@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>录音卡</title>
+<style>
+:root{--pri:#0F766E;--bg:#F2F2F7;--card:#fff;--label:#1C1C1E;--sec:#8A8A8E;--sep:rgba(60,60,67,.13)}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:-apple-system,"SF Pro Text","PingFang SC",sans-serif;background:var(--bg);color:var(--label);max-width:390px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
+header.app{position:sticky;top:0;z-index:20;background:var(--bg);padding:calc(env(safe-area-inset-top) + 10px) 16px 8px;display:flex;align-items:center;justify-content:space-between}
+header.app h1{font-size:22px;font-weight:700}
+header.app .status{font-size:12px;color:var(--sec);margin-left:8px;font-weight:400}
+.capsule{display:flex;align-items:center;gap:5px;background:var(--card);border:1px solid var(--sep);border-radius:999px;padding:6px 11px;font-size:12px;min-height:32px;cursor:pointer}
+.capsule .dot{width:7px;height:7px;border-radius:50%;background:#34C759}
+main{flex:1;overflow-y:auto;padding:0 16px calc(env(safe-area-inset-bottom) + 84px)}
+.model-line{font-size:11px;color:var(--sec);padding:2px 0 8px}
+.banner{background:#FFF7E6;border:1px solid #F2D9A4;color:#7A5B12;font-size:12px;border-radius:10px;padding:8px 10px;margin-bottom:10px}
+.chips{display:flex;gap:8px;margin-bottom:10px}
+.chip{border:1px solid var(--sep);background:var(--card);border-radius:999px;padding:6px 13px;font-size:13px;min-height:32px;color:var(--label)}
+.chip.on{background:var(--pri);color:#fff;border-color:var(--pri)}
+.tl-head{display:flex;justify-content:space-between;align-items:baseline;margin:4px 0 2px}
+.tl-head h2{font-size:17px}
+.tl-head .date{font-size:12px;color:var(--sec)}
+.btn-sum{background:var(--pri);color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:13px;min-height:32px}
+.src-line{font-size:11px;color:var(--sec);margin-bottom:10px}
+.card{background:var(--card);border-radius:14px;padding:13px 14px;margin-bottom:10px;box-shadow:0 1px 2px rgba(0,0,0,.05);position:relative;cursor:pointer}
+.card h3{font-size:15px;margin-bottom:5px;padding-right:44px}
+.sum{font-size:13px;color:#3C3C43;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card.open .sum{-webkit-line-clamp:unset}
+.meta{display:flex;flex-wrap:wrap;gap:6px 10px;font-size:11px;color:var(--sec);margin-top:7px}
+.tag{background:rgba(15,118,110,.1);color:var(--pri);border-radius:5px;padding:1px 6px}
+.exp{display:none;margin-top:8px;font-size:13px;color:#3C3C43}
+.card.open .exp{display:block}
+.exp .note{font-size:11px;color:var(--sec);margin-top:5px}
+.btn-line{display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:8px}
+.btn{background:var(--pri);color:#fff;border:none;border-radius:9px;padding:9px 14px;font-size:13px;min-height:36px}
+.btn.ghost{background:transparent;color:var(--pri);border:1px solid var(--pri)}
+.rawbtn{position:absolute;top:11px;right:11px;font-size:11px;color:var(--sec);background:rgba(60,60,67,.08);border:none;border-radius:6px;padding:4px 8px;min-height:26px}
+.panel{display:none}
+.panel.show{display:block}
+.subbar{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--sep);background:var(--bg);position:sticky;top:calc(env(safe-area-inset-top) + 44px);z-index:10}
+.subbar .back{background:none;border:none;color:var(--pri);font-size:16px;min-height:36px;min-width:52px;text-align:left}
+.subbar h2{font-size:17px;flex:1}
+.dlg{background:var(--card);border-radius:14px;margin:12px 16px;padding:14px}
+.dline{margin-bottom:10px}
+.dline .who{font-size:12px;font-weight:600;color:var(--pri)}
+.dline .who.b{color:#7C5CBF}
+.dline .txt{font-size:14px;margin-top:2px}
+.dline .map{font-size:11px;color:var(--sec);margin-top:2px}
+.warn{font-size:11px;color:var(--sec);padding:0 16px 10px;line-height:1.5}
+.rawline{border-left:2px solid var(--sep);padding-left:10px;margin-bottom:10px}
+.rawline .txt{white-space:pre-wrap}
+.tabs{display:flex;gap:8px;padding:10px 16px 0}
+.tabs .chip{flex:1;text-align:center}
+.mdbox{background:var(--card);border-radius:12px;margin:12px 16px;padding:12px;font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:pre-wrap;line-height:1.55}
+.act{display:flex;align-items:center;gap:10px;background:var(--card);border-radius:12px;margin:8px 16px;padding:11px 12px;font-size:14px}
+.act input{width:20px;height:20px;accent-color:var(--pri)}
+.counter{padding:4px 16px 0;font-size:12px;color:var(--sec)}
+.sel-row{display:flex;gap:10px;padding:4px 16px 0}
+.sel-row .btn{flex:1}
+button:disabled{opacity:.4}
+nav.bottom{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:390px;background:rgba(255,255,255,.92);backdrop-filter:blur(10px);border-top:1px solid var(--sep);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:30}
+nav.bottom button{flex:1;background:none;border:none;font-size:11px;color:var(--sec);padding:8px 0 6px;min-height:52px;display:flex;flex-direction:column;align-items:center;gap:2px}
+nav.bottom button.on{color:var(--pri)}
+.sheet-wrap{position:fixed;inset:0;z-index:50;display:none}
+.sheet-wrap.show{display:block}
+.backdrop{position:absolute;inset:0;background:rgba(0,0,0,.4)}
+.sheet{position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:390px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px calc(env(safe-area-inset-bottom) + 20px)}
+.sheet h2{font-size:16px;margin-bottom:10px}
+.sheet .row{display:flex;justify-content:space-between;font-size:13px;padding:9px 0;border-bottom:1px solid var(--sep)}
+.sheet .row span:first-child{color:var(--sec)}
+.sheet .lbl{font-size:11px;color:var(--sec);margin-top:12px}
+.sheet .btn{width:100%;margin-top:10px}
+.state{font-size:12px;color:var(--pri);margin-top:8px;min-height:16px}
+.switchrow{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--sep);font-size:15px}
+.sw{width:50px;height:30px;border-radius:999px;background:rgba(120,120,128,.32);position:relative;transition:.2s;flex:none}
+.sw.on{background:#34C759}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:26px;height:26px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.sw.on::after{left:22px}
+.card.summary-card{border-left:3px solid var(--pri)}
+details.dec{background:var(--card);border-radius:12px;margin:8px 16px;padding:10px 12px;font-size:14px}
+details.dec summary{cursor:pointer;font-weight:600;min-height:28px;display:flex;align-items:center}
+details.dec .dec-body{margin-top:8px;font-size:13px;color:#3C3C43;display:flex;gap:10px;align-items:flex-start}
+details.dec .dec-body input{width:20px;height:20px;accent-color:var(--pri);margin-top:2px;flex:none}
+</style>
+</head>
+<body>
+<header class="app">
+  <div style="display:flex;align-items:baseline">
+    <h1>录音卡</h1><span class="status">未定稿·本地演示</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <button class="capsule" data-testid="hw-capsule" aria-label="打开模拟硬件状态面板" onclick="openSheet()"><span class="dot"></span>● 已连接 · 82%<span style="color:var(--sec)">（模拟）</span></button>
+  </div>
+</header>
+
+<!-- 主页面：时间线 -->
+<main id="p-timeline" class="panel show">
+  <div class="model-line">持续录音 / 偶尔标记 / 按阶段清洗 —— 一条连续来源，事件为阶段切片</div>
+  <div class="banner">本地示例 · 需独立云端服务，当前未接</div>
+  <div class="chips" role="tablist">
+    <button class="chip on" data-f="all" onclick="setFilter(this)">全部</button>
+    <button class="chip" data-f="event" onclick="setFilter(this)">对话事件</button>
+    <button class="chip" data-f="summary" onclick="setFilter(this)">手动总结</button>
+  </div>
+  <div class="tl-head">
+    <div><h2>今天 11月6日</h2><span class="date">星期五 · 当前 14:53</span></div>
+    <button class="btn-sum" data-testid="summary-start" onclick="startSummary()">总结</button>
+  </div>
+  <div class="src-line">08:00—14:42 · 连续来源（演示）· 事件为来源的阶段切片，已省略长静音</div>
+  <div id="feed"></div>
+</main>
+
+<!-- 设置页 -->
+<main id="p-setting" class="panel">
+  <div class="banner">本地示例 · 需独立云端服务，当前未接</div>
+  <div style="background:var(--card);border-radius:14px;padding:4px 14px;margin-bottom:12px">
+    <div class="switchrow"><span>持续录音（演示）</span><div class="sw on" role="switch" aria-checked="true" tabindex="0" onclick="tsw(this)" onkeydown="tswKey(event,this)" aria-label="持续录音演示开关"></div></div>
+    <div class="switchrow"><span>偶尔标记重要对话</span><div class="sw on" role="switch" aria-checked="true" tabindex="0" onclick="tsw(this)" onkeydown="tswKey(event,this)" aria-label="偶尔标记开关"></div></div>
+    <div class="switchrow"><span>仅在无线网络导入（演示）</span><div class="sw" role="switch" aria-checked="false" tabindex="0" onclick="tsw(this)" onkeydown="tswKey(event,this)" aria-label="无线网络导入偏好开关"></div></div>
+    <div class="switchrow" style="border:none"><span>阶段切片清洗提示</span><div class="sw" role="switch" aria-checked="false" tabindex="0" onclick="tsw(this)" onkeydown="tswKey(event,this)" aria-label="清洗提示开关"></div></div>
+  </div>
+  <div style="background:var(--card);border-radius:14px;padding:14px;font-size:13px;color:var(--sec);line-height:1.6">
+    <strong style="color:var(--label)">关于录音卡</strong><br>
+    录音卡是一个未定稿的本地演示原型。所有对话内容、说话人标注、总结均为示例数据，不涉及任何真实识别或分析能力；分析类功能需独立云端服务，当前未接。硬件状态仅通过顶部胶囊查看。
+  </div>
+</main>
+
+<!-- 多选页 -->
+<main id="p-sel" class="panel">
+  <div class="subbar"><button class="back" onclick="go('timeline')">取消</button><h2>选择来源切片</h2></div>
+  <div class="banner" style="margin:12px 16px 6px">本地示例 · 需独立云端服务，当前未接</div>
+  <div class="sel-row"><button class="btn ghost" onclick="selAll(true)">全选</button><button class="btn ghost" onclick="selAll(false)">取消选择</button></div>
+  <div id="sel-list" style="margin-top:10px"></div>
+  <div class="counter" id="sel-count">已选 0 项</div>
+  <div style="padding:10px 16px"><button class="btn" style="width:100%" data-testid="generate-summary" id="gen-btn" disabled onclick="genSummary()">生成演示总结</button></div>
+  <div class="warn">生成结果为本地示例，不代表任何真实分析能力。</div>
+</main>
+
+<!-- 总结结果页 -->
+<main id="p-sumres" class="panel">
+  <div class="subbar"><button class="back" onclick="go('timeline')">返回</button><h2>总结结果（演示）</h2></div>
+  <div class="warn" style="padding-top:10px">两种结果均为本地示例；需独立云端服务，当前未接。</div>
+  <div class="warn" id="sum-src"></div>
+  <div class="tabs"><button class="chip on" id="tab-md" onclick="sumTab('md')">Markdown</button><button class="chip" id="tab-ix" onclick="sumTab('ix')">交互视图</button></div>
+  <div id="sum-md" class="mdbox"></div>
+  <div id="sum-ix" style="display:none">
+    <div class="counter">行动项完成：<span id="ix-done">0</span> / <span id="ix-total">0</span></div>
+    <div id="ix-list"></div>
+    <div class="counter" style="margin-top:6px">决策以下方展开项勾选标记。</div>
+    <div id="ix-dec"></div>
+  </div>
+</main>
+
+<!-- 清洗后对话详情 -->
+<main id="p-detail" class="panel">
+  <div class="subbar"><button class="back" onclick="go('timeline')">返回</button><h2 id="dt-title">对话详情</h2></div>
+  <div class="warn" style="padding-top:10px">说话人 A/B 为演示/推测归整，非已验证身份；长静音已在清洗版中省略。</div>
+  <div class="dlg" id="dt-body"></div>
+  <div class="warn">完整原始来源按产品要求保留（低权重存放）；本演示仅含抽样片段，实际存储未实现。</div>
+</main>
+
+<!-- 原始记录 -->
+<main id="p-raw" class="panel">
+  <div class="subbar"><button class="back" onclick="go('timeline')">返回</button><h2 id="raw-title">原始记录</h2></div>
+  <div class="warn" style="padding-top:10px">保留语气词、口误、静音与原始分段；括号内为清洗版对应位置。完整原始来源按产品要求保留，本页为抽样示例，实际存储未实现。</div>
+  <div class="dlg" id="raw-body"></div>
+</main>
+
+<div class="sheet-wrap" id="sheet">
+  <div class="backdrop" onclick="closeSheet()"></div>
+  <div class="sheet" role="dialog" aria-label="模拟硬件面板">
+    <h2>硬件状态（模拟）</h2>
+    <div class="row"><span>连接状态</span><span>● 已连接</span></div>
+    <div class="row"><span>电量</span><span>82%（模拟值）</span></div>
+    <div class="row"><span>固件</span><span>demo-1.0</span></div>
+    <div class="lbl">以下操作均为本地模拟，不访问真实设备。</div>
+    <button class="btn ghost" onclick="sim('正在扫描附近设备…（模拟）')">扫描附近设备（模拟）</button>
+    <button class="btn ghost" onclick="sim('已模拟导入一段示例录音来源。')">导入录音（本地模拟）</button>
+    <div class="state" id="sim-state" role="status"></div>
+    <button class="btn" onclick="closeSheet()">关闭</button>
+  </div>
+</div>
+
+<nav class="bottom">
+  <button data-testid="nav-timeline" class="on" id="nt" onclick="go('timeline')" aria-label="Timeline">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="8"/><path d="M10 5v5l3 2"/></svg>Timeline</button>
+  <button data-testid="nav-setting" id="ns" onclick="go('setting')" aria-label="Setting">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="2.5"/><path d="M10 2v3M10 15v3M2 10h3M15 10h3M4.3 4.3l2.1 2.1M13.6 13.6l2.1 2.1M15.7 4.3l-2.1 2.1M6.4 13.6l-2.1 2.1"/></svg>Setting</button>
+</nav>
+
+<script>
+"use strict";
+/* 清洗版（去掉语气词、口误与静音） */
+var EVENTS=[
+ {id:"e1",kind:"event",title:"午后项目方向讨论",brief:"与同事讨论下一阶段项目方向，明确了交付节奏与分工。讨论中出现排期优先级分歧，约定本周五前给出书面结论，再由负责人确认资源。",long:"与同事讨论下一阶段项目方向，明确了交付节奏与分工。讨论中出现排期优先级分歧，双方各自给出理由后，决定先缩小范围做一版可验证的小方案，约定本周五前给出书面结论，再由负责人确认资源。",time:"14:20",dur:"18分40秒",spk:"A / B",mark:"重要对话",map:"来源 14:20—14:38",dlg:[
+  ["A","这版排期偏紧，特别是测试阶段。","来源 14:20—14:22"],
+  ["B","同意。建议先移除两个低优先级功能。","来源 14:22—14:25"],
+  ["A","可以，导出功能延后两周。","来源 14:25—14:27"],
+  ["B","我整理分工，周五前给出书面结论。","来源 14:29—14:31"],
+  ["A","先做一版可验证的小方案，不铺大范围。","来源 14:34—14:36"],
+  ["B","下午整理后发出，有问题随时沟通。","来源 14:36—14:38"]],
+ raw:[
+  ["A","（静音约2分钟）呃……我觉得这版排期有点太紧了，就是那个……测试那一段。","来源 14:18—14:22 ｜ 清洗版 14:20—14:22"],
+  ["B","对，嗯，我也这么想。要不我们先砍掉两个低优先级的功能？","来源 14:22—14:25 ｜ 清洗版 14:22—14:25"],
+  ["A","可以，那个导出功能可以先放一放，啊不对，是放两周。","来源 14:25—14:27 ｜ 清洗版 14:25—14:27"],
+  ["B","那我把分工写一下，那个……周五前给你一份书面的结论。","来源 14:27—14:31（含停顿）｜ 清洗版 14:29—14:31"],
+  ["A","好，就先做一版能验证的小方案，别一下子铺太大。","来源 14:34—14:36 ｜ 清洗版 14:34—14:36"],
+  ["B","行，那我下午整理完发给你，有问题随时说。","来源 14:36—14:38 ｜ 清洗版 14:36—14:38"]]},
+ {id:"e2",kind:"event",title:"客户回访要点",brief:"电话回访客户，记录对新版本界面的反馈与两条改进建议。客户整体态度积极，但对加载速度提出明确不满，希望下次沟通前有改进数据。",long:"电话回访客户，记录对新版本界面的反馈与两条改进建议：筛选记住上次选择；列表页加载提速。客户整体态度积极，但对加载速度明确表示不满，希望下次沟通前看到改进数据。",time:"13:05",dur:"9分12秒",spk:"A / B",mark:"",map:"来源 13:05—13:14",dlg:[
+  ["B","新界面反馈整体清爽，列表页打开偏慢。","来源 13:06—13:08"],
+  ["A","速度问题已记录，下版本专项优化。","来源 13:08—13:10"],
+  ["B","筛选希望能记住上次选择条件。","来源 13:10—13:12"],
+  ["A","建议有效，已记录。","来源 13:12—13:14"]],
+ raw:[
+  ["B","那个新界面我们同事都说挺清爽的，就是列表打开有点慢……嗯对，就是列表。","来源 13:05—13:08 ｜ 清洗版 13:06—13:08"],
+  ["A","嗯，速度问题我们记下来，下版会专门优化这一块。","来源 13:08—13:10 ｜ 清洗版 13:08—13:10"],
+  ["B","还有啊，筛选能不能记住我上次选的条件？每次都要重选，有点麻烦。（静音约10秒）","来源 13:10—13:12 ｜ 清洗版 13:10—13:12"],
+  ["A","可以，这个建议很好，我记一下……好的，已经记下来了。","来源 13:12—13:14 ｜ 清洗版 13:12—13:14"]]},
+ {id:"e3",kind:"event",title:"晨间工作计划",brief:"对今日工作的口头规划，列出三件待办并标记一件需重点跟进事项。提到明天上午先确认测试环境是否就绪。",long:"对今日工作的口头规划：发出分工文档、跟进客户加载速度问题、准备周五书面结论三件待办，其中书面结论需重点跟进。提到明天上午先确认测试环境是否就绪。",time:"10:12",dur:"3分05秒",spk:"A",mark:"",map:"来源 10:12—10:15",dlg:[
+  ["A","今日计划：推进排期讨论与客户回访安排。","来源 10:12—10:13"],
+  ["A","三件待办：发出分工文档；跟进加载速度问题；准备周五书面结论（重点跟进）。","来源 10:13—10:14"],
+  ["A","明日早间先确认测试环境就绪。","来源 10:14—10:15"]],
+ raw:[
+  ["A","今天打算把排期讨论和客户回访这两块推进一下……嗯，先记三件事。","来源 10:12—10:13 ｜ 清洗版 10:12—10:13"],
+  ["A","第一，把分工文档发出去；第二，跟进客户说的加载速度；第三就是准备周五的书面结论，这个要重点盯一下。","来源 10:13—10:14 ｜ 清洗版 10:13—10:14"],
+  ["A","对了，明早记得先看看测试环境准备好了没有，别到时候又出岔子。","来源 10:14—10:15 ｜ 清洗版 10:14—10:15"]]}
+];
+var selOpen={},summaries=[],curSum=null,curFilter="all";
+function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt")}
+function cardHTML(e){
+ if(e.kind==="summary")return '<div class="card summary-card'+(selOpen[e.id]?" open":"")+'" data-testid="card-'+e.id+'" data-kind="summary" data-id="'+e.id+'" onclick="tapCard(this)" role="button" aria-expanded="'+(!!selOpen[e.id])+'"><h3>手动总结 · '+e.title+'</h3><div class="sum">'+esc(e.brief)+'</div><div class="meta"><span>'+e.time+'</span><span class="tag">手动总结</span></div><div class="exp">'+esc(e.long)+'<div class="note">来源：'+esc(e.srcDesc)+'</div><div class="btn-line"><button class="btn" onclick="event.stopPropagation();openSumRes()">查看总结结果</button></div></div></div>';
+ return '<div class="card'+(selOpen[e.id]?" open":"")+'" data-testid="card-'+e.id+'" data-kind="event" data-id="'+e.id+'" onclick="tapCard(this)" role="button" aria-expanded="'+(!!selOpen[e.id])+'"><h3>'+e.title+'</h3><div class="sum">'+esc(e.brief)+'</div><div class="meta"><span>'+e.time+'</span><span>'+e.dur+'</span><span>说话人 '+e.spk+'（演示）</span>'+(e.mark?'<span class="tag">'+e.mark+'</span>':'')+'</div><div class="exp">'+esc(e.long)+'<div class="note">切片映射：'+e.map+'（长静音已省略）</div><div class="btn-line"><span style="font-size:12px;color:var(--sec)">再点查看完整对话 →</span></div></div><button class="rawbtn" data-testid="raw-'+e.id+'" aria-label="查看'+e.title+'的原始记录" onclick="event.stopPropagation();openRaw(\''+e.id+'\')">原始</button></div>'}
+function render(){
+ var f=curFilter;
+ var html=summaries.filter(s=>f==="all"||f==="summary").map(cardHTML).join("")
+  +EVENTS.filter(e=>f==="all"||f==="event").map(cardHTML).join("");
+ document.getElementById("feed").innerHTML=html||'<div class="warn" style="padding:16px 0">该筛选下暂无内容。</div>'}
+function tapCard(el){
+ var id=el.dataset.id,kind=el.dataset.kind;
+ if(el.classList.contains("open")){if(kind==="event")openDetail(id);else{curSum=summaries.find(s=>s.id===id);showSumRes();go("sumres")}return}
+ selOpen={};selOpen[id]=1;render()}
+function setFilter(btn){curFilter=btn.dataset.f;document.querySelectorAll(".chips .chip").forEach(c=>c.classList.toggle("on",c===btn));render()}
+function go(p){
+ ["timeline","setting","sel","sumres","detail","raw"].forEach(x=>document.getElementById("p-"+x).classList.toggle("show",x===p));
+ document.getElementById("nt").classList.toggle("on",p==="timeline");
+ document.getElementById("ns").classList.toggle("on",p==="setting");
+ window.scrollTo(0,0)}
+function openDetail(id){
+ var e=EVENTS.find(x=>x.id===id);
+ document.getElementById("dt-title").textContent=e.title;
+ document.getElementById("dt-body").innerHTML=e.dlg.map(l=>'<div class="dline"><div class="who'+(l[0]==="B"?" b":"")+'">说话人 '+l[0]+'（演示/推测归整）</div><div class="txt">'+esc(l[1])+'</div><div class="map">'+l[2]+'</div></div>').join("");
+ go("detail")}
+function openRaw(id){
+ var e=EVENTS.find(x=>x.id===id);
+ document.getElementById("raw-title").textContent=e.title+" · 原始";
+ document.getElementById("raw-body").innerHTML=e.raw.map(l=>'<div class="rawline"><div class="who'+(l[0]==="B"?" b":"")+'">原说话分段 '+l[0]+'</div><div class="txt">'+esc(l[1])+'</div><div class="map">'+l[2]+'</div></div>').join("");
+ go("raw")}
+/* 多选 */
+function startSummary(){buildSel();go("sel")}
+function buildSel(){
+ document.getElementById("sel-list").innerHTML=EVENTS.map(e=>'<label class="act" style="cursor:pointer"><input type="checkbox" data-sel="'+e.id+'" onchange="updSel()" aria-label="选择 '+e.title+'"><span style="flex:1">'+e.title+'<br><span style="font-size:11px;color:var(--sec)">'+e.map+'</span></span></label>').join("");
+ updSel()}
+function checked(){return Array.from(document.querySelectorAll("[data-sel]")).filter(c=>c.checked).map(c=>c.dataset.sel)}
+function updSel(){var n=checked().length,b=document.getElementById("gen-btn");b.disabled=n===0;b.textContent=n===0?"生成演示总结":"生成演示总结（已选 "+n+" 项）";document.getElementById("sel-count").textContent="已选 "+n+" 项"}
+function selAll(v){document.querySelectorAll("[data-sel]").forEach(c=>c.checked=v);updSel()}
+function genSummary(){
+ var ids=checked();if(!ids.length)return;
+ var parts=[],idList=[];
+ ids.forEach(id=>{var e=EVENTS.find(x=>x.id===id);parts.push(e.title+"（"+e.map+"）");idList.push(id)});
+ var srcDesc=parts.join("；");
+ var md="# 会议要点总结（演示）\n\n来源切片："+ids.map(i=>EVENTS.find(x=>x.id===i).map).join("、")+"\n\n## 要点\n- 排期偏紧，先移除低优先级功能\n- 客户反馈界面清爽，但列表加载偏慢\n- 周五前需给出书面结论\n\n## 行动项\n- [ ] 发出分工文档\n- [ ] 跟进客户加载速度问题\n\n## 待定决策\n- 小方案范围是否包含导出功能\n\n> 两种结果均为本地示例；需独立云端服务，当前未接。";
+ var ix=["发出分工文档","跟进客户加载速度问题","确认测试环境就绪"];
+ var s={id:"s"+(Date.now()),kind:"summary",title:"会议要点",
+  brief:"人工触发生成的演示总结：概括所选 "+ids.length+" 个切片的要点、行动项与一条待定决策。",
+  long:"人工触发生成的演示总结。包含要点回顾、行动项与一条待定决策，全部为本地示例内容，不代表真实分析结果。\n来源切片："+srcDesc+"。",
+  time:"生成于 14:53",srcDesc:srcDesc,srcIds:idList.slice(),md:md,ix:ix.slice()};
+ summaries.unshift(s);curSum=s;
+ selOpen={};render();showSumRes();go("sumres")}
+function showSumRes(){
+ var s=curSum;if(!s)return;
+ document.getElementById("sum-src").innerHTML="来源（"+s.srcIds.length+" 项，ID："+s.srcIds.join("、")+"）：<br>"+esc(s.srcDesc);
+ document.getElementById("sum-md").textContent=s.md;
+ document.getElementById("ix-total").textContent=s.ix.length;
+ document.getElementById("ix-done").textContent=0;
+ document.getElementById("ix-list").innerHTML=s.ix.map((a,i)=>'<label class="act"><input type="checkbox" onchange="ixCount()" data-ix="'+i+'" aria-label="标记行动项 '+a+'"><span>'+a+'</span></label>').join("");
+ document.getElementById("ix-dec").innerHTML='<details class="dec"><summary>待定决策：小方案是否包含导出功能</summary><div class="dec-body"><input type="checkbox" onchange="ixDec(this)" aria-label="标记该决策已有结论"><span>勾选表示该决策已有结论（本地演示标记，不做任何真实记录）。</span></div></details>';
+ sumTab("md")}
+function ixCount(){document.getElementById("ix-done").textContent=document.querySelectorAll("[data-ix]:checked").length}
+function ixDec(el){el.closest("details").style.borderLeft=el.checked?"3px solid var(--pri)":"none"}
+function sumTab(t){
+ document.getElementById("tab-md").classList.toggle("on",t==="md");
+ document.getElementById("tab-ix").classList.toggle("on",t==="ix");
+ document.getElementById("sum-md").style.display=t==="md"?"block":"none";
+ document.getElementById("sum-ix").style.display=t==="ix"?"block":"none"}
+function openSumRes(){if(curSum)showSumRes();go("sumres")}
+/* 硬件胶囊 */
+function openSheet(){document.getElementById("sheet").classList.add("show");document.getElementById("sim-state").textContent=""}
+function closeSheet(){document.getElementById("sheet").classList.remove("show")}
+function sim(msg){document.getElementById("sim-state").textContent=msg+" ✔（仅模拟，未连接任何真实设备）"}
+/* 设置开关 */
+function tsw(el){el.classList.toggle("on");el.setAttribute("aria-checked",el.classList.contains("on"))}
+function tswKey(e,el){if(e.key===" "||e.key==="Enter"){e.preventDefault();tsw(el)}}
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>录音卡</title>
+<style>
+:root{
+  --primary:#0F766E;
+  --primary-soft:rgba(15,118,110,.08);
+  --bg:#F2F2F7;
+  --card:#FFFFFF;
+  --sep:rgba(60,60,67,.13);
+  --label:#1C1C1E;
+  --label2:#8A8A8E;
+  --label3:#C7C7CC;
+  --danger:#FF3B30;
+  --orange:#FF9500;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;
+  background:#D8D8DC;
+  display:flex;justify-content:center;align-items:center;
+  color:var(--label);
+}
+#phone{
+  width:390px;height:844px;background:var(--bg);
+  border-radius:44px;overflow:hidden;position:relative;
+  box-shadow:0 0 0 10px #111,0 30px 80px rgba(0,0,0,.4);
+}
+@media (max-width:430px),(max-height:880px){
+  body{align-items:stretch}
+  #phone{width:100vw;height:100vh;height:100dvh;border-radius:0;box-shadow:none}
+}
+/* Status bar */
+.statusbar{
+  position:absolute;top:0;left:0;right:0;height:54px;z-index:50;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 28px;font-size:15px;font-weight:600;pointer-events:none;
+  padding-top:env(safe-area-inset-top,0);
+}
+.statusbar .icons{display:flex;gap:6px;align-items:center}
+.sig{display:flex;gap:2px;align-items:flex-end}
+.sig i{width:3px;background:#000;border-radius:1px;display:block}
+.batt{width:25px;height:12px;border:1.5px solid rgba(0,0,0,.5);border-radius:3.5px;position:relative;padding:1.5px}
+.batt::after{content:"";position:absolute;right:-4px;top:3px;width:2px;height:5px;background:rgba(0,0,0,.5);border-radius:0 2px 2px 0}
+.batt i{position:absolute;left:1.5px;top:1.5px;bottom:1.5px;background:#000;border-radius:1.5px;width:70%}
+/* App structure */
+.app{position:absolute;inset:0;display:flex;flex-direction:column}
+.pages{flex:1;overflow:hidden;position:relative}
+.page{position:absolute;inset:0;overflow-y:auto;padding:70px 16px 100px;display:none;-webkit-overflow-scrolling:touch}
+.page.active{display:block;animation:fadein .22s ease}
+@keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.bigtitle{font-size:32px;font-weight:800;letter-spacing:.2px;margin:4px 2px 14px}
+.subtitle{font-size:13px;color:var(--label2);margin:-6px 2px 14px}
+/* Inset grouped */
+.group{background:var(--card);border-radius:12px;margin-bottom:18px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;padding:13px 16px;position:relative;font-size:15px;min-height:48px}
+.row+.row::before{content:"";position:absolute;top:0;left:52px;right:0;height:.5px;background:var(--sep)}
+.row .grow{flex:1;min-width:0}
+.row .lab2{font-size:13px;color:var(--label2)}
+.row.clickable:active{background:#e5e5ea}
+.badge-sim{
+  font-size:10px;font-weight:600;color:var(--primary);background:var(--primary-soft);
+  border:0.5px solid rgba(15,118,110,.25);border-radius:6px;padding:2px 7px;flex-shrink:0;
+}
+.badge-gray{color:var(--label2);background:#e9e9eb;border-color:#d1d1d6}
+/* section headers */
+.sechead{font-size:13px;color:var(--label2);text-transform:none;padding:0 16px 7px;margin-top:2px}
+/* device card */
+.dev-card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:18px}
+.dev-top{display:flex;align-items:center;gap:12px}
+.dev-icon{width:48px;height:48px;border-radius:12px;background:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.dev-icon svg{width:26px;height:26px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.dev-name{font-size:17px;font-weight:700}
+.dev-model{font-size:12px;color:var(--label2);margin-top:2px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:1px}
+.dot.on{background:#34C759}.dot.off{background:#C7C7CC}
+.state-txt{font-size:13px;color:var(--label2);margin-top:1px}
+.state-txt .on-t{color:#34A752;font-weight:600}
+.meters{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:14px;border-top:.5px solid var(--sep);padding-top:14px}
+.meter .m-lab{font-size:12px;color:var(--label2);margin-bottom:6px;display:flex;justify-content:space-between}
+.meter .m-lab b{color:var(--label);font-weight:700}
+.bar{height:6px;background:#e9e9eb;border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--primary);border-radius:3px;transition:width .5s ease}
+.bar i.low{background:var(--danger)}
+.meter+.meter{padding-left:14px;border-left:.5px solid var(--sep)}
+.meter:first-child{padding-right:14px}
+.sync-time{display:flex;justify-content:space-between;font-size:13px;color:var(--label2);margin-top:12px;padding-top:12px;border-top:.5px solid var(--sep)}
+.sync-time b{color:var(--label);font-weight:600}
+/* buttons */
+.btn{
+  width:100%;border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:600;
+  font-family:inherit;cursor:pointer;color:#fff;background:var(--primary);transition:opacity .15s;
+}
+.btn:active{opacity:.7}
+.btn.secondary{background:var(--primary-soft);color:var(--primary)}
+.btn.gray{background:#e9e9eb;color:var(--label3);pointer-events:none}
+.btnrow{display:flex;gap:10px}
+.btnrow .btn{flex:1}
+/* nearby devices */
+.near-item{display:flex;align-items:center;gap:12px;padding:13px 16px;position:relative;cursor:pointer}
+.near-item+.near-item::before{content:"";position:absolute;top:0;left:52px;right:0;height:.5px;background:var(--sep)}
+.near-item:active{background:#e5e5ea}
+.near-ic{width:36px;height:36px;border-radius:9px;background:var(--primary-soft);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.near-ic svg{width:20px;height:20px;stroke:var(--primary);fill:none;stroke-width:2;stroke-linecap:round}
+.empty{padding:28px 16px;text-align:center;font-size:13px;color:var(--label3)}
+/* spinner */
+.spin{width:16px;height:16px;border:2px solid rgba(15,118,110,.25);border-top-color:var(--primary);border-radius:50%;animation:sp .8s linear infinite;flex-shrink:0}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* import page */
+.big-bar{height:10px;border-radius:5px;background:#e9e9eb;overflow:hidden;margin-top:8px}
+.big-bar i{display:block;height:100%;background:var(--primary);border-radius:5px;transition:width .3s ease}
+.import-stats{display:flex;justify-content:space-between;font-size:13px;color:var(--label2);margin-top:8px}
+.hero-num{font-size:34px;font-weight:800;color:var(--primary);font-variant-numeric:tabular-nums}
+.hero-sub{font-size:13px;color:var(--label2)}
+/* transcribe page */
+.banner{
+  background:linear-gradient(135deg,#FFF7E6,#FFEFDB);
+  border:1px solid rgba(255,149,0,.35);border-radius:14px;padding:16px;margin-bottom:18px;
+}
+.banner .b-t{font-size:15px;font-weight:700;color:#8a5300;display:flex;align-items:center;gap:8px}
+.banner .b-d{font-size:13px;color:#a06400;margin-top:6px;line-height:1.5}
+.disabled-mask{opacity:.45;pointer-events:none}
+.placeholder-card{background:#e9e9eb;border-radius:14px;padding:18px;text-align:center}
+.placeholder-card .ph-t{font-size:15px;font-weight:600;color:var(--label2)}
+.placeholder-card .ph-d{font-size:12px;color:var(--label3);margin-top:4px}
+/* tabbar */
+.tabbar{
+  position:absolute;left:0;right:0;bottom:0;z-index:40;
+  background:rgba(249,249,249,.92);backdrop-filter:blur(20px);
+  border-top:.5px solid var(--sep);
+  padding-bottom:env(safe-area-inset-bottom,0);
+  display:flex;
+}
+.tab{flex:1;padding:8px 0 6px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;color:var(--label2);border:0;background:none;font-family:inherit}
+.tab svg{width:26px;height:26px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.tab span{font-size:10px;font-weight:500}
+.tab.on{color:var(--primary)}
+.homebar{position:absolute;bottom:7px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:rgba(0,0,0,.3);z-index:60;pointer-events:none}
+/* toast */
+.toast{
+  position:absolute;left:50%;bottom:120px;transform:translateX(-50%) translateY(20px);
+  background:rgba(28,28,30,.9);color:#fff;font-size:13px;padding:10px 18px;border-radius:20px;
+  z-index:100;opacity:0;transition:all .25s;pointer-events:none;max-width:80%;text-align:center;white-space:nowrap;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.pill-status{font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;flex-shrink:0}
+.pill-on{background:rgba(52,199,89,.12);color:#248A3D}
+.pill-off{background:#e9e9eb;color:var(--label2)}
+.list-hidden{display:none}
+</style>
+</head>
+<body>
+<div id="phone">
+  <div class="statusbar">
+    <span>9:41</span>
+    <div class="icons">
+      <div class="sig"><i style="height:4px"></i><i style="height:6px"></i><i style="height:8px"></i><i style="height:10px"></i></div>
+      <svg width="17" height="12" viewBox="0 0 17 12"><path d="M8.5 9.5a1.5 1.5 0 011.5 1.5L8.5 12 7 11a1.5 1.5 0 011.5-1.5zM5 7.5a5 5 0 017 0M2.5 5a8.5 8.5 0 0112 0" stroke="#000" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+      <div class="batt"><i></i></div>
+    </div>
+  </div>
+
+  <div class="app">
+    <div class="pages">
+      <!-- ============ 设备页 ============ -->
+      <section class="page active" id="page-device">
+        <h1 class="bigtitle">设备</h1>
+        <p class="subtitle">连接与管理你的录音卡</p>
+
+        <div class="dev-card" id="devCard">
+          <div class="dev-top">
+            <div class="dev-icon">
+              <svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="3"/><circle cx="12" cy="15" r="3"/><path d="M10 7h4"/></svg>
+            </div>
+            <div class="grow">
+              <div class="dev-name">录音卡 Pro <span style="font-size:12px;color:var(--label2);font-weight:500">· DYJ-HD</span></div>
+              <div class="state-txt" id="devState"><span class="dot off"></span>未连接</div>
+            </div>
+            <span class="pill-status pill-off" id="devPill">未连接</span>
+          </div>
+
+          <div id="devDetail" style="display:none">
+            <div class="meters">
+              <div class="meter">
+                <div class="m-lab"><span>电量</span><b id="battPct">—</b></div>
+                <div class="bar"><i id="battBar" style="width:0%"></i></div>
+              </div>
+              <div class="meter">
+                <div class="m-lab"><span>容量</span><b id="storTxt">—</b></div>
+                <div class="bar"><i id="storBar" style="width:0%"></i></div>
+              </div>
+            </div>
+            <div class="sync-time"><span>最近同步</span><b id="syncTime">—</b></div>
+          </div>
+        </div>
+
+        <div class="btnrow" id="connBtns">
+          <button class="btn" id="btnConnect">连接</button>
+          <button class="btn secondary list-hidden" id="btnDisconnect">断开</button>
+        </div>
+        <div style="height:18px"></div>
+
+        <div class="sechead">设备信息</div>
+        <div class="group">
+          <div class="row"><div class="grow">型号名称<span class="lab2" style="margin-left:8px">DYJ-HD</span></div><span class="badge-sim badge-gray">产品信息</span></div>
+          <div class="row"><div class="grow">固件版本</div><span class="lab2">v2.4.1</span></div>
+          <div class="row"><div class="grow">序列号</div><span class="lab2">DYJ-2481-A03X</span></div>
+        </div>
+
+        <div class="sechead">附近设备</div>
+        <div class="group">
+          <div class="row clickable" id="btnScan">
+            <div class="spin list-hidden" id="scanSpin"></div>
+            <div class="grow">扫描附近设备</div>
+            <span class="badge-sim">模拟</span>
+          </div>
+          <div id="nearList"></div>
+          <div class="empty" id="nearEmpty">尚未扫描到附近设备</div>
+        </div>
+      </section>
+
+      <!-- ============ 导入页 ============ -->
+      <section class="page" id="page-import">
+        <h1 class="bigtitle">导入</h1>
+        <p class="subtitle">录音同步与导入</p>
+
+        <div class="dev-card">
+          <div class="import-stats" style="margin:0 0 4px">
+            <span>硬件录音时长</span>
+            <span>已上云时长</span>
+          </div>
+          <div class="hero-num" id="impBig">0:00 / 0:00</div>
+          <div class="big-bar"><i id="impBar" style="width:0%"></i></div>
+          <div class="import-stats">
+            <span id="impPct">0%</span>
+            <span id="impRemain">待同步 0 分钟</span>
+          </div>
+        </div>
+
+        <button class="btn" id="btnTransfer">现在就要传</button>
+        <div style="height:6px"></div>
+        <button class="btn secondary" id="btnTransferStop" style="display:none">停止同步</button>
+        <div style="height:18px"></div>
+
+        <div class="sechead">同步进度</div>
+        <div class="group">
+          <div class="row">
+            <div class="grow">
+              <div style="font-weight:600">会议纪要 · 周一</div>
+              <div class="lab2">录音 42 分钟 · 尚未上云</div>
+            </div>
+            <span class="badge-sim badge-gray">待同步</span>
+          </div>
+          <div class="row">
+            <div class="grow">
+              <div style="font-weight:600">课堂录音 · 上周五</div>
+              <div class="lab2">录音 51 分钟 · 尚未上云</div>
+            </div>
+            <span class="badge-sim badge-gray">待同步</span>
+          </div>
+          <div class="row">
+            <div class="grow">
+              <div style="font-weight:600">采访备忘 · 上周四</div>
+              <div class="lab2">录音 18 分钟 · 已上云</div>
+            </div>
+            <span class="badge-sim" style="color:#248A3D;background:rgba(52,199,89,.12);border-color:rgba(52,199,89,.3)">已上云</span>
+          </div>
+        </div>
+        <div class="sechead" style="margin-top:-8px">说明</div>
+        <div class="group">
+          <div class="row"><div class="grow lab2">同步进度为模拟演示，不连接真实设备</div><span class="badge-sim">模拟</span></div>
+        </div>
+      </section>
+
+      <!-- ============ 转写页 ============ -->
+      <section class="page" id="page-asr">
+        <h1 class="bigtitle">转写</h1>
+        <p class="subtitle">转写与总结</p>
+
+        <div class="banner">
+          <div class="b-t">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8a5300" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>
+            需独立云端服务，当前未接
+          </div>
+          <div class="b-d">语音转文字与智能总结能力由独立云端服务提供，当前应用尚未接入该服务。接入后即可在此完成录音转写与纪要总结。</div>
+        </div>
+
+        <div class="disabled-mask">
+          <div class="group">
+            <div class="row">
+              <div class="grow">
+                <div style="font-weight:600">选择录音</div>
+                <div class="lab2">从已同步的录音中选择进行转写</div>
+              </div>
+              <span class="lab2">会议纪要 · 周一</span>
+            </div>
+          </div>
+          <div class="btnrow">
+            <button class="btn gray">开始转写</button>
+            <button class="btn gray">生成总结</button>
+          </div>
+        </div>
+        <div style="height:18px"></div>
+
+        <div class="sechead">历史结果</div>
+        <div class="placeholder-card" style="margin-bottom:18px">
+          <div class="ph-t">暂无转写记录</div>
+          <div class="ph-d">接入云端服务后，转写与总结结果将显示在这里</div>
+        </div>
+
+        <div class="sechead">能力说明</div>
+        <div class="group">
+          <div class="row"><div class="grow lab2">语音转文字</div><span class="badge-sim badge-gray">需云端服务</span></div>
+          <div class="row"><div class="grow lab2">智能总结</div><span class="badge-sim badge-gray">需云端服务</span></div>
+          <div class="row"><div class="grow lab2">待区分说话人</div><span class="badge-sim badge-gray">需云端服务</span></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Tabbar -->
+    <nav class="tabbar">
+      <button class="tab on" data-page="page-device">
+        <svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="3"/><circle cx="12" cy="16" r="2.5"/></svg>
+        <span>设备</span>
+      </button>
+      <button class="tab" data-page="page-import">
+        <svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>
+        <span>导入</span>
+      </button>
+      <button class="tab" data-page="page-asr">
+        <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3M9 21h6"/></svg>
+        <span>转写</span>
+      </button>
+    </nav>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <div class="homebar"></div>
+</div>
+
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const toastEl=$('toast');let toastT;
+  function toast(m){toastEl.textContent=m;toastEl.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>toastEl.classList.remove('show'),1800);}
+
+  /* Tab 切换 */
+  document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+    document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
+    t.classList.add('on');$(t.dataset.page).classList.add('active');
+  }));
+
+  /* 设备状态 */
+  const state={connected:false,batt:76,usedGB:18.4,totalGB:32};
+  function fmtSync(){const d=new Date();const p=n=>String(n).padStart(2,'0');return `今天 ${p(d.getHours())}:${p(d.getMinutes())}`;}
+  function render(){
+    $('devState').innerHTML=state.connected
+      ?'<span class="dot on"></span><span class="on-t">已连接</span>'
+      :'<span class="dot off"></span>未连接';
+    $('devPill').textContent=state.connected?'已连接':'未连接';
+    $('devPill').className='pill-status '+(state.connected?'pill-on':'pill-off');
+    $('devDetail').style.display=state.connected?'block':'none';
+    $('btnConnect').classList.toggle('list-hidden',state.connected);
+    $('btnDisconnect').classList.toggle('list-hidden',!state.connected);
+    if(state.connected){
+      const bp=state.batt+'%';
+      const bb=$('battBar');bb.style.width=state.batt+'%';bb.classList.toggle('low',state.batt<=20);
+      $('battPct').textContent=bp;
+      const sp=Math.round(state.usedGB/state.totalGB*100);
+      $('storBar').style.width=sp+'%';
+      $('storTxt').textContent=state.usedGB+' / '+state.totalGB+' GB';
+      $('syncTime').textContent=fmtSync();
+    }
+  }
+
+  $('btnConnect').addEventListener('click',()=>{
+    toast('正在连接…');
+    setTimeout(()=>{
+      state.connected=true;render();
+      toast('已连接 · 录音卡 Pro');
+    },700);
+  });
+  $('btnDisconnect').addEventListener('click',()=>{
+    state.connected=false;render();
+    toast('已断开连接');
+  });
+
+  /* 扫描附近设备（模拟） */
+  const pool=[
+    {n:'录音卡 Pro · DYJ-HD',s:'电量 82%'},
+    {n:'录音卡 Air · DYJ-LT',s:'电量 45%'},
+    {n:'录音卡 Mini · DYJ-MN',s:'电量 91%'}
+  ];
+  let scanning=false;
+  $('btnScan').addEventListener('click',()=>{
+    if(scanning)return;
+    scanning=true;$('scanSpin').classList.remove('list-hidden');$('nearEmpty').style.display='none';$('nearList').innerHTML='';
+    toast('正在扫描附近设备…');
+    setTimeout(()=>{
+      const list=pool.slice(0,1+Math.floor(Math.random()*3));
+      $('nearList').innerHTML=list.map((d,i)=>`
+        <div class="near-item" data-name="${d.n}">
+          <div class="near-ic"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="3"/><circle cx="12" cy="15" r="2.5"/></svg></div>
+          <div class="grow"><div style="font-weight:600;font-size:15px">${d.n}</div><div class="lab2">${d.s} · 附近可见</div></div>
+          <span class="badge-sim">模拟</span>
+        </div>`).join('');
+      $('nearEmpty').style.display=list.length?'none':'block';
+      $('scanSpin').classList.add('list-hidden');scanning=false;
+      toast('扫描完成 · 发现 '+list.length+' 台设备');
+      $('nearList').querySelectorAll('.near-item').forEach(it=>it.addEventListener('click',()=>{
+        toast('已选择：'+it.dataset.name+'（模拟）');
+        state.connected=true;render();
+      }));
+    },1200);
+  });
+
+  /* 导入页模拟进度 */
+  const TOTAL_MIN=93,DONE0=18;
+  let doneMin=0,running=false,impT=null;
+  function fmt(min){return Math.floor(min/60)+':'+String(min%60).padStart(2,'0');}
+  function renderImp(){
+    const cur=DONE0+doneMin;
+    const pct=Math.round(cur/TOTAL_MIN*100);
+    $('impBig').textContent=fmt(cur)+' / '+fmt(TOTAL_MIN);
+    $('impBar').style.width=pct+'%';
+    $('impPct').textContent=pct+'%';
+    $('impRemain').textContent='待同步 '+(TOTAL_MIN-cur)+' 分钟';
+  }
+  $('btnTransfer').addEventListener('click',()=>{
+    if(running)return;
+    if(doneMin>=TOTAL_MIN-DONE0){toast('所有录音均已上云');return;}
+    running=true;
+    $('btnTransfer').style.display='none';
+    $('btnTransferStop').style.display='block';
+    toast('开始同步（模拟）');
+    impT=setInterval(()=>{
+      doneMin++;
+      renderImp();
+      if(doneMin>=TOTAL_MIN-DONE0){stopImp(true);}
+    },300);
+  });
+  function stopImp(done){
+    clearInterval(impT);running=false;
+    $('btnTransfer').style.display='block';
+    $('btnTransferStop').style.display='none';
+    toast(done?'同步完成（模拟）':'已停止同步（模拟）');
+  }
+  $('btnTransferStop').addEventListener('click',()=>stopImp(false));
+  renderImp();
+  render();
+})();
+</script>
+</body>
+</html>

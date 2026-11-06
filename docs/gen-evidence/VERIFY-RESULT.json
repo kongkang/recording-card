@@ -1,0 +1,21 @@
+{
+  "pass": true,
+  "viewport": "390x844 @2x",
+  "navigation": 2,
+  "errors": [],
+  "networkRequests": [],
+  "checks": [
+    "inline-expand",
+    "detail",
+    "raw-mapping",
+    "multi-select",
+    "cancel",
+    "one-summary-card",
+    "filter",
+    "summary-reopen",
+    "interactive-html",
+    "setting-toggle",
+    "hardware-sheet",
+    "no-overflow"
+  ]
+}

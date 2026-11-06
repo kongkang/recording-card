@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>录音卡 · 原型</title>
+<style>
+:root {
+  --brand: #0F766E; --brand-soft: #CCFBF1; --brand-ink: #134E4A;
+  --page: #F2F2F7; --card: #FFFFFF; --ink: #1C1C1E; --ink-2: #3A3A3C;
+  --muted: #8E8E93; --label: #6C6C70;
+  --hairline: rgba(60,60,67,.18); --hairline-light: rgba(60,60,67,.12);
+  --danger: #FF3B30; --success: #34C759; --warn: #FF9500;
+  --safe-top: 54px; --safe-bot: 34px; --tab-h: 49px; --radius: 14px;
+  font-family: -apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","PingFang SC","Hiragino Sans GB","Helvetica Neue",sans-serif;
+  -webkit-font-smoothing: antialiased; color-scheme: light;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+button { font: inherit; color: inherit; appearance: none; -webkit-appearance: none; background: none; border: 0; cursor: pointer; }
+html, body { height: 100%; }
+body { background: #0c0d10; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.device { width: 390px; height: 844px; border-radius: 52px; padding: 11px; background: linear-gradient(160deg,#3a3d45,#1a1b1f 40%,#0e0f12); box-shadow: 0 40px 80px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.08); position: relative; flex-shrink: 0; }
+.device::before { content: ""; position: absolute; top: 22px; left: 50%; transform: translateX(-50%); width: 126px; height: 36px; border-radius: 20px; background: #0a0a0c; z-index: 20; }
+.screen { width: 100%; height: 100%; border-radius: 42px; overflow: hidden; background: var(--page); position: relative; display: flex; flex-direction: column; }
+.status-bar { height: var(--safe-top); padding: 14px 28px 0; display: flex; align-items: flex-end; justify-content: space-between; font-size: 15px; font-weight: 600; color: var(--ink); flex-shrink: 0; z-index: 5; }
+.status-bar .icons { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.app { flex: 1; display: flex; flex-direction: column; min-height: 0; padding-bottom: calc(var(--tab-h) + var(--safe-bot)); }
+.nav-large { padding: 6px 20px 12px; flex-shrink: 0; }
+.nav-large h1 { font-size: 34px; font-weight: 700; letter-spacing: -.4px; color: var(--ink); line-height: 1.15; }
+.nav-large .sub { margin-top: 6px; font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sim-badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; color: var(--brand-ink); background: var(--brand-soft); padding: 3px 8px; border-radius: 6px; }
+.warn-badge { display: inline-flex; font-size: 11px; font-weight: 600; color: #9A5B00; background: #FFF4E5; padding: 3px 8px; border-radius: 6px; }
+.content { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 16px 20px; }
+.section-label { font-size: 13px; font-weight: 500; color: var(--label); padding: 8px 4px 6px; margin-top: 4px; }
+.group { background: var(--card); border-radius: var(--radius); overflow: hidden; margin-bottom: 16px; }
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; min-height: 56px; position: relative; }
+.row + .row::before { content: ""; position: absolute; left: 56px; right: 0; top: 0; height: .5px; background: var(--hairline); }
+.row-icon { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0; background: var(--brand-soft); color: var(--brand); font-size: 16px; font-weight: 700; }
+.row-icon.off { background: #E5E5EA; color: var(--muted); }
+.row-body { flex: 1; min-width: 0; }
+.row-title { font-size: 17px; color: var(--ink); font-weight: 500; }
+.row-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.pill { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.pill.on { background: var(--brand-soft); color: var(--brand-ink); }
+.pill.off { background: #E5E5EA; color: var(--label); }
+.pill.busy { background: #FFF4E5; color: #9A5B00; }
+.btn { display: inline-flex; align-items: center; justify-content: center; height: 44px; padding: 0 18px; border-radius: 12px; font-size: 16px; font-weight: 600; transition: opacity .15s, transform .1s; }
+.btn:active { opacity: .75; transform: scale(.98); }
+.btn:disabled, .btn[disabled] { opacity: .4; pointer-events: none; }
+.btn-primary { background: var(--brand); color: #fff; width: 100%; }
+.btn-secondary { background: var(--card); color: var(--brand); border: 1px solid rgba(15,118,110,.25); }
+.btn-ghost { color: var(--brand); font-size: 15px; font-weight: 600; height: auto; padding: 8px 4px; }
+.btn-danger { color: var(--danger); font-size: 15px; font-weight: 600; height: auto; padding: 8px 4px; }
+.toolbar { display: flex; gap: 10px; padding: 0 0 12px; }
+.toolbar .btn { flex: 1; min-width: 0; }
+.hint { font-size: 12px; color: var(--muted); line-height: 1.45; padding: 0 4px 14px; }
+.empty { text-align: center; padding: 40px 24px; color: var(--muted); }
+.empty .icon { font-size: 40px; margin-bottom: 10px; opacity: .55; }
+.empty h3 { font-size: 17px; color: var(--ink-2); font-weight: 600; margin-bottom: 6px; }
+.empty p { font-size: 14px; line-height: 1.5; }
+.meter { background: var(--card); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+.meter h3 { font-size: 15px; font-weight: 600; color: var(--ink); margin-bottom: 12px; }
+.meter-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.meter-row strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.bar { height: 8px; background: #E5E5EA; border-radius: 4px; overflow: hidden; margin-bottom: 14px; }
+.bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--brand), #14B8A6); border-radius: 4px; width: 0; transition: width .4s ease; }
+.banner { background: #FFF4E5; border-radius: var(--radius); padding: 14px 14px; margin-bottom: 14px; border: 1px solid rgba(255,149,0,.25); }
+.banner h3 { font-size: 15px; font-weight: 700; color: #9A5B00; margin-bottom: 6px; }
+.banner p { font-size: 13px; color: #6B4A12; line-height: 1.5; }
+.toast { position: absolute; left: 50%; bottom: calc(var(--tab-h) + var(--safe-bot) + 16px); transform: translateX(-50%) translateY(20px); opacity: 0; background: rgba(28,28,30,.92); color: #fff; font-size: 14px; font-weight: 500; padding: 10px 16px; border-radius: 12px; pointer-events: none; transition: opacity .25s, transform .25s; z-index: 30; max-width: 86%; text-align: center; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.tabbar { position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--tab-h) + var(--safe-bot)); padding-bottom: var(--safe-bot); background: rgba(249,249,249,.92); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-top: .5px solid var(--hairline); display: flex; z-index: 10; }
+.tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: var(--muted); font-size: 10px; font-weight: 500; }
+.tab .ti { font-size: 20px; line-height: 1; }
+.tab.active { color: var(--brand); }
+.page { display: none; flex-direction: column; flex: 1; min-height: 0; }
+.page.active { display: flex; }
+.home-ind { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); width: 134px; height: 5px; border-radius: 3px; background: #1c1c1e; z-index: 25; opacity: .9; }
+@media (max-width: 430px) {
+  body { padding: 0; background: var(--page); align-items: stretch; }
+  .device { width: 100%; height: 100vh; height: 100dvh; border-radius: 0; padding: 0; box-shadow: none; background: none; }
+  .device::before, .home-ind { display: none; }
+  .screen { border-radius: 0; }
+}
+</style>
+</head>
+<body>
+<div class="device"><div class="screen" id="screen">
+  <div class="status-bar"><span id="clock">9:41</span><span class="icons">●●● ▮▮▮ ▮▮</span></div>
+
+  <div class="app page active" data-page="device" id="page-device">
+    <div class="nav-large">
+      <h1>设备</h1>
+      <div class="sub"><span class="sim-badge">模拟 · 非真实 BLE</span><span>连接与管理录音卡</span></div>
+    </div>
+    <div class="content">
+      <div class="toolbar">
+        <button class="btn btn-primary" id="btn-scan" type="button">扫描附近设备</button>
+        <button class="btn btn-secondary" id="btn-disconnect-all" type="button">全部断开</button>
+      </div>
+      <p class="hint">对应 SDK：DeviceManager.scan / connect、DyjDevice.disconnect / battery / state。本页不访问蓝牙硬件。</p>
+      <div class="section-label">我的设备</div>
+      <div class="group" id="device-list"></div>
+      <div class="empty" id="device-empty" hidden>
+        <div class="icon">📡</div><h3>还没有设备</h3>
+        <p>点「扫描附近设备」添加一张录音卡（模拟）。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="app page" data-page="import" id="page-import">
+    <div class="nav-large">
+      <h1>同步</h1>
+      <div class="sub"><span class="sim-badge">模拟 · 导入=上云同步</span><span>非文件管家</span></div>
+    </div>
+    <div class="content">
+      <div class="meter">
+        <h3>同步状态</h3>
+        <div class="meter-row"><span>硬件内录音时长</span><strong id="hw-hours">—</strong></div>
+        <div class="bar"><i id="bar-hw"></i></div>
+        <div class="meter-row"><span>已上云时长</span><strong id="cloud-hours">—</strong></div>
+        <div class="bar"><i id="bar-cloud"></i></div>
+        <p class="hint" style="padding:0;margin:0">产品边界：只做设备级同步可视化，不做文件列表 / 播放器。</p>
+      </div>
+      <div class="toolbar">
+        <button class="btn btn-primary" id="btn-sync-now" type="button" disabled>现在就要传</button>
+      </div>
+      <p class="hint" id="import-hint">需先在「设备」页连接录音卡。对应协议 FILE_UPLOAD / 热点快传 / STA 上传；原型仅模拟进度。</p>
+      <div class="section-label">最近同步（模拟日志，非文件管理）</div>
+      <div class="group" id="sync-log"></div>
+      <div class="empty" id="sync-empty">
+        <div class="icon">☁️</div><h3>尚未同步</h3>
+        <p>连接设备后点「现在就要传」，模拟一次设备→手机→云端同步。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="app page" data-page="transcript" id="page-transcript">
+    <div class="nav-large">
+      <h1>转写</h1>
+      <div class="sub"><span class="warn-badge">非 SDK · 云端占位</span></div>
+    </div>
+    <div class="content">
+      <div class="banner">
+        <h3>需独立云端 ASR / Agent，当前未接</h3>
+        <p>按《录音 APP 功能边界决策 2026-05-28》：转写、总结归云端 Agent，APP ❌ 不做转写文档视图 / 摘要独立视图。本页仅为占位，禁止当作设备自带能力。</p>
+      </div>
+      <div class="group">
+        <div class="row">
+          <div class="row-icon off">AI</div>
+          <div class="row-body">
+            <div class="row-title">问 Agent（未接通）</div>
+            <div class="row-meta">模块 2：聊天问 Agent · 模拟禁用</div>
+          </div>
+          <span class="pill off">不可用</span>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btn-ask-agent" type="button" disabled style="margin-top:8px">向 Agent 提问（未接）</button>
+      <p class="hint" style="margin-top:12px">SDK（reai-card-sdk 0.0.5）与 ble-protocol 均无 ASR / 总结接口。真机需云端服务就绪后再接 IM。</p>
+      <div class="empty" style="padding-top:24px">
+        <div class="icon">🔒</div>
+        <h3>转写与总结不可用</h3>
+        <p>不会展示时间戳文稿或摘要卡，避免伪装成已支持功能。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabbar">
+    <button class="tab active" data-tab="device" type="button"><span class="ti">▣</span>设备</button>
+    <button class="tab" data-tab="import" type="button"><span class="ti">☁</span>导入</button>
+    <button class="tab" data-tab="transcript" type="button"><span class="ti">✦</span>转写</button>
+  </div>
+  <div class="toast" id="toast"></div>
+  <div class="home-ind"></div>
+</div></div>
+<script id="app-js">
+/* FLASH_FILL */
+</script>
+</body>
+</html>

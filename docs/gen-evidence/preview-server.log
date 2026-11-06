@@ -1,0 +1,8 @@
+127.0.0.1 - - [06/Nov/2026 16:24:14] "GET /index.html HTTP/1.1" 200 -
+192.168.31.195 - - [06/Nov/2026 16:24:14] "GET /index.html HTTP/1.1" 200 -
+127.0.0.1 - - [06/Nov/2026 16:24:33] "GET /index.html HTTP/1.1" 200 -
+192.168.31.195 - - [06/Nov/2026 16:25:21] "GET /index.html HTTP/1.1" 200 -
+192.168.31.195 - - [06/Nov/2026 16:31:50] code 404, message File not found
+192.168.31.195 - - [06/Nov/2026 16:31:50] "GET /index.html HTTP/1.1" 404 -
+192.168.31.195 - - [06/Nov/2026 16:31:54] code 404, message File not found
+192.168.31.195 - - [06/Nov/2026 16:31:54] "GET /index.html HTTP/1.1" 404 -

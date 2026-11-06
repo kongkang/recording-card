@@ -1,0 +1,11 @@
+{
+  "name": "recording-card-prototype",
+  "private": true,
+  "description": "录音卡设计确认原型的验收脚本依赖，仅本地使用",
+  "scripts": {
+    "verify": "node verify.cjs"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}
