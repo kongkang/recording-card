@@ -238,11 +238,24 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid^="ref-"]');
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
   assert(await p.$eval('#pb-sum', x => x.hidden));
+  // 直接点左侧列表（根上下文）→ 栈重置为单层，不出现「返回记录」
+  await p.click('[data-testid="card-e4"]');
+  await p.click('[data-testid="detail-e4"]');
+  assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
+  assert(await p.$eval('#pb-detail', x => x.hidden));
+  // 会话存储：刷新后右栏页面与总结卡保留
+  await p.reload({ waitUntil: 'domcontentloaded' });
+  await new Promise(r => setTimeout(r, 300));
+  assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
+  assert(await p.$eval('#dt-h3', x => x.innerText.includes('发布窗口')));
+  assert(await p.$eval('#pb-detail', x => x.hidden));
   await p.click('[data-testid="nav-timeline"]');
   assert(await p.$eval('#empty-pane', x => getComputedStyle(x).display === 'flex'));
+  // sessionStorage 同标签页跨刷新保留：窄屏段 1 张 + 宽屏段 1 张
+  assert.equal(await p.$$eval('.card[data-kind="summary"]', x => x.length), 2);
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'device-sheet', 'sheet-single-rows', 'no-sim-labels', 'sync-now', 'firmware-update', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'device-sheet', 'sheet-single-rows', 'no-sim-labels', 'sync-now', 'firmware-update', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });
