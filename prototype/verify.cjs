@@ -115,8 +115,17 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.evaluate(() => window.scrollTo(0, 900));
   const sb = await p.$eval('#stickbar', x => x.getBoundingClientRect().top);
   assert(sb >= 46 && sb <= 60, '吸顶位置异常: ' + sb);
-  assert.equal(await p.$eval('#stabs', x => x.scrollWidth > x.clientWidth), true);
+  const tb = await p.$eval('#toc-btn', x => x.getBoundingClientRect().top);
+  assert(tb >= 80 && tb <= 106, '目录浮钮应悬于内容右上角: ' + tb);
+  assert.equal(await p.$eval('#stabs', x => getComputedStyle(x).borderBottomWidth), '1px');
+  assert.equal(await p.$eval('#stabs', x => getComputedStyle(x).overflowX), 'auto');
   assert.equal(await p.$eval('.stabs button', x => getComputedStyle(x).whiteSpace), 'nowrap');
+  // 窄屏下 tabs 溢出可横向滑动
+  await p.setViewport({ width: 320, height: 844, deviceScaleFactor: 2 });
+  await new Promise(r => setTimeout(r, 200));
+  assert.equal(await p.$eval('#stabs', x => x.scrollWidth > x.clientWidth), true);
+  await p.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 });
+  await new Promise(r => setTimeout(r, 200));
 
   // Tab 切换：概览单显；信息点展开 + 溯源跳转
   await p.click('#stabs button[data-st="ov"]');
