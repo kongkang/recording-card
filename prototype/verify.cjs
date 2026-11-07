@@ -83,15 +83,37 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('.rangebar .chip[data-r="week"]');
   assert.equal(await checkedCount(), 5);
   assert.equal(await p.$eval('#sel-count2', x => x.innerText), '已选 5 项');
+  assert.equal(await p.$eval('#gen-btn2', x => x.innerText.trim()), '生成总结');
+  assert.equal(await p.$$eval('#sumbar .row2 .btn', x => x.length), 2);
+  // 生成：卡片先显示进度，完成后自动进入结果页
   await p.click('[data-testid="generate-summary"]');
+  assert(!(await p.$eval('#p-sumres', x => x.classList.contains('show'))));
+  assert(await p.$('#feed .card[data-kind="summary"] .cardprog i'));
+  assert.equal(await p.$eval('.card[data-kind="summary"]', x => x.getAttribute('aria-disabled')), 'true');
+  await new Promise(r => setTimeout(r, 2600));
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
   assert(!(await navVisible()));
+  assert.equal(await p.$eval('#sum-title', x => x.innerText), '项目排期与客户反馈');
+  assert(await p.$eval('#sum-sub', x => x.innerText.includes('条记录') && !x.innerText.includes('来源')));
+  for (const id of ['sec-ov', 'sec-map', 'sec-pt', 'sec-todo']) assert(await p.$('#' + id));
+  assert.equal(await p.$eval('#sum-md', x => getComputedStyle(x).display), 'none');
   await shot('summary-result');
-  await p.click('#tab-ix');
+  // 目录：右上弹出导航
+  await p.click('[data-testid="toc-btn"]');
+  assert(await p.$eval('#toc-pop', x => !x.hidden));
+  await p.click('#toc-pop button:nth-child(4)');
+  assert(await p.$eval('#toc-pop', x => x.hidden));
   await p.click('[data-ix="0"]');
   assert.equal(await p.$eval('#ix-done', x => x.innerText), '1');
-  await p.click('details summary');
-  await shot('summary-result-html');
+  await shot('summary-render-todo');
+  // Markdown 原文作为导出选项
+  await p.click('[data-testid="toc-btn"]');
+  await p.click('#toc-pop button:nth-child(5)');
+  assert(await p.$eval('#sum-md', x => x.style.display === 'block' && x.innerText.includes('## 行动项')));
+  await shot('summary-md-export');
+  await p.click('[data-testid="toc-btn"]');
+  await p.click('#toc-pop button:nth-child(5)');
+  assert.equal(await p.$eval('#sum-md', x => x.style.display), 'none');
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$$eval('.card[data-kind="summary"]', x => x.length), 1);
   assert(await p.$eval('.card[data-kind="summary"]', x => x.classList.contains('open')));
@@ -158,6 +180,6 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['two-line-card', 'expand-collapse', 'detail-entry', 'breadcrumb-back', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'action-card', 'range-today', 'range-week', 'range-month', 'clear-none', 'tap-toggle', 'generate-summary', 'interactive-html', 'filter', 'summary-reopen', 'cancel-summary', 'setting-toggle', 'device-sheet', 'no-sim-labels', 'sync-now', 'firmware-update', 'wide-two-pane', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['two-line-card', 'expand-collapse', 'detail-entry', 'breadcrumb-back', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'action-card', 'range-today', 'range-week', 'range-month', 'clear-none', 'tap-toggle', 'sumbar-rows', 'generate-progress', 'rendered-view', 'toc-nav', 'md-export', 'filter', 'summary-reopen', 'cancel-summary', 'setting-toggle', 'device-sheet', 'no-sim-labels', 'sync-now', 'firmware-update', 'wide-two-pane', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });
