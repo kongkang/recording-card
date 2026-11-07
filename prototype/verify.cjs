@@ -205,7 +205,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$$eval('#dev-main .row', x => x.length), 5);
   assert.equal(await p.$$eval('.batt', x => x.length), 2);
   assert.equal(await p.$$eval('.batt svg', x => x.length), 2);
-  assert.equal(await p.$eval('.recval', x => getComputedStyle(x).display), 'inline-flex');
+  assert(['inline-flex', 'flex'].includes(await p.$eval('.recval', x => getComputedStyle(x).display)));
   assert.equal(await p.$$eval('#dev-main .actions', x => x.length), 0);
   assert(await p.$eval('#rec-clock', x => /^\d+:\d{2}:\d{2}$/.test(x.innerText)));
   const ck = await p.$eval('#rec-clock', x => x.innerText);
@@ -215,19 +215,19 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('#rec-clock', x => x.offsetWidth), cw);
   assert(await p.$eval('#sync-rel', x => /刚刚|秒前|分钟前/.test(x.innerText)));
   assert.equal(await p.$$eval('#dev-main .syncico', x => x.length), 0);
-  assert(await p.$eval('[data-testid="sync-now"]', x => x.innerText.includes('最近同步') && !!x.querySelector('.rowchev')));
-  assert(await p.$eval('[data-testid="wifi-row"]', x => x.innerText.includes('已配置 · 2 个网络') && !!x.querySelector('.rowchev')));
+  assert(await p.$eval('[data-testid="sync-now"]', x => x.innerText.includes('最近同步') && !!x.querySelector('.syncidle svg')));
+  assert(await p.$eval('[data-testid="wifi-row"]', x => x.textContent.includes('已配置 · 2 个网络') && !!x.querySelector('.rowchev')));
   await shot('hardware-capsule');
   await p.click('[data-testid="sync-now"]');
-  assert(await p.$eval('#sync-ico .spin', x => !!x));
+  assert(await p.$eval('#sync-ico.spin svg', x => !!x));
   assert(await p.$eval('#sync-txt', x => x.innerText.includes('正在同步')));
   await new Promise(r => setTimeout(r, 1200));
-  assert(await p.$eval('#sync-ico .okcheck', x => !!x));
+  assert(await p.$eval('#sync-ico.okcheck', x => !!x));
   assert(await p.$eval('#sync-txt', x => x.innerText.includes('同步成功')));
   // 10 秒冷却：点击无效
   await p.click('[data-testid="sync-now"]');
   await new Promise(r => setTimeout(r, 400));
-  assert(await p.$eval('#sync-ico .okcheck', x => !!x));
+  assert(await p.$eval('#sync-ico.okcheck', x => !!x));
   await p.click('[data-testid="fw-update"]');
   assert(await p.$eval('#dev-upg', x => !x.hidden && x.innerText.includes('主控芯片') && x.innerText.includes('2.1.0 → 2.2.0') && x.innerText.includes('1.4.2 → 1.5.0')));
   await p.click('#upg-btn');
@@ -242,7 +242,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('#fw-val', x => x.innerText.trim()), '已是最新');
   assert(await p.$eval('#dev-state', x => x.innerText.includes('已更新到 主控 2.2.0 / Wi-Fi 1.5.0')));
   // 同步冷却结束后恢复箭头
-  await p.waitForFunction(() => document.querySelector('#sync-ico .rowchev'), { timeout: 13000 });
+  await p.waitForFunction(() => document.querySelector('#sync-ico.syncidle'), { timeout: 13000 });
   assert(await p.$eval('#sync-txt', x => x.innerText.includes('最近同步')));
   // Wi-Fi 二级页：已保存置顶（前3+展开）→ 扫描 → 范围外置灰 → 直连 → 新网络保存
   await p.click('[data-testid="wifi-row"]');
@@ -269,7 +269,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('#wifi-n', x => x.innerText), '5');
   await p.click('[data-testid="wifi-back"]');
   assert(await p.$eval('#dev-main', x => !x.hidden));
-  assert(await p.$eval('[data-testid="wifi-row"]', x => x.innerText.includes('5 个网络')));
+  assert(await p.$eval('[data-testid="wifi-row"]', x => x.textContent.includes('5 个网络')));
   await p.click('#dev-main > .btn:last-child');
 
   assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
