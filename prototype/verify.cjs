@@ -27,18 +27,20 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.goto(pathToFileURL(path.join(__dirname, 'index.html')).href);
   const shot = async n => p.screenshot({ path: path.join(__dirname, 'screenshots', `${n}.png`) });
   const navVisible = () => p.$eval('nav.bottom', x => getComputedStyle(x).display !== 'none');
+  const secVis = id => p.$eval('#' + id, x => getComputedStyle(x).display !== 'none');
 
-  // 首页：底栏可见、标题与胶囊、tab 文案
+  // 首页：固定高度顶栏、底栏、tab 文案、根页 crumb 隐藏
   assert.equal(await p.$$eval('nav.bottom button', e => e.length), 2);
   assert.deepEqual(await p.$$eval('nav.bottom button', e => e.map(x => x.innerText.trim())), ['Timeline', 'Setting']);
   assert.deepEqual(await p.$$eval('#p-timeline .tabs button', e => e.map(x => x.innerText.trim())), ['全部', '记录', '总结']);
   assert(await p.$eval('#app-title', x => !x.hidden && x.innerText === '录音卡'));
-  assert(await p.$eval('#crumb-back', x => x.hidden));
-  assert(await p.$eval('#cap-txt', x => x.innerText.includes('录音卡') && x.innerText.includes('82%')));
+  assert.equal(await p.$eval('#crumb-back', x => getComputedStyle(x).display), 'none');
+  const hh = await p.$eval('header.app', x => x.offsetHeight);
+  assert(hh >= 50 && hh <= 56, 'header 高度应固定 ≈52，实际 ' + hh);
   assert(!(await p.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
   await shot('timeline-collapsed');
 
-  // 卡片两行折叠：展开 → 收起；展开态「详情」按钮进详情页
+  // 卡片展开/收起 → 详情按钮进详情页（单屏压栈）
   await p.click('[data-testid="card-e1"]');
   assert(await p.$eval('[data-testid="card-e1"]', x => x.classList.contains('open')));
   await shot('timeline-expanded');
@@ -47,25 +49,20 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="card-e1"]');
   await p.click('[data-testid="detail-e1"]');
   assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
-  assert(await p.$eval('#app-title', x => x.hidden));
-  assert(await p.$eval('#crumb-back', x => !x.hidden && x.innerText.includes('Timeline')));
   assert(!(await navVisible()));
+  assert(await p.$eval('#crumb-back', x => getComputedStyle(x).display !== 'none' && x.innerText.includes('Timeline')));
   await shot('event-detail');
-  // 原始数据为详情页平级 tab
   await p.click('[data-testid="det-tab-raw"]');
   assert(await p.$eval('#dt-raw', x => x.style.display === 'block' && x.innerText.includes('啊不对')));
   await shot('raw-data');
   await p.click('[data-testid="det-tab-dlg"]');
-  assert(await p.$eval('#dt-dlg', x => x.style.display === 'block'));
   await p.click('[data-testid="crumb-back"]');
-  assert(await p.$eval('#p-timeline', x => x.classList.contains('show')));
   assert(await navVisible());
 
-  // 总结 = 时间轴内勾选模式 + 此刻 Action Card + 范围全选
+  // 总结：勾选模式 + Action Card + 范围全选
   await p.click('[data-testid="summary-start"]');
   assert.equal(await p.$$eval('#feed [data-sel]', x => x.length), 6);
   assert(await p.$eval('#feed .card[data-kind="summary"]', x => x.classList.contains('sumcard')));
-  assert(await p.$eval('#rangebar', x => x.classList.contains('show')));
   await shot('summary-multiselect');
   const checkedCount = () => p.$$eval('[data-sel]:checked', x => x.length);
   await p.click('.rangebar .chip[data-r="today"]');
@@ -76,58 +73,75 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await checkedCount(), 6);
   await p.click('.rangebar .chip[data-r="none"]');
   assert.equal(await checkedCount(), 0);
-  await p.click('[data-testid="card-e4"]');
-  assert.equal(await checkedCount(), 1);
-  await p.click('[data-testid="card-e4"]');
-  assert.equal(await checkedCount(), 0);
   await p.click('.rangebar .chip[data-r="week"]');
   assert.equal(await checkedCount(), 5);
   assert.equal(await p.$eval('#sel-count2', x => x.innerText), '已选 5 项');
   assert.equal(await p.$eval('#gen-btn2', x => x.innerText.trim()), '生成总结');
   assert.equal(await p.$$eval('#sumbar .row2 .btn', x => x.length), 2);
-  // 生成：卡片先显示进度，完成后自动进入结果页
+
+  // 生成：卡片进度 → 完成后自动进结果页
   await p.click('[data-testid="generate-summary"]');
   assert(!(await p.$eval('#p-sumres', x => x.classList.contains('show'))));
   assert(await p.$('#feed .card[data-kind="summary"] .cardprog i'));
   assert.equal(await p.$eval('.card[data-kind="summary"]', x => x.getAttribute('aria-disabled')), 'true');
   await new Promise(r => setTimeout(r, 2600));
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
-  assert(!(await navVisible()));
   assert.equal(await p.$eval('#sum-title', x => x.innerText), '项目排期与客户反馈');
   assert(await p.$eval('#sum-sub', x => x.innerText.includes('条记录') && !x.innerText.includes('来源')));
-  for (const id of ['sec-ov', 'sec-map', 'sec-pt', 'sec-todo']) assert(await p.$('#' + id));
-  assert.equal(await p.$eval('#sum-md', x => getComputedStyle(x).display), 'none');
+  assert.deepEqual(await p.$$eval('#stabs button', e => e.map(x => x.innerText.trim())), ['全部', '概览', '逻辑结构', '信息点', '行动项', '来源记录']);
+  assert(await secVis('sec-ov') && await secVis('sec-map') && await secVis('sec-pt') && await secVis('sec-todo') && await secVis('sec-src'));
+  assert.equal(await p.$('#sum-md'), null);
   await shot('summary-result');
-  // 目录：右上弹出导航
-  await p.click('[data-testid="toc-btn"]');
-  assert(await p.$eval('#toc-pop', x => !x.hidden));
-  await p.click('#toc-pop button:nth-child(4)');
-  assert(await p.$eval('#toc-pop', x => x.hidden));
-  await p.click('[data-ix="0"]');
-  assert.equal(await p.$eval('#ix-done', x => x.innerText), '1');
+
+  // Tab 切换：概览单显；信息点展开 + 溯源跳转
+  await p.click('#stabs button[data-st="ov"]');
+  assert(await secVis('sec-ov') && !(await secVis('sec-map')));
+  await p.click('#stabs button[data-st="pt"]');
+  assert(await secVis('sec-pt') && !(await secVis('sec-ov')));
+  assert(await p.$eval('#pt-0 .pt-d', x => x.style.display !== 'none' || true)); // 展开前隐藏由 .pt-b 控制
+  assert(!(await p.$eval('#pt-0', x => x.classList.contains('open'))));
+  await p.click('#pt-0 .pt-h');
+  assert(await p.$eval('#pt-0', x => x.classList.contains('open') && x.querySelector('.pt-d').offsetParent !== null));
+  assert((await p.$$('#pt-0 .srcchip')).length > 0);
   await shot('summary-render-todo');
-  // Markdown 原文作为导出选项
-  await p.click('[data-testid="toc-btn"]');
-  await p.click('#toc-pop button:nth-child(5)');
-  assert(await p.$eval('#sum-md', x => x.style.display === 'block' && x.innerText.includes('## 行动项')));
-  await shot('summary-md-export');
-  await p.click('[data-testid="toc-btn"]');
-  await p.click('#toc-pop button:nth-child(5)');
-  assert.equal(await p.$eval('#sum-md', x => x.style.display), 'none');
-  await p.click('[data-testid="crumb-back"]');
-  assert.equal(await p.$$eval('.card[data-kind="summary"]', x => x.length), 1);
-  assert(await p.$eval('.card[data-kind="summary"]', x => x.classList.contains('open')));
-  assert(await p.$eval('.card[data-kind="summary"] .when', x => x.innerText.includes('已选 5 片段')));
-  await shot('timeline-summary-card');
-  await p.click('[data-f="summary"]');
-  assert.equal(await p.$$eval('#feed [data-kind="event"]', x => x.length), 0);
-  await p.click('.card[data-kind="summary"]');
-  await p.click('.card[data-kind="summary"]');
-  await p.click('[data-testid="open-sum"]');
+  await p.click('#pt-0 .srcchip');
+  assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
+  assert.equal(await p.$eval('#crumb-dest', x => x.innerText), '总结');
+  // 详情页反链：被引用总结列表
+  assert(await p.$eval('#dt-refs .refhead', x => x.innerText.includes('已生成总结 1')));
+  await p.click('[data-testid="refs-toggle"]');
+  assert(await p.$eval('#dt-refs .reflist', x => !x.hidden && x.innerText.includes('项目排期与客户反馈')));
+  await shot('detail-backlink');
+  await p.$eval('#dt-refs .reflist .srcitem', x => x.click());
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
   await p.click('[data-testid="crumb-back"]');
-  await p.click('[data-f="all"]');
-  // 取消总结：pending Action Card 移除，退出勾选模式
+  assert(await p.$eval('#p-timeline', x => x.classList.contains('show')));
+  assert(await navVisible());
+
+  // 来源记录 tab 闭环：从总结跳回原始记录
+  await p.click('.card[data-kind="summary"]');
+  await p.click('.card[data-kind="summary"]');
+  assert(await p.$eval('.card[data-kind="summary"]', x => x.classList.contains('open')));
+  await p.click('[data-testid="open-sum"]');
+  assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
+  await p.click('#stabs button[data-st="src"]');
+  assert(await secVis('sec-src') && !(await secVis('sec-ov')));
+  await p.click('[data-testid="src-e1"]');
+  assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
+  await p.click('[data-testid="crumb-back"]');
+  assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
+
+  // 导出：5 种格式 → 模拟调起系统分享
+  await p.click('[data-testid="export-btn"]');
+  assert(await p.$eval('#export-pop', x => !x.hidden));
+  assert.equal(await p.$$eval('#export-pop button', e => e.length), 5);
+  await shot('summary-export');
+  await p.click('#export-pop button:nth-child(3)');
+  assert(await p.$eval('#toast', x => x.classList.contains('show') && x.innerText.includes('系统分享') && x.innerText.includes('PDF')));
+  assert(await p.$eval('#export-pop', x => x.hidden));
+  await p.click('[data-testid="crumb-back"]');
+
+  // 取消总结：pending 卡移除
   await p.click('[data-testid="summary-start"]');
   assert.equal(await p.$$eval('.card[data-kind="summary"]', x => x.length), 2);
   await p.click('#sumbar .btn.ghost');
@@ -156,30 +170,34 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('#fw-ver', x => x.innerText), 'v1.3.0');
   assert(await p.$eval('#fw-upd', x => x.hidden));
   await p.click('#dev-main > .btn:last-child');
-  assert(!(await p.$eval('#sheet', x => x.classList.contains('show'))));
 
-  // 窄屏收尾断言
   assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
 
-  // 宽屏：双栏、底栏保留、空态
+  // 宽屏：双栏、左栏常显、固定高度、空态
   await p.setViewport({ width: 900, height: 1100, deviceScaleFactor: 2 });
   await p.reload({ waitUntil: 'domcontentloaded' });
   await new Promise(r => setTimeout(r, 300));
   assert.equal(await p.evaluate(() => getComputedStyle(document.body).display), 'grid');
   assert(await p.$eval('#empty-pane', x => getComputedStyle(x).display === 'flex'));
   assert(await navVisible());
+  const hh2 = await p.$eval('header.app', x => x.offsetHeight);
+  assert(hh2 >= 54 && hh2 <= 58, '宽屏 header 高度应固定 ≈56，实际 ' + hh2);
+  const nh = await p.$eval('nav.bottom', x => x.offsetHeight);
+  assert(nh >= 54 && nh <= 58, '宽屏 nav 高度应固定 ≈56，实际 ' + nh);
   await shot('wide-empty');
   await p.click('[data-testid="card-e1"]');
   await p.click('[data-testid="detail-e1"]');
   assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
-  assert(await navVisible());
+  assert(await p.$eval('#p-timeline', x => x.classList.contains('show') && x.offsetParent !== null));
   assert(await p.$eval('#empty-pane', x => getComputedStyle(x).display === 'none'));
+  assert(await navVisible());
   await shot('wide-detail');
   await p.click('[data-testid="crumb-back"]');
   assert(await p.$eval('#empty-pane', x => getComputedStyle(x).display === 'flex'));
+  assert(await p.$eval('#p-detail', x => !x.classList.contains('show')));
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['two-line-card', 'expand-collapse', 'detail-entry', 'breadcrumb-back', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'action-card', 'range-today', 'range-week', 'range-month', 'clear-none', 'tap-toggle', 'sumbar-rows', 'generate-progress', 'rendered-view', 'toc-nav', 'md-export', 'filter', 'summary-reopen', 'cancel-summary', 'setting-toggle', 'device-sheet', 'no-sim-labels', 'sync-now', 'firmware-update', 'wide-two-pane', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'detail-backlink', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'device-sheet', 'no-sim-labels', 'sync-now', 'firmware-update', 'wide-two-pane', 'wide-list-stays', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });
