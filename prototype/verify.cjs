@@ -181,6 +181,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#dev-main', x => x.innerText.includes('已连接') && x.innerText.includes('可录至') && x.innerText.includes('电量高')));
   assert.equal(await p.$$eval('#dev-main .row', x => x.length), 5);
   assert.equal(await p.$$eval('.batt', x => x.length), 2);
+  assert.equal(await p.$$eval('.batt svg', x => x.length), 2);
+  assert.equal(await p.$eval('.recval', x => getComputedStyle(x).display), 'inline-flex');
   assert.equal(await p.$$eval('#dev-main .actions', x => x.length), 0);
   assert(await p.$eval('#rec-clock', x => /^\d+:\d{2}:\d{2}$/.test(x.innerText)));
   const ck = await p.$eval('#rec-clock', x => x.innerText);
@@ -202,11 +204,31 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('#upg-btn');
   assert(await p.$eval('#upg-back', x => x.disabled));
   assert(await p.$eval('#upg-warn', x => !x.hidden));
+  // 更新中锁定：点空白处弹层不消失
+  await p.click('#sheet .backdrop');
+  assert(await p.$eval('#sheet', x => x.classList.contains('show')));
   await new Promise(r => setTimeout(r, 1200));
   assert(await p.$eval('#upg-stage', x => x.innerText.includes('主控芯片')));
   await p.waitForFunction(() => document.getElementById('upg-back') && document.getElementById('upg-back').disabled === false, { timeout: 15000 });
   assert.equal(await p.$eval('#fw-val', x => x.innerText.trim()), '已是最新');
   assert(await p.$eval('#dev-state', x => x.innerText.includes('已更新到 主控 2.2.0 / Wi-Fi 1.5.0')));
+  // Wi-Fi 二级页：扫描 → 选网 → 密码 → 验证连接
+  await p.click('[data-testid="wifi-row"]');
+  assert(await p.$eval('#dev-wifi', x => !x.hidden));
+  assert(await p.$eval('#wstate', x => x.innerText.includes('正在扫描')));
+  await p.waitForFunction(() => document.getElementById('wstate') && document.getElementById('wstate').textContent.includes('扫描完成'), { timeout: 8000 });
+  assert.equal(await p.$$eval('.witem', x => x.length), 3);
+  assert(await p.$eval('#dev-wifi', x => x.innerText.includes('2.4GHz')));
+  await p.click('.witem[data-i="1"]');
+  await new Promise(r => setTimeout(r, 200));
+  await p.type('#wifi-pwd', 'demo-password');
+  await p.click('[data-testid="wifi-connect"]');
+  assert(await p.$eval('#wlist .wform', x => x.innerText.includes('正在验证')));
+  await p.waitForFunction(() => document.getElementById('wstate') && document.getElementById('wstate').textContent.includes('连接成功'), { timeout: 8000 });
+  assert.equal(await p.$eval('#wifi-n', x => x.innerText), '3');
+  await p.click('[data-testid="wifi-back"]');
+  assert(await p.$eval('#dev-main', x => !x.hidden));
+  assert(await p.$eval('[data-testid="wifi-row"]', x => x.innerText.includes('3 个网络')));
   await p.click('#dev-main > .btn:last-child');
 
   assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -276,6 +298,6 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'two-stage-fw', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });
