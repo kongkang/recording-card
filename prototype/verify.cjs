@@ -116,7 +116,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   const sb = await p.$eval('#stickbar', x => x.getBoundingClientRect().top);
   assert(sb >= 46 && sb <= 60, '吸顶位置异常: ' + sb);
   const tb = await p.$eval('#toc-btn', x => x.getBoundingClientRect().top);
-  assert(tb >= 80 && tb <= 106, '目录浮钮应悬于内容右上角: ' + tb);
+  assert(tb >= 90 && tb <= 118, '目录浮钮应悬于内容右上角且留出间距: ' + tb);
   assert.equal(await p.$eval('#stabs', x => getComputedStyle(x).borderBottomWidth), '1px');
   assert.equal(await p.$eval('#stabs', x => getComputedStyle(x).overflowX), 'auto');
   assert.equal(await p.$eval('.stabs button', x => getComputedStyle(x).whiteSpace), 'nowrap');
