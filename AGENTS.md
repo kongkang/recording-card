@@ -2,16 +2,20 @@
 
 给接手本项目的工程师与 AI 协作者。全局通用规范见用户级 `~/.Codex/AGENTS.md`，此处只写本项目特有约定。
 
-## 当前阶段：设计确认期
+## 当前阶段：开发期（Flutter 构建）
 
-- `prototype/index.html` 是唯一交付物（设计确认稿）。设计打磨直接改它，不要另起副本。
-- 每轮改动后回归：`cd prototype && npm run verify`，把结果贴出来；验收截图由脚本自动刷新。
-- 设计定稿前**不建**工程目录（Flutter 等）、不写业务代码、不接任何真实服务。
+设计已定稿（2026-11-07，prototype v15 + handoff `docs/handoff/handoff-2026-11-07-1935-flutter-build.md`），正式进入工程开发。
+
+- `app/` 是 Flutter 工程（当前主交付物）：把 `prototype/index.html` 严格还原为 App，含 OAuth 登录（借鉴 `/Users/kongkang/Developer/reai_mobile_app` 的 `lib/core` 分层）。
+- **验收基准 = `prototype/verify.cjs` 的 62 项检查**：Flutter 侧在 `app/test/` 建等价 widget/集成测试逐项对齐，命名与检查项一一对应。
+- `prototype/` 降级为**设计参考真源（只读）**：还原有疑义以它和「设计基线」节为准，不再直接改它；如确需改设计，先与 owner 确认，并同步 `prototype/verify.cjs` 与 Flutter 测试。
 - 推翻设计基线（下一节）前先与 owner 确认，不顺手改。
 
 ## 目录职责
 
-- `prototype/`——设计确认稿。单文件内联 CSS/JS，保持无构建、无外部资源、`file://` 可直接打开。
+- `app/`——Flutter 工程（主交付物）。分层参考 reai_mobile_app：`lib/core`（config / models / theme / store）、`lib/data`（本地预置数据）、`lib/pages`、`lib/widgets`；测试在 `app/test/`。
+- `prototype/`——设计参考真源（**只读**）。单文件内联 CSS/JS，无构建、无外部资源、`file://` 可直接打开；其 `verify.cjs` 62 项是开发期验收需求清单。
+- `docs/handoff/`——阶段交接文档（含开发期启动指令与 owner 硬约束）。
 - `docs/SDK-CAPABILITY.md`——上游 SDK 能力对照（reai-card-sdk v0.0.5 @ 30a093b，异步 Rust + btleplug，非 Flutter 插件）。
 - `docs/gen-evidence/`——原型生成证据链（Flash prompt/output 留存、核验结果、旧版验收脚本）。**只读**。
 - `archive/`——旧版原型与截图。**只读**，不作为当前结构的依据。
@@ -31,12 +35,15 @@
 
 ## 真实性红线
 
-- 不接真实 BLE、ASR、声纹、LLM、云端或网络；数据为本地预置示例。
-- 界面按真实上线形态呈现（owner 指示 2026-11-07）：不出现「模拟 / 演示 / 未接云端」等标注与元说明；诚实边界只写在文档层（README / AGENTS），不写在页面上。
-- 交互视图只允许预置安全 DOM，不执行任意 HTML/脚本。
+- 业务数据不接真实 BLE、ASR、声纹、LLM、云端：App 用本地预置示例数据实现。OAuth 登录为架构性借鉴（reai_mobile_app 模式，端点经 `--dart-define` 配置），未配置真实后端时不发起业务网络请求。
+- 界面按真实上线形态呈现（owner 指示 2026-11-07）：不出现「模拟 / 演示 / 未接云端」等标注与元说明；诚实边界只写在文档层（README / AGENTS），不写在页面上。开发期同理：UI 文案不留占位标注。
+- 交互视图只允许预置安全内容，不执行任意 HTML/脚本（WebView 场景禁用，Flutter 侧用原生组件还原）。
 
 ## 修改约定
 
-- `data-testid` 属性是验收脚本的锚点：改名必须同步 `prototype/verify.cjs`。
-- 验收流程顺序与页面导航强相关（如：详情页内先看原始数据再返回），改交互流时同步改脚本。
-- 改完必跑 `npm run verify`，结果如实贴出；失败不隐瞒。
+- Flutter 侧测试锚点用 `Key('data-testid 同名')`：`prototype/verify.cjs` 的 `data-testid` 是需求语义，App 与测试两侧改名必须同步。
+- 验收流程顺序与页面导航强相关（如：详情页内先看原始数据再返回），改交互流时同步改测试。
+- Flutter 改完必跑 `cd app && flutter analyze && flutter test`，结果如实贴出；失败不隐瞒。
+- SDK 未决项（固件 OTA 接口、Wi-Fi 是否仅 2.4GHz）不编造：按设计稿交互实现 + 代码 `TODO` + `docs/SDK-CAPABILITY.md` 对照表登记，不阻塞主线。
+- 阶段性保存：commit → push → PR → merge。
+- OAuth 借鉴 reai_mobile_app：`lib/core/config/auth_mode.dart`、`lib/core/config/remote/endpoint_resolver.dart`、`lib/core/config/remote/client_config.dart`、`lib/main_mobile.dart`；登录 UI 按真实上线形态做，凭据/端点配置走 `--dart-define`。

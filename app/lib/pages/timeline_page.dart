@@ -1,0 +1,487 @@
+/// Timeline 页 —— 按日分组倒序；两行折叠卡；勾选模式（全选今日/本周/本月 + 底部操作栏）。
+library;
+import 'package:flutter/material.dart';
+
+import '../core/models/record.dart';
+import '../core/models/summary.dart';
+import '../core/store/app_store.dart';
+import '../core/theme/tokens.dart';
+import '../widgets/selection_marker.dart';
+import '../widgets/store_scope.dart';
+
+class TimelinePage extends StatelessWidget {
+  const TimelinePage({super.key, this.asLeftPane = false});
+
+  /// 宽屏双栏时作为常显左栏
+  final bool asLeftPane;
+
+  @override
+  Widget build(BuildContext context) {
+    final store = StoreScope.of(context);
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final groups = store.feedGroups;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _TabsBar(store: store),
+            if (store.selMode) _RangeBar(store: store),
+            Expanded(
+              child: groups.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Center(
+                        child: Text('该筛选下暂无内容。',
+                            style: TextStyle(color: RCColors.sec, fontSize: 14)),
+                      ),
+                    )
+                  : ListView(
+                      padding: const EdgeInsets.fromLTRB(22, 4, 22, 32),
+                      children: [
+                        for (final g in groups) ...[
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4, bottom: 14),
+                            child: Text(g.dayLabel,
+                                style: const TextStyle(
+                                    fontSize: 15, fontWeight: FontWeight.w700)),
+                          ),
+                          for (final item in g.items)
+                            if (item is SummaryCard)
+                              _SummaryCardView(card: item, store: store)
+                            else if (item is RecordEvent)
+                              _EventCardView(event: item, store: store),
+                        ],
+                      ],
+                    ),
+            ),
+            if (store.selMode) _SelBar(store: store),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _TabsBar extends StatelessWidget {
+  const _TabsBar({required this.store});
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget tab(String label, FeedFilter f, String keyName) {
+      final locked = store.tabsLocked && f != FeedFilter.event;
+      final on = store.filter == f;
+      return TextButton(
+        key: Key('tab-$keyName'),
+        onPressed: locked ? null : () => store.setFilter(f),
+        style: TextButton.styleFrom(
+          foregroundColor: on ? RCColors.label : RCColors.sec,
+          disabledForegroundColor: RCColors.ax,
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 14,
+                fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(22, 2, 22, 0),
+      decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: RCColors.sep))),
+      child: Row(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                tab('全部', FeedFilter.all, 'all'),
+                const SizedBox(width: 18),
+                tab('记录', FeedFilter.event, 'event'),
+                const SizedBox(width: 18),
+                tab('总结', FeedFilter.summary, 'summary'),
+              ],
+            ),
+          ),
+          TextButton(
+            key: const Key('summary-start'),
+            onPressed: store.selMode ? null : store.startSummary,
+            style: TextButton.styleFrom(
+              foregroundColor: RCColors.okInk,
+              disabledForegroundColor: RCColors.ax,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('总结',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RangeBar extends StatelessWidget {
+  const _RangeBar({required this.store});
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget chip(String label, String r) => Padding(
+          key: Key('chip-$r'),
+          padding: const EdgeInsets.only(right: 8),
+          child: OutlinedButton(
+            onPressed: () =>
+                r == 'none' ? store.selNone() : store.selRange(r),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: RCColors.ink,
+              side: const BorderSide(color: RCColors.sep),
+              shape: const StadiumBorder(),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              textStyle: const TextStyle(fontSize: 13),
+            ),
+            child: Text(label),
+          ),
+        );
+
+    return Container(
+      key: const Key('rangebar'),
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+      child: Row(
+        children: [
+          const Text('全选',
+              style: TextStyle(fontSize: 13, color: RCColors.sec)),
+          const SizedBox(width: 10),
+          chip('今日', 'today'),
+          chip('本周', 'week'),
+          chip('本月', 'month'),
+          chip('清除', 'none'),
+        ],
+      ),
+    );
+  }
+}
+
+class _SelBar extends StatelessWidget {
+  const _SelBar({required this.store});
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('sumbar'),
+      decoration: const BoxDecoration(
+        color: RCColors.bg,
+        border: Border(top: BorderSide(color: RCColors.sep)),
+      ),
+      padding: const EdgeInsets.fromLTRB(22, 10, 22, 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Text('已选 ${store.selCount} 项',
+                  key: const Key('sel-count'),
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              const Text('勾选要总结的记录',
+                  style: TextStyle(fontSize: 12, color: RCColors.sec)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  key: const Key('cancel-summary'),
+                  onPressed: store.cancelSummary,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: RCColors.ink,
+                    side: const BorderSide(color: RCColors.ax),
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                  ),
+                  child: const Text('取消'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  key: const Key('generate-summary'),
+                  onPressed:
+                      store.selCount == 0 ? null : store.genSummary,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: RCColors.label,
+                    disabledBackgroundColor: RCColors.ax,
+                    foregroundColor: Colors.white,
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                  ),
+                  child: const Text('生成总结'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 两行折叠事件卡：标题 / 时间·时长；点开显示 long 摘要 + 说话人 + 详情按钮。
+class _EventCardView extends StatelessWidget {
+  const _EventCardView({required this.event, required this.store});
+  final RecordEvent event;
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final open = store.openCardId == event.id;
+    final picked = store.selMode && store.selIds.contains(event.id);
+    return Padding(
+      key: Key('timeline-item-${event.id}'),
+      padding: const EdgeInsets.only(bottom: 36),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: SelectionMarker(
+          checked: picked,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+            if (store.selMode)
+              GestureDetector(
+                key: Key('selbox-${event.id}'),
+                onTap: () => store.toggleSel(event.id),
+                child: Container(
+                  margin: const EdgeInsets.only(top: 2, right: 10),
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                        color: picked ? RCColors.ok : RCColors.ax, width: 1.6),
+                    color: picked ? RCColors.ok : Colors.transparent,
+                  ),
+                  child: picked
+                      ? const Icon(Icons.check, size: 15, color: Colors.white)
+                      : null,
+                ),
+              ),
+            Expanded(
+              child: InkWell(
+                key: Key('card-${event.id}'),
+                onTap: () => store.tapCard(event.id, isSummary: false),
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: RCColors.card,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color: open ? RCColors.sep : const Color(0x00000000)),
+                    boxShadow: const [
+                      BoxShadow(
+                          color: Color(0x14000000),
+                          blurRadius: 10,
+                          offset: Offset(0, 2))
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(event.title,
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 4),
+                      Text('${event.time} · ${event.dur}',
+                          key: Key('when-${event.id}'),
+                          style: const TextStyle(
+                              fontSize: 13, color: RCColors.sec)),
+                      if (open) ...[
+                        const SizedBox(height: 10),
+                        Text(event.longText,
+                            style:
+                                const TextStyle(fontSize: 14, height: 1.55)),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 6,
+                          children: [
+                            Text('说话人 ${event.speakers}',
+                                style: const TextStyle(
+                                    fontSize: 12, color: RCColors.sec)),
+                            if (event.mark.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF0F0EC),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(event.mark,
+                                    style: const TextStyle(
+                                        fontSize: 12, color: RCColors.ink)),
+                              ),
+                            Text(event.srcMap,
+                                style: const TextStyle(
+                                    fontSize: 12, color: RCColors.sec)),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton(
+                            key: Key('detail-${event.id}'),
+                            onPressed: () =>
+                                store.openDetail(event.id, fresh: true),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: RCColors.label,
+                              side: const BorderSide(color: RCColors.ax),
+                              shape: const StadiumBorder(),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 8),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              textStyle: const TextStyle(fontSize: 13),
+                            ),
+                            child: const Text('详情'),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 总结 Action Card：pending / generating（进度）/ done（查看结果入口）。
+class _SummaryCardView extends StatelessWidget {
+  const _SummaryCardView({required this.card, required this.store});
+  final SummaryCard card;
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final locked = card.state != SummaryState.done;
+    final open = store.openCardId == card.id && !locked;
+    Widget inner;
+    switch (card.state) {
+      case SummaryState.pending:
+        inner = Column(
+          key: const Key('sumcard-pending'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('手动总结',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            Text('${card.time} · 选择来源切片中',
+                style: const TextStyle(fontSize: 13, color: RCColors.sec)),
+          ],
+        );
+      case SummaryState.generating:
+        inner = Column(
+          key: const Key('sumcard-generating'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('正在生成总结',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            Text('${card.time} · 分析检查中',
+                style: const TextStyle(fontSize: 13, color: RCColors.sec)),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: SizedBox(
+                height: 4,
+                child: LinearProgressIndicator(
+                  key: const Key('sumcard-prog'),
+                  value: card.progress / 100,
+                  minHeight: 4,
+                  backgroundColor: RCColors.sep,
+                  valueColor: const AlwaysStoppedAnimation(RCColors.ok),
+                ),
+              ),
+            ),
+          ],
+        );
+      case SummaryState.done:
+        inner = Column(
+          key: const Key('sumcard-done'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(card.title ?? '',
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            Text('${card.time} · 已选 ${card.srcIds.length} 片段',
+                style: const TextStyle(fontSize: 13, color: RCColors.sec)),
+            if (open) ...[
+              const SizedBox(height: 10),
+              Text(card.subDesc ?? '',
+                  style: const TextStyle(fontSize: 14, height: 1.5)),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: OutlinedButton(
+                  key: const Key('open-sum'),
+                  onPressed: () => store.openSum(card.id, fresh: true),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: RCColors.label,
+                    side: const BorderSide(color: RCColors.ax),
+                    shape: const StadiumBorder(),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    textStyle: const TextStyle(fontSize: 13),
+                  ),
+                  child: const Text('查看总结结果'),
+                ),
+              ),
+            ],
+          ],
+        );
+    }
+    return Padding(
+      key: Key('timeline-item-${card.id}'),
+      padding: const EdgeInsets.only(bottom: 36),
+      child: InkWell(
+        key: Key('card-${card.id}'),
+        onTap: locked ? null : () => store.tapCard(card.id, isSummary: true),
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: RCColors.card,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+                color: open
+                    ? RCColors.sep
+                    : locked ? const Color(0xFFF2F2EE) : const Color(0x00000000),
+                width: locked && !open ? 1 : 1),
+            boxShadow: const [
+              BoxShadow(
+                  color: Color(0x14000000), blurRadius: 10, offset: Offset(0, 2))
+            ],
+          ),
+          child: inner,
+        ),
+      ),
+    );
+  }
+}
