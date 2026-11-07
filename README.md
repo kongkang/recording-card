@@ -1,6 +1,6 @@
-# 录音卡 · 设计确认原型
+# 录音卡 · 伴侣 App
 
-always-on 录音硬件（录音卡）伴侣 App 的设计确认仓库。当前阶段：**设计确认期**——`prototype/index.html` 是唯一交付物，设计打磨直接在它上面进行；定稿后才启动工程开发（技术栈未定）。
+always-on 录音硬件（录音卡）伴侣 App。设计已于 2026-11-07 定稿（prototype v15），当前阶段：**开发期**——在 `app/` 用 Flutter 把 `prototype/index.html`（设计参考真源，只读）还原为 App，验收基准为 prototype 验收脚本的 62 项检查（Flutter 侧建等价测试对齐）。
 
 ## 目录结构
 
@@ -8,12 +8,16 @@ always-on 录音硬件（录音卡）伴侣 App 的设计确认仓库。当前�
 recording-card/
 ├── AGENTS.md                # 本项目协作规则（给接手者/AI）
 ├── README.md
-├── prototype/               # 设计确认稿
+├── app/                     # Flutter 工程（开发期主交付物）
+│   ├── lib/                 # core 分层参考 reai_mobile_app
+│   └── test/                # 等价验收测试（对齐 prototype/verify.cjs 62 项）
+├── prototype/               # 设计参考真源（只读）
 │   ├── index.html           # 主原型：单文件内联 CSS/JS，无构建、无外部资源
-│   ├── verify.cjs           # 验收脚本（puppeteer-core + Chrome）
+│   ├── verify.cjs           # 验收脚本（puppeteer-core + Chrome），62 项 = 需求清单
 │   ├── package.json
 │   └── screenshots/         # 验收截图（verify.cjs 自动刷新）
 ├── docs/
+│   ├── handoff/             # 阶段交接文档
 │   ├── SDK-CAPABILITY.md    # 上游 SDK 能力对照与数据边界
 │   └── gen-evidence/        # 原型生成证据链：prompt/output 留存、核验结果、旧版脚本
 └── archive/                 # 旧版原型与旧截图，仅追溯，不代表当前结构
@@ -21,19 +25,17 @@ recording-card/
 
 ## 预览
 
-本地直接打开 `prototype/index.html` 即可，无需构建；或起静态服务：
-
-```sh
-cd prototype && python3 -m http.server 8767
-```
+- Flutter App：`cd app && flutter run`
+- 设计原型（参考）：本地直接打开 `prototype/index.html`，或 `cd prototype && python3 -m http.server 8767`
 
 ## 验收
 
 ```sh
-cd prototype && npm install && npm run verify
+cd app && flutter analyze && flutter test    # 开发期主验收（对齐 verify.cjs 62 项）
+cd prototype && npm install && npm run verify # 设计原型回归（prototype 只读，理论恒 pass）
 ```
 
-390×844 @2x，断言完整交互流程（展开/详情/原始数据/多选总结/筛选/开关/硬件弹层），并要求无网络请求、无 JS 异常；截图自动刷新到 `screenshots/`。当前状态：**pass**（2026-11-06）。
+原型脚本以 390×844 @2x 断言完整交互流程，并要求无网络请求、无 JS 异常。当前状态：**pass**（2026-11-06，v15 定稿后未再改动）。
 
 ## 当前设计基线（2026-11-07 v3 打磨）
 
