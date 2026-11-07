@@ -117,13 +117,16 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('#pt-0 .srcchip');
   assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
   assert.equal(await p.$eval('#crumb-dest', x => x.innerText), '总结');
+  assert.equal(await p.$eval('#pb-detail', x => getComputedStyle(x).display), 'none');
   // 详情页第三个 tab：被引用总结（>0 才显示）
   assert(await p.$eval('#dtab-refs', x => !x.hidden && x.innerText.includes('被引用总结 1')));
   await p.click('[data-testid="det-tab-refs"]');
   assert(await p.$eval('#dt-refs', x => x.style.display === 'block' && x.innerText.includes('项目排期与客户反馈')));
   await shot('detail-backlink');
   await p.click('[data-testid^="ref-"]');
+  // 历史扁平化：该总结已在路由栈中 → 直接回到先前的总结（不纵深），面包屑即显示 Timeline
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
+  assert.equal(await p.$eval('#crumb-dest', x => x.innerText), 'Timeline');
   await p.click('[data-testid="crumb-back"]');
   assert(await p.$eval('#p-timeline', x => x.classList.contains('show')));
   assert(await navVisible());
@@ -206,13 +209,40 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#p-timeline', x => x.classList.contains('show') && x.offsetParent !== null));
   assert(await p.$eval('#empty-pane', x => getComputedStyle(x).display === 'none'));
   assert(await navVisible());
+  // 宽屏：面包屑停用（恒显标题），栈底时无面板内返回
+  assert.equal(await p.$eval('#crumb-back', x => getComputedStyle(x).display), 'none');
+  assert(await p.$eval('#app-title', x => getComputedStyle(x).display !== 'none'));
+  assert(await p.$eval('#pb-detail', x => x.hidden));
   await shot('wide-detail');
-  await p.click('[data-testid="crumb-back"]');
+  await p.click('[data-testid="nav-timeline"]');
   assert(await p.$eval('#empty-pane', x => getComputedStyle(x).display === 'flex'));
   assert(await p.$eval('#p-detail', x => !x.classList.contains('show')));
+  // 宽屏嵌套：生成总结 → 溯源进详情 → 面板内「‹ 返回总结」→ 再跳回栈内已有的总结（扁平化）
+  await p.click('[data-testid="summary-start"]');
+  await p.click('.rangebar .chip[data-r="week"]');
+  await p.click('[data-testid="generate-summary"]');
+  await p.waitForFunction(() => document.getElementById('sum-gen') && document.getElementById('sum-gen').hidden === true, { timeout: 15000 });
+  assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
+  assert(await p.$eval('#pb-sum', x => x.hidden));
+  await p.click('#stabs button[data-st="src"]');
+  await p.click('[data-testid="src-e1"]');
+  assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
+  assert(await p.$eval('#pb-detail', x => !x.hidden && x.innerText.includes('返回总结')));
+  await shot('wide-nested');
+  await p.click('#pb-detail');
+  assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
+  await p.click('#stabs button[data-st="src"]');
+  await p.click('[data-testid="src-e1"]');
+  assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
+  await p.click('[data-testid="det-tab-refs"]');
+  await p.click('[data-testid^="ref-"]');
+  assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
+  assert(await p.$eval('#pb-sum', x => x.hidden));
+  await p.click('[data-testid="nav-timeline"]');
+  assert(await p.$eval('#empty-pane', x => getComputedStyle(x).display === 'flex'));
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'device-sheet', 'sheet-single-rows', 'no-sim-labels', 'sync-now', 'firmware-update', 'wide-two-pane', 'wide-list-stays', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'device-sheet', 'sheet-single-rows', 'no-sim-labels', 'sync-now', 'firmware-update', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });
