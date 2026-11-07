@@ -38,6 +38,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   const hh = await p.$eval('header.app', x => x.offsetHeight);
   assert(hh >= 50 && hh <= 56, 'header 高度应固定 ≈52，实际 ' + hh);
   assert(!(await p.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
+  // 电池胶囊：仅图标（无数字），按电量分三色
+  assert(await p.$eval('.capsule .batt', x => x.classList.contains('lv-hi')));
+  assert(!(await p.$eval('[data-testid="hw-capsule"]', x => /\d/.test(x.innerText))));
   await shot('timeline-collapsed');
 
   // 卡片展开/收起 → 详情按钮进详情页（单屏压栈）
@@ -175,18 +178,30 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.notEqual(await p.$eval('.sw', x => x.getAttribute('aria-checked')), sw);
   await p.click('[data-testid="hw-capsule"]');
   assert(await p.$eval('#sheet', x => x.classList.contains('show')));
-  assert(await p.$eval('#dev-main', x => x.innerText.includes('已连接') && x.innerText.includes('预计可录制到')));
+  assert(await p.$eval('#dev-main', x => x.innerText.includes('已连接') && x.innerText.includes('可录至')));
   assert.equal(await p.$$eval('#dev-main .row', x => x.length), 5);
   assert.equal(await p.$$eval('#dev-main .actions .btn', x => x.length), 2);
+  assert(await p.$eval('#rec-clock', x => /^\d+:\d{2}:\d{2}$/.test(x.innerText)));
+  const ck = await p.$eval('#rec-clock', x => x.innerText);
+  await new Promise(r => setTimeout(r, 1300));
+  assert.notEqual(await p.$eval('#rec-clock', x => x.innerText), ck);
+  assert(await p.$eval('#sync-rel', x => /刚刚|秒前|分钟前/.test(x.innerText)));
+  assert(await p.$eval('#dev-main', x => x.innerText.includes('已配置 · 2 个网络')));
   await shot('hardware-capsule');
   await p.click('[data-testid="sync-now"]');
   await new Promise(r => setTimeout(r, 900));
   assert.equal(await p.$eval('#dev-state', x => x.innerText), '同步完成 · 刚刚');
+  assert.equal(await p.$eval('#sync-rel', x => x.innerText), '刚刚');
   await p.click('[data-testid="fw-update"]');
-  assert(await p.$eval('#dev-upg', x => !x.hidden));
+  assert(await p.$eval('#dev-upg', x => !x.hidden && x.innerText.includes('主控芯片') && x.innerText.includes('2.1.0 → 2.2.0') && x.innerText.includes('1.4.2 → 1.5.0')));
   await p.click('#upg-btn');
-  await new Promise(r => setTimeout(r, 3200));
-  assert.equal(await p.$eval('#fw-ver', x => x.innerText.trim()), 'v1.3.0');
+  assert(await p.$eval('#upg-back', x => x.disabled));
+  assert(await p.$eval('#upg-warn', x => !x.hidden));
+  await new Promise(r => setTimeout(r, 1200));
+  assert(await p.$eval('#upg-stage', x => x.innerText.includes('主控芯片')));
+  await p.waitForFunction(() => document.getElementById('upg-back') && document.getElementById('upg-back').disabled === false, { timeout: 15000 });
+  assert.equal(await p.$eval('#fw-ver', x => x.innerText.trim()), '已是最新');
+  assert(await p.$eval('#dev-state', x => x.innerText.includes('已更新到 主控 2.2.0 / Wi-Fi 1.5.0')));
   await p.click('#dev-main > .btn:last-child');
 
   assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -256,6 +271,6 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'device-sheet', 'sheet-single-rows', 'no-sim-labels', 'sync-now', 'firmware-update', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'two-stage-fw', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });

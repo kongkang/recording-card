@@ -13,6 +13,7 @@
 |扫描/连接/断开|SDK 可支撑：DeviceManager::scan/connect、DyjDevice::disconnect|胶囊弹层，本地模拟，无真实 BLE|
 |电量/设备状态|SDK 可支撑：battery/state/device_info|82% 等均示例值|
 |文件取回/上传通道|SDK 可支撑：list_files、take_file_to_dir、AP download_to_dir、upload_*_via_sta|导入状态演示，不实际取回或上传|
+|固件升级（主控 + Wi-Fi 两阶段）|**SDK 文档未记录 OTA/固件接口（2026-11-07 复核）**；升级流程参照 热爱 Mobile App 已实现（蓝牙升级 + Wi-Fi 升级），待确认 SDK 对应接口名|两阶段版本对比与升级进度演示（阶段 1 主控 / 阶段 2 Wi-Fi），升级中禁止退出；版本号为示例|
 |持续录音默认不分段|产品硬件假设；上列通道不等于已验证硬件全天录音策略|示例共用连续源时间轴；切片是下游逻辑，不声称硬件实现|
 |手动 mark 起止/重要对话|产品需求；本轮未核实对应 SDK 接口|仅示例标记，不向设备发命令|
 |ASR / 阶段切片 / 清洗|SDK 无 ASR；需独立云端或本地分析服务，当前未接|静态假数据，保留空白、口误与时间映射示例|
