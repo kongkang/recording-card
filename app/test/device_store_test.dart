@@ -397,7 +397,9 @@ void main() {
     await store.restoreLink();
     await store.startScan();
     expect(store.discovered, isEmpty);
-    expect(store.linkError, '没有找到附近的录音卡');
+    // 文案按授权状态可能追加「请确认录音卡已开机」或「请允许…使用蓝牙」，
+    // 这里只锚定共同前缀，避免把提示语变化当成回归。
+    expect(store.linkError, contains('没有找到附近的录音卡'));
   });
 
   testWidgets('录音开关与打点：未连接直接给文案，连上后真的发命令', (tester) async {

@@ -557,9 +557,11 @@ class RealCardGateway implements CardGateway {
 
   @override
   Future<List<CardDevice>> scan({int timeoutMs = 6000}) async {
+    // 扫描窗口之外还要算上设备管理器初始化与首次蓝牙授权弹窗的等待，
+    // 所以这里给足余量（iPone 上首次授权是阻塞式对话框）。
     final json = await _once('scan', {
       'timeoutMs': timeoutMs,
-    }, Duration(milliseconds: timeoutMs + 8000));
+    }, Duration(milliseconds: timeoutMs + 30000));
     final list = (json['data'] as List<dynamic>? ?? const []);
     return list
         .whereType<Map<String, dynamic>>()

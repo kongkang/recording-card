@@ -16,6 +16,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../device/card_gateway.dart';
+import '../platform/bluetooth_permission.dart';
 
 enum SyncState { idle, busy, done }
 
@@ -80,6 +81,10 @@ class DeviceStore extends ChangeNotifier {
   String? linkError;
   String? connectedName;
 
+  /// 蓝牙授权状态（iOS 专用；Android 恒为 unknown 由系统自行申请）。
+  BluetoothAuthorization bleAuth = BluetoothAuthorization.unknown;
+  final BluetoothPermission _permission = const BluetoothPermission();
+
   /// 连接代次：异步结果回来时比对，过期丢弃。
   int _epoch = 0;
   Timer? _heartbeatTimer;
@@ -94,6 +99,7 @@ class DeviceStore extends ChangeNotifier {
   /// 启动时核对一次：桥可用且已连着卡 → 已连接；否则未连接。
   Future<void> restoreLink() async {
     final epoch = ++_epoch;
+    bleAuth = await _permission.status();
     if (!_gateway.available) {
       linkState = LinkState.unsupported;
       linkError = '此设备不支持连接录音卡';
@@ -126,6 +132,18 @@ class DeviceStore extends ChangeNotifier {
       }
       return; // 防重入：扫描中再点不重复发起（SDK 要求串行）
     }
+    // 读一次授权状态用于解释失败原因。**不在这里阻塞等待用户点弹窗**：
+    // 底层（Rust/CoreBluetooth）在扫描时会自己触发同一个系统对话框，
+    // 这里若同步等 30 秒，用户看到的会是"点了扫描没反应"。
+    bleAuth = await _permission.status();
+    if (bleAuth == BluetoothAuthorization.denied ||
+        bleAuth == BluetoothAuthorization.restricted) {
+      linkState = LinkState.disconnected;
+      linkError = bleAuth.hint;
+      notifyListeners();
+      return;
+    }
+
     final epoch = ++_epoch;
     linkState = LinkState.scanning;
     linkError = null;
@@ -136,7 +154,11 @@ class DeviceStore extends ChangeNotifier {
       if (epoch != _epoch) return;
       discovered = list;
       linkState = LinkState.disconnected;
-      linkError = list.isEmpty ? '没有找到附近的录音卡' : null;
+      linkError = list.isEmpty
+          ? (bleAuth == BluetoothAuthorization.notDetermined
+              ? '请允许「录音卡」使用蓝牙后重试'
+              : '没有找到附近的录音卡，请确认录音卡已开机')
+          : null;
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       discovered = const [];

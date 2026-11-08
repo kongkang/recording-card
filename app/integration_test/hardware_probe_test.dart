@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 import 'package:recording_card/core/device/card_gateway.dart';
+import 'package:recording_card/core/platform/bluetooth_permission.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -32,7 +33,13 @@ void main() {
     final bridge = gateway!;
 
     // 首次安装会弹系统蓝牙授权，用户点「允许」后才可能扫到；窗口给足
-    final devices = await bridge.scan(timeoutMs: 12000);
+    const permission = BluetoothPermission();
+    final auth = await permission.request();
+    // ignore: avoid_print
+    print('[probe] 蓝牙授权：$auth');
+    expect(auth.canScan, isTrue, reason: auth.hint ?? '蓝牙未授权');
+
+    final devices = await bridge.scan(timeoutMs: 10000);
     // ignore: avoid_print
     print('[probe] 扫到 ${devices.length} 台：'
         '${devices.map((d) => '${d.name}(${d.rssi}dBm)').join(', ')}');
