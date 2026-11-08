@@ -440,7 +440,9 @@ class _EventCardView extends StatelessWidget {
                         if (open) ...[
                           const SizedBox(height: 10),
                           Text(
-                            event.longText.isEmpty ? (event.error ?? '原始音频已保存，等待转录') : event.longText,
+                            event.longText.isEmpty
+                                ? (event.error ?? '原始音频已保存，等待转录')
+                                : event.longText,
                             style: const TextStyle(fontSize: 14, height: 1.55),
                           ),
                           const SizedBox(height: 12),

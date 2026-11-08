@@ -435,8 +435,11 @@ class DeviceStore extends ChangeNotifier {
       wifiScanRes = wifiScanRes
           .where((r) => r.frequencyMhz == null || r.frequencyMhz! < 2500)
           .toList();
-      final frequencyKnown = wifiScanRes.isNotEmpty && wifiScanRes.every((r) => r.frequencyMhz != null);
-      wifiStateText = '扫描完成 · 附近可见 ${wifiScanRes.length} 个${frequencyKnown ? ' 2.4GHz ' : ''}网络';
+      final frequencyKnown =
+          wifiScanRes.isNotEmpty &&
+          wifiScanRes.every((r) => r.frequencyMhz != null);
+      wifiStateText =
+          '扫描完成 · 附近可见 ${wifiScanRes.length} 个${frequencyKnown ? ' 2.4GHz ' : ''}网络';
     } catch (e) {
       wifiScanRes = [];
       wifiStateText = 'Wi-Fi扫描失败：${_message(e)}';

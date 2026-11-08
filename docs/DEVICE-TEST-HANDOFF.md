@@ -1,52 +1,104 @@
-# 真机测试交接（修复后候选；未宣称真机通过）
+# 录音卡真机测试交接
 
-工作分支为 `feat/full-flow-device-ready-20261108`，禁止合并 master 或擅自 push/PR。prototype 保持只读，现有 HTML 结构/布局交互不变。沙盒已验证 Flutter analyze/test 与无硬件 Rust/FFI；没有 Mac/Xcode/iOS/Android 构建、签名、安装或真机证据。
+本轮代码位于独立分支 `feat/full-flow-device-ready-20261108`，不合并 `master`。HTML 原型保持只读，现有布局、导航和交互基线保留。
 
-## 1. 先冻结依赖，再交给获授权 Mac
+**当前状态：**完整依赖和生产组合根已纳入候选。最终沙盒回归为 **220 项 Flutter 测试通过、无跳过，11 项 Rust 测试通过，Flutter analyze 无问题**。这次 Flutter 验证实际加载 Rust 动态库、已校验 SenseVoice 权重和 Silero VAD，使用官方非敏感测试音频；不是只跑 Mock。它证明 Linux 下的代码与 native 推理，不等同 iPhone 蓝牙/推理/签名安装通过。macOS CI 会另外验证 iOS 无签名构建，结果见当前分支 Actions。
 
-按协作边界，最终修复源码 commit **不包含 `app/pubspec.yaml` / `app/pubspec.lock`**；本工作树已用集成者的真实依赖解析进行测试。集成者需 review 并单独提交这两个文件，之后才有可重现的完整 Git 构建候选，不能只 checkout 修复 commit 就称依赖齐全。
-
-当前依赖：`ffi ^2.1.0`、`http ^1.2.0`、`crypto ^3.0.6`、`flutter_secure_storage ^9.2.4`、`flutter_web_auth_2 ^4.1.0`、`path_provider ^2.1.6`、`connectivity_plus ^7.0.0`、`shared_preferences ^2.5.6`、`sherpa_onnx 1.13.3`、`sherpa_onnx_ios 1.13.3`、`pdf ^3.13.1`、`share_plus ^12.0.2`、`archive ^4.6.0`；dev dependency `integration_test sdk:flutter`；字体 asset `lib/services/export/assets/NotoSansSC-Regular.ttf`。保留基线 Flutter/cupertino_icons/flutter_test/flutter_lints。
-
-## 2. 无密钥配置
-
-复制 `config/device.public.example.json` 为已 ignore 的 `config/device.public.json`。只填获批的 public client、URL、模型 ID、权重 size/SHA256、白名单和许可声明；**禁止 token、password、secret**。真实 token 只进独立安全存储。
-
-OAuth 原生 callback 固定 `recording-card://callback`；服务端必须允许本 App 复用该 public client 和精确 redirect。没有登记就不能登录验收。`RC_TEXT_MODEL` 必须为当前账号获授权文本模型，生产不自动替换模型。此任务禁止实际登录或付费请求，后续真实联调需另行授权。
-
-SenseVoice 使用已审核的固定模型/tokens 大小和 SHA256；生产私有模型目录为 `<ApplicationSupport>/recording_card/models`。安装权重或显式受信下载前，需真实许可确认和镜像白名单；默认不会自动下载。Silero 可配置 `RC_VAD_URL`、`RC_VAD_SIZE`、`RC_VAD_SHA256`，文件名 `silero_vad.onnx`，亦使用 `RC_ASR_DOWNLOAD_HOSTS`。三项留空/0为未配置 VAD；填写时 size/hash 必须精确。未配置 VAD不产生“长静音已检测”的假证据。
-
-上传需 `RC_UPLOAD_URL/HOSTS`、`RC_UPLOAD_RAW_CONTRACT_APPROVED`、`RC_UPLOAD_OAUTH_BEARER_APPROVED`，且上传 host 与 OAuth trusted host 交集非空。应取得协议和原始录音上云授权；2xx/本地下载不等于已上传。固件需精确 `RC_FIRMWARE_MANIFEST_JSON` 和测试卡/包单独刷写授权，没有清单不升级。
-
-## 3. Mac 命令及边界
-
-在用户指定并授权的 Mac 上准备 Flutter/Cargo/Rust iOS target、Xcode、CocoaPods、开发者签名和测试 iPhone。不要自动切换到未授权电脑。
+## 1. 获取代码与构建工具
 
 ```bash
-cd /path/to/recording-card
-cp config/device.public.example.json config/device.public.json
-# 填写获批的公开参数，不要加入凭据。
-bash scripts/run_ios_device.sh --check
+git clone --branch feat/full-flow-device-ready-20261108 \
+  https://github.com/kongkang/recording-card.git
+cd recording-card
+rustup target add aarch64-apple-ios
+```
+
+Mac 需要 Flutter **3.47.9 stable / Dart 3.13.7** 或满足本工程约束的兼容版本，Rust 至少1.93（本轮测试1.99.1），Xcode、CocoaPods、测试 iPhone 和自己的开发者签名。大型 ASR 权重不进 Git；小型 MIT Silero VAD 和中文导出字体已随 App 打包，许可文件保留。
+
+`app/pubspec.yaml` 与 `pubspec.lock` 一并提交。`sherpa_onnx` 与 `sherpa_onnx_ios` 固定 **1.13.3**，不可随意升到名称不同的 iOS framework；本轮已验证的 Linux native 插件为1.13.8。依赖包含 http/crypto、secure storage、OAuth launcher、path_provider/connectivity/shared_preferences、pdf/share_plus/archive；`share_plus` 采用12.0.2兼容线。
+
+## 2. 临时复用现有 OAuth 客户端
+
+按本次要求，先用已获准参考 public client 注册跑通，再改客户端 ID。**复用客户端注册不是复制账号 Token。** 登录仍在官方 OAuth 授权页由已授权账号完成，保留 PKCE、state、精确 callback、Token 安全存储和刷新。
+
+```bash
+cp config/device.reai-reference.example.json config/device.public.json
+```
+
+此模板明确启用 `RC_OAUTH_REUSE_REFERENCE_CLIENT=true`，仅允许原始 public ID `58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo` 与精确 `reai-mobile://callback`。Token 存储仍为独立的 `recording_card` namespace。**测试 iPhone 上不能同时安装另一款接收 `reai-mobile` scheme 的参考 App；先卸载参考 App或改用另一台测试手机。** 我们不会自行卸载你的应用；如有参考 App 本地数据，先备份后由你决定。
+
+服务端是否继续允许复用该注册、当前账号的 scope 和模型权限，仍需要真实授权页验证。发生 `invalid_client/redirect` 应核对服务器登记，不绕过白名单。正常独立注册模式使用 `device.public.example.json` 和 `recording-card://callback`；后续换 ID 时同时登记回调、切换配置并重新登录。
+
+`config/device.public.json` 已忽略，禁止放 access/refresh token、password 或 secret。构建脚本从同一配置生成忽略的 `OAuthLocal.xcconfig`，并核验实际 Runner callback；Android 从相同 Dart defines 生成 placeholder。仅改 JSON 而直接绕过脚本 Xcode 构建可能留旧配置，改配置后重跑脚本。
+
+## 3. 本地模型准备
+
+参考模板已填固定官方 ONNX 下载 URL，精确大小/SHA256 与 ReAI mobile 注册表和本次实际下载一致。App 可下载到 `<ApplicationSupport>/recording_card/models`，不会上传音频。首次约230MB下载和 native 初始化会增加等待时间。
+
+审阅 `app/lib/services/transcription/NOTICE.md` 中的 **模型权重许可** 后，在你的 `device.public.json` 中明确设置：
+
+```json
+"RC_ASR_LICENSE_ACCEPTED": true,
+"RC_ASR_ALLOW_DOWNLOAD": true
+```
+
+模板默认不代用户接受权重许可；如果暂时只测 OAuth/设备，将 `RC_ASR_ALLOW_DOWNLOAD` 设为 false。不提供许可确认或模型时，ASR明确报错，不生成假转写。下载逐跳仅允许 `huggingface.co` 和 `us.aws.cdn.hf.co`，完成后校验固定hash；如测试网络无法访问，可配置你审核过的镜像，但文件必须匹配同一规格。
+
+Silero VAD 已内置并校验，用于给长静音提供真实证据；如配置 `RC_VAD_URL/SIZE/SHA256`，使用该显式模型而不覆盖它。没有真实语音区间的证据时，不把蓝牙断流或空 ASR 文字当静音。
+
+Mac/沙盒本地 native 冒烟可使用：
+
+```bash
+python3 scripts/prepare_asr_models.py --accept-model-license --with-fixture
+```
+
+脚本仅下载固定模型和上游公开 `zh.wav` 到用户缓存，不请求账号、云模型或用户录音。真实 iPhone 模型仍由 App 私有目录管理，不会把沙盒缓存当作手机已经安装。
+
+## 4. 模型目录与首次文本模型
+
+`RC_TEXT_MODEL` 可留空。第一次由用户触发分析时，App 从登录账号的真实授权 text 目录按服务端目录顺序选择一次，并绑定当前 OAuth identity epoch；退出/换账号重新选择。**不是按价格选模型**。如果要固定服务商或费用，请配置该账号获批的精确 ID。
+
+指定 ID 无权限、目录无文本模型、已选模型撤权或请求失败均报错，不自动换另一款付费模型。启动不发 completion；使用录音分析、自动润色或手动总结时才实际请求云端文本模型。测试前确认账号额度，首次建议非敏感短录音，避免把长历史录音直接送云端。
+
+## 5. 构建和安装
+
+先做不访问网络服务/设备的公开配置校验：
+
+```bash
+python3 scripts/validate_public_config.py config/device.public.json
 bash scripts/run_ios_device.sh --build
 ```
 
-`--check` 仅工具/配置核查，无设备探测、登录、下载、OTA。Linux 必须 exit 2，不能生成签名 IPA。`--build` 在 Mac 执行 pub get → analyze/test → Rust check/test → pod install → unsigned debug iOS build。输出 Runner.app **不是签名 IPA或安装成功**。Runner Xcode phase 为当前 SDK 构建 Rust archive；需要实际验证 iOS15、Pods、symbols、静态链接和签名。
+`--build` 在 Mac 执行 pub get → analyze/test → Rust check/test → Pods → iOS unsigned debug build → 设备架构/FFI符号/callback核验。首次干净签出先使用 `--build`；`--check` 的 Pods检查要求已完成依赖准备，不能把缺少Pods的首次check当业务错误。
 
-安装/运行必须额外设置 `RC_DEVICE_RUN_APPROVED=yes` 与精确 `RC_IOS_DEVICE_ID`：
+无签名 `Runner.app` **不是可直接安装的签名 IPA**。打开 `app/ios/Runner.xcworkspace`，在 Runner 的 Signing & Capabilities 选择自己的 Team，确认唯一 Bundle ID、测试手机开发者模式和信任，保持脚本生成的回调配置。
+
+随后：
 
 ```bash
-RC_DEVICE_RUN_APPROVED=yes RC_IOS_DEVICE_ID=<获批测试iPhone-ID> \
+flutter devices
+RC_DEVICE_RUN_APPROVED=yes RC_IOS_DEVICE_ID=<你的测试iPhone-ID> \
   bash scripts/run_ios_device.sh --run
 ```
 
-运行 App 后，连接卡可能按已保存持续录音策略启动 App 所有的录音/实时传输；执行前审阅测试卡/数据授权。AP 切换与 Wi-Fi/固件/账号联调不因脚本能运行而自动获得授权。native system share 可只打开面板，不发给外部账号；iPad origin与各格式实显示需真机核查。
+此命令安装/启动前需要显式手机 ID，使用本机已有签名。脚本不会刷写固件、取走设备源文件或替你确认账号授权。macOS CI 默认采用独立 `recording-card` 配置且不开模型下载，仅检验编译；测试复用 OAuth 时仍按上面兼容配置在你的 Mac 重新签名构建。
 
-## 4. 分层验收，不跳步骤冒充完成
+## 6. 建议真机测试顺序
 
-先验证 Mac archive/Pods/link/sign，再验证获批 OAuth→profile→目录→指定模型调用。之后在专用测试卡确认 BLE 状态、录音启停、实时 WAV 落盘、间断 epoch、终态释放/重新开始、ASR/VAD 真模型、窗口/阶段、Timeline/原始/对话同源、选择总结合法来源、行动项持久化和五格式原生分享。重启恢复须用非敏感测试录音验证，不删除源。
+1. **登录：**OAuth授权→profile验证→会话恢复；取消/拒绝、退出、再次登录不出现非空密码成功或旧会话复活。
+2. **设备：**从现有状态胶囊扫描/连接专用测试卡，核对电量、版本和录音状态。连接后可能按已保存“持续录音”策略启动 App 所有的录音/实时传输，先确认测试卡和可用数据授权。
+3. **实时短录音：**说一段非敏感内容，跨几个默认30秒切片，观察本地分片→真实ASR→原始页→润色对话。缺口开启新epoch，不跨丢失音频拼接时间，也不编造设备绝对时钟。
+4. **窗口/阶段：**新增切片按 A→AB→ABC→BCD 更新已有润色；原文不可被云端覆盖。真实VAD长静音或终态封阶段，Timeline增加阶段摘要。确认原始/对话/阶段来源一致、重启后能恢复和重试。
+5. **手动总结：**勾选多个来源，验证结果内容变化、溯源合法、行动项和路由重启保留；既有阶段摘要只在来源完整选中时进入prompt。不包含未选窗口上下文，必要时舍弃不安全的润色而保留所选原文。
+6. **导出：**五种格式实际生成文件，检查中文、长文、来源/不确定性及行动项；打开iPhone/iPad系统分享面板即可，不必外发文件。
+7. **设置/异常：**六开关的实际业务效果、断连/重连、缺模型、无授权模型、云失败、取消和重启恢复。模型取消不能保证已经发出的服务端请求停止计费。
 
-同步按钮仍要求真实上传回执。AP 下载保存大小写配对 `.txt` 和 `.mrk`；MRK 为固件 v0.3.2+ 每行十进制秒偏移，原侧车持久化，坏行/超限明确失败。标记开关只派生解释，不覆写硬件按键绑定。live mark notify 的精确源音频映射仍未提供，本轮不造时间或身份；文件同步路径可获取真实 marks。
+## 7. 上传、Wi-Fi、OTA与未验证项
 
-VAD 模型缺失则只能验证“无静音证据”，不能拿空 ASR、30秒 BLE 断流或计时器当静音。先前窗口曾含未选上下文时，手动总结会排除该 polished 行，退回所选 raw；不会泄漏未选资料。阶段 context 仅在其完整原始来源全部选中时进入 prompt。
+**上传**需实际 `RC_UPLOAD_URL/HOSTS`、multipart/回执合约，以及原始录音上云与 OAuth bearer 授权。默认关闭；同步下载或 HTTP 2xx 不冒充已上传。可以先验证实时主流程；历史AP取回和同步上传另按真实配置验证。
 
-后台锁屏、iOS蓝牙/ASR资源及功耗、原生分享、AP切网恢复、长录音内存/耗电、录音标记映射和真实两阶段 OTA 均未获真机证据；不得写成全功能真实完成。退出/认证失效由 runtime 停止 owned 实时传输、取消并 await 任务、断开 BLE；不停止其他 owner 的 SD 录音。已发送模型请求取消不能保证服务端停止计费。
+**AP/Wi-Fi**需测试卡支持和手机手动加入其网络。录音中访问SD会冲突；App不暗停他人已有录音，不默认走可能删源的BLE take。AP同步取回大小写匹配的 `.txt/.mrk`，保留原侧车；MRK秒偏移严格解析。live mark通知的精确音频映射尚未接完，不能把该项算完整实测。
+
+**OTA**接口和两阶段任务已实现，但必须提供精确可信清单/包摘要/版本/目标设备并在 App 确认，不在无人值守测试中刷卡。缺清单不显示伪更新，不用定时器报成功。
+
+尚无实际账号授权、iPhone安装/蓝牙/ASR、锁屏后台、功耗、长音频内存、AP切网恢复、原生分享或真设备两阶段OTA证据。SenseVoice保存实际token时间点、情绪等元数据；它没有真实speaker embeddings，本轮匿名说话人推测不等于声纹身份识别。

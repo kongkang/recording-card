@@ -93,7 +93,7 @@ class CardDownloadAdapter implements RecordingDownloadGateway {
     if (!_opened || _cancelled) throw const RecordingSyncCancelled();
   }
 
-  Future<String> _download(
+  Future<CardDownload> _download(
     String name,
     String directory,
     int size,
@@ -110,7 +110,7 @@ class CardDownloadAdapter implements RecordingDownloadGateway {
     );
     if (result.sourceDeleted) throw StateError('网关错误报告删源，拒绝将其记为非破坏同步成功');
     _check();
-    return result.path;
+    return result;
   }
 
   @override
@@ -143,7 +143,7 @@ class CardDownloadAdapter implements RecordingDownloadGateway {
         dir.path,
         recording.metadataSizeBytes!,
         null,
-      );
+      ).then((file) => file.path);
     }
     final marks = <RecordMark>[];
     if (markName != null && (recording.markSizeBytes ?? 0) > 0) {
@@ -152,8 +152,8 @@ class CardDownloadAdapter implements RecordingDownloadGateway {
         dir.path,
         recording.markSizeBytes!,
         null,
-      );
-      final file = File(markPath);
+      ).then((file) => file.path);
+      final file = File(markPath!);
       if (await file.length() > 256 * 1024) {
         throw const FormatException('MRK sidecar too large');
       }
@@ -181,10 +181,10 @@ class CardDownloadAdapter implements RecordingDownloadGateway {
       marks.addAll(sorted.map((s) => RecordMark(offsetMs: s * 1000)));
     }
     return DownloadedRecording(
-      audioPath: audio,
+      audioPath: audio.path,
       metadataPath: metadataPath,
       markPath: markPath,
-      recordedAt: recording.recordedAt,
+      recordedAt: recording.recordedAt ?? audio.recordedAt,
       durationMs: recording.durationMs,
       marks: marks,
     );

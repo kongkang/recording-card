@@ -122,7 +122,9 @@ class _DetailPageState extends State<DetailPage> {
   String _dayLabel(RecordEvent e) {
     if (e.dayOffsetAt(DateTime.now()) == 0) return '今天';
     if (e.dayOffsetAt(DateTime.now()) == 1) return '昨天';
-    final d = DateTime.now().subtract(Duration(days: e.dayOffsetAt(DateTime.now())));
+    final d = DateTime.now().subtract(
+      Duration(days: e.dayOffsetAt(DateTime.now())),
+    );
     const dow = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     return '${d.month}月${d.day}日 ${dow[d.weekday - 1]}';
   }

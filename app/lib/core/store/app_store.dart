@@ -224,7 +224,10 @@ class AppStore extends ChangeNotifier {
     }
     for (final off in offs.where((off) => off != 0)) {
       groups.add(
-        FeedGroup(dayLabel(off), evs.where((e) => e.dayOffsetAt(_now()) == off).toList()),
+        FeedGroup(
+          dayLabel(off),
+          evs.where((e) => e.dayOffsetAt(_now()) == off).toList(),
+        ),
       );
     }
     return groups;
@@ -281,7 +284,10 @@ class AppStore extends ChangeNotifier {
 
   bool inRange(RecordEvent e, String r) {
     if (r == 'today') return e.dayOffsetAt(_now()) == 0;
-    if (r == 'week') return e.dayOffsetAt(_now()) >= 0 && e.dayOffsetAt(_now()) <= (_now().weekday - 1);
+    if (r == 'week') {
+      return e.dayOffsetAt(_now()) >= 0 &&
+          e.dayOffsetAt(_now()) <= (_now().weekday - 1);
+    }
     final now = _now();
     final d = now.subtract(Duration(days: e.dayOffsetAt(now)));
     return d.month == now.month && d.year == now.year;

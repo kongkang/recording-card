@@ -1,0 +1,22 @@
+{
+  "RC_OAUTH_CLIENT_ID": "58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo",
+  "RC_OAUTH_BASE_URL": "https://block2-api.wainao.chat",
+  "RC_OAUTH_REDIRECT_URI": "reai-mobile://callback",
+  "RC_OAUTH_REUSE_REFERENCE_CLIENT": true,
+  "RC_OAUTH_SCOPE": "mobile:full profile:read",
+  "RC_MODEL_GATEWAY_BASE_URL": "https://block2-api.wainao.chat/api/model-gateway/v1",
+  "RC_TEXT_MODEL": "",
+  "RC_ASR_LICENSE_ACCEPTED": false,
+  "RC_ASR_ALLOW_DOWNLOAD": true,
+  "RC_ASR_MODEL_URL": "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/model.int8.onnx",
+  "RC_ASR_TOKENS_URL": "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/tokens.txt",
+  "RC_ASR_DOWNLOAD_HOSTS": "huggingface.co,us.aws.cdn.hf.co",
+  "RC_VAD_URL": "",
+  "RC_VAD_SIZE": 0,
+  "RC_VAD_SHA256": "",
+  "RC_UPLOAD_URL": "",
+  "RC_UPLOAD_HOSTS": "",
+  "RC_UPLOAD_RAW_CONTRACT_APPROVED": false,
+  "RC_UPLOAD_OAUTH_BEARER_APPROVED": false,
+  "RC_FIRMWARE_MANIFEST_JSON": ""
+}

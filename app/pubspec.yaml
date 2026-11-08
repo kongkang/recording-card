@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.10.4
+  sdk: ^3.13.0
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -29,6 +29,18 @@ environment:
 # versions available, run `flutter pub outdated`.
 dependencies:
   ffi: ^2.1.0
+  http: ^1.2.0
+  crypto: ^3.0.6
+  flutter_secure_storage: ^9.2.4
+  flutter_web_auth_2: ^4.1.0
+  path_provider: ^2.1.6
+  connectivity_plus: ^7.0.0
+  shared_preferences: ^2.5.6
+  sherpa_onnx: 1.13.3
+  sherpa_onnx_ios: 1.13.3
+  pdf: ^3.13.1
+  share_plus: ^12.0.2
+  archive: ^4.6.0
   flutter:
     sdk: flutter
 
@@ -37,6 +49,8 @@ dependencies:
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
+  integration_test:
+    sdk: flutter
   flutter_test:
     sdk: flutter
 
@@ -57,6 +71,10 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+    - lib/services/export/assets/NotoSansSC-Regular.ttf
+    - assets/models/silero_vad.onnx
+    - assets/models/silero_vad.LICENSE.txt
 
   # To add assets to your application, add an assets section, like this:
   # assets:

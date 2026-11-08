@@ -19,6 +19,7 @@ import '../recordings/recording_repository.dart';
 import '../recordings/sync_coordinator.dart';
 import '../settings/settings_repository.dart';
 import '../transcription/transcription_service.dart';
+import '../transcription/bundled_vad_model.dart';
 import 'card_download_adapter.dart';
 import 'recording_pipeline.dart';
 import 'runtime_config.dart';
@@ -106,7 +107,10 @@ class ProductionRuntime {
     );
     final auth = AuthService();
     final gateway = RealCardGateway.maybe() ?? const UnavailableCardGateway();
-    final modelGateway = AuthorizedAnalysisGateway(ModelGateway(auth: auth));
+    final modelGateway = AuthorizedAnalysisGateway(
+      ModelGateway(auth: auth),
+      sessionEpoch: () => auth.authorizedClient.tokenStore.userIdentityEpoch,
+    );
     final analysis = AnalysisService(
       gateway: modelGateway,
       rebuildCleanEvent:
@@ -124,10 +128,14 @@ class ProductionRuntime {
             cleanedTranscript: longText,
           ),
     );
+    final modelDirectory = Directory('${support.path}/recording_card/models');
+    if (RuntimeConfig.vadUrl.isEmpty &&
+        RuntimeConfig.vadSha256.isEmpty &&
+        RuntimeConfig.vadSize == 0) {
+      await BundledVadModel.ensureReady(modelDirectory);
+    }
     final asr = TranscriptionService(
-      models: const RuntimeConfig().models(
-        Directory('${support.path}/recording_card/models'),
-      ),
+      models: const RuntimeConfig().models(modelDirectory),
     );
     final pipeline = RecordingPipeline(
       gateway: gateway,

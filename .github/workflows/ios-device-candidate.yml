@@ -1,0 +1,72 @@
+name: iOS device candidate (unsigned)
+
+on:
+  push:
+    branches:
+      - feat/full-flow-device-ready-20261108
+    paths:
+      - app/**
+      - scripts/**
+      - config/**
+      - .github/workflows/ios-device-candidate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recording-card-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unsigned-ios:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install tested Flutter toolchain
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: stable
+          cache: true
+      - name: Install Rust and device target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+          components: rustfmt
+      - name: CocoaPods prerequisites
+        run: |
+          command -v pod || brew install cocoapods
+          flutter --version
+          cargo --version
+          xcodebuild -version
+      - name: Non-secret build configuration
+        run: cp config/device.public.example.json config/device.public.json
+      - name: Offline tests and real unsigned iOS build
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/run_ios_device.sh --build 2>&1 | tee ios-device-build.log
+      - name: Archive unsigned app without losing framework symlinks
+        if: success()
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent app/build/ios/iphoneos/Runner.app dist/RecordingCard-unsigned-Runner.zip
+      - name: Upload unsigned candidate
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RecordingCard-unsigned-iOS-${{ github.sha }}
+          path: dist/RecordingCard-unsigned-Runner.zip
+          retention-days: 3
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-build-log-${{ github.sha }}
+          path: ios-device-build.log
+          if-no-files-found: ignore
+          retention-days: 7

@@ -35,7 +35,8 @@
 
 ## 真实性红线
 
-- 业务数据不接真实 BLE、ASR、声纹、LLM、云端：App 用本地预置示例数据实现。OAuth 登录为架构性借鉴（reai_mobile_app 模式，端点经 `--dart-define` 配置），未配置真实后端时不发起业务网络请求。
+- 2026-11-08 owner 已授权独立分支实现真实 OAuth、BLE、ASR 与模型网关流程。生产默认不载入示例数据、不回退 Mock；仅测试通过显式夹具使用预置数据。OAuth/模型/上传通过公开配置和安全存储接入，未配置或失败必须返回真实错误，不能用静态结果冒充成功。
+- 未经专门授权不执行会删除设备源文件的 BLE take、真实固件刷写、历史录音上云或修改硬件按键绑定。时间戳/情绪只保留模型实际输出，文本说话人推测不等于声纹识别；不伪造真人身份。
 - 界面按真实上线形态呈现（owner 指示 2026-11-07）：不出现「模拟 / 演示 / 未接云端」等标注与元说明；诚实边界只写在文档层（README / AGENTS），不写在页面上。开发期同理：UI 文案不留占位标注。
 - 交互视图只允许预置安全内容，不执行任意 HTML/脚本（WebView 场景禁用，Flutter 侧用原生组件还原）。
 
@@ -45,5 +46,5 @@
 - 验收流程顺序与页面导航强相关（如：详情页内先看原始数据再返回），改交互流时同步改测试。
 - Flutter 改完必跑 `cd app && flutter analyze && flutter test`，结果如实贴出；失败不隐瞒。
 - SDK 未决项（固件 OTA 接口、Wi-Fi 是否仅 2.4GHz）不编造：按设计稿交互实现 + 代码 `TODO` + `docs/SDK-CAPABILITY.md` 对照表登记，不阻塞主线。
-- 阶段性保存：commit → push → PR → merge。
+- 本轮保存：独立功能分支 commit → push → PR；未经 owner 新授权不合并 master，不 force-push，不发布商店。具体测试配置与未验证项见 `docs/DEVICE-TEST-HANDOFF.md`。
 - OAuth 借鉴 reai_mobile_app：`lib/core/config/auth_mode.dart`、`lib/core/config/remote/endpoint_resolver.dart`、`lib/core/config/remote/client_config.dart`、`lib/main_mobile.dart`；登录 UI 按真实上线形态做，凭据/端点配置走 `--dart-define`。

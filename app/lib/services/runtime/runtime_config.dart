@@ -3,6 +3,7 @@ import 'dart:io';
 import '../analysis/analysis_gateway.dart';
 import '../model_gateway/model_gateway.dart';
 import '../transcription/asr_model_store.dart';
+import '../transcription/bundled_vad_model.dart';
 
 /// No secrets: explicit approved model ID and audited model mirror only.
 class RuntimeConfig {
@@ -53,7 +54,7 @@ class RuntimeConfig {
       downloadUri: tokensUrl.isEmpty ? null : Uri.parse(tokensUrl),
     ),
     vad: vadSha256.isEmpty && vadSize == 0 && vadUrl.isEmpty
-        ? null
+        ? BundledVadModel.artifact
         : ModelArtifact(
             fileName: 'silero_vad.onnx',
             sizeBytes: vadSize,

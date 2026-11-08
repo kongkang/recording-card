@@ -125,6 +125,9 @@ class GatewaySpy extends CardGateway {
       bytes: files[name]!.length,
       originalName: name,
       sourceDeleted: false,
+      recordedAt: name.toLowerCase().endsWith('.apm')
+          ? DateTime(2026, 11, 7, 10)
+          : null,
     );
   }
 }
@@ -539,6 +542,11 @@ void main() {
     expect(result.marks.map((m) => m.offsetMs), [2000, 9000]);
     expect(result.metadataPath, isNotNull);
     expect(result.markPath, isNotNull);
+    expect(
+      result.recordedAt,
+      DateTime(2026, 11, 7, 10),
+      reason: 'native synced filename date is preserved',
+    );
     expect(h.gateway.downloads, ['REC.APM', 'rec.TXT', 'Rec.MRK']);
     final imported = await h.repo.importRecording(
       RecordingImport(

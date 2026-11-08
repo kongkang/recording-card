@@ -23,11 +23,14 @@ for ARCH in $ARCHITECTURES; do
     iphonesimulator:x86_64) TARGET=x86_64-apple-ios; SDK=iphonesimulator ;;
     *) echo "ERROR: unsupported iOS slice $PLATFORM:$ARCH" >&2; exit 2 ;;
   esac
-  if ! rustup target list --installed | grep -qx "$TARGET"; then
+  INSTALLED_TARGETS="$(rustup target list --installed)"
+  if ! grep -qx "$TARGET" <<< "$INSTALLED_TARGETS"; then
     echo "ERROR: prerequisite missing; run rustup target add $TARGET on this Mac" >&2
     exit 2
   fi
-  export SDKROOT="$(xcrun --sdk "$SDK" --show-sdk-path)"
+  SDKROOT="$(xcrun --sdk "$SDK" --show-sdk-path)"
+  [[ -d "$SDKROOT" ]] || { echo "ERROR: installed SDK not found: $SDK" >&2; exit 2; }
+  export SDKROOT
   export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-15.0}"
   cargo build --locked --release --manifest-path "$ROOT/Cargo.toml" --target "$TARGET"
   LIBS+=("$ROOT/target/$TARGET/release/libcard_bridge.a")
