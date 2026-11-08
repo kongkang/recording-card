@@ -167,13 +167,15 @@ class _Row extends StatelessWidget {
         children: [
           Text(label, style: const TextStyle(fontSize: 14, color: RCColors.ink)),
           const Spacer(),
-          // 行值统一右对齐单行：过长时整体缩排，不换行不溢出
+          // 行值统一右对齐单行：占满剩余宽 + 右对齐，过长整体缩排，不换行不溢出
           if (child != null)
-            Flexible(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
+            Expanded(
+              child: Align(
                 alignment: Alignment.centerRight,
-                child: Row(mainAxisSize: MainAxisSize.min, children: [child!]),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [child!]),
+                ),
               ),
             ),
         ],
@@ -245,17 +247,14 @@ class _MainView extends StatelessWidget {
                 const SizedBox(width: 5),
                 const Text('录音中', style: TextStyle(fontSize: 13)),
                 const SizedBox(width: 8),
-                SizedBox(
-                  width: 52, // 等宽定宽，时钟跳动不抖动
-                  child: Text(
-                    store.recClockText,
-                    key: const Key('rec-clock'),
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(
-                        fontSize: 13,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                        fontWeight: FontWeight.w600),
-                  ),
+                Text(
+                  store.recClockText,
+                  key: const Key('rec-clock'),
+                  softWrap: false, // 等宽数字单行，不折行
+                  style: const TextStyle(
+                      fontSize: 13,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                      fontWeight: FontWeight.w600),
                 ),
               ],
             ),

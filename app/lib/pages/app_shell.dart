@@ -14,9 +14,12 @@ import 'summary_result_page.dart';
 import 'timeline_page.dart';
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.store, this.device});
+  const AppShell({super.key, required this.store, this.device, this.onDeviceCreated});
   final AppStore store;
   final DeviceStore? device;
+
+  /// dev 驱动注册内部 DeviceStore 用（release 不传）
+  final void Function(DeviceStore)? onDeviceCreated;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -24,6 +27,12 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   late final DeviceStore _device = widget.device ?? DeviceStore();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.device == null) widget.onDeviceCreated?.call(_device);
+  }
 
   @override
   void dispose() {
