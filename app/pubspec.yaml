@@ -48,6 +48,7 @@ dependencies:
   pdf: ^3.12.0                    # 导出 PDF
   flutter_web_auth_2: ^5.1.0      # OAuth 登录：ASWebAuthenticationSession / Chrome Custom Tabs
   crypto: ^3.0.8                  # PKCE S256 摘要（OAuth 安全要求，plain 仅作降级）
+  sherpa_onnx: 1.13.3             # 本地语音转写/声纹聚类（离线 SenseVoice + Silero VAD + pyannote）
 
 # pdf 3.12.0 把 archive 钉在 <4.1.0，而 image 4.11 的 PNG 解码依赖 archive 4.1 的
 # decodeLazy；4.10.2 的 PNG 解码走 decodeBytes，三者可共存（已实测 PDF 组装通过）。
@@ -78,6 +79,13 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    # 随包的 Silero VAD（644KB）；ASR 大模型运行时下载，不进仓库
+    - assets/models/silero_vad.onnx
+    - assets/models/silero_vad.LICENSE.txt
+    # 本地转写/声纹的测试音频（179KB，sherpa-onnx 官方 test_wavs）
+    - assets/spike/zh.wav
 
   # To add assets to your application, add an assets section, like this:
   # assets:

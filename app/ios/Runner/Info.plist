@@ -97,5 +97,17 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- 连录音卡热点（192.168.4.1）与开发期本地模型下载需要 http 局域网访问；
+	     公网业务请求仍强制 https（ModelGatewayConfig 只接受 https）。 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- 后台保持 BLE 连接，持续取回录音（P3 起使用；无此声明退到前台同步）。 -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
 </dict>
 </plist>

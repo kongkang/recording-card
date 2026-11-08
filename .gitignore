@@ -1,1 +1,7 @@
 target/
+
+# 本地并行开发用 git worktree（各自有完整检出，不入库）
+.worktree/
+
+# 会话工具状态
+.zcode/

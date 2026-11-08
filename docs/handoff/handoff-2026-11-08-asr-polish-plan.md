@@ -35,7 +35,7 @@
 | 本地 ASR | SenseVoice int8 + Silero VAD；云端只做改写/总结，不做 ASR 兜底 |
 | 窗口 | 当前片 + 前 2 片（约 3 分钟）；只允许改窗口内 turn，窗口外冻结 |
 | 分段 | 静音 ≥20s / 手动 mark / LLM topic / 单段 15 分钟兜底 / 录音结束 |
-| 说话人 | 文件级聚类 + session 质心匹配；展示「说话人 1/2（推测）」，低置信度「未区分」；不断言身份 |
+| 说话人 | Campplus 句级 embedding + 本地聚类（pyannote 分割在 iOS 真机卡死，已弃用）；session 质心匹配；展示「说话人 1/2（推测）」，低置信度「未区分」；不断言身份 |
 | 持久化 | 每录音文件一份 JSON + `rc_recordings_index_v2` 轻量索引；原子写；v1 迁移不丢数据 |
 | 音频保留 | 文本永久；音频默认 7 天（可设 1/7/30 天），先删 WAV 再删 APM |
 | 模型 | SenseVoice 237MB + tokens + VAD（随包）+ pyannote ~6MB + 3dspeaker ~28MB；`RC_MODEL_MANIFEST/BASE` 下载 + SHA-256 + 续传；缺失时排队不冒充 |
@@ -46,7 +46,7 @@
 |---|---|---|
 | P0 | 基线合并 + 文档 + Spike（真机 SenseVoice/diarization 可行性） | 2.0 |
 | P1 | 模型管理 + sherpa worker + SlicePlanner + WAV IO | 6.5 |
-| P2 | 声纹聚类 + 跨文件质心 + 情绪/语种 + 映射 | 4.5 |
+| P2 | Campplus 句级嵌入 + 聚类 + 跨文件质心 + 情绪/语种 + 映射 | 4.5 |
 | P3 | CardFile 元数据 + 同步器 + 流水线 + 存储/迁移/保留策略 + 调度 | 7.5 |
 | P4 | 增量窗口改写 + 严格 JSON + 对账/冻结/重试 | 7.5 |
 | P5 | 分段边界 + 段总结 + live/closed 生命周期 | 4.5 |
