@@ -2,19 +2,27 @@
 
 给接手本项目的工程师与 AI 协作者。全局通用规范见用户级 `~/.Codex/AGENTS.md`，此处只写本项目特有约定。
 
-## 当前阶段：开发期（Flutter 构建）
+## 当前阶段：语音转写 / 增量润色 / 分段总结（2026-11-08 起）
 
-设计已定稿（2026-11-07，prototype v15 + handoff `docs/handoff/handoff-2026-11-07-1935-flutter-build.md`），正式进入工程开发。
+PR #7 已把正式版基线（真实 BLE 桥 + OAuth + 模型网关 + 真实总结 + 导出）合并进 master（`664211f`）。
+本阶段在 `stage/asr-polish-timeline` 上实现「设备文件 → 本地切片 → 本地转写 → 云端窗口改写 → 话题分段 → 三处展示」，
+完整计划见 `docs/handoff/handoff-2026-11-08-asr-polish-plan.md`（owner 已确认，2026-11-08）。
 
-- `app/` 是 Flutter 工程（当前主交付物）：把 `prototype/index.html` 严格还原为 App，含 OAuth 登录（借鉴 `/Users/kongkang/Developer/reai_mobile_app` 的 `lib/core` 分层）。
+- `app/` 是 Flutter 工程（主交付物）。分层参考 reai_mobile_app：`lib/core`（config/models/theme/store）、`lib/services`、`lib/pages`、`lib/widgets`；测试在 `app/test/`。
 - **验收基准 = `prototype/verify.cjs` 的 55 项检查**（脚本 `checks` 数组实际 55 项，早前文档写的 62 项是历史笔误）：Flutter 侧在 `app/test/` 建等价 widget/集成测试逐项对齐，命名与检查项一一对应。
 - `prototype/` 降级为**设计参考真源（只读）**：还原有疑义以它和「设计基线」节为准，不再直接改它；如确需改设计，先与 owner 确认，并同步 `prototype/verify.cjs` 与 Flutter 测试。
+- 本阶段硬约束：
+  - **本地转写优先**（SenseVoice + Silero VAD）；云端只做润色与分段总结。模型缺失时音频入库排队，**不上传音频、不编造文本**。
+  - 说话人由声纹聚类推测，展示「说话人 1 / 2（推测）」；低置信度「未区分」，**不断言真实身份**。
+  - 音频切片、转写文本、声纹 embedding 默认只在本机；云端只上行润色/总结所需的文本。
+  - V1 走文件拉取，**延迟 20~35 分钟是 BLE 3~8 KB/s 的物理上限**；不做实时流。界面用「正在录音」状态块如实区分已转写 / 处理中 / 等待处理。
+  - 失败必须如实呈现（未连接、未登录、模型缺失、润色失败），不静默降级成编造内容。
 - 推翻设计基线（下一节）前先与 owner 确认，不顺手改。
 
 ## 目录职责
 
-- `app/`——Flutter 工程（主交付物）。分层参考 reai_mobile_app：`lib/core`（config / models / theme / store）、`lib/data`（本地预置数据）、`lib/pages`、`lib/widgets`；测试在 `app/test/`。
-- `prototype/`——设计参考真源（**只读**）。单文件内联 CSS/JS，无构建、无外部资源、`file://` 可直接打开；其 `verify.cjs` 62 项是开发期验收需求清单。
+- `app/`——Flutter 工程（主交付物）。分层参考 reai_mobile_app：`lib/core`（config / models / theme / store）、`lib/services`（transcribe / polish / segment / recordings / net）、`lib/pages`、`lib/widgets`；测试在 `app/test/`。
+- `prototype/`——设计参考真源（**只读**）。单文件内联 CSS/JS，无构建、无外部资源、`file://` 可直接打开；其 `verify.cjs` 55 项是开发期验收需求清单。
 - `docs/handoff/`——阶段交接文档（含开发期启动指令与 owner 硬约束）。
 - `docs/SDK-CAPABILITY.md`——上游 SDK 能力对照（reai-card-sdk v0.0.6 @ 32a1b86，异步 Rust + btleplug，非 Flutter 插件）。
 - `docs/gen-evidence/`——原型生成证据链（Flash prompt/output 留存、核验结果、旧版验收脚本）。**只读**。
@@ -39,7 +47,7 @@ owner 明确要求「做正式发布版，所有问题都要解决」，旧口�
 
 - **硬件**：经 `app/rust/card_bridge`（C ABI，`card_bridge_command` 单一入口）接 reai-card-sdk v0.0.6 真实 BLE——扫描/连接/电量/固件版本/存储/录音控制/打点/文件列表与下载/AP→WAV 转码/Wi-Fi 扫描与凭据/同步上传/两阶段 OTA。桥不可用（模拟器）时**显式失败**，不回退预置假数据。
 - **转写与总结**：真实调用后端模型网关（`RC_API_BASE` 默认 `https://block2-api.wainao.chat`；ASR `/api/model-gateway/v1/audio/transcriptions`，总结 `/chat/completions`），鉴权走真实 OAuth2（PKCE S256 + 系统浏览器授权 + Keychain 存 token）。未配置/未登录时给出**明确错误并可重试**，绝不展示编造内容。
-- **仍未接**：声纹/说话人分离（ASR 不返回，界面按「未区分」呈现，不编造 A/B 身份）。
+- **仍未接**：声纹/说话人分离（ASR 不返回，界面按「未区分」呈现，不编造 A/B 身份）。本阶段 P2 起改为本地聚类推测，展示仍必须标「推测」。
 - 界面仍按真实上线形态呈现，不出现「模拟/演示/未接云端」标注；但真实失败（未连接、未登录、服务不可用）必须如实提示。
 - 交互视图只允许预置安全内容，不执行任意 HTML/脚本（WebView 场景禁用，Flutter 侧用原生组件还原）。
 
@@ -48,7 +56,9 @@ owner 明确要求「做正式发布版，所有问题都要解决」，旧口�
 - Flutter 侧测试锚点用 `Key('data-testid 同名')`：`prototype/verify.cjs` 的 `data-testid` 是需求语义，App 与测试两侧改名必须同步。
 - 验收流程顺序与页面导航强相关（如：详情页内先看原始数据再返回），改交互流时同步改测试。
 - Flutter 改完必跑 `cd app && flutter analyze && flutter test`，结果如实贴出；失败不隐瞒。
-- 真机验证：`flutter test integration_test/hardware_probe_test.dart -d <deviceId>`（硬件在环探针）与 `flutter drive --driver=test_driver/integration_test.dart --target=integration_test/ui_flow_test.dart -d <deviceId>`（界面动线 + 截图，产物在 /tmp/rc-shots）。
+- 真机验证：`flutter test integration_test/hardware_probe_test.dart -d <deviceId>`（硬件在环探针）、`flutter test integration_test/recording_pipeline_test.dart -d <deviceId>`（取回→转 WAV）与 `flutter drive --driver=test_driver/integration_test.dart --target=integration_test/ui_flow_test.dart -d <deviceId>`（界面动线 + 截图，产物在 /tmp/rc-shots）。
+- 本地 ASR 模型开发期 sideload：SenseVoice 取自 `~/Library/Application Support/reai-vibe-board/models/sensevoice-int8/`，VAD 取自 `reai_mobile_app/assets/models/silero_vad.onnx`；生产必须走 `RC_MODEL_MANIFEST`/`RC_MODEL_BASE` 下载，**不把 237MB 模型提交进仓库**。
+- 转写/润色的时间语义一律用「相对录音起点的毫秒」存储，展示时再叠加设备 `start_at`；不用本地墙钟推算设备时间。
 - Rust 桥构建必须用 rustup 工具链（`app/rust/build-ios.sh` 已固定 1.94.0）：本机 PATH 里 Homebrew 的 rustc 会遮住 rustup，而它没有 iOS std。
 - SDK 未决项（固件 OTA 接口、Wi-Fi 是否仅 2.4GHz）不编造：按设计稿交互实现 + 代码 `TODO` + `docs/SDK-CAPABILITY.md` 对照表登记，不阻塞主线。
 - 阶段性保存：commit → push → PR → merge。
