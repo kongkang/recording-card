@@ -63,7 +63,7 @@ mv -f "$LOCAL_TEMP" "$ROOT/app/ios/Flutter/OAuthLocal.xcconfig"
 flutter build ios --debug --no-codesign --dart-define-from-file="$CONFIG"
 ARCHIVE="$ROOT/app/rust/card_bridge/build/ios/iphoneos/libcard_bridge.a"
 [[ -s "$ARCHIVE" ]] || blocked 'Xcode did not produce the device Rust static archive'
-xcrun lipo -verify_arch arm64 "$ARCHIVE"
+xcrun lipo "$ARCHIVE" -verify_arch arm64
 NM_OUTPUT="$(mktemp "${TMPDIR:-/tmp}/recording-card-nm.XXXXXX")"
 # No producer | grep -q pipeline: inspect complete nm output for defined symbols.
 bash "$ROOT/scripts/rust_nm.sh" --defined-only --extern-only "$ARCHIVE" > "$NM_OUTPUT"
