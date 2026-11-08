@@ -1,7 +1,7 @@
 /// 总结卡片（Action Card）模型 —— 状态机 pending → generating → done。
 library;
 
-enum SummaryState { pending, generating, done }
+enum SummaryState { pending, generating, done, failed }
 
 class SourceRef {
   final String eventId;
@@ -39,6 +39,9 @@ class SummaryCard {
   List<String> todos = const [];
   String? srcDesc;
   String? markdown;
+
+  /// 生成失败时的可展示原因（failed 态使用；不编造成功内容）。
+  String? error;
 
   SummaryCard({required this.id, required this.time, this.state = SummaryState.pending});
 

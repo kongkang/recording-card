@@ -1,7 +1,10 @@
 /// 应用外壳 —— 窄屏（顶栏面包屑 + 底栏导航，子页隐藏底栏）与
 /// 宽屏 ≥720px 双栏（左栏 Timeline 常显 + 右栏详情/空态，面包屑停用、面板内返回）。
 library;
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
@@ -32,6 +35,8 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     if (widget.device == null) widget.onDeviceCreated?.call(_device);
+    // 启动即核对一次蓝牙链路：连着卡就直接展示真实状态，没连就等用户点胶囊去扫描
+    unawaited(_device.restoreLink());
   }
 
   @override
@@ -49,13 +54,25 @@ class _AppShellState extends State<AppShell> {
         builder: (context, _) => LayoutBuilder(
           builder: (context, constraints) {
             final wide = constraints.maxWidth >= RCDims.wideBreakpoint;
-            return Scaffold(
-              backgroundColor: RCColors.bg,
-              body: Stack(
-                children: [
-                  if (wide) _WideLayout(device: _device) else _NarrowLayout(device: _device),
-                  StatusSheetOverlay(store: _device),
-                ],
+            return PopScope(
+              // Android 物理返回键 / 手势：先退自管路由栈，栈空才交给系统退出
+              canPop: false,
+              onPopInvokedWithResult: (didPop, _) {
+                if (didPop) return;
+                final handled = widget.store.handleSystemBack();
+                if (!handled && mounted) {
+                  // 栈已空：让系统退出 App（Android 期望行为）
+                  SystemNavigator.pop();
+                }
+              },
+              child: Scaffold(
+                backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+                body: Stack(
+                  children: [
+                    if (wide) _WideLayout(device: _device) else _NarrowLayout(device: _device),
+                    StatusSheetOverlay(store: _device),
+                  ],
+                ),
               ),
             );
           },
@@ -120,8 +137,11 @@ class _Header extends StatelessWidget {
           // 真实电量经 DeviceStore 刷新（refreshFromDevice），需监听设备状态重建胶囊
           ListenableBuilder(
             listenable: device,
-            builder: (context, _) =>
-                HwCapsule(onTap: device.openSheet, level: device.battery),
+            builder: (context, _) => HwCapsule(
+              onTap: device.openSheet,
+              level: device.battery,
+              connected: device.isConnected,
+            ),
           ),
         ],
       ),

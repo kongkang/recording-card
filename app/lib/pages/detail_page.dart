@@ -25,7 +25,39 @@ class _DetailPageState extends State<DetailPage> {
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
-    final RecordEvent e = store.eventById(widget.eventId);
+    final RecordEvent? e = store.eventByIdOrNull(widget.eventId);
+    if (e == null) {
+      // 记录已被删除 / 历史栈里的失效 id：明确空态，不留红屏
+      return Center(
+        key: const Key('detail-missing'),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.description_outlined, size: 36, color: RCColors.ax),
+              const SizedBox(height: 10),
+              const Text(
+                '这条记录已不在本机',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                '可能已被删除，或录音卡上的原文件已清理。',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: RCColors.sec),
+              ),
+              const SizedBox(height: 14),
+              OutlinedButton(
+                key: const Key('detail-missing-back'),
+                onPressed: store.goBack,
+                child: const Text('返回'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     final refs = store.doneSummariesReferencing(widget.eventId);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -86,6 +118,15 @@ class _DetailPageState extends State<DetailPage> {
               _tabBtn('原始数据', 'raw'),
               if (refs.isNotEmpty) _tabBtn('被引用总结 ${refs.length}', 'refs'),
             ],
+          ),
+        ),
+        // 诚实边界：说话人来自推测归类，不能当成已验证身份展示
+        Padding(
+          padding: const EdgeInsets.fromLTRB(22, 10, 22, 0),
+          child: Text(
+            '说话人为推测归类，非已验证身份；长静音已在清洗版中省略。',
+            key: const Key('detail-pnote'),
+            style: TextStyle(fontSize: 11.5, height: 1.5, color: context.rc.sec),
           ),
         ),
         Expanded(

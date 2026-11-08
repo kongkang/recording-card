@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Android 自适应图标前景层（108×108dp 画布，透明底，内容收在中心 66% 安全区内）。
+  由 app_icon.svg 的卡片图形等比缩放而来（缩放系数 0.074 → 卡片 51.8×36.3dp，
+  外形对角线约 63dp，圆形/ squircle 蒙版下四角都不会被裁）。
+  背景层用 res/values/colors.xml 的 ic_launcher_background 纯色。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <g transform="translate(54 54) scale(0.074) translate(-512 -512)">
+    <!-- 卡片主体 -->
+    <rect x="162" y="267" width="700" height="490" rx="96" fill="#1D1D1F"/>
+    <!-- 波形 -->
+    <g fill="#FAFAF8">
+      <rect x="258" y="452" width="60" height="120" rx="30"/>
+      <rect x="370" y="398" width="60" height="228" rx="30"/>
+      <rect x="482" y="359" width="60" height="306" rx="30"/>
+      <rect x="594" y="398" width="60" height="228" rx="30"/>
+      <rect x="706" y="452" width="60" height="120" rx="30"/>
+    </g>
+    <!-- 录音指示点 -->
+    <circle cx="778" cy="330" r="40" fill="#FF3B30"/>
+  </g>
+</svg>

@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -5,8 +8,34 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// ── 发布签名配置 ──────────────────────────────────────────────
+// 密钥信息放在 android/key.properties（已在 .gitignore，绝不入库），
+// 模板见 android/key.properties.example。文件不存在时回退 debug 签名，
+// 保证新机器 / CI 不配密钥也能 `flutter build apk --release` 出包自测。
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        FileInputStream(keystorePropertiesFile).use { load(it) }
+    }
+}
+
+fun requireProperty(name: String): String =
+    keystoreProperties.getProperty(name)
+        ?: throw GradleException(
+            "android/key.properties 缺少字段 $name，请对照 android/key.properties.example 补全（生成命令见 docs/RELEASE.md）",
+        )
+
+val releaseStoreFile = if (keystorePropertiesFile.exists()) {
+    // storeFile 相对路径按 android/app 解析，也兼容相对 android/ 的写法
+    val raw = requireProperty("storeFile")
+    val byAppDir = file(raw)
+    if (byAppDir.exists()) byAppDir else rootProject.file(raw)
+} else {
+    null
+}
+
 android {
-    namespace = "dev.kongkang.recording_card"
+    namespace = "com.reai.recordingcard"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,8 +49,8 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "dev.kongkang.recording_card"
+        // 与 iOS bundle id 保持一致：com.reai.recordingcard
+        applicationId = "com.reai.recordingcard"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -30,15 +59,64 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (releaseStoreFile != null) {
+            create("release") {
+                keyAlias = requireProperty("keyAlias")
+                keyPassword = requireProperty("keyPassword")
+                storeFile = releaseStoreFile
+                storePassword = requireProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            if (releaseStoreFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                signingConfig = signingConfigs.getByName("debug")
+                logger.warn(
+                    "\n⚠️  未找到 android/key.properties：release 构建将使用 debug 签名，产物**不能**上传 Google Play。\n" +
+                        "    生成上传密钥与配置文件的步骤见 docs/RELEASE.md。\n",
+                )
+            }
+            // 代码与资源压缩：体积收益明显，规则见 proguard-rules.pro
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android.txt"),
+                "proguard-rules.pro",
+            )
         }
+    }
+
+    lint {
+        // release 出包不被 lint 静态检查中断；lint 单独用 `./gradlew lint` 把关
+        checkReleaseBuilds = false
+        abortOnError = false
     }
 }
 
 flutter {
     source = "../.."
+}
+
+// ── Release 构建修正：剥掉 dev 依赖插件的注册行 ───────────────────────────────
+//
+// Flutter 生成的 GeneratedPluginRegistrant.java 会把 dev_dependencies 里的
+// integration_test 也注册进去，但它的 Android 库在 release 配置里不可用，
+// javac 会报「程序包 dev.flutter.plugins.integration_test 不存在」。
+// release 本来就不该注册测试插件，这里在编译前把这一行去掉。
+// 注意：只影响 release 的 Java 编译输入，不改 debug/profile，也不动 ios。
+tasks.whenTaskAdded {
+    if (name.endsWith("JavaWithJavac") && name.contains("Release")) {
+        doFirst {
+            val registrant = file("src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java")
+            if (registrant.exists()) {
+                val kept = registrant.readLines().filterNot { it.contains("integration_test") }
+                registrant.writeText(kept.joinToString("\n"))
+            }
+        }
+    }
 }

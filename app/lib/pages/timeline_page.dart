@@ -28,45 +28,81 @@ class TimelinePage extends StatelessWidget {
           children: [
             _TabsBar(store: store),
             if (store.selMode) _RangeBar(store: store),
+            if (store.loading || store.syncStage != null)
+              _SyncBanner(store: store),
             Expanded(
-              child: groups.isEmpty
-                  ? const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Center(
-                        child: Text(
-                          '该筛选下暂无内容。',
-                          style: TextStyle(color: RCColors.sec, fontSize: 14),
-                        ),
-                      ),
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.fromLTRB(22, 4, 22, 32),
-                      children: [
-                        for (final g in groups) ...[
+              // 下拉同步：从录音卡取回新录音（下载 + 转码 + 转写）
+              child: RefreshIndicator(
+                key: const Key('timeline-refresh'),
+                onRefresh: () async {
+                  await store.syncRecordings();
+                },
+                child: groups.isEmpty
+                    ? ListView(
+                        key: const Key('timeline-empty'),
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        children: [
                           Padding(
-                            padding: const EdgeInsets.only(top: 4, bottom: 14),
-                            child: Text(
-                              g.dayLabel,
-                              style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700,
+                            padding: const EdgeInsets.only(top: 60),
+                            child: Center(
+                              child: Column(
+                                children: [
+                                  const Icon(
+                                    Icons.mic_none,
+                                    size: 36,
+                                    color: RCColors.ax,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    store.loadError ??
+                                        (store.syncError ?? '还没有录音\n下拉可从录音卡取回'),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: RCColors.sec,
+                                      fontSize: 14,
+                                      height: 1.6,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
-                          for (final (i, item) in g.items.indexed)
-                            _TimelineRail(
-                              first: i == 0,
-                              last: i == g.items.length - 1,
-                              child: item is SummaryCard
-                                  ? _SummaryCardView(card: item, store: store)
-                                  : _EventCardView(
-                                      event: item as RecordEvent,
-                                      store: store,
-                                    ),
-                            ),
                         ],
-                      ],
-                    ),
+                      )
+                    : ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(22, 4, 22, 32),
+                        children: [
+                          for (final g in groups) ...[
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                top: 4,
+                                bottom: 14,
+                              ),
+                              child: Text(
+                                g.dayLabel,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            for (final (i, item) in g.items.indexed)
+                              _TimelineRail(
+                                first: i == 0,
+                                last: i == g.items.length - 1,
+                                child: item is SummaryCard
+                                    ? _SummaryCardView(card: item, store: store)
+                                    : _EventCardView(
+                                        event: item as RecordEvent,
+                                        store: store,
+                                      ),
+                              ),
+                          ],
+                        ],
+                      ),
+              ),
             ),
             if (store.selMode) _SelBar(store: store),
           ],
@@ -361,113 +397,98 @@ class _EventCardView extends StatelessWidget {
                 child: InkWell(
                   key: Key('card-${event.id}'),
                   onTap: () => store.tapCard(event.id, isSummary: false),
-                  borderRadius: BorderRadius.circular(14),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: RCColors.card,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: open ? RCColors.sep : const Color(0x00000000),
+                  borderRadius: BorderRadius.circular(12),
+                  // 设计稿 .card 只有 margin-bottom，没有底板/边框/阴影：
+                  // 事件是时间轴上的列表行，卡片形态只属于总结（.sumcard）。
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        event.title,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.1,
+                        ),
                       ),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x14000000),
-                          blurRadius: 10,
-                          offset: Offset(0, 2),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${event.time} · ${event.dur}',
+                        key: Key('when-${event.id}'),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: RCColors.sec,
                         ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                      ),
+                      if (open) ...[
+                        const SizedBox(height: 10),
                         Text(
-                          event.title,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
+                          event.longText,
+                          style: const TextStyle(fontSize: 14, height: 1.55),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${event.time} · ${event.dur}',
-                          key: Key('when-${event.id}'),
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: RCColors.sec,
-                          ),
-                        ),
-                        if (open) ...[
-                          const SizedBox(height: 10),
-                          Text(
-                            event.longText,
-                            style: const TextStyle(fontSize: 14, height: 1.55),
-                          ),
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 6,
-                            children: [
-                              Text(
-                                '说话人 ${event.speakers}',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: RCColors.sec,
-                                ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 6,
+                          children: [
+                            Text(
+                              '说话人 ${event.speakers}',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: RCColors.sec,
                               ),
-                              if (event.mark.isNotEmpty)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF0F0EC),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    event.mark,
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: RCColors.ink,
-                                    ),
-                                  ),
-                                ),
-                              Text(
-                                event.srcMap,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: RCColors.sec,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: OutlinedButton(
-                              key: Key('detail-${event.id}'),
-                              onPressed: () =>
-                                  store.openDetail(event.id, fresh: true),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: RCColors.label,
-                                side: const BorderSide(color: RCColors.ax),
-                                shape: const StadiumBorder(),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 8,
-                                ),
-                                minimumSize: Size.zero,
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                textStyle: const TextStyle(fontSize: 13),
-                              ),
-                              child: const Text('详情'),
                             ),
+                            if (event.mark.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF0F0EC),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  event.mark,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: RCColors.ink,
+                                  ),
+                                ),
+                              ),
+                            Text(
+                              event.srcMap,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: RCColors.sec,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton(
+                            key: Key('detail-${event.id}'),
+                            onPressed: () =>
+                                store.openDetail(event.id, fresh: true),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: RCColors.label,
+                              side: const BorderSide(color: RCColors.ax),
+                              shape: const StadiumBorder(),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              textStyle: const TextStyle(fontSize: 13),
+                            ),
+                            child: const Text('详情'),
                           ),
-                        ],
+                        ),
                       ],
-                    ),
+                    ],
                   ),
                 ),
               ),
@@ -498,12 +519,12 @@ class _SummaryCardView extends StatelessWidget {
           children: [
             const Text(
               '手动总结',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 4),
             Text(
               '${card.time} · 选择来源切片中',
-              style: const TextStyle(fontSize: 13, color: RCColors.sec),
+              style: const TextStyle(fontSize: 12, color: RCColors.sec),
             ),
           ],
         );
@@ -514,12 +535,12 @@ class _SummaryCardView extends StatelessWidget {
           children: [
             const Text(
               '正在生成总结',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 4),
             Text(
               '${card.time} · 分析检查中',
-              style: const TextStyle(fontSize: 13, color: RCColors.sec),
+              style: const TextStyle(fontSize: 12, color: RCColors.sec),
             ),
             const SizedBox(height: 10),
             ClipRRect(
@@ -537,6 +558,38 @@ class _SummaryCardView extends StatelessWidget {
             ),
           ],
         );
+      case SummaryState.failed:
+        inner = Column(
+          key: const Key('sumcard-failed'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '总结生成失败',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              card.error ?? '请稍后重试',
+              style: const TextStyle(fontSize: 12, color: RCColors.sec),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton(
+                  key: const Key('sumcard-retry'),
+                  onPressed: () => store.retryGeneration(card.id),
+                  child: const Text('重试'),
+                ),
+                TextButton(
+                  key: const Key('sumcard-dismiss'),
+                  onPressed: () => store.dismissFailed(card.id),
+                  child: const Text('放弃'),
+                ),
+              ],
+            ),
+          ],
+        );
       case SummaryState.done:
         inner = Column(
           key: const Key('sumcard-done'),
@@ -544,12 +597,12 @@ class _SummaryCardView extends StatelessWidget {
           children: [
             Text(
               card.title ?? '',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 4),
             Text(
               '${card.time} · 已选 ${card.srcIds.length} 片段',
-              style: const TextStyle(fontSize: 13, color: RCColors.sec),
+              style: const TextStyle(fontSize: 12, color: RCColors.sec),
             ),
             if (open) ...[
               const SizedBox(height: 10),
@@ -588,30 +641,75 @@ class _SummaryCardView extends StatelessWidget {
       child: InkWell(
         key: Key('card-${card.id}'),
         onTap: locked ? null : () => store.tapCard(card.id, isSummary: true),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          key: Key('sumcard-${card.id}'),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          // 设计稿 .sumcard：只有总结才是卡片（底板 + 1px 分隔线边框 + 12 圆角）
           decoration: BoxDecoration(
             color: RCColors.card,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: open
-                  ? RCColors.sep
-                  : locked
-                  ? const Color(0xFFF2F2EE)
-                  : const Color(0x00000000),
-              width: locked && !open ? 1 : 1,
-            ),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x14000000),
-                blurRadius: 10,
-                offset: Offset(0, 2),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: RCColors.sep),
           ),
           child: inner,
         ),
+      ),
+    );
+  }
+}
+
+/// 同步/装载提示条：阶段文案 + 真实进度（不做假动画）。
+class _SyncBanner extends StatelessWidget {
+  const _SyncBanner({required this.store});
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = store.syncStage != null ? store.syncText : '正在读取本地录音…';
+    final progress = store.syncStage != null ? store.syncProgress : null;
+    return Container(
+      key: const Key('sync-banner'),
+      margin: const EdgeInsets.fromLTRB(22, 0, 22, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: RCColors.card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: RCColors.sep),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const SizedBox(
+                width: 13,
+                height: 13,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  text,
+                  key: const Key('sync-text'),
+                  style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                ),
+              ),
+            ],
+          ),
+          if (progress != null) ...[
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                key: const Key('sync-progress'),
+                value: progress.clamp(0, 1),
+                minHeight: 3,
+                backgroundColor: RCColors.sep,
+                valueColor: const AlwaysStoppedAnimation(RCColors.ok),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

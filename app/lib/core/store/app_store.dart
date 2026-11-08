@@ -1,14 +1,24 @@
-/// 应用核心状态机 —— 逐函数对应 prototype/index.html 全局状态与交互逻辑。
-/// 设计真源：卡片两行折叠、勾选模式锁 Tab、生成 6s 进程、路由栈扁平化。
+/// 应用核心状态机 —— 时间轴数据、勾选式总结、生成进度、路由栈、会话持久化。
+///
+/// 与原型（prototype/index.html）保持一致的交互语义：卡片两行折叠、勾选模式锁 Tab、
+/// 走"记录 → 勾选 → 生成 → 结果页"的主线，路由栈扁平化。
+///
+/// 与原型**不同**的地方（正式版）：生成不再是 6 秒假进度，而是真实的
+/// 转写 + 大模型调用（[SummaryGenerator]）；录音数据来自真实设备同步
+/// （[RecordingSyncService]）；导航栈与总结卡落 shared_preferences，冷启动恢复。
 library;
+
 import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
 import '../../data/seed.dart';
+import '../../services/ai/summary_generator.dart';
+import '../../services/recordings/recording_sync_service.dart';
 import '../models/record.dart';
 import '../models/summary.dart';
+import '../storage/storage.dart';
 
 enum RootTab { timeline, setting }
 
@@ -32,17 +42,44 @@ class FeedGroup {
   const FeedGroup(this.dayLabel, this.items);
 }
 
-/// 与原型一致的常量（测试对齐依赖这些时长）
+/// 生成过程的展示常量：仅用于文案与估算，不驱动真实工作。
 abstract final class GenConst {
-  static const totalMs = 6000;
-  static const tickMs = 150;
-  static String stepText(int ms) =>
-      ms < 2000 ? '解析来源内容…' : ms < 4000 ? '提炼要点与逻辑…' : '整理结构与行动项…';
+  /// 粗略估算：每条记录的转写+整理按 8 秒算，用于"预计还需"的提示。
+  static const secondsPerSource = 8;
+  static const minEstimateSeconds = 8;
 }
 
 class AppStore extends ChangeNotifier {
-  final List<RecordEvent> events;
-  AppStore({List<RecordEvent>? events}) : events = events ?? seedEvents;
+  AppStore({
+    List<RecordEvent>? events,
+    RecordingSyncService? recordings,
+    SummaryGenerator? generator,
+    JsonStore? jsonStore,
+    bool loadPersistedState = true,
+  }) : events = events ?? const [],
+       _seedOverride = events,
+       _recordings = recordings,
+       _generator = generator,
+       _json = jsonStore,
+       _loadPersisted = loadPersistedState;
+
+  /// 录音数据（真实设备同步进来的记录）。
+  List<RecordEvent> events;
+
+  /// 测试注入的固定数据集（非 null 时不做网络/设备加载）。
+  final List<RecordEvent>? _seedOverride;
+
+  RecordingSyncService? _recordings;
+  SummaryGenerator? _generator;
+  JsonStore? _json;
+  final bool _loadPersisted;
+
+  bool loading = false;
+  String? loadError;
+  SyncStage? syncStage;
+  double syncProgress = 0;
+  String syncText = '';
+  String? syncError;
 
   RootTab rootTab = RootTab.timeline;
   FeedFilter filter = FeedFilter.all;
@@ -55,9 +92,114 @@ class AppStore extends ChangeNotifier {
   String? openCardId; // 展开态卡片（互斥）
 
   List<RouteEntry> subStack = []; // 路由栈：总结↔记录互跳统一历史栈
-  Timer? _genTimer;
+
+  /// 生成计时（真实墙钟，用于"已生成 N 秒"）
+  Stopwatch? _genWatch;
+  Timer? _genTicker;
+  double _genProgress = 0;
+  String _genStep = '';
 
   static const pageLabels = {'sum': '总结', 'detail': '记录'};
+
+  void attachServices({
+    required RecordingSyncService recordings,
+    required SummaryGenerator generator,
+  }) {
+    _recordings = recordings;
+    _generator = generator;
+  }
+
+  // ── 启动装载 ────────────────────────────────────────────
+  /// 冷启动：恢复导航栈与历史总结卡，再拉本地录音清单。
+  Future<void> init() async {
+    if (_loadPersisted) {
+      final store = await _jsonStore();
+      final data = await store.read('route');
+      restoreState(data);
+    }
+    await refreshEvents();
+  }
+
+  Future<JsonStore> _jsonStore() async {
+    final existing = _json;
+    if (existing != null) return existing;
+    final created = JsonStore(store: await PrefsStore.open());
+    _json = created;
+    return created;
+  }
+
+  /// 重新读取本地录音清单（同步设备后调用）。
+  Future<void> refreshEvents() async {
+    final override = _seedOverride;
+    if (override != null) {
+      events = [...override];
+      notifyListeners();
+      return;
+    }
+    final service = _recordings;
+    if (service == null) {
+      events = seedEvents; // 未装配服务（旧调用方/测试）时退回设计样例
+      notifyListeners();
+      return;
+    }
+    loading = true;
+    loadError = null;
+    notifyListeners();
+    try {
+      events = await service.loadEvents();
+    } on Object catch (e) {
+      loadError = '读取本地录音失败：$e';
+    }
+    loading = false;
+    notifyListeners();
+  }
+
+  /// 从录音卡同步新录音（下载 + 转码 + 转写），完成后再刷新列表。
+  Future<String?> syncRecordings() async {
+    final service = _recordings;
+    if (service == null) {
+      syncError = '录音同步未就绪，请稍后重试';
+      notifyListeners();
+      return syncError;
+    }
+    syncError = null;
+    syncStage = SyncStage.listing;
+    syncProgress = 0;
+    syncText = '正在读取录音卡文件列表…';
+    notifyListeners();
+    try {
+      final report = await service.syncFromDevice(
+        onProgress: (stage, progress, text) {
+          syncStage = stage;
+          syncProgress = progress.clamp(0, 1);
+          syncText = text;
+          notifyListeners();
+        },
+      );
+      events = report.events;
+      if (report.error != null) {
+        syncError = report.error;
+        return report.error;
+      }
+      final failed = report.items
+          .where((i) => i.outcome == SyncFileOutcome.failed)
+          .toList();
+      if (failed.isNotEmpty) {
+        syncError = '${failed.length} 条录音同步失败：${failed.first.message ?? ''}';
+      }
+      // 顺手清理孤儿文件，避免本地目录无限增长
+      unawaited(service.pruneOrphans());
+      return syncError;
+    } on Object catch (e) {
+      syncError = '同步失败：$e';
+      return syncError;
+    } finally {
+      syncStage = null;
+      syncProgress = 0;
+      syncText = '';
+      notifyListeners();
+    }
+  }
 
   // ── 根导航 ──────────────────────────────────────────────
   void go(RootTab tab) {
@@ -83,7 +225,7 @@ class AppStore extends ChangeNotifier {
       navSub(RouteEntry('detail', id), fresh: fresh);
 
   void openSum(String id, {bool fresh = false}) {
-    final s = summaries.where((x) => x.id == id).firstOrNull;
+    final s = summaryById(id);
     if (s == null || s.state != SummaryState.done) return;
     navSub(RouteEntry('sum', id), fresh: fresh);
   }
@@ -98,8 +240,7 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  /// 系统返回手势（Navigator 页面被弹出）回调：仅同步栈状态，不反向触发导航
-  ///（弹栈动画由 Navigator 驱动；store 更新只为 pages 列表收敛，防止路由被重新插入）
+  /// 系统返回手势（Navigator 页面被弹出）回调：仅同步栈状态，不反向触发导航。
   void onSubPopped() {
     if (subStack.isEmpty) return;
     subStack = subStack.sublist(0, subStack.length - 1);
@@ -108,29 +249,59 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Android 物理返回键 / iOS 边缘手势入口：栈里有页就退一页，否则交给系统。
+  bool handleSystemBack() {
+    if (subStack.isEmpty) return false;
+    goBack();
+    return true;
+  }
+
   RouteEntry? get stackTop => subStack.isEmpty ? null : subStack.last;
-  RouteEntry? get stackPrev => subStack.length > 1 ? subStack[subStack.length - 2] : null;
-  String get crumbDest => stackPrev == null ? 'Timeline' : (pageLabels[stackPrev!.type] ?? 'Timeline');
-  bool get showPaneBackDetail => subStack.length > 1 && stackTop!.type == 'detail';
+  RouteEntry? get stackPrev =>
+      subStack.length > 1 ? subStack[subStack.length - 2] : null;
+  String get crumbDest => stackPrev == null
+      ? 'Timeline'
+      : (pageLabels[stackPrev!.type] ?? 'Timeline');
+  bool get showPaneBackDetail =>
+      subStack.length > 1 && stackTop!.type == 'detail';
   bool get showPaneBackSum => subStack.length > 1 && stackTop!.type == 'sum';
 
-  SummaryCard? summaryById(String id) => summaries.where((s) => s.id == id).firstOrNull;
-  RecordEvent eventById(String id) => events.firstWhere((e) => e.id == id);
-  List<SummaryCard> doneSummariesReferencing(String eventId) =>
-      summaries.where((s) => s.state == SummaryState.done && s.srcIds.contains(eventId)).toList();
+  SummaryCard? summaryById(String id) =>
+      summaries.where((s) => s.id == id).firstOrNull;
+
+  /// 按 id 找记录；找不到返回 null（历史栈里残留的失效 id 不该让页面红屏）。
+  RecordEvent? eventByIdOrNull(String id) {
+    for (final e in events) {
+      if (e.id == id) return e;
+    }
+    return null;
+  }
+
+  RecordEvent? eventByIdOrNullOrFallback(String id) =>
+      eventByIdOrNull(id) ?? (events.isEmpty ? null : events.first);
+
+  List<SummaryCard> doneSummariesReferencing(String eventId) => summaries
+      .where((s) => s.state == SummaryState.done && s.srcIds.contains(eventId))
+      .toList();
 
   // ── Timeline 渲染数据 ───────────────────────────────────
   List<FeedGroup> get feedGroups {
     final f = filter;
-    final sums = summaries.where((s) => f == FeedFilter.all || f == FeedFilter.summary).toList();
-    final evs = events.where((e) => f == FeedFilter.all || f == FeedFilter.event).toList();
+    final sums = summaries
+        .where((s) => f == FeedFilter.all || f == FeedFilter.summary)
+        .toList();
+    final evs = events
+        .where((e) => f == FeedFilter.all || f == FeedFilter.event)
+        .toList();
     final past = evs.where((e) => e.dayOffset > 0).toList();
     final offs = past.map((e) => e.dayOffset).toSet().toList()..sort();
     final groups = <FeedGroup>[];
     final today = [...sums, ...evs.where((e) => e.dayOffset == 0)];
     if (today.isNotEmpty) groups.add(FeedGroup(dayLabel(0), today));
     for (final o in offs) {
-      groups.add(FeedGroup(dayLabel(o), evs.where((e) => e.dayOffset == o).toList()));
+      groups.add(
+        FeedGroup(dayLabel(o), evs.where((e) => e.dayOffset == o).toList()),
+      );
     }
     return groups;
   }
@@ -159,7 +330,10 @@ class AppStore extends ChangeNotifier {
     selMode = true;
     selIds.clear();
     openCardId = null;
-    pend = SummaryCard(id: 'act${DateTime.now().millisecondsSinceEpoch}', time: nowHM());
+    pend = SummaryCard(
+      id: 'act${DateTime.now().millisecondsSinceEpoch}',
+      time: nowHM(),
+    );
     summaries = [pend!, ...summaries];
     _lockTabs(true);
   }
@@ -167,7 +341,10 @@ class AppStore extends ChangeNotifier {
   void cancelSummary() {
     selMode = false;
     pend = null;
-    summaries = summaries.where((s) => s.state != SummaryState.pending).toList();
+    // 取消只丢弃挂起的草稿卡，历史已完成的总结卡必须保留
+    summaries = summaries
+        .where((s) => s.state != SummaryState.pending)
+        .toList();
     openCardId = null;
     _lockTabs(false);
   }
@@ -205,80 +382,188 @@ class AppStore extends ChangeNotifier {
 
   int get selCount => selIds.length;
 
-  // ── 生成进程（6s，150ms tick；与原型一致） ──────────────
+  // ── 生成总结（真实链路） ────────────────────────────────
+  /// 开始生成：卡片进入 generating，页面立即跳转到总结页展示进度。
+  ///
+  /// 真正的转写+大模型调用在后台跑；失败会落到 failed 态并给出可读原因，
+  /// 用户可以重试或取消——不会出现"进度走完但内容是编的"。
   void genSummary() {
-    final ids = events.where((e) => selIds.contains(e.id)).map((e) => e.id).toList();
-    if (ids.isEmpty) return;
+    final picked = events.where((e) => selIds.contains(e.id)).toList();
+    if (picked.isEmpty) return;
     selMode = false;
-    final card = pend!;
-    card.state = SummaryState.generating;
-    card.progress = 0;
-    card.srcIds = ids;
+    final card = pend;
+    if (card == null) return;
+    card
+      ..state = SummaryState.generating
+      ..progress = 0
+      ..srcIds = picked.map((e) => e.id).toList()
+      ..error = null;
     openCardId = card.id;
     _lockTabs(false);
     navSub(RouteEntry('sum', card.id));
-    _runProgress(card);
+    _runGeneration(card, picked);
   }
 
-  void _runProgress(SummaryCard card) {
-    var ticks = 0;
-    _genTimer?.cancel();
-    _genTimer = Timer.periodic(const Duration(milliseconds: GenConst.tickMs), (_) {
-      // 用 tick 计数而非墙钟：进度完全由定时器驱动，测试虚拟时间下确定
-      ticks++;
-      final ms = ticks * GenConst.tickMs;
-      final pc = math.min(100.0, ms / GenConst.totalMs * 100);
-      card.progress = pc;
-      if (pc >= 100) {
-        _genTimer?.cancel();
-        _genTimer = null;
-        fillSummaryContent(card, events);
-        _persist();
-      }
+  Future<void> _runGeneration(
+    SummaryCard card,
+    List<RecordEvent> sources,
+  ) async {
+    _genProgress = 0;
+    _genStep = '解析来源内容…';
+    _genWatch = Stopwatch()..start();
+    _genTicker?.cancel();
+    // 每 500ms 刷新一次"已生成 N 秒"，只做展示计时，不伪造阶段推进
+    _genTicker = Timer.periodic(const Duration(milliseconds: 500), (_) {
       notifyListeners();
     });
+    card.progress = 0;
+    notifyListeners();
+
+    final generator = _generator;
+    try {
+      if (generator == null) {
+        throw const SummaryGenerationException('总结服务未就绪');
+      }
+      final draft = await generator.generate(
+        sources,
+        onProgress: (progress, step) {
+          _genProgress = progress.clamp(0, 1);
+          _genStep = step;
+          card.progress = _genProgress * 100;
+          notifyListeners();
+        },
+      );
+      card
+        ..state = SummaryState.done
+        ..progress = 100
+        ..error = null
+        ..title = draft.title
+        ..overview = draft.overview
+        ..structure = draft.structure
+        ..points = draft.points
+        ..todos = draft.todos
+        ..markdown = draft.markdown
+        ..subDesc = _describeSources(sources)
+        ..srcDesc = sources
+            .map((e) => '${dayLabel(e.dayOffset)} ${e.time} ${e.title}')
+            .join('；');
+      _persist();
+    } on Object catch (e) {
+      final message = e is SummaryGenerationException ? e.message : '生成失败：$e';
+      // 失败不产出任何内容：卡片停在 failed，页面展示原因与重试入口
+      card
+        ..state = SummaryState.failed
+        ..error = message
+        ..progress = 100;
+    } finally {
+      _genTicker?.cancel();
+      _genTicker = null;
+      _genWatch?.stop();
+      notifyListeners();
+    }
   }
 
-  int get _genMs {
-    final card = pend;
-    if (card == null || card.state != SummaryState.generating) return 0;
-    return (card.progress / 100 * GenConst.totalMs).floor();
+  /// 失败后重试：复用同一张卡。
+  void retryGeneration(String summaryId) {
+    final card = summaryById(summaryId);
+    if (card == null || card.state != SummaryState.failed) return;
+    final sources = <RecordEvent>[];
+    for (final id in card.srcIds) {
+      final e = eventByIdOrNull(id);
+      if (e != null) sources.add(e);
+    }
+    if (sources.isEmpty) return;
+    card
+      ..state = SummaryState.generating
+      ..error = null
+      ..progress = 0;
+    notifyListeners();
+    _runGeneration(card, sources);
   }
 
-  String genElapsedText() => '已生成 ${(_genMs / 1000).floor()} 秒';
-  String genEtaText() =>
-      '预计还需 ${math.max(0, ((GenConst.totalMs - _genMs) / 1000).ceil())} 秒';
-  String genStepText() => GenConst.stepText(_genMs);
+  /// 放弃失败的总结卡。
+  void dismissFailed(String summaryId) {
+    summaries = [
+      for (final s in summaries)
+        if (!(s.id == summaryId && s.state == SummaryState.failed)) s,
+    ];
+    if (openCardId == summaryId) openCardId = null;
+    if (subStack.isNotEmpty && stackTop?.id == summaryId) {
+      subStack = subStack.sublist(0, subStack.length - 1);
+    }
+    _persist();
+    notifyListeners();
+  }
+
+  static String _describeSources(List<RecordEvent> sources) {
+    if (sources.isEmpty) return '';
+    final days = sources.map((e) => e.dayOffset).toSet().toList()..sort();
+    if (days.length == 1) {
+      final times = sources.map((e) => e.time).toList()..sort();
+      return '${dayLabel(days.first)} ${times.first}–${times.last} · ${sources.length} 条记录';
+    }
+    return '跨 ${dayLabel(days.last)} 至 ${dayLabel(days.first)} · ${sources.length} 条记录';
+  }
+
+  // 生成进度文案（真实计时 + 估算）
+  int get genElapsedSeconds => _genWatch?.elapsed.inSeconds ?? 0;
+  String genElapsedText() => '已生成 $genElapsedSeconds 秒';
+  String genEtaText() {
+    final card = stackTop == null ? null : summaryById(stackTop!.id);
+    final count = math.max(1, card?.srcIds.length ?? 1);
+    final estimate = math.max(
+      GenConst.minEstimateSeconds,
+      count * GenConst.secondsPerSource,
+    );
+    final remain = math.max(0, estimate - genElapsedSeconds);
+    return '预计还需 $remain 秒';
+  }
+
+  String genStepText() => _genStep.isEmpty ? '解析来源内容…' : _genStep;
 
   @override
   void dispose() {
-    _genTimer?.cancel();
+    _genTicker?.cancel();
     super.dispose();
   }
 
   // ── 会话持久化（对应原型 sessionStorage rc-route-v1） ──
   Map<String, dynamic> exportState() => {
-        'stack': [
-          for (final e in subStack) {'t': e.type, 'id': e.id}
-        ],
-        'sums': [for (final s in summaries.where((s) => s.state == SummaryState.done)) s.toJson()],
-      };
+    'stack': [
+      for (final e in subStack) {'t': e.type, 'id': e.id},
+    ],
+    'sums': [
+      for (final s in summaries.where((s) => s.state == SummaryState.done))
+        s.toJson(),
+    ],
+  };
 
   void restoreState(Map<String, dynamic>? data) {
     if (data == null) return;
     summaries = [
       for (final j in (data['sums'] as List? ?? []))
-        if (j is Map<String, dynamic>) SummaryCard.fromJson(j)
+        if (j is Map<String, dynamic>) SummaryCard.fromJson(j),
     ];
     subStack = [
       for (final e in (data['stack'] as List? ?? []))
         if (e is Map<String, dynamic> &&
             ((e['t'] == 'detail') ||
                 (e['t'] == 'sum' && summaries.any((s) => s.id == e['id']))))
-          RouteEntry(e['t'] as String, e['id'] as String)
+          RouteEntry(e['t'] as String, e['id'] as String),
     ];
     notifyListeners();
   }
 
-  void _persist() {} // 持久化钩子：Stage 接 shared_preferences 时替换
+  /// 落盘：导航栈 + 已完成的总结卡。写失败不影响交互（下次再写）。
+  void _persist() {
+    if (!_loadPersisted) return;
+    unawaited(() async {
+      try {
+        final store = await _jsonStore();
+        await store.write('route', exportState());
+      } on Object catch (e) {
+        debugPrint('[store] 会话持久化失败：$e');
+      }
+    }());
+  }
 }

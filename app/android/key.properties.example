@@ -1,0 +1,21 @@
+# ── 上传密钥配置模板 ───────────────────────────────────────────
+# 复制为 android/key.properties 后填入真实值（该文件已在 .gitignore，不会入库）。
+#
+#   cp android/key.properties.example android/key.properties
+#
+# 生成上传密钥（Play App Signing 的上传密钥，一次性，务必备份到密码管理器）：
+#
+#   keytool -genkeypair -v \
+#     -keystore android/app/upload-keystore.jks \
+#     -storetype JKS \
+#     -keyalg RSA -keysize 2048 -validity 10000 \
+#     -alias upload \
+#     -dname "CN=ReAI, OU=Mobile, O=ReAI, L=Beijing, ST=Beijing, C=CN"
+#
+# 有效期建议 ≥ 25 年（Google Play 要求 2033 年后仍有效）。
+# storeFile 可写绝对路径，或相对 android/app（默认）的路径。
+
+storePassword=你的_keystore_口令
+keyPassword=你的_key_口令
+keyAlias=upload
+storeFile=upload-keystore.jks

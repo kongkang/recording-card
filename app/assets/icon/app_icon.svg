@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  录音卡 App 图标源文件（1024×1024，不含 alpha，iOS/Android 图标的唯一设计真源）
+
+  意象：录音卡本体（深色圆角卡片）+ 录音电平波形 + 右上角红色录音指示点。
+  色值取自 lib/core/theme/tokens.dart：
+    米白背景 #FAFAF8（渐变收边避免小尺寸发灰）、卡片墨黑 #1D1D1F、
+    波形米白 #FAFAF8、录音红 #FF3B30。
+  约束：无文字、无细描边；卡片占画布 68% 宽，缩到 20pt 仍能靠「浅底上的深色圆角卡片」辨认。
+
+  修改后执行 assets/icon/render_icons.sh 重新生成 iOS / Android 全套图标。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="rcBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FDFDFB"/>
+      <stop offset="1" stop-color="#EFEFE8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景：铺满整块画布，圆角交给系统蒙版处理 -->
+  <rect x="0" y="0" width="1024" height="1024" fill="url(#rcBg)"/>
+
+  <!-- 卡片主体（700×490，圆角 96） -->
+  <rect x="162" y="267" width="700" height="490" rx="96" fill="#1D1D1F"/>
+
+  <!-- 录音电平波形：五根等宽胶囊，居中对称 -->
+  <g fill="#FAFAF8">
+    <rect x="258" y="452" width="60" height="120" rx="30"/>
+    <rect x="370" y="398" width="60" height="228" rx="30"/>
+    <rect x="482" y="359" width="60" height="306" rx="30"/>
+    <rect x="594" y="398" width="60" height="228" rx="30"/>
+    <rect x="706" y="452" width="60" height="120" rx="30"/>
+  </g>
+
+  <!-- 录音指示点 -->
+  <circle cx="778" cy="330" r="40" fill="#FF3B30"/>
+</svg>
