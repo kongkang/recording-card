@@ -65,3 +65,18 @@
 - 声纹置信度：低相似度（<0.5）或小簇（总时长 <2.5s）统一显示「未区分」。
 - ASR/VAD 模型生产规格：SenseVoice 官方 size/sha 待 manifest 下发；当前 dev 规格 size=0。
 - 真实双人/多人录音的聚类阈值需要用真机数据调参（当前只用重复单人音频验证了链路）。
+
+## 6. 真机全链路（2026-11-09）
+
+- 设备 DYJV2_T4W25T，固件 0.3.8 / WiFi 0.1.3，电量 61%。
+- 取回最小且 ≥200KB 的 `62B1755F.APM`（25.2s）：
+  **1 片 → 6 句原始 → 6 turn → 1 段 → 2 个说话人**。
+- 全程 1:06（BLE 下载 + 转码 + VAD + SenseVoice + Campplus + 假云端润色/分段）。
+- 证据测试：`app/integration_test/pipeline_device_test.dart`
+  （`maxFiles:1, smallestFirst:true, minFileSize:200000`）。
+  注意 `take_file_to_dir` 是移动语义：测试会把该文件从录音卡删除，所以只取一个；
+  不传 `RC_E2E` 时默认取最小文件。
+- 开发期模型：用 `devicectl` 把 `models/` 拷进应用容器
+  （见 `/tmp/run_pipeline_device.sh` 或 handoff 的 P7 命令）。
+- iOS 重装会重置 TCC：每次真机首跑需在设备上点一次「允许蓝牙」/
+  「允许查找本地网络」；授权后 `BluetoothPermission.request()` 返回 granted。

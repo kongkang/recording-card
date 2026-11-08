@@ -126,8 +126,14 @@ class RecordingPipeline {
   bool get isBusy => _busy;
 
   /// 从设备同步新录音并处理。已完成的文件跳过；失败文件重试。
+  ///
+  /// [maxFiles] / [smallestFirst] 用于真机验证：只取最小的一个文件，避免
+  /// 把整卡录音都拉下来（BLE 很慢）。生产不传 = 处理全部新文件。
   Future<PipelineSyncResult> sync({
     void Function(PipelineProgress progress)? onProgress,
+    int? maxFiles,
+    bool smallestFirst = false,
+    int minFileSize = 0,
   }) async {
     if (_busy) {
       throw const PipelineException('同步已在进行中');
@@ -143,8 +149,17 @@ class RecordingPipeline {
         ),
       );
       final files = await gateway.files();
-      final apms = files.where((f) => f.isApm).toList()
-        ..sort((a, b) => _startSecond(b).compareTo(_startSecond(a)));
+      var apms = files
+          .where((f) => f.isApm && f.size >= minFileSize)
+          .toList();
+      if (smallestFirst) {
+        apms.sort((a, b) => a.size.compareTo(b.size));
+      } else {
+        apms.sort((a, b) => _startSecond(b).compareTo(_startSecond(a)));
+      }
+      if (maxFiles != null && apms.length > maxFiles) {
+        apms = apms.take(maxFiles).toList();
+      }
 
       if (apms.isEmpty) {
         return const PipelineSyncResult(

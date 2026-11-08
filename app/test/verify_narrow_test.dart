@@ -121,8 +121,11 @@ void main() {
     await tester.tap(find.byKey(const Key('chip-today')));
     await tester.pump();
     expect(store.selCount, _rangeCount('today'));
-    expect(store.selCount, 3, reason: '今日 = e1 e2 e3');
-    expect(find.text('已选 3 项'), findsOneWidget);
+    expect(
+      find.text('已选 ${_rangeCount('today')} 项'),
+      findsOneWidget,
+      reason: '计数文案随日期推导，不能写死 3（周一会把周一记录算进今天）',
+    );
 
     await tester.tap(find.byKey(const Key('chip-week')));
     await tester.pump();

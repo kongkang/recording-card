@@ -57,6 +57,7 @@ owner 明确要求「做正式发布版，所有问题都要解决」，旧口�
 - 验收流程顺序与页面导航强相关（如：详情页内先看原始数据再返回），改交互流时同步改测试。
 - Flutter 改完必跑 `cd app && flutter analyze && flutter test`，结果如实贴出；失败不隐瞒。
 - 真机验证：`flutter test integration_test/hardware_probe_test.dart -d <deviceId>`（硬件在环探针）、`flutter test integration_test/recording_pipeline_test.dart -d <deviceId>`（取回→转 WAV）与 `flutter drive --driver=test_driver/integration_test.dart --target=integration_test/ui_flow_test.dart -d <deviceId>`（界面动线 + 截图，产物在 /tmp/rc-shots）。
+- 本地转写全链路（会移动设备文件，只取一个）：`flutter test integration_test/pipeline_device_test.dart -d <deviceId> --dart-define=RC_SPIKE_WAIT_FOR_MODELS=true`；开发期模型用 `devicectl` 拷到应用容器 `Library/Application Support/models/`（见 `docs/ASR-PIPELINE.md` §6）。重装后 iOS TCC 会重置，首次需在真机点「允许蓝牙 / 允许本地网络」。
 - 本地 ASR 模型开发期 sideload：SenseVoice 取自 `~/Library/Application Support/reai-vibe-board/models/sensevoice-int8/`，VAD 取自 `reai_mobile_app/assets/models/silero_vad.onnx`；生产必须走 `RC_MODEL_MANIFEST`/`RC_MODEL_BASE` 下载，**不把 237MB 模型提交进仓库**。
 - 转写/润色的时间语义一律用「相对录音起点的毫秒」存储，展示时再叠加设备 `start_at`；不用本地墙钟推算设备时间。
 - Rust 桥构建必须用 rustup 工具链（`app/rust/build-ios.sh` 已固定 1.94.0）：本机 PATH 里 Homebrew 的 rustc 会遮住 rustup，而它没有 iOS std。

@@ -3,6 +3,20 @@
 > 本文件是 owner 已确认的开发计划，作为 P0~P7 的执行依据。设计来源：owner 2026-11-08 口头方案 + 现有代码盘点。
 > 新会话接手时先读本文件，再读 `AGENTS.md` 的「当前阶段」。
 
+## 实施状态（2026-11-09）
+
+- P0/P1：基线合并、本地 ASR/VAD/切片/token 对齐、模型管理（PR #10 已合并）。
+- P2：声纹改用 **Campplus embedding + 本地聚类**（pyannote 在 iOS 真机卡死，弃用）；
+  真机 12 段 0.94s。
+- P3：CardFile 元数据、v2 存储/迁移、download→transcode→slice→ASR→label 流水线（PR #12）。
+- P4/P5：切片窗口润色 + 阶段总结分段（接既有 Coordinator）；失败均回退原文。
+- P6：main/AppStore/Timeline/详情/Setting/总结全部接线；模型管理 UI 就绪。
+- **P7 真机全链路通过**（2026-11-09）：`62B1755F.APM` 25.2s →
+  1 片 / 6 句 / 6 turn / 1 段 / 2 说话人，总耗时 1:06（假云端润色）。
+  证据：`app/integration_test/pipeline_device_test.dart`，详见 `docs/ASR-PIPELINE.md` §6。
+- 剩余：真实云端润色/分段在真机的联调（需要 RC_MODEL_BASE/后端）、跨文件声纹质心、
+  真实双人录音调参、UI 逐帧目检、Android（不在本期）。
+
 ## 1. 基线
 
 - **不是 master 从零做**。PR #7 已把 `fix/mobile-hw-design` 合并进 master（`664211f`），其中包含：
