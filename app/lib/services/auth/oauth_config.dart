@@ -31,11 +31,17 @@ class OAuthConfig {
   void validate() {
     baseUri;
     final redirect = Uri.tryParse(clientConfig.oauthRedirectUri);
+    final independentCallback =
+        clientConfig.oauthRedirectUri ==
+        ClientConfig.independentOAuthRedirectUri;
+    final approvedReferenceCallback =
+        clientConfig.oauthReuseReferenceClient &&
+        clientConfig.oauthClientId == ClientConfig.referencePublicClientId &&
+        clientConfig.oauthRedirectUri == ClientConfig.referenceOAuthRedirectUri;
     if (clientId.isEmpty ||
         scope.isEmpty ||
         redirect == null ||
-        !RegExp(r'^[a-z][a-z0-9+.-]*$').hasMatch(redirect.scheme) ||
-        ['http', 'https', 'reai-mobile'].contains(redirect.scheme) ||
+        (!independentCallback && !approvedReferenceCallback) ||
         redirect.host != 'callback' ||
         redirect.path.isNotEmpty ||
         redirect.userInfo.isNotEmpty ||
@@ -44,7 +50,7 @@ class OAuthConfig {
         redirect.hasFragment) {
       throw const AuthException(
         'invalid_config',
-        'OAuth客户端、scope或独立callback配置无效',
+        'OAuth客户端、scope或callback配置无效；参考回调仅允许显式获准复用组合',
       );
     }
   }

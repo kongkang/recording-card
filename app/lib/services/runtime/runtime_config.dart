@@ -63,23 +63,80 @@ class RuntimeConfig {
   );
 }
 
-/// Directory validation is deferred to the user's first analysis action. No
-/// auto fallback or model request on startup; an explicit approved ID is needed.
+/// Directory access is deferred to the user's analysis action, never startup.
+/// With no configured ID, select ONCE per OAuth identity epoch from the actual
+/// authorized text catalog. GatewayModel exposes no server-default metadata, so
+/// the first choice follows server catalog order (not price/name/local IDs).
+/// A removed/failed chosen model is an error, never a reason to switch models.
 class AuthorizedAnalysisGateway implements AnalysisGateway {
-  AuthorizedAnalysisGateway(this.gateway);
+  AuthorizedAnalysisGateway(this.gateway, {this.sessionEpoch});
   final ModelGateway gateway;
-  String? _validated;
+
+  /// Wire the SAME gateway's tokenStore.userIdentityEpoch. Optional only for
+  /// explicit-ID callers; automatic choice fails closed without this binding.
+  final int Function()? sessionEpoch;
+  static const firstChoicePolicy =
+      'first_authorized_text_in_server_catalog_order';
+  int? _choiceEpoch;
+  String? _firstChoice;
+  Future<String>? _choosing;
+
   @override
   Future<String> complete(String prompt, {String? model}) async {
-    final id = (model ?? gateway.configuredModel).trim();
-    if (id.isEmpty) throw StateError('请在无密钥构建配置 RC_TEXT_MODEL 中指定获批文本模型ID');
-    if (_validated != id) {
-      final models = await gateway.listTextModels();
-      if (!models.any((m) => m.id == id && m.supportsText)) {
-        throw StateError('配置模型不在当前账号授权的文本模型目录中');
-      }
-      _validated = id;
+    if (prompt.trim().isEmpty) {
+      throw const GatewayException('empty_prompt', '文本模型输入不能为空');
     }
-    return gateway.complete(prompt, model: id);
+    var id = (model ?? gateway.configuredModel).trim();
+    final epoch = sessionEpoch?.call();
+    if (id.isEmpty) {
+      // An explicitly supplied empty ID is invalid, not an auto-choice request.
+      if (model != null) {
+        throw const GatewayException('model_not_configured', '明确选择的文本模型ID不能为空');
+      }
+      if (epoch == null) {
+        throw const GatewayException(
+          'session_epoch_required',
+          '空默认模型需要绑定当前OAuth会话epoch后才能按授权目录选择',
+        );
+      }
+      if (_choiceEpoch != epoch) {
+        _choiceEpoch = epoch;
+        _firstChoice = null;
+        _choosing = null;
+      }
+      id = _firstChoice ?? await (_choosing ??= _chooseFirst(epoch));
+    }
+    _checkEpoch(epoch);
+    // ModelGateway re-fetches /models and validates this EXACT ID before POST.
+    // No validation cache can bypass fresh account permission or trigger fallback.
+    final result = await gateway.complete(prompt, model: id);
+    _checkEpoch(epoch);
+    return result;
+  }
+
+  Future<String> _chooseFirst(int epoch) async {
+    try {
+      final catalog = await gateway.listTextModels();
+      _checkEpoch(epoch);
+      final textModels = catalog.where((item) => item.supportsText);
+      if (textModels.isEmpty) {
+        throw const GatewayException('no_text_models', '当前账号没有可用的已授权文本模型');
+      }
+      final id = textModels.first.id;
+      if (id.trim().isEmpty) {
+        throw const GatewayException('invalid_catalog', '模型目录包含无效模型ID');
+      }
+      _firstChoice = id;
+      return id;
+    } finally {
+      // An old in-flight lookup must never clear a newer session's lookup.
+      if (_choiceEpoch == epoch) _choosing = null;
+    }
+  }
+
+  void _checkEpoch(int? epoch) {
+    if (epoch != null && sessionEpoch!() != epoch) {
+      throw const AuthRequiredException();
+    }
   }
 }

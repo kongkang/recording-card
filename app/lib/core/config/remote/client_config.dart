@@ -3,35 +3,50 @@ library;
 import 'endpoint_resolver.dart';
 
 /// Public configuration only. No provider key, client secret or account token.
-/// The reference public client is temporarily reusable by user approval, but
-/// its server redirect allowlist MUST include recording-card://callback first.
+/// Reference-client callback reuse is an explicit, default-off compatibility
+/// mode. Do not install another app handling reai-mobile on the test device.
 class ClientConfig {
   const ClientConfig({
     this.hasApiBaseDefine = false,
     this.apiBaseDefineValue = '',
-    this.oauthClientId = '58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo',
+    this.oauthClientId = referencePublicClientId,
     this.oauthBaseUrl = 'https://block2-api.wainao.chat',
-    this.oauthRedirectUri = 'recording-card://callback',
+    String? oauthRedirectUri,
+    this.oauthReuseReferenceClient = false,
     this.oauthScope = 'mobile:full profile:read',
     this.modelGatewayBaseUrl = '',
     this.textModel = '',
     this.trustedHosts = kTrustedEndpointHosts,
-  });
+  }) : oauthRedirectUri =
+           oauthRedirectUri ??
+           (oauthReuseReferenceClient
+               ? referenceOAuthRedirectUri
+               : independentOAuthRedirectUri);
+
+  static const referencePublicClientId = '58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo';
+  static const referenceOAuthRedirectUri = 'reai-mobile://callback';
+  static const independentOAuthRedirectUri = 'recording-card://callback';
 
   static const ClientConfig instance = ClientConfig(
     hasApiBaseDefine: bool.hasEnvironment('RC_API_BASE'),
     apiBaseDefineValue: String.fromEnvironment('RC_API_BASE'),
     oauthClientId: String.fromEnvironment(
       'RC_OAUTH_CLIENT_ID',
-      defaultValue: '58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo',
+      defaultValue: referencePublicClientId,
     ),
     oauthBaseUrl: String.fromEnvironment(
       'RC_OAUTH_BASE_URL',
       defaultValue: 'https://block2-api.wainao.chat',
     ),
+    oauthReuseReferenceClient: bool.fromEnvironment(
+      'RC_OAUTH_REUSE_REFERENCE_CLIENT',
+      defaultValue: false,
+    ),
     oauthRedirectUri: String.fromEnvironment(
       'RC_OAUTH_REDIRECT_URI',
-      defaultValue: 'recording-card://callback',
+      defaultValue: bool.fromEnvironment('RC_OAUTH_REUSE_REFERENCE_CLIENT')
+          ? referenceOAuthRedirectUri
+          : independentOAuthRedirectUri,
     ),
     oauthScope: String.fromEnvironment(
       'RC_OAUTH_SCOPE',
@@ -46,6 +61,9 @@ class ClientConfig {
   final String oauthClientId;
   final String oauthBaseUrl;
   final String oauthRedirectUri;
+
+  /// Public build flag RC_OAUTH_REUSE_REFERENCE_CLIENT; never grants Auth.
+  final bool oauthReuseReferenceClient;
   final String oauthScope;
   final String modelGatewayBaseUrl;
   final String textModel;
