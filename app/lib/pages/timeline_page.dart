@@ -106,18 +106,21 @@ class _TabsBar extends StatelessWidget {
               ],
             ),
           ),
-          TextButton(
+          // 原型 .btn-sum：透明底 + 深色描边胶囊
+          OutlinedButton(
             key: const Key('summary-start'),
             onPressed: store.selMode ? null : store.startSummary,
-            style: TextButton.styleFrom(
-              foregroundColor: RCColors.okInk,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: RCColors.label,
               disabledForegroundColor: RCColors.ax,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              side: const BorderSide(color: RCColors.label),
+              shape: const StadiumBorder(),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              textStyle: const TextStyle(fontSize: 13),
             ),
-            child: const Text('总结',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            child: const Text('总结'),
           ),
         ],
       ),
