@@ -86,14 +86,75 @@ class CardDevice {
 }
 
 /// 设备上的录音文件。
+///
+/// SDK 的 `FileEntry` 除 name/size 外还带录音会话标记与时间：
+/// - `start_at`：段开始时间（Unix 秒，来自同名 .txt 的 timestamp）
+/// - `created_at`：FAT 修改时间（`.apm` 即切片结束时间）
+/// - `session`/`seq`：主控 0.3.8+ 的会话号与段序号
+/// - `synced`：设备时钟是否已同步（false 时时间不是真实日期）
 class CardFile {
-  const CardFile({required this.name, required this.size});
+  const CardFile({
+    required this.name,
+    required this.size,
+    this.index,
+    this.createdAtSec,
+    this.session,
+    this.seq,
+    this.startAtSec,
+    this.synced,
+  });
+
   factory CardFile.fromJson(Map<String, dynamic> json) => CardFile(
     name: (json['name'] as String?) ?? '',
     size: (json['size'] as num?)?.toInt() ?? 0,
+    index: _intOrNull(json['index']),
+    createdAtSec: _intOrNull(json['created_at'] ?? json['createdAt']),
+    session: _stringOrNull(json['session']),
+    seq: _intOrNull(json['seq']),
+    startAtSec: _intOrNull(json['start_at'] ?? json['startAt']),
+    synced: json['synced'] is bool ? json['synced'] as bool : null,
   );
+
   final String name;
   final int size;
+  final int? index;
+
+  /// Unix 秒；FAT 修改时间（结束时间）。
+  final int? createdAtSec;
+
+  /// 8 位十六进制会话号；旧固件为空。
+  final String? session;
+
+  /// 会话内段序号，从 1 递增。
+  final int? seq;
+
+  /// Unix 秒；段开始时间。优先用它做时间轴定位。
+  final int? startAtSec;
+
+  /// 设备时钟是否已同步；false 时 [startAtSec] 不是真实日期。
+  final bool? synced;
+
+  bool get isApm => name.toUpperCase().endsWith('.APM');
+
+  bool get isTxt => name.toUpperCase().endsWith('.TXT');
+
+  /// 录音起点；缺失 start_at 时无法可靠推算（等转码拿到时长后再算）。
+  DateTime? get startTime => startAtSec == null
+      ? null
+      : DateTime.fromMillisecondsSinceEpoch(startAtSec! * 1000);
+
+  DateTime? get fileModifiedTime => createdAtSec == null
+      ? null
+      : DateTime.fromMillisecondsSinceEpoch(createdAtSec! * 1000);
+
+  static int? _intOrNull(Object? value) =>
+      value is num ? value.toInt() : null;
+
+  static String? _stringOrNull(Object? value) {
+    if (value is! String) return null;
+    final v = value.trim();
+    return v.isEmpty ? null : v;
+  }
 }
 
 /// 下载结果。

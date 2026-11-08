@@ -19,6 +19,8 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
+import 'speech_models.dart';
+
 enum LocalModelKind { asr, vad, speakerSegmentation, speakerEmbedding }
 
 class ModelFileSpec {
@@ -382,5 +384,46 @@ class ModelInstaller {
   static Future<String> _sha256File(File file) async {
     final digest = await sha256.bind(file.openRead()).first;
     return digest.toString();
+  }
+}
+
+/// 用已安装的模型解析管线所需路径；ASR/VAD 缺失返回 null。
+class InstalledSpeechModelProvider implements SpeechModelProvider {
+  InstalledSpeechModelProvider(this.installer);
+
+  final ModelInstaller installer;
+
+  @override
+  Future<SpeechModelPaths?> resolve() async {
+    // VAD 随包：首次调用时复制到模型目录
+    await installer.ensureBundled(sileroVadSpec);
+    final asr = await installer.status(senseVoiceSpec);
+    final vad = await installer.status(sileroVadSpec);
+    if (!asr.installed || !vad.installed) return null;
+
+    final modelPath = await installer.resolve(
+      senseVoiceSpec,
+      'model.int8.onnx',
+    );
+    final tokensPath = await installer.resolve(senseVoiceSpec, 'tokens.txt');
+    final vadPath = await installer.resolve(sileroVadSpec, 'silero_vad.onnx');
+    if (modelPath == null || tokensPath == null || vadPath == null) {
+      return null;
+    }
+
+    final emb = await installer.status(campplusEmbeddingSpec);
+    final embPath = emb.installed
+        ? await installer.resolve(
+            campplusEmbeddingSpec,
+            campplusEmbeddingSpec.files.first.relPath,
+          )
+        : null;
+
+    return SpeechModelPaths(
+      asrModelPath: modelPath,
+      tokensPath: tokensPath,
+      vadPath: vadPath,
+      speakerEmbeddingPath: embPath,
+    );
   }
 }

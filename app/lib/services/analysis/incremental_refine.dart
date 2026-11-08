@@ -15,12 +15,34 @@ class RefineSegmentInput {
     required this.rawText,
     this.speaker,
     this.emotion,
+    this.turns = const [],
   });
 
   final String id;
   final int startMs;
   final int endMs;
   final String rawText;
+  final String? speaker;
+  final String? emotion;
+
+  /// 切片内的原始句（本地 ASR 产出）；云端按 src id 合并/改写后回传。
+  final List<RefineTurnInput> turns;
+}
+
+class RefineTurnInput {
+  const RefineTurnInput({
+    required this.id,
+    required this.startMs,
+    required this.endMs,
+    required this.text,
+    this.speaker,
+    this.emotion,
+  });
+
+  final String id;
+  final int startMs;
+  final int endMs;
+  final String text;
   final String? speaker;
   final String? emotion;
 }
@@ -31,12 +53,40 @@ class RefinedSegment {
     required this.cleanText,
     this.speaker,
     this.emotion,
+    this.turns = const [],
+    this.topicBoundary = false,
   });
 
   final String id;
   final String cleanText;
   final String? speaker;
   final String? emotion;
+
+  /// 云端改写后的 turn；为空时 UI 回退到原始句。
+  final List<RefinedTurn> turns;
+
+  /// 云端判断本片末尾是话题边界（阶段总结的触发信号之一）。
+  final bool topicBoundary;
+}
+
+class RefinedTurn {
+  const RefinedTurn({
+    required this.id,
+    required this.startMs,
+    required this.endMs,
+    required this.speaker,
+    required this.text,
+    required this.sourceTurnIds,
+  });
+
+  final String id;
+  final int startMs;
+  final int endMs;
+  final String speaker;
+  final String text;
+
+  /// 可回溯到 [RefineTurnInput.id]；空表示模型没给来源（会被丢弃）。
+  final List<String> sourceTurnIds;
 }
 
 abstract class SegmentRefiner {
@@ -135,12 +185,10 @@ class IncrementalRefineCoordinator {
             cleanText: source.rawText,
             speaker: source.speaker,
             emotion: source.emotion,
+            turns: _fallbackTurns(source),
           );
       _refined[source.id] = resolved;
-      if (previous == null ||
-          previous.cleanText != resolved.cleanText ||
-          previous.speaker != resolved.speaker ||
-          previous.emotion != resolved.emotion) {
+      if (previous == null || !_same(previous, resolved)) {
         changed.add(resolved);
       }
     }
@@ -152,6 +200,41 @@ class IncrementalRefineCoordinator {
       error: error,
     );
   }
+
+  static bool _same(RefinedSegment a, RefinedSegment b) {
+    if (a.cleanText != b.cleanText ||
+        a.speaker != b.speaker ||
+        a.emotion != b.emotion ||
+        a.topicBoundary != b.topicBoundary ||
+        a.turns.length != b.turns.length) {
+      return false;
+    }
+    for (var i = 0; i < a.turns.length; i++) {
+      final x = a.turns[i];
+      final y = b.turns[i];
+      if (x.id != y.id ||
+          x.text != y.text ||
+          x.speaker != y.speaker ||
+          x.startMs != y.startMs ||
+          x.endMs != y.endMs) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// 云端不可用时，turn 回退为本地原始句（保留时间与说话人），UI 不会空白。
+  static List<RefinedTurn> _fallbackTurns(RefineSegmentInput source) => [
+    for (final turn in source.turns)
+      RefinedTurn(
+        id: turn.id,
+        startMs: turn.startMs,
+        endMs: turn.endMs,
+        speaker: turn.speaker ?? '未区分',
+        text: turn.text,
+        sourceTurnIds: [turn.id],
+      ),
+  ];
 }
 
 /// 云端润色：OpenAI-compatible chat，输入/输出都是 JSON 数组；

@@ -15,8 +15,15 @@ import 'package:flutter/foundation.dart';
 
 import '../../data/seed.dart';
 import '../../services/ai/summary_generator.dart';
+import '../../services/audio/recording_status.dart';
+import '../../services/recordings/recording_pipeline.dart';
+import '../../services/recordings/recording_store.dart';
+import '../../services/recordings/recordings_manifest.dart';
 import '../../services/recordings/recording_sync_service.dart';
+import '../../services/recordings/segment_projection.dart';
 import '../models/record.dart';
+import '../models/recording.dart';
+import '../models/segment_view.dart';
 import '../models/summary.dart';
 import '../storage/storage.dart';
 
@@ -70,9 +77,18 @@ class AppStore extends ChangeNotifier {
   final List<RecordEvent>? _seedOverride;
 
   RecordingSyncService? _recordings;
+  RecordingPipeline? _pipeline;
+  RecordingStore? _recordingStore;
+  RecordingStatusController? _status;
   SummaryGenerator? _generator;
   JsonStore? _json;
   final bool _loadPersisted;
+
+  /// 本地录音文件（含未完成/失败的，供空态与处理状态使用）。
+  List<RecordingFile> recordingFiles = const [];
+
+  /// 分段详情视图：Timeline 与详情页共用同一份 turns/utterances。
+  Map<String, SegmentView> segmentViews = const {};
 
   bool loading = false;
   String? loadError;
@@ -109,6 +125,24 @@ class AppStore extends ChangeNotifier {
     _generator = generator;
   }
 
+  /// 正式版装配：本地转写/润色/分段流水线 + v2 存储。
+  ///
+  /// 与 [attachServices] 二选一：旧链路（云端整文件 ASR）保留给旧测试；
+  /// 有 pipeline 时优先走新链路。
+  void attachPipeline({
+    required RecordingPipeline pipeline,
+    required RecordingStore store,
+    required SummaryGenerator generator,
+    RecordingStatusController? status,
+  }) {
+    _pipeline = pipeline;
+    _recordingStore = store;
+    _generator = generator;
+    _status = status;
+  }
+
+  SegmentView? segmentViewFor(String segmentId) => segmentViews[segmentId];
+
   // ── 启动装载 ────────────────────────────────────────────
   /// 冷启动：恢复导航栈与历史总结卡，再拉本地录音清单。
   Future<void> init() async {
@@ -116,6 +150,15 @@ class AppStore extends ChangeNotifier {
       final store = await _jsonStore();
       final data = await store.read('route');
       restoreState(data);
+    }
+    if (_pipeline != null) {
+      try {
+        await _recordingStore!.migrateFromV1(RecordingsManifest());
+      } on Object catch (e) {
+        debugPrint('[store] v1 迁移失败（不阻塞启动）：$e');
+      }
+      await refreshFromStore();
+      return;
     }
     await refreshEvents();
   }
@@ -128,8 +171,32 @@ class AppStore extends ChangeNotifier {
     return created;
   }
 
+  /// 从 v2 存储读取录音并投影成分段（正式版路径）。
+  Future<void> refreshFromStore() async {
+    final store = _recordingStore;
+    if (store == null) return;
+    loading = true;
+    loadError = null;
+    notifyListeners();
+    try {
+      final files = await store.loadAll(refresh: true);
+      final projection = SegmentProjection.build(files);
+      recordingFiles = files;
+      events = projection.events;
+      segmentViews = projection.views;
+    } on Object catch (e) {
+      loadError = '读取本地录音失败：$e';
+    }
+    loading = false;
+    notifyListeners();
+  }
+
   /// 重新读取本地录音清单（同步设备后调用）。
   Future<void> refreshEvents() async {
+    if (_pipeline != null) {
+      await refreshFromStore();
+      return;
+    }
     final override = _seedOverride;
     if (override != null) {
       events = [...override];
@@ -156,6 +223,8 @@ class AppStore extends ChangeNotifier {
 
   /// 从录音卡同步新录音（下载 + 转码 + 转写），完成后再刷新列表。
   Future<String?> syncRecordings() async {
+    final pipeline = _pipeline;
+    if (pipeline != null) return _syncWithPipeline(pipeline);
     final service = _recordings;
     if (service == null) {
       syncError = '录音同步未就绪，请稍后重试';
@@ -199,6 +268,67 @@ class AppStore extends ChangeNotifier {
       syncText = '';
       notifyListeners();
     }
+  }
+
+  /// v2 流水线同步：真实进度来自下载/切片/转写/润色/分段。
+  Future<String?> _syncWithPipeline(RecordingPipeline pipeline) async {
+    if (pipeline.isBusy) {
+      syncError = '处理已在进行中';
+      notifyListeners();
+      return syncError;
+    }
+    syncError = null;
+    syncStage = SyncStage.listing;
+    syncProgress = 0;
+    syncText = '正在读取录音卡文件列表…';
+    _status?.updateQueue(remaining: 0, active: true);
+    notifyListeners();
+    try {
+      final report = await pipeline.sync(onProgress: _onPipelineProgress);
+      await refreshFromStore();
+      if (report.failed > 0) {
+        syncError = '${report.failed} 条录音处理失败：${report.failures.first}';
+      }
+      return syncError;
+    } on Object catch (e) {
+      syncError = '同步失败：$e';
+      return syncError;
+    } finally {
+      syncStage = null;
+      syncProgress = 0;
+      syncText = '';
+      _status?.updateQueue(remaining: 0, active: false);
+      notifyListeners();
+    }
+  }
+
+  /// 启动/切前台时继续处理本地未完成的录音（不访问设备）。
+  Future<void> processPendingRecordings() async {
+    final pipeline = _pipeline;
+    if (pipeline == null || pipeline.isBusy) return;
+    _status?.updateQueue(remaining: 0, active: true);
+    try {
+      await pipeline.processPending(onProgress: _onPipelineProgress);
+      await refreshFromStore();
+    } on Object catch (e) {
+      debugPrint('[store] 续跑失败：$e');
+    } finally {
+      _status?.updateQueue(remaining: 0, active: false);
+    }
+  }
+
+  void _onPipelineProgress(PipelineProgress p) {
+    syncStage = SyncStage.listing;
+    syncProgress = p.progress;
+    syncText = p.text;
+    final total = p.sliceTotal ?? 0;
+    final index = p.sliceIndex ?? 0;
+    final remaining = total > 0 ? (total - index).clamp(0, total) : 0;
+    _status?.updateQueue(
+      remaining: remaining,
+      active: p.stage != PipelineStage.done,
+    );
+    notifyListeners();
   }
 
   // ── 根导航 ──────────────────────────────────────────────
@@ -356,6 +486,7 @@ class AppStore extends ChangeNotifier {
   }
 
   bool inRange(RecordEvent e, String r) {
+    if (e.live) return false; // 整理中的分段未定稿，不参与总结勾选
     if (r == 'today') return e.dayOffset == 0;
     if (r == 'week') return e.dayOffset <= mondayOffset;
     final n = DateTime.now();
@@ -376,6 +507,8 @@ class AppStore extends ChangeNotifier {
   }
 
   void toggleSel(String id) {
+    final event = eventByIdOrNull(id);
+    if (event != null && event.live) return;
     selIds.contains(id) ? selIds.remove(id) : selIds.add(id);
     notifyListeners();
   }

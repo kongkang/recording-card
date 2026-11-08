@@ -18,6 +18,7 @@ import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 import 'sherpa_runtime.dart';
 import 'slice_planner.dart';
+import 'speech_engine.dart';
 
 class AsrNotReadyException implements Exception {
   const AsrNotReadyException(this.message);
@@ -68,7 +69,7 @@ class AsrResult {
   };
 }
 
-class LocalAsrService {
+class LocalAsrService implements SpeechEngine {
   LocalAsrService({
     this.loadTimeout = const Duration(seconds: 90),
     this.transcribeTimeout = const Duration(seconds: 120),
@@ -103,6 +104,7 @@ class LocalAsrService {
 
   /// 加载声纹嵌入模型（Campplus）。与 pyannote 分割不同，这条路在 iOS 上
   /// 已被唤醒词功能验证过；分段直接用 VAD 语音段，不再单独跑分割模型。
+  @override
   Future<void> loadSpeakerEmbedding(String modelPath) async {
     if (_embeddingLoaded && _embeddingModelPath == modelPath) return;
     await _ensureWorker();
@@ -118,6 +120,7 @@ class LocalAsrService {
   }
 
   /// 计算一段语音的声纹向量。音频太短（模型未 ready）时返回空列表，不抛异常。
+  @override
   Future<List<double>> embedSpeaker(
     Float32List samples, {
     int sampleRate = 16000,
@@ -140,6 +143,7 @@ class LocalAsrService {
   }
 
   /// 加载 VAD 模型（与 ASR 独立，可只做切片不做转写）。
+  @override
   Future<void> loadVad(String vadPath) async {
     if (_vadLoaded && _vadPath == vadPath) return;
     await _ensureWorker();
@@ -154,6 +158,7 @@ class LocalAsrService {
   }
 
   /// 检测语音段（采样点区间）。没有语音时返回空列表。
+  @override
   Future<List<SpeechSpan>> detectSpeech(
     Float32List samples, {
     int sampleRate = 16000,
@@ -184,6 +189,7 @@ class LocalAsrService {
   }
 
   /// 加载/切换模型。相同路径重复调用直接返回。
+  @override
   Future<void> load({
     required String modelPath,
     required String tokensPath,
@@ -217,6 +223,7 @@ class LocalAsrService {
   }
 
   /// 转写一段 16 kHz 单声道 PCM。空文本正常返回。
+  @override
   Future<AsrResult> transcribe(
     Float32List samples, {
     int sampleRate = 16000,
@@ -267,6 +274,7 @@ class LocalAsrService {
     _loaded = false;
   }
 
+  @override
   Future<void> dispose() async {
     try {
       if (_command != null) {

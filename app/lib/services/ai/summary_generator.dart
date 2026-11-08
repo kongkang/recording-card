@@ -115,6 +115,16 @@ class SummaryGenerator {
       buffer.writeln('[${e.id}] ${e.title}（${e.time}）');
       final body = e.longText.trim().isEmpty ? e.brief : e.longText;
       buffer.writeln(body.isEmpty ? '（无转写内容）' : body);
+      // 润色后的对话是总结的最可靠依据；原文过长时只带摘要，避免超上下文
+      if (e.dialog.isNotEmpty) {
+        final dialog = [
+          for (final t in e.dialog) '${t.spk}：${t.text}',
+        ].join('\n');
+        if (dialog.length <= 4000) {
+          buffer.writeln('对话：');
+          buffer.writeln(dialog);
+        }
+      }
       buffer.writeln();
     }
     return buffer.toString();

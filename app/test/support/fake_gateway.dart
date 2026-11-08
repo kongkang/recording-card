@@ -3,8 +3,11 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:recording_card/core/device/card_gateway.dart';
+import 'package:recording_card/services/transcribe/wav_io.dart';
 
 const defaultSnapshot = CardSnapshot(
   batteryLevel: 82,
@@ -38,8 +41,28 @@ class FakeCardGateway implements CardGateway {
       uploaded: 1,
       running: false,
     ),
+    this.deviceFiles = const [],
+    this.writeDownload = false,
+    this.transcodeSeconds = 0,
+    this.failDownload,
+    this.failTranscode,
   }) : current = initialSnapshot,
        savedCredentials = List<CardWifiCredential>.of(wifiCredentials);
+
+  /// files() 返回的设备文件；默认空（保持旧测试行为）。
+  List<CardFile> deviceFiles;
+
+  /// download() 是否真的落盘（管线测试用）。
+  bool writeDownload;
+
+  /// transcode() 写出的 WAV 时长（秒）；0 表示沿用旧的空结果。
+  int transcodeSeconds;
+
+  CardException? failDownload;
+  CardException? failTranscode;
+  Set<String> failDownloadNames = {};
+  int downloadCalls = 0;
+  int transcodeCalls = 0;
 
   /// 当前设备快照；null = 未连接。
   CardSnapshot? current;
@@ -129,18 +152,46 @@ class FakeCardGateway implements CardGateway {
   Future<void> mark() async {}
 
   @override
-  Future<List<CardFile>> files() async => const [];
+  Future<List<CardFile>> files() async => deviceFiles;
 
   @override
-  Future<CardDownload> download(String name, String dir) async =>
-      CardDownload(path: '$dir/$name', bytesWritten: 0, originalName: name);
+  Future<CardDownload> download(String name, String dir) async {
+    downloadCalls++;
+    if (failDownload != null) throw failDownload!;
+    if (failDownloadNames.contains(name)) {
+      throw CardException(CardErrorKind.device, '注入失败：$name');
+    }
+    final path = '$dir/$name';
+    if (writeDownload) {
+      await Directory(dir).create(recursive: true);
+      await File(path).writeAsBytes(Uint8List(64), flush: true);
+    }
+    return CardDownload(path: path, bytesWritten: 64, originalName: name);
+  }
 
   @override
   Future<void> deleteFile(String name) async {}
 
   @override
-  Future<CardAudio> transcode(String apmPath, String wavPath) async =>
-      CardAudio(path: wavPath, samples: 0, durationSecs: 0);
+  Future<CardAudio> transcode(String apmPath, String wavPath) async {
+    transcodeCalls++;
+    if (failTranscode != null) throw failTranscode!;
+    if (transcodeSeconds <= 0) {
+      return CardAudio(path: wavPath, samples: 0, durationSecs: 0);
+    }
+    final samples = Float32List(transcodeSeconds * 16000);
+    // 低幅正弦，避免全零被特殊处理；内容由 FakeSpeechEngine 决定
+    for (var i = 0; i < samples.length; i++) {
+      samples[i] = 0.01 * ((i % 160) - 80) / 80;
+    }
+    await Directory(File(wavPath).parent.path).create(recursive: true);
+    await File(wavPath).writeAsBytes(encodeWav(samples), flush: true);
+    return CardAudio(
+      path: wavPath,
+      samples: samples.length,
+      durationSecs: transcodeSeconds.toDouble(),
+    );
+  }
 
   @override
   Future<List<CardWifiNetwork>> scanWifi() async {

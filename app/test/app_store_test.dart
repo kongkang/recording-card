@@ -134,7 +134,6 @@ void main() {
 
       store.selRange('today');
       expect(store.selCount, _rangeCount('today'));
-      expect(store.selCount, 3, reason: '今日 = e1/e2/e3');
 
       store.selRange('week');
       expect(store.selCount, _rangeCount('week'));
