@@ -1,0 +1,94 @@
+{
+  "tool": "qa_audit",
+  "command": "source",
+  "ok": false,
+  "result": {
+    "findings": [
+      {
+        "id": "AUTH-LOCAL",
+        "severity": "BLOCKER",
+        "path": "app/lib/services/auth_service.dart",
+        "reason": "legacy nonempty-password session assignment"
+      },
+      {
+        "id": "SEED-DEFAULT",
+        "severity": "BLOCKER",
+        "path": "app/lib/core/store/app_store.dart",
+        "reason": "default production seed"
+      },
+      {
+        "id": "SEED-SUMMARY",
+        "severity": "BLOCKER",
+        "path": "app/lib/core/store/app_store.dart",
+        "reason": "seed summary result fallback"
+      },
+      {
+        "id": "MOCK-DEFAULT",
+        "severity": "BLOCKER",
+        "path": "app/lib/core/store/device_store.dart",
+        "reason": "default mock device fallback"
+      },
+      {
+        "id": "FFI-TEMP",
+        "severity": "BLOCKER",
+        "path": "app/rust/card_bridge/src/lib.rs",
+        "reason": "temporary CString posted to asynchronous Dart listener"
+      },
+      {
+        "id": "FFI-FREE-NOOP",
+        "severity": "BLOCKER",
+        "path": "app/rust/card_bridge/src/lib.rs",
+        "reason": "native string release is no-op"
+      },
+      {
+        "id": "SYNC-TIMER",
+        "severity": "BLOCKER",
+        "path": "app/lib/core/store/device_store.dart",
+        "reason": "known timer-driven sync success"
+      },
+      {
+        "id": "WIFI-TIMER",
+        "severity": "REVIEW",
+        "path": "app/lib/core/store/device_store.dart",
+        "reason": "known local Wi-Fi completion assignment; verify native result gate"
+      },
+      {
+        "id": "OTA-TIMER",
+        "severity": "REVIEW",
+        "path": "app/lib/core/store/device_store.dart",
+        "reason": "OTA completion assignment; verify signed package/authorization/version gate"
+      },
+      {
+        "id": "MISSING-MODULE",
+        "severity": "UNVERIFIED",
+        "path": "app/lib/services/model_gateway/model_gateway.dart",
+        "reason": "not integrated; do not invent service tests/API"
+      },
+      {
+        "id": "MISSING-MODULE",
+        "severity": "UNVERIFIED",
+        "path": "app/lib/services/recordings",
+        "reason": "not integrated; do not invent service tests/API"
+      },
+      {
+        "id": "MISSING-MODULE",
+        "severity": "UNVERIFIED",
+        "path": "app/lib/services/transcription",
+        "reason": "not integrated; do not invent service tests/API"
+      },
+      {
+        "id": "MISSING-MODULE",
+        "severity": "UNVERIFIED",
+        "path": "app/lib/services/analysis",
+        "reason": "not integrated; do not invent service tests/API"
+      },
+      {
+        "id": "MISSING-MODULE",
+        "severity": "UNVERIFIED",
+        "path": "app/lib/services/export",
+        "reason": "not integrated; do not invent service tests/API"
+      }
+    ],
+    "meaning": "heuristic known-risk detector only; zero findings is NOT full acceptance"
+  }
+}

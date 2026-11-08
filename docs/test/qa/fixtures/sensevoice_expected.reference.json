@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "reference_only": true,
+  "reference_commit": "reai_mobile_app 7f9d13a; lib/services/model_manager/model_registry.dart",
+  "note": "Reference metadata only. Module D must confirm allowed model source/license/version. No model is bundled or downloaded by QA.",
+  "files": [
+    {"path": "model.int8.onnx", "size_bytes": 239233841, "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51"},
+    {"path": "tokens.txt", "size_bytes": 315894, "sha256": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"}
+  ]
+}

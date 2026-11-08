@@ -1,0 +1,10 @@
+00:00 +0: loading /home/ubuntu/recording-card-worktrees/f-qa/app/test/full_flow_fixture_test.dart
+00:00 +0: qa fixture is explicit, fresh, and unrelated to production seed ids
+00:00 +1: qa fixture preserves original disfluency separately from cleaned text
+00:00 +2: qa result contains only selected source with legal clock range
+00:00 +3: qa result round-trip keeps source mapping and raw markdown
+00:00 +4: qa source oracle rejects unselected source
+00:00 +5: qa source oracle rejects fabricated id and duplicate source
+00:00 +6: qa source oracle rejects range outside selected recording
+00:00 +7: qa source oracle rejects completed empty-source summary
+00:00 +8: All tests passed!

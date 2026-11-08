@@ -1,0 +1,11 @@
+{
+  "tool": "qa_audit",
+  "command": "flow",
+  "ok": true,
+  "result": {
+    "evidence_kind": "fixture",
+    "record_count": 2,
+    "task_count": 4,
+    "meaning": "evidence structure valid; caller claims are not independently verified"
+  }
+}

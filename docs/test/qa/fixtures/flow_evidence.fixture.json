@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "fixture",
+  "note": "QA-only expected evidence schema, not runtime service DTO or real acceptance.",
+  "defaults": {"auth": "signed_out", "events_count": 0, "mock_enabled": false},
+  "records": [
+    {"id": "qa-orchid", "start_ms": 0, "end_ms": 120000, "raw_text": "嗯，周二，啊，检查湿度。"},
+    {"id": "qa-lantern", "start_ms": 0, "end_ms": 180000, "raw_text": "呃，比较纸张，耐用性。"}
+  ],
+  "selected_ids": ["qa-orchid"],
+  "summary": {
+    "source_ids": ["qa-orchid"],
+    "points": [{"title": "检查周期", "refs": [{"event_id": "qa-orchid", "start_ms": 0, "end_ms": 60000}]}]
+  },
+  "auth_attempt": {"method": "legacy_password", "state": "signed_out"},
+  "asr": {"mode": "local", "configured": false, "state": "failed", "error": "ASR model not configured"},
+  "tasks": [
+    {"id": "download-fixture", "kind": "download", "operation": "ap_download", "state": "succeeded", "progress": 100, "outcome_ref": "fixture-file"},
+    {"id": "wifi-fixture", "kind": "wifi", "state": "failed", "progress": null, "error": "gateway unavailable"},
+    {"id": "ota-fixture", "kind": "ota", "state": "failed", "progress": null, "allow_hardware_write": false, "error": "firmware manifest/authorization absent"},
+    {"id": "take-denied", "kind": "download", "operation": "ble_take", "state": "failed", "allow_destructive": false, "error": "destructive operation not authorized"}
+  ],
+  "receipts": {"fixture-file": {"origin": "repository", "confirmed": true, "evidence_kind": "fixture"}}
+}

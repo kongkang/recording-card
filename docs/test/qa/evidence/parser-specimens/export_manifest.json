@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "fixture",
+  "required_text": [
+    "QA ORCHID",
+    "Tuesday moisture check",
+    "qa-orchid 09:10-09:11"
+  ],
+  "formats": {
+    "html": "specimen.html",
+    "markdown": "specimen.md",
+    "pdf": "specimen.pdf",
+    "png": "specimen.png",
+    "docx": "specimen.docx"
+  },
+  "note": "QA parser specimen only. PNG has no text; semantic content/native sharing NOT tested."
+}

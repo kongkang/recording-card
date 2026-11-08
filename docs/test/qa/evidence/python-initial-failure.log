@@ -1,0 +1,54 @@
+test_five_real_parser_specimens_not_production_claim (test_qa_audit.ArtifactAuditTest.test_five_real_parser_specimens_not_production_claim) ... ok
+test_html_script_is_rejected (test_qa_audit.ArtifactAuditTest.test_html_script_is_rejected) ... ok
+test_missing_format_is_rejected (test_qa_audit.ArtifactAuditTest.test_missing_format_is_rejected) ... ok
+test_missing_model_is_rejected (test_qa_audit.ArtifactAuditTest.test_missing_model_is_rejected) ... ok
+test_missing_source_text_is_rejected (test_qa_audit.ArtifactAuditTest.test_missing_source_text_is_rejected) ... ok
+test_model_digest_and_size_are_both_checked (test_qa_audit.ArtifactAuditTest.test_model_digest_and_size_are_both_checked) ... FAIL
+test_png_crc_error_is_rejected (test_qa_audit.ArtifactAuditTest.test_png_crc_error_is_rejected) ... ok
+test_renamed_text_is_not_pdf (test_qa_audit.ArtifactAuditTest.test_renamed_text_is_not_pdf) ... ok
+test_renamed_zip_is_not_docx (test_qa_audit.ArtifactAuditTest.test_renamed_zip_is_not_docx) ... ok
+test_truncated_png_is_rejected (test_qa_audit.ArtifactAuditTest.test_truncated_png_is_rejected) ... ok
+test_actual_ota_authorization_required_in_device_evidence (test_qa_audit.FlowAuditTest.test_actual_ota_authorization_required_in_device_evidence) ... ok
+test_approved_shape_remains_fixture_not_real_login (test_qa_audit.FlowAuditTest.test_approved_shape_remains_fixture_not_real_login) ... ok
+test_ble_take_fails_closed (test_qa_audit.FlowAuditTest.test_ble_take_fails_closed) ... ok
+test_default_mock_is_rejected (test_qa_audit.FlowAuditTest.test_default_mock_is_rejected) ... ok
+test_default_seed_is_rejected (test_qa_audit.FlowAuditTest.test_default_seed_is_rejected) ... ok
+test_default_signed_in_is_rejected (test_qa_audit.FlowAuditTest.test_default_signed_in_is_rejected) ... ok
+test_duplicate_record_id (test_qa_audit.FlowAuditTest.test_duplicate_record_id) ... ok
+test_empty_records_with_no_summary_are_legal (test_qa_audit.FlowAuditTest.test_empty_records_with_no_summary_are_legal) ... ok
+test_empty_summary_sources_rejected (test_qa_audit.FlowAuditTest.test_empty_summary_sources_rejected) ... ok
+test_fabricated_point_source (test_qa_audit.FlowAuditTest.test_fabricated_point_source) ... ok
+test_fabricated_selection (test_qa_audit.FlowAuditTest.test_fabricated_selection) ... ok
+test_fake_receipt_cannot_be_claimed_as_device (test_qa_audit.FlowAuditTest.test_fake_receipt_cannot_be_claimed_as_device) ... ok
+test_missing_model_cannot_succeed (test_qa_audit.FlowAuditTest.test_missing_model_cannot_succeed) ... ok
+test_missing_state_or_pkce_is_rejected (test_qa_audit.FlowAuditTest.test_missing_state_or_pkce_is_rejected) ... ok
+test_oauth_fixture_requires_verified_profile_and_storage (test_qa_audit.FlowAuditTest.test_oauth_fixture_requires_verified_profile_and_storage) ... ok
+test_ota_version_must_be_verified (test_qa_audit.FlowAuditTest.test_ota_version_must_be_verified) ... ok
+test_password_cannot_create_session (test_qa_audit.FlowAuditTest.test_password_cannot_create_session) ... ok
+test_point_out_of_range (test_qa_audit.FlowAuditTest.test_point_out_of_range) ... ok
+test_progress_overflow_rejected (test_qa_audit.FlowAuditTest.test_progress_overflow_rejected) ... ok
+test_raw_original_required (test_qa_audit.FlowAuditTest.test_raw_original_required) ... ok
+test_unselected_summary_source (test_qa_audit.FlowAuditTest.test_unselected_summary_source) ... ok
+test_valid_fixture_label_is_preserved (test_qa_audit.FlowAuditTest.test_valid_fixture_label_is_preserved) ... ok
+test_wifi_no_timer_only_success (test_qa_audit.FlowAuditTest.test_wifi_no_timer_only_success) ... ok
+test_wifi_receipt_requires_connected (test_qa_audit.FlowAuditTest.test_wifi_receipt_requires_connected) ... ok
+test_baseline_detector_rejects_prototype_mutation (test_qa_audit.SourceAuditTest.test_baseline_detector_rejects_prototype_mutation) ... ok
+test_detector_reports_moved_sources_as_unverified (test_qa_audit.SourceAuditTest.test_detector_reports_moved_sources_as_unverified) ... ok
+test_detects_known_baseline_risks_without_executing_app (test_qa_audit.SourceAuditTest.test_detects_known_baseline_risks_without_executing_app) ... ok
+
+======================================================================
+FAIL: test_model_digest_and_size_are_both_checked (test_qa_audit.ArtifactAuditTest.test_model_digest_and_size_are_both_checked)
+----------------------------------------------------------------------
+qa_audit.AuditError: ASR size mismatch
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/ubuntu/recording-card-worktrees/f-qa/docs/test/qa/scripts/test_qa_audit.py", line 181, in test_model_digest_and_size_are_both_checked
+    with self.assertRaisesRegex(qa.AuditError, "checksum mismatch"):
+AssertionError: "checksum mismatch" does not match "ASR size mismatch"
+
+----------------------------------------------------------------------
+Ran 37 tests in 0.079s
+
+FAILED (failures=1)

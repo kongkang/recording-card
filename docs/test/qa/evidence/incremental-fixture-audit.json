@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "result": {
+    "evidence_kind": "fixture",
+    "stable_records": 4,
+    "meaning": "offline evidence shape only; raw/hash/silence/provenance claims need actual pipeline capture"
+  }
+}

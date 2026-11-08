@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "fixture",
+  "note": "Hashes are SHA256 of non-sensitive strings QA raw A/B/C/D. This fixture is not real pipeline evidence.",
+  "raw_before_sha256": {
+    "A": "276149dde0a221a58e1204859f4bae07e0879ce940f6385d99e6e1521502ba0c",
+    "B": "fccbe714cf5df9393aa00ec82d42b96f4aaafb3d0179775a00e0bfd827fefa00",
+    "C": "c6f577e24f8858178fe7f124b958aac0b95a96eb1f569f1849a5fbf161e93492",
+    "D": "5c8c640125a4349a344a567f2e936d0f1ca561299b580201ef43839ef80a4524"
+  },
+  "raw_after_sha256": {
+    "A": "276149dde0a221a58e1204859f4bae07e0879ce940f6385d99e6e1521502ba0c",
+    "B": "fccbe714cf5df9393aa00ec82d42b96f4aaafb3d0179775a00e0bfd827fefa00",
+    "C": "c6f577e24f8858178fe7f124b958aac0b95a96eb1f569f1849a5fbf161e93492",
+    "D": "5c8c640125a4349a344a567f2e936d0f1ca561299b580201ef43839ef80a4524"
+  },
+  "cloud_writes_raw": false,
+  "windows": [
+    {"input_ids": ["A", "B", "C"], "result_ids": ["A", "B", "C"], "source_map": {"A": "source-A", "B": "source-B", "C": "source-C"}},
+    {"input_ids": ["B", "C", "D"], "result_ids": ["B", "C", "D"], "source_map": {"B": "source-B", "C": "source-C", "D": "source-D"}},
+    {"input_ids": ["B", "C", "D"], "result_ids": ["B", "C", "D"], "source_map": {"B": "source-B", "C": "source-C", "D": "source-D"}}
+  ],
+  "final_record_ids": ["A", "B", "C", "D"],
+  "record_intervals": {"A": [0, 120000]},
+  "silence_stages": [
+    {"record_id": "A", "start_ms": 0, "end_ms": 45000, "boundary_basis": "detected_silence", "silence_ms": 1000},
+    {"record_id": "A", "start_ms": 46000, "end_ms": 120000, "boundary_basis": "detected_silence", "silence_ms": 1000}
+  ],
+  "views": [{"record_id": "A", "raw_source_id": "source-A", "polished_source_id": "source-A", "summary_source_id": "source-A"}],
+  "manual_summary": {"selected_record_ids": ["A", "B"], "used_polished_record_ids": ["A", "B"], "existing_summary_ids": ["summary-A"], "used_existing_summary_ids": ["summary-A"], "used_raw_as_polished": false},
+  "metadata": [
+    {"record_id": "A", "speaker": {"value": "A", "basis": "inferred", "uncertain": true}, "emotion": {"value": null, "basis": "unknown"}, "time": {"value": 0, "basis": "asr"}}
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "tool": "qa_audit",
+  "command": "baseline",
+  "ok": true,
+  "result": {
+    "protected_prototype": "unchanged",
+    "legacy_names_retained": 20,
+    "note": "names/hash retention is not assertion quality or execution evidence"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "tool": "qa_audit",
+  "command": "exports",
+  "ok": true,
+  "result": {
+    "evidence_kind": "fixture",
+    "files": {
+      "html": {
+        "bytes": 237,
+        "sha256": "525e695b24a4ec866ebec53da789be55b1ecb3479dbc1ebdd3e674b3e1aa6787",
+        "text_content": "checked"
+      },
+      "markdown": {
+        "bytes": 67,
+        "sha256": "84ad1efc83fd0cd6d8bdc17c8f9de65ed773173ec7a8a2baba2c8568e1e46567",
+        "text_content": "checked"
+      },
+      "pdf": {
+        "bytes": 666,
+        "sha256": "ee9bc911b7842fdd307e953e9721184204e1f1de81626cdbacb5dfb005719794",
+        "text_content": "checked"
+      },
+      "png": {
+        "bytes": 79,
+        "sha256": "15e1089f18d1148b509c4bb079110f2293f9491d48d02c75aa66f51ed931fabd",
+        "width": 16,
+        "height": 16,
+        "visual_content": "NOT_VERIFIED"
+      },
+      "docx": {
+        "bytes": 843,
+        "sha256": "d4157876dc670dd9337ab3e40b4ea5852de1adc597bbd7cde564297a0841948f",
+        "text_content": "checked"
+      }
+    },
+    "acceptance": "structural/text checks only; PNG visual review and native share remain required"
+  }
+}

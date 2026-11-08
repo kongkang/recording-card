@@ -1,0 +1,54 @@
+{
+  "baseline_commit": "ef02d84",
+  "protected": {
+    "prototype/index.html": "a196db75f123a20a5ac30d1e407a6e87edfc35259e95245f1ff35c76d2ec2a53",
+    "prototype/verify.cjs": "c07fd44d6865a9267081ec2d7b73f564ba8048f665a99f788cb9342fd8eed640"
+  },
+  "legacy_tests": [
+    {
+      "path": "app/test/auth_test.dart",
+      "sha256": "c57783987d909ea4af40b731330f2e49977a0d9c2caa45a94dc0a1fab0252866",
+      "names": [
+        "未配置端点：本地会话模式，不发起网络请求",
+        "空账号 / 空密码返回错误文案，不建立会话",
+        "有效凭据建立本地会话并通知",
+        "login-gate：行内错误 → 登录成功进入应用外壳"
+      ]
+    },
+    {
+      "path": "app/test/verify_device_test.dart",
+      "sha256": "a1e8c20e4729f0669ed01a79550dfd7887aa460cd3cbea4b82ede5a3ebe0d7f2",
+      "names": [
+        "device-sheet / sheet-single-rows / battery-row / rec-clock-tick / clock-stable / rel-sync / wifi-count",
+        "sync-now / sync-cooldown",
+        "two-stage-fw / fw-lock",
+        "wifi-setup / wifi-count"
+      ]
+    },
+    {
+      "path": "app/test/verify_narrow_test.dart",
+      "sha256": "fdec3a049ea5f2b568a4e9e2768d0b16e153954aadacf0de173e4a4a1ae4b713",
+      "names": [
+        "fixed-chrome / crumb-root-hidden / battery-capsule / no-sim-labels",
+        "two-line-card / expand-collapse / detail-entry / subpage-hides-nav / detail-tabs-raw",
+        "select-mode / tabs-lock-on-summary / range-* / tap-toggle / sumbar-rows",
+        "gen-status-view / generate-progress / sum-tabs / default-all-view",
+        "toc-float / tabs-single / pt-default-open / point-expand / point-trace",
+        "refs-tab / detail-backlink / history-flatten",
+        "src-tab-loop / export-sheet",
+        "cancel-summary",
+        "setting-toggle"
+      ]
+    },
+    {
+      "path": "app/test/verify_wide_test.dart",
+      "sha256": "bc028d0f00f639515d32a7075cd0114c67c699e44e4dc7ba4a533fb279706823",
+      "names": [
+        "wide-two-pane / wide-list-stays / wide-crumb-off",
+        "pane-back / wide-flatten / fresh-from-list",
+        "session-restore"
+      ]
+    }
+  ],
+  "test_count": 20
+}
