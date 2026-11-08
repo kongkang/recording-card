@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
 import '../core/theme/tokens.dart';
+import '../services/audio/recording_status.dart';
 import '../widgets/store_scope.dart';
 import 'detail_page.dart';
 import 'setting_page.dart';
@@ -17,9 +18,16 @@ import 'summary_result_page.dart';
 import 'timeline_page.dart';
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.store, this.device, this.onDeviceCreated});
+  const AppShell({
+    super.key,
+    required this.store,
+    this.device,
+    this.recordingStatus,
+    this.onDeviceCreated,
+  });
   final AppStore store;
   final DeviceStore? device;
+  final RecordingStatusController? recordingStatus;
 
   /// dev 驱动注册内部 DeviceStore 用（release 不传）
   final void Function(DeviceStore)? onDeviceCreated;
@@ -30,18 +38,33 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   late final DeviceStore _device = widget.device ?? DeviceStore();
+  late final RecordingStatusController _recording =
+      widget.recordingStatus ?? RecordingStatusController();
 
   @override
   void initState() {
     super.initState();
     if (widget.device == null) widget.onDeviceCreated?.call(_device);
+    _device.addListener(_syncRecordingStatus);
+    _syncRecordingStatus();
     // 启动即核对一次蓝牙链路：连着卡就直接展示真实状态，没连就等用户点胶囊去扫描
     unawaited(_device.restoreLink());
   }
 
+  /// 设备录音态 → Timeline 顶部状态块；转写/切片细粒度事件由后续管线接入。
+  void _syncRecordingStatus() {
+    if (_device.isRecording) {
+      if (!_recording.isRecording) _recording.startRecording();
+    } else if (_recording.phase != RecordingPhase.idle) {
+      _recording.stopRecording();
+    }
+  }
+
   @override
   void dispose() {
+    _device.removeListener(_syncRecordingStatus);
     if (widget.device == null) _device.dispose();
+    if (widget.recordingStatus == null) _recording.dispose();
     super.dispose();
   }
 
@@ -69,7 +92,11 @@ class _AppShellState extends State<AppShell> {
                 backgroundColor: Theme.of(context).scaffoldBackgroundColor,
                 body: Stack(
                   children: [
-                    if (wide) _WideLayout(device: _device) else _NarrowLayout(device: _device),
+                    if (wide)
+                      _WideLayout(device: _device, recordingStatus: _recording)
+                    else
+                      _NarrowLayout(
+                          device: _device, recordingStatus: _recording),
                     StatusSheetOverlay(store: _device),
                   ],
                 ),
@@ -216,8 +243,9 @@ Widget _stackTopPage(AppStore store, {required bool wide}) {
 }
 
 class _NarrowLayout extends StatelessWidget {
-  const _NarrowLayout({required this.device});
+  const _NarrowLayout({required this.device, required this.recordingStatus});
   final DeviceStore device;
+  final RecordingStatusController recordingStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -244,7 +272,8 @@ class _NarrowLayout extends StatelessWidget {
                 child: Offstage(
                   offstage: store.subStack.isNotEmpty,
                   child: switch (store.rootTab) {
-                    RootTab.timeline => const TimelinePage(),
+                    RootTab.timeline =>
+                      TimelinePage(recordingStatus: recordingStatus),
                     RootTab.setting => const SettingPage(),
                   },
                 ),
@@ -290,8 +319,9 @@ class _NarrowLayout extends StatelessWidget {
 }
 
 class _WideLayout extends StatelessWidget {
-  const _WideLayout({required this.device});
+  const _WideLayout({required this.device, required this.recordingStatus});
   final DeviceStore device;
+  final RecordingStatusController recordingStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -306,7 +336,8 @@ class _WideLayout extends StatelessWidget {
             children: [
               SizedBox(
                 width: 380,
-                child: TimelinePage(asLeftPane: true),
+                child: TimelinePage(
+                    asLeftPane: true, recordingStatus: recordingStatus),
               ),
               Container(width: 1, color: RCColors.sep),
               Expanded(
