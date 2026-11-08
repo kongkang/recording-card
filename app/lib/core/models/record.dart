@@ -38,3 +38,48 @@ class RecordEvent {
     required this.raw,
   });
 }
+
+/// 持久化序列化（本地清单用）。字段名保持短、稳定，便于向后兼容。
+extension RecordEventJson on RecordEvent {
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'off': dayOffset,
+        'title': title,
+        'brief': brief,
+        'long': longText,
+        'time': time,
+        'dur': dur,
+        'spk': speakers,
+        'mark': mark,
+        'map': srcMap,
+        'dlg': [
+          for (final t in dialog) [t.spk, t.text, t.src]
+        ],
+        'raw': [
+          for (final t in raw) [t.spk, t.text, t.src]
+        ],
+      };
+}
+
+/// 反序列化；缺字段按空值兜底，不因历史数据缺失崩溃。
+RecordEvent recordEventFromJson(Map<String, dynamic> j) {
+  List<TurnLine> turns(Object? value) => [
+        for (final t in (value as List? ?? const []))
+          if (t is List && t.length >= 3)
+            TurnLine('${t[0]}', '${t[1]}', '${t[2]}'),
+      ];
+  return RecordEvent(
+    id: '${j['id'] ?? ''}',
+    dayOffset: (j['off'] as num?)?.toInt() ?? 0,
+    title: '${j['title'] ?? ''}',
+    brief: '${j['brief'] ?? ''}',
+    longText: '${j['long'] ?? ''}',
+    time: '${j['time'] ?? ''}',
+    dur: '${j['dur'] ?? ''}',
+    speakers: '${j['spk'] ?? ''}',
+    mark: '${j['mark'] ?? ''}',
+    srcMap: '${j['map'] ?? ''}',
+    dialog: turns(j['dlg']),
+    raw: turns(j['raw']),
+  );
+}

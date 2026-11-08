@@ -3,9 +3,14 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<string>zh-Hans</string>
 	<key>CFBundleDisplayName</key>
-	<string>Recording Card</string>
+	<string>录音卡</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh-Hans</string>
+		<string>en</string>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,21 +18,43 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>recording_card</string>
+	<string>录音卡</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(FLUTTER_BUILD_NAME)</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.reai.recordingcard.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>reai-mobile</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>录音卡需要蓝牙连接你的录音卡设备，同步录音与设备状态。</string>
+	<string>录音卡通过蓝牙与你的录音卡设备保持连接，用于同步录音、查看电量与录音状态、下发录音命令。不开启蓝牙将无法连接设备。</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>录音卡需要蓝牙连接你的录音卡设备，同步录音与设备状态。</string>
+	<string>录音卡通过蓝牙与你的录音卡设备保持连接，用于同步录音、查看电量与录音状态、下发录音命令。不开启蓝牙将无法连接设备。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>为录音卡设备配置 Wi-Fi 时，App 需要访问局域网，以发现设备热点并完成配网；聊天记录与个人资料不会因此上传。</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_rc._tcp</string>
+		<string>_http._tcp</string>
+	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

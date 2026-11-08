@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App 主背景（与 lib/core/theme/tokens.dart 的 RCColors.bg 一致：米白） -->
+    <color name="rc_bg">#FAFAF8</color>
+    <!-- 自适应图标的背景层颜色 -->
+    <color name="ic_launcher_background">#FAFAF8</color>
+</resources>

@@ -11,4 +11,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [dependencies]
 reai-card-sdk = { git = "https://github.com/ReAI-com/reai-card-sdk.git", tag = "v0.0.6" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[dev-dependencies]
+# 仅用于诊断示例（examples/raw_scan.rs）：绕过 SDK 的服务过滤，直看广播包内容
+btleplug = "0.12"
+uuid = "1"

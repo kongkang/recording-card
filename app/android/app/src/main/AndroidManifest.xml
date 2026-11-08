@@ -1,8 +1,55 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      录音卡权限清单（定位为「硬件伴侣 App」：BLE 连接录音卡、Wi-Fi 配网、可选云端转写）
+      分版本声明的原因：Android 12（API 31）起蓝牙拆分为运行时权限，12 以下只能用定位权限做扫描；
+      API 33 起 Wi-Fi 相关改为 NEARBY_WIFI_DEVICES。老权限用 maxSdkVersion 收口，避免新系统上多要权限。
+    -->
+
+    <!-- Android 12+：扫描周边录音卡（neverForLocation：我们不用蓝牙结果推断位置，可免定位权限） -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <!-- Android 12+：连接设备、读取设备信息 -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Android 11 及以下：经典蓝牙与 BLE 的基础权限 -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <!-- Android 11 及以下：BLE 扫描在系统层面强制要求定位权限（即便不取位置） -->
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.ACCESS_COARSE_LOCATION"
+        android:maxSdkVersion="30" />
+    <!-- Wi-Fi 配网：读写当前网络状态、发起连接 -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- Android 13+：扫描/连接录音卡热点（neverForLocation：同样不用于定位） -->
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation" />
+    <!-- 可选云端转写 / 版本检查 / 固件更新 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- BLE 是核心能力但不设为 required，避免不带蓝牙的平板在商店无法安装；运行时再做能力判断 -->
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="false" />
+
     <application
-        android:label="recording_card"
+        android:label="录音卡"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="false">
+        <!-- allowBackup=false：录音与转写内容不进系统云备份（体积大且涉及隐私）。
+             usesCleartextTraffic=false：所有网络请求强制 HTTPS；若固件配网页只提供
+             局域网 http，需要另加 networkSecurityConfig 例外（见 docs/RELEASE.md 待确认项 2）。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -23,6 +70,13 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- OAuth 回调：系统浏览器授权完成后回到本 App（scheme 与 RC_OAUTH_REDIRECT 一致） -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="reai-mobile" android:host="callback"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

@@ -31,13 +31,34 @@ dependencies:
   ffi: ^2.1.0
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # ── 运行时能力（正式版依赖集合，逐个说明用途）──
+  shared_preferences: ^2.5.5      # 本地持久化：设置开关、导航栈、总结卡、Wi-Fi 收藏清单
+  flutter_secure_storage: ^11.2.0 # OAuth token（iOS Keychain / Android EncryptedSharedPreferences）
+  path_provider: ^2.1.6           # 应用支持目录/临时目录（录音、导出文件）
+  package_info_plus: ^10.2.2      # 关于页版本号（与构建产物一致，不手写常量）
+  http: ^1.6.0                    # 模型网关请求（ASR / 总结）
+  share_plus: ^13.3.1             # 导出后调起系统分享面板
+  pdf: ^3.12.0                    # 导出 PDF
+  flutter_web_auth_2: ^5.1.0      # OAuth 登录：ASWebAuthenticationSession / Chrome Custom Tabs
+  crypto: ^3.0.8                  # PKCE S256 摘要（OAuth 安全要求，plain 仅作降级）
+
+# pdf 3.12.0 把 archive 钉在 <4.1.0，而 image 4.11 的 PNG 解码依赖 archive 4.1 的
+# decodeLazy；4.10.2 的 PNG 解码走 decodeBytes，三者可共存（已实测 PDF 组装通过）。
+# 升 pdf 到 3.13 需 Dart >=3.12，当前 Flutter 3.38.5 / Dart 3.10.4 升不上去。
+dependency_overrides:
+  image: 4.10.2
+
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to

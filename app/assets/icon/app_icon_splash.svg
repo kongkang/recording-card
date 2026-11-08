@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  启动屏用标识（透明底，卡片图形居中，四周留白）。
+  仅用于 Android 旧系统（API ≤ 30）的 windowBackground 居中位图；
+  iOS 启动屏走 LaunchScreen.storyboard + 纯色背景，不用这张图。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <g transform="translate(256 256) scale(0.43) translate(-512 -512)">
+    <rect x="162" y="267" width="700" height="490" rx="96" fill="#1D1D1F"/>
+    <g fill="#FAFAF8">
+      <rect x="258" y="452" width="60" height="120" rx="30"/>
+      <rect x="370" y="398" width="60" height="228" rx="30"/>
+      <rect x="482" y="359" width="60" height="306" rx="30"/>
+      <rect x="594" y="398" width="60" height="228" rx="30"/>
+      <rect x="706" y="452" width="60" height="120" rx="30"/>
+    </g>
+    <circle cx="778" cy="330" r="40" fill="#FF3B30"/>
+  </g>
+</svg>

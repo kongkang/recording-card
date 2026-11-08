@@ -1,14 +1,25 @@
 /// 总结结果页 —— 生成态（进度/已生成/预计还需/步骤）与结果态（吸顶 Tab + 目录浮钮 + 信息点溯源 + 导出）。
 library;
+
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
+import '../services/export/export.dart';
 import '../core/theme/tokens.dart';
 import '../widgets/store_scope.dart';
 
+/// 吸顶 Tab 栏高度（原型 .stabs 行高 46）。
+const double _kTabsH = 46;
+
 class SummaryResultPage extends StatefulWidget {
-  const SummaryResultPage({super.key, required this.summaryId, this.showPaneBack = false});
+  const SummaryResultPage({
+    super.key,
+    required this.summaryId,
+    this.showPaneBack = false,
+  });
   final String summaryId;
   final bool showPaneBack;
 
@@ -19,6 +30,20 @@ class SummaryResultPage extends StatefulWidget {
 class _SummaryResultPageState extends State<SummaryResultPage> {
   final _scroll = ScrollController();
   final _sectionKeys = <String, GlobalKey>{};
+
+  /// 结果态标题块（标题 + 统计行）的实测高度：目录钮的吸附位置由它决定。
+  final _titleKey = GlobalKey();
+  double _titleH = 76;
+
+  void _measureTitle() {
+    final ctx = _titleKey.currentContext;
+    if (!mounted || ctx == null) return;
+    final box = ctx.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return;
+    final h = box.size.height;
+    if ((h - _titleH).abs() > 0.5) setState(() => _titleH = h);
+  }
+
   String _tab = 'all'; // all | ov | map | pt | todo | src
   final Map<int, bool> _ptOpen = {};
   final Set<int> _todosDone = {};
@@ -40,17 +65,24 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
   }
 
   // 供子组件调用的公开变更入口（避免跨类调用受保护的 setState）
-  void togglePoint(int i) => setState(() => _ptOpen[i] = !(_ptOpen[i] ?? false));
+  void togglePoint(int i) =>
+      setState(() => _ptOpen[i] = !(_ptOpen[i] ?? false));
 
-  void toggleTodo(int i) => setState(() => _todosDone.contains(i)
-      ? _todosDone.remove(i)
-      : _todosDone.add(i));
+  void toggleTodo(int i) => setState(
+    () => _todosDone.contains(i) ? _todosDone.remove(i) : _todosDone.add(i),
+  );
 
   void _tocGo(String secId) {
     setState(() => _tab = 'all'); // 非「全部」时先切回「全部」再滚动
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = _sectionKeys[secId]?.currentContext;
-      if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300), alignment: 0.1);
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 300),
+          alignment: 0.1,
+        );
+      }
     });
   }
 
@@ -72,18 +104,75 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
                   key: const Key('pb-sum'),
                   onPressed: store.goBack,
                   icon: const Icon(Icons.chevron_left, size: 18),
-                  label: Text('返回${AppStore.pageLabels[store.stackPrev?.type] ?? ''}'),
+                  label: Text(
+                    '返回${AppStore.pageLabels[store.stackPrev?.type] ?? ''}',
+                  ),
                   style: TextButton.styleFrom(
-                      foregroundColor: RCColors.sec,
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      minimumSize: Size.zero,
-                      textStyle: const TextStyle(fontSize: 13)),
+                    foregroundColor: RCColors.sec,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    minimumSize: Size.zero,
+                    textStyle: const TextStyle(fontSize: 13),
+                  ),
                 ),
               ),
             if (card.state == SummaryState.generating)
-              Expanded(child: _GenView(store: store, card: card))
+              Expanded(
+                child: _GenView(store: store, card: card),
+              )
             else if (card.state == SummaryState.done)
-              Expanded(child: _ResultView(page: this, card: card)),
+              Expanded(
+                child: _ResultView(page: this, card: card),
+              )
+            else if (card.state == SummaryState.failed)
+              Expanded(
+                child: Center(
+                  key: const Key('gen-failed'),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.cloud_off_outlined,
+                          size: 40,
+                          color: RCColors.ax,
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          '总结没能生成',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          card.error ?? '请稍后重试',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: RCColors.sec,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton(
+                          key: const Key('gen-retry'),
+                          onPressed: () => store.retryGeneration(card.id),
+                          child: const Text('重试'),
+                        ),
+                        TextButton(
+                          key: const Key('gen-dismiss'),
+                          onPressed: () => store.dismissFailed(card.id),
+                          child: const Text('放弃这次总结'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
           ],
         );
       },
@@ -123,18 +212,24 @@ class _GenView extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(store.genElapsedText(),
-                    key: const Key('gen-elapsed'),
-                    style: const TextStyle(fontSize: 13, color: RCColors.ink)),
-                Text(store.genEtaText(),
-                    key: const Key('gen-eta'),
-                    style: const TextStyle(fontSize: 13, color: RCColors.sec)),
+                Text(
+                  store.genElapsedText(),
+                  key: const Key('gen-elapsed'),
+                  style: const TextStyle(fontSize: 13, color: RCColors.ink),
+                ),
+                Text(
+                  store.genEtaText(),
+                  key: const Key('gen-eta'),
+                  style: const TextStyle(fontSize: 13, color: RCColors.sec),
+                ),
               ],
             ),
             const SizedBox(height: 8),
-            Text(store.genStepText(),
-                key: const Key('gen-step'),
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            Text(
+              store.genStepText(),
+              key: const Key('gen-step'),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
           ],
         ),
       ),
@@ -160,69 +255,97 @@ class _ResultView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
-    // 原型 .tochold：目录钮归属内容区右上角（不占 tab 行），钉在吸顶栏下方
-    return Stack(
-      children: [
-        CustomScrollView(
-          key: const Key('sum-scroll'),
-          controller: page._scroll,
-          slivers: [
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+    // 图片导出的截图锚点：每次构建复用同一个 GlobalKey（同屏只有一个结果页）
+    _exportCaptureKey ??= GlobalKey(debugLabel: 'sum-export-capture');
+    WidgetsBinding.instance.addPostFrameCallback((_) => page._measureTitle());
+    // 原型 .stickbar + .tochold：目录钮是内容区里的 sticky 元素——未滚动时压在
+    // 「概览」这一行右侧，向上滚动到与 Tab 栏同一卡点时跟 Tab 一起钉住
+    // （距 Tab 栏下沿 10px），而不是永远钉在屏幕同一位置去盖住 Tab。
+    return AnimatedBuilder(
+      animation: page._scroll,
+      builder: (context, _) {
+        final offset = page._scroll.hasClients
+            ? page._scroll.position.pixels
+            : 0.0;
+        final natural = page._titleH + _kTabsH - offset + 10;
+        final tocTop = math.max(_kTabsH + 10, natural);
+        return Stack(
+          children: [
+            RepaintBoundary(
+              key: _exportCaptureKey,
+              child: CustomScrollView(
+                key: const Key('sum-scroll'),
+                controller: page._scroll,
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      key: page._titleKey,
+                      padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
+                      child: Row(
                         children: [
-                          Text(card.title ?? '',
-                              key: const Key('sum-title'),
-                              style: const TextStyle(
-                                  fontSize: 20, fontWeight: FontWeight.w800)),
-                          const SizedBox(height: 4),
-                          Text(card.subDesc ?? '',
-                              key: const Key('sum-sub'),
-                              style: const TextStyle(
-                                  fontSize: 12, color: RCColors.sec)),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  card.title ?? '',
+                                  key: const Key('sum-title'),
+                                  style: const TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  card.subDesc ?? '',
+                                  key: const Key('sum-sub'),
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: RCColors.sec,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          _ExportButton(card: card),
                         ],
                       ),
                     ),
-                    const _ExportButton(),
-                  ],
-                ),
+                  ),
+                  // 吸顶 Tab 栏：滚动中持续可见
+                  SliverPersistentHeader(
+                    key: const Key('stickbar'),
+                    pinned: true,
+                    delegate: _StickyTabs(
+                      tabs: _tabs,
+                      current: page._tab,
+                      onTap: page._setTab,
+                    ),
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(22, 6, 22, 96),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, _) => Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: _sections(context, store),
+                        ),
+                        childCount: 1,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            // 吸顶 Tab 栏：滚动中持续可见
-            SliverPersistentHeader(
-              key: const Key('stickbar'),
-              pinned: true,
-              delegate: _StickyTabs(
-                tabs: _tabs,
-                current: page._tab,
-                onTap: page._setTab,
-              ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(22, 6, 22, 96),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, _) => Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: _sections(context, store)),
-                  childCount: 1,
-                ),
-              ),
+            // 目录浮钮：随内容滚动，撞到吸顶栏下沿后与 Tab 栏同点吸附（各 Tab 均可用）
+            Positioned(
+              top: tocTop,
+              right: 8,
+              child: _TocButton(onGo: page._tocGo),
             ),
           ],
-        ),
-        // 目录浮钮：吸顶栏（46px）正下方右侧 8px，压于内容之上（各 Tab 均可用）
-        Positioned(
-          top: 46,
-          right: 8,
-          child: _TocButton(onGo: page._tocGo),
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -231,29 +354,27 @@ class _ResultView extends StatelessWidget {
     return [
       if (show('ov'))
         _section('sec-ov', '概览', [
-          Text(card.overview ?? '',
-              style: const TextStyle(fontSize: 14, height: 1.6)),
+          Text(
+            card.overview ?? '',
+            style: const TextStyle(fontSize: 14, height: 1.6),
+          ),
         ]),
       if (show('map'))
-        _section('sec-map', '逻辑结构', [
-          _MapTree(branches: card.structure),
-        ]),
+        _section('sec-map', '逻辑结构', [_MapTree(branches: card.structure)]),
       if (show('pt'))
         _section('sec-pt', '信息点', [
           for (var i = 0; i < card.points.length; i++)
-            _PointTile(
-              page: page,
-              index: i,
-              point: card.points[i],
-            ),
+            _PointTile(page: page, index: i, point: card.points[i]),
         ]),
       if (show('todo'))
         _section('sec-todo', '行动项', [
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
-            child: Text('已完成 ${page._todosDone.length} / ${card.todos.length}',
-                key: const Key('ix-done'),
-                style: const TextStyle(fontSize: 12, color: RCColors.sec)),
+            child: Text(
+              '已完成 ${page._todosDone.length} / ${card.todos.length}',
+              key: const Key('ix-done'),
+              style: const TextStyle(fontSize: 12, color: RCColors.sec),
+            ),
           ),
           for (var i = 0; i < card.todos.length; i++)
             InkWell(
@@ -274,8 +395,11 @@ class _ResultView extends StatelessWidget {
                     ),
                     const SizedBox(width: 10),
                     Expanded(
-                        child: Text(card.todos[i],
-                            style: const TextStyle(fontSize: 14))),
+                      child: Text(
+                        card.todos[i],
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -284,39 +408,50 @@ class _ResultView extends StatelessWidget {
       if (show('src'))
         _section('sec-src', '来源记录', [
           for (final id in card.srcIds)
-            Builder(builder: (context) {
-              final e = store.eventById(id);
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: OutlinedButton(
-                  key: Key('src-$id'),
-                  onPressed: () => store.openDetail(id),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: RCColors.label,
-                    side: const BorderSide(color: RCColors.sep),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    padding: const EdgeInsets.all(14),
-                  ),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(e.title,
+            Builder(
+              builder: (context) {
+                final e = store.eventByIdOrNull(id);
+                if (e == null) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: OutlinedButton(
+                    key: Key('src-$id'),
+                    onPressed: () => store.openDetail(id),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: RCColors.label,
+                      side: const BorderSide(color: RCColors.sep),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.all(14),
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            e.title,
                             style: const TextStyle(
-                                fontSize: 14, fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 4),
-                        Text(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
                             '${_dayLabel(e.dayOffset)} ${e.time} · ${e.dur}',
                             style: const TextStyle(
-                                fontSize: 12, color: RCColors.sec)),
-                      ],
+                              fontSize: 12,
+                              color: RCColors.sec,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              );
-            }),
+                );
+              },
+            ),
         ]),
     ];
   }
@@ -339,40 +474,65 @@ class _ResultView extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.only(top: 18, bottom: 10),
-            child: Text(title,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            child: Text(
+              title,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
           ),
           ...children,
         ],
       ),
     );
   }
-
 }
 
 /// 导出按钮：菜单锚定在按钮自身位置；5 种格式 → 模拟调起系统分享
-class _ExportButton extends StatelessWidget {
-  const _ExportButton();
+class _ExportButton extends StatefulWidget {
+  const _ExportButton({required this.card});
+
+  final SummaryCard card;
+
+  @override
+  State<_ExportButton> createState() => _ExportButtonState();
+}
+
+class _ExportButtonState extends State<_ExportButton> {
+  bool _busy = false;
+
+  static const _formats = <String, ExportFormat>{
+    '完整文档': ExportFormat.fullDoc,
+    'Markdown': ExportFormat.markdown,
+    'PDF': ExportFormat.pdf,
+    '图片': ExportFormat.image,
+    'Word 文档': ExportFormat.word,
+  };
 
   @override
   Widget build(BuildContext context) {
     return TextButton(
       key: const Key('export-btn'),
-      onPressed: () => _open(context),
+      onPressed: _busy ? null : () => _open(context),
       style: TextButton.styleFrom(
-          foregroundColor: RCColors.label,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          minimumSize: Size.zero,
-          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-      child: const Text('导出'),
+        foregroundColor: RCColors.label,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        minimumSize: Size.zero,
+        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      ),
+      child: _busy
+          ? const SizedBox(
+              key: Key('export-busy'),
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Text('导出'),
     );
   }
 
-  void _open(BuildContext context) {
+  Future<void> _open(BuildContext context) async {
     final size = MediaQuery.of(context).size;
     final messenger = ScaffoldMessenger.of(context);
-    showMenu<String>(
+    final chosen = await showMenu<String>(
       context: context,
       // 页头右上锚定（导出按钮位于滚动流内，随内容滚动，菜单用固定位置防跑偏）
       position: RelativeRect.fromSize(
@@ -380,23 +540,58 @@ class _ExportButton extends StatelessWidget {
         size,
       ),
       items: [
-        for (final f in const ['完整文档', 'Markdown', 'PDF', '图片', 'Word 文档'])
+        for (final f in _formats.keys)
           PopupMenuItem(
             value: f,
             child: Text(f, key: Key('export-item-$f')),
           ),
       ],
-    ).then((f) {
-      if (f == null) return;
+    );
+    if (chosen == null) return;
+    final format = _formats[chosen]!;
+
+    setState(() => _busy = true);
+    try {
+      final doc = exportDocumentFromSummary(widget.card);
+      // 图片导出用页面根锚点截屏；其它格式不需要
+      final captureKey = format == ExportFormat.image
+          ? captureKeyForExport()
+          : null;
+      final result = await ExportService().export(
+        format,
+        doc,
+        captureKey: captureKey,
+      );
       messenger
         ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(
-          content: Text('已调用系统分享 · $f', key: const Key('toast')),
-          duration: const Duration(milliseconds: 1600),
-        ));
-    });
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              '已导出 ${result.path.split('/').last}',
+              key: const Key('toast'),
+            ),
+            duration: const Duration(milliseconds: 2000),
+          ),
+        );
+    } on Object catch (e) {
+      final message = e is ExportException ? e.message : '导出失败：$e';
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(message, key: const Key('toast-error')),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 }
+
+/// 图片导出的截图锚点：由 `_ResultView` 提供（包住可滚动内容）。
+GlobalKey? _exportCaptureKey;
+GlobalKey? captureKeyForExport() => _exportCaptureKey;
 
 /// 吸顶 Tab 栏：文字不换行，宽度不足时横向滑动；目录浮钮另钉于栏下内容区。
 class _StickyTabs extends SliverPersistentHeaderDelegate {
@@ -407,7 +602,11 @@ class _StickyTabs extends SliverPersistentHeaderDelegate {
   final void Function(String) onTap;
 
   @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
     return Container(
       key: const Key('stabs'),
       decoration: const BoxDecoration(
@@ -427,27 +626,31 @@ class _StickyTabs extends SliverPersistentHeaderDelegate {
                 child: Row(
                   children: [
                     for (final (k, label) in tabs)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 18),
-                      child: TextButton(
-                        key: Key('stab-$k'),
-                        onPressed: () => onTap(k),
-                        style: TextButton.styleFrom(
-                          foregroundColor:
-                              current == k ? RCColors.label : RCColors.sec,
-                          padding: const EdgeInsets.symmetric(horizontal: 2),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        child: Text(label,
+                      Padding(
+                        padding: const EdgeInsets.only(right: 18),
+                        child: TextButton(
+                          key: Key('stab-$k'),
+                          onPressed: () => onTap(k),
+                          style: TextButton.styleFrom(
+                            foregroundColor: current == k
+                                ? RCColors.label
+                                : RCColors.sec,
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: Text(
+                            label,
                             softWrap: false,
                             style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: current == k
-                                    ? FontWeight.w700
-                                    : FontWeight.w500)),
+                              fontSize: 14,
+                              fontWeight: current == k
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -483,8 +686,10 @@ class _MapTree extends StatelessWidget {
             color: const Color(0xFFEAF3EA),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: const Text('会议要点',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          child: const Text(
+            '会议要点',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
         ),
         const SizedBox(height: 10),
         for (final b in branches)
@@ -493,13 +698,19 @@ class _MapTree extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [
-                  Container(width: 2, height: 14, color: RCColors.ax),
-                  const SizedBox(width: 8),
-                  Text(b.name,
+                Row(
+                  children: [
+                    Container(width: 2, height: 14, color: RCColors.ax),
+                    const SizedBox(width: 8),
+                    Text(
+                      b.name,
                       style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w600)),
-                ]),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 6),
                 Padding(
                   padding: const EdgeInsets.only(left: 10),
@@ -510,15 +721,21 @@ class _MapTree extends StatelessWidget {
                       for (final leaf in b.leaves)
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 5),
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
                             color: RCColors.card,
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(color: RCColors.sep),
                           ),
-                          child: Text(leaf,
-                              style: const TextStyle(
-                                  fontSize: 12, color: RCColors.ink)),
+                          child: Text(
+                            leaf,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: RCColors.ink,
+                            ),
+                          ),
                         ),
                     ],
                   ),
@@ -533,7 +750,11 @@ class _MapTree extends StatelessWidget {
 
 /// 信息点：标题 + 细节 + 溯源链接（可展开收起）
 class _PointTile extends StatelessWidget {
-  const _PointTile({required this.page, required this.index, required this.point});
+  const _PointTile({
+    required this.page,
+    required this.index,
+    required this.point,
+  });
   final _SummaryResultPageState page;
   final int index;
   final InfoPoint point;
@@ -560,12 +781,19 @@ class _PointTile extends StatelessWidget {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(point.title,
-                        style: const TextStyle(
-                            fontSize: 14, fontWeight: FontWeight.w600)),
+                    child: Text(
+                      point.title,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
-                  Icon(open ? Icons.expand_less : Icons.expand_more,
-                      size: 18, color: RCColors.sec),
+                  Icon(
+                    open ? Icons.expand_less : Icons.expand_more,
+                    size: 18,
+                    color: RCColors.sec,
+                  ),
                 ],
               ),
             ),
@@ -576,10 +804,11 @@ class _PointTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(point.detail,
-                      key: Key('pt-d-$index'),
-                      style:
-                          const TextStyle(fontSize: 13, height: 1.6)),
+                  Text(
+                    point.detail,
+                    key: Key('pt-d-$index'),
+                    style: const TextStyle(fontSize: 13, height: 1.6),
+                  ),
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,
@@ -594,7 +823,9 @@ class _PointTile extends StatelessWidget {
                             side: const BorderSide(color: RCColors.ok),
                             shape: const StadiumBorder(),
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 5),
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
                             minimumSize: Size.zero,
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             textStyle: const TextStyle(fontSize: 12),
@@ -657,7 +888,10 @@ class _TocButton extends StatelessWidget {
       position: pos,
       items: [
         for (final (id, label) in _items)
-          PopupMenuItem(value: id, child: Text(label, key: Key('toc-item-$id'))),
+          PopupMenuItem(
+            value: id,
+            child: Text(label, key: Key('toc-item-$id')),
+          ),
       ],
     ).then((v) {
       if (v != null) onGo?.call(v);

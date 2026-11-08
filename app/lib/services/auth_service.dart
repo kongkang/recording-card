@@ -1,44 +1,461 @@
+/// 登录服务（应用内唯一鉴权入口）。
+///
+/// **本文件保留了旧版公开契约**，所以 `main.dart` / `login_page.dart` /
+/// `dev_driver.dart` 不需要任何改动就能编译：
+/// - `class AuthService extends ChangeNotifier`
+/// - `bool get isSignedIn`、`AuthSession? get session`
+/// - `String? signIn(String account, String password)`——返回 null 表示成功，
+///   非 null 是可直接展示的中文错误文案
+/// - `void signOut()`
+///
+/// 内部已经换成**真实 OAuth 2.0 授权码 + PKCE**：不再有「任意非空账号密码即通过」
+/// 的假登录。`signIn` 是同步门面（为了兼容现有 UI 的同步调用），实际流程在
+/// [signInWithOAuth] 里异步跑完；UI 侧建议改为 `await auth.signInWithOAuth()`。
+///
+/// 当前构建的已知缺口（需要在主线上决策）：
+/// 1. `pubspec.yaml` 没有 `flutter_web_auth_2`，因此没有真实浏览器授权组件
+///    （[UnavailableWebAuthLauncher]），`signIn` 会直接返回
+///    「当前构建未内置浏览器授权组件…」；
+/// 2. `RC_OAUTH_CLIENT_ID` 未配置时返回「未配置登录服务…」——**不再静默假登录**。
+///
+/// 这两条是刻意为之：宁可显式失败，也不要让用户以为登录成功了。
 library;
+
+import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
 import '../core/config/auth_mode.dart';
 import '../core/config/remote/client_config.dart';
+import '../core/storage/secure_store.dart';
+import 'auth/auth.dart';
+import 'net/authorized_http_client.dart';
 
-/// 登录会话（进程内保存；sessionStorage 级语义，TODO 接 shared_preferences 持久化）。
+/// 登录会话（进程内快照；真正的 token 在 [OAuthTokenStore] / 系统密钥库里）。
 class AuthSession {
-  const AuthSession({required this.account, required this.issuedAt});
+  const AuthSession({
+    required this.account,
+    required this.issuedAt,
+    this.userId,
+    this.email,
+    this.avatarUrl,
+  });
+
+  /// 展示用账号名（显示名 > 邮箱 > 用户 ID）。
   final String account;
+
+  /// 建立会话的时间。
   final DateTime issuedAt;
+
+  /// 服务端用户 ID（未校验身份时为 null）。
+  final String? userId;
+
+  /// 邮箱（可能为 null）。
+  final String? email;
+
+  /// 头像地址（可能为 null）。
+  final String? avatarUrl;
 }
 
-/// 鉴权服务：OAuth 模式（kIsOAuthAuthMode）+ 远端已配置时走远端流程；
-/// 否则建立本地会话，不发起任何网络请求（真实性红线，见 AGENTS.md）。
+/// 一次授权流程的临时状态（内存级；进程被杀即失效）。
+class _PendingAuthorization {
+  const _PendingAuthorization({
+    required this.state,
+    required this.codeVerifier,
+    required this.startedAt,
+  });
+
+  final String state;
+  final String codeVerifier;
+  final DateTime startedAt;
+}
+
+/// 鉴权服务。
 class AuthService extends ChangeNotifier {
-  AuthService({ClientConfig? config}) : _config = config ?? ClientConfig.instance;
+  AuthService({
+    ClientConfig? config,
+    OAuthConfig? oauthConfig,
+    WebAuthLauncher? launcher,
+    OAuthClient? oauthClient,
+    OAuthTokenStore? tokenStore,
+    SecureStore? secureStore,
+    DateTime Function()? clock,
+  })  : _config = config ?? ClientConfig.instance,
+        _oauthConfig = oauthConfig ??
+            OAuthConfig.fromEnvironment(clientConfig: config),
+        _clock = clock ?? DateTime.now {
+    _launcher = launcher ?? const FlutterWebAuthLauncher();
+    final client = oauthClient ?? OAuthClient(config: _oauthConfig);
+    _ownsOAuthClient = oauthClient == null;
+    _client = client;
+    _tokens = tokenStore ??
+        OAuthTokenStore(
+          secure: secureStore ?? KeychainSecureStore(),
+          client: client,
+          config: _oauthConfig,
+          clock: _clock,
+        );
+    // 会话彻底失效（服务端判定 refresh token 已死）→ 本地同步登出，UI 回登录页。
+    _tokens.onSessionInvalidated = _handleSessionInvalidated;
+    _bootstrapFuture = _bootstrap();
+  }
 
   final ClientConfig _config;
-  AuthSession? session;
+  final OAuthConfig _oauthConfig;
+  late final OAuthClient _client;
+  late final OAuthTokenStore _tokens;
+  final DateTime Function() _clock;
 
-  bool get isSignedIn => session != null;
-  bool get useRemoteOAuth => kIsOAuthAuthMode && _config.hasRemoteBackend;
+  late final WebAuthLauncher _launcher;
+  bool _ownsOAuthClient = false;
 
-  /// 登录：校验非空后建立会话；返回 null 表示成功，否则为错误文案。
+  AuthSession? _session;
+  String? _lastError;
+  bool _busy = false;
+  bool _disposed = false;
+  _PendingAuthorization? _pending;
+
+  /// 授权流程代次：登出会 +1，让在途流程的回调自我作废（防「登出后又被登录」）。
+  int _authFlowEpoch = 0;
+
+  AuthorizedHttpClient? _apiClient;
+
+  late final Future<void> _bootstrapFuture;
+
+  // ===== 兼容旧契约的公开面 =====
+
+  /// 当前会话；null = 未登录。
+  AuthSession? get session => _session;
+
+  /// 是否已登录。
+  bool get isSignedIn => _session != null;
+
+  /// 是否处于「远端 OAuth 模式」（旧接口，语义保持：OAuth 模式且登录服务已配置）。
+  bool get useRemoteOAuth =>
+      kIsOAuthAuthMode && _oauthConfig.isConfigured && _config.hasRemoteBackend;
+
+  /// 最近一次错误的用户可读文案（成功登录后清空）。
+  String? get lastError => _lastError;
+
+  /// 是否正在进行授权（UI 可用来转圈 / 禁用按钮）。
+  bool get isBusy => _busy;
+
+  /// 登录服务是否配置齐全（client id + 端点）。
+  bool get isOAuthConfigured => _oauthConfig.isConfigured;
+
+  /// 当前构建是否具备真实浏览器授权能力（无 flutter_web_auth_2 时为 false）。
+  bool get isWebAuthAvailable => _launcher.isSupported;
+
+  /// 登录前就能告诉用户「为什么登不了」的预检文案；null = 可以发起登录。
   ///
-  /// TODO(oauth-backend)：远端模式接入真实 OAuth2 授权码流程
-  /// （全量移植 reai_mobile_app lib/core/config/remote/client_config.dart +
-  /// token 刷新），端点经 RC_API_BASE 配置、host 过可信白名单后生效。
-  String? signIn(String account, String password) {
-    final a = account.trim();
-    if (a.isEmpty) return '请输入账号';
-    if (password.isEmpty) return '请输入密码';
-    session = AuthSession(account: a, issuedAt: DateTime.now());
-    notifyListeners();
+  /// UI 建议直接用：非空时把登录按钮置灰并展示该文案。
+  String? get signInBlockedReason {
+    if (!kIsOAuthAuthMode) return '当前构建未启用登录服务';
+    if (!_oauthConfig.isConfigured) return '未配置登录服务，暂时无法登录';
+    if (!_launcher.isSupported) return '当前构建未内置浏览器授权组件，暂时无法完成登录';
     return null;
   }
 
+  /// 首次本地会话恢复完成（测试里 `await auth.ready` 可拿到确定的初始状态）。
+  Future<void> get ready => _bootstrapFuture;
+
+  /// 登录（**同步门面**，保持旧契约）。
+  ///
+  /// 返回 null 表示「登录流程已被接受」；非 null 是错误文案。
+  ///
+  /// 因为真实 OAuth 必须异步完成，这里对需要浏览器交互的情况会启动
+  /// [signInWithOAuth]（fire-and-forget），结果通过 [lastError] +
+  /// `notifyListeners()` 通知 UI。**新 UI 请直接 `await signInWithOAuth()`**，
+  /// 才能拿到确定的成败。
+  String? signIn(String account, String password) {
+    final a = account.trim();
+    if (a.isEmpty) return _fail('请输入账号');
+    if (password.isEmpty) return _fail('请输入密码');
+
+    final blocked = signInBlockedReason;
+    if (blocked != null) return _fail(blocked);
+
+    unawaited(signInWithOAuth(loginHint: a));
+    return null;
+  }
+
+  /// 走完真实 OAuth 登录：拉起浏览器授权 → 校验 state → 换 token → 拉 profile →
+  /// 落密钥库 → 建立会话。
+  ///
+  /// 返回 null 表示登录成功；非 null 是可直接展示的错误文案。
+  /// 不论成功失败都会 `notifyListeners()`。
+  Future<String?> signInWithOAuth({String? loginHint}) async {
+    if (_busy) return '登录正在进行中，请稍候';
+    final blocked = signInBlockedReason;
+    if (blocked != null) return _fail(blocked);
+
+    final epoch = ++_authFlowEpoch;
+    _busy = true;
+    _lastError = null;
+    _notify();
+
+    try {
+      final request = _client.createAuthorizationRequest(loginHint: loginHint);
+      _pending = _PendingAuthorization(
+        state: request.state,
+        codeVerifier: request.pkce.codeVerifier,
+        startedAt: _clock(),
+      );
+
+      final callback = await _launcher.launch(
+        authorizeUrl: request.url,
+        callbackScheme: _oauthConfig.callbackScheme,
+      );
+      if (epoch != _authFlowEpoch) return null; // 期间已登出 / 已有新流程
+
+      final code = _extractAuthorizationCode(callback);
+      final tokenResponse = await _client.exchangeCodeForToken(
+        code: code,
+        codeVerifier: request.pkce.codeVerifier,
+      );
+      if (epoch != _authFlowEpoch) return null;
+
+      // 换到 token 后立刻用 /profile 确认身份（也验证 token 真的可用）。
+      final account = await _client.fetchProfile(tokenResponse.accessToken);
+      if (epoch != _authFlowEpoch) {
+        // 期间登出：把刚拿到的 token 落库反而会「复活」会话，直接丢弃。
+        unawaited(_revokeQuietly(tokenResponse.refreshToken ?? tokenResponse.accessToken));
+        return null;
+      }
+
+      await _tokens.saveTokens(tokenResponse, account: account);
+      _applySession(account);
+      _lastError = null;
+      return null;
+    } on OAuthCancelledException {
+      // 用户主动取消：不当错误提示，UI 静默留在登录页。
+      return null;
+    } on OAuthException catch (e) {
+      final message = e.message;
+      _lastError = message;
+      return message;
+    } catch (e) {
+      // 兜底：不吞异常语义，给用户一个明确文案，细节只进日志。
+      debugPrint('[AuthService] 登录异常: $e');
+      const message = '登录失败，请稍后重试';
+      _lastError = message;
+      return message;
+    } finally {
+      _pending = null;
+      if (epoch == _authFlowEpoch) _busy = false;
+      _notify();
+    }
+  }
+
+  /// 校验当前会话是否仍然有效（拉一次 `/profile`）。
+  ///
+  /// 返回 false 且已本地登出时，UI 应回登录页。
+  Future<bool> validateSession() async {
+    if (!_tokens.hasSession) {
+      _dropSessionLocally();
+      return false;
+    }
+    try {
+      final token = await _tokens.getValidAccessToken();
+      if (token == null) {
+        _dropSessionLocally();
+        return false;
+      }
+      final account = await _client.fetchProfile(token);
+      await _tokens.updateAccount(account);
+      _applySession(account);
+      return true;
+    } on OAuthAuthRequiredException {
+      _dropSessionLocally();
+      return false;
+    } on OAuthException catch (e) {
+      // 网络类问题不代表会话失效；保留会话，把文案交给 UI 决定是否提示。
+      _lastError = e.message;
+      _notify();
+      return _session != null;
+    }
+  }
+
+  /// 登出（同步门面，保持旧契约）。
+  ///
+  /// 立即清空本地会话并通知 UI，随后在后台尽力撤销服务端 token。
   void signOut() {
-    session = null;
+    // 让在途授权流程的回调自我作废，并解除「登录中」状态。
+    _authFlowEpoch++;
+    _busy = false;
+    _dropSessionLocally();
+    unawaited(_revokeAndClearRemote());
+  }
+
+  /// 网络客户端（其他模块用它发起带鉴权的请求）。
+  ///
+  /// 生命周跟随本服务；[dispose] 后不可再用。典型用法：
+  /// ```dart
+  /// final gateway = ModelGateway(client: auth.apiClient);
+  /// ```
+  AuthorizedHttpClient get apiClient {
+    final existing = _apiClient;
+    if (existing != null) return existing;
+    final client = AuthorizedHttpClient(tokenStore: _tokens);
+    client.onAuthRequired = _handleAuthRequired;
+    _apiClient = client;
+    return client;
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _apiClient?.close();
+    _apiClient = null;
+    if (_ownsOAuthClient) _client.close();
+    super.dispose();
+  }
+
+  // ===== 内部 =====
+
+  /// 启动时恢复本地会话（不发起网络请求）。
+  ///
+  /// - 密钥库读取失败（如无平台通道）→ 当作未登录，不影响 App 启动；
+  /// - 有 token 且有账号 → 直接恢复会话（离线也能进主界面）；
+  /// - 有 token 但缺账号（旧数据/半截写入）→ 尝试拉一次 profile，
+  ///   失败则保持未登录（token 不删，下次启动还能再试）。
+  Future<void> _bootstrap() async {
+    try {
+      await _tokens.bootstrap();
+    } catch (e) {
+      debugPrint('[AuthService] 读取本地登录态失败，按未登录处理: $e');
+      return;
+    }
+    if (!_tokens.hasSession) return;
+
+    // 会话已彻底过期（access 过期且 refresh 也过期/缺失）→ 不恢复，
+    // 让用户走一次真实登录，而不是进主界面后每个接口都 401。
+    final accessExpires = _tokens.accessExpiresAt;
+    final accessUsable = _tokens.accessToken != null &&
+        (accessExpires == null || accessExpires.isAfter(_clock()));
+    if (!accessUsable && !_tokens.hasValidRefreshToken) return;
+
+    final account = _tokens.account;
+    if (account != null) {
+      _applySession(account);
+      return;
+    }
+    try {
+      final token = await _tokens.getValidAccessToken();
+      if (token == null) return;
+      final fetched = await _client.fetchProfile(token);
+      await _tokens.updateAccount(fetched);
+      _applySession(fetched);
+    } on OAuthException catch (e) {
+      debugPrint('[AuthService] 恢复会话时校验身份失败: ${e.message}');
+    } catch (e) {
+      debugPrint('[AuthService] 恢复会话异常: $e');
+    }
+  }
+
+  /// 后台登出：撤销服务端 token + 清密钥库。
+  Future<void> _revokeAndClearRemote() async {
+    final access = _tokens.accessToken;
+    final refresh = _tokens.refreshToken;
+    final client = _apiClient;
+    client?.setLoggingOut(true);
+    try {
+      if (refresh != null) {
+        await _client.revoke(token: refresh, tokenTypeHint: 'refresh_token');
+      } else if (access != null) {
+        await _client.revoke(token: access);
+      }
+    } catch (e) {
+      // 撤销是尽力而为：服务端不可达不应阻塞用户退出。
+      debugPrint('[AuthService] 撤销 token 失败（已忽略）: $e');
+    } finally {
+      await _tokens.clear();
+      client?.setLoggingOut(false);
+    }
+  }
+
+  Future<void> _revokeQuietly(String token) async {
+    try {
+      await _client.revoke(token: token, tokenTypeHint: 'refresh_token');
+    } catch (e) {
+      debugPrint('[AuthService] 撤销新签发 token 失败（已忽略）: $e');
+    }
+  }
+
+  /// 从回调 URL 里取授权码，并做 state / error 校验。
+  String _extractAuthorizationCode(Uri callback) {
+    final pending = _pending;
+    if (pending == null) {
+      throw const OAuthPendingMissingException();
+    }
+    if (_clock().difference(pending.startedAt) >
+        _oauthConfig.pendingAuthorizationTtl) {
+      throw const OAuthPendingMissingException();
+    }
+
+    final params = callback.queryParameters;
+    final error = params['error'];
+    if (error != null && error.isNotEmpty) {
+      throw OAuthServerException(
+        code: error,
+        message: error == 'access_denied'
+            ? '已取消登录'
+            : (params['error_description'] ?? '授权失败，请稍后重试'),
+      );
+    }
+    if (params['state'] != pending.state) {
+      throw const OAuthStateMismatchException();
+    }
+    final code = params['code'];
+    if (code == null || code.trim().isEmpty) {
+      throw const OAuthServerException(
+        code: 'invalid_request',
+        message: '登录回调缺少授权码，请重新登录',
+      );
+    }
+    return code.trim();
+  }
+
+  void _applySession(OAuthAccount account) {
+    _session = AuthSession(
+      account: account.displayName,
+      issuedAt: _clock(),
+      userId: account.userId,
+      email: account.email,
+      avatarUrl: account.avatarUrl,
+    );
+    _lastError = null;
+    _notify();
+  }
+
+  void _dropSessionLocally() {
+    _session = null;
+    _notify();
+  }
+
+  /// 服务端判定会话已死（refresh token 失效）。
+  ///
+  /// 除了本地登出，还要把密钥库里的 token 清掉：否则下次冷启动会照着残留
+  /// bundle 把用户「恢复」成一个用不了任何接口的登录态。
+  void _handleSessionInvalidated() {
+    _lastError = '登录已过期，请重新登录';
+    _dropSessionLocally();
+    unawaited(_tokens.clear());
+  }
+
+  /// 业务请求 401 且刷新失败（网络层的全局回调）。
+  void _handleAuthRequired() {
+    _handleSessionInvalidated();
+  }
+
+  String _fail(String message) {
+    _lastError = message;
+    _notify();
+    return message;
+  }
+
+  void _notify() {
+    if (_disposed) return;
     notifyListeners();
   }
 }

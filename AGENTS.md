@@ -7,7 +7,7 @@
 设计已定稿（2026-11-07，prototype v15 + handoff `docs/handoff/handoff-2026-11-07-1935-flutter-build.md`），正式进入工程开发。
 
 - `app/` 是 Flutter 工程（当前主交付物）：把 `prototype/index.html` 严格还原为 App，含 OAuth 登录（借鉴 `/Users/kongkang/Developer/reai_mobile_app` 的 `lib/core` 分层）。
-- **验收基准 = `prototype/verify.cjs` 的 62 项检查**：Flutter 侧在 `app/test/` 建等价 widget/集成测试逐项对齐，命名与检查项一一对应。
+- **验收基准 = `prototype/verify.cjs` 的 55 项检查**（脚本 `checks` 数组实际 55 项，早前文档写的 62 项是历史笔误）：Flutter 侧在 `app/test/` 建等价 widget/集成测试逐项对齐，命名与检查项一一对应。
 - `prototype/` 降级为**设计参考真源（只读）**：还原有疑义以它和「设计基线」节为准，不再直接改它；如确需改设计，先与 owner 确认，并同步 `prototype/verify.cjs` 与 Flutter 测试。
 - 推翻设计基线（下一节）前先与 owner 确认，不顺手改。
 
@@ -16,7 +16,7 @@
 - `app/`——Flutter 工程（主交付物）。分层参考 reai_mobile_app：`lib/core`（config / models / theme / store）、`lib/data`（本地预置数据）、`lib/pages`、`lib/widgets`；测试在 `app/test/`。
 - `prototype/`——设计参考真源（**只读**）。单文件内联 CSS/JS，无构建、无外部资源、`file://` 可直接打开；其 `verify.cjs` 62 项是开发期验收需求清单。
 - `docs/handoff/`——阶段交接文档（含开发期启动指令与 owner 硬约束）。
-- `docs/SDK-CAPABILITY.md`——上游 SDK 能力对照（reai-card-sdk v0.0.5 @ 30a093b，异步 Rust + btleplug，非 Flutter 插件）。
+- `docs/SDK-CAPABILITY.md`——上游 SDK 能力对照（reai-card-sdk v0.0.6 @ 32a1b86，异步 Rust + btleplug，非 Flutter 插件）。
 - `docs/gen-evidence/`——原型生成证据链（Flash prompt/output 留存、核验结果、旧版验收脚本）。**只读**。
 - `archive/`——旧版原型与截图。**只读**，不作为当前结构的依据。
 
@@ -33,10 +33,14 @@
 - Tab：全部 / 记录 / 总结；总结结果：Markdown + 可交互 HTML 两种视图，均本地预置。
 - 产品需求：连续录音默认不分段、偶尔 mark；清洗内容优先展示，原始数据完整保留（低权重）；推测归类必须保留原始映射，不断言真实身份。
 
-## 真实性红线
+## 真实性红线（2026-11-08 起：全链路转真实，预置数据退役）
 
-- 业务数据不接真实 BLE、ASR、声纹、LLM、云端：App 用本地预置示例数据实现。OAuth 登录为架构性借鉴（reai_mobile_app 模式，端点经 `--dart-define` 配置），未配置真实后端时不发起业务网络请求。
-- 界面按真实上线形态呈现（owner 指示 2026-11-07）：不出现「模拟 / 演示 / 未接云端」等标注与元说明；诚实边界只写在文档层（README / AGENTS），不写在页面上。开发期同理：UI 文案不留占位标注。
+owner 明确要求「做正式发布版，所有问题都要解决」，旧口径（业务数据一律用本地预置示例）**已作废**，改为：
+
+- **硬件**：经 `app/rust/card_bridge`（C ABI，`card_bridge_command` 单一入口）接 reai-card-sdk v0.0.6 真实 BLE——扫描/连接/电量/固件版本/存储/录音控制/打点/文件列表与下载/AP→WAV 转码/Wi-Fi 扫描与凭据/同步上传/两阶段 OTA。桥不可用（模拟器）时**显式失败**，不回退预置假数据。
+- **转写与总结**：真实调用后端模型网关（`RC_API_BASE` 默认 `https://block2-api.wainao.chat`；ASR `/api/model-gateway/v1/audio/transcriptions`，总结 `/chat/completions`），鉴权走真实 OAuth2（PKCE S256 + 系统浏览器授权 + Keychain 存 token）。未配置/未登录时给出**明确错误并可重试**，绝不展示编造内容。
+- **仍未接**：声纹/说话人分离（ASR 不返回，界面按「未区分」呈现，不编造 A/B 身份）。
+- 界面仍按真实上线形态呈现，不出现「模拟/演示/未接云端」标注；但真实失败（未连接、未登录、服务不可用）必须如实提示。
 - 交互视图只允许预置安全内容，不执行任意 HTML/脚本（WebView 场景禁用，Flutter 侧用原生组件还原）。
 
 ## 修改约定
@@ -44,6 +48,8 @@
 - Flutter 侧测试锚点用 `Key('data-testid 同名')`：`prototype/verify.cjs` 的 `data-testid` 是需求语义，App 与测试两侧改名必须同步。
 - 验收流程顺序与页面导航强相关（如：详情页内先看原始数据再返回），改交互流时同步改测试。
 - Flutter 改完必跑 `cd app && flutter analyze && flutter test`，结果如实贴出；失败不隐瞒。
+- 真机验证：`flutter test integration_test/hardware_probe_test.dart -d <deviceId>`（硬件在环探针）与 `flutter drive --driver=test_driver/integration_test.dart --target=integration_test/ui_flow_test.dart -d <deviceId>`（界面动线 + 截图，产物在 /tmp/rc-shots）。
+- Rust 桥构建必须用 rustup 工具链（`app/rust/build-ios.sh` 已固定 1.94.0）：本机 PATH 里 Homebrew 的 rustc 会遮住 rustup，而它没有 iOS std。
 - SDK 未决项（固件 OTA 接口、Wi-Fi 是否仅 2.4GHz）不编造：按设计稿交互实现 + 代码 `TODO` + `docs/SDK-CAPABILITY.md` 对照表登记，不阻塞主线。
 - 阶段性保存：commit → push → PR → merge。
 - OAuth 借鉴 reai_mobile_app：`lib/core/config/auth_mode.dart`、`lib/core/config/remote/endpoint_resolver.dart`、`lib/core/config/remote/client_config.dart`、`lib/main_mobile.dart`；登录 UI 按真实上线形态做，凭据/端点配置走 `--dart-define`。
