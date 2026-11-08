@@ -34,7 +34,7 @@ dependencies:
   flutter_secure_storage: ^9.2.4
   flutter_web_auth_2: ^4.1.0
   path_provider: ^2.1.6
-  connectivity_plus: ^7.0.0
+  connectivity_plus: 7.0.0
   shared_preferences: ^2.5.6
   sherpa_onnx: 1.13.3
   sherpa_onnx_ios: 1.13.3
