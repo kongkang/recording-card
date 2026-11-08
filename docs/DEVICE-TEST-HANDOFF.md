@@ -4,6 +4,8 @@
 
 **当前状态：**完整依赖和生产组合根已纳入候选。最终沙盒回归为 **220 项 Flutter 测试通过、无跳过，11 项 Rust 测试通过，Flutter analyze 无问题**。这次 Flutter 验证实际加载 Rust 动态库、已校验 SenseVoice 权重和 Silero VAD，使用官方非敏感测试音频；不是只跑 Mock。它证明 Linux 下的代码与 native 推理，不等同 iPhone 蓝牙/推理/签名安装通过。macOS / Xcode16.4 已实际编译出无签名 `Runner.app`；最终产物校验与下载见当前分支 Actions，仍不是已签名IPA或已安装验证。
 
+最终构建提交 `6945f864abe2fcef24e8500a9210ac8f637222ca` 的 [macOS CI](https://github.com/kongkang/recording-card/actions/runs/42497122132) 已完整成功，包含 arm64静态归档、四个已定义FFI符号、实际Runner callback校验和未签名包上传。Artifacts中下载 `RecordingCard-unsigned-iOS-6945f864abe2fcef24e8500a9210ac8f637222ca`。Mac suite 为214 passed / 6 skipped（没有在CI假装存在模型/硬件夹具）；220无跳过的真实native验证来自已提供模型和动态库的沙盒运行。
+
 ## 1. 获取代码与构建工具
 
 ```bash
