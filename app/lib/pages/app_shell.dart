@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 
 import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
+import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
+import '../services/audio/recording_status.dart';
+import '../services/export_service.dart';
 import '../widgets/store_scope.dart';
 import 'detail_page.dart';
 import 'setting_page.dart';
@@ -14,9 +17,20 @@ import 'summary_result_page.dart';
 import 'timeline_page.dart';
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.store, this.device, this.onDeviceCreated});
+  const AppShell({
+    super.key,
+    required this.store,
+    this.device,
+    this.settings,
+    this.exportService,
+    this.recordingStatus,
+    this.onDeviceCreated,
+  });
   final AppStore store;
   final DeviceStore? device;
+  final SettingsStore? settings;
+  final ExportService? exportService;
+  final RecordingStatusController? recordingStatus;
 
   /// dev 驱动注册内部 DeviceStore 用（release 不传）
   final void Function(DeviceStore)? onDeviceCreated;
@@ -27,6 +41,10 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   late final DeviceStore _device = widget.device ?? DeviceStore();
+  late final SettingsStore _settings = widget.settings ?? SettingsStore();
+  late final ExportService _export = widget.exportService ?? ExportService();
+  late final RecordingStatusController _recording =
+      widget.recordingStatus ?? RecordingStatusController();
 
   @override
   void initState() {
@@ -37,6 +55,8 @@ class _AppShellState extends State<AppShell> {
   @override
   void dispose() {
     if (widget.device == null) _device.dispose();
+    if (widget.settings == null) _settings.dispose();
+    if (widget.recordingStatus == null) _recording.dispose();
     super.dispose();
   }
 
@@ -53,7 +73,17 @@ class _AppShellState extends State<AppShell> {
               backgroundColor: RCColors.bg,
               body: Stack(
                 children: [
-                  if (wide) _WideLayout(device: _device) else _NarrowLayout(device: _device),
+                  if (wide)
+                    _WideLayout(
+                        device: _device,
+                        exportService: _export,
+                        recordingStatus: _recording)
+                  else
+                    _NarrowLayout(
+                        device: _device,
+                        settings: _settings,
+                        exportService: _export,
+                        recordingStatus: _recording),
                   StatusSheetOverlay(store: _device),
                 ],
               ),
@@ -182,12 +212,18 @@ class _BottomNav extends StatelessWidget {
 }
 
 /// 栈顶页面部件；面板内返回按钮仅宽屏双栏使用（窄屏走顶栏面包屑）
-Widget _stackTopPage(AppStore store, {required bool wide}) {
+Widget _stackTopPage(
+  AppStore store, {
+  required bool wide,
+  required ExportService exportService,
+}) {
   final top = store.stackTop;
   if (top == null) return const SizedBox.shrink();
   if (top.type == 'sum') {
     return SummaryResultPage(
-        summaryId: top.id, showPaneBack: wide && store.showPaneBackSum);
+        summaryId: top.id,
+        showPaneBack: wide && store.showPaneBackSum,
+        exportService: exportService);
   }
   return DetailPage(
       eventId: top.id,
@@ -196,8 +232,16 @@ Widget _stackTopPage(AppStore store, {required bool wide}) {
 }
 
 class _NarrowLayout extends StatelessWidget {
-  const _NarrowLayout({required this.device});
+  const _NarrowLayout({
+    required this.device,
+    required this.settings,
+    required this.exportService,
+    required this.recordingStatus,
+  });
   final DeviceStore device;
+  final SettingsStore settings;
+  final ExportService exportService;
+  final RecordingStatusController recordingStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -224,8 +268,9 @@ class _NarrowLayout extends StatelessWidget {
                 child: Offstage(
                   offstage: store.subStack.isNotEmpty,
                   child: switch (store.rootTab) {
-                    RootTab.timeline => const TimelinePage(),
-                    RootTab.setting => const SettingPage(),
+                    RootTab.timeline =>
+                      TimelinePage(recordingStatus: recordingStatus),
+                    RootTab.setting => SettingPage(settings: settings),
                   },
                 ),
               ),
@@ -234,7 +279,7 @@ class _NarrowLayout extends StatelessWidget {
                   key: ValueKey('sub-${e.type}-${e.id}'),
                   child: Offstage(
                     offstage: e != store.subStack.last,
-                    child: _subPage(store, e),
+                    child: _subPage(store, e, exportService),
                   ),
                 ),
             ],
@@ -261,17 +306,25 @@ class _NarrowLayout extends StatelessWidget {
   }
 
   /// 栈内条目对应的页面（Navigator 页面渲染用；宽屏右栏仍走 _stackTopPage）
-  static Widget _subPage(AppStore store, RouteEntry e) {
+  static Widget _subPage(
+      AppStore store, RouteEntry e, ExportService exportService) {
     if (e.type == 'sum') {
-      return SummaryResultPage(summaryId: e.id, showPaneBack: false);
+      return SummaryResultPage(
+          summaryId: e.id, showPaneBack: false, exportService: exportService);
     }
     return DetailPage(eventId: e.id, showPaneBack: false, backLabel: '');
   }
 }
 
 class _WideLayout extends StatelessWidget {
-  const _WideLayout({required this.device});
+  const _WideLayout({
+    required this.device,
+    required this.exportService,
+    required this.recordingStatus,
+  });
   final DeviceStore device;
+  final ExportService exportService;
+  final RecordingStatusController recordingStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -286,14 +339,16 @@ class _WideLayout extends StatelessWidget {
             children: [
               SizedBox(
                 width: 380,
-                child: TimelinePage(asLeftPane: true),
+                child: TimelinePage(
+                    asLeftPane: true, recordingStatus: recordingStatus),
               ),
               Container(width: 1, color: RCColors.sep),
               Expanded(
                 child: sub
                     ? Material(
                         color: RCColors.bg,
-                        child: _stackTopPage(store, wide: true),
+                        child: _stackTopPage(store,
+                            wide: true, exportService: exportService),
                       )
                     : const _EmptyPane(),
               ),

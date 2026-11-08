@@ -5,12 +5,19 @@ import 'package:flutter/material.dart';
 import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
+import '../services/export_service.dart';
 import '../widgets/store_scope.dart';
 
 class SummaryResultPage extends StatefulWidget {
-  const SummaryResultPage({super.key, required this.summaryId, this.showPaneBack = false});
+  const SummaryResultPage({
+    super.key,
+    required this.summaryId,
+    this.showPaneBack = false,
+    this.exportService,
+  });
   final String summaryId;
   final bool showPaneBack;
+  final ExportService? exportService;
 
   @override
   State<SummaryResultPage> createState() => _SummaryResultPageState();
@@ -19,6 +26,7 @@ class SummaryResultPage extends StatefulWidget {
 class _SummaryResultPageState extends State<SummaryResultPage> {
   final _scroll = ScrollController();
   final _sectionKeys = <String, GlobalKey>{};
+  late final ExportService _export = widget.exportService ?? ExportService();
   String _tab = 'all'; // all | ov | map | pt | todo | src
   final Map<int, bool> _ptOpen = {};
   final Set<int> _todosDone = {};
@@ -83,7 +91,11 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
             if (card.state == SummaryState.generating)
               Expanded(child: _GenView(store: store, card: card))
             else if (card.state == SummaryState.done)
-              Expanded(child: _ResultView(page: this, card: card)),
+              Expanded(
+                  child: _ResultView(
+                      page: this, card: card, exportService: _export))
+            else if (card.state == SummaryState.error)
+              Expanded(child: _ErrorView(store: store, card: card)),
           ],
         );
       },
@@ -144,9 +156,14 @@ class _GenView extends StatelessWidget {
 
 /// 结果态：标题 + 统计行 + 吸顶 Tab 栏 + 分节内容 + 目录浮钮 + 导出
 class _ResultView extends StatelessWidget {
-  const _ResultView({required this.page, required this.card});
+  const _ResultView({
+    required this.page,
+    required this.card,
+    required this.exportService,
+  });
   final _SummaryResultPageState page;
   final SummaryCard card;
+  final ExportService exportService;
 
   static const _tabs = [
     ('all', '全部'),
@@ -188,7 +205,7 @@ class _ResultView extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const _ExportButton(),
+                    _ExportButton(card: card, exportService: exportService),
                   ],
                 ),
               ),
@@ -351,9 +368,59 @@ class _ResultView extends StatelessWidget {
 
 }
 
-/// 导出按钮：菜单锚定在按钮自身位置；5 种格式 → 模拟调起系统分享
+/// 生成失败态：保留已选来源，展示可读原因并可重试。
+class _ErrorView extends StatelessWidget {
+  const _ErrorView({required this.store, required this.card});
+
+  final AppStore store;
+  final SummaryCard card;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      key: const Key('sum-error'),
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 36, color: RCColors.danger),
+            const SizedBox(height: 12),
+            const Text('总结生成失败',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Text(
+              card.error ?? '请稍后重试',
+              key: const Key('sum-error-message'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 13, color: RCColors.sec),
+            ),
+            const SizedBox(height: 20),
+            FilledButton(
+              key: const Key('sum-retry'),
+              onPressed: () => store.retrySummary(card.id),
+              style: FilledButton.styleFrom(
+                backgroundColor: RCColors.label,
+                foregroundColor: Colors.white,
+                shape: const StadiumBorder(),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+              child: const Text('重新生成'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 导出按钮：5 种格式 → 生成真实文件 → 调起系统分享
 class _ExportButton extends StatelessWidget {
-  const _ExportButton();
+  const _ExportButton({required this.card, required this.exportService});
+
+  final SummaryCard card;
+  final ExportService exportService;
 
   @override
   Widget build(BuildContext context) {
@@ -369,10 +436,10 @@ class _ExportButton extends StatelessWidget {
     );
   }
 
-  void _open(BuildContext context) {
+  Future<void> _open(BuildContext context) async {
     final size = MediaQuery.of(context).size;
     final messenger = ScaffoldMessenger.of(context);
-    showMenu<String>(
+    final format = await showMenu<ExportFormat>(
       context: context,
       // 页头右上锚定（导出按钮位于滚动流内，随内容滚动，菜单用固定位置防跑偏）
       position: RelativeRect.fromSize(
@@ -380,21 +447,32 @@ class _ExportButton extends StatelessWidget {
         size,
       ),
       items: [
-        for (final f in const ['完整文档', 'Markdown', 'PDF', '图片', 'Word 文档'])
+        for (final f in ExportFormat.values)
           PopupMenuItem(
             value: f,
-            child: Text(f, key: Key('export-item-$f')),
+            child: Text(f.label, key: Key('export-item-${f.label}')),
           ),
       ],
-    ).then((f) {
-      if (f == null) return;
+    );
+    if (format == null) return;
+    try {
+      final artifact = await exportService.build(card, format);
+      await exportService.share(artifact);
       messenger
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(
-          content: Text('已调用系统分享 · $f', key: const Key('toast')),
+          content:
+              Text('已调用系统分享 · ${format.label}', key: const Key('toast')),
           duration: const Duration(milliseconds: 1600),
         ));
-    });
+    } catch (_) {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(
+          content: Text('导出失败，请重试', key: Key('toast')),
+          duration: Duration(milliseconds: 1600),
+        ));
+    }
   }
 }
 

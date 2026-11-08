@@ -1,6 +1,20 @@
 # SDK / 产品能力对照
 
-状态：接入施工中（card_bridge FFI 已落地）。2026-11-08 Asia/Shanghai。
+状态：接入施工中（card_bridge FFI 代码已落地，构建链未接入）。2026-11-08 Asia/Shanghai。
+
+## 2026-11-08 客户端接入更新
+
+- 已实现并可单测：OAuth2 PKCE + token 安全存储 + 401 刷新、模型网关
+  `/models` / `/chat/completions`、增量滑动窗口润色、长静音阶段总结、
+  录音仓库 + 同步协调器、转写管线 + Setting 生效、音频切片仓库 + 录音状态机、
+  录音→Timeline 适配、手动总结文章（云端可配）、5 格式导出。
+- 仍未接入：真实 BLE 音频拉取 / 文件取回 / mark / Wi-Fi / OTA 的 Dart 适配器；
+  `card_bridge` 未在 Xcode/Android 工程中链接（本机无 Rust 工具链、无 `.a`/`.so`），
+  运行时 `RealCardGateway.maybe()` 失败会回退 `MockCardGateway`。
+- 本地 ASR：`TranscriptionService` 只有接口与 Fake；未引入 `sherpa_onnx`、
+  未打包 SenseVoice 模型。
+- 真实 OAuth/模型网关需要自有 client 注册、redirect allowlist、scope 与模型 ID；
+  未配置时不发起业务请求。
 
 ## 上游核验句
 最新 tag **v0.0.6**（2026-11-08 本地核验：已克隆源码确认 `src/ota.rs`/`src/dfu.rs` 存在，OTA 接口不再是"未记录"）。上游 https://github.com/ReAI-com/reai-card-sdk ，异步 Rust + btleplug（Tokio），不是 Flutter 插件；经本仓库 `app/rust/card_bridge`（C ABI FFI 桥，host 编译通过）接入 Flutter。

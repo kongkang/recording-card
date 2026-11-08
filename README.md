@@ -1,6 +1,6 @@
 # 录音卡 · 伴侣 App
 
-always-on 录音硬件（录音卡）伴侣 App。设计已于 2026-11-07 定稿（prototype v15），当前阶段：**开发期**——在 `app/` 用 Flutter 把 `prototype/index.html`（设计参考真源，只读）还原为 App，验收基准为 prototype 验收脚本的 62 项检查（Flutter 侧建等价测试对齐）。
+always-on 录音硬件（录音卡）伴侣 App。设计已于 2026-11-07 定稿（prototype v15），当前阶段：**开发期**——在 `app/` 用 Flutter 把 `prototype/index.html`（设计参考真源，只读）还原为 App，并已接入可测试的 OAuth / 模型网关 / 录音仓库 / 转写管线 / 增量润色 / 阶段总结 / 导出服务层。设计验收基准是 `verify.cjs` 的 55 个 check 名称（Flutter 侧等价测试对齐）。
 
 ## 目录结构
 
@@ -10,10 +10,10 @@ recording-card/
 ├── README.md
 ├── app/                     # Flutter 工程（开发期主交付物）
 │   ├── lib/                 # core 分层参考 reai_mobile_app
-│   └── test/                # 等价验收测试（对齐 prototype/verify.cjs 62 项）
+│   └── test/                # 等价验收 + 服务层测试（对齐 verify.cjs 55 个 check）
 ├── prototype/               # 设计参考真源（只读）
 │   ├── index.html           # 主原型：单文件内联 CSS/JS，无构建、无外部资源
-│   ├── verify.cjs           # 验收脚本（puppeteer-core + Chrome），62 项 = 需求清单
+│   ├── verify.cjs           # 验收脚本（puppeteer-core + Chrome），55 个 check = 交互需求清单
 │   ├── package.json
 │   └── screenshots/         # 验收截图（verify.cjs 自动刷新）
 ├── docs/
@@ -31,11 +31,24 @@ recording-card/
 ## 验收
 
 ```sh
-cd app && flutter analyze && flutter test    # 开发期主验收（对齐 verify.cjs 62 项）
+cd app && flutter analyze && flutter test    # 主验收：交互基线 + 服务层测试
 cd prototype && npm install && npm run verify # 设计原型回归（prototype 只读，理论恒 pass）
 ```
 
 原型脚本以 390×844 @2x 断言完整交互流程，并要求无网络请求、无 JS 异常。当前状态：**pass**（2026-11-06，v15 定稿后未再改动）。
+
+## 2026-11-08 测试驱动进展
+
+- 自动化测试：**170 个用例全部通过**（`flutter analyze` 0 issue；本机 Flutter 3.38.5）。
+- 服务层已落地：OAuth2 PKCE + token 安全存储 + 401 刷新、模型网关、增量滑动窗口润色
+  （A / A+B / A+B+C / B+C+D）、长静音切段 + 阶段总结、录音仓库 + 同步协调器、
+  转写管线 + Setting 生效、音频切片 + 录音状态机、录音→UI 适配、手动总结文章、5 格式导出。
+- UI 已接线：OAuth 登录门、Timeline 录音状态块、真实录音仓库、云端总结失败态/重试、
+  设备自动重连、真实电量/固件/录音态。
+- 外部阻塞（不伪装为已通过）：`card_bridge` 未链入 iOS/Android、真实 BLE 音频拉取/
+  文件取回未接、本地 ASR 模型未打包、真实 OAuth/模型网关配置未提供。
+  详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 与
+  [`docs/FEATURE-TEST-MAP.md`](docs/FEATURE-TEST-MAP.md)。
 
 ## 当前设计基线（2026-11-07 v3 打磨）
 
@@ -52,8 +65,10 @@ cd prototype && npm install && npm run verify # 设计原型回归（prototype �
 
 ## 边界（重要）
 
-纯本地原型：未接真实 BLE、ASR、声纹、LLM 或云端服务，数据全部为本地预置示例；说话人为推测归类示例，不断言真实身份。界面按真实上线形态呈现、不在页面内标注模拟字样（owner 指示，2026-11-07）。SDK 实际可支撑范围见 `docs/SDK-CAPABILITY.md`。
+默认本地可运行：未配置 `RC_OAUTH_*` / 模型网关时 App 不发业务网络请求，录音/总结使用本地预置或本地生成路径；配置后 OAuth 登录、模型网关润色/总结走真实服务。真实 BLE 音频拉取与本地 ASR 仍需 `card_bridge` 构建链与 ASR 模型包（见 `docs/ARCHITECTURE.md`）。界面按真实上线形态呈现、不在页面内标注模拟字样（owner 指示，2026-11-07）。
 
 ## 后续路线
 
-1. 设计打磨（当前）→ 2. 设计定稿 → 3. 工程开发。
+1. `card_bridge` 链入 iOS/Android + 真实 BLE 音频切片/文件取回。
+2. 接入 sherpa_onnx + SenseVoice 模型包，打通本地转写→增量润色→阶段总结。
+3. 真机全流程验收 + 发布工程（图标、隐私合规、release 签名、商店素材）。

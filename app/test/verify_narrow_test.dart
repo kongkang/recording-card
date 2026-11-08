@@ -2,13 +2,43 @@
 // 命名沿用 verify.cjs 末尾 checks 数组；段落注释标注对应脚本行号。
 library;
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/models/summary.dart';
 import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/core/store/device_store.dart';
 import 'package:recording_card/pages/app_shell.dart';
+import 'package:recording_card/services/export_service.dart';
 import 'test_transitions.dart';
+
+/// 验收测试不触发 share_plus 平台通道；导出字节由 export_service_test 覆盖。
+class FakeExportService extends ExportService {
+  FakeExportService() : super(sharer: const _NoopSharer());
+
+  final built = <ExportFormat>[];
+
+  @override
+  Future<ExportArtifact> build(SummaryCard card, ExportFormat format) async {
+    built.add(format);
+    return ExportArtifact(
+      fileName: 'test.${format.extension}',
+      bytes: Uint8List.fromList([1, 2, 3]),
+      mimeType: format.mimeType,
+    );
+  }
+
+  @override
+  Future<void> share(ExportArtifact artifact) async {}
+}
+
+class _NoopSharer implements ExportSharer {
+  const _NoopSharer();
+
+  @override
+  Future<void> share(ExportArtifact artifact) async {}
+}
 
 Future<(AppStore, DeviceStore)> boot(WidgetTester tester,
     {Size size = const Size(390, 844)}) async {
@@ -18,7 +48,13 @@ Future<(AppStore, DeviceStore)> boot(WidgetTester tester,
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
   addTearDown(device.dispose);
-  await tester.pumpWidget(MaterialApp(theme: testTheme(), home: AppShell(store: store, device: device)));
+  await tester.pumpWidget(MaterialApp(
+      theme: testTheme(),
+      home: AppShell(
+        store: store,
+        device: device,
+        exportService: FakeExportService(),
+      )));
   await tester.pump();
   return (store, device);
 }

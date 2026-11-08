@@ -51,6 +51,12 @@ abstract class CardGateway {
   /// 当前已连接设备的状态快照；不可用/未连接返回 null（调用方回退预置数据）。
   Future<CardSnapshot?> status();
 
+  /// 扫描可连接设备（NUS）；默认无桥实现返回空列表。
+  Future<List<String>> scan({int timeoutMs = 3000}) async => const [];
+
+  /// 连接指定设备并返回快照；默认无桥实现返回 null。
+  Future<CardSnapshot?> connect(String deviceId) async => null;
+
   /// 真实网关是否就绪（桥符号可解析）。
   bool get available => true;
 }
@@ -61,6 +67,12 @@ class MockCardGateway implements CardGateway {
 
   @override
   Future<CardSnapshot?> status() async => null;
+
+  @override
+  Future<List<String>> scan({int timeoutMs = 3000}) async => const [];
+
+  @override
+  Future<CardSnapshot?> connect(String deviceId) async => null;
 
   @override
   bool get available => false;
@@ -157,6 +169,7 @@ class RealCardGateway implements CardGateway {
   }
 
   /// 扫描并连接指定设备（scan→find→connect→快照）；成功后 status() 可用。
+  @override
   Future<CardSnapshot?> connect(String deviceId) {
     final ptr = deviceId.toNativeUtf8();
     try {
@@ -167,6 +180,7 @@ class RealCardGateway implements CardGateway {
   }
 
   /// 扫描 NUS 设备，返回可连接的设备 id 列表。
+  @override
   Future<List<String>> scan({int timeoutMs = 3000}) async {
     final json = await _call((cb, ud) => _scanFn(timeoutMs, cb, ud));
     if (json['ok'] != true) return const [];

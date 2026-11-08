@@ -213,14 +213,15 @@ class _MainView extends StatelessWidget {
                   const BoxDecoration(color: RCColors.ok, shape: BoxShape.circle),
             ),
             const SizedBox(width: 8),
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('录音卡',
+                  const Text('录音卡',
                       style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-                  Text('已连接 · 蓝牙',
-                      style: TextStyle(fontSize: 12, color: RCColors.sec)),
+                  Text(store.connectionText,
+                      key: const Key('conn-state'),
+                      style: const TextStyle(fontSize: 12, color: RCColors.sec)),
                 ],
               ),
             ),
@@ -230,8 +231,10 @@ class _MainView extends StatelessWidget {
                 color: const Color(0xFFE8F5EA),
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: const Text('已连接',
-                  style: TextStyle(fontSize: 11, color: RCColors.okInk)),
+              child: Text(
+                  store.connectionText == '未连接' ? '未连接' : '已连接',
+                  key: const Key('conn-chip'),
+                  style: const TextStyle(fontSize: 11, color: RCColors.okInk)),
             ),
           ],
         ),
@@ -247,11 +250,14 @@ class _MainView extends StatelessWidget {
                 Container(
                   width: 7,
                   height: 7,
-                  decoration: const BoxDecoration(
-                      color: RCColors.danger, shape: BoxShape.circle),
+                  decoration: BoxDecoration(
+                      color: store.recording ? RCColors.danger : RCColors.ax,
+                      shape: BoxShape.circle),
                 ),
                 const SizedBox(width: 5),
-                const Text('录音中', style: TextStyle(fontSize: 13)),
+                Text(store.recording ? '录音中' : '已停止',
+                    key: const Key('rec-state'),
+                    style: const TextStyle(fontSize: 13)),
                 const SizedBox(width: 8),
                 Text(
                   store.recClockText,
@@ -333,7 +339,7 @@ class _MainView extends StatelessWidget {
                 style: const TextStyle(fontSize: 13, color: RCColors.okInk)),
             const SizedBox(width: 5),
             const Icon(Icons.chevron_right,
-                size: 15, color: RCColors.ax),
+                key: Key('rowchev-fw'), size: 15, color: RCColors.ax),
           ]),
         ),
         if (store.devStateText.isNotEmpty)
@@ -401,8 +407,14 @@ class _FirmwareView extends StatelessWidget {
         const Text('固件更新',
             style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
         const SizedBox(height: 6),
-        const _Row(label: '主控芯片', child: Text('2.1.0 → 2.2.0', style: TextStyle(fontSize: 13))),
-        const _Row(label: 'Wi-Fi 芯片', child: Text('1.4.2 → 1.5.0', style: TextStyle(fontSize: 13))),
+        _Row(
+            label: '主控芯片',
+            child: Text('${store.fwVersionText} → 2.2.0',
+                style: const TextStyle(fontSize: 13))),
+        _Row(
+            label: 'Wi-Fi 芯片',
+            child: Text('${store.wifiVersionText} → 1.5.0',
+                style: const TextStyle(fontSize: 13))),
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 8),
           child: Text(

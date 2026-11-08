@@ -2,13 +2,18 @@
 /// 设计真源：卡片两行折叠、勾选模式锁 Tab、生成 6s 进程、路由栈扁平化。
 library;
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
 import '../../data/seed.dart';
+import '../../services/analysis/summary_article.dart';
+import '../../services/recordings/recording_repository.dart';
+import '../../services/recordings/recording_view_adapter.dart';
 import '../models/record.dart';
 import '../models/summary.dart';
+import '../storage/kv_store.dart';
 
 enum RootTab { timeline, setting }
 
@@ -41,8 +46,32 @@ abstract final class GenConst {
 }
 
 class AppStore extends ChangeNotifier {
+  AppStore({
+    List<RecordEvent>? events,
+    KvStore? storage,
+    RecordingRepository? recordings,
+    SummaryArticleService? summaryService,
+  })  : events = events ?? seedEvents,
+        _storage = storage ?? MemoryKvStore(),
+        _recordings = recordings,
+        _summaryService = summaryService {
+    _recordings?.addListener(_onRecordingsChanged);
+    _restoreFromStorage();
+  }
+
+  /// 路由栈 + 已生成总结的持久化键（对应原型 sessionStorage rc-route-v1）
+  static const storageKey = 'rc-route-v1';
+
   final List<RecordEvent> events;
-  AppStore({List<RecordEvent>? events}) : events = events ?? seedEvents;
+  final KvStore _storage;
+  final RecordingRepository? _recordings;
+  final SummaryArticleService? _summaryService;
+
+  /// 真实录音仓库优先；未注入时保持预置数据（设计验收/测试）。
+  List<RecordEvent> get displayEvents =>
+      _recordings == null ? events : toTimelineEvents(_recordings.all());
+
+  void _onRecordingsChanged() => notifyListeners();
 
   RootTab rootTab = RootTab.timeline;
   FeedFilter filter = FeedFilter.all;
@@ -115,7 +144,8 @@ class AppStore extends ChangeNotifier {
   bool get showPaneBackSum => subStack.length > 1 && stackTop!.type == 'sum';
 
   SummaryCard? summaryById(String id) => summaries.where((s) => s.id == id).firstOrNull;
-  RecordEvent eventById(String id) => events.firstWhere((e) => e.id == id);
+  RecordEvent eventById(String id) =>
+      displayEvents.firstWhere((e) => e.id == id);
   List<SummaryCard> doneSummariesReferencing(String eventId) =>
       summaries.where((s) => s.state == SummaryState.done && s.srcIds.contains(eventId)).toList();
 
@@ -123,7 +153,7 @@ class AppStore extends ChangeNotifier {
   List<FeedGroup> get feedGroups {
     final f = filter;
     final sums = summaries.where((s) => f == FeedFilter.all || f == FeedFilter.summary).toList();
-    final evs = events.where((e) => f == FeedFilter.all || f == FeedFilter.event).toList();
+    final evs = displayEvents.where((e) => f == FeedFilter.all || f == FeedFilter.event).toList();
     final past = evs.where((e) => e.dayOffset > 0).toList();
     final offs = past.map((e) => e.dayOffset).toSet().toList()..sort();
     final groups = <FeedGroup>[];
@@ -170,6 +200,7 @@ class AppStore extends ChangeNotifier {
     summaries = summaries.where((s) => s.state != SummaryState.pending).toList();
     openCardId = null;
     _lockTabs(false);
+    _persist();
   }
 
   void _lockTabs(bool lock) {
@@ -189,7 +220,7 @@ class AppStore extends ChangeNotifier {
   void selRange(String r) {
     selIds
       ..clear()
-      ..addAll(events.where((e) => inRange(e, r)).map((e) => e.id));
+      ..addAll(displayEvents.where((e) => inRange(e, r)).map((e) => e.id));
     notifyListeners();
   }
 
@@ -207,7 +238,10 @@ class AppStore extends ChangeNotifier {
 
   // ── 生成进程（6s，150ms tick；与原型一致） ──────────────
   void genSummary() {
-    final ids = events.where((e) => selIds.contains(e.id)).map((e) => e.id).toList();
+    final ids = displayEvents
+        .where((e) => selIds.contains(e.id))
+        .map((e) => e.id)
+        .toList();
     if (ids.isEmpty) return;
     selMode = false;
     final card = pend!;
@@ -223,6 +257,7 @@ class AppStore extends ChangeNotifier {
   void _runProgress(SummaryCard card) {
     var ticks = 0;
     _genTimer?.cancel();
+    _genCard = card;
     _genTimer = Timer.periodic(const Duration(milliseconds: GenConst.tickMs), (_) {
       // 用 tick 计数而非墙钟：进度完全由定时器驱动，测试虚拟时间下确定
       ticks++;
@@ -232,15 +267,92 @@ class AppStore extends ChangeNotifier {
       if (pc >= 100) {
         _genTimer?.cancel();
         _genTimer = null;
-        fillSummaryContent(card, events);
-        _persist();
+        final service = _summaryService;
+        if (service == null) {
+          fillSummaryContent(card, displayEvents);
+          _persist();
+        } else {
+          _finishWithService(card, service);
+        }
       }
       notifyListeners();
     });
   }
 
+  SummaryCard? _genCard;
+
+  Future<void> _finishWithService(
+      SummaryCard card, SummaryArticleService service) async {
+    try {
+      final article = await service.generate(_sourcesFor(card));
+      _applyArticle(card, article);
+      _persist();
+    } catch (e) {
+      card.state = SummaryState.error;
+      card.error = e.toString();
+    }
+    notifyListeners();
+  }
+
+  List<SummaryArticleSource> _sourcesFor(SummaryCard card) {
+    final byId = {for (final e in displayEvents) e.id: e};
+    return [
+      for (final id in card.srcIds)
+        if (byId[id] != null)
+          SummaryArticleSource(
+            recordingId: id,
+            title: byId[id]!.title,
+            cleanText: byId[id]!.dialog.isEmpty
+                ? byId[id]!.longText
+                : byId[id]!.dialog.map((l) => l.text).join('\n'),
+          ),
+    ];
+  }
+
+  void _applyArticle(SummaryCard card, SummaryArticle article) {
+    final byId = {for (final e in displayEvents) e.id: e};
+    final ids =
+        article.sourceIds.isEmpty ? card.srcIds : article.sourceIds;
+    final refs = [
+      for (final id in ids)
+        if (byId[id] != null)
+          SourceRef(id, byId[id]!.title,
+              byId[id]!.srcMap.replaceFirst('来源 ', ''))
+    ];
+    card.state = SummaryState.done;
+    card.error = null;
+    card.title = article.title;
+    card.overview = article.overview;
+    card.subDesc = '${card.srcIds.length} 条记录';
+    card.structure = [
+      for (final section in article.sections)
+        MapBranch(section.heading, [section.body])
+    ];
+    card.points = [
+      for (final section in article.sections)
+        InfoPoint(section.heading, section.body, refs)
+    ];
+    card.todos = article.actionItems;
+    card.srcDesc =
+        [for (final id in ids) byId[id]?.title ?? id].join('；');
+    card.markdown = '# ${article.title}\n\n${article.overview}\n\n'
+        '${article.sections.map((s) => '## ${s.heading}\n${s.body}').join('\n\n')}\n\n'
+        '## 行动项\n${article.actionItems.map((t) => '- [ ] $t').join('\n')}';
+  }
+
+  void retrySummary(String id) {
+    final card = summaryById(id);
+    if (card == null || card.state != SummaryState.error) return;
+    card
+      ..state = SummaryState.generating
+      ..error = null
+      ..progress = 0;
+    _runProgress(card);
+    notifyListeners();
+  }
+
   int get _genMs {
-    final card = pend;
+    final card = _genCard;
     if (card == null || card.state != SummaryState.generating) return 0;
     return (card.progress / 100 * GenConst.totalMs).floor();
   }
@@ -252,6 +364,7 @@ class AppStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    _recordings?.removeListener(_onRecordingsChanged);
     _genTimer?.cancel();
     super.dispose();
   }
@@ -266,10 +379,16 @@ class AppStore extends ChangeNotifier {
 
   void restoreState(Map<String, dynamic>? data) {
     if (data == null) return;
-    summaries = [
-      for (final j in (data['sums'] as List? ?? []))
-        if (j is Map<String, dynamic>) SummaryCard.fromJson(j)
-    ];
+    final restoredSums = <SummaryCard>[];
+    for (final j in (data['sums'] as List? ?? [])) {
+      if (j is! Map<String, dynamic>) continue;
+      try {
+        restoredSums.add(SummaryCard.fromJson(j));
+      } catch (_) {
+        // 单条损坏只跳过该条，不拖垮整个会话
+      }
+    }
+    summaries = restoredSums;
     subStack = [
       for (final e in (data['stack'] as List? ?? []))
         if (e is Map<String, dynamic> &&
@@ -280,5 +399,18 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _persist() {} // 持久化钩子：Stage 接 shared_preferences 时替换
+  void _restoreFromStorage() {
+    final raw = _storage.getString(storageKey);
+    if (raw == null) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) restoreState(decoded);
+    } catch (_) {
+      // 损坏数据按空会话处理，不阻塞启动
+    }
+  }
+
+  void _persist() {
+    unawaited(_storage.setString(storageKey, jsonEncode(exportState())));
+  }
 }

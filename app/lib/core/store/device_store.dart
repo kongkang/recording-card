@@ -6,10 +6,12 @@
 /// 网关不可用/无硬件时回退预置数据，界面语义不变。
 library;
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
 import '../device/card_gateway.dart';
+import '../storage/kv_store.dart';
 
 enum SyncState { idle, busy, done }
 enum DeviceView { main, upg, wifi }
@@ -28,12 +30,23 @@ class SavedWifi {
 }
 
 class DeviceStore extends ChangeNotifier {
-  DeviceStore({CardGateway? gateway})
+  DeviceStore({CardGateway? gateway, KvStore? storage})
       : _gateway = gateway ??
             RealCardGateway.maybe() ??
-            const MockCardGateway();
+            const MockCardGateway(),
+        _storage = storage ?? MemoryKvStore() {
+    _restoreWifi();
+    _restoreDevice();
+  }
+
+  /// Wi-Fi 已保存网络 + 最后一次连接网络（密码随名称持久化）
+  static const wifiStorageKey = 'rc-wifi-v1';
+
+  /// 最后一次成功连接的设备 id（下次打开弹层优先直连）
+  static const deviceStorageKey = 'rc-device-v1';
 
   final CardGateway _gateway;
+  final KvStore _storage;
 
   /// 真实桥是否就绪（真机+硬件时可观测）
   bool get liveDeviceAvailable => _gateway.available;
@@ -68,6 +81,12 @@ class DeviceStore extends ChangeNotifier {
   static const batteryLevel = 82; // ≥40 绿（预置/回退值）
   int? _liveBattery;
   bool? _liveCharging;
+  bool? _liveRecording;
+  bool? _liveWifiOpen;
+  String? _liveFwVersion;
+  String? _liveWifiVersion;
+  String? _connectedDeviceId;
+  String? _lastDeviceId;
 
   /// 当前展示电量：真实回报优先，否则预置值
   int get battery => _liveBattery ?? DeviceStore.batteryLevel;
@@ -76,6 +95,25 @@ class DeviceStore extends ChangeNotifier {
     if (_liveCharging == true) return '充电中';
     return level < 20 ? '电量低' : level < 40 ? '电量中' : '电量高';
   }
+
+  /// 录音状态：真实回报优先，否则按设计稿初始「录音中」
+  bool get recording => _liveRecording ?? true;
+
+  /// 硬件 Wi-Fi 是否开启（真实回报优先）
+  bool get wifiOpen => _liveWifiOpen ?? true;
+
+  /// 当前固件版本：真实回报优先，否则设计稿对比基线
+  String get fwVersionText => _liveFwVersion ?? '2.1.0';
+
+  /// 当前 Wi-Fi 芯片版本：真实回报优先，否则设计稿对比基线
+  String get wifiVersionText => _liveWifiVersion ?? '1.4.2';
+
+  /// 最近连接成功的设备 id（无桥/未连接为 null）
+  String? get connectedDeviceId => _connectedDeviceId;
+
+  /// 弹层连接状态文案：桥可用但尚未连接时不得伪装「已连接」
+  String get connectionText =>
+      _gateway.available && _connectedDeviceId == null ? '未连接' : '已连接 · 蓝牙';
 
   String get batteryEtaText {
     final level = battery;
@@ -92,9 +130,53 @@ class DeviceStore extends ChangeNotifier {
     if (!_gateway.available) return;
     final snapshot = await _gateway.status();
     if (snapshot == null) return;
+    _applySnapshot(snapshot);
+    notifyListeners();
+  }
+
+  /// 扫描可连接设备；桥不可用返回空列表（不触发权限/蓝牙）
+  Future<List<String>> scanDevices({int timeoutMs = 3000}) async {
+    if (!_gateway.available) return const [];
+    return _gateway.scan(timeoutMs: timeoutMs);
+  }
+
+  /// 连接指定设备并应用快照；失败返回 false，不伪造连接态。
+  Future<bool> connectDevice(String deviceId) async {
+    if (!_gateway.available) return false;
+    final snapshot = await _gateway.connect(deviceId);
+    if (snapshot == null) {
+      notifyListeners();
+      return false;
+    }
+    _connectedDeviceId = deviceId;
+    _lastDeviceId = deviceId;
+    _persistDevice();
+    _applySnapshot(snapshot);
+    notifyListeners();
+    return true;
+  }
+
+  /// 打开弹层/启动时的连接策略：已连接只刷新；有上次设备直连；
+  /// 否则扫描并连接第一个；桥不可用时静默跳过。
+  Future<void> ensureConnected() async {
+    if (!_gateway.available) return;
+    if (_connectedDeviceId != null) {
+      await refreshFromDevice();
+      return;
+    }
+    final last = _lastDeviceId;
+    if (last != null && await connectDevice(last)) return;
+    final devices = await scanDevices();
+    if (devices.isNotEmpty) await connectDevice(devices.first);
+  }
+
+  void _applySnapshot(CardSnapshot snapshot) {
     _liveBattery = snapshot.batteryLevel.clamp(1, 100);
     _liveCharging = snapshot.isCharging;
-    notifyListeners();
+    _liveRecording = snapshot.recording;
+    _liveWifiOpen = snapshot.wifiOpen;
+    if (snapshot.fwVersion.isNotEmpty) _liveFwVersion = snapshot.fwVersion;
+    if (snapshot.wifiVersion.isNotEmpty) _liveWifiVersion = snapshot.wifiVersion;
   }
 
   // ── 同步：idle → busy(900ms) → done(冷却 10s) → idle ──
@@ -137,7 +219,8 @@ class DeviceStore extends ChangeNotifier {
     sheetOpen = true;
     view = DeviceView.main;
     _startClock();
-    unawaited(refreshFromDevice()); // 真实电量/状态异步刷新，回退路径不阻塞 UI
+    // 真实链路：优先重连上次设备，否则扫描第一个；无桥静默跳过不阻塞 UI
+    unawaited(ensureConnected());
     notifyListeners();
   }
 
@@ -257,6 +340,7 @@ class DeviceStore extends ChangeNotifier {
       wifiJoining = false;
       wifiJoinName = '';
       wifiStateText = '$n 连接成功';
+      _persistWifi();
       notifyListeners();
     });
   }
@@ -286,8 +370,53 @@ class DeviceStore extends ChangeNotifier {
       wifiSelName = null;
       wifiCountShown = wifiSaved.length;
       wifiStateText = '$wifiLast 连接成功';
+      _persistWifi();
       notifyListeners();
     });
+  }
+
+  void _restoreWifi() {
+    final raw = _storage.getString(wifiStorageKey);
+    if (raw == null) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return;
+      final saved = <SavedWifi>[];
+      for (final item in (decoded['saved'] as List? ?? const [])) {
+        if (item is! Map) continue;
+        final name = item['n'];
+        final pwd = item['p'];
+        if (name is String && name.isNotEmpty) {
+          saved.add(SavedWifi(name, pwd is String ? pwd : ''));
+        }
+      }
+      if (saved.isNotEmpty) wifiSaved = saved;
+      final last = decoded['last'];
+      if (last is String && last.isNotEmpty) wifiLast = last;
+    } catch (_) {
+      // 损坏数据回落到内置示例网络，不阻塞启动
+    }
+  }
+
+  void _persistWifi() {
+    unawaited(_storage.setString(
+      wifiStorageKey,
+      jsonEncode({
+        'saved': [
+          for (final w in wifiSaved) {'n': w.name, 'p': w.pwd}
+        ],
+        'last': wifiLast,
+      }),
+    ));
+  }
+
+  void _restoreDevice() {
+    final last = _storage.getString(deviceStorageKey);
+    if (last != null && last.isNotEmpty) _lastDeviceId = last;
+  }
+
+  void _persistDevice() {
+    unawaited(_storage.setString(deviceStorageKey, _lastDeviceId ?? ''));
   }
 
   @override

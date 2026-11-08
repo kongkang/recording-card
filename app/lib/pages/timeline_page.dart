@@ -7,14 +7,23 @@ import '../core/models/record.dart';
 import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
+import '../services/audio/recording_status.dart';
+import '../widgets/recording_status_block.dart';
 import '../widgets/selection_marker.dart';
 import '../widgets/store_scope.dart';
 
 class TimelinePage extends StatelessWidget {
-  const TimelinePage({super.key, this.asLeftPane = false});
+  const TimelinePage({
+    super.key,
+    this.asLeftPane = false,
+    this.recordingStatus,
+  });
 
   /// 宽屏双栏时作为常显左栏
   final bool asLeftPane;
+
+  /// 顶部「正在录音」状态块；null 时不展示（测试/旧调用兼容）
+  final RecordingStatusController? recordingStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -26,6 +35,8 @@ class TimelinePage extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (recordingStatus != null)
+              RecordingStatusBlock(controller: recordingStatus!),
             _TabsBar(store: store),
             if (store.selMode) _RangeBar(store: store),
             Expanded(
@@ -172,15 +183,19 @@ class _RangeBar extends StatelessWidget {
     return Container(
       key: const Key('rangebar'),
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
-      child: Row(
-        children: [
-          const Text('全选', style: TextStyle(fontSize: 13, color: RCColors.sec)),
-          const SizedBox(width: 10),
-          chip('今日', 'today'),
-          chip('本周', 'week'),
-          chip('本月', 'month'),
-          chip('清除', 'none'),
-        ],
+      // 320 宽窄屏下「全选 + 4 个范围」超出可用宽度：横向滑动而不是溢出
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            const Text('全选', style: TextStyle(fontSize: 13, color: RCColors.sec)),
+            const SizedBox(width: 10),
+            chip('今日', 'today'),
+            chip('本周', 'week'),
+            chip('本月', 'month'),
+            chip('清除', 'none'),
+          ],
+        ),
       ),
     );
   }
@@ -579,6 +594,20 @@ class _SummaryCardView extends StatelessWidget {
                 ),
               ),
             ],
+          ],
+        );
+      case SummaryState.error:
+        inner = Column(
+          key: const Key('sumcard-error'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('总结生成失败',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            Text(card.error ?? '请稍后重试',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, color: RCColors.danger)),
           ],
         );
     }

@@ -7,7 +7,8 @@
 设计已定稿（2026-11-07，prototype v15 + handoff `docs/handoff/handoff-2026-11-07-1935-flutter-build.md`），正式进入工程开发。
 
 - `app/` 是 Flutter 工程（当前主交付物）：把 `prototype/index.html` 严格还原为 App，含 OAuth 登录（借鉴 `/Users/kongkang/Developer/reai_mobile_app` 的 `lib/core` 分层）。
-- **验收基准 = `prototype/verify.cjs` 的 62 项检查**：Flutter 侧在 `app/test/` 建等价 widget/集成测试逐项对齐，命名与检查项一一对应。
+- **验收基准 = `prototype/verify.cjs` 的 55 个 check 名称**（脚本自报口径；早期文档写 62 为旧口径）：Flutter 侧在 `app/test/` 建等价 widget/集成测试逐项对齐，命名与检查项一一对应。
+- 2026-11-08 起按测试驱动推进：服务层（OAuth / 模型网关 / 增量润色 / 阶段总结 / 录音仓库 / 转写管线 / 音频切片 / 导出）均有注入接缝与单测；真实外部依赖未验证时只能报「代码+自动测试」，不得报「真实链路通过」。详见 `docs/ARCHITECTURE.md` / `docs/FEATURE-TEST-MAP.md`。
 - `prototype/` 降级为**设计参考真源（只读）**：还原有疑义以它和「设计基线」节为准，不再直接改它；如确需改设计，先与 owner 确认，并同步 `prototype/verify.cjs` 与 Flutter 测试。
 - 推翻设计基线（下一节）前先与 owner 确认，不顺手改。
 

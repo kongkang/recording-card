@@ -19,6 +19,7 @@ class _LoginPageState extends State<LoginPage> {
   final _account = TextEditingController();
   final _password = TextEditingController();
   String? _error;
+  bool _submitting = false;
 
   @override
   void dispose() {
@@ -27,7 +28,23 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    if (_submitting) return;
+    if (widget.auth.useRemoteOAuth) {
+      setState(() {
+        _submitting = true;
+        _error = null;
+      });
+      final err = await widget.auth
+          .signInWithOAuth(loginHint: _account.text.trim());
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = err;
+      });
+      if (err == null) widget.onSignedIn();
+      return;
+    }
     final err = widget.auth.signIn(_account.text, _password.text);
     setState(() => _error = err);
     if (err == null) widget.onSignedIn();
@@ -58,18 +75,20 @@ class _LoginPageState extends State<LoginPage> {
                 TextField(
                   key: const Key('login-account'),
                   controller: _account,
-                  decoration: _deco('账号'),
+                  decoration: _deco(widget.auth.useRemoteOAuth ? '账号（可选）' : '账号'),
                   style: const TextStyle(fontSize: 15),
                 ),
-                const SizedBox(height: 14),
-                TextField(
-                  key: const Key('login-password'),
-                  controller: _password,
-                  obscureText: true,
-                  decoration: _deco('密码'),
-                  style: const TextStyle(fontSize: 15),
-                  onSubmitted: (_) => _submit(),
-                ),
+                if (!widget.auth.useRemoteOAuth) ...[
+                  const SizedBox(height: 14),
+                  TextField(
+                    key: const Key('login-password'),
+                    controller: _password,
+                    obscureText: true,
+                    decoration: _deco('密码'),
+                    style: const TextStyle(fontSize: 15),
+                    onSubmitted: (_) => _submit(),
+                  ),
+                ],
                 if (_error != null) ...[
                   const SizedBox(height: 12),
                   Text(_error!,
@@ -79,14 +98,23 @@ class _LoginPageState extends State<LoginPage> {
                 const SizedBox(height: 28),
                 FilledButton(
                   key: const Key('login-submit'),
-                  onPressed: _submit,
+                  onPressed: _submitting ? null : _submit,
                   style: FilledButton.styleFrom(
                     backgroundColor: RCColors.label,
                     foregroundColor: Colors.white,
                     shape: const StadiumBorder(),
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
-                  child: const Text('登录', style: TextStyle(fontSize: 15)),
+                  child: _submitting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : Text(
+                          widget.auth.useRemoteOAuth ? '使用账号登录' : '登录',
+                          style: const TextStyle(fontSize: 15)),
                 ),
               ],
             ),

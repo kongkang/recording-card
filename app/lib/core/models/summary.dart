@@ -1,7 +1,7 @@
-/// 总结卡片（Action Card）模型 —— 状态机 pending → generating → done。
+/// 总结卡片（Action Card）模型 —— 状态机 pending → generating → done / error。
 library;
 
-enum SummaryState { pending, generating, done }
+enum SummaryState { pending, generating, done, error }
 
 class SourceRef {
   final String eventId;
@@ -39,6 +39,7 @@ class SummaryCard {
   List<String> todos = const [];
   String? srcDesc;
   String? markdown;
+  String? error; // error 态的可读原因
 
   SummaryCard({required this.id, required this.time, this.state = SummaryState.pending});
 
