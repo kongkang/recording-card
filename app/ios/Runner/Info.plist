@@ -90,7 +90,7 @@
 			<string>dev.kongkang.recordingCard.oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>recording-card</string>
+				<string>$(RC_OAUTH_CALLBACK_SCHEME)</string>
 			</array>
 		</dict>
 	</array>

@@ -1,0 +1,5 @@
+// Safe default; never register both app schemes on one installation.
+RC_OAUTH_CALLBACK_SCHEME = recording-card
+// Generated only by the authorized Mac runner after approved CONFIG validation.
+// Reference reuse is explicit opt-in; uninstall the reference app or use another phone.
+#include? "OAuthLocal.xcconfig"

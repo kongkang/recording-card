@@ -1,8 +1,71 @@
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// BEGIN RC_OAUTH_CONFIG: pure functions also exercised by scripts/tests.
+fun decodeRcDartDefines(encoded: String): Map<String, String> {
+    if (encoded.isEmpty()) return emptyMap()
+    val result = linkedMapOf<String, String>()
+    for (entry in encoded.split(',')) {
+        require(entry.isNotEmpty()) { "Empty entry in Flutter dart-defines" }
+        val decoded = try {
+            val bytes = Base64.getDecoder().decode(entry)
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes)).toString()
+        } catch (_: Exception) {
+            throw IllegalArgumentException("Flutter dart-defines must be valid Base64 UTF-8")
+        }
+        val separator = decoded.indexOf('=')
+        require(separator > 0) { "Each Flutter dart-define must contain key=value" }
+        val key = decoded.substring(0, separator)
+        require(!result.containsKey(key)) { "Duplicate Flutter dart-define; use one approved CONFIG without overrides" }
+        result[key] = decoded.substring(separator + 1)
+    }
+    return result
+}
+
+fun rcOAuthCallbackScheme(defines: Map<String, String>): String {
+    val flags = listOf(
+        "RC_OAUTH_REUSE_REFERENCE_CLIENT", "RC_ASR_ALLOW_DOWNLOAD",
+        "RC_ASR_LICENSE_ACCEPTED", "RC_UPLOAD_RAW_CONTRACT_APPROVED",
+        "RC_UPLOAD_OAUTH_BEARER_APPROVED",
+    )
+    for (flag in flags) {
+        require(defines[flag] == null || defines[flag] in listOf("true", "false")) {
+            "$flag must be exactly true or false"
+        }
+    }
+    val reuse = defines["RC_OAUTH_REUSE_REFERENCE_CLIENT"] == "true"
+    val client = defines["RC_OAUTH_CLIENT_ID"] ?: "58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo"
+    val redirect = defines["RC_OAUTH_REDIRECT_URI"] ?: "recording-card://callback"
+    val expected = if (reuse) "reai-mobile://callback" else "recording-card://callback"
+    require(redirect == expected) {
+        "RC_OAUTH_REDIRECT_URI must exactly match the explicit reuse flag ($expected)"
+    }
+    require(client.isNotEmpty() && client.none { it.isWhitespace() }) {
+        "RC_OAUTH_CLIENT_ID must name an approved public client"
+    }
+    require(!reuse || client == "58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo") {
+        "Reference reuse is restricted to the agreed public client ID"
+    }
+    return if (reuse) "reai-mobile" else "recording-card"
+}
+// END RC_OAUTH_CONFIG
+
+val nativeOAuthCallbackScheme = rcOAuthCallbackScheme(
+    decodeRcDartDefines(providers.gradleProperty("dart-defines").orNull ?: ""),
+)
+if (nativeOAuthCallbackScheme == "reai-mobile") {
+    logger.warn("Explicit reference OAuth reuse: uninstall the reference ReAI app from the test phone or use another phone. Two installed apps must NOT share reai-mobile; token storage remains recording_card.")
 }
 
 android {
@@ -28,6 +91,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["rcOAuthCallbackScheme"] = nativeOAuthCallbackScheme
     }
 
     buildTypes {

@@ -2,3 +2,6 @@ target/
 config/device.public.json
 .e-ui-artifacts/
 .repair-*.py
+app/ios/Flutter/OAuthLocal.xcconfig
+app/ios/Flutter/.OAuthLocal.xcconfig.*
+scripts/**/__pycache__/

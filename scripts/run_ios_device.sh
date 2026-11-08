@@ -1,46 +1,91 @@
 #!/usr/bin/env bash
-# Build/preflight only by default. No phone probe, OAuth, ASR download or OTA.
+# --check is read-only. No phone probe, OAuth, ASR download or OTA.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MODE="${1:---check}"
 CONFIG="${RC_CONFIG_FILE:-$ROOT/config/device.public.json}"
+blocked() { echo "BLOCKED: $*" >&2; exit 2; }
+case "$MODE" in --check|--build|--run) ;; *) blocked 'Usage: run_ios_device.sh [--check|--build|--run]';; esac
+[[ $# -le 1 ]] || blocked 'Pass public config using RC_CONFIG_FILE, not extra command arguments.'
 if [[ "$(uname -s)" != Darwin ]]; then
-  echo 'BLOCKED: iOS requires an authorized Mac/Xcode; Linux cannot build/sign an IPA.' >&2
-  exit 2
+  blocked 'iOS requires an authorized Mac/Xcode; Linux cannot build/sign an IPA. For read-only config validation: python3 scripts/validate_public_config.py CONFIG'
 fi
-case "$MODE" in --check|--build|--run) ;; *) echo 'Usage: run_ios_device.sh [--check|--build|--run]'; exit 2;; esac
+if [[ "$MODE" == --run ]]; then
+  [[ "${RC_DEVICE_RUN_APPROVED:-}" == yes && -n "${RC_IOS_DEVICE_ID:-}" ]] || blocked 'Explicit RC_DEVICE_RUN_APPROVED=yes and RC_IOS_DEVICE_ID required for installation'
+fi
 for tool in flutter dart cargo rustup xcodebuild xcrun pod python3; do
-  command -v "$tool" >/dev/null || { echo "BLOCKED: missing $tool" >&2; exit 2; }
+  command -v "$tool" >/dev/null || blocked "missing $tool"
 done
+[[ -f "$CONFIG" ]] || blocked 'Copy config/device.public.example.json to ignored config/device.public.json and fill approved public configuration; reuse remains OFF unless explicitly opted in.'
+# Resolve before cd so the exact approved file also reaches --dart-define-from-file.
+CONFIG="$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve(strict=True))' "$CONFIG")"
+SCHEME="$(python3 "$ROOT/scripts/validate_public_config.py" "$CONFIG" --scheme)"
+case "$SCHEME" in recording-card|reai-mobile) ;; *) blocked 'validator returned an unknown callback scheme';; esac
 flutter --version
 xcodebuild -version
 xcrun --sdk iphoneos --show-sdk-version
-rustup target list --installed | grep -qx aarch64-apple-ios || { echo 'Run rustup target add aarch64-apple-ios on this Mac'; exit 2; }
-[[ -f "$CONFIG" ]] || { echo 'Copy config/device.public.example.json to ignored config/device.public.json and fill approved public configuration.'; exit 2; }
-python3 - "$CONFIG" <<'PY'
-import json,sys
-c=json.load(open(sys.argv[1]))
-if c.get('RC_OAUTH_REDIRECT_URI') != 'recording-card://callback': raise SystemExit('Callback must match committed platform scheme')
-for key in c:
-    if any(s in key.lower() for s in ('secret','password','access_token','refresh_token')): raise SystemExit('Secrets are prohibited in build config')
-if not c.get('RC_TEXT_MODEL'): raise SystemExit('Configure exact approved RC_TEXT_MODEL; no automatic model fallback')
-if c.get('RC_ASR_ALLOW_DOWNLOAD') in (True,'true'):
-    if c.get('RC_ASR_LICENSE_ACCEPTED') not in (True,'true') or not all(c.get(k) for k in ('RC_ASR_MODEL_URL','RC_ASR_TOKENS_URL','RC_ASR_DOWNLOAD_HOSTS')): raise SystemExit('Audited model mirror, hosts and license acceptance required')
-PY
-if [[ "$MODE" == --check ]]; then echo 'Preflight only completed; no mobile build or device proof.'; exit 0; fi
+SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+[[ -d "$SDK_PATH" ]] || blocked 'selected Xcode does not provide an installed iphoneos SDK'
+for tool in clang nm lipo; do
+  TOOL_PATH="$(xcrun --sdk iphoneos --find "$tool")"
+  [[ -x "$TOOL_PATH" ]] || blocked "Xcode iphoneos tool is missing: $tool"
+done
+# Capture first: grep -q in a producer pipe can trigger SIGPIPE under pipefail.
+INSTALLED_TARGETS="$(rustup target list --installed)"
+grep -qx 'aarch64-apple-ios' <<< "$INSTALLED_TARGETS" || blocked 'Run rustup target add aarch64-apple-ios on this Mac'
+bash -n "$ROOT/app/rust/card_bridge/scripts/build-ios.sh"
+python3 "$ROOT/scripts/ios_config_preflight.py" "$ROOT"
+if [[ "$MODE" == --check ]]; then
+  python3 "$ROOT/scripts/ios_config_preflight.py" "$ROOT" --pods
+  echo "Approved CONFIG requires native scheme $SCHEME. --build/--run will regenerate ignored OAuthLocal.xcconfig from that same CONFIG."
+  echo 'Read-only Mac preflight completed; no mobile build, static-archive proof, login or device proof.'
+  exit 0
+fi
 cd "$ROOT/app"
 flutter pub get
 flutter analyze
 flutter test --reporter expanded
 (cd rust/card_bridge && cargo check --locked && cargo test --locked)
 (cd ios && pod install)
+python3 "$ROOT/scripts/ios_config_preflight.py" "$ROOT" --pods
+# Revalidate immediately before generation/build; never auto-enable reference reuse.
+SCHEME="$(python3 "$ROOT/scripts/validate_public_config.py" "$CONFIG" --scheme)"
+case "$SCHEME" in recording-card|reai-mobile) ;; *) blocked 'unknown callback scheme';; esac
+LOCAL_TEMP="$(mktemp "$ROOT/app/ios/Flutter/.OAuthLocal.xcconfig.XXXXXX")"
+NM_OUTPUT=""
+cleanup() { rm -f "$LOCAL_TEMP"; [[ -z "$NM_OUTPUT" ]] || rm -f "$NM_OUTPUT"; }
+trap cleanup EXIT
+# Only a fixed known scheme is written. No arbitrary JSON keys, values or includes.
+printf '// Generated by scripts/run_ios_device.sh from validated approved public CONFIG.\n// Re-run this script for every CONFIG change; do not commit.\nRC_OAUTH_CALLBACK_SCHEME = %s\n' "$SCHEME" > "$LOCAL_TEMP"
+mv -f "$LOCAL_TEMP" "$ROOT/app/ios/Flutter/OAuthLocal.xcconfig"
 # Xcode invokes the checked-in Rust phase for its current SDK and architecture.
 flutter build ios --debug --no-codesign --dart-define-from-file="$CONFIG"
+ARCHIVE="$ROOT/app/rust/card_bridge/build/ios/iphoneos/libcard_bridge.a"
+[[ -s "$ARCHIVE" ]] || blocked 'Xcode did not produce the device Rust static archive'
+xcrun lipo -verify_arch arm64 "$ARCHIVE"
+NM_OUTPUT="$(mktemp "${TMPDIR:-/tmp}/recording-card-nm.XXXXXX")"
+# No producer | grep -q pipeline: inspect complete nm output for defined symbols.
+xcrun nm -g "$ARCHIVE" > "$NM_OUTPUT"
+for SYMBOL in card_bridge_version card_bridge_request card_bridge_free_string card_bridge_set_event_callback; do
+  grep -E "[[:space:]][TDS][[:space:]]+_${SYMBOL}$" "$NM_OUTPUT" >/dev/null || blocked "missing defined Rust FFI symbol $SYMBOL"
+done
+python3 - "$ROOT/app/build/ios/iphoneos/Runner.app/Info.plist" "$SCHEME" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as file:
+    info = plistlib.load(file)
+schemes = [scheme for entry in info.get('CFBundleURLTypes', []) for scheme in entry.get('CFBundleURLSchemes', [])]
+if schemes != [sys.argv[2]]:
+    print('BLOCKED: built Runner callback does not match approved CONFIG; no install attempted', file=sys.stderr)
+    sys.exit(2)
+print('Built Runner callback matches approved CONFIG; static archive arm64 and four defined FFI symbols checked.')
+PY
 if [[ "$MODE" == --build ]]; then
   echo 'Unsigned Runner.app produced; NOT a signed IPA or an installed/verified app.'
   exit 0
 fi
-[[ "${RC_DEVICE_RUN_APPROVED:-}" == yes && -n "${RC_IOS_DEVICE_ID:-}" ]] || { echo 'Explicit RC_DEVICE_RUN_APPROVED=yes and RC_IOS_DEVICE_ID required for installation'; exit 2; }
+CURRENT_SCHEME="$(python3 "$ROOT/scripts/validate_public_config.py" "$CONFIG" --scheme)"
+[[ "$CURRENT_SCHEME" == "$SCHEME" ]] || blocked 'CONFIG callback changed during build; rerun --build/--run before installation'
 # Flutter invokes local signing configured by the user in Runner.xcworkspace.
+# Before reference reuse, uninstall the reference app or use a separate phone.
 # Opening/using the app may start owned recording when connected: review manual.
 flutter run --debug -d "$RC_IOS_DEVICE_ID" --dart-define-from-file="$CONFIG"
