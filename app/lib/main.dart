@@ -8,24 +8,46 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/dev/dev_driver.dart';
 import 'core/platform/crash_guard.dart';
+import 'core/storage/storage.dart';
 import 'core/store/app_store.dart';
 import 'core/store/device_store.dart';
+import 'core/store/settings_store.dart';
 import 'core/theme/tokens.dart';
 import 'pages/app_shell.dart';
 import 'pages/login_page.dart';
 import 'services/ai/summary_generator.dart';
+import 'services/analysis/chat_completion.dart';
+import 'services/analysis/incremental_refine.dart';
+import 'services/analysis/live_analysis_pipeline.dart';
+import 'services/analysis/staged_summary.dart';
+import 'services/audio/wav_splitter.dart';
 import 'services/auth_service.dart';
 import 'services/net/model_gateway.dart';
 import 'services/recordings/recording_sync_service.dart';
+import 'services/transcription/cloud_asr_transcription_service.dart';
+import 'services/transcription/segmented_transcription_pipeline.dart';
+import 'services/transcription/transcription_pipeline.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   // 崩溃兜底要在 runApp 之前装好，否则启动期异常会直接白屏且无迹可查
   installCrashHandlers();
-  runApp(const RecordingCardApp());
+
+  SettingsStore settings;
+  try {
+    settings = SettingsStore(store: await PrefsStore.open());
+    await settings.load();
+  } catch (_) {
+    // 平台通道不可用时用内存默认值，保证仍可启动
+    settings = SettingsStore(store: InMemoryStore());
+  }
+  runApp(RecordingCardApp(settings: settings));
 }
 
 class RecordingCardApp extends StatelessWidget {
-  const RecordingCardApp({super.key});
+  const RecordingCardApp({super.key, required this.settings});
+
+  final SettingsStore settings;
 
   @override
   Widget build(BuildContext context) {
@@ -43,7 +65,7 @@ class RecordingCardApp extends StatelessWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       locale: const Locale('zh', 'CN'),
-      home: const _HomeGate(),
+      home: _HomeGate(settings: settings),
     );
   }
 }
@@ -55,7 +77,9 @@ final GlobalKey _shotKey = GlobalKey();
 final DevDriver? dev = kDebugMode ? DevDriver(_shotKey) : null;
 
 class _HomeGate extends StatefulWidget {
-  const _HomeGate();
+  const _HomeGate({required this.settings});
+
+  final SettingsStore settings;
 
   @override
   State<_HomeGate> createState() => _HomeGateState();
@@ -66,6 +90,7 @@ class _HomeGateState extends State<_HomeGate> {
   final _store = AppStore();
   // autoStart：启动即核对链路并开心跳（测试里传 false，避免悬挂定时器）
   final _device = DeviceStore(autoStart: true);
+  late final SettingsStore _settings = widget.settings;
 
   late final ModelGateway _modelGateway;
   late final RecordingSyncService _recordings;
@@ -79,6 +104,8 @@ class _HomeGateState extends State<_HomeGate> {
     _recordings = RecordingSyncService(
       gateway: _device.gateway,
       model: _modelGateway,
+      segmented: _buildSegmented(),
+      shouldTranscribe: () => _settings.value('rc.set.trans.auto'),
     );
     _summaries = SummaryGenerator(gateway: _modelGateway);
     _store.attachServices(recordings: _recordings, generator: _summaries);
@@ -89,6 +116,33 @@ class _HomeGateState extends State<_HomeGate> {
         ..device = _device
         ..auth = _auth;
     }
+  }
+
+  /// 长录音的分段链路：逐片 ASR → 滑动窗口润色 → 长静音阶段总结。
+  /// 模型目录未探测到文本模型时，RecordingSyncService 会回退整文件 ASR。
+  SegmentedTranscriber _buildSegmented() {
+    final chat = ModelGatewayChatCompletion(_modelGateway);
+    return SegmentedTranscriptionPipeline(
+      splitter: const WavSplitter(),
+      transcription: TranscriptionPipeline(
+        service: CloudAsrTranscriptionService(
+          (bytes, {language}) => _modelGateway.transcribe(
+            bytes,
+            filename: 'segment.wav',
+            language: language,
+          ),
+        ),
+        settings: _settings,
+      ),
+      analysis: LiveAnalysisPipeline(
+        refine: IncrementalRefineCoordinator(
+          refiner: CloudSegmentRefiner(chat: chat),
+        ),
+        summary: StagedSummaryCoordinator(
+          summarizer: CloudEventSummarizer(chat: chat),
+        ),
+      ),
+    );
   }
 
   /// 启动装载：等鉴权恢复 → 载入历史状态与本地录音 → 登录态就绪时探测模型目录。
@@ -117,7 +171,11 @@ class _HomeGateState extends State<_HomeGate> {
             return const _Splash();
           }
           if (_auth.isSignedIn) {
-            return AppShell(store: _store, device: _device);
+            return AppShell(
+              store: _store,
+              device: _device,
+              settings: _settings,
+            );
           }
           return LoginPage(
             auth: _auth,

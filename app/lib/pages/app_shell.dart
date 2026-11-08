@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
+import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/audio/recording_status.dart';
 import '../widgets/store_scope.dart';
@@ -22,11 +23,13 @@ class AppShell extends StatefulWidget {
     super.key,
     required this.store,
     this.device,
+    this.settings,
     this.recordingStatus,
     this.onDeviceCreated,
   });
   final AppStore store;
   final DeviceStore? device;
+  final SettingsStore? settings;
   final RecordingStatusController? recordingStatus;
 
   /// dev 驱动注册内部 DeviceStore 用（release 不传）
@@ -96,7 +99,9 @@ class _AppShellState extends State<AppShell> {
                       _WideLayout(device: _device, recordingStatus: _recording)
                     else
                       _NarrowLayout(
-                          device: _device, recordingStatus: _recording),
+                          device: _device,
+                          settings: widget.settings,
+                          recordingStatus: _recording),
                     StatusSheetOverlay(store: _device),
                   ],
                 ),
@@ -243,8 +248,13 @@ Widget _stackTopPage(AppStore store, {required bool wide}) {
 }
 
 class _NarrowLayout extends StatelessWidget {
-  const _NarrowLayout({required this.device, required this.recordingStatus});
+  const _NarrowLayout({
+    required this.device,
+    required this.settings,
+    required this.recordingStatus,
+  });
   final DeviceStore device;
+  final SettingsStore? settings;
   final RecordingStatusController recordingStatus;
 
   @override
@@ -274,7 +284,9 @@ class _NarrowLayout extends StatelessWidget {
                   child: switch (store.rootTab) {
                     RootTab.timeline =>
                       TimelinePage(recordingStatus: recordingStatus),
-                    RootTab.setting => const SettingPage(),
+                    RootTab.setting => settings == null
+                        ? const SettingPage()
+                        : SettingPage(settings: settings),
                   },
                 ),
               ),

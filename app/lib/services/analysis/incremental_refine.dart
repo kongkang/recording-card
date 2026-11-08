@@ -159,7 +159,7 @@ class IncrementalRefineCoordinator {
 class CloudSegmentRefiner implements SegmentRefiner {
   CloudSegmentRefiner({
     required this.chat,
-    required this.model,
+    this.model = '',
     this.temperature = 0.1,
   });
 

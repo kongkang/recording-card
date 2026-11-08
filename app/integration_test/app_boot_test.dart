@@ -17,7 +17,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('冷启动 → 落到登录页（未配置登录服务时按钮禁用且有原因）', (tester) async {
-    app.main();
+    await app.main();
 
     // 启动态：先出 splash，再进登录页
     await tester.pump();

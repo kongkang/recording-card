@@ -18,7 +18,7 @@ class FakeChat implements ChatCompletion {
   @override
   Future<String> complete(
     List<ChatMessage> messages, {
-    required String model,
+    String? model,
     double temperature = 0.1,
     int maxTokens = 2048,
   }) async {

@@ -15,7 +15,7 @@ class FakeChat implements ChatCompletion {
   @override
   Future<String> complete(
     List<ChatMessage> messages, {
-    required String model,
+    String? model,
     double temperature = 0.1,
     int maxTokens = 2048,
   }) async =>
@@ -121,6 +121,25 @@ void main() {
 
     expect(summarizer.previous.first, isNull);
     expect(summarizer.previous.last?.segmentIds, ['a']);
+  });
+
+  test('无静音时按最大事件时长兜底切段', () async {
+    final summarizer = FakeSummarizer();
+    final c = StagedSummaryCoordinator(
+      summarizer: summarizer,
+      maxEventDuration: const Duration(minutes: 3),
+    );
+    await c.add(_seg('a', 0, 120000, 'A'));
+    await c.add(_seg('b', 120000, 240000, 'B'));
+    final third = await c.add(_seg('c', 240000, 360000, 'C'));
+
+    expect(third.finalized?.segmentIds, ['a', 'b']);
+    final flushed = await c.flush();
+    expect(flushed.finalized?.segmentIds, ['c']);
+    expect(summarizer.calls, [
+      ['a', 'b'],
+      ['c']
+    ]);
   });
 
   test('总结失败：回退为原文事件并上报 error，不丢段', () async {

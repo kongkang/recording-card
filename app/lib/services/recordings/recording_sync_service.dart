@@ -18,6 +18,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../core/device/card_gateway.dart';
 import '../../core/models/record.dart';
 import '../net/model_gateway.dart';
+import '../transcription/segmented_transcription_pipeline.dart';
 import 'recordings_manifest.dart';
 
 /// 单条录音的同步结果。
@@ -50,13 +51,23 @@ class RecordingSyncService {
     required CardGateway gateway,
     required ModelGateway model,
     RecordingsManifest? manifest,
+    SegmentedTranscriber? segmented,
+    bool Function()? shouldTranscribe,
+    this.segmentThreshold = const Duration(seconds: 30),
   }) : _gateway = gateway,
        _model = model,
-       _manifest = manifest ?? RecordingsManifest();
+       _manifest = manifest ?? RecordingsManifest(),
+       _segmented = segmented,
+       _shouldTranscribe = shouldTranscribe ?? (() => true);
 
   final CardGateway _gateway;
   final ModelGateway _model;
   final RecordingsManifest _manifest;
+  final SegmentedTranscriber? _segmented;
+  final bool Function() _shouldTranscribe;
+
+  /// 超过该时长的录音走分段转写；短录音保持整文件单次 ASR。
+  final Duration segmentThreshold;
 
   /// 本地录音目录（应用支持目录下的 recordings/）。
   Future<Directory> _recordingsDir() async {
@@ -69,7 +80,7 @@ class RecordingSyncService {
   /// 读取本地已有记录（按时间倒序：今天的在前）。
   Future<List<RecordEvent>> loadEvents() async {
     final items = await _manifest.load();
-    final events = items.map((e) => e.event).toList();
+    final events = [for (final item in items) ...item.timelineEvents];
     events.sort((a, b) {
       if (a.dayOffset != b.dayOffset) return a.dayOffset.compareTo(b.dayOffset);
       return b.time.compareTo(a.time);
@@ -170,9 +181,86 @@ class RecordingSyncService {
         base + step * 0.6,
         '正在转写 ${file.name}',
       );
+      // 长录音优先走分段：逐片 ASR → 滑动窗口润色 → 阶段总结。
+      final segmented = _segmented;
+      if (segmented != null &&
+          _shouldTranscribe() &&
+          _model.chatAvailable &&
+          _model.asrAvailable &&
+          durationSecs * 1000 >= segmentThreshold.inMilliseconds) {
+        try {
+          final bytes = await File(wavPath).readAsBytes();
+          final result = await segmented.process(
+            bytes,
+            recordingId: file.name,
+            language: 'zh',
+          );
+          if (result.hasContent) {
+            await _manifest.add(RecordingItem(
+              deviceName: file.name,
+              apmPath: apmPath,
+              wavPath: wavPath,
+              transcript: result.segments.map((s) => s.cleanText).join('\n'),
+              durationSecs: durationSecs,
+              recordedAt: DateTime.now(),
+              segments: [
+                for (final s in result.segments)
+                  RecordingSegment(
+                    id: s.id,
+                    startMs: s.startMs,
+                    endMs: s.endMs,
+                    rawText: s.rawText,
+                    cleanText: s.cleanText,
+                    speaker: s.speaker,
+                    emotion: s.emotion,
+                  )
+              ],
+              events: [
+                for (final e in result.events)
+                  RecordingEventSummary(
+                    title: e.title,
+                    overview: e.overview,
+                    startMs: e.startMs,
+                    endMs: e.endMs,
+                    segmentIds: e.segmentIds,
+                  )
+              ],
+            ));
+            items.add(
+              SyncFileReport(
+                name: file.name,
+                outcome: SyncFileOutcome.transcribed,
+                message: result.errors.isEmpty ? null : result.errors.first,
+              ),
+            );
+            continue;
+          }
+          if (result.skipped) {
+            // 自动转录关闭：录音照常入库，但不调用 ASR
+            await _manifest.add(RecordingItem(
+              deviceName: file.name,
+              apmPath: apmPath,
+              wavPath: wavPath,
+              transcript: '',
+              durationSecs: durationSecs,
+              recordedAt: DateTime.now(),
+            ));
+            items.add(SyncFileReport(
+              name: file.name,
+              outcome: SyncFileOutcome.downloaded,
+            ));
+            continue;
+          }
+        } catch (_) {
+          // 分段失败回退整文件 ASR；不丢已下载文件
+        }
+      }
+
       var transcript = '';
       String? transcribeError;
-      if (_model.ready) {
+      if (!_shouldTranscribe()) {
+        // 自动转录关闭：只取回文件，不转写
+      } else if (_model.ready) {
         try {
           final bytes = await File(wavPath).readAsBytes();
           final result = await _model.transcribe(
@@ -218,6 +306,7 @@ class RecordingSyncService {
   Future<int> retryPendingTranscriptions({
     void Function(double progress, String text)? onProgress,
   }) async {
+    if (!_shouldTranscribe()) return 0;
     if (!_model.ready) return 0;
     final items = await _manifest.load();
     final pending = items
@@ -246,7 +335,10 @@ class RecordingSyncService {
   /// 删除一条本地录音（连同音频文件）。
   Future<void> deleteRecording(String id) async {
     final items = await _manifest.load();
-    final target = items.where((i) => i.event.id == id).firstOrNull;
+    final target = items
+        .where((i) =>
+            i.event.id == id || i.timelineEvents.any((e) => e.id == id))
+        .firstOrNull;
     if (target == null) return;
     for (final p in [target.apmPath, target.wavPath]) {
       if (p == null) continue;

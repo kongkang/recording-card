@@ -50,6 +50,6 @@ lib/
 
 - 硬件/ASR/云端为真实链路；桥不可用（模拟器）或未配置网关时显式提示，不伪造数据；
 - 声纹/说话人分离：ASR 不返回，界面按「未区分」呈现，不编造身份；
-- 增量分段润色 / 长静音阶段总结模块已完成代码+单测（见 `docs/INCREMENTAL-ANALYSIS.md`），待本地 ASR/音频切片接入后串联；
+- 增量分段润色 / 长静音阶段总结已接入长录音同步：WAV 按 30s 切片 → 逐片云端 ASR → 润色 → 事件总结（见 `docs/INCREMENTAL-ANALYSIS.md`）；本地 sherpa 模型仍待接入；
 - 固件 OTA 接口、Wi-Fi 是否仅 2.4GHz 等待定项登记在 `docs/SDK-CAPABILITY.md`；
 - 待人工确认的发布项（Bonjour 服务类型、局域网 http 配网、云端删除实现等）见 `docs/RELEASE.md` 第 5 节。

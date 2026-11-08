@@ -9,7 +9,7 @@ export '../net/model_gateway.dart' show ChatMessage;
 abstract class ChatCompletion {
   Future<String> complete(
     List<ChatMessage> messages, {
-    required String model,
+    String? model,
     double temperature = 0.1,
     int maxTokens = 2048,
   });
@@ -23,13 +23,13 @@ class ModelGatewayChatCompletion implements ChatCompletion {
   @override
   Future<String> complete(
     List<ChatMessage> messages, {
-    required String model,
+    String? model,
     double temperature = 0.1,
     int maxTokens = 2048,
   }) =>
       _gateway.chat(
         messages,
-        model: model,
+        model: (model == null || model.trim().isEmpty) ? null : model,
         temperature: temperature,
         maxTokens: maxTokens,
       );

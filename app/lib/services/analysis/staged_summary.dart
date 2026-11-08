@@ -85,12 +85,17 @@ class StagedSummaryCoordinator {
   StagedSummaryCoordinator({
     required this.summarizer,
     this.silenceGap = const Duration(seconds: 3),
+    this.maxEventDuration = const Duration(minutes: 5),
   });
 
   final EventSummarizer summarizer;
 
   /// 相邻分段间隔达到该静音时长即切分事件。
   final Duration silenceGap;
+
+  /// 没有可用静音检测时的兜底：单事件最长时长，超过就切段，
+  /// 避免整段长录音只生成一个事件。
+  final Duration maxEventDuration;
 
   final List<SummarySegmentInput> _pending = [];
   final List<EventSummary> _events = [];
@@ -119,7 +124,9 @@ class StagedSummaryCoordinator {
     Object? error;
     if (_pending.isNotEmpty) {
       final gapMs = input.startMs - _pending.last.endMs;
-      if (gapMs >= silenceGap.inMilliseconds) {
+      final pendingMs = _pending.last.endMs - _pending.first.startMs;
+      if (gapMs >= silenceGap.inMilliseconds ||
+          pendingMs >= maxEventDuration.inMilliseconds) {
         final outcome = await _finalize();
         finalized = outcome.event;
         error = outcome.error;
@@ -233,7 +240,7 @@ class _FinalizeOutcome {
 class CloudEventSummarizer implements EventSummarizer {
   CloudEventSummarizer({
     required this.chat,
-    required this.model,
+    this.model = '',
     this.temperature = 0.1,
   });
 
