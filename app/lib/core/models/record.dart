@@ -23,6 +23,12 @@ class RecordEvent {
   final List<TurnLine> dialog; // 清洗版对话
   final List<TurnLine> raw; // 原始转写（保留语气词/停顿/静音）
 
+  /// 分段仍在整理中（时间轴显示「整理中」，不可进详情）。
+  final bool live;
+
+  /// 降级提示（部分未润色 / 时间未校准 / 总结未完成）；null 表示正常。
+  final String? note;
+
   const RecordEvent({
     required this.id,
     required this.dayOffset,
@@ -36,6 +42,8 @@ class RecordEvent {
     required this.srcMap,
     required this.dialog,
     required this.raw,
+    this.live = false,
+    this.note,
   });
 }
 
@@ -58,6 +66,8 @@ extension RecordEventJson on RecordEvent {
         'raw': [
           for (final t in raw) [t.spk, t.text, t.src]
         ],
+        if (live) 'live': true,
+        if (note != null) 'note': note,
       };
 }
 
@@ -81,5 +91,7 @@ RecordEvent recordEventFromJson(Map<String, dynamic> j) {
     srcMap: '${j['map'] ?? ''}',
     dialog: turns(j['dlg']),
     raw: turns(j['raw']),
+    live: j['live'] == true,
+    note: j['note'] as String?,
   );
 }

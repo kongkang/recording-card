@@ -14,9 +14,17 @@ import 'core/theme/tokens.dart';
 import 'pages/app_shell.dart';
 import 'pages/login_page.dart';
 import 'services/ai/summary_generator.dart';
+import 'services/analysis/chat_completion.dart';
+import 'services/audio/recording_status.dart';
 import 'services/auth_service.dart';
 import 'services/net/model_gateway.dart';
-import 'services/recordings/recording_sync_service.dart';
+import 'services/polish/slice_polish_service.dart';
+import 'services/recordings/recording_pipeline.dart';
+import 'services/recordings/recording_store.dart';
+import 'services/segment/segment_build_service.dart';
+import 'services/transcribe/model_manager_controller.dart';
+import 'services/transcribe/asr_models.dart';
+import 'services/transcribe/local_asr_service.dart';
 
 void main() {
   // 崩溃兜底要在 runApp 之前装好，否则启动期异常会直接白屏且无迹可查
@@ -66,9 +74,15 @@ class _HomeGateState extends State<_HomeGate> {
   final _store = AppStore();
   // autoStart：启动即核对链路并开心跳（测试里传 false，避免悬挂定时器）
   final _device = DeviceStore(autoStart: true);
+  final _recordingStatus = RecordingStatusController();
 
   late final ModelGateway _modelGateway;
-  late final RecordingSyncService _recordings;
+  late final ModelInstaller _installer;
+  late final InstalledSpeechModelProvider _models;
+  late final LocalAsrService _asr;
+  late final RecordingStore _recordingStore;
+  late final RecordingPipeline _pipeline;
+  late final ModelManagerController _modelManager;
   late final SummaryGenerator _summaries;
   bool _booted = false;
 
@@ -76,12 +90,40 @@ class _HomeGateState extends State<_HomeGate> {
   void initState() {
     super.initState();
     _modelGateway = ModelGateway(client: _auth.apiClient);
-    _recordings = RecordingSyncService(
-      gateway: _device.gateway,
-      model: _modelGateway,
-    );
     _summaries = SummaryGenerator(gateway: _modelGateway);
-    _store.attachServices(recordings: _recordings, generator: _summaries);
+
+    // 本地转写/润色/分段流水线（离线优先；云端未配置/未登录时自动降级）
+    _installer = ModelInstaller();
+    _models = InstalledSpeechModelProvider(_installer);
+    _modelManager = ModelManagerController(
+      installer: _installer,
+      onInstalled: () => _store.processPendingRecordings(),
+    );
+    _asr = LocalAsrService();
+    _recordingStore = RecordingStore();
+    final chat = ModelGatewayChatCompletion(_modelGateway);
+    _pipeline = RecordingPipeline(
+      gateway: _device.gateway,
+      store: _recordingStore,
+      engine: _asr,
+      models: _models,
+      polish: SlicePolishService(
+        chat: chat,
+        model: _modelGateway.textModel,
+        ready: () => _modelGateway.ready,
+      ),
+      segments: SegmentBuildService(
+        chat: chat,
+        model: _modelGateway.textModel,
+        ready: () => _modelGateway.ready,
+      ),
+    );
+    _store.attachPipeline(
+      pipeline: _pipeline,
+      store: _recordingStore,
+      generator: _summaries,
+      status: _recordingStatus,
+    );
     unawaited(_boot());
     if (dev != null) {
       dev!
@@ -97,12 +139,17 @@ class _HomeGateState extends State<_HomeGate> {
     if (_auth.isSignedIn) unawaited(_modelGateway.discoverModels());
     await _store.init();
     if (mounted) setState(() => _booted = true);
+    // 有本地未完成的录音就继续处理（不访问设备）；模型未装时只下载/转码排队
+    unawaited(_store.processPendingRecordings());
   }
 
   @override
   void dispose() {
     _device.dispose();
     _store.dispose();
+    _recordingStatus.dispose();
+    _modelManager.dispose();
+    unawaited(_asr.dispose());
     super.dispose();
   }
 
@@ -117,7 +164,12 @@ class _HomeGateState extends State<_HomeGate> {
             return const _Splash();
           }
           if (_auth.isSignedIn) {
-            return AppShell(store: _store, device: _device);
+            return AppShell(
+              store: _store,
+              device: _device,
+              recordingStatus: _recordingStatus,
+              modelManager: _modelManager,
+            );
           }
           return LoginPage(
             auth: _auth,

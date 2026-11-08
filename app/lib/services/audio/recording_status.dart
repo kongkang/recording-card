@@ -73,6 +73,18 @@ class RecordingStatusController extends ChangeNotifier {
     _commit(phase: RecordingPhase.error, lastError: error.toString());
   }
 
+  /// 处理管线直接更新队列：剩余片数 + 是否仍在处理。
+  ///
+  /// 与 [onSliceReceived]/[onTranscriptionCompleted] 的区别是它不做"逐片
+  /// 增减"的假设，适合"同步过程中一次拿到总片数"的批处理路径。
+  void updateQueue({required int remaining, required bool active}) {
+    final pending = remaining < 0 ? 0 : remaining;
+    final phase = active
+        ? RecordingPhase.transcribing
+        : (_sessionActive ? RecordingPhase.recording : RecordingPhase.idle);
+    _commit(phase: phase, pendingSlices: pending);
+  }
+
   void _commit({
     RecordingPhase? phase,
     int? pendingSlices,

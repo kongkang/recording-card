@@ -4,6 +4,7 @@ library;
 import 'package:flutter/material.dart';
 
 import '../core/models/record.dart';
+import '../core/models/recording.dart';
 import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
@@ -67,7 +68,8 @@ class TimelinePage extends StatelessWidget {
                                   const SizedBox(height: 10),
                                   Text(
                                     store.loadError ??
-                                        (store.syncError ?? '还没有录音\n下拉可从录音卡取回'),
+                                        (store.syncError ??
+                                            _emptyText(store)),
                                     textAlign: TextAlign.center,
                                     style: const TextStyle(
                                       color: RCColors.sec,
@@ -383,7 +385,7 @@ class _EventCardView extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (store.selMode)
+              if (store.selMode && !event.live)
                 GestureDetector(
                   key: Key('selbox-${event.id}'),
                   onTap: () => store.toggleSel(event.id),
@@ -422,6 +424,14 @@ class _EventCardView extends StatelessWidget {
                           letterSpacing: -0.1,
                         ),
                       ),
+                      if (event.live ||
+                          (event.note != null && event.note!.isNotEmpty)) ...[
+                        const SizedBox(height: 6),
+                        _EventNoteBadge(
+                          text: event.live ? '整理中' : event.note!,
+                          live: event.live,
+                        ),
+                      ],
                       const SizedBox(height: 4),
                       Text(
                         '${event.time} · ${event.dur}',
@@ -476,28 +486,30 @@ class _EventCardView extends StatelessWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 12),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: OutlinedButton(
-                            key: Key('detail-${event.id}'),
-                            onPressed: () =>
-                                store.openDetail(event.id, fresh: true),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: RCColors.label,
-                              side: const BorderSide(color: RCColors.ax),
-                              shape: const StadiumBorder(),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
+                        if (!event.live) ...[
+                          const SizedBox(height: 12),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: OutlinedButton(
+                              key: Key('detail-${event.id}'),
+                              onPressed: () =>
+                                  store.openDetail(event.id, fresh: true),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: RCColors.label,
+                                side: const BorderSide(color: RCColors.ax),
+                                shape: const StadiumBorder(),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
+                                ),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                textStyle: const TextStyle(fontSize: 13),
                               ),
-                              minimumSize: Size.zero,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              textStyle: const TextStyle(fontSize: 13),
+                              child: const Text('详情'),
                             ),
-                            child: const Text('详情'),
                           ),
-                        ),
+                        ],
                       ],
                     ],
                   ),
@@ -724,4 +736,56 @@ class _SyncBanner extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 分段状态小徽标：整理中 / 部分未润色 / 时间未校准。
+class _EventNoteBadge extends StatelessWidget {
+  const _EventNoteBadge({required this.text, required this.live});
+
+  final String text;
+  final bool live;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: live ? const Color(0xFFFDF1EC) : const Color(0xFFF2F2EE),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (live) ...[
+            Container(
+              width: 6,
+              height: 6,
+              decoration: const BoxDecoration(
+                color: RCColors.danger,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 5),
+          ],
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 11,
+              color: live ? RCColors.danger : RCColors.sec,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 空态文案：区分「没录音」「正在整理」「录了但没识别到语音」。
+String _emptyText(AppStore store) {
+  final files = store.recordingFiles;
+  if (files.isEmpty) return '还没有录音\n下拉可从录音卡取回';
+  if (files.every((f) => f.stage != RecordingStage.ready)) {
+    return '正在整理本地录音…\n完成后会出现在时间轴';
+  }
+  return '录音里没有识别到语音';
 }

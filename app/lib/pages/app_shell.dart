@@ -10,6 +10,7 @@ import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/audio/recording_status.dart';
+import '../services/transcribe/model_manager_controller.dart';
 import '../widgets/store_scope.dart';
 import 'detail_page.dart';
 import 'setting_page.dart';
@@ -23,11 +24,13 @@ class AppShell extends StatefulWidget {
     required this.store,
     this.device,
     this.recordingStatus,
+    this.modelManager,
     this.onDeviceCreated,
   });
   final AppStore store;
   final DeviceStore? device;
   final RecordingStatusController? recordingStatus;
+  final ModelManagerController? modelManager;
 
   /// dev 驱动注册内部 DeviceStore 用（release 不传）
   final void Function(DeviceStore)? onDeviceCreated;
@@ -52,10 +55,13 @@ class _AppShellState extends State<AppShell> {
   }
 
   /// 设备录音态 → Timeline 顶部状态块；转写/切片细粒度事件由后续管线接入。
+  ///
+  /// 注意：设备停止录音时不能直接清空状态——本地还在转写/润色时，
+  /// 状态块要继续显示「正在整理」；只有仍处于 recording 态才收起。
   void _syncRecordingStatus() {
     if (_device.isRecording) {
       if (!_recording.isRecording) _recording.startRecording();
-    } else if (_recording.phase != RecordingPhase.idle) {
+    } else if (_recording.phase == RecordingPhase.recording) {
       _recording.stopRecording();
     }
   }
@@ -96,7 +102,10 @@ class _AppShellState extends State<AppShell> {
                       _WideLayout(device: _device, recordingStatus: _recording)
                     else
                       _NarrowLayout(
-                          device: _device, recordingStatus: _recording),
+                        device: _device,
+                        recordingStatus: _recording,
+                        modelManager: widget.modelManager,
+                      ),
                     StatusSheetOverlay(store: _device),
                   ],
                 ),
@@ -243,9 +252,14 @@ Widget _stackTopPage(AppStore store, {required bool wide}) {
 }
 
 class _NarrowLayout extends StatelessWidget {
-  const _NarrowLayout({required this.device, required this.recordingStatus});
+  const _NarrowLayout({
+    required this.device,
+    required this.recordingStatus,
+    this.modelManager,
+  });
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
+  final ModelManagerController? modelManager;
 
   @override
   Widget build(BuildContext context) {
@@ -274,7 +288,9 @@ class _NarrowLayout extends StatelessWidget {
                   child: switch (store.rootTab) {
                     RootTab.timeline =>
                       TimelinePage(recordingStatus: recordingStatus),
-                    RootTab.setting => const SettingPage(),
+                    RootTab.setting => SettingPage(
+                      modelManager: modelManager,
+                    ),
                   },
                 ),
               ),

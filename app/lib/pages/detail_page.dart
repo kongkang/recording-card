@@ -1,14 +1,27 @@
 /// 详情页 —— 「对话详情 / 原始数据 / 被引用总结 N」平级 tab（refs 仅 N>0 显示）。
+///
+/// 有 v2 分段视图时（本地转写链路）：
+/// - 对话详情：润色 turn；润色未完成时回退本地原始句并提示；
+/// - 原始数据：按切片分组，展示时间、情绪、说话人推测与静音；
+/// 没有视图时（旧数据/设计样例）回退 [RecordEvent] 的 dialog/raw。
 library;
+
 import 'package:flutter/material.dart';
 
 import '../core/models/record.dart';
+import '../core/models/segment_view.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
 import '../widgets/store_scope.dart';
 
 class DetailPage extends StatefulWidget {
-  const DetailPage({super.key, required this.eventId, this.showPaneBack = false, this.backLabel});
+  const DetailPage({
+    super.key,
+    required this.eventId,
+    this.showPaneBack = false,
+    this.backLabel,
+  });
+
   final String eventId;
 
   /// 宽屏双栏：面板内返回按钮（窄屏走顶栏面包屑）
@@ -35,7 +48,11 @@ class _DetailPageState extends State<DetailPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.description_outlined, size: 36, color: RCColors.ax),
+              const Icon(
+                Icons.description_outlined,
+                size: 36,
+                color: RCColors.ax,
+              ),
               const SizedBox(height: 10),
               const Text(
                 '这条记录已不在本机',
@@ -59,6 +76,11 @@ class _DetailPageState extends State<DetailPage> {
       );
     }
     final refs = store.doneSummariesReferencing(widget.eventId);
+    final view = store.segmentViewFor(widget.eventId);
+    final speakerText = view != null && view.segment.speakerCount > 0
+        ? '${view.segment.speakerLabels.join(' / ')}（推测）'
+        : '说话人 ${e.speakers}';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -71,10 +93,14 @@ class _DetailPageState extends State<DetailPage> {
               icon: const Icon(Icons.chevron_left, size: 18),
               label: Text(widget.backLabel ?? '‹ 返回'),
               style: TextButton.styleFrom(
-                  foregroundColor: RCColors.sec,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  minimumSize: Size.zero,
-                  textStyle: const TextStyle(fontSize: 13)),
+                foregroundColor: RCColors.sec,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 4,
+                ),
+                minimumSize: Size.zero,
+                textStyle: const TextStyle(fontSize: 13),
+              ),
             ),
           ),
         Padding(
@@ -82,27 +108,33 @@ class _DetailPageState extends State<DetailPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(e.title,
-                  key: const Key('dt-h3'),
-                  style:
-                      const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+              Text(
+                e.title,
+                key: const Key('dt-h3'),
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
               const SizedBox(height: 6),
               Wrap(
                 spacing: 10,
                 runSpacing: 4,
                 children: [
                   Text(
-                      '${_dayLabel(e)} ${e.time} · ${e.dur}',
-                      key: const Key('dt-meta'),
-                      style:
-                          const TextStyle(fontSize: 12, color: RCColors.sec)),
-                  Text('说话人 ${e.speakers}',
-                      style:
-                          const TextStyle(fontSize: 12, color: RCColors.sec)),
+                    '${_dayLabel(e)} ${e.time} · ${e.dur}',
+                    key: const Key('dt-meta'),
+                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                  ),
+                  Text(
+                    speakerText,
+                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                  ),
                   if (e.mark.isNotEmpty)
-                    Text(e.mark,
-                        style:
-                            const TextStyle(fontSize: 12, color: RCColors.ink)),
+                    Text(
+                      e.mark,
+                      style: const TextStyle(fontSize: 12, color: RCColors.ink),
+                    ),
                 ],
               ),
             ],
@@ -110,8 +142,9 @@ class _DetailPageState extends State<DetailPage> {
         ),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 22),
-          decoration:
-              const BoxDecoration(border: Border(bottom: BorderSide(color: RCColors.sep))),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: RCColors.sep)),
+          ),
           child: Row(
             children: [
               _tabBtn('对话详情', 'dlg'),
@@ -132,7 +165,27 @@ class _DetailPageState extends State<DetailPage> {
         Expanded(
           child: ListView(
             padding: const EdgeInsets.fromLTRB(22, 14, 22, 32),
-            children: _buildTab(store, e, refs),
+            children: [
+              if (view != null &&
+                  ((e.note != null && e.note!.isNotEmpty) ||
+                      (view.turns.isEmpty && view.utterances.isNotEmpty)))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: Text(
+                    e.note ??
+                        (view.file.polishStale
+                            ? '部分内容未润色，以下为本地原始转写。'
+                            : '云端润色未完成，以下为本地原始转写。'),
+                    key: const Key('detail-note'),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: RCColors.sec,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+              ..._buildTab(store, e, refs, view),
+            ],
           ),
         ),
       ],
@@ -148,106 +201,37 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Widget _tabBtn(String label, String id) => Padding(
-        padding: const EdgeInsets.only(right: 18),
-        child: TextButton(
-          key: Key('det-tab-$id'),
-          onPressed: () => setState(() => _tab = id),
-          style: TextButton.styleFrom(
-            foregroundColor: _tab == id ? RCColors.label : RCColors.sec,
-            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 10),
-            minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-          child: Text(label,
-              style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: _tab == id ? FontWeight.w700 : FontWeight.w500)),
+    padding: const EdgeInsets.only(right: 18),
+    child: TextButton(
+      key: Key('det-tab-$id'),
+      onPressed: () => setState(() => _tab = id),
+      style: TextButton.styleFrom(
+        foregroundColor: _tab == id ? RCColors.label : RCColors.sec,
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 10),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: _tab == id ? FontWeight.w700 : FontWeight.w500,
         ),
-      );
+      ),
+    ),
+  );
 
-  List<Widget> _buildTab(AppStore store, RecordEvent e, List refs) {
+  List<Widget> _buildTab(
+    AppStore store,
+    RecordEvent e,
+    List refs,
+    SegmentView? view,
+  ) {
     switch (_tab) {
       case 'dlg':
-        return [
-          for (final l in e.dialog)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 28,
-                    height: 28,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: l.spk == 'B'
-                          ? const Color(0xFFE8E8E4)
-                          : const Color(0xFFDDE9DD),
-                    ),
-                    child: Text(l.spk,
-                        style: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w700)),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('说话人 ${l.spk} · ${l.src.replaceFirst('来源 ', '')}',
-                            style: const TextStyle(
-                                fontSize: 11, color: RCColors.sec)),
-                        const SizedBox(height: 3),
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: RCColors.card,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: RCColors.sep),
-                          ),
-                          child: Text(l.text,
-                              style: const TextStyle(
-                                  fontSize: 14, height: 1.5)),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ];
+        return _dialogWidgets(e, view);
       case 'raw':
-        return [
-          const Padding(
-            padding: EdgeInsets.only(bottom: 14),
-            child: Text(
-                '原始转写保留语气词、停顿与静音；时间标注后段为清洗版对应位置。',
-                style: TextStyle(fontSize: 12, color: RCColors.sec, height: 1.5)),
-          ),
-          for (final l in e.raw)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF6F6F2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('${l.spk} · ${l.src}',
-                        style: const TextStyle(
-                            fontSize: 11, color: RCColors.sec)),
-                    const SizedBox(height: 3),
-                    Text(l.text,
-                        style:
-                            const TextStyle(fontSize: 14, height: 1.55)),
-                  ],
-                ),
-              ),
-            ),
-        ];
+        return _rawWidgets(e, view);
       case 'refs':
         return [
           for (final r in refs)
@@ -259,8 +243,9 @@ class _DetailPageState extends State<DetailPage> {
                 style: OutlinedButton.styleFrom(
                   foregroundColor: RCColors.label,
                   side: const BorderSide(color: RCColors.sep),
-                  shape:
-                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   padding: const EdgeInsets.all(14),
                   alignment: Alignment.centerLeft,
                 ),
@@ -269,14 +254,22 @@ class _DetailPageState extends State<DetailPage> {
                   children: [
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: Text(r.title ?? '',
-                          style: const TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.w700)),
+                      child: Text(
+                        r.title ?? '',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 4),
-                    Text('${r.time} · 已选 ${r.srcIds.length} 片段',
-                        style:
-                            const TextStyle(fontSize: 12, color: RCColors.sec)),
+                    Text(
+                      '${r.time} · 已选 ${r.srcIds.length} 片段',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: RCColors.sec,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -285,5 +278,259 @@ class _DetailPageState extends State<DetailPage> {
       default:
         return const [];
     }
+  }
+
+  List<Widget> _dialogWidgets(RecordEvent e, SegmentView? view) {
+    final lines = <({String spk, String text, String meta})>[];
+    if (view != null && view.turns.isNotEmpty) {
+      for (final t in view.turns) {
+        lines.add((
+          spk: t.speakerLabel,
+          text: t.text,
+          meta:
+              '${_speakerText(t.speakerLabel)} · '
+              '${_hms(view.file.startAtMs + t.startMs)}—'
+              '${_hms(view.file.startAtMs + t.endMs)}',
+        ));
+      }
+    } else if (view != null && view.utterances.isNotEmpty) {
+      for (final u in view.utterances) {
+        final label = u.speakerLabel ?? '未区分';
+        lines.add((
+          spk: label,
+          text: u.text,
+          meta:
+              '${_speakerText(label)} · '
+              '${_hms(view.file.startAtMs + u.startMs)}—'
+              '${_hms(view.file.startAtMs + u.endMs)}',
+        ));
+      }
+    } else {
+      for (final l in e.dialog) {
+        lines.add((
+          spk: l.spk,
+          text: l.text,
+          meta: '说话人 ${l.spk} · ${l.src.replaceFirst('来源 ', '')}',
+        ));
+      }
+    }
+
+    return [
+      for (final l in lines)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _speakerColor(l.spk),
+                ),
+                child: Text(
+                  _avatar(l.spk),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l.meta,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: RCColors.sec,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: RCColors.card,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: RCColors.sep),
+                      ),
+                      child: Text(
+                        l.text,
+                        style: const TextStyle(fontSize: 14, height: 1.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+    ];
+  }
+
+  List<Widget> _rawWidgets(RecordEvent e, SegmentView? view) {
+    final widgets = <Widget>[
+      const Padding(
+        padding: EdgeInsets.only(bottom: 14),
+        child: Text(
+          '原始转写保留语气词、停顿与静音；时间标注后段为清洗版对应位置。',
+          style: TextStyle(fontSize: 12, color: RCColors.sec, height: 1.5),
+        ),
+      ),
+    ];
+
+    if (view == null) {
+      for (final l in e.raw) {
+        widgets.add(_rawBubble('${l.spk} · ${l.src}', l.text));
+      }
+      return widgets;
+    }
+
+    if (!view.file.timeSynced) {
+      widgets.add(
+        const Padding(
+          padding: EdgeInsets.only(bottom: 12),
+          child: Text(
+            '时间未校准：录音时设备时钟未同步，时间为推算值。',
+            key: Key('raw-time-unsynced'),
+            style: TextStyle(fontSize: 12, color: RCColors.danger),
+          ),
+        ),
+      );
+    }
+
+    if (view.slices.isEmpty) {
+      if (view.utterances.isEmpty) {
+        widgets.add(
+          const Text(
+            '暂无原始转写（静音或模型未识别到语音）。',
+            style: TextStyle(fontSize: 13, color: RCColors.sec),
+          ),
+        );
+      } else {
+        for (final u in view.utterances) {
+          widgets.add(
+            _rawBubble(
+              '${_speakerText(u.speakerLabel ?? '未区分')} · '
+              '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
+              u.text,
+            ),
+          );
+        }
+      }
+      return widgets;
+    }
+
+    for (final slice in view.slices) {
+      final sliceUtterances = view.utterances
+          .where((u) => u.sliceId == slice.id)
+          .toList();
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8, top: 4),
+          child: Text(
+            '[${_hms(view.file.startAtMs + slice.startMs)}—'
+            '${_hms(view.file.startAtMs + slice.endMs)}]',
+            key: Key('raw-slice-${slice.id}'),
+            style: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: RCColors.sec,
+            ),
+          ),
+        ),
+      );
+      for (final u in sliceUtterances) {
+        widgets.add(
+          _rawBubble(
+            '${_speakerText(u.speakerLabel ?? '未区分')} · '
+            '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
+            u.text,
+          ),
+        );
+      }
+      if (slice.silenceAfterMs >= 2000) {
+        final seconds = (slice.silenceAfterMs / 1000).round();
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              '（静音约 $seconds 秒）',
+              style: const TextStyle(fontSize: 12, color: RCColors.ax),
+            ),
+          ),
+        );
+      }
+    }
+    return widgets;
+  }
+
+  Widget _rawBubble(String meta, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF6F6F2),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              meta,
+              style: const TextStyle(fontSize: 11, color: RCColors.sec),
+            ),
+            const SizedBox(height: 3),
+            Text(text, style: const TextStyle(fontSize: 14, height: 1.55)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _speakerText(String label) {
+    final v = label.trim();
+    if (v.isEmpty) return '说话人 未区分';
+    if (v.startsWith('说话人')) return v;
+    return '说话人 $v';
+  }
+
+  static String _emotion(String? emotion) {
+    final v = (emotion ?? '').trim();
+    return v.isEmpty ? '情绪 —' : '情绪 $v';
+  }
+
+  static String _avatar(String speaker) {
+    final match = RegExp(r'\d+').firstMatch(speaker);
+    if (match != null) return match.group(0)!;
+    final cleaned = speaker.replaceAll('说话人', '').trim();
+    if (cleaned.isEmpty || cleaned.startsWith('未')) return '未';
+    return String.fromCharCode(cleaned.runes.first);
+  }
+
+  static Color _speakerColor(String speaker) {
+    const colors = [
+      Color(0xFFDDE9DD),
+      Color(0xFFE8E8E4),
+      Color(0xFFE3E6F0),
+      Color(0xFFF0E6DD),
+    ];
+    final match = RegExp(r'\d+').firstMatch(speaker);
+    final n = match != null
+        ? int.tryParse(match.group(0)!) ?? 0
+        : (speaker.isEmpty ? 0 : speaker.codeUnitAt(0));
+    return colors[n % colors.length];
+  }
+
+  static String _hms(int epochMs) {
+    final d = DateTime.fromMillisecondsSinceEpoch(epochMs);
+    return '${d.hour.toString().padLeft(2, '0')}:'
+        '${d.minute.toString().padLeft(2, '0')}:'
+        '${d.second.toString().padLeft(2, '0')}';
   }
 }

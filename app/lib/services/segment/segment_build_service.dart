@@ -33,15 +33,19 @@ class SegmentBuildService {
     required String model,
     this.silenceGap = const Duration(seconds: 20),
     this.maxSegmentMs = 15 * 60 * 1000,
+    bool Function()? ready,
   }) : _chat = chat,
-       _model = model;
+       _model = model,
+       _ready = ready;
 
   final ChatCompletion _chat;
   final String _model;
+  final bool Function()? _ready;
   final Duration silenceGap;
   final int maxSegmentMs;
 
-  bool get configured => _model.trim().isNotEmpty;
+  bool get configured =>
+      _model.trim().isNotEmpty && (_ready?.call() ?? true);
 
   Future<SegmentBuildResult> build(
     RecordingFile file, {
@@ -183,6 +187,7 @@ class SegmentBuildService {
       sliceIds: sliceIds.toList()..sort(),
       turnIds: event.segmentIds,
       fallback: event.fallback,
+      polishStale: file.polishStale,
     );
   }
 

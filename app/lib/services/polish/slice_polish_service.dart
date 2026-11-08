@@ -37,17 +37,21 @@ class SlicePolishService {
     required String model,
     this.windowSize = 3,
     this.temperature = 0.2,
+    bool Function()? ready,
   }) : _refiner = CloudSliceRefiner(
          chat: chat,
          model: model,
          temperature: temperature,
-       );
+       ),
+       _ready = ready;
 
   final CloudSliceRefiner _refiner;
   final int windowSize;
   final double temperature;
+  final bool Function()? _ready;
 
-  bool get configured => _refiner.model.trim().isNotEmpty;
+  bool get configured =>
+      _refiner.model.trim().isNotEmpty && (_ready?.call() ?? true);
 
   /// 对一条录音做窗口润色；每完成一个窗口就通过 [save] 落盘。
   ///

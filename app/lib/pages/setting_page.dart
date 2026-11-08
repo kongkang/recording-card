@@ -21,6 +21,8 @@ import '../core/platform/app_info.dart';
 import '../core/storage/storage.dart';
 import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
+import '../services/transcribe/asr_models.dart';
+import '../services/transcribe/model_manager_controller.dart';
 import 'privacy_page.dart';
 
 class SettingPage extends StatefulWidget {
@@ -28,9 +30,12 @@ class SettingPage extends StatefulWidget {
   ///
   /// 不传时页面自建：先用内存实现渲染首帧（默认值即原型默认），再异步打开
   /// `PrefsStore` 并 load —— 这样「无参构造」在测试（无平台通道）和真机上都能用。
-  const SettingPage({super.key, this.settings});
+  const SettingPage({super.key, this.settings, this.modelManager});
 
   final SettingsStore? settings;
+
+  /// 本地转写模型管理；null 时不展示模型区块（旧测试/预览）。
+  final ModelManagerController? modelManager;
 
   @override
   State<SettingPage> createState() => _SettingPageState();
@@ -130,6 +135,8 @@ class _SettingPageState extends State<SettingPage> {
               ],
             ),
           ],
+          if (widget.modelManager != null)
+            _ModelSection(controller: widget.modelManager!),
           _AboutSection(version: _version),
         ],
       ),
@@ -415,5 +422,179 @@ class _PrivacyEntry extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// 「本地转写模型」区块：状态 / 下载 / 删除 / 进度。
+///
+/// 模型体积大（SenseVoice ~230MB），只在用户点「下载」时走网络；VAD 随包，
+/// 首次安装时复制。地址未配置时明确提示，不假装可用。
+class _ModelSection extends StatefulWidget {
+  const _ModelSection({required this.controller});
+
+  final ModelManagerController controller;
+
+  @override
+  State<_ModelSection> createState() => _ModelSectionState();
+}
+
+class _ModelSectionState extends State<_ModelSection> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(widget.controller.refresh());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) {
+        final controller = widget.controller;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _GroupTitle(text: '本地转写模型'),
+            _GroupCard(
+              children: [
+                for (var i = 0; i < controller.specs.length; i++) ...[
+                  if (i > 0) const _RowDivider(),
+                  _row(context, controller.specs[i]),
+                ],
+                const _RowDivider(),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              controller.allReady
+                                  ? '本地转写已就绪'
+                                  : (controller.configured
+                                      ? '本地模型未安装，无法转录'
+                                      : '模型下载服务未配置'),
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.4,
+                                color: c.sec,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          OutlinedButton(
+                            key: const Key('model-install-all'),
+                            onPressed:
+                                controller.busy || !controller.configured
+                                ? null
+                                : () => unawaited(controller.installAll()),
+                            child: Text(
+                              controller.allReady ? '重新下载' : '下载',
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (controller.busy) ...[
+                        const SizedBox(height: 10),
+                        LinearProgressIndicator(
+                          value: controller.progress > 0 ? controller.progress : null,
+                          minHeight: 4,
+                          backgroundColor: c.sep,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          controller.text,
+                          key: const Key('model-progress-text'),
+                          style: TextStyle(fontSize: 12, color: c.sec),
+                        ),
+                      ],
+                      if (controller.error != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          controller.error!,
+                          key: const Key('model-error'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.4,
+                            color: c.danger,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _row(BuildContext context, ModelSpec spec) {
+    final c = context.rc;
+    final status = widget.controller.statusFor(spec);
+    final installed = status?.installed ?? false;
+    return Padding(
+      key: Key('model-row-${spec.id}'),
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  spec.displayName,
+                  style: TextStyle(fontSize: 15, height: 1.3, color: c.label),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${_kindLabel(spec.kind)} · ${installed ? _bytes(status?.presentBytes ?? 0) : _expectedSize(spec)}',
+                  style: TextStyle(fontSize: 12, color: c.sec),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          if (installed)
+            TextButton(
+              key: Key('model-delete-${spec.id}'),
+              onPressed: widget.controller.busy
+                  ? null
+                  : () => unawaited(widget.controller.delete(spec)),
+              child: const Text('删除'),
+            )
+          else
+            Text(
+              spec.bundled ? '随包' : '未安装',
+              style: TextStyle(fontSize: 12, color: c.sec),
+            ),
+        ],
+      ),
+    );
+  }
+
+  static String _kindLabel(LocalModelKind kind) => switch (kind) {
+    LocalModelKind.asr => '语音转写',
+    LocalModelKind.vad => '语音活动检测',
+    LocalModelKind.speakerSegmentation => '声纹分割',
+    LocalModelKind.speakerEmbedding => '声纹识别',
+  };
+
+  static String _expectedSize(ModelSpec spec) {
+    if (spec.id == sileroVadSpec.id) return '随包安装';
+    if (spec.id == senseVoiceSpec.id) return '约 230MB';
+    if (spec.id == campplusEmbeddingSpec.id) return '约 27MB';
+    return spec.totalBytes > 0 ? _bytes(spec.totalBytes) : '未知大小';
+  }
+
+  static String _bytes(int bytes) {
+    if (bytes <= 0) return '—';
+    final mb = bytes / (1024 * 1024);
+    return mb >= 100 ? '${mb.toStringAsFixed(0)}MB' : '${mb.toStringAsFixed(1)}MB';
   }
 }
