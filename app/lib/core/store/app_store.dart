@@ -98,6 +98,16 @@ class AppStore extends ChangeNotifier {
     }
   }
 
+  /// 系统返回手势（Navigator 页面被弹出）回调：仅同步栈状态，不反向触发导航
+  ///（弹栈动画由 Navigator 驱动；store 更新只为 pages 列表收敛，防止路由被重新插入）
+  void onSubPopped() {
+    if (subStack.isEmpty) return;
+    subStack = subStack.sublist(0, subStack.length - 1);
+    if (subStack.isEmpty) openCardId = null;
+    _persist();
+    notifyListeners();
+  }
+
   RouteEntry? get stackTop => subStack.isEmpty ? null : subStack.last;
   RouteEntry? get stackPrev => subStack.length > 1 ? subStack[subStack.length - 2] : null;
   String get crumbDest => stackPrev == null ? 'Timeline' : (pageLabels[stackPrev!.type] ?? 'Timeline');

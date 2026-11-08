@@ -160,56 +160,67 @@ class _ResultView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
-    return CustomScrollView(
-      key: const Key('sum-scroll'),
-      controller: page._scroll,
-      slivers: [
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(card.title ?? '',
-                          key: const Key('sum-title'),
-                          style: const TextStyle(
-                              fontSize: 20, fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 4),
-                      Text(card.subDesc ?? '',
-                          key: const Key('sum-sub'),
-                          style: const TextStyle(
-                              fontSize: 12, color: RCColors.sec)),
-                    ],
-                  ),
+    // 原型 .tochold：目录钮归属内容区右上角（不占 tab 行），钉在吸顶栏下方
+    return Stack(
+      children: [
+        CustomScrollView(
+          key: const Key('sum-scroll'),
+          controller: page._scroll,
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(card.title ?? '',
+                              key: const Key('sum-title'),
+                              style: const TextStyle(
+                                  fontSize: 20, fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 4),
+                          Text(card.subDesc ?? '',
+                              key: const Key('sum-sub'),
+                              style: const TextStyle(
+                                  fontSize: 12, color: RCColors.sec)),
+                        ],
+                      ),
+                    ),
+                    const _ExportButton(),
+                  ],
                 ),
-                const _ExportButton(),
-              ],
+              ),
             ),
-          ),
-        ),
-        // 吸顶 Tab 栏：滚动中持续可见；右端常驻「目录」浮钮（各 Tab 均可用）
-        SliverPersistentHeader(
-          key: const Key('stickbar'),
-          pinned: true,
-          delegate: _StickyTabs(
-            tabs: _tabs,
-            current: page._tab,
-            onTap: page._setTab,
-            toc: _TocButton(page: page),
-          ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(22, 6, 22, 96),
-          sliver: SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, _) =>
-                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: _sections(context, store)),
-              childCount: 1,
+            // 吸顶 Tab 栏：滚动中持续可见
+            SliverPersistentHeader(
+              key: const Key('stickbar'),
+              pinned: true,
+              delegate: _StickyTabs(
+                tabs: _tabs,
+                current: page._tab,
+                onTap: page._setTab,
+              ),
             ),
-          ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(22, 6, 22, 96),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, _) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: _sections(context, store)),
+                  childCount: 1,
+                ),
+              ),
+            ),
+          ],
+        ),
+        // 目录浮钮：吸顶栏（46px）正下方右侧 8px，压于内容之上（各 Tab 均可用）
+        Positioned(
+          top: 46,
+          right: 8,
+          child: _TocButton(onGo: page._tocGo),
         ),
       ],
     );
@@ -387,15 +398,13 @@ class _ExportButton extends StatelessWidget {
   }
 }
 
-/// 吸顶 Tab 栏：文字不换行，宽度不足时横向滑动；右端常驻目录浮钮。
+/// 吸顶 Tab 栏：文字不换行，宽度不足时横向滑动；目录浮钮另钉于栏下内容区。
 class _StickyTabs extends SliverPersistentHeaderDelegate {
-  _StickyTabs(
-      {required this.tabs, required this.current, required this.onTap, required this.toc});
+  _StickyTabs({required this.tabs, required this.current, required this.onTap});
 
   final List<(String, String)> tabs;
   final String current;
   final void Function(String) onTap;
-  final Widget toc;
 
   @override
   Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
@@ -443,7 +452,6 @@ class _StickyTabs extends SliverPersistentHeaderDelegate {
                 ),
               ),
             ),
-            toc,
           ],
         ),
       ),
@@ -606,8 +614,8 @@ class _PointTile extends StatelessWidget {
 
 /// 目录浮钮 + 弹层列表
 class _TocButton extends StatelessWidget {
-  const _TocButton({required this.page});
-  final _SummaryResultPageState page;
+  const _TocButton({this.onGo});
+  final void Function(String secId)? onGo;
 
   static const _items = [
     ('sec-ov', '概览'),
@@ -652,7 +660,7 @@ class _TocButton extends StatelessWidget {
           PopupMenuItem(value: id, child: Text(label, key: Key('toc-item-$id'))),
       ],
     ).then((v) {
-      if (v != null) page._tocGo(v);
+      if (v != null) onGo?.call(v);
     });
   }
 }

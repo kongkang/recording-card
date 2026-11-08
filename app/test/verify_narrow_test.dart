@@ -8,6 +8,7 @@ import 'package:recording_card/core/models/summary.dart';
 import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/core/store/device_store.dart';
 import 'package:recording_card/pages/app_shell.dart';
+import 'test_transitions.dart';
 
 Future<(AppStore, DeviceStore)> boot(WidgetTester tester,
     {Size size = const Size(390, 844)}) async {
@@ -17,7 +18,7 @@ Future<(AppStore, DeviceStore)> boot(WidgetTester tester,
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
   addTearDown(device.dispose);
-  await tester.pumpWidget(MaterialApp(home: AppShell(store: store, device: device)));
+  await tester.pumpWidget(MaterialApp(theme: testTheme(), home: AppShell(store: store, device: device)));
   await tester.pump();
   return (store, device);
 }
@@ -99,6 +100,7 @@ void main() {
     await tester.tap(find.byKey(const Key('card-e1')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('detail-e1')));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
     expect(find.byKey(const Key('dt-h3')), findsOneWidget);
     expect(find.text('午后项目方向讨论'), findsOneWidget);
@@ -113,6 +115,7 @@ void main() {
     await tester.tap(find.byKey(const Key('det-tab-dlg')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('crumb-back')));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
     expect(find.byKey(const Key('nav-timeline')), findsOneWidget); // 返回后底栏恢复
   });
@@ -167,6 +170,7 @@ void main() {
     await tester.tap(find.byKey(const Key('chip-week')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('generate-summary')));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
     // 立即切到总结页生成态
     expect(find.byKey(const Key('gen-elapsed')), findsOneWidget);
@@ -207,6 +211,7 @@ void main() {
     await tester.tap(find.byKey(const Key('chip-week')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('generate-summary')));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(seconds: 7));
     await tester.pump();
     expect(find.byKey(const Key('toc-btn')), findsOneWidget);
@@ -257,6 +262,7 @@ void main() {
     await tester.tap(find.byKey(const Key('chip-week')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('generate-summary')));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(seconds: 7));
     await tester.pump();
     // 从信息点溯源进详情（栈：sum → detail）
@@ -276,6 +282,7 @@ void main() {
     expect(store.subStack.length, 1, reason: '历史扁平化：栈应只剩 sum 一层');
     expect(tester.widget<Text>(find.byKey(const Key('crumb-dest'))).data, 'Timeline');
     await tester.tap(find.byKey(const Key('crumb-back')));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
     expect(find.byKey(const Key('nav-timeline')), findsOneWidget);
     expect(disabled(tester, const Key('tab-all')), isFalse);
@@ -289,10 +296,12 @@ void main() {
     await tester.tap(find.byKey(const Key('chip-week')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('generate-summary')));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(seconds: 7));
     await tester.pump();
     // 回到时间轴，展开总结卡进入结果
     await tester.tap(find.byKey(const Key('crumb-back')));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
     final sumCard = find.byKey(Key('card-${store.summaries.first.id}'));
     await tester.tap(sumCard); // 收起（生成后默认展开）
@@ -301,6 +310,7 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('open-sum')), findsOneWidget);
     await tester.tap(find.byKey(const Key('open-sum')));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
     await tapTab(tester, const Key('stab-src'));
     expect(find.byKey(const Key('sec-src')), findsOneWidget);
@@ -308,6 +318,7 @@ void main() {
     await tapInPage(tester, find.byKey(const Key('src-e1')));
     expect(find.byKey(const Key('dt-h3')), findsOneWidget);
     await tester.tap(find.byKey(const Key('crumb-back')));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
     expect(find.byKey(const Key('sum-title')), findsOneWidget); // 返回弹栈至总结
     // 导出：5 种格式 → 调起系统分享
@@ -324,6 +335,7 @@ void main() {
     await tester.pump(const Duration(seconds: 2)); // toast 退场，避免悬挂 timer
     expect(find.byKey(const Key('crumb-back')), findsOneWidget);
     await tester.tap(find.byKey(const Key('crumb-back')));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
     expect(find.byKey(const Key('nav-timeline')), findsOneWidget);
   });

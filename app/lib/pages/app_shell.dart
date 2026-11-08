@@ -117,7 +117,12 @@ class _Header extends StatelessWidget {
                 style:
                     const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
           const Spacer(),
-          HwCapsule(onTap: device.openSheet),
+          // 真实电量经 DeviceStore 刷新（refreshFromDevice），需监听设备状态重建胶囊
+          ListenableBuilder(
+            listenable: device,
+            builder: (context, _) =>
+                HwCapsule(onTap: device.openSheet, level: device.battery),
+          ),
         ],
       ),
     );
@@ -210,21 +215,57 @@ class _NarrowLayout extends StatelessWidget {
           device: device,
         ),
         Expanded(
-          child: sub
-              ? _stackTopPage(store, wide: false)
-              : switch (store.rootTab) {
-                  RootTab.timeline => const TimelinePage(),
-                  RootTab.setting => const SettingPage(),
-                },
+          // 栈页走 Navigator pages：系统级 iOS 边缘滑动返回
+          //（MaterialPage 在 iOS 用 Cupertino 转场自带返回手势），栈仍由 store 单一事实源驱动
+          child: Navigator(
+            pages: [
+              MaterialPage(
+                // 覆盖路由包 Offstage：与旧内联渲染语义一致（被盖页不进 hit test/find）
+                child: Offstage(
+                  offstage: store.subStack.isNotEmpty,
+                  child: switch (store.rootTab) {
+                    RootTab.timeline => const TimelinePage(),
+                    RootTab.setting => const SettingPage(),
+                  },
+                ),
+              ),
+              for (final e in store.subStack)
+                MaterialPage(
+                  key: ValueKey('sub-${e.type}-${e.id}'),
+                  child: Offstage(
+                    offstage: e != store.subStack.last,
+                    child: _subPage(store, e),
+                  ),
+                ),
+            ],
+            onDidRemovePage: (page) {
+              // 手势/系统返回 → 页面被移除而 store 未收敛：同步栈状态。
+              // store 主动驱动的移除（面包屑/扁平化）在页移除时栈已一致，此处守卫跳过
+              final key = page.key;
+              if (key is ValueKey<String>) {
+                final last = store.subStack.lastOrNull;
+                if (last != null && 'sub-${last.type}-${last.id}' == key.value) {
+                  store.onSubPopped();
+                }
+              }
+            },
+          ),
         ),
-        // 子页隐藏底栏，经顶栏返回（真机另有边缘滑动返回）；
-        // 内容底部让出 home indicator，避免底部内容被遮挡
+        // 子页隐藏底栏，经顶栏面包屑或边缘滑动返回；内容底部让出 home indicator
         if (!sub)
           _BottomNav(height: 56 + insets.bottom, bottomInset: insets.bottom)
         else if (insets.bottom > 0)
           SizedBox(height: insets.bottom),
       ],
     );
+  }
+
+  /// 栈内条目对应的页面（Navigator 页面渲染用；宽屏右栏仍走 _stackTopPage）
+  static Widget _subPage(AppStore store, RouteEntry e) {
+    if (e.type == 'sum') {
+      return SummaryResultPage(summaryId: e.id, showPaneBack: false);
+    }
+    return DetailPage(eventId: e.id, showPaneBack: false, backLabel: '');
   }
 }
 

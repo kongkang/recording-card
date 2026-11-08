@@ -16,13 +16,14 @@ class BatteryIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 原型 SVG 23×11：电池体 + 间隙 + 正极凸起（凸起独立于体外右侧，不叠在边框上）
     return SizedBox(
       width: 23 * scale,
       height: 11 * scale,
-      child: Stack(alignment: Alignment.centerRight, children: [
+      child: Row(children: [
         Container(
           key: const Key('batt'),
-          width: 21 * scale,
+          width: 19 * scale,
           height: 11 * scale,
           decoration: BoxDecoration(
             border: Border.all(color: _color, width: 1.3),
@@ -33,17 +34,19 @@ class BatteryIcon extends StatelessWidget {
             child: Container(
               key: const Key('batt-fill'),
               margin: EdgeInsets.all(1.6 * scale),
-              width: ((21 * scale - 3.2 * scale) * level / 100).clamp(1.5, 21 * scale),
+              width: ((19 * scale - 3.2 * scale - 2.6 * scale) * level / 100)
+                  .clamp(1.5, 19 * scale),
               color: _color,
             ),
           ),
         ),
+        SizedBox(width: 1.2 * scale),
         Container(
           width: 2 * scale,
           height: 4.5 * scale,
           decoration: BoxDecoration(
             color: _color,
-            borderRadius: BorderRadius.circular(1),
+            borderRadius: BorderRadius.circular(1 * scale),
           ),
         ),
       ]),
@@ -53,8 +56,9 @@ class BatteryIcon extends StatelessWidget {
 
 /// 顶栏胶囊：绿点心跳 + 电池图标
 class HwCapsule extends StatefulWidget {
-  const HwCapsule({super.key, required this.onTap});
+  const HwCapsule({super.key, required this.onTap, required this.level});
   final VoidCallback onTap;
+  final int level;
 
   @override
   State<HwCapsule> createState() => _HwCapsuleState();
@@ -96,7 +100,7 @@ class _HwCapsuleState extends State<HwCapsule> with SingleTickerProviderStateMix
               ),
             ),
             const SizedBox(width: 6),
-            const BatteryIcon(scale: 0.9),
+            BatteryIcon(level: widget.level, scale: 0.9),
           ],
         ),
       ),
@@ -267,7 +271,7 @@ class _MainView extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const BatteryIcon(),
+              BatteryIcon(level: store.battery),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
