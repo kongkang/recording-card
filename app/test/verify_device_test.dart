@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/core/store/device_store.dart';
 import 'package:recording_card/pages/app_shell.dart';
+import 'test_transitions.dart';
 
 Future<DeviceStore> boot(WidgetTester tester) async {
   final store = AppStore();
@@ -16,7 +17,7 @@ Future<DeviceStore> boot(WidgetTester tester) async {
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
   addTearDown(device.dispose);
-  await tester.pumpWidget(MaterialApp(home: AppShell(store: store, device: device)));
+  await tester.pumpWidget(MaterialApp(theme: testTheme(), home: AppShell(store: store, device: device)));
   await tester.pump();
   return device;
 }

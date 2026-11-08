@@ -24,6 +24,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>录音卡需要蓝牙连接你的录音卡设备，同步录音与设备状态。</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>录音卡需要蓝牙连接你的录音卡设备，同步录音与设备状态。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

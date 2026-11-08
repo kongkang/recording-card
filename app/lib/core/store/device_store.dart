@@ -1,10 +1,15 @@
 /// 录音卡设备状态机 —— 对应 prototype 状态胶囊弹层全部逻辑。
 /// 时序常量与原型一致（测试对齐依赖）：同步 busy 900ms + 冷却 10s；Wi-Fi 扫描 1200ms、
 /// 直连 1200ms、新网络 1400ms；固件两阶段共 6000ms。
+///
+/// 真实数据：经 [CardGateway]（card_bridge FFI → reai-card-sdk BLE）刷新；
+/// 网关不可用/无硬件时回退预置数据，界面语义不变。
 library;
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+
+import '../device/card_gateway.dart';
 
 enum SyncState { idle, busy, done }
 enum DeviceView { main, upg, wifi }
@@ -23,6 +28,16 @@ class SavedWifi {
 }
 
 class DeviceStore extends ChangeNotifier {
+  DeviceStore({CardGateway? gateway})
+      : _gateway = gateway ??
+            RealCardGateway.maybe() ??
+            const MockCardGateway();
+
+  final CardGateway _gateway;
+
+  /// 真实桥是否就绪（真机+硬件时可观测）
+  bool get liveDeviceAvailable => _gateway.available;
+
   // ── 录音时钟：起始 3:12:15，每秒跳动；定时器随弹层开关启停 ──
   static const _clockBase = 3 * 3600 + 12 * 60 + 15;
   int _clockTicks = 0;
@@ -49,16 +64,37 @@ class DeviceStore extends ChangeNotifier {
     return '${s ~/ 3600}:${((s % 3600) ~/ 60).toString().padLeft(2, '0')}:${(s % 60).toString().padLeft(2, '0')}';
   }
 
-  // ── 电量：82%（高），可录至时点保守估算 ──
-  static const batteryLevel = 82; // ≥40 绿
-  String get batteryLevelText => '电量高';
+  // ── 电量：默认 82%（高）；有真实桥时以设备回报为准，可录至时点保守估算 ──
+  static const batteryLevel = 82; // ≥40 绿（预置/回退值）
+  int? _liveBattery;
+  bool? _liveCharging;
+
+  /// 当前展示电量：真实回报优先，否则预置值
+  int get battery => _liveBattery ?? DeviceStore.batteryLevel;
+  String get batteryLevelText {
+    final level = battery;
+    if (_liveCharging == true) return '充电中';
+    return level < 20 ? '电量低' : level < 40 ? '电量中' : '电量高';
+  }
+
   String get batteryEtaText {
-    final hours = (82 * 0.24 * 0.7).floor().clamp(1, 24);
+    final level = battery;
+    final hours = (level * 0.24 * 0.7).floor().clamp(1, 24);
     final end = DateTime.now().add(Duration(hours: hours));
     final hm =
         '${end.hour.toString().padLeft(2, '0')}:${end.minute.toString().padLeft(2, '0')}';
     final day = end.day == DateTime.now().day ? '今天' : '明天';
     return '$day $hm';
+  }
+
+  /// 弹层打开时尝试刷新真实设备数据（无桥/无硬件静默回退预置值）
+  Future<void> refreshFromDevice() async {
+    if (!_gateway.available) return;
+    final snapshot = await _gateway.status();
+    if (snapshot == null) return;
+    _liveBattery = snapshot.batteryLevel.clamp(1, 100);
+    _liveCharging = snapshot.isCharging;
+    notifyListeners();
   }
 
   // ── 同步：idle → busy(900ms) → done(冷却 10s) → idle ──
@@ -101,6 +137,7 @@ class DeviceStore extends ChangeNotifier {
     sheetOpen = true;
     view = DeviceView.main;
     _startClock();
+    unawaited(refreshFromDevice()); // 真实电量/状态异步刷新，回退路径不阻塞 UI
     notifyListeners();
   }
 

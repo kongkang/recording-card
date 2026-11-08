@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/core/store/device_store.dart';
 import 'package:recording_card/pages/app_shell.dart';
+import 'test_transitions.dart';
 
 Future<AppStore> boot(WidgetTester tester) async {
   final store = AppStore();
@@ -16,7 +17,7 @@ Future<AppStore> boot(WidgetTester tester) async {
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
   addTearDown(device.dispose);
-  await tester.pumpWidget(MaterialApp(home: AppShell(store: store, device: device)));
+  await tester.pumpWidget(MaterialApp(theme: testTheme(), home: AppShell(store: store, device: device)));
   await tester.pump();
   return store;
 }
@@ -138,7 +139,7 @@ void main() {
     final store2 = AppStore()..restoreState(exported);
     final device2 = DeviceStore();
     addTearDown(device2.dispose);
-    await tester.pumpWidget(MaterialApp(home: AppShell(store: store2, device: device2)));
+    await tester.pumpWidget(MaterialApp(theme: testTheme(), home: AppShell(store: store2, device: device2)));
     await tester.pump();
     // 右栏恢复到详情页，栈单层无面板返回
     expect(find.text('与运维确认发布窗口'), findsWidgets); // 左栏卡片 + 右栏详情同名
