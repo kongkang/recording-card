@@ -346,12 +346,12 @@ class RecordingFile {
   final int seq;
 
   /// 录音起点（Unix 毫秒）。来自设备 `.txt` 的 `start_at`；不可信时用 created - duration。
-  final int startAtMs;
+  int startAtMs;
 
   /// 设备时钟是否已同步；false 时界面标注「时间未校准」。
-  final bool timeSynced;
+  bool timeSynced;
 
-  final String apmPath;
+  String apmPath;
   String? wavPath;
   int durationMs;
   RecordingStage stage;
