@@ -38,6 +38,8 @@ def check_wiring(root):
     bridge = (flutter / "CardBridge.xcconfig").read_text()
     if 'OTHER_LDFLAGS = $(inherited) -force_load "$(CARD_BRIDGE_ARCHIVE)"' not in bridge:
         raise PreflightError("Rust archive must be force-loaded without discarding Pods linker flags")
+    if "ENABLE_DEBUG_DYLIB = NO" not in bridge:
+        raise PreflightError("Rust process-lookup FFI requires the main executable, not Runner.debug.dylib")
     for symbol in SYMBOLS:
         if f"-Wl,-u,_{symbol}" not in bridge:
             raise PreflightError(f"Missing retained Rust FFI symbol {symbol}")

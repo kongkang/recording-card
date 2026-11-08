@@ -22,6 +22,8 @@ Mac 需要 Flutter **3.47.9 stable / Dart 3.13.7** 或满足本工程约束的�
 
 第二轮实际 CI 捕获旧 Xcode `nm` 无法解析 Rust1.99预构建对象的 LLVM23嵌入段。现在符号检查使用 `scripts/rust_nm.sh` 定位当前 Rust 同版本 `llvm-nm`，缺组件会明确停止，不忽略错误、不跳过四个FFI定义验证。Rust标准库对象已核验为原生arm64 Mach-O，不能把符号检查工具的不兼容当成模型或业务假成功。
 
+第三轮已进入最终原生链接，Xcode16的 Debug Dylib模式与`KEEP_PRIVATE_EXTERNS`冲突。`CardBridge.xcconfig`显式关闭 `ENABLE_DEBUG_DYLIB`，保留原有架构/符号验证，让Dart process lookup使用主可执行文件中的FFI；不要为绕过链接而删除符号保留配置。
+
 ## 2. 临时复用现有 OAuth 客户端
 
 按本次要求，先用已获准参考 public client 注册跑通，再改客户端 ID。**复用客户端注册不是复制账号 Token。** 登录仍在官方 OAuth 授权页由已授权账号完成，保留 PKCE、state、精确 callback、Token 安全存储和刷新。
