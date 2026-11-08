@@ -219,3 +219,35 @@ xmllint --noout ios/Runner/Base.lproj/LaunchScreen.storyboard
 xmllint --noout android/app/src/main/AndroidManifest.xml android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 flutter analyze && flutter test
 ```
+
+## 登录与模型配置（2026-11-08 起）
+
+- **OAuth 客户端**：默认复用 reai_mobile_app 的 public client
+  （`RC_OAUTH_CLIENT_ID` 编译默认 `58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo`，
+  回调 `reai-mobile://callback`，iOS Info.plist 与 Android intent-filter 均已注册该 scheme）。
+  换自家客户端时用 `--dart-define=RC_OAUTH_CLIENT_ID=... --dart-define=RC_OAUTH_REDIRECT=...`，
+  并同步改两端回调注册，否则授权回不来。
+- **模型名**：不再硬编码。登录后 App 调 `GET /api/model-gateway/v1/models`，
+  按 `capabilities` 选 ASR（`asr`）与文本（`text`/`chat`）。也可用
+  `--dart-define=RC_MODEL_ASR=... --dart-define=RC_MODEL_REFINE=...` 显式覆盖。
+- **后端地址**：`RC_API_BASE` 编译默认 `https://block2-api.wainao.chat`。
+
+## 平台能力现状
+
+| 平台 | 界面/登录/转写/总结/导出 | 蓝牙硬件链路 |
+| --- | --- | --- |
+| iOS | ✅ | ✅ 已验证（Rust 静态库链入，release 二进制有导出符号，真机扫描执行） |
+| Android | ✅ | ⚠️ **未接通**：Rust 桥目前只编了 iOS 静态库，Android 需要交叉编译 `.so` +
+  为 btleplug 提供 JavaVM（`ndk_context` / `JNI_OnLoad`）。当前 Android 包会显示
+  「此设备不支持连接录音卡」，其余功能正常。 |
+
+## 验收命令
+
+```sh
+cd app
+flutter analyze && flutter test                     # 108 项
+flutter test integration_test/app_boot_test.dart -d <deviceId>     # 冷启动冒烟
+flutter test integration_test/hardware_probe_test.dart -d <deviceId> # 硬件在环（需卡在广播）
+flutter build ipa     # iOS 上架包
+flutter build appbundle  # Android 上架包
+```
