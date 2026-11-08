@@ -14,6 +14,8 @@ import 'dart:typed_data';
 
 import '../../core/device/card_gateway.dart';
 import '../../core/models/recording.dart';
+import '../polish/slice_polish_service.dart';
+import '../segment/segment_build_service.dart';
 import '../transcribe/slice_planner.dart';
 import '../transcribe/speaker_clusterer.dart';
 import '../transcribe/speech_engine.dart';
@@ -30,6 +32,8 @@ enum PipelineStage {
   slicing,
   transcribing,
   labeling,
+  polishing,
+  summarizing,
   done,
 }
 
@@ -99,6 +103,8 @@ class RecordingPipeline {
     this.language = 'zh',
     this.slicePlanner = const SlicePlanner(),
     this.clusterer = const SpeakerClusterer(),
+    this.polish,
+    this.segments,
   });
 
   final CardGateway gateway;
@@ -108,6 +114,12 @@ class RecordingPipeline {
   final String language;
   final SlicePlanner slicePlanner;
   final SpeakerClusterer clusterer;
+
+  /// 云端窗口润色；null 或未配置时只保留本地原始数据。
+  final SlicePolishService? polish;
+
+  /// 阶段总结/话题分段；null 时只留下 turn，不产出 Timeline 分段。
+  final SegmentBuildService? segments;
 
   bool _busy = false;
 
@@ -442,6 +454,50 @@ class RecordingPipeline {
           for (final u in file.utterances)
             u.copyWith(speakerLabel: '未区分'),
         ];
+      }
+      await store.save(file);
+    }
+
+    // 7) 云端窗口润色：失败不推翻本地数据，只标 stale 供界面提示
+    final polisher = polish;
+    if (polisher != null && polisher.configured && file.utterances.isNotEmpty) {
+      report(PipelineStage.polishing, text: '正在润色 ${file.deviceName}');
+      file
+        ..stage = RecordingStage.polishing
+        ..error = null;
+      await store.save(file);
+      try {
+        final result = await polisher.polish(
+          file,
+          save: () => store.save(file),
+        );
+        file
+          ..polishStale = result.stale
+          ..polishedThroughSlice = result.polishedThroughSlice;
+      } on Object {
+        // 本地原文已经完整：润色失败只影响"清洗版"，下次可重试
+        file.polishStale = true;
+      }
+      await store.save(file);
+    }
+
+    // 8) 阶段总结/话题分段：云端失败时由协调器用原文兜底，不丢段
+    final segmenter = segments;
+    if (segmenter != null && file.segments.isEmpty) {
+      report(PipelineStage.summarizing, text: '正在整理分段 ${file.deviceName}');
+      file
+        ..stage = RecordingStage.summarizing
+        ..error = null;
+      await store.save(file);
+      try {
+        final result = await segmenter.build(
+          file,
+          save: () => store.save(file),
+        );
+        file.segments = result.segments;
+      } on Object catch (e) {
+        // 分段失败不推翻本地 turn；保留空 segments，详情页仍可看对话
+        file.error = '分段整理失败：$e';
       }
       await store.save(file);
     }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -5,8 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/device/card_gateway.dart';
 import 'package:recording_card/core/models/recording.dart';
 import 'package:recording_card/core/storage/storage.dart';
-import 'package:recording_card/services/recordings/recording_pipeline.dart';
-import 'package:recording_card/services/recordings/recording_store.dart';
+import 'package:recording_card/services/analysis/chat_completion.dart';
+import 'package:recording_card/services/polish/slice_polish_service.dart';
+import 'package:recording_card/services/recordings/recording_pipeline.dart';import 'package:recording_card/services/recordings/recording_store.dart';
+import 'package:recording_card/services/segment/segment_build_service.dart';
 import 'package:recording_card/services/transcribe/local_asr_service.dart';
 import 'package:recording_card/services/transcribe/slice_planner.dart';
 import 'package:recording_card/services/transcribe/speech_engine.dart';
@@ -80,6 +83,42 @@ class _FakeModels implements SpeechModelProvider {
   Future<SpeechModelPaths?> resolve() async => paths;
 }
 
+class _FakeChat implements ChatCompletion {
+  bool fail = false;
+
+  @override
+  Future<String> complete(
+    List<ChatMessage> messages, {
+    required String model,
+    double temperature = 0.1,
+    int maxTokens = 2048,
+  }) async {
+    if (fail) throw Exception('注入润色失败');
+    final content = messages.last.content.trim();
+    if (!content.startsWith('[')) {
+      return jsonEncode({'title': '事件', 'overview': '事件概述'});
+    }
+    final payload = jsonDecode(content) as List;
+    return jsonEncode([
+      for (final s in payload)
+        {
+          'id': s['id'],
+          'turns': [
+            for (final t in (s['turns'] as List))
+              {
+                'src': [t['id']],
+                'startMs': t['startMs'],
+                'endMs': t['endMs'],
+                'speaker': t['speaker'],
+                'text': '润色：${t['text']}',
+              },
+          ],
+          'boundary': 'none',
+        },
+    ]);
+  }
+}
+
 const _paths = SpeechModelPaths(
   asrModelPath: '/models/asr.onnx',
   tokensPath: '/models/tokens.txt',
@@ -93,6 +132,7 @@ void main() {
   late RecordingStore store;
   late _FakeEngine engine;
   late _FakeModels models;
+  late _FakeChat chat;
   late RecordingPipeline pipeline;
 
   setUp(() async {
@@ -106,11 +146,14 @@ void main() {
     );
     engine = _FakeEngine();
     models = _FakeModels(_paths);
+    chat = _FakeChat();
     pipeline = RecordingPipeline(
       gateway: gateway,
       store: store,
       engine: engine,
       models: models,
+      polish: SlicePolishService(chat: chat, model: 'test-model'),
+      segments: SegmentBuildService(chat: chat, model: 'test-model'),
     );
   });
 
@@ -151,6 +194,13 @@ void main() {
       file.utterances.map((u) => u.speakerLabel).toSet(),
       containsAll(<String>['说话人 1', '说话人 2']),
     );
+    expect(file.turns.length, 2);
+    expect(file.turns.first.text, startsWith('润色：'));
+    expect(file.polishedThroughSlice, 0);
+    expect(file.polishStale, isFalse);
+    expect(file.segments, isNotEmpty);
+    expect(file.segments.first.title, '事件');
+    expect(file.segments.first.turnIds, isNotEmpty);
     expect(File(file.apmPath).existsSync(), isTrue);
     expect(File(file.wavPath!).existsSync(), isTrue);
     expect(File(file.slices.first.wavPath).existsSync(), isTrue);
@@ -254,5 +304,19 @@ void main() {
     engine.failTranscribe = false;
     await pipeline.processPending();
     expect((await store.loadAll(refresh: true)).single.stage, RecordingStage.ready);
+  });
+
+  test('润色失败：本地原文与切片保留，文件仍 ready，标 stale', () async {
+    gateway.deviceFiles = [apm()];
+    chat.fail = true;
+
+    await pipeline.sync();
+    final file = (await store.loadAll(refresh: true)).single;
+    expect(file.stage, RecordingStage.ready);
+    expect(file.polishStale, isTrue);
+    expect(file.turns.length, 2);
+    expect(file.turns.first.text, '第一句话');
+    expect(file.slices, isNotEmpty);
+    expect(file.segments, isNotEmpty);
   });
 }

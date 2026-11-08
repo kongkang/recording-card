@@ -17,6 +17,7 @@ enum RecordingStage {
   slicing, // VAD 切片
   transcribing, // 本地 ASR
   polishing, // 云端窗口改写
+  summarizing, // 阶段总结/话题分段
   ready, // 全部完成
   failed, // 失败（error 里有可读原因）
 }
@@ -242,6 +243,7 @@ class SegmentRecord {
     this.mark,
     this.legacy = false,
     this.polishStale = false,
+    this.fallback = false,
   });
 
   final String id;
@@ -266,6 +268,9 @@ class SegmentRecord {
   /// 有切片润色失败时置 true，界面如实提示"部分内容未润色"。
   bool polishStale;
 
+  /// 云端阶段总结失败、用原文兜底时置 true（标题/概述来自原文截取）。
+  bool fallback;
+
   bool get closed => status == SegmentStatus.closed;
   int? get durationMs => endAtMs == null ? null : endAtMs! - startAtMs;
 
@@ -287,6 +292,7 @@ class SegmentRecord {
     if (mark != null) 'mk': mark,
     if (legacy) 'lg': true,
     if (polishStale) 'ps': true,
+    if (fallback) 'fb': true,
   };
 
   factory SegmentRecord.fromJson(Map<String, dynamic> j) => SegmentRecord(
@@ -312,6 +318,7 @@ class SegmentRecord {
     mark: j['mk'] as String?,
     legacy: j['lg'] == true,
     polishStale: j['ps'] == true,
+    fallback: j['fb'] == true,
   );
 }
 
@@ -333,6 +340,7 @@ class RecordingFile {
     this.turns = const [],
     this.segments = const [],
     this.polishedThroughSlice = -1,
+    this.polishStale = false,
     this.error,
   });
 
@@ -362,6 +370,9 @@ class RecordingFile {
 
   /// 已完成云端改写的最后一个切片下标；-1 表示还没润色过。
   int polishedThroughSlice;
+
+  /// 有窗口润色失败并回退原文；界面提示「部分内容未润色」。
+  bool polishStale;
   String? error;
 
   /// 本地入库时间（同步时刻），用于保留策略与排障。
@@ -385,6 +396,7 @@ class RecordingFile {
     'tu': [for (final t in turns) t.toJson()],
     'sg': [for (final s in segments) s.toJson()],
     'pt': polishedThroughSlice,
+    if (polishStale) 'ps': true,
     'cr': createdAtMs,
     if (error != null) 'err': error,
   };
@@ -419,6 +431,7 @@ class RecordingFile {
         if (s is Map<String, dynamic>) SegmentRecord.fromJson(s),
     ],
     polishedThroughSlice: (j['pt'] as num?)?.toInt() ?? -1,
+    polishStale: j['ps'] == true,
     createdAtMs: (j['cr'] as num?)?.toInt() ?? 0,
     error: j['err'] as String?,
   );
