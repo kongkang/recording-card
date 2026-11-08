@@ -11,8 +11,8 @@ flutter run                      # 默认连已启动的模拟器/真机
 flutter analyze && flutter test  # 提交前必过
 ```
 
-- 设计真源是仓库根目录的 `prototype/index.html`（只读），她的 62 项 `verify.cjs` 检查在 `test/` 里逐项对应；
-- 业务数据当前用 `lib/data/seed.dart` 的本地预置内容，不连真实 BLE/ASR/LLM；
+- 设计真源是仓库根目录的 `prototype/index.html`（只读），她的 55 个 `verify.cjs` check 在 `test/` 里逐项对应；
+- 正式版走真实链路：`card_bridge`（BLE）+ 后端模型网关（ASR / 总结）+ 真实 OAuth；未配置/未连接时显式失败，不回退预置假数据；
 - OAuth 端点与客户端标识走 `--dart-define`（见 `lib/core/config/remote/`）。
 
 ## 目录结构
@@ -48,6 +48,8 @@ lib/
 
 ## 已知边界
 
-- 硬件、ASR、声纹、LLM、云端均为本地预置数据模拟，不发起真实业务请求；
+- 硬件/ASR/云端为真实链路；桥不可用（模拟器）或未配置网关时显式提示，不伪造数据；
+- 声纹/说话人分离：ASR 不返回，界面按「未区分」呈现，不编造身份；
+- 增量分段润色 / 长静音阶段总结模块已完成代码+单测（见 `docs/INCREMENTAL-ANALYSIS.md`），待本地 ASR/音频切片接入后串联；
 - 固件 OTA 接口、Wi-Fi 是否仅 2.4GHz 等待定项登记在 `docs/SDK-CAPABILITY.md`；
 - 待人工确认的发布项（Bonjour 服务类型、局域网 http 配网、云端删除实现等）见 `docs/RELEASE.md` 第 5 节。

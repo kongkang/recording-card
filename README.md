@@ -1,6 +1,6 @@
 # 录音卡 · 伴侣 App
 
-always-on 录音硬件（录音卡）伴侣 App。设计已于 2026-11-07 定稿（prototype v15），当前阶段：**开发期**——在 `app/` 用 Flutter 把 `prototype/index.html`（设计参考真源，只读）还原为 App，验收基准为 prototype 验收脚本的 62 项检查（Flutter 侧建等价测试对齐）。
+always-on 录音硬件（录音卡）伴侣 App。设计已于 2026-11-07 定稿（prototype v15），当前阶段：**开发期**——在 `app/` 用 Flutter 把 `prototype/index.html`（设计参考真源，只读）还原为 App，验收基准是 prototype 验收脚本的 55 个 check 名称（Flutter 侧建等价测试对齐）。增量分段润色/阶段总结见 [`docs/INCREMENTAL-ANALYSIS.md`](docs/INCREMENTAL-ANALYSIS.md)。
 
 ## 目录结构
 

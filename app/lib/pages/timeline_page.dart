@@ -7,14 +7,23 @@ import '../core/models/record.dart';
 import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
+import '../services/audio/recording_status.dart';
+import '../widgets/recording_status_block.dart';
 import '../widgets/selection_marker.dart';
 import '../widgets/store_scope.dart';
 
 class TimelinePage extends StatelessWidget {
-  const TimelinePage({super.key, this.asLeftPane = false});
+  const TimelinePage({
+    super.key,
+    this.asLeftPane = false,
+    this.recordingStatus,
+  });
 
   /// 宽屏双栏时作为常显左栏
   final bool asLeftPane;
+
+  /// 设备录音态状态块；null 时不展示（旧调用/测试兼容）
+  final RecordingStatusController? recordingStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -26,6 +35,8 @@ class TimelinePage extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (recordingStatus != null)
+              RecordingStatusBlock(controller: recordingStatus!),
             _TabsBar(store: store),
             if (store.selMode) _RangeBar(store: store),
             if (store.loading || store.syncStage != null)
