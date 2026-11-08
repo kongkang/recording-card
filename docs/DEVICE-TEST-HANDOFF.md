@@ -11,6 +11,7 @@ git clone --branch feat/full-flow-device-ready-20261108 \
   https://github.com/kongkang/recording-card.git
 cd recording-card
 rustup target add aarch64-apple-ios
+rustup component add llvm-tools
 ```
 
 Mac 需要 Flutter **3.47.9 stable / Dart 3.13.7** 或满足本工程约束的兼容版本，Rust 至少1.93（本轮测试1.99.1），Xcode、CocoaPods、测试 iPhone 和自己的开发者签名。大型 ASR 权重不进 Git；小型 MIT Silero VAD 和中文导出字体已随 App 打包，许可文件保留。
@@ -18,6 +19,8 @@ Mac 需要 Flutter **3.47.9 stable / Dart 3.13.7** 或满足本工程约束的�
 `app/pubspec.yaml` 与 `pubspec.lock` 一并提交。`sherpa_onnx` 与 `sherpa_onnx_ios` 固定 **1.13.3**，不可随意升到名称不同的 iOS framework；本轮已验证的 Linux native 插件为1.13.8。依赖包含 http/crypto、secure storage、OAuth launcher、path_provider/connectivity/shared_preferences、pdf/share_plus/archive；`share_plus` 采用12.0.2兼容线。
 
 网络插件固定 `connectivity_plus 7.0.0`。第一轮实际 macOS CI 在 Xcode16.4 / iOS18.5 SDK 下发现自动升级到7.3.2后引用不存在的 `NWPath.isUltraConstrained`；已改为精确版本，避免用户首次构建再遇到同一新SDK API阻断。
+
+第二轮实际 CI 捕获旧 Xcode `nm` 无法解析 Rust1.99预构建对象的 LLVM23嵌入段。现在符号检查使用 `scripts/rust_nm.sh` 定位当前 Rust 同版本 `llvm-nm`，缺组件会明确停止，不忽略错误、不跳过四个FFI定义验证。Rust标准库对象已核验为原生arm64 Mach-O，不能把符号检查工具的不兼容当成模型或业务假成功。
 
 ## 2. 临时复用现有 OAuth 客户端
 

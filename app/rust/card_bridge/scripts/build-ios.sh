@@ -38,7 +38,7 @@ done
 if [[ ${#LIBS[@]} -eq 1 ]]; then cp "${LIBS[0]}" "$OUT/libcard_bridge.a";
 else xcrun lipo -create "${LIBS[@]}" -output "$OUT/libcard_bridge.a"; fi
 for SYMBOL in card_bridge_version card_bridge_request card_bridge_free_string card_bridge_set_event_callback; do
-  if ! xcrun nm -g "$OUT/libcard_bridge.a" | grep "_$SYMBOL" >/dev/null; then
+  if ! bash "$ROOT/../../../scripts/rust_nm.sh" --defined-only --extern-only "$OUT/libcard_bridge.a" | grep "_$SYMBOL" >/dev/null; then
     echo "ERROR: missing FFI symbol $SYMBOL" >&2; exit 3
   fi
 done

@@ -45,7 +45,9 @@ def check_wiring(root):
     text = script.read_text()
     for contract in ("set -euo pipefail", "Darwin", "iphoneos:arm64",
                      "iphonesimulator:arm64", "iphonesimulator:x86_64", "--show-sdk-path",
-                     "cargo build --locked --release", 'xcrun nm -g "$OUT/libcard_bridge.a"', *SYMBOLS):
+                     "cargo build --locked --release",
+                     'bash "$ROOT/../../../scripts/rust_nm.sh" --defined-only --extern-only "$OUT/libcard_bridge.a"',
+                     *SYMBOLS):
         if contract not in text:
             raise PreflightError("Rust iOS script is missing a checked SDK/archive/symbol contract")
     project = (root / "app/ios/Runner.xcodeproj/project.pbxproj").read_text()

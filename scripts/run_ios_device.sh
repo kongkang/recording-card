@@ -13,9 +13,10 @@ fi
 if [[ "$MODE" == --run ]]; then
   [[ "${RC_DEVICE_RUN_APPROVED:-}" == yes && -n "${RC_IOS_DEVICE_ID:-}" ]] || blocked 'Explicit RC_DEVICE_RUN_APPROVED=yes and RC_IOS_DEVICE_ID required for installation'
 fi
-for tool in flutter dart cargo rustup xcodebuild xcrun pod python3; do
+for tool in flutter dart cargo rustc rustup xcodebuild xcrun pod python3; do
   command -v "$tool" >/dev/null || blocked "missing $tool"
 done
+bash "$ROOT/scripts/rust_nm.sh" --version >/dev/null
 [[ -f "$CONFIG" ]] || blocked 'Copy config/device.public.example.json to ignored config/device.public.json and fill approved public configuration; reuse remains OFF unless explicitly opted in.'
 # Resolve before cd so the exact approved file also reaches --dart-define-from-file.
 CONFIG="$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve(strict=True))' "$CONFIG")"
@@ -65,7 +66,7 @@ ARCHIVE="$ROOT/app/rust/card_bridge/build/ios/iphoneos/libcard_bridge.a"
 xcrun lipo -verify_arch arm64 "$ARCHIVE"
 NM_OUTPUT="$(mktemp "${TMPDIR:-/tmp}/recording-card-nm.XXXXXX")"
 # No producer | grep -q pipeline: inspect complete nm output for defined symbols.
-xcrun nm -g "$ARCHIVE" > "$NM_OUTPUT"
+bash "$ROOT/scripts/rust_nm.sh" --defined-only --extern-only "$ARCHIVE" > "$NM_OUTPUT"
 for SYMBOL in card_bridge_version card_bridge_request card_bridge_free_string card_bridge_set_event_callback; do
   grep -E "[[:space:]][TDS][[:space:]]+_${SYMBOL}$" "$NM_OUTPUT" >/dev/null || blocked "missing defined Rust FFI symbol $SYMBOL"
 done
