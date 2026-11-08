@@ -1,0 +1,5 @@
+card_bridge_version
+card_bridge_request
+card_bridge_free_string
+card_bridge_set_event_callback
+Java_dev_kongkang_recording_1card_CardNative_initialize
