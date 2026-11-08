@@ -115,6 +115,8 @@ class StatusSheetOverlay extends StatelessWidget {
       listenable: store,
       builder: (context, _) {
         if (!store.sheetOpen) return const SizedBox.shrink();
+        // 真机 home indicator：卡片底边让出安全区（测试环境 inset=0，行为不变）
+        final bottomInset = MediaQuery.paddingOf(context).bottom;
         return Positioned.fill(
           key: const Key('sheet'),
           child: GestureDetector(
@@ -129,7 +131,7 @@ class StatusSheetOverlay extends StatelessWidget {
                   key: const Key('sheet-card'),
                   width: double.infinity,
                   constraints: const BoxConstraints(maxHeight: 620),
-                  margin: const EdgeInsets.all(10),
+                  margin: EdgeInsets.fromLTRB(10, 10, 10, 10 + bottomInset),
                   padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
                   decoration: BoxDecoration(
                     color: RCColors.card,

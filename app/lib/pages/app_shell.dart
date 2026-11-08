@@ -67,8 +67,16 @@ class _AppShellState extends State<AppShell> {
 
 /// 顶栏标题区：根页「录音卡」+ 胶囊；子页「‹ {返回目标}」（窄屏）
 class _Header extends StatelessWidget {
-  const _Header({required this.height, required this.wide, required this.device});
+  const _Header({
+    required this.height,
+    required this.wide,
+    required this.device,
+    this.topInset = 0,
+  });
   final double height;
+
+  /// 窄屏真机安全区：刘海高度并入顶栏背景，内容仍占下方 [height] 区域
+  final double topInset;
   final bool wide;
   final DeviceStore device;
 
@@ -79,7 +87,7 @@ class _Header extends StatelessWidget {
     return Container(
       key: const Key('app-header'),
       height: height,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: EdgeInsets.fromLTRB(20, topInset, 20, 0),
       decoration: const BoxDecoration(
         color: RCColors.bg,
         border: Border(bottom: BorderSide(color: RCColors.sep)),
@@ -117,8 +125,11 @@ class _Header extends StatelessWidget {
 }
 
 class _BottomNav extends StatelessWidget {
-  const _BottomNav({required this.height});
+  const _BottomNav({required this.height, this.bottomInset = 0});
   final double height;
+
+  /// 窄屏真机安全区：home indicator 高度并入底栏背景，图标区仍占上方 [height]
+  final double bottomInset;
 
   @override
   Widget build(BuildContext context) {
@@ -151,10 +162,12 @@ class _BottomNav extends StatelessWidget {
     return Container(
       key: const Key('bottom-nav'),
       height: height,
+      padding: EdgeInsets.only(bottom: bottomInset),
       decoration: const BoxDecoration(
         color: RCColors.bg,
         border: Border(top: BorderSide(color: RCColors.sep)),
       ),
+      alignment: Alignment.topCenter,
       child: Row(children: [
         item('Timeline', RootTab.timeline, 'nav-timeline', Icons.schedule),
         item('Setting', RootTab.setting, 'nav-setting', Icons.settings_outlined),
@@ -185,9 +198,17 @@ class _NarrowLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
     final sub = store.subStack.isNotEmpty;
+    // 真机安全区：刘海并入顶栏背景，home indicator 并入底栏背景
+    // （widget 测试里 padding 为 0，高度与原型/断言一致）
+    final insets = MediaQuery.paddingOf(context);
     return Column(
       children: [
-        _Header(height: RCDims.narrowHeader, wide: false, device: device),
+        _Header(
+          height: RCDims.narrowHeader + insets.top,
+          topInset: insets.top,
+          wide: false,
+          device: device,
+        ),
         Expanded(
           child: sub
               ? _stackTopPage(store, wide: false)
@@ -196,8 +217,12 @@ class _NarrowLayout extends StatelessWidget {
                   RootTab.setting => const SettingPage(),
                 },
         ),
-        // 子页隐藏底栏，经顶栏返回（真机另有边缘滑动返回）
-        if (!sub) const _BottomNav(height: 56),
+        // 子页隐藏底栏，经顶栏返回（真机另有边缘滑动返回）；
+        // 内容底部让出 home indicator，避免底部内容被遮挡
+        if (!sub)
+          _BottomNav(height: 56 + insets.bottom, bottomInset: insets.bottom)
+        else if (insets.bottom > 0)
+          SizedBox(height: insets.bottom),
       ],
     );
   }
