@@ -1,6 +1,6 @@
 // Archive built by the Runner Card Rust Bridge phase for current SDK slices.
 CARD_BRIDGE_ARCHIVE = $(PROJECT_DIR)/../rust/card_bridge/build/ios/$(PLATFORM_NAME)/libcard_bridge.a
-OTHER_LDFLAGS = $(inherited) -force_load "$(CARD_BRIDGE_ARCHIVE)" -framework CoreBluetooth -framework Foundation -framework Security -lc++ -liconv -lresolv -Wl,-u,_card_bridge_request -Wl,-u,_card_bridge_free_string -Wl,-u,_card_bridge_set_event_callback -Wl,-u,_card_bridge_version -Wl,-export_dynamic
+OTHER_LDFLAGS = $(inherited) -force_load "$(CARD_BRIDGE_ARCHIVE)" -framework CoreBluetooth -framework CoreLocation -framework Foundation -framework Security -lc++ -liconv -lresolv -Wl,-u,_card_bridge_request -Wl,-u,_card_bridge_free_string -Wl,-u,_card_bridge_set_event_callback -Wl,-u,_card_bridge_version -Wl,-export_dynamic
 DEAD_CODE_STRIPPING = NO
 STRIP_INSTALLED_PRODUCT = NO
 STRIP_STYLE = non-global

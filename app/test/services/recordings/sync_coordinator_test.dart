@@ -139,9 +139,8 @@ void main() {
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('sync-coordinator-test-');
     directory = Directory('${temp.path}/data');
-    source = await File(
-      '${temp.path}/real.apm',
-    ).writeAsBytes(List.generate(128, (i) => i));
+    source = await File('${temp.path}/real.apm')
+        .writeAsBytes(List.generate(128, (i) => i));
     repository = RecordingRepository(directory: directory);
     secrets = MemorySecureStore();
     settings = SettingsRepository(directory: directory, secureStore: secrets);
@@ -162,58 +161,49 @@ void main() {
     await temp.delete(recursive: true);
   });
 
-  test(
-    'unconfigured sync refuses before opening device, does not silently become local download',
-    () async {
-      uploader.configured = false;
-      await expectLater(
-        coordinator.syncAndUpload('card-1'),
-        throwsA(isA<RecordingUploadConfigurationException>()),
-      );
-      expect(log, isEmpty);
-      expect((await repository.load()).index, isEmpty);
-      final imports = await coordinator.importFromDevice('card-1');
-      expect(imports, hasLength(1));
-      expect(uploader.uploads, 0);
-      expect((await repository.load()).index.single.cloudFileId, isNull);
-      expect(
-        (await repository.load()).metadata['lastSuccessfulSyncAt'],
-        isNull,
-      );
-    },
-  );
+  test('unconfigured sync refuses before opening device, does not silently become local download', () async {
+    uploader.configured = false;
+    await expectLater(
+      coordinator.syncAndUpload('card-1'),
+      throwsA(isA<RecordingUploadConfigurationException>()),
+    );
+    expect(log, isEmpty);
+    expect((await repository.load()).index, isEmpty);
+    final imports = await coordinator.importFromDevice('card-1');
+    expect(imports, hasLength(1));
+    expect(uploader.uploads, 0);
+    expect((await repository.load()).index.single.cloudFileId, isNull);
+    expect((await repository.load()).metadata['lastSuccessfulSyncAt'], isNull);
+  });
 
-  test(
-    'two-phase sync closes download session before upload and only succeeds with accepted receipt',
-    () async {
-      final updates = <RecordingTask>[];
-      final subscription = coordinator.changes.listen(updates.add);
-      final result = await coordinator.syncAndUpload('card-1');
-      await subscription.cancel();
-      expect(log, ['open', 'list', 'download', 'close', 'upload']);
-      expect(gateway.destructiveRequested, false);
-      expect(result.imports, hasLength(1));
-      expect(result.uploaded.single.cloudFileId, 'accepted-server-file');
-      expect(await source.exists(), true);
-      expect(
-        (await repository.load()).metadata['lastSuccessfulSyncAt'],
-        isA<String>(),
-      );
-      expect(
-        updates.any((task) => task.state == RecordingTaskState.running),
-        true,
-      );
-      expect(
-        (await repository.load()).tasks.every(
-          (task) => task.state == RecordingTaskState.succeeded,
-        ),
-        true,
-      );
-      await coordinator.syncAndUpload('card-1');
-      expect(gateway.downloads, 1);
-      expect(uploader.uploads, 1);
-    },
-  );
+  test('two-phase sync closes download session before upload and only succeeds with accepted receipt', () async {
+    final updates = <RecordingTask>[];
+    final subscription = coordinator.changes.listen(updates.add);
+    final result = await coordinator.syncAndUpload('card-1');
+    await subscription.cancel();
+    expect(log, ['open', 'list', 'download', 'close', 'upload']);
+    expect(gateway.destructiveRequested, false);
+    expect(result.imports, hasLength(1));
+    expect(result.uploaded.single.cloudFileId, 'accepted-server-file');
+    expect(await source.exists(), true);
+    expect(
+      (await repository.load()).metadata['lastSuccessfulSyncAt'],
+      isA<String>(),
+    );
+    expect(
+      updates.any((task) => task.state == RecordingTaskState.running),
+      true,
+    );
+    expect(
+      (await repository.load()).tasks.every(
+        (task) => task.state == RecordingTaskState.succeeded,
+      ),
+      true,
+    );
+    await coordinator.syncAndUpload('card-1');
+    expect(gateway.downloads, 1);
+    expect(uploader.uploads, 1);
+  });
 
   test(
     'every network enum respects wifiOnly; offline and unknown fail closed',
@@ -238,105 +228,93 @@ void main() {
     },
   );
 
-  test(
-    'network changing away from Wi-Fi aborts upload rather than recording success',
-    () async {
-      await settings.setSwitch('wifiOnlySync', true);
-      uploader.duringUpload = () {
-        network.value = RecordingNetwork.mobile;
-      };
-      await expectLater(
-        coordinator.syncAndUpload('card-1'),
-        throwsA(isA<RecordingNetworkPolicyException>()),
-      );
-      final state = await repository.load();
-      expect(state.index.single.cloudFileId, isNull);
-      expect(state.metadata['lastSuccessfulSyncAt'], isNull);
-      expect(
-        state.tasks.where((task) => task.kind == 'upload').single.state,
-        RecordingTaskState.failed,
-      );
-      expect(await source.exists(), true);
-    },
-  );
+  test('network changing away from Wi-Fi aborts upload rather than recording success', () async {
+    await settings.setSwitch('wifiOnlySync', true);
+    uploader.duringUpload = () {
+      network.value = RecordingNetwork.mobile;
+    };
+    await expectLater(
+      coordinator.syncAndUpload('card-1'),
+      throwsA(isA<RecordingNetworkPolicyException>()),
+    );
+    final state = await repository.load();
+    expect(state.index.single.cloudFileId, isNull);
+    expect(state.metadata['lastSuccessfulSyncAt'], isNull);
+    expect(
+      state.tasks.where((task) => task.kind == 'upload').single.state,
+      RecordingTaskState.failed,
+    );
+    expect(await source.exists(), true);
+  });
 
-  test(
-    'upload rejection remains pending and explicit restart retry uses same idempotency key without device',
-    () async {
-      uploader.fail = true;
-      await expectLater(
-        coordinator.syncAndUpload('card-1'),
-        throwsA(isA<RecordingUploadException>()),
-      );
-      expect((await repository.load()).index.single.cloudFileId, isNull);
-      final originalKey = uploader.keys.single;
-      final restarted = RecordingRepository(directory: directory);
-      final retry = SyncCoordinator(
-        repository: restarted,
-        settingsRepository: settings,
-        uploader: uploader,
-        networkPolicy: RecordingNetworkPolicy(probe: network),
-      );
-      uploader.fail = false;
-      final result = await retry.resumePendingUploads(deviceId: 'card-1');
-      expect(result.single.cloudFileId, 'accepted-server-file');
-      expect(uploader.keys.last, originalKey);
-      expect(gateway.downloads, 1);
-      expect(
-        (await restarted.load()).tasks
-            .where((task) => task.kind == 'upload')
-            .single
-            .attempts,
-        2,
-      );
-      await retry.dispose();
-    },
-  );
+  test('upload rejection remains pending and explicit restart retry uses same idempotency key without device', () async {
+    uploader.fail = true;
+    await expectLater(
+      coordinator.syncAndUpload('card-1'),
+      throwsA(isA<RecordingUploadException>()),
+    );
+    expect((await repository.load()).index.single.cloudFileId, isNull);
+    final originalKey = uploader.keys.single;
+    final restarted = RecordingRepository(directory: directory);
+    final retry = SyncCoordinator(
+      repository: restarted,
+      settingsRepository: settings,
+      uploader: uploader,
+      networkPolicy: RecordingNetworkPolicy(probe: network),
+    );
+    uploader.fail = false;
+    final result = await retry.resumePendingUploads(deviceId: 'card-1');
+    expect(result.single.cloudFileId, 'accepted-server-file');
+    expect(uploader.keys.last, originalKey);
+    expect(gateway.downloads, 1);
+    expect(
+      (await restarted.load()).tasks
+          .where((task) => task.kind == 'upload')
+          .single
+          .attempts,
+      2,
+    );
+    await retry.dispose();
+  });
 
-  test(
-    'failed open and failed download always close session; no successful index/upload',
-    () async {
-      gateway.failOpen = true;
-      await expectLater(coordinator.syncAndUpload('card-1'), throwsStateError);
-      expect(log, ['open', 'close']);
-      gateway.failOpen = false;
-      gateway.failDownload = true;
-      await expectLater(coordinator.syncAndUpload('card-1'), throwsStateError);
-      expect(log.last, 'close');
-      expect((await repository.load()).index, isEmpty);
-      expect(uploader.uploads, 0);
-    },
-  );
+  test('failed open and failed download always close session; no successful index/upload', () async {
+    gateway.failOpen = true;
+    await expectLater(coordinator.syncAndUpload('card-1'), throwsStateError);
+    expect(log, ['open', 'close']);
+    gateway.failOpen = false;
+    gateway.failDownload = true;
+    await expectLater(coordinator.syncAndUpload('card-1'), throwsStateError);
+    expect(log.last, 'close');
+    expect((await repository.load()).index, isEmpty);
+    expect(uploader.uploads, 0);
+  });
 
-  test(
-    'cancellation stops upload and marks tasks cancelled without deleting source',
-    () async {
-      gateway.blocked = Completer<void>();
-      final running = coordinator.syncAndUpload('card-1');
-      final assertion = expectLater(
-        running,
-        throwsA(isA<RecordingSyncCancelled>()),
-      );
-      while (gateway.downloads == 0) {
-        await Future<void>.delayed(const Duration(milliseconds: 1));
-      }
-      await expectLater(
-        coordinator.syncAndUpload('card-1'),
-        throwsA(isA<RecordingStorageException>()),
-      );
-      await coordinator.cancel();
-      await assertion;
-      expect(uploader.uploads, 0);
-      expect(
-        (await repository.load()).tasks.any(
-          (task) => task.state == RecordingTaskState.cancelled,
-        ),
-        true,
-      );
-      expect(await source.exists(), true);
-      expect(log.last, 'close');
-    },
-  );
+  test('cancellation stops upload and marks tasks cancelled without deleting source', () async {
+    gateway.blocked = Completer<void>();
+    final running = coordinator.syncAndUpload('card-1');
+    final assertion = expectLater(
+      running,
+      throwsA(isA<RecordingSyncCancelled>()),
+    );
+    while (gateway.downloads == 0) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    await expectLater(
+      coordinator.syncAndUpload('card-1'),
+      throwsA(isA<RecordingStorageException>()),
+    );
+    await coordinator.cancel();
+    await assertion;
+    expect(uploader.uploads, 0);
+    expect(
+      (await repository.load()).tasks.any(
+        (task) => task.state == RecordingTaskState.cancelled,
+      ),
+      true,
+    );
+    expect(await source.exists(), true);
+    expect(log.last, 'close');
+  });
 
   test(
     'empty remote and no pending local upload does not report sync success',

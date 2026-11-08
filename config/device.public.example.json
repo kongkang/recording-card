@@ -1,0 +1,21 @@
+{
+  "RC_OAUTH_CLIENT_ID": "58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo",
+  "RC_OAUTH_BASE_URL": "https://block2-api.wainao.chat",
+  "RC_OAUTH_REDIRECT_URI": "recording-card://callback",
+  "RC_OAUTH_SCOPE": "mobile:full profile:read",
+  "RC_MODEL_GATEWAY_BASE_URL": "https://block2-api.wainao.chat/api/model-gateway/v1",
+  "RC_TEXT_MODEL": "",
+  "RC_ASR_LICENSE_ACCEPTED": false,
+  "RC_ASR_ALLOW_DOWNLOAD": false,
+  "RC_ASR_MODEL_URL": "",
+  "RC_ASR_TOKENS_URL": "",
+  "RC_ASR_DOWNLOAD_HOSTS": "",
+  "RC_VAD_URL": "",
+  "RC_VAD_SIZE": 0,
+  "RC_VAD_SHA256": "",
+  "RC_UPLOAD_URL": "",
+  "RC_UPLOAD_HOSTS": "",
+  "RC_UPLOAD_RAW_CONTRACT_APPROVED": false,
+  "RC_UPLOAD_OAUTH_BEARER_APPROVED": false,
+  "RC_FIRMWARE_MANIFEST_JSON": ""
+}

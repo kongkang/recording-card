@@ -1,5 +1,6 @@
 import 'dart:ffi';
 import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/device/card_gateway.dart';
 
@@ -92,24 +93,21 @@ void main() {
     expect(f.sequence, 2);
     expect(f.transport, CardTransfer.ble);
   });
-  test(
-    'audio chunk exposes received offsets and discontinuity, not absolute timestamps',
-    () {
-      final chunk = CardAudioChunk.fromJson({
-        'taskId': 't',
-        'path': '/private/t.wav',
-        'index': 2,
-        'samples': 160,
-        'receivedSampleOffset': 160,
-        'discontinuous': true,
-        'droppedChunks': 4,
-        'isFinal': false,
-        'interrupted': false,
-      });
-      expect(chunk.discontinuous, true);
-      expect(chunk.receivedSampleOffset, 160);
-    },
-  );
+  test('audio chunk exposes received offsets and discontinuity, not absolute timestamps', () {
+    final chunk = CardAudioChunk.fromJson({
+      'taskId': 't',
+      'path': '/private/t.wav',
+      'index': 2,
+      'samples': 160,
+      'receivedSampleOffset': 160,
+      'discontinuous': true,
+      'droppedChunks': 4,
+      'isFinal': false,
+      'interrupted': false,
+    });
+    expect(chunk.discontinuous, true);
+    expect(chunk.receivedSampleOffset, 160);
+  });
 
   final library = Platform.environment['CARD_BRIDGE_TEST_LIBRARY'];
   group(

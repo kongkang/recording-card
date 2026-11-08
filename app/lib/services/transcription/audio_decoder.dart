@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'transcription_types.dart';
 
 /// ReAI card firmware uses raw IMA ADPCM, low nibble first, predictor/index=0.

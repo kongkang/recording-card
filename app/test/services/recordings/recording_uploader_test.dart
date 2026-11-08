@@ -86,9 +86,8 @@ void main() {
   late RecordingUploadRequest job;
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('http-upload-test-');
-    audio = await File(
-      '${temp.path}/test.apm',
-    ).writeAsBytes(List.generate(128, (i) => i));
+    audio = await File('${temp.path}/test.apm')
+        .writeAsBytes(List.generate(128, (i) => i));
     job = RecordingUploadRequest(
       entry: RecordingIndexEntry(
         key: 'stable-source',
@@ -119,69 +118,63 @@ void main() {
     client: client,
   );
 
-  test(
-    'missing endpoint/auth or malformed/unapproved endpoint fails before sending bytes',
-    () async {
-      final request = TestRequest(TestResponse(200, '{}'));
-      final client = TestHttpClient(request);
-      final missing = HttpRecordingUploader(client: client);
-      expect(
-        missing.validateConfiguration,
-        throwsA(isA<RecordingUploadConfigurationException>()),
-      );
-      for (final url in [
-        'http://upload.example.org/api',
-        'file:///tmp/audio',
-        'https://evil.example.org/api',
-        'https://user:password@upload.example.org/api',
-        'https://upload.example.org/api#fragment',
-      ]) {
-        await expectLater(
-          adapter(client, url: Uri.parse(url)).upload(job),
-          throwsA(isA<RecordingUploadConfigurationException>()),
-        );
-      }
+  test('missing endpoint/auth or malformed/unapproved endpoint fails before sending bytes', () async {
+    final request = TestRequest(TestResponse(200, '{}'));
+    final client = TestHttpClient(request);
+    final missing = HttpRecordingUploader(client: client);
+    expect(
+      missing.validateConfiguration,
+      throwsA(isA<RecordingUploadConfigurationException>()),
+    );
+    for (final url in [
+      'http://upload.example.org/api',
+      'file:///tmp/audio',
+      'https://evil.example.org/api',
+      'https://user:password@upload.example.org/api',
+      'https://upload.example.org/api#fragment',
+    ]) {
       await expectLater(
-        adapter(client, hosts: {}).upload(job),
+        adapter(client, url: Uri.parse(url)).upload(job),
         throwsA(isA<RecordingUploadConfigurationException>()),
       );
-      final noAuth = HttpRecordingUploader(
-        endpoint: Uri.parse('https://upload.example.org/api'),
-        allowedHosts: {'upload.example.org'},
-        client: client,
-      );
-      await expectLater(
-        noAuth.upload(job),
-        throwsA(isA<RecordingUploadConfigurationException>()),
-      );
-      expect(client.opens, 0);
-    },
-  );
+    }
+    await expectLater(
+      adapter(client, hosts: {}).upload(job),
+      throwsA(isA<RecordingUploadConfigurationException>()),
+    );
+    final noAuth = HttpRecordingUploader(
+      endpoint: Uri.parse('https://upload.example.org/api'),
+      allowedHosts: {'upload.example.org'},
+      client: client,
+    );
+    await expectLater(
+      noAuth.upload(job),
+      throwsA(isA<RecordingUploadConfigurationException>()),
+    );
+    expect(client.opens, 0);
+  });
 
-  test(
-    'streams exact bytes, prevents redirects, sets stable idempotency and accepts explicit receipt',
-    () async {
-      final request = TestRequest(
-        TestResponse(201, '{"accepted":true,"fileId":"server-file-id"}'),
-      );
-      final client = TestHttpClient(request);
-      var checks = 0;
-      final withPolicy = RecordingUploadRequest(
-        entry: job.entry,
-        requireNetwork: () async {
-          checks++;
-        },
-      );
-      final receipt = await adapter(client).upload(withPolicy);
-      expect(receipt.cloudFileId, 'server-file-id');
-      expect(request.sent, await audio.readAsBytes());
-      expect(request.followRedirects, false);
-      expect(request.contentLength, job.entry.sizeBytes);
-      expect(request.headers.values['idempotency-key'], job.idempotencyKey);
-      expect(request.headers.values['x-content-sha256'], job.entry.contentHash);
-      expect(checks, greaterThanOrEqualTo(2));
-    },
-  );
+  test('streams exact bytes, prevents redirects, sets stable idempotency and accepts explicit receipt', () async {
+    final request = TestRequest(
+      TestResponse(201, '{"accepted":true,"fileId":"server-file-id"}'),
+    );
+    final client = TestHttpClient(request);
+    var checks = 0;
+    final withPolicy = RecordingUploadRequest(
+      entry: job.entry,
+      requireNetwork: () async {
+        checks++;
+      },
+    );
+    final receipt = await adapter(client).upload(withPolicy);
+    expect(receipt.cloudFileId, 'server-file-id');
+    expect(request.sent, await audio.readAsBytes());
+    expect(request.followRedirects, false);
+    expect(request.contentLength, job.entry.sizeBytes);
+    expect(request.headers.values['idempotency-key'], job.idempotencyKey);
+    expect(request.headers.values['x-content-sha256'], job.entry.contentHash);
+    expect(checks, greaterThanOrEqualTo(2));
+  });
 
   test(
     'HTTP 2xx alone, redirects and invalid JSON never imply successful upload',

@@ -130,42 +130,39 @@ void main() {
     },
   );
 
-  test(
-    'staggered 401 after another refresh reuses new token without second refresh',
-    () async {
-      var refreshes = 0, oldRequests = 0;
-      final delayed401 = Completer<void>();
-      final client = MockClient((request) async {
-        if (request.url.path == '/oauth/token') {
-          refreshes++;
-          return jsonResponse(
-            tokenJson(
-              access: 'synthetic-access-2',
-              refresh: 'synthetic-refresh-2',
-            ),
-          );
-        }
-        if (request.headers['Authorization'] == 'Bearer synthetic-access-1') {
-          oldRequests++;
-          if (oldRequests == 2) await delayed401.future;
-          return jsonResponse({}, status: 401);
-        }
-        return jsonResponse({'ok': true});
-      });
-      final store = OAuthTokenStore(
-        client: testOAuth(client),
-        storage: MemoryTokenStorage(),
-        clock: () => testTime,
-      );
-      await seedTokens(store);
-      final auth = authorized(store, client);
-      final first = auth.get(url), second = auth.get(url);
-      await first;
-      delayed401.complete();
-      await second;
-      expect(refreshes, 1);
-    },
-  );
+  test('staggered 401 after another refresh reuses new token without second refresh', () async {
+    var refreshes = 0, oldRequests = 0;
+    final delayed401 = Completer<void>();
+    final client = MockClient((request) async {
+      if (request.url.path == '/oauth/token') {
+        refreshes++;
+        return jsonResponse(
+          tokenJson(
+            access: 'synthetic-access-2',
+            refresh: 'synthetic-refresh-2',
+          ),
+        );
+      }
+      if (request.headers['Authorization'] == 'Bearer synthetic-access-1') {
+        oldRequests++;
+        if (oldRequests == 2) await delayed401.future;
+        return jsonResponse({}, status: 401);
+      }
+      return jsonResponse({'ok': true});
+    });
+    final store = OAuthTokenStore(
+      client: testOAuth(client),
+      storage: MemoryTokenStorage(),
+      clock: () => testTime,
+    );
+    await seedTokens(store);
+    final auth = authorized(store, client);
+    final first = auth.get(url), second = auth.get(url);
+    await first;
+    delayed401.complete();
+    await second;
+    expect(refreshes, 1);
+  });
 
   test(
     'second 401 throws rather than looping or returning fake response',
@@ -194,35 +191,32 @@ void main() {
     },
   );
 
-  test(
-    'invalid_grant clears session; transient network errors preserve token bundle',
-    () async {
-      for (final networkFailure in [false, true]) {
-        final client = MockClient((_) async {
-          if (networkFailure) {
-            throw http.ClientException('synthetic-sensitive-error');
-          }
-          return jsonResponse({'error': 'invalid_grant'}, status: 400);
-        });
-        final storage = MemoryTokenStorage();
-        final store = OAuthTokenStore(
-          client: testOAuth(client),
-          storage: storage,
-          clock: () => testTime,
-        );
-        await seedTokens(store);
-        var invalidated = 0;
-        store.onSessionInvalidated = () => invalidated++;
-        await expectLater(store.refresh(), throwsA(isA<AuthException>()));
-        expect(invalidated, networkFailure ? 0 : 1);
-        expect(
-          store.refreshToken,
-          networkFailure ? 'synthetic-refresh-1' : isNull,
-        );
-        expect(storage.values.isEmpty, !networkFailure);
-      }
-    },
-  );
+  test('invalid_grant clears session; transient network errors preserve token bundle', () async {
+    for (final networkFailure in [false, true]) {
+      final client = MockClient((_) async {
+        if (networkFailure) {
+          throw http.ClientException('synthetic-sensitive-error');
+        }
+        return jsonResponse({'error': 'invalid_grant'}, status: 400);
+      });
+      final storage = MemoryTokenStorage();
+      final store = OAuthTokenStore(
+        client: testOAuth(client),
+        storage: storage,
+        clock: () => testTime,
+      );
+      await seedTokens(store);
+      var invalidated = 0;
+      store.onSessionInvalidated = () => invalidated++;
+      await expectLater(store.refresh(), throwsA(isA<AuthException>()));
+      expect(invalidated, networkFailure ? 0 : 1);
+      expect(
+        store.refreshToken,
+        networkFailure ? 'synthetic-refresh-1' : isNull,
+      );
+      expect(storage.values.isEmpty, !networkFailure);
+    }
+  });
 
   test(
     'logout during refresh response cannot resurrect persisted tokens',
@@ -254,45 +248,42 @@ void main() {
     },
   );
 
-  test(
-    'logout during a storage write followed by new login never deletes new bundle',
-    () async {
-      final writing = Completer<void>(), release = Completer<void>();
-      final client = MockClient(
-        (_) async => jsonResponse(tokenJson(access: 'synthetic-access-2')),
-      );
-      final storage = MemoryTokenStorage();
-      final store = OAuthTokenStore(
-        client: testOAuth(client),
-        storage: storage,
-        clock: () => testTime,
-      );
-      await seedTokens(store);
-      storage.beforeWrite = (key, value) async {
-        if (value.contains('synthetic-access-2')) {
-          writing.complete();
-          await release.future;
-        }
-      };
-      final refreshing = store.refresh();
-      final check = expectLater(
-        refreshing,
-        throwsA(isA<AuthRequiredException>()),
-      );
-      await writing.future;
-      final clearing = store.clearTokens();
-      final signing = seedTokens(
-        store,
-        access: 'new-user-access',
-        refresh: 'new-user-refresh',
-      );
-      release.complete();
-      await Future.wait([check, clearing, signing]);
-      expect(store.accessToken, 'new-user-access');
-      final persisted = jsonDecode(storage.values.values.single);
-      expect(persisted['access_token'], 'new-user-access');
-    },
-  );
+  test('logout during a storage write followed by new login never deletes new bundle', () async {
+    final writing = Completer<void>(), release = Completer<void>();
+    final client = MockClient(
+      (_) async => jsonResponse(tokenJson(access: 'synthetic-access-2')),
+    );
+    final storage = MemoryTokenStorage();
+    final store = OAuthTokenStore(
+      client: testOAuth(client),
+      storage: storage,
+      clock: () => testTime,
+    );
+    await seedTokens(store);
+    storage.beforeWrite = (key, value) async {
+      if (value.contains('synthetic-access-2')) {
+        writing.complete();
+        await release.future;
+      }
+    };
+    final refreshing = store.refresh();
+    final check = expectLater(
+      refreshing,
+      throwsA(isA<AuthRequiredException>()),
+    );
+    await writing.future;
+    final clearing = store.clearTokens();
+    final signing = seedTokens(
+      store,
+      access: 'new-user-access',
+      refresh: 'new-user-refresh',
+    );
+    release.complete();
+    await Future.wait([check, clearing, signing]);
+    expect(store.accessToken, 'new-user-access');
+    final persisted = jsonDecode(storage.values.values.single);
+    expect(persisted['access_token'], 'new-user-access');
+  });
 
   test(
     'old account request cannot be replayed or returned to new account',

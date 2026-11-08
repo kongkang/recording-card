@@ -1,8 +1,10 @@
 library;
 
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
 import 'core/dev/dev_driver.dart';
 import 'core/store/app_store.dart';
 import 'core/store/app_backend.dart';
@@ -12,10 +14,62 @@ import 'core/theme/tokens.dart';
 import 'pages/app_shell.dart';
 import 'pages/login_page.dart';
 import 'services/auth_service.dart';
+import 'services/runtime/production_runtime.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const RecordingCardApp());
+  runApp(const _ProductionBootstrap());
+}
+
+class _ProductionBootstrap extends StatefulWidget {
+  const _ProductionBootstrap();
+  @override
+  State<_ProductionBootstrap> createState() => _ProductionBootstrapState();
+}
+
+class _ProductionBootstrapState extends State<_ProductionBootstrap> {
+  late Future<ProductionRuntime> _runtime = ProductionRuntime.create();
+  @override
+  void dispose() {
+    unawaited(_runtime.then((r) => r.dispose()).catchError((Object _) {}));
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<ProductionRuntime>(
+    future: _runtime,
+    builder: (context, snapshot) {
+      final runtime = snapshot.data;
+      if (runtime != null) {
+        return RecordingCardApp(
+          auth: runtime.auth,
+          store: runtime.store,
+          device: runtime.device,
+        );
+      }
+      return MaterialApp(
+        theme: buildRCTheme(),
+        home: Scaffold(
+          body: Center(
+            child: snapshot.hasError
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('本机服务初始化失败，请检查安全存储及应用数据。'),
+                      TextButton(
+                        onPressed: () => setState(() {
+                          _runtime = ProductionRuntime.create();
+                        }),
+                        child: const Text('重试'),
+                      ),
+                    ],
+                  )
+                : const CircularProgressIndicator(),
+          ),
+        ),
+      );
+    },
+  );
 }
 
 /// Integration injects C/D AppBackend and B/C DeviceBackend here. Unconfigured
@@ -94,7 +148,7 @@ class _HomeGateState extends State<_HomeGate> {
       if (widget.config.restoreAuth != null) {
         await widget.config.restoreAuth!();
       } else {
-        await (_auth as dynamic).restore();
+        await _auth.restore();
       }
     } catch (_) {
       /* Login page will surface unavailable OAuth on user action. */
@@ -105,7 +159,11 @@ class _HomeGateState extends State<_HomeGate> {
   }
 
   void _authChanged() {
-    if (!_auth.isSignedIn || _initialized) return;
+    if (!_auth.isSignedIn) {
+      _initialized = false;
+      return;
+    }
+    if (_initialized) return;
     _initialized = true;
     unawaited(_store.initialize());
     unawaited(_device.initialize());

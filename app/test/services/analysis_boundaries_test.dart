@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/models/summary.dart';
 import 'package:recording_card/services/analysis/analysis_service.dart';
@@ -8,6 +9,7 @@ import 'package:recording_card/services/analysis/sliding_window_service.dart';
 import 'package:recording_card/services/analysis/stage_segmenter.dart';
 import 'package:recording_card/services/analysis/stage_summary_service.dart';
 import 'package:recording_card/services/transcription/transcription_service.dart';
+
 import 'analysis_service_test.dart' as a;
 import 'transcription_service_test.dart' as t;
 
@@ -32,41 +34,35 @@ void main() {
       expect(gateway.requestedModel, 'authorized-test-model');
     },
   );
-  test(
-    'real native metadata is deep immutable in raw chunk and retains microseconds',
-    () {
-      final tokens = ['x'], stamps = [0.2];
-      final segment = TranscriptSegment(
-        index: 0,
-        start: const Duration(microseconds: 1),
-        end: const Duration(microseconds: 999),
-        text: 'x',
-        tokens: tokens,
-        tokenTimestamps: stamps,
-        emotion: '<|NEUTRAL|>',
-      );
-      final chunk = RawTranscriptChunk(
-        id: 'x',
-        recordId: 'r',
-        ordinal: 0,
-        start: Duration.zero,
-        end: const Duration(seconds: 1),
-        rawText: 'x',
-        segments: [segment],
-      );
-      tokens[0] = 'tampered';
-      stamps[0] = 4;
-      expect(chunk.segments.single.tokens, ['x']);
-      expect(chunk.segments.single.tokenTimestamps, [0.2]);
-      expect(
-        () => chunk.segments.single.tokens.add('y'),
-        throwsUnsupportedError,
-      );
-      final restored = RawTranscriptChunk.fromJson(chunk.toJson());
-      expect(restored.segments.single.start.inMicroseconds, 1);
-      expect(restored.segments.single.end.inMicroseconds, 999);
-    },
-  );
+  test('real native metadata is deep immutable in raw chunk and retains microseconds', () {
+    final tokens = ['x'], stamps = [0.2];
+    final segment = TranscriptSegment(
+      index: 0,
+      start: const Duration(microseconds: 1),
+      end: const Duration(microseconds: 999),
+      text: 'x',
+      tokens: tokens,
+      tokenTimestamps: stamps,
+      emotion: '<|NEUTRAL|>',
+    );
+    final chunk = RawTranscriptChunk(
+      id: 'x',
+      recordId: 'r',
+      ordinal: 0,
+      start: Duration.zero,
+      end: const Duration(seconds: 1),
+      rawText: 'x',
+      segments: [segment],
+    );
+    tokens[0] = 'tampered';
+    stamps[0] = 4;
+    expect(chunk.segments.single.tokens, ['x']);
+    expect(chunk.segments.single.tokenTimestamps, [0.2]);
+    expect(() => chunk.segments.single.tokens.add('y'), throwsUnsupportedError);
+    final restored = RawTranscriptChunk.fromJson(chunk.toJson());
+    expect(restored.segments.single.start.inMicroseconds, 1);
+    expect(restored.segments.single.end.inMicroseconds, 999);
+  });
   test(
     'sliding snapshot restore preserves revisions without making model request',
     () async {
@@ -102,29 +98,26 @@ void main() {
       );
     },
   );
-  test(
-    'private PCM inference copy is cleaned, caller source and models stay intact',
-    () async {
-      final root = await Directory.systemTemp.createTemp('private-asr-test-');
-      addTearDown(() => root.delete(recursive: true));
-      final store = await t.fixture(root);
-      final scratch = Directory('${root.path}/scratch');
-      final source = File('${root.path}/source.pcm');
-      await source.writeAsBytes([0, 0]);
-      final service = TranscriptionService(
-        models: store,
-        backend: t.FakeBackend(),
-      );
-      await service.transcribePcmBytes(
-        Uint8List.fromList([0, 0]),
-        temporaryDirectory: scratch,
-      );
-      expect(await source.readAsBytes(), [0, 0]);
-      expect(scratch.listSync(), isEmpty);
-      expect(await File('${root.path}/model.onnx').exists(), isTrue);
-      await service.close();
-    },
-  );
+  test('private PCM inference copy is cleaned, caller source and models stay intact', () async {
+    final root = await Directory.systemTemp.createTemp('private-asr-test-');
+    addTearDown(() => root.delete(recursive: true));
+    final store = await t.fixture(root);
+    final scratch = Directory('${root.path}/scratch');
+    final source = File('${root.path}/source.pcm');
+    await source.writeAsBytes([0, 0]);
+    final service = TranscriptionService(
+      models: store,
+      backend: t.FakeBackend(),
+    );
+    await service.transcribePcmBytes(
+      Uint8List.fromList([0, 0]),
+      temporaryDirectory: scratch,
+    );
+    expect(await source.readAsBytes(), [0, 0]);
+    expect(scratch.listSync(), isEmpty);
+    expect(await File('${root.path}/model.onnx').exists(), isTrue);
+    await service.close();
+  });
   test(
     'stage summary drops polished text whose context includes another stage',
     () async {
@@ -212,25 +205,22 @@ void main() {
       throwsA(a.analysisCode('raw_immutable')),
     );
   });
-  test(
-    'whole-source existing summary is sent as context, new references remain canonical',
-    () async {
-      final prior = a.card('prior')
-        ..state = SummaryState.done
-        ..srcIds = ['new-record-42']
-        ..overview = '已有真实阶段总结';
-      final service = AnalysisService(
-        gateway: CallbackAnalysisGateway((p, {model}) async {
-          expect(p, contains('已有真实阶段总结'));
-          return jsonEncode(a.summaryData());
-        }),
-      );
-      final c = await service.generateSummary(
-        [a.event()],
-        target: a.card(),
-        existingSummaries: [prior],
-      );
-      expect(c.sources.single.range, '08:10:00—08:10:15');
-    },
-  );
+  test('whole-source existing summary is sent as context, new references remain canonical', () async {
+    final prior = a.card('prior')
+      ..state = SummaryState.done
+      ..srcIds = ['new-record-42']
+      ..overview = '已有真实阶段总结';
+    final service = AnalysisService(
+      gateway: CallbackAnalysisGateway((p, {model}) async {
+        expect(p, contains('已有真实阶段总结'));
+        return jsonEncode(a.summaryData());
+      }),
+    );
+    final c = await service.generateSummary(
+      [a.event()],
+      target: a.card(),
+      existingSummaries: [prior],
+    );
+    expect(c.sources.single.range, '08:10:00—08:10:15');
+  });
 }

@@ -191,11 +191,17 @@ class TranscriptionResult {
   final Duration audioDuration;
   final List<TranscriptSegment> segments;
   final List<String> uncertainties;
+
+  /// Set only by actual configured Silero inference, never ASR emptiness.
+  final bool vadVerified;
+  final List<List<int>> vadSpeechRangesMs;
   const TranscriptionResult({
     required this.text,
     required this.audioDuration,
     required this.segments,
     this.uncertainties = const [],
+    this.vadVerified = false,
+    this.vadSpeechRangesMs = const [],
   });
   factory TranscriptionResult.fromJson(Map<String, dynamic> j) =>
       TranscriptionResult(
@@ -211,6 +217,11 @@ class TranscriptionResult {
         uncertainties: List<String>.unmodifiable(
           (j['uncertainties'] as List? ?? []).cast<String>(),
         ),
+        vadVerified: j['vadVerified'] == true,
+        vadSpeechRangesMs: [
+          for (final span in j['vadSpeechRangesMs'] as List? ?? [])
+            (span as List).cast<int>(),
+        ],
       );
   Map<String, dynamic> toJson() => {
     'text': text,
@@ -218,6 +229,8 @@ class TranscriptionResult {
     'durationUs': audioDuration.inMicroseconds,
     'segments': [for (final s in segments) s.toJson()],
     'uncertainties': uncertainties,
+    'vadVerified': vadVerified,
+    'vadSpeechRangesMs': vadSpeechRangesMs,
   };
 }
 

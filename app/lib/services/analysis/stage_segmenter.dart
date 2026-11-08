@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'sliding_window_service.dart';
 import 'analysis_gateway.dart';
 
@@ -33,6 +34,7 @@ class TranscriptStage {
 class StageSegmenter {
   final String recordId;
   final Duration silenceThreshold;
+  final bool sealSourceGaps;
   final List<RawTranscriptChunk> _pending = [];
   final Map<String, String> _seen = {};
   final List<TranscriptStage> _stages = [];
@@ -41,12 +43,59 @@ class StageSegmenter {
   StageSegmenter({
     required this.recordId,
     this.silenceThreshold = const Duration(seconds: 30),
+    this.sealSourceGaps = true,
   }) {
     if (recordId.isEmpty || silenceThreshold <= Duration.zero) {
       throw ArgumentError('阶段配置无效');
     }
   }
   List<TranscriptStage> get stages => List.unmodifiable(_stages);
+
+  Map<String, dynamic> toJson() => {
+    'recordId': recordId,
+    'seen': _seen,
+    'pending': [for (final c in _pending) c.toJson()],
+    'stages': [
+      for (final s in _stages)
+        {
+          ...s.toJson(),
+          'chunks': [for (final c in s.chunks) c.toJson()],
+        },
+    ],
+    'last': _last?.toJson(),
+    'observedThroughUs': _observedThrough.inMicroseconds,
+  };
+
+  void restoreSnapshot(Map<String, dynamic> json) {
+    if (_seen.isNotEmpty || json['recordId'] != recordId) {
+      throw const AnalysisException('stage_record', '阶段快照只能恢复到同录音的空服务');
+    }
+    RawTranscriptChunk chunk(dynamic j) =>
+        RawTranscriptChunk.fromJson((j as Map).cast<String, dynamic>());
+    final pending = [for (final j in json['pending'] as List) chunk(j)];
+    final stages = [
+      for (final j in json['stages'] as List)
+        TranscriptStage(
+          id: j['id'] as String,
+          recordId: j['recordId'] as String,
+          chunks: [for (final c in j['chunks'] as List) chunk(c)],
+          start: Duration(microseconds: j['startUs'] as int),
+          end: Duration(microseconds: j['endUs'] as int),
+          reason: j['reason'] as String,
+        ),
+    ];
+    if ([
+      ...pending,
+      for (final s in stages) ...s.chunks,
+    ].any((c) => c.recordId != recordId)) {
+      throw const AnalysisException('stage_record', '阶段快照包含跨录音来源');
+    }
+    _seen.addAll((json['seen'] as Map).cast<String, String>());
+    _pending.addAll(pending);
+    _stages.addAll(stages);
+    _last = json['last'] == null ? null : chunk(json['last']);
+    _observedThrough = Duration(microseconds: json['observedThroughUs'] as int);
+  }
 
   /// Returns a stage sealed by a long gap before this new speech chunk, or null.
   TranscriptStage? addChunk(RawTranscriptChunk chunk) {
@@ -66,7 +115,8 @@ class StageSegmenter {
       throw const AnalysisException('chunk_order', '阶段片段时序无效或与已确认静音重叠');
     }
     TranscriptStage? sealed;
-    if (_pending.isNotEmpty &&
+    if (sealSourceGaps &&
+        _pending.isNotEmpty &&
         chunk.start - _pending.last.end >= silenceThreshold) {
       sealed = _seal('long_silence');
     }

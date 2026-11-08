@@ -2,7 +2,9 @@
 library;
 
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+
 import '../device/card_gateway.dart';
 import 'app_backend.dart';
 import 'device_backend.dart';
@@ -19,14 +21,13 @@ class DeviceStore extends ChangeNotifier {
     DeviceBackend? backend,
     StorePersistence? persistence,
     RecordingPolicy Function()? policy,
-    Future<void> Function()? onSynced,
+    this._onSynced,
   }) : backend =
            backend ?? GatewayDeviceBackend(gateway ?? RealCardGateway.maybe()),
        persistence =
            persistence ??
            PreferencesStorePersistence(key: 'recording-card.device-ui.v2'),
-       _policy = policy ?? (() => const RecordingPolicy()),
-       _onSynced = onSynced;
+       _policy = policy ?? (() => const RecordingPolicy());
   final DeviceBackend backend;
   final StorePersistence persistence;
   final RecordingPolicy Function() _policy;
@@ -434,7 +435,8 @@ class DeviceStore extends ChangeNotifier {
       wifiScanRes = wifiScanRes
           .where((r) => r.frequencyMhz == null || r.frequencyMhz! < 2500)
           .toList();
-      wifiStateText = '扫描完成 · 附近可见 ${wifiScanRes.length} 个网络';
+      final frequencyKnown = wifiScanRes.isNotEmpty && wifiScanRes.every((r) => r.frequencyMhz != null);
+      wifiStateText = '扫描完成 · 附近可见 ${wifiScanRes.length} 个${frequencyKnown ? ' 2.4GHz ' : ''}网络';
     } catch (e) {
       wifiScanRes = [];
       wifiStateText = 'Wi-Fi扫描失败：${_message(e)}';

@@ -1,5 +1,6 @@
 /// 设计 token —— 取自 prototype/index.html `:root` 与关键布局尺寸（设计真源）。
 library;
+
 import 'package:flutter/material.dart';
 
 abstract final class RCColors {

@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:io';
+
 import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
 
@@ -409,24 +410,24 @@ class UnavailableCardGateway extends CardGateway {
 }
 
 typedef _CallbackNative = ffi.Void Function(ffi.UintPtr, ffi.Pointer<Utf8>);
-typedef _RequestNative =
-    ffi.Void Function(
-      ffi.Pointer<Utf8>,
-      ffi.Pointer<ffi.NativeFunction<_CallbackNative>>,
-      ffi.UintPtr,
-    );
-typedef _RequestDart =
-    void Function(
-      ffi.Pointer<Utf8>,
-      ffi.Pointer<ffi.NativeFunction<_CallbackNative>>,
-      int,
-    );
+typedef _RequestNative = ffi.Void Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.NativeFunction<_CallbackNative>>,
+  ffi.UintPtr,
+);
+typedef _RequestDart = void Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.NativeFunction<_CallbackNative>>,
+  int,
+);
 typedef _FreeNative = ffi.Void Function(ffi.Pointer<Utf8>);
 typedef _FreeDart = void Function(ffi.Pointer<Utf8>);
-typedef _RegisterNative =
-    ffi.Void Function(ffi.Pointer<ffi.NativeFunction<_CallbackNative>>);
-typedef _RegisterDart =
-    void Function(ffi.Pointer<ffi.NativeFunction<_CallbackNative>>);
+typedef _RegisterNative = ffi.Void Function(
+  ffi.Pointer<ffi.NativeFunction<_CallbackNative>>,
+);
+typedef _RegisterDart = void Function(
+  ffi.Pointer<ffi.NativeFunction<_CallbackNative>>,
+);
 
 class _Pending {
   _Pending(this.completer, this.onProgress);
@@ -769,14 +770,10 @@ class RealCardGateway extends CardGateway {
   Future<List<Map<String, dynamic>>> checkFirmware({
     required String apiBaseUrl,
     required List<String> allowedHosts,
-  }) async =>
-      (await _call('checkFirmware', {
-                'apiBaseUrl': apiBaseUrl,
-                'allowedHosts': allowedHosts,
-              })
-              as List)
-          .map(_map)
-          .toList();
+  }) async => (await _call('checkFirmware', {
+    'apiBaseUrl': apiBaseUrl,
+    'allowedHosts': allowedHosts,
+  }) as List).map(_map).toList();
   @override
   Future<Map<String, dynamic>> checkWifiOta({
     required String apiBaseUrl,

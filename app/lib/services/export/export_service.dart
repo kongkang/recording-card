@@ -3,12 +3,14 @@ library;
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
+
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
+
 import '../../core/models/record.dart';
 import '../../core/models/summary.dart';
 import 'export_document.dart';
@@ -38,10 +40,9 @@ class ExportService {
   ExportService({
     Future<Directory> Function()? directory,
     Future<ByteData> Function()? fontLoader,
-    Future<void> Function(ExportArtifact, RectOrigin?)? shareFiles,
+    this._shareFiles,
   }) : _directory = directory ?? getTemporaryDirectory,
-       _fontLoader = fontLoader ?? (() => rootBundle.load(fontAsset)),
-       _shareFiles = shareFiles;
+       _fontLoader = fontLoader ?? (() => rootBundle.load(fontAsset));
   static const fontAsset = 'lib/services/export/assets/NotoSansSC-Regular.ttf';
   final Future<Directory> Function() _directory;
   final Future<ByteData> Function() _fontLoader;
@@ -83,8 +84,7 @@ class ExportService {
         mime = 'text/markdown';
       case ExportFormat.docx:
         names.add(('$base.docx', doc.docx()));
-        mime =
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
       case ExportFormat.pdf:
         names.add(('$base.pdf', await _pdf(doc)));
         mime = 'application/pdf';

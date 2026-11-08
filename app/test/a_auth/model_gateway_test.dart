@@ -105,9 +105,8 @@ void main() {
           ],
         });
       });
-      final result = await (await gateway(
-        client,
-      )).complete('测试真实请求协议', model: 'text-model');
+      final result = await (await gateway(client))
+          .complete('测试真实请求协议', model: 'text-model');
       expect(result, '已收到服务端文本');
       expect(seen, [
         '/api/model-gateway/v1/models',
@@ -259,60 +258,57 @@ void main() {
     );
   });
 
-  test(
-    'empty/malformed/truncated completion and server failure never return raw prompt',
-    () async {
-      for (final body in [
-        <String, dynamic>{},
-        {'choices': []},
-        {
-          'choices': [
-            {
-              'message': {'content': ''},
-            },
-          ],
-        },
-        {
-          'choices': [
-            {
-              'finish_reason': 'length',
-              'message': {'content': 'partial'},
-            },
-          ],
-        },
-      ]) {
-        final client = MockClient(
-          (request) async =>
-              jsonResponse(request.method == 'GET' ? textCatalog : body),
-        );
-        await expectLater(
-          (await gateway(
-            client,
-            model: 'text-model',
-          )).complete('sensitive-prompt'),
-          throwsA(isA<GatewayException>()),
-        );
-      }
-      final failing = MockClient(
-        (request) async => request.method == 'GET'
-            ? jsonResponse(textCatalog)
-            : http.Response('untrusted-sensitive-server-body', 500),
+  test('empty/malformed/truncated completion and server failure never return raw prompt', () async {
+    for (final body in [
+      <String, dynamic>{},
+      {'choices': []},
+      {
+        'choices': [
+          {
+            'message': {'content': ''},
+          },
+        ],
+      },
+      {
+        'choices': [
+          {
+            'finish_reason': 'length',
+            'message': {'content': 'partial'},
+          },
+        ],
+      },
+    ]) {
+      final client = MockClient(
+        (request) async =>
+            jsonResponse(request.method == 'GET' ? textCatalog : body),
       );
       await expectLater(
         (await gateway(
-          failing,
+          client,
           model: 'text-model',
         )).complete('sensitive-prompt'),
-        throwsA(
-          isA<GatewayException>().having(
-            (e) => e.toString(),
-            'redacted',
-            isNot(contains('sensitive')),
-          ),
-        ),
+        throwsA(isA<GatewayException>()),
       );
-    },
-  );
+    }
+    final failing = MockClient(
+      (request) async => request.method == 'GET'
+          ? jsonResponse(textCatalog)
+          : http.Response('untrusted-sensitive-server-body', 500),
+    );
+    await expectLater(
+      (await gateway(
+        failing,
+        model: 'text-model',
+      )).complete('sensitive-prompt'),
+      throwsA(
+        isA<GatewayException>().having(
+          (e) => e.toString(),
+          'redacted',
+          isNot(contains('sensitive')),
+        ),
+      ),
+    );
+  });
 
   test('unapproved model gateway host fails before bearer or HTTP', () async {
     var calls = 0;

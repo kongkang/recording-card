@@ -8,16 +8,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/core/store/device_store.dart';
 import 'package:recording_card/pages/app_shell.dart';
+
 import 'test_transitions.dart';
+import 'fixtures/legacy_ui_fixture.dart';
 
 Future<AppStore> boot(WidgetTester tester) async {
-  final store = AppStore();
-  final device = DeviceStore();
+  final store = legacyAppFixture(clock: tester.binding.clock.now);
+  final device = legacyDeviceFixture();
   tester.view.physicalSize = const Size(900, 1100);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
   addTearDown(device.dispose);
-  await tester.pumpWidget(MaterialApp(theme: testTheme(), home: AppShell(store: store, device: device)));
+  addTearDown(store.dispose);
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: testTheme(),
+      home: AppShell(store: store, device: device),
+    ),
+  );
   await tester.pump();
   return store;
 }
@@ -26,7 +34,10 @@ Future<void> tapTab(WidgetTester tester, Key key) async {
   final target = find.byKey(key);
   var guard = 0;
   while (!tester.any(target.hitTestable()) && guard++ < 10) {
-    await tester.drag(find.byKey(const Key('stab-strip')), const Offset(-120, 0));
+    await tester.drag(
+      find.byKey(const Key('stab-strip')),
+      const Offset(-120, 0),
+    );
     await tester.pump();
   }
   await tester.tap(target.hitTestable().first);
@@ -36,7 +47,9 @@ Future<void> tapTab(WidgetTester tester, Key key) async {
 
 void main() {
   // verify.cjs 277-302：双栏、左栏常显、固定高度、空态、面包屑停用
-  testWidgets('wide-two-pane / wide-list-stays / wide-crumb-off', (tester) async {
+  testWidgets('wide-two-pane / wide-list-stays / wide-crumb-off', (
+    tester,
+  ) async {
     await boot(tester);
     expect(find.byKey(const Key('empty-pane')), findsOneWidget);
     expect(find.byKey(const Key('bottom-nav')), findsOneWidget);
@@ -139,7 +152,12 @@ void main() {
     final store2 = AppStore()..restoreState(exported);
     final device2 = DeviceStore();
     addTearDown(device2.dispose);
-    await tester.pumpWidget(MaterialApp(theme: testTheme(), home: AppShell(store: store2, device: device2)));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: testTheme(),
+        home: AppShell(store: store2, device: device2),
+      ),
+    );
     await tester.pump();
     // 右栏恢复到详情页，栈单层无面板返回
     expect(find.text('与运维确认发布窗口'), findsWidgets); // 左栏卡片 + 右栏详情同名

@@ -77,6 +77,7 @@ class RecordEvent {
   final int? sourceStartMs;
   final int? sourceEndMs;
   final int revision;
+  final List<String> polishedContextChunkIds;
 
   const RecordEvent({
     required this.id,
@@ -111,6 +112,7 @@ class RecordEvent {
     this.sourceStartMs,
     this.sourceEndMs,
     this.revision = 0,
+    this.polishedContextChunkIds = const [],
   });
 
   /// 按本地日历计算，不以 24h 除法跨越夏令时；未知真实时间仍兼容旧数据。
@@ -118,10 +120,10 @@ class RecordEvent {
     final date = recordedAt?.toLocal();
     if (date == null) return dayOffset;
     return DateTime.utc(
-      date.year,
-      date.month,
-      date.day,
-    ).difference(DateTime.utc(now.year, now.month, now.day)).inDays;
+      now.toLocal().year,
+      now.toLocal().month,
+      now.toLocal().day,
+    ).difference(DateTime.utc(date.year, date.month, date.day)).inDays;
   }
 
   Map<String, dynamic> toJson() => {
@@ -157,6 +159,7 @@ class RecordEvent {
     'sourceStartMs': sourceStartMs,
     'sourceEndMs': sourceEndMs,
     'revision': revision,
+    'polishedContextChunkIds': polishedContextChunkIds,
   };
 
   factory RecordEvent.fromJson(Map<String, dynamic> json) {
@@ -198,6 +201,8 @@ class RecordEvent {
       sourceStartMs: (json['sourceStartMs'] as num?)?.toInt(),
       sourceEndMs: (json['sourceEndMs'] as num?)?.toInt(),
       revision: (json['revision'] as num?)?.toInt() ?? 0,
+      polishedContextChunkIds: (json['polishedContextChunkIds'] as List? ?? [])
+          .cast<String>(),
       transcriptionStatus: json['transcriptionStatus'] as String?,
       taskId: json['taskId'] as String?,
       error: json['error'] as String?,
@@ -242,6 +247,7 @@ class RecordEvent {
     Object? sourceStartMs = _unchanged,
     Object? sourceEndMs = _unchanged,
     int? revision,
+    List<String>? polishedContextChunkIds,
   }) => RecordEvent(
     id: id ?? this.id,
     dayOffset: dayOffset ?? this.dayOffset,
@@ -301,5 +307,7 @@ class RecordEvent {
         ? this.sourceEndMs
         : sourceEndMs as int?,
     revision: revision ?? this.revision,
+    polishedContextChunkIds:
+        polishedContextChunkIds ?? this.polishedContextChunkIds,
   );
 }

@@ -58,7 +58,7 @@ class FirmwareOffer {
   bool get valid =>
       packageId.isNotEmpty &&
       deviceId.isNotEmpty &&
-      checksum.isNotEmpty &&
+      RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(checksum) &&
       (targetMainVersion.isNotEmpty || targetWifiVersion.isNotEmpty);
 }
 
@@ -204,7 +204,6 @@ class GatewayDeviceBackend extends CallbackDeviceBackend {
           if (gateway == null) throw StateError('蓝牙服务不可用');
           await (gateway as dynamic).connect(id);
           final snapshot = await gateway.status();
-          if (snapshot == null) throw StateError('设备没有返回有效状态');
           return DeviceReading(snapshot, id: id);
         },
         readStatus: () async {
@@ -212,7 +211,6 @@ class GatewayDeviceBackend extends CallbackDeviceBackend {
             throw StateError('蓝牙服务不可用，请检查原生桥与权限');
           }
           final snapshot = await gateway.status();
-          if (snapshot == null) throw StateError('未连接录音卡');
           return DeviceReading(snapshot);
         },
         disconnectDevice: () async {

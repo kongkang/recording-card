@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -94,7 +95,8 @@ CallbackDeviceBackend deviceBackend({
     deviceId: 'test-card',
     targetMainVersion: '2',
     targetWifiVersion: '2',
-    checksum: 'sha256-test',
+    checksum:
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     notes: '测试包',
   ),
   installFirmware: install,
@@ -271,7 +273,7 @@ void main() {
         consent: const FirmwareConsent(
           packageId: 'wrong',
           deviceId: 'test-card',
-          checksum: 'sha256-test',
+          checksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         ),
       );
       expect(installs, 0);
@@ -280,7 +282,7 @@ void main() {
         consent: const FirmwareConsent(
           packageId: 'test-package',
           deviceId: 'test-card',
-          checksum: 'sha256-test',
+          checksum: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         ),
       );
       expect(installs, 1);
@@ -369,9 +371,8 @@ void main() {
         final service = ExportService(
           directory: () async => output,
           fontLoader: () async => ByteData.sublistView(
-            await File(
-              'lib/services/export/assets/NotoSansSC-Regular.ttf',
-            ).readAsBytes(),
+            await File('lib/services/export/assets/NotoSansSC-Regular.ttf')
+                .readAsBytes(),
           ),
           shareFiles: (artifact, origin) async {
             shares++;

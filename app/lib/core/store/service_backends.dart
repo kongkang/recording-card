@@ -4,23 +4,31 @@
 library;
 
 import 'dart:async';
+
 import '../device/card_gateway.dart';
 import '../models/record.dart';
 import '../models/summary.dart';
 import 'app_backend.dart';
 import 'device_backend.dart';
+import '../../services/recordings/recording_repository.dart';
+import '../../services/recordings/sync_coordinator.dart';
+import '../../services/settings/settings_repository.dart';
+import '../../services/analysis/analysis_service.dart';
+import '../../services/transcription/transcription_types.dart';
 
 class ServiceAppBackend implements AppBackend, CancelableAppBackend {
   ServiceAppBackend({
-    required Object recordingRepository,
-    required Object settingsRepository,
-    required Object analysisService,
+    required RecordingRepository recordingRepository,
+    required SettingsRepository settingsRepository,
+    required AnalysisService analysisService,
     this.applyRuntimePolicy,
     this.cancellationFactory,
   }) : _recordings = recordingRepository,
        _settings = settingsRepository,
        _analysis = analysisService;
-  final dynamic _recordings, _settings, _analysis;
+  final RecordingRepository _recordings;
+  final SettingsRepository _settings;
+  final AnalysisService _analysis;
 
   /// Apply continuous recording via B and configure C/D task dispatch here.
   /// Never call setMarkEnabled: markImportant controls local mark policy only.
@@ -28,8 +36,8 @@ class ServiceAppBackend implements AppBackend, CancelableAppBackend {
 
   /// Pass D CancellationToken.new; cancellation is cooperative, not a guarantee
   /// that a model HTTP request already sent stops billing on the server.
-  final Object Function()? cancellationFactory;
-  final Map<String, dynamic> _tokens = {};
+  final CancellationToken Function()? cancellationFactory;
+  final Map<String, CancellationToken> _tokens = {};
   @override
   Future<List<RecordEvent>> loadEvents() async {
     final state = await _recordings.load();
@@ -49,7 +57,14 @@ class ServiceAppBackend implements AppBackend, CancelableAppBackend {
       wifiOnlySync: policy.wifiOnlySync,
     );
     await applyRuntimePolicy!(policy);
-    await _settings.save(next);
+    try {
+      await _settings.save(next);
+    } catch (_) {
+      await applyRuntimePolicy!(
+        RecordingPolicy.fromJson(state.settings.toJson()),
+      );
+      rethrow;
+    }
   }
 
   @override
@@ -89,17 +104,15 @@ class ServiceAppBackend implements AppBackend, CancelableAppBackend {
     try {
       final SummaryCard result = token == null
           ? await _analysis.generateSummary(events, target: target)
-                as SummaryCard
           : await _analysis.generateSummary(
-                  events,
-                  target: target,
-                  cancellation: token,
-                )
-                as SummaryCard;
+              events,
+              target: target,
+              cancellation: token,
+            );
       // Repository.update merges concurrent source/task mutations rather than
       // overwriting C's entire state with stale UI snapshots.
       await _recordings.update(
-        (dynamic state) => state.copyWith(
+        (state) => state.copyWith(
           summaries: <SummaryCard>[
             ...(state.summaries as List).cast<SummaryCard>().where(
               (s) => s.id != result.id,
@@ -134,15 +147,16 @@ class FirmwareRelease {
 
 class ServiceDeviceBackend implements DeviceBackend {
   ServiceDeviceBackend({
-    required Object gateway,
-    required Object settingsRepository,
-    Object? syncCoordinator,
+    required this.gateway,
+    required SettingsRepository settingsRepository,
+    SyncCoordinator? syncCoordinator,
     this.firmwareProvider,
     this.recordedSeconds,
-  }) : _gateway = gateway,
-       _settings = settingsRepository,
+  }) : _settings = settingsRepository,
        _sync = syncCoordinator;
-  final dynamic _gateway, _settings, _sync;
+  final CardGateway gateway;
+  final SettingsRepository _settings;
+  final SyncCoordinator? _sync;
   final Future<FirmwareRelease?> Function()? firmwareProvider;
 
   /// Bind only a verified recording duration/sample clock. Null => unknown.
@@ -150,10 +164,10 @@ class ServiceDeviceBackend implements DeviceBackend {
   String? _transportId;
   FirmwareRelease? _release;
   @override
-  bool get available => _gateway.available as bool;
+  bool get available => gateway.available;
   @override
   Future<List<DeviceChoice>> scan() async {
-    final devices = await _gateway.scan() as List;
+    final devices = await gateway.scan() as List;
     return [
       for (final d in devices)
         d is String
@@ -187,17 +201,16 @@ class ServiceDeviceBackend implements DeviceBackend {
 
   @override
   Future<DeviceReading> connect(String id) async {
-    final snapshot = await _gateway.connect(id) as CardSnapshot;
+    final snapshot = await gateway.connect(id);
     _transportId = id;
     return _reading(snapshot);
   }
 
   @override
-  Future<DeviceReading> status() async =>
-      _reading(await _gateway.status() as CardSnapshot);
+  Future<DeviceReading> status() async => _reading(await gateway.status());
   @override
   Future<void> disconnect() async {
-    await _gateway.disconnect();
+    await gateway.disconnect();
     _transportId = null;
   }
 
@@ -239,8 +252,8 @@ class ServiceDeviceBackend implements DeviceBackend {
 
   @override
   Future<List<WifiNet>> scanWifi() async {
-    await _gateway.setWifiEnabled(true);
-    final networks = await _gateway.scanWifi() as List;
+    await gateway.setWifiEnabled(true);
+    final networks = await gateway.scanWifi() as List;
     return [
       for (final net in networks)
         WifiNet(
@@ -265,12 +278,12 @@ class ServiceDeviceBackend implements DeviceBackend {
         .firstOrNull;
     if (network == null) throw StateError('网络未保存，请重新输入密码');
     final credential = await _settings.readWifiCredential(network.id);
-    await _gateway.connectWifi(credential.ssid, credential.password);
+    await gateway.connectWifi(credential.ssid, credential.password);
   }
 
   @override
   Future<void> joinWifi(String name, String password) async {
-    await _gateway.connectWifi(name, password);
+    await gateway.connectWifi(name, password);
     final snapshot = await status();
     if (snapshot.connectedWifi != name) throw StateError('设备尚未确认连接到该网络');
     await _settings.saveWifiNetwork(ssid: name, password: password);

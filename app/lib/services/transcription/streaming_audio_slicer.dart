@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+
 import 'audio_decoder.dart';
 import 'transcription_types.dart';
 

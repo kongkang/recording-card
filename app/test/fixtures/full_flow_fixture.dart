@@ -107,9 +107,8 @@ List<String> auditFixtureSources(
 }
 
 (int, int)? _clockRange(String value) {
-  final match = RegExp(
-    r'^(\d{2}):(\d{2})[—–-](\d{2}):(\d{2})$',
-  ).firstMatch(value);
+  final match = RegExp(r'^(\d{2}):(\d{2})[—–-](\d{2}):(\d{2})$')
+      .firstMatch(value);
   if (match == null) return null;
   final parts = [for (var i = 1; i <= 4; i++) int.parse(match.group(i)!)];
   if (parts[0] > 23 || parts[2] > 23 || parts[1] > 59 || parts[3] > 59) {

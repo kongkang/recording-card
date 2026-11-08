@@ -2,7 +2,9 @@ library;
 
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:archive/archive.dart';
+
 import '../../core/models/record.dart';
 import '../../core/models/summary.dart';
 
@@ -36,8 +38,17 @@ class ExportDocument {
         ExportBlock('来源：${ref.label} · ${ref.range} [${ref.eventId}]'),
     ],
     const ExportBlock('行动项', level: 2),
-    for (final (i, todo) in summary.todos.indexed)
+    for (final (i, todo) in summary.todos.indexed) ...[
       ExportBlock('${completedTodos.contains(i) ? '[x]' : '[ ]'} $todo'),
+      if (i < summary.todoSources.length)
+        for (final ref in summary.todoSources[i])
+          ExportBlock('行动项来源：${ref.label} · ${ref.range} [${ref.eventId}]'),
+    ],
+    const ExportBlock('不确定性', level: 2),
+    for (final text in summary.uncertainties) ExportBlock(text),
+    const ExportBlock('完整来源索引', level: 2),
+    for (final ref in summary.sources)
+      ExportBlock('来源：${ref.label} · ${ref.range} [${ref.eventId}]'),
     const ExportBlock('来源记录', level: 2),
     if (summary.srcDesc?.isNotEmpty == true) ExportBlock(summary.srcDesc!),
     for (final record in sources) ...[

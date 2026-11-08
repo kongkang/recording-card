@@ -1,8 +1,10 @@
 import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/models/record.dart';
 import 'package:recording_card/services/analysis/analysis_service.dart';
 import 'package:recording_card/services/analysis/stage_summary_service.dart';
+
 import 'analysis_service_test.dart' as f;
 
 StageEvent stage() => StageEvent(
@@ -16,17 +18,35 @@ StageEvent stage() => StageEvent(
   uncertainties: [],
 );
 void main() {
-  test(
-    'selected polished + mapped stage summary enter prompt, sources stay original',
-    () async {
-      final service = AnalysisService(
-        gateway: CallbackAnalysisGateway((prompt, {model}) async {
-          expect(prompt, contains('已有选中阶段总结'));
-          expect(prompt, isNot(contains('下周复测')));
-          return jsonEncode(f.summaryData());
-        }),
-      );
-      final result = await service.generateSummary(
+  test('selected polished + mapped stage summary enter prompt, sources stay original', () async {
+    final service = AnalysisService(
+      gateway: CallbackAnalysisGateway((prompt, {model}) async {
+        expect(prompt, contains('已有选中阶段总结'));
+        expect(prompt, isNot(contains('下周复测')));
+        return jsonEncode(f.summaryData());
+      }),
+    );
+    final result = await service.generateSummary(
+      [f.event()],
+      target: f.card(),
+      selectedRawIndices: {
+        'new-record-42': [0],
+      },
+      existingStageSummaries: [
+        StageSummaryContext(summary: stage(), chunkRawIndices: {'chunk-a': 0}),
+      ],
+    );
+    expect(result.sources.single.eventId, 'new-record-42');
+    expect(result.sources.single.range, '08:10:00—08:10:15');
+  });
+  test('existing stage mapped outside chosen original rows fails before cloud call', () async {
+    final service = AnalysisService(
+      gateway: CallbackAnalysisGateway(
+        (p, {model}) async => throw StateError('must not call'),
+      ),
+    );
+    await expectLater(
+      service.generateSummary(
         [f.event()],
         target: f.card(),
         selectedRawIndices: {
@@ -35,40 +55,13 @@ void main() {
         existingStageSummaries: [
           StageSummaryContext(
             summary: stage(),
-            chunkRawIndices: {'chunk-a': 0},
+            chunkRawIndices: {'chunk-a': 1},
           ),
         ],
-      );
-      expect(result.sources.single.eventId, 'new-record-42');
-      expect(result.sources.single.range, '08:10:00—08:10:15');
-    },
-  );
-  test(
-    'existing stage mapped outside chosen original rows fails before cloud call',
-    () async {
-      final service = AnalysisService(
-        gateway: CallbackAnalysisGateway(
-          (p, {model}) async => throw StateError('must not call'),
-        ),
-      );
-      await expectLater(
-        service.generateSummary(
-          [f.event()],
-          target: f.card(),
-          selectedRawIndices: {
-            'new-record-42': [0],
-          },
-          existingStageSummaries: [
-            StageSummaryContext(
-              summary: stage(),
-              chunkRawIndices: {'chunk-a': 1},
-            ),
-          ],
-        ),
-        throwsA(f.analysisCode('source_invalid')),
-      );
-    },
-  );
+      ),
+      throwsA(f.analysisCode('source_invalid')),
+    );
+  });
   test(
     'C event rebuilder is injected and cannot modify original text or mapping',
     () async {

@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
+
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
+
 import 'audio_decoder.dart';
 import 'transcription_types.dart';
 
@@ -110,6 +112,11 @@ class SherpaTranscriptionBackend implements TranscriptionBackend {
                   ),
               ],
               uncertainties: (m['uncertainties'] as List).cast<String>(),
+              vadVerified: m['vadVerified'] == true,
+              vadSpeechRangesMs: [
+                for (final span in m['vadSpeechRangesMs'] as List)
+                  (span as List).cast<int>(),
+              ],
             ),
           );
         }
@@ -300,6 +307,14 @@ Future<void> _worker(Map<String, Object?> message) async {
       'text': text,
       'durationUs': audio.duration.inMicroseconds,
       'segments': segments,
+      'vadVerified': message['vad'] != null,
+      'vadSpeechRangesMs': [
+        for (final span in spans)
+          [
+            span.$1 * 1000 ~/ audio.sampleRate,
+            span.$2 * 1000 ~/ audio.sampleRate,
+          ],
+      ],
       'uncertainties': [
         '时间为音频切片范围，并非逐字对齐；SenseVoice不提供说话人身份。',
         if (message['vad'] == null) '未配置VAD：按固定时长切片，边界语句可能不完整。',

@@ -18,7 +18,10 @@ class NoAnimPageTransitionsBuilder extends PageTransitionsBuilder {
 }
 
 ThemeData testTheme() => ThemeData(
-      pageTransitionsTheme: PageTransitionsTheme(builders: {
-        for (final p in TargetPlatform.values) p: const NoAnimPageTransitionsBuilder(),
-      }),
-    );
+  pageTransitionsTheme: PageTransitionsTheme(
+    builders: {
+      for (final p in TargetPlatform.values)
+        p: const NoAnimPageTransitionsBuilder(),
+    },
+  ),
+);

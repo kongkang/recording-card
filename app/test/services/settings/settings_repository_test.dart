@@ -73,58 +73,49 @@ void main() {
     },
   );
 
-  test(
-    'concurrent switch changes use latest snapshot rather than dropping another change',
-    () async {
-      await Future.wait([
-        repository.setSwitch('continuousRecording', false),
-        repository.setSwitch('markImportant', false),
-      ]);
-      final settings = (await repository.load()).settings;
-      expect(settings.continuousRecording, false);
-      expect(settings.markImportant, false);
-    },
-  );
+  test('concurrent switch changes use latest snapshot rather than dropping another change', () async {
+    await Future.wait([
+      repository.setSwitch('continuousRecording', false),
+      repository.setSwitch('markImportant', false),
+    ]);
+    final settings = (await repository.load()).settings;
+    expect(settings.continuousRecording, false);
+    expect(settings.markImportant, false);
+  });
 
-  test(
-    'Wi-Fi passwords only in secure store; same SSID replaces instead of duplicates',
-    () async {
-      final saved = await repository.saveWifiNetwork(
-        ssid: 'test-wifi-2.4G',
-        password: 'secret-key-1',
-      );
-      await repository.saveWifiNetwork(
-        ssid: 'test-wifi-2.4G',
-        password: 'secret-key-2',
-      );
-      final restarted = SettingsRepository(
-        directory: temp,
-        secureStore: secrets,
-      );
-      expect((await restarted.load()).networks, hasLength(1));
-      final credential = await restarted.readWifiCredential(saved.id);
-      expect(credential.ssid, saved.ssid);
-      expect(credential.password, 'secret-key-2');
-      expect(credential.toString(), isNot(contains('secret-key')));
-      final files = await temp
-          .list()
-          .where((entity) => entity is File)
-          .cast<File>()
-          .toList();
-      for (final file in files) {
-        final text = await file.readAsString();
-        expect(text, isNot(contains('secret-key-1')));
-        expect(text, isNot(contains('secret-key-2')));
-      }
-      await restarted.removeWifiNetwork(saved.id);
-      expect((await restarted.load()).networks, isEmpty);
-      expect(secrets.values, isEmpty);
-      await expectLater(
-        restarted.readWifiCredential(saved.id),
-        throwsA(isA<RecordingStorageException>()),
-      );
-    },
-  );
+  test('Wi-Fi passwords only in secure store; same SSID replaces instead of duplicates', () async {
+    final saved = await repository.saveWifiNetwork(
+      ssid: 'test-wifi-2.4G',
+      password: 'secret-key-1',
+    );
+    await repository.saveWifiNetwork(
+      ssid: 'test-wifi-2.4G',
+      password: 'secret-key-2',
+    );
+    final restarted = SettingsRepository(directory: temp, secureStore: secrets);
+    expect((await restarted.load()).networks, hasLength(1));
+    final credential = await restarted.readWifiCredential(saved.id);
+    expect(credential.ssid, saved.ssid);
+    expect(credential.password, 'secret-key-2');
+    expect(credential.toString(), isNot(contains('secret-key')));
+    final files = await temp
+        .list()
+        .where((entity) => entity is File)
+        .cast<File>()
+        .toList();
+    for (final file in files) {
+      final text = await file.readAsString();
+      expect(text, isNot(contains('secret-key-1')));
+      expect(text, isNot(contains('secret-key-2')));
+    }
+    await restarted.removeWifiNetwork(saved.id);
+    expect((await restarted.load()).networks, isEmpty);
+    expect(secrets.values, isEmpty);
+    await expectLater(
+      restarted.readWifiCredential(saved.id),
+      throwsA(isA<RecordingStorageException>()),
+    );
+  });
 
   test(
     'secure failure does not fall back to plaintext or register a network',

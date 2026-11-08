@@ -8,6 +8,8 @@
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false"/>
     <application
         android:label="recording_card"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
         android:name="${applicationName}"
         android:networkSecurityConfig="@xml/card_network_security"
         android:icon="@mipmap/ic_launcher">
@@ -15,8 +17,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:taskAffinity=""
-            android:theme="@style/LaunchTheme"
+                        android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
@@ -31,6 +32,14 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <activity android:name="com.linusu.flutter_web_auth_2.CallbackActivity" android:exported="true" android:launchMode="singleTop">
+            <intent-filter android:label="recording_card_oauth">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="recording-card" android:host="callback"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

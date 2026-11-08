@@ -30,6 +30,8 @@ class SyncCoordinator {
   bool _busy = false;
   bool _cancelled = false;
   RecordingTask? _currentTask;
+  Completer<void>? _idle;
+  Future<void> get drained => _idle?.future ?? Future.value();
   bool get isBusy => _busy;
   RecordingTask? get currentTask => _currentTask;
   Stream<RecordingTask> get changes => _changes.stream;
@@ -261,11 +263,14 @@ class SyncCoordinator {
     }
     _busy = true;
     _cancelled = false;
+    _idle = Completer<void>();
     try {
       return await action();
     } finally {
       _busy = false;
       _currentTask = null;
+      _idle!.complete();
+      _idle = null;
     }
   }
 

@@ -7,8 +7,10 @@ abstract interface class AnalysisGateway {
   Future<String> complete(String prompt, {String? model});
 }
 
-typedef TextCompletion =
-    Future<String> Function(String prompt, {String? model});
+typedef TextCompletion = Future<String> Function(
+  String prompt, {
+  String? model,
+});
 
 class CallbackAnalysisGateway implements AnalysisGateway {
   final TextCompletion completion;
@@ -52,9 +54,8 @@ Map<String, dynamic> parseStructuredResponse(
   }
   var text = response.trim();
   if (text.startsWith('```')) {
-    final match = RegExp(
-      r'^```(?:json)?\s*\n?([\s\S]*?)\n?```$',
-    ).firstMatch(text);
+    final match = RegExp(r'^```(?:json)?\s*\n?([\s\S]*?)\n?```$')
+        .firstMatch(text);
     if (match == null) {
       throw const AnalysisException('schema_invalid', '模型响应不是单一JSON对象');
     }

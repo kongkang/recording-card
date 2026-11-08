@@ -128,9 +128,8 @@ void main() {
       expect(request.state.length, 32);
       expect(
         request.codeChallenge,
-        base64UrlEncode(
-          sha256.convert(utf8.encode(request.codeVerifier)).bytes,
-        ).replaceAll('=', ''),
+        base64UrlEncode(sha256.convert(utf8.encode(request.codeVerifier)).bytes)
+            .replaceAll('=', ''),
       );
       expect(request.url.queryParameters['code_challenge_method'], 'S256');
       expect(request.url.queryParameters['client_id'], 'test-public-client');
@@ -158,140 +157,134 @@ void main() {
       expect(notices, 0);
     });
 
-    test(
-      'OAuth persists pending before launch, consumes code, validates profile and restores',
-      () async {
-        final storage = MemoryTokenStorage();
-        final launcher = CallbackLauncher();
-        final requests = <String>[];
-        late OAuthTokenStore store;
-        final http = MockClient((request) async {
-          requests.add(request.url.path);
-          expect(request.followRedirects, isFalse);
-          if (request.url.path == '/oauth/token') {
-            expect(request.headers.containsKey('Authorization'), isFalse);
-            final body = request.bodyFields;
-            expect(body['grant_type'], 'authorization_code');
-            expect(body['code'], 'synthetic-code');
-            expect(body['code_verifier']!.length, 64);
-            expect(body['redirect_uri'], 'recording-card://callback');
-            expect(body.containsKey('client_secret'), isFalse);
-            expect(await store.readPendingAuthorization(), isNull);
-            return jsonResponse(tokenJson());
-          }
-          expect(request.url.path, '/profile');
-          expect(request.headers['Authorization'], 'Bearer synthetic-access-1');
-          return profileResponse();
+    test('OAuth persists pending before launch, consumes code, validates profile and restores', () async {
+      final storage = MemoryTokenStorage();
+      final launcher = CallbackLauncher();
+      final requests = <String>[];
+      late OAuthTokenStore store;
+      final http = MockClient((request) async {
+        requests.add(request.url.path);
+        expect(request.followRedirects, isFalse);
+        if (request.url.path == '/oauth/token') {
+          expect(request.headers.containsKey('Authorization'), isFalse);
+          final body = request.bodyFields;
+          expect(body['grant_type'], 'authorization_code');
+          expect(body['code'], 'synthetic-code');
+          expect(body['code_verifier']!.length, 64);
+          expect(body['redirect_uri'], 'recording-card://callback');
+          expect(body.containsKey('client_secret'), isFalse);
+          expect(await store.readPendingAuthorization(), isNull);
+          return jsonResponse(tokenJson());
+        }
+        expect(request.url.path, '/profile');
+        expect(request.headers['Authorization'], 'Bearer synthetic-access-1');
+        return profileResponse();
+      });
+      final oauth = testOAuth(http);
+      store = OAuthTokenStore(
+        client: oauth,
+        storage: storage,
+        clock: () => testTime,
+      );
+      launcher.callback = (url) async {
+        final pending = await store.readPendingAuthorization();
+        expect(pending!.state, url.queryParameters['state']);
+        return successfulCallback(url);
+      };
+      final auth = AuthService(
+        tokenStore: store,
+        launcher: launcher,
+        httpClient: http,
+        clock: () => testTime,
+      );
+      addTearDown(auth.dispose);
+      final session = await auth.signInWithOAuth();
+      expect(session.userId, 'test-user-1');
+      expect(session.account, 'test-user-1@example.test');
+      expect(auth.isSignedIn, isTrue);
+      expect(session.issuedAt, testTime);
+      expect(launcher.lastScheme, 'recording-card');
+      expect(requests, ['/oauth/token', '/profile']);
+      expect(
+        storage.values.keys,
+        everyElement(startsWith('recording_card.oauth.v1.')),
+      );
+      expect(storage.values.length, 1);
+      final restartStore = OAuthTokenStore(
+        client: oauth,
+        storage: storage,
+        clock: () => testTime,
+      );
+      final restart = AuthService(
+        tokenStore: restartStore,
+        launcher: CallbackLauncher(),
+        httpClient: http,
+        clock: () => testTime,
+      );
+      addTearDown(restart.dispose);
+      expect(restart.isSignedIn, isFalse);
+      await restart.restore();
+      expect(restart.isSignedIn, isTrue);
+      expect(requests.last, '/profile');
+    });
+
+    test('invalid state, duplicate code/state, wrong callback never exchange tokens', () async {
+      for (final variant in [
+        'state',
+        'code',
+        'duplicate-state',
+        'host',
+        'scheme',
+        'fragment',
+      ]) {
+        var calls = 0;
+        final http = MockClient((_) async {
+          calls++;
+          return jsonResponse(tokenJson());
         });
         final oauth = testOAuth(http);
-        store = OAuthTokenStore(
+        final storage = MemoryTokenStorage();
+        final store = OAuthTokenStore(
           client: oauth,
           storage: storage,
           clock: () => testTime,
         );
-        launcher.callback = (url) async {
-          final pending = await store.readPendingAuthorization();
-          expect(pending!.state, url.queryParameters['state']);
-          return successfulCallback(url);
-        };
+        final launcher = CallbackLauncher(
+          callback: (url) {
+            final cb = successfulCallback(url);
+            switch (variant) {
+              case 'state':
+                return cb.replace(
+                  queryParameters: {'code': 'x', 'state': 'invalid'},
+                );
+              case 'code':
+                return cb.replace(query: '${cb.query}&code=another');
+              case 'duplicate-state':
+                return cb.replace(query: '${cb.query}&state=another');
+              case 'host':
+                return cb.replace(host: 'wrong');
+              case 'scheme':
+                return cb.replace(scheme: 'reai-mobile');
+              default:
+                return cb.replace(fragment: 'extra');
+            }
+          },
+        );
         final auth = AuthService(
           tokenStore: store,
           launcher: launcher,
           httpClient: http,
-          clock: () => testTime,
         );
-        addTearDown(auth.dispose);
-        final session = await auth.signInWithOAuth();
-        expect(session.userId, 'test-user-1');
-        expect(session.account, 'test-user-1@example.test');
-        expect(auth.isSignedIn, isTrue);
-        expect(session.issuedAt, testTime);
-        expect(launcher.lastScheme, 'recording-card');
-        expect(requests, ['/oauth/token', '/profile']);
-        expect(
-          storage.values.keys,
-          everyElement(startsWith('recording_card.oauth.v1.')),
+        await expectLater(
+          auth.signInWithOAuth(),
+          throwsA(isA<AuthException>()),
         );
-        expect(storage.values.length, 1);
-        final restartStore = OAuthTokenStore(
-          client: oauth,
-          storage: storage,
-          clock: () => testTime,
-        );
-        final restart = AuthService(
-          tokenStore: restartStore,
-          launcher: CallbackLauncher(),
-          httpClient: http,
-          clock: () => testTime,
-        );
-        addTearDown(restart.dispose);
-        expect(restart.isSignedIn, isFalse);
-        await restart.restore();
-        expect(restart.isSignedIn, isTrue);
-        expect(requests.last, '/profile');
-      },
-    );
-
-    test(
-      'invalid state, duplicate code/state, wrong callback never exchange tokens',
-      () async {
-        for (final variant in [
-          'state',
-          'code',
-          'duplicate-state',
-          'host',
-          'scheme',
-          'fragment',
-        ]) {
-          var calls = 0;
-          final http = MockClient((_) async {
-            calls++;
-            return jsonResponse(tokenJson());
-          });
-          final oauth = testOAuth(http);
-          final storage = MemoryTokenStorage();
-          final store = OAuthTokenStore(
-            client: oauth,
-            storage: storage,
-            clock: () => testTime,
-          );
-          final launcher = CallbackLauncher(
-            callback: (url) {
-              final cb = successfulCallback(url);
-              switch (variant) {
-                case 'state':
-                  return cb.replace(
-                    queryParameters: {'code': 'x', 'state': 'invalid'},
-                  );
-                case 'code':
-                  return cb.replace(query: '${cb.query}&code=another');
-                case 'duplicate-state':
-                  return cb.replace(query: '${cb.query}&state=another');
-                case 'host':
-                  return cb.replace(host: 'wrong');
-                case 'scheme':
-                  return cb.replace(scheme: 'reai-mobile');
-                default:
-                  return cb.replace(fragment: 'extra');
-              }
-            },
-          );
-          final auth = AuthService(
-            tokenStore: store,
-            launcher: launcher,
-            httpClient: http,
-          );
-          await expectLater(
-            auth.signInWithOAuth(),
-            throwsA(isA<AuthException>()),
-          );
-          expect(calls, 0, reason: variant);
-          expect(auth.isSignedIn, isFalse);
-          expect(storage.values, isEmpty);
-          auth.dispose();
-        }
-      },
-    );
+        expect(calls, 0, reason: variant);
+        expect(auth.isSignedIn, isFalse);
+        expect(storage.values, isEmpty);
+        auth.dispose();
+      }
+    });
 
     test(
       'authorization cancellation/denial clears pending without fake session',

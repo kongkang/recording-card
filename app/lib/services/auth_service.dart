@@ -73,8 +73,8 @@ class AuthService extends ChangeNotifier {
     this._launcher,
     this.authorizedClient,
     this._clock, {
-    required bool ownsOAuthClient,
-  }) : _ownsOAuthClient = ownsOAuthClient {
+    required this._ownsOAuthClient,
+  }) {
     _tokens.onSessionInvalidated = _onInvalidated;
   }
 

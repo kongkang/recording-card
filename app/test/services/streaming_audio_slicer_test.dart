@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/services/transcription/audio_decoder.dart';
 import 'package:recording_card/services/transcription/streaming_audio_slicer.dart';

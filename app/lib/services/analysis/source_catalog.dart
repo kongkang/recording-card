@@ -93,6 +93,35 @@ class SourceCatalog {
     for (final s in requiredList(value, 'sources')) resolve(s),
   ];
 
+  bool _cleanedAllowed(RecordEvent event, TurnLine line) {
+    // Sliding-window revisions may contain context from other chunks. Only
+    // disclose them if that entire context was selected as original sources.
+    if (!event.polishedContextChunkIds.every(
+      (id) =>
+          events.containsKey(id) &&
+          _selected[id]!.length == events[id]!.raw.length,
+    )) {
+      return false;
+    }
+    final label = line.src
+        .split(RegExp('[｜|]'))
+        .first
+        .trim()
+        .replaceFirst(RegExp(r'^来源\s*'), '');
+    final range = _clockRange(label);
+    if (range == null) return false;
+    final covered = <int>[];
+    for (var i = 0; i < event.raw.length; i++) {
+      final raw = _clockRange(event.raw[i].src);
+      if (raw == null) return false;
+      if (raw.$1 >= range.$1 && raw.$2 <= range.$2) covered.add(i);
+    }
+    return covered.isNotEmpty &&
+        covered.every(_selected[event.id]!.contains) &&
+        range.$1 == _clockRange(event.raw[covered.first].src)!.$1 &&
+        range.$2 == _clockRange(event.raw[covered.last].src)!.$2;
+  }
+
   List<Map<String, dynamic>> get promptRecords => [
     for (final e in events.values)
       {
@@ -108,19 +137,11 @@ class SourceCatalog {
                 'speakerHintUnverified': true,
               },
         ],
-        // Use only cleaned rows with an EXACT source-range match; no unselected
-        // context from brief/longText or loosely grouped dialogue can leak in.
+        // A grouped polished row is valid only when ALL raw rows it covers and
+        // ALL window context chunks were selected. Partial selection stays raw.
         'cleaned': [
           for (final line in e.dialog)
-            if (_selected[e.id]!.any(
-              (i) =>
-                  line.src
-                      .split(RegExp('[｜|]'))
-                      .first
-                      .trim()
-                      .replaceFirst(RegExp(r'^来源\s*'), '') ==
-                  _refs[e.id]![i].range,
-            ))
+            if (_cleanedAllowed(e, line))
               {'text': line.text, 'range': line.src, 'speakerHint': line.spk},
         ],
       },

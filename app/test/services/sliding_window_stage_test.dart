@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/services/analysis/analysis_gateway.dart';
 import 'package:recording_card/services/analysis/sliding_window_service.dart';
@@ -265,40 +266,37 @@ void main() {
     );
     expect(service.eventsById, isEmpty);
   });
-  test(
-    'raw/dlg/event projections expose same stable recording without append on revise',
-    () async {
-      final window = SlidingWindowService(
-        gateway: CallbackAnalysisGateway(
-          (p, {model}) async => polishedResponse(windowData(p), 1),
-        ),
-      );
-      await window.addChunk(chunk('A', 0));
-      final stages = StageSummaryService(
-        gateway: CallbackAnalysisGateway(
-          (p, {model}) async => jsonEncode({
-            'overview': '阶段',
-            'points': ['温控'],
-            'todos': [],
-            'sourceChunkIds': ['A'],
-            'uncertainties': [],
-          }),
-        ),
-      );
-      final segmenter = StageSegmenter(recordId: 'r-real');
-      segmenter.addChunk(chunk('A', 0));
-      final stage = segmenter.flush()!;
-      await stages.summarize(stage);
-      await stages.summarize(stage, revise: true);
-      final projections = TranscriptProjections.forRecord(
-        'r-real',
-        window,
-        stages,
-      );
-      expect(projections.raw, hasLength(1));
-      expect(projections.dlg, hasLength(1));
-      expect(projections.events, hasLength(1));
-      expect(projections.events.single.revision, 2);
-    },
-  );
+  test('raw/dlg/event projections expose same stable recording without append on revise', () async {
+    final window = SlidingWindowService(
+      gateway: CallbackAnalysisGateway(
+        (p, {model}) async => polishedResponse(windowData(p), 1),
+      ),
+    );
+    await window.addChunk(chunk('A', 0));
+    final stages = StageSummaryService(
+      gateway: CallbackAnalysisGateway(
+        (p, {model}) async => jsonEncode({
+          'overview': '阶段',
+          'points': ['温控'],
+          'todos': [],
+          'sourceChunkIds': ['A'],
+          'uncertainties': [],
+        }),
+      ),
+    );
+    final segmenter = StageSegmenter(recordId: 'r-real');
+    segmenter.addChunk(chunk('A', 0));
+    final stage = segmenter.flush()!;
+    await stages.summarize(stage);
+    await stages.summarize(stage, revise: true);
+    final projections = TranscriptProjections.forRecord(
+      'r-real',
+      window,
+      stages,
+    );
+    expect(projections.raw, hasLength(1));
+    expect(projections.dlg, hasLength(1));
+    expect(projections.events, hasLength(1));
+    expect(projections.events.single.revision, 2);
+  });
 }

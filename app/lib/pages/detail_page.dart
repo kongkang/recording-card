@@ -120,9 +120,9 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   String _dayLabel(RecordEvent e) {
-    if (e.dayOffset == 0) return '今天';
-    if (e.dayOffset == 1) return '昨天';
-    final d = DateTime.now().subtract(Duration(days: e.dayOffset));
+    if (e.dayOffsetAt(DateTime.now()) == 0) return '今天';
+    if (e.dayOffsetAt(DateTime.now()) == 1) return '昨天';
+    final d = DateTime.now().subtract(Duration(days: e.dayOffsetAt(DateTime.now())));
     const dow = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     return '${d.month}月${d.day}日 ${dow[d.weekday - 1]}';
   }
@@ -223,14 +223,14 @@ class _DetailPageState extends State<DetailPage> {
       case 'raw':
         return [
           if (e.raw.isEmpty)
-            const Text(
-              '暂无原始转写，请检查转录任务或模型配置。',
+            Text(
+              e.error ?? '暂无原始转写，请检查转录任务或模型配置。',
               style: TextStyle(color: RCColors.sec),
             ),
           const Padding(
             padding: EdgeInsets.only(bottom: 14),
             child: Text(
-              '原始转写保留语气词、停顿与静音；时间标注后段为清洗版对应位置。',
+              '原始转写不会被清洗覆盖；时间为识别片段范围，非逐词时间或声纹身份。',
               style: TextStyle(fontSize: 12, color: RCColors.sec, height: 1.5),
             ),
           ),

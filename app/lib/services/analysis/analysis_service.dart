@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+
 import '../../core/models/record.dart';
 import '../../core/models/summary.dart';
 import '../transcription/transcription_types.dart';
@@ -14,20 +15,24 @@ export 'processed_transcript.dart';
 class StageSummaryContext {
   final StageEvent summary;
   final Map<String, int> chunkRawIndices;
+  final Map<String, String> chunkSourceIds;
   StageSummaryContext({
     required this.summary,
     required Map<String, int> chunkRawIndices,
-  }) : chunkRawIndices = Map.unmodifiable(chunkRawIndices);
+    Map<String, String> chunkSourceIds = const {},
+  }) : chunkRawIndices = Map.unmodifiable(chunkRawIndices),
+       chunkSourceIds = Map.unmodifiable(chunkSourceIds);
+  String sourceId(String chunkId) =>
+      chunkSourceIds[chunkId] ?? summary.recordId;
 }
 
-typedef CleanEventRebuilder =
-    RecordEvent Function(
-      RecordEvent source, {
-      required String brief,
-      required String longText,
-      required String speakers,
-      required List<TurnLine> dialog,
-    });
+typedef CleanEventRebuilder = RecordEvent Function(
+  RecordEvent source, {
+  required String brief,
+  required String longText,
+  required String speakers,
+  required List<TurnLine> dialog,
+});
 
 /// Real authorized-model analysis. A ModelGateway can be passed directly or
 /// through CallbackAnalysisGateway(aGateway.complete). No seed/fake fallback.
@@ -183,7 +188,7 @@ class AnalysisService {
                   );
                 }
                 catalog.resolve({
-                  'sourceId': context.summary.recordId,
+                  'sourceId': context.sourceId(chunkId),
                   'rawIndex': index,
                 });
               }
@@ -266,7 +271,7 @@ ${jsonEncode(summarySchema)}
             'points': c.summary.points,
             'todos': c.summary.todos,
             'sources': [
-              for (final id in c.summary.sourceChunkIds) {'sourceId': c.summary.recordId, 'rawIndex': c.chunkRawIndices[id]},
+              for (final id in c.summary.sourceChunkIds) {'sourceId': c.sourceId(id), 'rawIndex': c.chunkRawIndices[id]},
             ],
           },
       ])}
@@ -435,6 +440,7 @@ ${jsonEncode(summarySchema)}
   Future<ProcessedTranscript> cleanTranscript(
     RecordEvent event, {
     bool inferSpeakers = true,
+    bool cleanOral = true,
     bool sliceStages = true,
     CancellationToken? cancellation,
   }) async {
@@ -445,7 +451,8 @@ ${jsonEncode(summarySchema)}
 每个rawIndex必须输出且只输出一次，保持顺序，不能合并/生成时间范围。
 可去无意义口头填充词，保留否定、修正、不确定表述及停顿提示的原始映射。
 说话人只能依据文本推测匿名A/B/C/D或unknown，不能声称真人身份或声纹验证。
-inferSpeakers=$inferSpeakers；sliceStages=$sliceStages。
+inferSpeakers=$inferSpeakers；cleanOral=$cleanOral；sliceStages=$sliceStages。
+cleanOral=false 时必须逐字保留输入raw文字，只允许推测说话人。
 返回单一JSON：{"turns":[{"rawIndex":0,"text":"清洗文字","speaker":"unknown","confidence":0.0}],"phases":[{"label":"阶段","rawIndices":[0],"rationale":"推测依据"}],"uncertainties":["不确定性"]}。
 启用阶段时必须用有序、不重叠、完整覆盖原始行的阶段；禁用时phases=[]。
 资料：${jsonEncode(catalog.promptRecords)}
@@ -463,6 +470,9 @@ inferSpeakers=$inferSpeakers；sliceStages=$sliceStages。
         throw const AnalysisException('mapping_invalid', '原始映射缺失、重复或乱序');
       }
       final text = requiredText(row['text'], 'turn.text');
+      if (!cleanOral && text != event.raw[i].text) {
+        throw const AnalysisException('raw_immutable', '关闭清洗时模型不能改写原始文字');
+      }
       final spk = row['speaker'];
       final confidence = row['confidence'];
       if (spk is! String ||

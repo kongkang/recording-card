@@ -3,7 +3,9 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+
 import '../models/record.dart';
 import '../models/summary.dart';
 import 'app_backend.dart';
@@ -37,11 +39,14 @@ class AppStore extends ChangeNotifier {
     AppBackend? backend,
     StorePersistence? persistence,
     ExportService? exportService,
+    DateTime Function()? clock,
     this.recordUpdates,
   }) : events = List.of(events ?? const []),
        backend = backend ?? const UnconfiguredAppBackend(),
        persistence = persistence ?? PreferencesStorePersistence(),
-       exportService = exportService ?? ExportService();
+       exportService = exportService ?? ExportService(),
+       _now = clock ?? DateTime.now;
+  final DateTime Function() _now;
   final List<RecordEvent> events;
   final AppBackend backend;
   final StorePersistence persistence;
@@ -207,19 +212,19 @@ class AppStore extends ChangeNotifier {
   List<FeedGroup> get feedGroups {
     final sums = summaries.where((s) => filter != FeedFilter.event).toList();
     final evs = events.where((e) => filter != FeedFilter.summary).toList();
-    final offs = evs.map((e) => e.dayOffset).toSet().toList()..sort();
+    final offs = evs.map((e) => e.dayOffsetAt(_now())).toSet().toList()..sort();
     final groups = <FeedGroup>[];
-    if (sums.isNotEmpty || evs.any((e) => e.dayOffset == 0)) {
+    if (sums.isNotEmpty || evs.any((e) => e.dayOffsetAt(_now()) == 0)) {
       groups.add(
         FeedGroup(dayLabel(0), [
           ...sums,
-          ...evs.where((e) => e.dayOffset == 0),
+          ...evs.where((e) => e.dayOffsetAt(_now()) == 0),
         ]),
       );
     }
     for (final off in offs.where((off) => off != 0)) {
       groups.add(
-        FeedGroup(dayLabel(off), evs.where((e) => e.dayOffset == off).toList()),
+        FeedGroup(dayLabel(off), evs.where((e) => e.dayOffsetAt(_now()) == off).toList()),
       );
     }
     return groups;
@@ -251,7 +256,7 @@ class AppStore extends ChangeNotifier {
     selIds.clear();
     openCardId = null;
     pend = SummaryCard(
-      id: 'act${DateTime.now().microsecondsSinceEpoch}',
+      id: 'act${_now().microsecondsSinceEpoch}',
       time: nowHM(),
     );
     summaries = [pend!, ...summaries];
@@ -275,10 +280,10 @@ class AppStore extends ChangeNotifier {
   }
 
   bool inRange(RecordEvent e, String r) {
-    if (r == 'today') return e.dayOffset == 0;
-    if (r == 'week') return e.dayOffset <= (DateTime.now().weekday - 1);
-    final now = DateTime.now();
-    final d = now.subtract(Duration(days: e.dayOffset));
+    if (r == 'today') return e.dayOffsetAt(_now()) == 0;
+    if (r == 'week') return e.dayOffsetAt(_now()) >= 0 && e.dayOffsetAt(_now()) <= (_now().weekday - 1);
+    final now = _now();
+    final d = now.subtract(Duration(days: e.dayOffsetAt(now)));
     return d.month == now.month && d.year == now.year;
   }
 
@@ -342,7 +347,7 @@ class AppStore extends ChangeNotifier {
     card.progress = 0;
     summaryErrors.remove(card.id);
     summaryTasks[card.id] = const TaskProgress('提交所选来源…');
-    _started[card.id] = DateTime.now();
+    _started[card.id] = _now();
     _clock ??= Timer.periodic(const Duration(seconds: 1), (_) => _notify());
     _persist();
     _notify();
@@ -426,7 +431,7 @@ class AppStore extends ChangeNotifier {
   double? generationPercent(String id) => summaryTasks[id]?.percent;
   String genElapsedText([String? id]) {
     final start = _started[id ?? pend?.id];
-    return '已生成 ${start == null ? 0 : DateTime.now().difference(start).inSeconds} 秒';
+    return '已生成 ${start == null ? 0 : _now().difference(start).inSeconds} 秒';
   }
 
   String genEtaText() => '预计时长未知';

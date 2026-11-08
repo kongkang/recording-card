@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+
 import '../transcription/transcription_types.dart';
 import 'analysis_gateway.dart';
 import 'sliding_window_service.dart';
