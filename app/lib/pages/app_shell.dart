@@ -1,6 +1,7 @@
 /// 应用外壳 —— 窄屏（顶栏面包屑 + 底栏导航，子页隐藏底栏）与
 /// 宽屏 ≥720px 双栏（左栏 Timeline 常显 + 右栏详情/空态，面包屑停用、面板内返回）。
 library;
+
 import 'package:flutter/material.dart';
 
 import '../core/store/app_store.dart';
@@ -14,7 +15,12 @@ import 'summary_result_page.dart';
 import 'timeline_page.dart';
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.store, this.device, this.onDeviceCreated});
+  const AppShell({
+    super.key,
+    required this.store,
+    this.device,
+    this.onDeviceCreated,
+  });
   final AppStore store;
   final DeviceStore? device;
 
@@ -53,7 +59,10 @@ class _AppShellState extends State<AppShell> {
               backgroundColor: RCColors.bg,
               body: Stack(
                 children: [
-                  if (wide) _WideLayout(device: _device) else _NarrowLayout(device: _device),
+                  if (wide)
+                    _WideLayout(device: _device)
+                  else
+                    _NarrowLayout(device: _device),
                   StatusSheetOverlay(store: _device),
                 ],
               ),
@@ -104,24 +113,36 @@ class _Header extends StatelessWidget {
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              child: Row(children: [
-                const Icon(Icons.chevron_left, size: 18),
-                Text(store.crumbDest,
+              child: Row(
+                children: [
+                  const Icon(Icons.chevron_left, size: 18),
+                  Text(
+                    store.crumbDest,
                     key: const Key('crumb-dest'),
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-              ]),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             )
           else
-            Text('录音卡',
-                key: const Key('app-title'),
-                style:
-                    const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+            Text(
+              '录音卡',
+              key: const Key('app-title'),
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+            ),
           const Spacer(),
           // 真实电量经 DeviceStore 刷新（refreshFromDevice），需监听设备状态重建胶囊
           ListenableBuilder(
             listenable: device,
-            builder: (context, _) =>
-                HwCapsule(onTap: device.openSheet, level: device.battery),
+            builder: (context, _) => HwCapsule(
+              onTap: device.openSheet,
+              level: device.battery,
+              connected: device.connected,
+              batteryKnown: device.batteryKnown,
+            ),
           ),
         ],
       ),
@@ -150,13 +171,15 @@ class _BottomNav extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon,
-                    size: 20, color: on ? RCColors.label : RCColors.sec),
+                Icon(icon, size: 20, color: on ? RCColors.label : RCColors.sec),
                 const SizedBox(height: 3),
-                Text(label,
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: on ? RCColors.label : RCColors.sec)),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: on ? RCColors.label : RCColors.sec,
+                  ),
+                ),
               ],
             ),
           ),
@@ -173,10 +196,17 @@ class _BottomNav extends StatelessWidget {
         border: Border(top: BorderSide(color: RCColors.sep)),
       ),
       alignment: Alignment.topCenter,
-      child: Row(children: [
-        item('Timeline', RootTab.timeline, 'nav-timeline', Icons.schedule),
-        item('Setting', RootTab.setting, 'nav-setting', Icons.settings_outlined),
-      ]),
+      child: Row(
+        children: [
+          item('Timeline', RootTab.timeline, 'nav-timeline', Icons.schedule),
+          item(
+            'Setting',
+            RootTab.setting,
+            'nav-setting',
+            Icons.settings_outlined,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -187,12 +217,15 @@ Widget _stackTopPage(AppStore store, {required bool wide}) {
   if (top == null) return const SizedBox.shrink();
   if (top.type == 'sum') {
     return SummaryResultPage(
-        summaryId: top.id, showPaneBack: wide && store.showPaneBackSum);
+      summaryId: top.id,
+      showPaneBack: wide && store.showPaneBackSum,
+    );
   }
   return DetailPage(
-      eventId: top.id,
-      showPaneBack: wide && store.showPaneBackDetail,
-      backLabel: '返回${AppStore.pageLabels[store.stackPrev?.type] ?? ''}');
+    eventId: top.id,
+    showPaneBack: wide && store.showPaneBackDetail,
+    backLabel: '返回${AppStore.pageLabels[store.stackPrev?.type] ?? ''}',
+  );
 }
 
 class _NarrowLayout extends StatelessWidget {
@@ -244,7 +277,8 @@ class _NarrowLayout extends StatelessWidget {
               final key = page.key;
               if (key is ValueKey<String>) {
                 final last = store.subStack.lastOrNull;
-                if (last != null && 'sub-${last.type}-${last.id}' == key.value) {
+                if (last != null &&
+                    'sub-${last.type}-${last.id}' == key.value) {
                   store.onSubPopped();
                 }
               }
@@ -286,7 +320,9 @@ class _WideLayout extends StatelessWidget {
             children: [
               SizedBox(
                 width: 380,
-                child: TimelinePage(asLeftPane: true),
+                child: store.rootTab == RootTab.setting
+                    ? const SettingPage()
+                    : const TimelinePage(asLeftPane: true),
               ),
               Container(width: 1, color: RCColors.sep),
               Expanded(
@@ -318,8 +354,10 @@ class _EmptyPane extends StatelessWidget {
         children: [
           Icon(Icons.schedule, size: 40, color: RCColors.ax),
           SizedBox(height: 10),
-          Text('选择左侧记录查看详情',
-              style: TextStyle(fontSize: 13, color: RCColors.sec)),
+          Text(
+            '选择左侧记录查看详情',
+            style: TextStyle(fontSize: 13, color: RCColors.sec),
+          ),
         ],
       ),
     );

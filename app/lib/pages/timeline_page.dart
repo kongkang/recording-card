@@ -28,6 +28,45 @@ class TimelinePage extends StatelessWidget {
           children: [
             _TabsBar(store: store),
             if (store.selMode) _RangeBar(store: store),
+            if (store.loading)
+              const LinearProgressIndicator(
+                key: Key('records-loading'),
+                minHeight: 2,
+              ),
+            if (store.error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 22,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        store.error!,
+                        key: const Key('records-error'),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: RCColors.danger,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      key: const Key('records-retry'),
+                      onPressed: store.reloadEvents,
+                      child: const Text('重试'),
+                    ),
+                  ],
+                ),
+              ),
+            if (store.persistenceError != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 22),
+                child: Text(
+                  store.persistenceError!,
+                  style: const TextStyle(fontSize: 12, color: RCColors.danger),
+                ),
+              ),
             Expanded(
               child: groups.isEmpty
                   ? const Padding(
@@ -487,100 +526,133 @@ class _SummaryCardView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final locked = card.state != SummaryState.done;
+    final failed = store.summaryErrors[card.id];
+    final locked = card.state != SummaryState.done && failed == null;
     final open = store.openCardId == card.id && !locked;
     Widget inner;
-    switch (card.state) {
-      case SummaryState.pending:
-        inner = Column(
-          key: const Key('sumcard-pending'),
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '手动总结',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${card.time} · 选择来源切片中',
-              style: const TextStyle(fontSize: 13, color: RCColors.sec),
-            ),
-          ],
-        );
-      case SummaryState.generating:
-        inner = Column(
-          key: const Key('sumcard-generating'),
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '正在生成总结',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${card.time} · 分析检查中',
-              style: const TextStyle(fontSize: 13, color: RCColors.sec),
-            ),
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: SizedBox(
-                height: 4,
-                child: LinearProgressIndicator(
-                  key: const Key('sumcard-prog'),
-                  value: card.progress / 100,
-                  minHeight: 4,
-                  backgroundColor: RCColors.sep,
-                  valueColor: const AlwaysStoppedAnimation(RCColors.ok),
-                ),
+    if (failed != null) {
+      inner = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '总结未完成',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            failed,
+            style: const TextStyle(fontSize: 13, color: RCColors.danger),
+          ),
+          TextButton(
+            key: Key('retry-${card.id}'),
+            onPressed: () => store.retrySummary(card.id),
+            child: const Text('重试'),
+          ),
+        ],
+      );
+    } else {
+      switch (card.state.name) {
+        case 'pending':
+          inner = Column(
+            key: const Key('sumcard-pending'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '手动总结',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
               ),
-            ),
-          ],
-        );
-      case SummaryState.done:
-        inner = Column(
-          key: const Key('sumcard-done'),
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              card.title ?? '',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${card.time} · 已选 ${card.srcIds.length} 片段',
-              style: const TextStyle(fontSize: 13, color: RCColors.sec),
-            ),
-            if (open) ...[
-              const SizedBox(height: 10),
+              const SizedBox(height: 4),
               Text(
-                card.subDesc ?? '',
-                style: const TextStyle(fontSize: 14, height: 1.5),
+                '${card.time} · 选择来源切片中',
+                style: const TextStyle(fontSize: 13, color: RCColors.sec),
               ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: OutlinedButton(
-                  key: const Key('open-sum'),
-                  onPressed: () => store.openSum(card.id, fresh: true),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: RCColors.label,
-                    side: const BorderSide(color: RCColors.ax),
-                    shape: const StadiumBorder(),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    textStyle: const TextStyle(fontSize: 13),
+            ],
+          );
+        case 'generating':
+          inner = Column(
+            key: const Key('sumcard-generating'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '正在生成总结',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${card.time} · 分析检查中',
+                style: const TextStyle(fontSize: 13, color: RCColors.sec),
+              ),
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: SizedBox(
+                  height: 4,
+                  child: LinearProgressIndicator(
+                    key: const Key('sumcard-prog'),
+                    value: store.generationPercent(card.id) == null
+                        ? null
+                        : card.progress / 100,
+                    minHeight: 4,
+                    backgroundColor: RCColors.sep,
+                    valueColor: const AlwaysStoppedAnimation(RCColors.ok),
                   ),
-                  child: const Text('查看总结结果'),
                 ),
               ),
             ],
-          ],
-        );
+          );
+        case 'done':
+          inner = Column(
+            key: const Key('sumcard-done'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                card.title ?? '',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${card.time} · 已选 ${card.srcIds.length} 片段',
+                style: const TextStyle(fontSize: 13, color: RCColors.sec),
+              ),
+              if (open) ...[
+                const SizedBox(height: 10),
+                Text(
+                  card.subDesc ?? '',
+                  style: const TextStyle(fontSize: 14, height: 1.5),
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: OutlinedButton(
+                    key: const Key('open-sum'),
+                    onPressed: () => store.openSum(card.id, fresh: true),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: RCColors.label,
+                      side: const BorderSide(color: RCColors.ax),
+                      shape: const StadiumBorder(),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      textStyle: const TextStyle(fontSize: 13),
+                    ),
+                    child: const Text('查看总结结果'),
+                  ),
+                ),
+              ],
+            ],
+          );
+        default:
+          inner = Text(
+            '总结任务：${card.state.name}',
+            style: const TextStyle(color: RCColors.sec),
+          );
+      }
     }
     return Padding(
       key: Key('timeline-item-${card.id}'),
