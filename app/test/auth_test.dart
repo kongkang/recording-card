@@ -208,7 +208,7 @@ void main() {
       final url = env.launcher.lastAuthorizeUrl!;
       expect(url.queryParameters['response_type'], 'code');
       expect(url.queryParameters['client_id'], 'test-client');
-      expect(url.queryParameters['code_challenge_method'], isNotNull);
+      expect(url.queryParameters['code_challenge_method'], 'S256');
       expect(url.queryParameters['login_hint'], 'k@example.com');
       expect(env.launcher.lastCallbackScheme, 'recording-card');
 
@@ -217,6 +217,14 @@ void main() {
         (r) => r.url.path.endsWith('/oauth/token'),
       );
       final tokenBody = Uri.splitQueryString(tokenReq.body);
+
+      // 服务端明确只接受 S256（plain 会被 400 拒绝）：challenge 必须是
+      // verifier 的 SHA-256 摘要，而不是 verifier 本身
+      final challenge = url.queryParameters['code_challenge']!;
+      expect(challenge, isNot(equals(tokenBody['code_verifier'])),
+          reason: 'S256 下 challenge 不能等于 verifier');
+      expect(challenge, hasLength(43), reason: 'S256 摘要 base64url 无 padding 为 43 字符');
+
       expect(tokenBody['grant_type'], 'authorization_code');
       expect(tokenBody['code'], 'test-code');
       expect(tokenBody['code_verifier'], isNotEmpty);
