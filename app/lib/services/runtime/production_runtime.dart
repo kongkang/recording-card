@@ -24,6 +24,7 @@ import 'card_download_adapter.dart';
 import 'recording_pipeline.dart';
 import 'runtime_config.dart';
 import 'firmware_provider.dart';
+import 'accessory_hotspot_session.dart';
 
 class ProductionRuntime {
   ProductionRuntime._(
@@ -112,9 +113,23 @@ class ProductionRuntime {
     );
     final auth = AuthService();
     final gateway = RealCardGateway.maybe() ?? const UnavailableCardGateway();
-    final modelGateway = AuthorizedAnalysisGateway(
-      ModelGateway(auth: auth),
-      sessionEpoch: () => auth.authorizedClient.tokenStore.userIdentityEpoch,
+    late final RecordingPipeline pipeline;
+    late final LocalOnlyAnalysisGateway modelGateway;
+    final hotspot = AccessoryHotspotSession(
+      gateway,
+      beforeWifiOpen: () async {
+        // Do not cancel existing text/ASR jobs. The active session blocks new
+        // cloud calls while already-started work drains before switching Wi-Fi.
+        await pipeline.drained;
+        await modelGateway.drained;
+      },
+    );
+    modelGateway = LocalOnlyAnalysisGateway(
+      AuthorizedAnalysisGateway(
+        ModelGateway(auth: auth),
+        sessionEpoch: () => auth.authorizedClient.tokenStore.userIdentityEpoch,
+      ),
+      localOnly: () => hotspot.active,
     );
     final analysis = AnalysisService(
       gateway: modelGateway,
@@ -142,7 +157,7 @@ class ProductionRuntime {
     final asr = TranscriptionService(
       models: const RuntimeConfig().models(modelDirectory),
     );
-    final pipeline = RecordingPipeline(
+    pipeline = RecordingPipeline(
       gateway: gateway,
       repository: recordings,
       asr: asr,
@@ -177,28 +192,41 @@ class ProductionRuntime {
         cancelTransfer: gateway.cancelFileTransfer,
       ),
       uploader: uploader,
+      onImported: (_) async {
+        await pipeline.publish();
+        if (pipeline.policy.autoTranscribe) await pipeline.processPending();
+      },
+    );
+    final fastDownload = CardDownloadAdapter(
+      gateway,
+      transport: CardTransfer.ap,
+      hotspotSession: hotspot,
+      cancelTransfer: gateway.cancelFileTransfer,
     );
     final fastSync = SyncCoordinator(
       repository: recordings,
       settingsRepository: settings,
-      gateway: CardDownloadAdapter(
-        gateway,
-        transport: CardTransfer.ap,
-        restoreWifiAfterSession: true,
-        cancelTransfer: gateway.cancelFileTransfer,
-      ),
+      gateway: fastDownload,
+      onImported: (_) async {
+        await pipeline.publish();
+        if (pipeline.policy.autoTranscribe) {
+          await pipeline.processPending(localOnly: true);
+        }
+      },
     );
     final backend = RuntimeAppBackend(
       recordingRepository: recordings,
       settingsRepository: settings,
       analysisService: analysis,
       pipeline: pipeline,
+      localOnly: () => hotspot.active,
     );
     final store = AppStore(
       backend: backend,
       persistence: RepositoryUiPersistence(recordings),
       recordUpdates: pipeline.changes,
-      retryRecordProcessing: pipeline.processPending,
+      retryRecordProcessing: () =>
+          pipeline.processPending(localOnly: hotspot.active),
     );
     final stored = await settings.load();
     store.policy = RecordingPolicy.fromJson(stored.settings.toJson());
@@ -210,6 +238,7 @@ class ProductionRuntime {
       syncCoordinator: sync,
       fastSyncCoordinator: fastSync,
       firmwareProvider: firmware.offer,
+      hotspotSession: hotspot,
     );
     final deviceBackend = RuntimeDeviceBackend(
       serviceDevice,
@@ -220,13 +249,16 @@ class ProductionRuntime {
       backend: deviceBackend,
       policy: () => store.policy,
       firmwareStatusMessage: () => firmware.lastCheck?.message,
+      fastTransferActive: () => hotspot.active,
       onSynced: () async {
         await store.reloadEvents();
         if (store.policy.autoTranscribe) {
           unawaited(
-            pipeline.processPending().catchError(
-              (Object e) => pipeline.reportError('sync-processing', e),
-            ),
+            pipeline
+                .processPending(localOnly: fastDownload.wifiSessionActive)
+                .catchError(
+                  (Object e) => pipeline.reportError('sync-processing', e),
+                ),
           );
         }
       },
@@ -243,6 +275,41 @@ class ProductionRuntime {
       backend,
       uploader,
     );
+  }
+}
+
+/// Covers queued legacy pipeline work as well as manual summaries. Checking at
+/// the call boundary prevents stale localOnly arguments from issuing cloud work.
+/// Already-submitted requests finish naturally before the card AP is powered.
+class LocalOnlyAnalysisGateway implements AnalysisGateway {
+  LocalOnlyAnalysisGateway(this.delegate, {required this.localOnly});
+  final AnalysisGateway delegate;
+  final bool Function() localOnly;
+  final Set<Future<String>> _pending = {};
+
+  Future<void> get drained => Future.wait(
+    _pending.map(
+      (request) =>
+          request.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+    ),
+  ).then((_) {});
+
+  @override
+  Future<String> complete(String prompt, {String? model}) {
+    if (localOnly()) {
+      return Future.error(
+        const AnalysisException(
+          'local_only',
+          '快传期间保留原文，等待联网后润色或分析',
+          retryable: true,
+        ),
+      );
+    }
+    final request = delegate.complete(prompt, model: model);
+    _pending.add(request);
+    return request.whenComplete(() {
+      _pending.remove(request);
+    });
   }
 }
 
@@ -272,6 +339,7 @@ class RuntimeAppBackend extends ServiceAppBackend {
     required super.settingsRepository,
     required super.analysisService,
     required this.pipeline,
+    this.localOnly,
   }) : _analysis = analysisService,
        _repository = recordingRepository,
        super(
@@ -280,6 +348,7 @@ class RuntimeAppBackend extends ServiceAppBackend {
        );
   final RecordingPipeline pipeline;
   final AnalysisService _analysis;
+  final bool Function()? localOnly;
   final RecordingRepository _repository;
   final Map<String, CancellationToken> _cancellations = {};
   final Map<String, Completer<void>> _drains = {};
@@ -288,9 +357,11 @@ class RuntimeAppBackend extends ServiceAppBackend {
     await super.applyPolicy(policy);
     if (policy.autoTranscribe) {
       unawaited(
-        pipeline.processPending().catchError(
-          (Object e) => pipeline.reportError('policy-pending', e),
-        ),
+        pipeline
+            .processPending(localOnly: localOnly?.call() ?? false)
+            .catchError(
+              (Object e) => pipeline.reportError('policy-pending', e),
+            ),
       );
     }
   }
@@ -309,6 +380,9 @@ class RuntimeAppBackend extends ServiceAppBackend {
     required RecordingPolicy policy,
     required ProgressSink onProgress,
   }) async {
+    if (localOnly?.call() == true) {
+      throw StateError('快传使用临时本地连接，请结束快传后联网生成总结');
+    }
     final token = CancellationToken();
     _cancellations[target.id] = token;
     _drains[target.id] = Completer<void>();
@@ -398,7 +472,8 @@ class RuntimeDeviceBackend
     implements
         DeviceBackend,
         RecordingDeviceBackend,
-        FileTransferDeviceBackend {
+        FileTransferDeviceBackend,
+        CancelableSyncDeviceBackend {
   RuntimeDeviceBackend(this.delegate, this.pipeline, this.gateway);
   final ServiceDeviceBackend delegate;
   final RecordingPipeline pipeline;
@@ -409,6 +484,8 @@ class RuntimeDeviceBackend
   Future<void> prepareFastTransfer() => delegate.prepareFastTransfer();
   @override
   Future<void> cancelFastTransfer() => delegate.cancelFastTransfer();
+  @override
+  Future<void> cancelSync() => delegate.cancelSync();
   @override
   Future<void> fastSync(RecordingPolicy policy, ProgressSink onProgress) =>
       delegate.fastSync(policy, onProgress);

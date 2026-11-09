@@ -21,6 +21,17 @@ impl KeepTransferOptions {
     }
 }
 
+/// Counters only; no raw bytes or transcript. Incomplete data stays untrusted.
+#[derive(Default, Debug)]
+pub struct KeepTransferStats {
+    pub pre_start_bytes: u64,
+    pub pre_start_packets: u64,
+    pub received_packets: u64,
+    pub last_packet_bytes: usize,
+    pub start_size: Option<u64>,
+    pub end_seen: bool,
+}
+
 struct KeepGuard {
     core: Arc<Core>,
     finished: bool,
@@ -66,9 +77,32 @@ impl DyjDevice {
         name: &str,
         writer: &mut W,
         options: KeepTransferOptions,
+        cancel: watch::Receiver<bool>,
+        progress: impl FnMut(u64, u64),
+    ) -> Result<TakenFile> {
+        self.download_file_preserving_with_stats_to(
+            name,
+            writer,
+            options,
+            cancel,
+            progress,
+            &mut KeepTransferStats::default(),
+        )
+        .await
+    }
+
+    /// Same safety and ordering as the public keep API; diagnostics do not accept
+    /// pre-start data, alter the file size, pad gaps, or acknowledge deletion.
+    pub async fn download_file_preserving_with_stats_to<W: AsyncWrite + Unpin>(
+        &self,
+        name: &str,
+        writer: &mut W,
+        options: KeepTransferOptions,
         mut cancel: watch::Receiver<bool>,
         mut progress: impl FnMut(u64, u64),
+        stats: &mut KeepTransferStats,
     ) -> Result<TakenFile> {
+        *stats = KeepTransferStats::default();
         if options.expected_bytes > options.maximum_bytes
             || options.absolute_timeout.is_zero()
             || options.idle_timeout.is_zero()
@@ -152,6 +186,8 @@ impl DyjDevice {
                 Inbound::Disconnected => return Err(SdkError::Disconnected),
                 Inbound::Fault(message) => return Err(SdkError::Protocol(message)),
                 Inbound::Binary(bytes) if started => {
+                    stats.received_packets = stats.received_packets.saturating_add(1);
+                    stats.last_packet_bytes = bytes.len();
                     let total = written.checked_add(bytes.len() as u64).ok_or_else(|| {
                         SdkError::InvalidFrame("keep stream size overflow".into())
                     })?;
@@ -173,6 +209,7 @@ impl DyjDevice {
                     match frame.payload.get("state").and_then(Value::as_str) {
                         Some("start") if !started => {
                             let size = required_u64(&frame.payload, "size")?;
+                            stats.start_size = Some(size);
                             if size != options.expected_bytes || size > options.maximum_bytes {
                                 return Err(SdkError::FileLengthMismatch {
                                     expected: options.expected_bytes,
@@ -186,6 +223,7 @@ impl DyjDevice {
                             idle = tokio::time::Instant::now() + options.idle_timeout;
                         }
                         Some("end") if started => {
+                            stats.end_seen = true;
                             if written != options.expected_bytes {
                                 return Err(SdkError::FileLengthMismatch {
                                     expected: options.expected_bytes,
@@ -208,6 +246,11 @@ impl DyjDevice {
                             ));
                         }
                     }
+                }
+                Inbound::Binary(bytes) => {
+                    stats.pre_start_bytes =
+                        stats.pre_start_bytes.saturating_add(bytes.len() as u64);
+                    stats.pre_start_packets = stats.pre_start_packets.saturating_add(1);
                 }
                 // Unrelated events and pre-start binary never refresh idle.
                 _ => {}

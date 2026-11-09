@@ -9,9 +9,10 @@ import '../device/card_gateway.dart';
 import 'app_backend.dart';
 import 'device_backend.dart';
 import 'store_persistence.dart';
+import '../../services/recordings/recording_download_gateway.dart';
 export 'device_backend.dart';
 
-enum SyncState { idle, busy, done, failed }
+enum SyncState { idle, busy, done, failed, cancelled }
 
 enum DeviceView { main, upg, wifi }
 
@@ -23,6 +24,7 @@ class DeviceStore extends ChangeNotifier {
     RecordingPolicy Function()? policy,
     this._onSynced,
     this.firmwareStatusMessage,
+    this.fastTransferActive,
   }) : backend =
            backend ?? GatewayDeviceBackend(gateway ?? RealCardGateway.maybe()),
        persistence =
@@ -34,6 +36,7 @@ class DeviceStore extends ChangeNotifier {
   final RecordingPolicy Function() _policy;
   final Future<void> Function()? _onSynced;
   final String? Function()? firmwareStatusMessage;
+  final bool Function()? fastTransferActive;
   bool _disposed = false;
   bool get liveDeviceAvailable => backend.available;
   DeviceReading? reading;
@@ -47,6 +50,7 @@ class DeviceStore extends ChangeNotifier {
   Timer? _clock;
   Timer? _cooldown;
   bool _refreshing = false;
+  Completer<void>? _refreshDrain;
   bool statusStale = false;
   String? statusError;
   bool recordingBusy = false;
@@ -79,9 +83,9 @@ class DeviceStore extends ChangeNotifier {
   bool get isRecording => connected && reading?.snapshot.recording == true;
   bool get recordingKnown =>
       connected && reading?.recordingKnown == true && !statusStale;
-  bool get deviceBusy =>
+  bool get deviceBusy => _refreshing || _exclusiveDeviceBusy;
+  bool get _exclusiveDeviceBusy =>
       recordingBusy ||
-      _refreshing ||
       scanning ||
       connecting ||
       fwUpdating ||
@@ -89,7 +93,10 @@ class DeviceStore extends ChangeNotifier {
       syncState == SyncState.busy ||
       wifiJoining ||
       wifiScanning ||
-      fastTransferPrepared;
+      fastTransferPreparing ||
+      fastTransferCancelling ||
+      fastTransferPrepared ||
+      fastTransferActive?.call() == true;
   bool get canControlRecording =>
       liveDeviceAvailable && recordingKnown && !deviceBusy;
   String get recordingText => !connected
@@ -307,7 +314,9 @@ class DeviceStore extends ChangeNotifier {
 
   Future<void> refreshFromDevice() async {
     if (_disposed || deviceBusy) return;
+    final drain = Completer<void>();
     _refreshing = true;
+    _refreshDrain = drain;
     _notify();
     final epoch = _connectionEpoch;
     try {
@@ -329,6 +338,8 @@ class DeviceStore extends ChangeNotifier {
           : '设备状态不可用：${_message(e)}';
     } finally {
       _refreshing = false;
+      if (identical(_refreshDrain, drain)) _refreshDrain = null;
+      drain.complete();
       _notify();
     }
   }
@@ -366,9 +377,19 @@ class DeviceStore extends ChangeNotifier {
   DateTime? lastSync;
   String syncStage = '';
   String? syncError;
+  double? syncPercent;
+  bool syncCancelling = false;
+  Completer<void>? _syncDrain;
+  bool get canCancelSync =>
+      syncState == SyncState.busy &&
+      !syncCancelling &&
+      backend is CancelableSyncDeviceBackend;
   bool sourceRetained = false;
   int retainedSourceCount = 0;
   bool fastTransferPrepared = false;
+  bool fastTransferPreparing = false;
+  bool fastTransferCancelling = false;
+  int _fastPrepareEpoch = 0;
   String get syncRelText {
     if (lastSync == null) return '尚未同步';
     final s = DateTime.now().difference(lastSync!).inSeconds;
@@ -378,10 +399,14 @@ class DeviceStore extends ChangeNotifier {
   }
 
   String get syncText => switch (syncState) {
-    SyncState.busy => syncStage.isEmpty ? '正在同步…' : syncStage,
+    SyncState.busy =>
+      syncCancelling
+          ? '正在取消 · 等待传输清理'
+          : '${syncStage.isEmpty ? '正在同步…' : syncStage}${syncPercent == null ? '' : ' · 已收 ${syncPercent!.toStringAsFixed(0)}%'}',
     SyncState.done =>
       sourceRetained ? '已保存 · 卡端保留 $retainedSourceCount 项' : '同步成功 · 刚刚',
     SyncState.failed => '同步失败 · 点击重试',
+    SyncState.cancelled => '同步已取消 · 已保存文件保留',
     SyncState.idle =>
       sourceRetained
           ? '卡端源保留 · 点击重试'
@@ -390,39 +415,88 @@ class DeviceStore extends ChangeNotifier {
           : '最近同步 · $syncRelText',
   };
   Future<bool> prepareFastTransfer() async {
-    if (!connected || deviceBusy || backend is! FileTransferDeviceBackend) {
+    if (!connected ||
+        _exclusiveDeviceBusy ||
+        backend is! FileTransferDeviceBackend) {
       devStateIsError = true;
       devStateText = '请先连接录音卡并等待当前任务完成';
       _notify();
       return false;
     }
     wifiJoining = true;
+    fastTransferPreparing = true;
+    devStateIsError = false;
+    devStateText = '等待系统加入热点确认与本地文件服务就绪…';
     _notify();
+    final requestEpoch = ++_fastPrepareEpoch;
+    final connectionEpoch = _connectionEpoch;
     try {
+      // Reserve the foreground lane first: periodic polls cannot overtake it.
+      // Await the already-started status final, not just a command ACK.
+      await _refreshDrain?.future;
+      if (_disposed || requestEpoch != _fastPrepareEpoch) return false;
+      if (!connected || connectionEpoch != _connectionEpoch) {
+        throw StateError('状态刷新后录音卡连接已变化，请重新连接后快传');
+      }
       await (backend as FileTransferDeviceBackend).prepareFastTransfer();
+      if (requestEpoch != _fastPrepareEpoch ||
+          fastTransferCancelling ||
+          fastTransferActive?.call() == false) {
+        return false;
+      }
       fastTransferPrepared = true;
       return true;
     } catch (e) {
-      devStateIsError = true;
-      devStateText = '快传准备失败：${_message(e)}';
+      fastTransferPrepared = fastTransferActive?.call() ?? false;
+      devStateIsError = e is! RecordingSyncCancelled;
+      devStateText = e is RecordingSyncCancelled
+          ? '快传已取消；登录、已保存音频与原文保留'
+          : '快传准备失败：${_message(e)}';
       return false;
     } finally {
-      wifiJoining = false;
+      fastTransferPreparing = false;
+      wifiJoining = fastTransferCancelling;
       _notify();
     }
   }
 
   Future<void> cancelFastTransfer() async {
+    if (syncState == SyncState.busy || fastTransferCancelling) return;
+    ++_fastPrepareEpoch;
+    fastTransferCancelling = true;
+    wifiJoining = true;
+    _notify();
     try {
-      if (fastTransferPrepared && backend is FileTransferDeviceBackend) {
+      if (backend is FileTransferDeviceBackend) {
         await (backend as FileTransferDeviceBackend).cancelFastTransfer();
       }
+      fastTransferPrepared = false;
     } catch (e) {
       devStateIsError = true;
       devStateText = '快传退出失败：${_message(e)}';
     } finally {
-      fastTransferPrepared = false;
+      fastTransferPrepared = fastTransferActive?.call() ?? fastTransferPrepared;
+      fastTransferCancelling = false;
+      wifiJoining = fastTransferPreparing;
       _notify();
+    }
+  }
+
+  Future<void> cancelSync() async {
+    if (!canCancelSync) return;
+    final drain = _syncDrain;
+    syncCancelling = true;
+    _notify();
+    try {
+      await (backend as CancelableSyncDeviceBackend).cancelSync();
+    } catch (e) {
+      syncError = '取消请求失败：${_message(e)}；等待原任务结束';
+      devStateIsError = true;
+      devStateText = syncError!;
+    } finally {
+      // Never unlock from the cancel ACK. The original sync owns final cleanup
+      // and partial-import publication; no login/audio/text job is cancelled.
+      await drain?.future;
     }
   }
 
@@ -430,18 +504,27 @@ class DeviceStore extends ChangeNotifier {
     if (syncState == SyncState.busy ||
         syncState == SyncState.done ||
         fwUpdating ||
-        recordingBusy) {
+        recordingBusy ||
+        wifiJoining ||
+        fastTransferCancelling) {
       return;
     }
     syncState = SyncState.busy;
     syncError = null;
     syncStage = '正在同步…';
+    syncPercent = null;
+    syncCancelling = false;
+    _syncDrain = Completer<void>();
     sourceRetained = false;
     retainedSourceCount = 0;
+    var finalState = SyncState.failed;
     _notify();
     try {
       void progress(TaskProgress p) {
         syncStage = p.stage;
+        syncPercent = p.percent?.isFinite == true
+            ? p.percent!.clamp(0.0, 100.0)
+            : null;
         _notify();
       }
 
@@ -460,24 +543,43 @@ class DeviceStore extends ChangeNotifier {
       retainedSourceCount = outcome?.retainedSourceCount ?? 0;
       sourceRetained = retainedSourceCount > 0;
       if (!sourceRetained) lastSync = DateTime.now();
-      syncState = SyncState.done;
+      finalState = SyncState.done;
       await _persist();
-      _cooldown?.cancel();
-      _cooldown = Timer(const Duration(seconds: 10), () {
-        syncState = SyncState.idle;
-        _notify();
-      });
     } catch (e) {
-      syncState = SyncState.failed;
-      syncError = '同步失败：${_message(e)}';
-      devStateIsError = true;
-      devStateText = syncError!;
+      if (e is RecordingSyncCancelled) {
+        finalState = SyncState.cancelled;
+        devStateIsError = false;
+        devStateText = '同步已取消；登录、已保存音频与原文保留';
+      } else {
+        syncError = '同步失败：${_message(e)}';
+        devStateIsError = true;
+        devStateText = syncError!;
+      }
     } finally {
-      if (fast) fastTransferPrepared = false;
-      // Partial imports are real local data even when a later transfer fails.
-      if (_onSynced != null) await _onSynced();
+      try {
+        if (fast) fastTransferPrepared = fastTransferActive?.call() ?? false;
+        // Partial imports are real local data even when a later transfer fails.
+        if (_onSynced != null) await _onSynced();
+      } catch (e) {
+        syncError = '文件已保留，记录刷新或处理失败：${_message(e)}';
+        devStateIsError = true;
+        devStateText = syncError!;
+        if (finalState != SyncState.cancelled) finalState = SyncState.failed;
+      } finally {
+        syncState = finalState;
+        syncCancelling = false;
+        _syncDrain!.complete();
+        _syncDrain = null;
+        if (syncState == SyncState.done && !_disposed) {
+          _cooldown?.cancel();
+          _cooldown = Timer(const Duration(seconds: 10), () {
+            syncState = SyncState.idle;
+            _notify();
+          });
+        }
+        _notify();
+      }
     }
-    _notify();
   }
 
   bool fwUpdating = false;

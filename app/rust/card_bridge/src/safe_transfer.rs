@@ -342,12 +342,14 @@ async fn download_preserving_inner(
         let mut options = reai_card_sdk::KeepTransferOptions::for_size(bytes);
         options.absolute_timeout = Duration::from_secs(seconds);
         options.idle_timeout = Duration::from_secs(idle_seconds);
-        d.download_file_preserving_to(
+        let mut stats = reai_card_sdk::KeepTransferStats::default();
+        d.download_file_preserving_with_stats_to(
             name,
             &mut writer,
             options,
             cancelled.clone(),
             |done, total| progress(cb, ticket, "bleKeep", Some(done), Some(total)),
+            &mut stats,
         )
         .await
         .map(|result| (result.bytes_written, Some(result.name)))
@@ -357,6 +359,7 @@ async fn download_preserving_inner(
             } else {
                 let mut error = Error::from(e);
                 error.message.push_str("；keep下载未删源，卡端原件保留");
+                error.message.push_str(&format!("；接收统计 {stats:?}"));
                 error
             }
         })

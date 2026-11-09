@@ -367,6 +367,7 @@ class _EventCardView extends StatelessWidget {
     'running' => event.originalTranscript == null ? '正在本机转写' : '原文已保存 · 正在润色',
     'cancelled' => '处理已取消 · 原音频与原文保留',
     'analysis_failed' => '原文已保存 · 润色或分析失败',
+    'analysis_pending' => '原文已保存 · 等待联网润色或分析',
     'failed' => '处理失败 · 原音频保留',
     'no_speech' => '未识别到可用文本',
     _ => null,
@@ -468,7 +469,9 @@ class _EventCardView extends StatelessWidget {
                           const SizedBox(height: 10),
                           Text(
                             event.longText.isEmpty
-                                ? '原始音频已保存，等待本机转写'
+                                ? (event.status == 'silent'
+                                      ? '本地转写完成，未检测到有效语音；原始音频已保留'
+                                      : '原始音频已保存，等待本机转写')
                                 : event.longText,
                             style: const TextStyle(fontSize: 14, height: 1.55),
                           ),

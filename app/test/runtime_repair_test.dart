@@ -20,6 +20,7 @@ import 'package:recording_card/services/settings/settings_repository.dart';
 import 'package:recording_card/services/transcription/transcription_service.dart';
 
 import 'services/analysis_service_test.dart' as summary_fixture;
+import 'fixtures/accessory_hotspot_fixture.dart';
 
 // All spies are confined to this test. Real production defaults are unchanged.
 class GatewaySpy extends CardGateway {
@@ -28,6 +29,7 @@ class GatewaySpy extends CardGateway {
   final downloads = <String>[];
   String? started;
   bool failStart = false, failStatus = false, recording = true;
+  bool wifiOpen = false;
   int conversions = 0, stops = 0, disconnects = 0, recordingCommands = 0;
   final wifiCommands = <bool>[];
   CardTransfer expectedTransport = CardTransfer.ble;
@@ -41,7 +43,7 @@ class GatewaySpy extends CardGateway {
     return CardSnapshot(
       batteryLevel: 80,
       isCharging: false,
-      wifiOpen: false,
+      wifiOpen: wifiOpen,
       recording: recording,
       fwVersion: '1',
       wifiVersion: '1',
@@ -66,6 +68,7 @@ class GatewaySpy extends CardGateway {
   @override
   Future<void> setWifiEnabled(bool enabled) async {
     wifiCommands.add(enabled);
+    wifiOpen = enabled;
   }
 
   @override
@@ -563,6 +566,11 @@ void main() {
         ),
         isEmpty,
       );
+      final rejected = (await h.repo.load()).events.firstWhere(
+        (e) => e.transcriptionStatus == 'no_speech',
+      );
+      expect(rejected.status, 'failed');
+      expect(rejected.error, contains('没有VAD静音证据'));
       await h.chunk(3);
       h.asr.result = const TranscriptionResult(
         text: '',
@@ -580,6 +588,14 @@ void main() {
               as Map;
       expect(pending['reason'], 'long_silence');
       expect(pending['chunkIds'], [state.events.first.id]);
+      final quiet = state.events.firstWhere((e) => e.status == 'silent');
+      expect(quiet.brief, contains('本地转写完成'));
+      expect(quiet.raw, isEmpty);
+      expect(quiet.dialog, isEmpty);
+      expect(quiet.dur, '30s');
+      final calls = h.asr.calls;
+      await h.pipeline.processPending();
+      expect(h.asr.calls, calls);
     },
   );
   test('grouped polished includes all selected raw; excludes partial rows and unselected window context', () async {
@@ -619,7 +635,13 @@ void main() {
       'Rec.MRK': utf8.encode('9\n2\n9\n'),
     });
     h.gateway.expectedTransport = CardTransfer.ap;
-    final adapter = CardDownloadAdapter(h.gateway, transport: CardTransfer.ap);
+    final hotspot = fixtureHotspot(h.gateway);
+    await hotspot.prepare('card:真实:device');
+    final adapter = CardDownloadAdapter(
+      h.gateway,
+      transport: CardTransfer.ap,
+      hotspotSession: hotspot,
+    );
     await adapter.openSession('card:真实:device');
     final remote = (await adapter.listRecordings('card:真实:device')).single;
     final result = await adapter.downloadRecording(

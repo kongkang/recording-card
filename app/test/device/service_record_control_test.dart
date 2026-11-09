@@ -14,6 +14,9 @@ class RecordingGateway extends CardGateway {
   bool missingConfirmation = false;
   bool wrongStatus = false;
   int reads = 0;
+  bool wifiOpen = false;
+  bool failWifiClose = false;
+  final wifiCommands = <bool>[];
   Completer<void>? gate;
   @override
   bool get available => true;
@@ -27,7 +30,7 @@ class RecordingGateway extends CardGateway {
     return CardSnapshot(
       batteryLevel: 68,
       isCharging: false,
-      wifiOpen: false,
+      wifiOpen: wifiOpen,
       recording: wrongStatus ? !recording : recording,
       fwVersion: '0.3.8',
       wifiVersion: '',
@@ -35,6 +38,12 @@ class RecordingGateway extends CardGateway {
       // A session ID is not a duration clock.
       recordingSession: 'ABCD1234',
     );
+  }
+
+  @override
+  Future<void> setWifiEnabled(bool enabled) async {
+    wifiCommands.add(enabled);
+    if (!failWifiClose) wifiOpen = enabled;
   }
 
   @override
@@ -75,7 +84,7 @@ void main() {
       expect(stopped.snapshot.recording, isFalse);
       expect(stopped.recordedSeconds, isNull);
       expect(gateway.commands, [true, false]);
-      expect(gateway.reads, 3);
+      expect(gateway.reads, 4);
       await service.disconnect();
       await expectLater(service.stopRecording(), throwsStateError);
       expect(gateway.commands, [true, false]);
@@ -88,7 +97,7 @@ void main() {
     await expectLater(service.startRecording(), throwsStateError);
     expect(gateway.commands, [true]);
     expect(gateway.recording, isFalse);
-    expect(gateway.reads, 1);
+    expect(gateway.reads, 2);
   });
 
   test('post-command status disagreement is rejected', () async {
@@ -96,7 +105,35 @@ void main() {
     gateway.wrongStatus = true;
     await expectLater(service.startRecording(), throwsStateError);
     expect(gateway.commands, [true]);
-    expect(gateway.reads, 2);
+    expect(gateway.reads, 3);
+  });
+
+  test('ordinary recording returns SD from Wi-Fi and verifies state before starting', () async {
+    gateway.wifiOpen = true;
+    await service.connect('transport');
+    expect((await service.startRecording()).snapshot.recording, isTrue);
+    expect(gateway.wifiCommands, [false]);
+    expect(gateway.wifiOpen, isFalse);
+    expect(gateway.commands, [true]);
+  });
+
+  test(
+    'Wi-Fi close ACK without actual SD release cannot start recording',
+    () async {
+      gateway.wifiOpen = true;
+      gateway.failWifiClose = true;
+      await service.connect('transport');
+      await expectLater(service.startRecording(), throwsStateError);
+      expect(gateway.commands, isEmpty);
+      expect(gateway.wifiCommands, [false]);
+    },
+  );
+
+  test('explicit stop does not change Wi-Fi or implicitly restart', () async {
+    await service.connect('transport');
+    await service.stopRecording();
+    expect(gateway.wifiCommands, isEmpty);
+    expect(gateway.commands, [false]);
   });
 
   test(

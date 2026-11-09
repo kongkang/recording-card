@@ -162,9 +162,9 @@ class _DetailPageState extends State<DetailPage> {
             style: TextStyle(fontSize: 12, color: RCColors.sec),
           ),
           if (e.dialog.isEmpty)
-            const Text(
-              '暂无对话详情，请检查转录任务或设置。',
-              style: TextStyle(color: RCColors.sec),
+            Text(
+              e.status == 'silent' ? '本地转写完成，未检测到有效语音。' : '暂无对话详情，请检查转录任务或设置。',
+              style: const TextStyle(color: RCColors.sec),
             ),
           for (final l in e.dialog)
             Padding(
@@ -226,7 +226,10 @@ class _DetailPageState extends State<DetailPage> {
         return [
           if (e.raw.isEmpty)
             Text(
-              e.error ?? '暂无原始转写，请检查转录任务或模型配置。',
+              e.error ??
+                  (e.status == 'silent'
+                      ? '本地转写完成，未检测到有效语音；原始音频完整保留。'
+                      : '暂无原始转写，请检查转录任务或模型配置。'),
               style: TextStyle(color: RCColors.sec),
             ),
           const Padding(

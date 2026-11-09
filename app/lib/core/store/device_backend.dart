@@ -127,6 +127,12 @@ abstract interface class FileTransferDeviceBackend {
   Future<void> fastSync(RecordingPolicy policy, ProgressSink onProgress);
 }
 
+/// Optional cancellation of file movement ONLY, not login or text processing.
+/// Resolves after the existing transfer final and session cleanup have drained.
+abstract interface class CancelableSyncDeviceBackend {
+  Future<void> cancelSync();
+}
+
 extension DeviceRecordingControl on DeviceBackend {
   Future<DeviceReading> startRecording() async {
     final control = this;
