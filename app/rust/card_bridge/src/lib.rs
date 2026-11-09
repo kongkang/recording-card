@@ -560,6 +560,25 @@ async fn execute(
             Ok(json!({"disconnected":true}))
         }
         "status" => snapshot(device(session)?).await,
+        "apFileServiceStatus" => {
+            let d = device(session)?;
+            let expected = text(req, "expectedDeviceId")?;
+            let info = d.device_info().await?;
+            if expected.is_empty() || info.device_id != expected {
+                return Err(Error::new("identity", "快传文件服务探测目标身份不一致"));
+            }
+            let record = d.record_status().await?;
+            if record.is_recording || record.realtime_enabled {
+                return Err(Error::new("busy", "快传探测需要先显式停止录音及实时传输"));
+            }
+            if !d.state().await?.wifi_open {
+                return Err(Error::new("ap_not_ready", "录音卡热点模组尚未上电"));
+            }
+            let page = d.access_point_client().await?.list_files(1, 1).await?;
+            Ok(
+                json!({"ready":true,"fileServiceVerified":true,"filesCount":page.files.len(),"deviceId":info.device_id}),
+            )
+        }
         "listFiles" => {
             let d = device(session)?;
             // Listing blocks firmware's SD loop; never enumerate while recording
@@ -610,11 +629,24 @@ async fn execute(
                     "不能在录音期间将SD切给Wi-Fi；请先显式停止录音",
                 ));
             }
-            serialize(if flag(req, "enabled") {
-                d.open_wifi().await?
+            if flag(req, "enabled") {
+                let response = d.open_wifi().await?;
+                // WIFI_OPEN acknowledges power, not AP/HTTP startup. Keep the
+                // command lane until the SDK's WIFI_AP_START watcher is ready.
+                // Already-powered reconnects retain SDK's documented behavior.
+                d.wait_for_ap_ready(Duration::from_secs(10))
+                    .await
+                    .map_err(|error| match error {
+                        SdkError::Timeout { .. } => Error::new(
+                            "ap_not_ready",
+                            "录音卡已接受Wi-Fi上电，但10秒内未确认热点启动；未向手机发起加入，请重试",
+                        ),
+                        other => Error::from(other),
+                    })?;
+                serialize(response)
             } else {
-                d.close_wifi().await?
-            })
+                serialize(d.close_wifi().await?)
+            }
         }
         "wifiStatus" => serialize(device(session)?.wifi_status().await?),
         "scanWifi" => serialize(device(session)?.scan_wifi().await?),
@@ -850,7 +882,7 @@ async fn convert(req: &Value) -> Result<Value> {
             return Err(Error::new(
                 "argument",
                 "只支持裸IMA ADPCM apm或16kHz单声道PCM16LE",
-            ))
+            ));
         }
     };
     if sample_count == 0 {
@@ -910,6 +942,10 @@ mod tests {
     use reai_card_sdk::{BleTransport, NotificationStream};
     use std::sync::atomic::{AtomicBool, Ordering};
     include!("safe_transfer_tests.rs");
+    include!("ap_ready_tests.rs");
+    mod ble_sdk_counter_tests {
+        include!("ble_sdk_counter_tests.rs");
+    }
 
     #[derive(Clone)]
     enum UploadAction {
@@ -1215,12 +1251,13 @@ mod tests {
         let result = snapshot(device(&session).unwrap()).await.unwrap();
         assert!(result["info"].is_null());
         assert_eq!(result["wifi"]["status"], "off");
-        assert!(!t
-            .commands
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|s| s == "WIFI_STATUS"));
+        assert!(
+            !t.commands
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|s| s == "WIFI_STATUS")
+        );
         assert!(!t.disconnected.load(Ordering::SeqCst));
     }
     #[tokio::test(start_paused = true)]

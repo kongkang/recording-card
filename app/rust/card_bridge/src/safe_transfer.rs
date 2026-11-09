@@ -517,5 +517,7 @@ pub(super) async fn confirm_delete(session: &mut Session, req: &Value) -> Result
     // LIST+DELETE is TOCTOU, even with session/seq/size timestamps identical.
     // SDK FILE_DELETE may also remove TXT implicitly. No firmware-side CAS nor
     // exclusive immutable lease is exposed, so no destructive command is sent.
-    Err(retained("已校验本机入库文件与远端元数据；固件没有可信原子条件删除/不可变租约，不能保证仍是同一代，保留音频与所有侧车"))
+    Err(retained(
+        "已校验本机入库文件与远端元数据；固件没有可信原子条件删除/不可变租约，不能保证仍是同一代，保留音频与所有侧车",
+    ))
 }

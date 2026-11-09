@@ -39,7 +39,13 @@ impl AccessPointClient {
         // 只限制建连阶段，下载本身可以很长。
         let client = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(5))
-            .build()?;
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none());
+        // The accessory AP is local-only: never let iOS select cellular or a
+        // default Internet path. Other platforms retain their existing routing.
+        #[cfg(target_os = "ios")]
+        let client = client.interface("en0");
+        let client = client.build()?;
         tracing::info!(target: "dyj.ap", "🌐 AP快传客户端就绪 base={base_url}");
         Ok(Self { client, base_url })
     }
@@ -68,15 +74,30 @@ impl AccessPointClient {
     }
 
     pub async fn list_files(&self, page: u32, page_size: u32) -> Result<AccessPointFilePage> {
-        self.client
+        let mut response = self
+            .client
             .get(self.endpoint("api/files")?)
             .query(&[("page", page), ("pageSize", page_size)])
+            .timeout(std::time::Duration::from_secs(10))
             .send()
             .await?
-            .error_for_status()?
-            .json()
-            .await
-            .map_err(Into::into)
+            .error_for_status()?;
+        if !response.status().is_success() {
+            return Err(SdkError::InvalidFrame(
+                "AP file service redirected instead of returning files".into(),
+            ));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if bytes.len().saturating_add(chunk.len()) > 1024 * 1024 {
+                return Err(SdkError::InvalidFrame(
+                    "AP files response exceeds 1MiB".into(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        // Full SDK page schema is mandatory; EOF/HTML/partial JSON is not ready.
+        serde_json::from_slice(&bytes).map_err(Into::into)
     }
 
     /// Streams an AP-hosted file to `writer`; this HTTP path does not delete the source file.
@@ -295,6 +316,10 @@ impl AccessPointClient {
 fn normalize_remote_path(path: &str) -> &str {
     path.trim_start_matches('/')
 }
+
+#[cfg(test)]
+#[path = "ap_bounded_http_tests.rs"]
+mod bounded_http_tests;
 
 /// 从 `attachment; filename="xxx"` 里取出建议文件名。
 fn disposition_filename(header: &str) -> Option<String> {
