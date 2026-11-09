@@ -23,6 +23,7 @@ import '../transcribe/speech_engine.dart';
 import '../transcribe/speech_models.dart';
 import '../transcribe/utterance_builder.dart';
 import '../transcribe/wav_io.dart';
+import 'network_policy.dart';
 import 'recording_store.dart';
 
 /// 管线阶段（用于状态块与进度条文案）。
@@ -107,6 +108,7 @@ class RecordingPipeline {
     this.clusterer = const SpeakerClusterer(),
     this.polish,
     this.segments,
+    this.network = const NetworkPolicy(),
   });
 
   final CardGateway gateway;
@@ -116,6 +118,14 @@ class RecordingPipeline {
 
   /// 设置开关；null 时按默认全开（测试/旧调用）。
   final SettingsStore? settings;
+
+  /// 网络策略：让「仅使用 Wi-Fi 同步」真正生效。
+  final NetworkPolicy network;
+
+  /// 「仅使用 Wi-Fi 同步」开关的存储键（与 SettingsStore 定义一致）。
+  static const wifiOnlyKey = 'rc.set.sync.wifiOnly';
+
+  bool get _wifiOnly => settings?.value(wifiOnlyKey) ?? false;
 
   static const autoTranscribeKey = 'rc.set.trans.auto';
   static const cleanSpeechKey = 'rc.set.trans.clean';
@@ -312,6 +322,21 @@ class RecordingPipeline {
 
     // 1) 取回 .apm（本地已有则跳过）
     if (file.apmPath.isEmpty || !await File(file.apmPath).exists()) {
+      // 「仅使用 Wi-Fi 同步」：取录音是整条链路里最贵的一步（BLE 3~8 KB/s），
+      // 在真正下载前拦一次，避免用户以为设了却仍走蜂窝流量。
+      final decision = await network.check(wifiOnly: _wifiOnly);
+      if (!decision.allowed) {
+        // 不是失败而是「暂不处理」：保留 queued 让下次联网后自动继续
+        report(
+          PipelineStage.listing,
+          text: decision.reason ?? '当前网络不允许同步',
+        );
+        file
+          ..stage = RecordingStage.queued
+          ..error = decision.reason;
+        await store.save(file);
+        return false;
+      }
       report(
         PipelineStage.downloading,
         text: '正在取回 ${file.deviceName}（${fileIndex + 1}/$fileTotal）',
