@@ -229,13 +229,15 @@ Future<void> _worker(Map<String, Object?> message) async {
       numThreads: message['threads'] as int,
       language: message['language'] as String,
     );
-    final audio = AudioDecoder.readFile(
-      AudioFileInput(
-        message['path'] as String,
-        format: AudioFileFormat.values.byName(message['format'] as String),
-        sampleRate: message['rate'] as int,
+    final audio = AudioDecoder.forLocalModels(
+      AudioDecoder.readFile(
+        AudioFileInput(
+          message['path'] as String,
+          format: AudioFileFormat.values.byName(message['format'] as String),
+          sampleRate: message['rate'] as int,
+        ),
+        options,
       ),
-      options,
     );
     await Future<void>.delayed(Duration.zero);
     check();
@@ -246,25 +248,31 @@ Future<void> _worker(Map<String, Object?> message) async {
       options,
       check,
     );
-    recognizer = sherpa.OfflineRecognizer(
-      sherpa.OfflineRecognizerConfig(
-        model: sherpa.OfflineModelConfig(
-          senseVoice: sherpa.OfflineSenseVoiceModelConfig(
-            model: message['model'] as String,
-            language: options.language == 'auto' ? '' : options.language,
-            useInverseTextNormalization: false,
+    // Only actual Silero inference may establish silence. An empty speech
+    // plan needs no ASR model allocation and must not run ASR on silence.
+    if (spans.isNotEmpty) {
+      recognizer = sherpa.OfflineRecognizer(
+        sherpa.OfflineRecognizerConfig(
+          model: sherpa.OfflineModelConfig(
+            senseVoice: sherpa.OfflineSenseVoiceModelConfig(
+              model: message['model'] as String,
+              language: options.language == 'auto' ? '' : options.language,
+              useInverseTextNormalization: false,
+            ),
+            tokens: message['tokens'] as String,
+            numThreads: options.numThreads,
+            provider: 'cpu',
+            debug: false,
           ),
-          tokens: message['tokens'] as String,
-          numThreads: options.numThreads,
         ),
-      ),
-    );
+      );
+    }
     final segments = <Map<String, Object?>>[];
     for (var i = 0; i < spans.length; i++) {
       await Future<void>.delayed(Duration.zero);
       check();
       final span = spans[i];
-      final stream = recognizer.createStream();
+      final stream = recognizer!.createStream();
       try {
         stream.acceptWaveform(
           samples: Float32List.sublistView(audio.samples, span.$1, span.$2),
@@ -300,7 +308,7 @@ Future<void> _worker(Map<String, Object?> message) async {
         .map((s) => (s['text'] as String).trim())
         .where((s) => s.isNotEmpty)
         .join('\n');
-    recognizer.free();
+    recognizer?.free();
     recognizer = null;
     port.send({
       'type': 'result',
@@ -348,7 +356,10 @@ Future<List<(int, int)>> _spans(
   if (vadPath == null) {
     regions.add((0, audio.samples.length));
   } else {
-    final windowSize = audio.sampleRate == 16000 ? 512 : 256;
+    if (audio.sampleRate != 16000) {
+      throw const TranscriptionException('audio_rate', '固定Silero模型需要16kHz推理输入');
+    }
+    const windowSize = 512;
     final vad = sherpa.VoiceActivityDetector(
       config: sherpa.VadModelConfig(
         sileroVad: sherpa.SileroVadModelConfig(
@@ -361,6 +372,7 @@ Future<List<(int, int)>> _spans(
         ),
         sampleRate: audio.sampleRate,
         numThreads: 1,
+        provider: 'cpu',
         debug: false,
       ),
       bufferSizeInSeconds: 30,

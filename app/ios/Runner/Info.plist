@@ -90,7 +90,9 @@
 			<string>dev.kongkang.recordingCard.oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>$(RC_OAUTH_CALLBACK_SCHEME)</string>
+				<!-- OAuth custom callbacks are captured by ASWebAuthenticationSession,
+				     not globally registered; keep the reference ReAI app untouched. -->
+				<string>recording-card</string>
 			</array>
 		</dict>
 	</array>

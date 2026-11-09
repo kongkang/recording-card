@@ -137,6 +137,23 @@ class DecodedAudio {
 }
 
 class AudioDecoder {
+  /// The pinned Silero ONNX accepts 16kHz only (8k native creation can exit
+  /// the process). Normalize inference copies, never rewrite the source file.
+  /// Exact 2:1 interpolation preserves sample-derived duration and offsets.
+  static DecodedAudio forLocalModels(DecodedAudio audio) {
+    _checkRate(audio.sampleRate);
+    if (audio.sampleRate == 16000) return audio;
+    final input = audio.samples;
+    final output = Float32List(input.length * 2);
+    for (var i = 0; i < input.length; i++) {
+      output[i * 2] = input[i];
+      output[i * 2 + 1] = i + 1 < input.length
+          ? (input[i] + input[i + 1]) / 2
+          : input[i];
+    }
+    return DecodedAudio(output, 16000);
+  }
+
   static DecodedAudio readFile(
     AudioFileInput input,
     TranscriptionOptions options,

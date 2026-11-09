@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-export PATH="$HOME/.cargo/bin:$PATH"
+# ~/.cargo/bin may itself contain Homebrew symlinks on the owner's Mac.
+# Resolve the project toolchain explicitly; never alter the user's default.
+export RUSTUP_TOOLCHAIN=1.94.0
+TOOLCHAIN_RUSTC="$(rustup which --toolchain "$RUSTUP_TOOLCHAIN" rustc)"
+export PATH="$(dirname "$TOOLCHAIN_RUSTC"):$PATH"
 if [[ "$(uname -s)" != Darwin ]]; then
   echo "ERROR: iOS requires an authorized Mac with Xcode. Linux is not an iOS build." >&2
   exit 2

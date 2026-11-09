@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import '../core/store/device_store.dart';
 import '../core/theme/tokens.dart';
 
+enum CardTransferChoice { normal, fast }
+
 /// 电池图标：仅图形不显数字；<20% 红 / <40% 橙 / ≥40% 绿
 class BatteryIcon extends StatelessWidget {
   const BatteryIcon({
@@ -191,11 +193,18 @@ class StatusSheetOverlay extends StatelessWidget {
 }
 
 class _Row extends StatelessWidget {
-  const _Row({required this.label, this.child, this.onTap, this.keyName});
+  const _Row({
+    required this.label,
+    this.child,
+    this.onTap,
+    this.keyName,
+    this.fillValue = false,
+  });
   final String label;
   final Widget? child;
   final VoidCallback? onTap;
   final String? keyName;
+  final bool fillValue;
 
   @override
   Widget build(BuildContext context) {
@@ -207,7 +216,7 @@ class _Row extends StatelessWidget {
             label,
             style: const TextStyle(fontSize: 14, color: RCColors.ink),
           ),
-          const Spacer(),
+          if (fillValue) const SizedBox(width: 12) else const Spacer(),
           // 行值统一右对齐单行：占满剩余宽 + 右对齐，过长整体缩排，不换行不溢出
           if (child != null)
             Expanded(
@@ -238,6 +247,35 @@ class _Row extends StatelessWidget {
 class _MainView extends StatelessWidget {
   const _MainView({required this.store});
   final DeviceStore store;
+
+  Future<void> _prepareFastTransfer(BuildContext context) async {
+    if (!await store.prepareFastTransfer() || !context.mounted) return;
+    final start = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('AP 快传'),
+        content: const Text(
+          '已请求开启录音卡快传，热点启动可能需要片刻。请在手机设置中连接录音卡热点，然后返回此处开始传输。热点名称和密码以设备实际信息为准。快传结束后将关闭录音卡热点，恢复普通 BLE 模式。音频只保存到本机。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消快传'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('已连接，开始快传'),
+          ),
+        ],
+      ),
+    );
+    if (start == true) {
+      await store.syncNow(fast: true);
+    } else {
+      await store.cancelFastTransfer();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -275,12 +313,15 @@ class _MainView extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: const Color(0xFFE8F5EA),
+                color: store.connected ? const Color(0xFFE8F5EA) : RCColors.bg,
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
                 store.connected ? '已连接' : '未连接',
-                style: TextStyle(fontSize: 11, color: RCColors.okInk),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: store.connected ? RCColors.okInk : RCColors.sec,
+                ),
               ),
             ),
           ],
@@ -289,16 +330,20 @@ class _MainView extends StatelessWidget {
         // 录音状态：红点 + 录音中 + 跳动时钟（定宽防抖动）
         _Row(
           label: '录音状态',
+          fillValue: true,
           child: Container(
             key: const Key('recval'),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
+                  key: const Key('recording-dot'),
                   width: 7,
                   height: 7,
-                  decoration: const BoxDecoration(
-                    color: RCColors.danger,
+                  decoration: BoxDecoration(
+                    color: store.isRecording && store.recordingKnown
+                        ? RCColors.danger
+                        : RCColors.ax,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -315,6 +360,31 @@ class _MainView extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: store.recordingBusy
+                      ? '等待设备确认'
+                      : store.isRecording
+                      ? '停止录音'
+                      : '开始录音',
+                  child: Semantics(
+                    label: '录音开关',
+                    child: Switch.adaptive(
+                      key: const Key('recording-switch'),
+                      value: store.isRecording,
+                      activeThumbColor: RCColors.danger,
+                      onChanged: store.canControlRecording
+                          ? (enabled) {
+                              if (enabled) {
+                                store.startRecording();
+                              } else {
+                                store.stopRecording();
+                              }
+                            }
+                          : null,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -329,7 +399,9 @@ class _MainView extends StatelessWidget {
               Flexible(
                 child: Text(
                   store.batteryKnown
-                      ? '${store.batteryLevelText} · 可录至 ${store.batteryEtaText}'
+                      ? store.statusStale
+                            ? '${store.batteryLevelText} · 上次读取'
+                            : '${store.batteryLevelText} · 可录至 ${store.batteryEtaText}'
                       : '电量未知',
                   key: const Key('batt-eta'),
                   overflow: TextOverflow.ellipsis,
@@ -343,6 +415,7 @@ class _MainView extends StatelessWidget {
         _Row(
           keyName: 'sync-now',
           label: '同步',
+          fillValue: true,
           onTap: store.syncNow,
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -370,12 +443,47 @@ class _MainView extends StatelessWidget {
                     color: RCColors.danger,
                   ),
                   SyncState.busy => const _SpinIcon(key: Key('sync-ico-busy')),
-                  SyncState.done => const Icon(
-                    Icons.check,
-                    key: Key('sync-ico-done'),
+                  SyncState.done => Icon(
+                    store.sourceRetained ? Icons.info_outline : Icons.check,
+                    key: Key(
+                      store.sourceRetained
+                          ? 'sync-ico-source-retained'
+                          : 'sync-ico-done',
+                    ),
                     size: 16,
-                    color: RCColors.ok,
+                    color: store.sourceRetained
+                        ? const Color(0xFFB87500)
+                        : RCColors.ok,
                   ),
+                },
+              ),
+              PopupMenuButton<CardTransferChoice>(
+                key: const Key('transfer-mode'),
+                tooltip: '传输方式',
+                enabled:
+                    store.connected &&
+                    !store.deviceBusy &&
+                    store.syncState != SyncState.done,
+                padding: EdgeInsets.zero,
+                iconSize: 16,
+                constraints: const BoxConstraints(minWidth: 170),
+                icon: const Icon(Icons.more_horiz, color: RCColors.sec),
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: CardTransferChoice.normal,
+                    child: Text('普通 BLE 传输'),
+                  ),
+                  PopupMenuItem(
+                    value: CardTransferChoice.fast,
+                    child: Text('AP 快传'),
+                  ),
+                ],
+                onSelected: (choice) {
+                  if (choice == CardTransferChoice.fast) {
+                    _prepareFastTransfer(context);
+                  } else {
+                    store.syncNow();
+                  }
                 },
               ),
             ],
@@ -410,7 +518,14 @@ class _MainView extends StatelessWidget {
               Text(
                 store.fwValText,
                 key: const Key('fw-val'),
-                style: const TextStyle(fontSize: 13, color: RCColors.okInk),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: store.fwHasError
+                      ? RCColors.danger
+                      : store.offer?.valid == true || store.fwDone
+                      ? RCColors.okInk
+                      : RCColors.sec,
+                ),
               ),
               const SizedBox(width: 5),
               const Icon(Icons.chevron_right, size: 15, color: RCColors.ax),
@@ -423,7 +538,10 @@ class _MainView extends StatelessWidget {
             child: Text(
               store.devStateText,
               key: const Key('dev-state'),
-              style: const TextStyle(fontSize: 12, color: RCColors.okInk),
+              style: TextStyle(
+                fontSize: 12,
+                color: store.devStateIsError ? RCColors.danger : RCColors.sec,
+              ),
             ),
           ),
         if (!store.connected) ...[
@@ -592,14 +710,21 @@ class _FirmwareView extends StatelessWidget {
           Text(
             store.fwStateText,
             key: const Key('upg-state'),
-            style: const TextStyle(fontSize: 12, color: RCColors.sec),
+            style: TextStyle(
+              fontSize: 12,
+              color: store.fwHasError ? RCColors.danger : RCColors.sec,
+            ),
           ),
         const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,
           child: FilledButton(
             key: const Key('upg-btn'),
-            onPressed: store.fwUpdating || store.fwChecking
+            onPressed:
+                store.deviceBusy ||
+                    !store.connected ||
+                    store.offer?.valid != true ||
+                    store.offer?.deviceId != store.deviceIdentity
                 ? null
                 : () => _confirmFirmware(context, store),
             style: FilledButton.styleFrom(

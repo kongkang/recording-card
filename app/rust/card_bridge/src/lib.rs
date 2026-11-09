@@ -2,17 +2,21 @@
 //! Every callback transfers a Rust heap CString; the receiver MUST free it exactly
 //! once, including late/unknown tickets. Callback return does NOT end its lifetime.
 //! One lane owns scan, connect, BLE commands, SD/AP transfer and OTA. A timeout
-//! invalidates the connection rather than reusing an ambiguous protocol response.
+//! of a required command invalidates the connection. Optional metadata failures
+//! are reported separately and never manufacture a physical disconnect.
 #[cfg(target_os = "android")]
 mod android;
 mod firmware;
 mod live_audio;
+mod safe_transfer;
+use safe_transfer::{confirm_delete, download_preserving, DownloadReceipt};
 
 use reai_card_sdk::{
     ControlAction, ControlInput, DeviceEvent, DeviceManager, DiscoveredDevice, DyjDevice, SdkError,
 };
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     ffi::{c_char, CStr, CString},
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
@@ -39,6 +43,7 @@ impl From<SdkError> for Error {
         let code = match &e {
             SdkError::Timeout { .. } => "timeout",
             SdkError::Disconnected => "disconnected",
+            SdkError::Transport(_) => "transport",
             SdkError::Protocol(_) => "protocol",
             _ => "sdk",
         };
@@ -67,11 +72,17 @@ pub(crate) struct Session {
     recovery: Option<JoinHandle<()>>,
     pub live: Option<live_audio::LiveTask>,
     pub dfu: Option<Arc<reai_card_sdk::DfuTarget>>,
+    receipts: HashMap<String, DownloadReceipt>,
+    next_receipt: u64,
+    receipt_epoch: u64,
+    #[cfg(test)]
+    transfer_io_fault: Option<&'static str>,
 }
 struct State {
     runtime: tokio::runtime::Runtime,
     lane: tokio::sync::Mutex<Session>,
     event_callback: Mutex<Option<Callback>>,
+    transfer_cancel: Mutex<HashMap<usize, tokio::sync::watch::Sender<bool>>>,
 }
 static STATE: OnceLock<State> = OnceLock::new();
 fn state() -> &'static State {
@@ -83,6 +94,7 @@ fn state() -> &'static State {
             .expect("Tokio runtime"),
         lane: tokio::sync::Mutex::new(Session::default()),
         event_callback: Mutex::new(None),
+        transfer_cancel: Mutex::new(HashMap::new()),
     })
 }
 fn owned_json(value: Value) -> *mut c_char {
@@ -146,9 +158,23 @@ pub unsafe extern "C" fn card_bridge_request(request: *const c_char, cb: Callbac
             .map_err(|_| Error::new("argument", "请求不是UTF-8"))
             .and_then(|s| serde_json::from_str::<Value>(s).map_err(Error::from))
     };
+    // Register synchronously BEFORE spawning: a cancel submitted immediately
+    // after this FFI call can signal even before the transfer task is scheduled.
+    let parsed = parsed.and_then(|req| {
+        let transfer =
+            if req.get("op").and_then(Value::as_str) == Some("downloadFilePreservingSource") {
+                Some(safe_transfer::register_transfer(ticket)?)
+            } else {
+                None
+            };
+        Ok((req, transfer))
+    });
     state().runtime.spawn(async move {
         let result = match parsed {
-            Ok(req) => run(req, cb, ticket).await,
+            Ok((req, Some(transfer))) => {
+                run_in_lane_registered(req, cb, ticket, &state().lane, Some(transfer)).await
+            }
+            Ok((req, None)) => run(req, cb, ticket).await,
             Err(e) => Err(e),
         };
         let envelope = match result {
@@ -159,10 +185,45 @@ pub unsafe extern "C" fn card_bridge_request(request: *const c_char, cb: Callbac
     });
 }
 async fn run(req: Value, cb: Callback, ticket: usize) -> Result<Value> {
+    if req.get("op").and_then(Value::as_str) == Some("cancelFileTransfer") {
+        return safe_transfer::cancel_transfer(&req);
+    }
+    run_in_lane(req, cb, ticket, &state().lane).await
+}
+async fn run_in_lane(
+    req: Value,
+    cb: Callback,
+    ticket: usize,
+    lane: &tokio::sync::Mutex<Session>,
+) -> Result<Value> {
+    let transfer = if req.get("op").and_then(Value::as_str) == Some("downloadFilePreservingSource")
+    {
+        Some(safe_transfer::register_transfer(ticket)?)
+    } else {
+        None
+    };
+    run_in_lane_registered(req, cb, ticket, lane, transfer).await
+}
+async fn run_in_lane_registered(
+    req: Value,
+    cb: Callback,
+    ticket: usize,
+    lane: &tokio::sync::Mutex<Session>,
+    mut transfer: Option<safe_transfer::TransferCancellation>,
+) -> Result<Value> {
     let op = text(&req, "op")?.to_owned();
-    let mut session = tokio::time::timeout(Duration::from_secs(15), state().lane.lock())
-        .await
-        .map_err(|_| Error::new("busy", "设备命令车道忙，请等待当前传输/升级结束"))?;
+    let waiting = tokio::time::timeout(Duration::from_secs(15), lane.lock());
+    let locked = if let Some(transfer) = transfer.as_mut() {
+        tokio::select! {
+            biased;
+            _ = transfer.cancelled.wait_for(|cancelled| *cancelled) => return Err(Error::new("cancelled", "保源下载排队期间已取消；未触碰设备")),
+            result = waiting => result,
+        }
+    } else {
+        waiting.await
+    };
+    let mut session =
+        locked.map_err(|_| Error::new("busy", "设备命令车道忙，请等待当前传输/升级结束"))?;
     if let Some(recovery) = &session.recovery {
         if !recovery.is_finished() {
             return Err(Error::new("busy", "上一次连接超时，正在释放蓝牙连接槽"));
@@ -170,26 +231,71 @@ async fn run(req: Value, cb: Callback, ticket: usize) -> Result<Value> {
         session.recovery.take();
     }
     let seconds = match op.as_str() {
+        // Scan + retained SDK handshake + required snapshot + bounded metadata.
+        // Optional reads cannot exhaust the former 65-second connect deadline.
+        "connect" => 120,
         "firmwareUpdate" => 600,
         "downloadFile" => 300,
+        "downloadFilePreservingSource" => 7260,
         "convertAudio" => 120,
         _ => 65,
     };
-    let result = tokio::time::timeout(
-        Duration::from_secs(seconds),
-        execute(&mut session, &op, &req, cb, ticket),
-    )
+    let result = tokio::time::timeout(Duration::from_secs(seconds), async {
+        if let Some(transfer) = transfer.as_ref() {
+            safe_transfer::download_registered(
+                &mut session,
+                &req,
+                cb,
+                ticket,
+                transfer.cancelled.clone(),
+            )
+            .await
+        } else {
+            execute(&mut session, &op, &req, cb, ticket).await
+        }
+    })
     .await;
     let result = result.unwrap_or_else(|_| {
         Err(Error::new(
             "timeout",
-            format!("{op} 超时；连接已失效，请重连"),
+            if matches!(
+                op.as_str(),
+                "wifiStatus" | "wifiOtaStatus" | "apOtaStatus" | "checkFirmware" | "checkWifiOta"
+            ) {
+                format!("{op} 可选查询超过应答窗口（并非物理断连）")
+            } else {
+                format!("{op} 超时；连接已失效，请重连")
+            },
         ))
     });
-    if result
+    // These queries are optional capabilities, not connection health probes.
+    // SDK timeout/JSON/firmware refusal is surfaced without tearing down BLE.
+    let result = if matches!(
+        op.as_str(),
+        "wifiStatus" | "wifiOtaStatus" | "apOtaStatus" | "checkFirmware" | "checkWifiOta"
+    ) {
+        result.map_err(|e| {
+            if matches!(e.code, "timeout" | "json" | "sdk") {
+                Error::new(
+                    "optionalUnavailable",
+                    format!("{op} 暂不可用：{}", e.message),
+                )
+            } else {
+                e
+            }
+        })
+    } else {
+        result
+    };
+    if result.as_ref().err().is_some_and(|e| {
+        matches!(
+            e.code,
+            "timeout" | "disconnected" | "transport" | "protocol" | "cancelled"
+        )
+    }) || session
+        .connection
         .as_ref()
-        .err()
-        .is_some_and(|e| matches!(e.code, "timeout" | "disconnected" | "protocol"))
+        .is_some_and(|c| c.device.is_terminal())
     {
         cleanup(&mut session).await;
     }
@@ -199,6 +305,9 @@ pub(crate) async fn cleanup(session: &mut Session) {
     let _ = close_connection(session).await;
 }
 pub(crate) async fn close_connection(session: &mut Session) -> Result<()> {
+    // A receipt is valid only in the exact connection that downloaded it.
+    session.receipt_epoch += 1;
+    session.receipts.clear();
     live_audio::cleanup_live(session).await;
     if let Some(dfu) = session.dfu.take() {
         let mut job = tokio::spawn(async move { dfu.disconnect().await });
@@ -305,9 +414,18 @@ async fn connect(session: &mut Session, id: &str) -> Result<Value> {
 }
 fn pump_events(dev: &DyjDevice) -> JoinHandle<()> {
     let mut rx = dev.subscribe_events();
+    let already_terminal = dev.is_terminal();
     tokio::spawn(async move {
+        if already_terminal {
+            event(json!({"kind":"disconnected","sessionInvalidated":true}));
+            return;
+        }
         loop {
             let value = match rx.recv().await {
+                Ok(DeviceEvent::Disconnected) => {
+                    event(json!({"kind":"disconnected","sessionInvalidated":true}));
+                    break;
+                }
                 Ok(DeviceEvent::RecordStatus(s)) => json!({"kind":"recordStatus", "data":s}),
                 Ok(DeviceEvent::WifiOtaProgress(p)) => json!({"kind":"wifiOtaProgress", "data":p}),
                 Ok(DeviceEvent::Sync(s)) => json!({"kind":"sync", "data":s}),
@@ -328,10 +446,67 @@ fn pump_events(dev: &DyjDevice) -> JoinHandle<()> {
 pub(crate) async fn snapshot(dev: &DyjDevice) -> Result<Value> {
     let battery = dev.battery().await?;
     let state = dev.state().await?;
-    let info = dev.device_info().await?;
     let recording = dev.record_status().await?;
-    let wifi = dev.wifi_status().await?;
-    Ok(json!({"battery":battery,"state":state,"info":info,"record":recording,"wifi":wifi}))
+    // BASE_INFO may be absent/malformed on older firmware. It must not hide an
+    // otherwise confirmed battery/state/recording reading or disconnect the card.
+    let mut warnings = serde_json::Map::new();
+    let info = optional_query("info", "BASE_INFO", dev.device_info(), &mut warnings).await?;
+    // Do not send UART commands to a powered-down Wi-Fi chip. Off is known;
+    // powered-on but failed query is unknown, not a fabricated disconnected STA.
+    let wifi = if state.wifi_open {
+        optional_query("wifi", "WIFI_STATUS", dev.wifi_status(), &mut warnings).await?
+    } else {
+        json!({"status":"off", "connected":false})
+    };
+    Ok(
+        json!({"battery":battery,"state":state,"info":info,"record":recording,"wifi":wifi,"optionalErrors":warnings}),
+    )
+}
+async fn optional_query<T: serde::Serialize>(
+    field: &str,
+    command: &str,
+    query: impl std::future::Future<Output = std::result::Result<T, SdkError>>,
+    warnings: &mut serde_json::Map<String, Value>,
+) -> Result<Value> {
+    // SDK resets its wait on unrelated frames. A hard optional deadline prevents
+    // continuous notifications from keeping metadata pending indefinitely.
+    let result = tokio::time::timeout(Duration::from_secs(11), query)
+        .await
+        .unwrap_or_else(|_| {
+            Err(SdkError::Timeout {
+                command: command.to_owned(),
+                seconds: 11,
+            })
+        });
+    optional_status(field, result, warnings)
+}
+fn optional_status<T: serde::Serialize>(
+    field: &str,
+    result: std::result::Result<T, SdkError>,
+    warnings: &mut serde_json::Map<String, Value>,
+) -> Result<Value> {
+    match result {
+        Ok(value) => serialize(value),
+        Err(e @ (SdkError::Disconnected | SdkError::Transport(_) | SdkError::Protocol(_))) => {
+            Err(e.into())
+        }
+        Err(e) => {
+            let error = Error::from(e);
+            warnings.insert(
+                field.to_owned(),
+                json!({"code":error.code,"message":error.message}),
+            );
+            Ok(Value::Null)
+        }
+    }
+}
+fn live_blocks(op: &str) -> bool {
+    // The live task issues background wire commands outside the Session lane.
+    // Its stop/cleanup owns that interval; do not interleave multi-command reads.
+    !matches!(
+        op,
+        "stopAudioCapture" | "audioCaptureStatus" | "disconnect" | "convertAudio"
+    )
 }
 
 async fn execute(
@@ -341,21 +516,29 @@ async fn execute(
     cb: Callback,
     ticket: usize,
 ) -> Result<Value> {
-    if session.live.is_some()
-        && matches!(
-            op,
-            "connect"
-                | "downloadFile"
-                | "setWifiEnabled"
-                | "setRealtimeEnabled"
-                | "setRecording"
-                | "firmwareUpdate"
-        )
-    {
+    if session.live.is_some() && live_blocks(op) {
         return Err(Error::new(
             "busy",
             "实时音频分片任务占有通道；先显式停止采集，不混用历史take/Wi-Fi/OTA",
         ));
+    }
+    // Invalidate before any possibly mutating attempt, including a refused or
+    // partially executed command; SDK worker also updates the wire epoch for
+    // hardware-originated changes synchronously before broadcasting them.
+    if matches!(
+        op,
+        "setRecording"
+            | "setWifiEnabled"
+            | "connectWifi"
+            | "disconnectWifi"
+            | "setRealtimeEnabled"
+            | "recordMark"
+            | "startAudioCapture"
+            | "stopAudioCapture"
+            | "firmwareUpdate"
+            | "downloadFile"
+    ) {
+        session.receipt_epoch += 1;
     }
     match op {
         "scan" => {
@@ -379,6 +562,15 @@ async fn execute(
         "status" => snapshot(device(session)?).await,
         "listFiles" => {
             let d = device(session)?;
+            // Listing blocks firmware's SD loop; never enumerate while recording
+            // or while unframed realtime binary notifications may be flowing.
+            let record = d.record_status().await?;
+            if record.is_recording || record.realtime_enabled {
+                return Err(Error::new(
+                    "busy",
+                    "请先显式停止录音及实时传输，再读取历史文件列表",
+                ));
+            }
             if d.state().await?.wifi_open {
                 let client = d.access_point_client().await?;
                 let mut files = Vec::new();
@@ -403,6 +595,9 @@ async fn execute(
             }
         }
         "downloadFile" => download(session, req, cb, ticket).await,
+        "downloadFilePreservingSource" => download_preserving(session, req, cb, ticket).await,
+        "confirmDeleteFile" => confirm_delete(session, req).await,
+        "fileTransferCapabilities" => safe_transfer::capabilities(session).await,
         "convertAudio" => convert(req).await,
         "startAudioCapture" => live_audio::start(session, req).await,
         "stopAudioCapture" => live_audio::stop(session, req).await,
@@ -454,12 +649,20 @@ async fn execute(
         ),
         "setRecording" => {
             let d = device(session)?;
-            if flag(req, "enabled") {
+            let enabled = flag(req, "enabled");
+            if enabled {
                 d.start_recording().await?;
             } else {
                 d.stop_recording().await?;
             }
-            serialize(d.record_status().await?)
+            let actual = d.record_status().await?;
+            if actual.is_recording != enabled {
+                return Err(Error::new(
+                    "verification",
+                    "设备录音命令已返回，但读回状态未确认；请重试状态读取",
+                ));
+            }
+            serialize(actual)
         }
         "setRealtimeEnabled" => serialize(
             device(session)?
@@ -513,6 +716,40 @@ fn validate_remote(path: &str) -> Result<()> {
     }
     Ok(())
 }
+async fn hash_local(path: &std::path::Path, expected_bytes: u64) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    use tokio::io::AsyncReadExt;
+    let mut file = tokio::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .await?;
+    if !file.metadata().await?.is_file() || file.metadata().await?.len() != expected_bytes {
+        return Err(Error::new(
+            "integrity",
+            "本机下载长度不匹配或不是普通文件；保留卡端原件",
+        ));
+    }
+    file.sync_all().await?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    let mut read = 0;
+    loop {
+        let n = file.read(&mut buffer).await?;
+        if n == 0 {
+            break;
+        }
+        read += n as u64;
+        hasher.update(&buffer[..n]);
+    }
+    if read != expected_bytes || file.metadata().await?.len() != expected_bytes {
+        return Err(Error::new(
+            "integrity",
+            "校验期间本机文件长度变化；保留卡端原件",
+        ));
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
 async fn download(session: &Session, req: &Value, cb: Callback, ticket: usize) -> Result<Value> {
     let name = text(req, "name")?;
     validate_remote(name)?;
@@ -545,7 +782,14 @@ async fn download(session: &Session, req: &Value, cb: Callback, ticket: usize) -
         None,
     );
     let saved = if use_ble {
-        d.take_file_to_dir(name, directory).await?
+        d.take_file_to_dir(name, directory).await.map_err(|e| {
+            let mut error = Error::from(e);
+            error.message = format!(
+                "{}；旧BLE take可能已删源（在客户端最终落盘/入库前），不能承诺可重试保源",
+                error.message
+            );
+            error
+        })?
     } else {
         // Never silently switch to BLE on AP failure. Power/network changes are separate APIs.
         if !d.state().await?.wifi_open {
@@ -561,7 +805,11 @@ async fn download(session: &Session, req: &Value, cb: Callback, ticket: usize) -
         if saved.bytes_written != expected {
             return Err(Error::new(
                 "integrity",
-                "下载长度与文件列表不一致，不可用于转写",
+                if use_ble {
+                    "下载长度与文件列表不一致；旧BLE take已提前删源，不能宣称保源或入库成功"
+                } else {
+                    "下载长度与文件列表不一致，卡端原件保留，不可用于转写"
+                },
             ));
         }
     }
@@ -659,6 +907,524 @@ async fn convert(req: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reai_card_sdk::{BleTransport, NotificationStream};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    include!("safe_transfer_tests.rs");
+
+    #[derive(Clone)]
+    enum UploadAction {
+        Frame(Vec<u8>),
+        Delay(Duration),
+        Terminal,
+    }
+
+    extern "C" fn discard(_ticket: usize, ptr: *mut c_char) {
+        unsafe {
+            card_bridge_free_string(ptr);
+        }
+    }
+
+    /// SDK's real parser and notification worker run against this in-memory
+    /// transport only. No DeviceManager/adapter/scan/connect path is touched.
+    struct TestBlock {
+        entered: tokio::sync::Semaphore,
+        release: tokio::sync::Semaphore,
+    }
+    impl TestBlock {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                entered: tokio::sync::Semaphore::new(0),
+                release: tokio::sync::Semaphore::new(0),
+            })
+        }
+        async fn wait(&self) {
+            self.entered.add_permits(1);
+            self.release.acquire().await.unwrap().forget();
+        }
+        async fn reached(&self) {
+            self.entered.acquire().await.unwrap().forget();
+        }
+    }
+    struct FakeTransport {
+        tx: tokio::sync::mpsc::UnboundedSender<reai_card_sdk::Result<Vec<u8>>>,
+        rx: tokio::sync::Mutex<
+            Option<tokio::sync::mpsc::UnboundedReceiver<reai_card_sdk::Result<Vec<u8>>>>,
+        >,
+        buffer: tokio::sync::Mutex<Vec<u8>>,
+        commands: Mutex<Vec<String>>,
+        replies: Mutex<HashMap<String, Value>>,
+        silent: Mutex<Vec<String>>,
+        recording: AtomicBool,
+        wifi: AtomicBool,
+        disconnected: AtomicBool,
+        source_deleted: AtomicBool,
+        record_pushes: AtomicBool,
+        payloads: Mutex<Vec<(String, Value)>>,
+        upload_script: Mutex<Option<Vec<UploadAction>>>,
+        file_entries: Mutex<Option<Vec<Value>>>,
+        notifications_count: std::sync::atomic::AtomicUsize,
+        disconnect_count: std::sync::atomic::AtomicUsize,
+        disconnect_block: Mutex<Option<Arc<TestBlock>>>,
+        write_blocks: Mutex<HashMap<String, Arc<TestBlock>>>,
+        block_upload_write: Mutex<Option<Arc<TestBlock>>>,
+    }
+    impl FakeTransport {
+        fn new() -> Arc<Self> {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            Arc::new(Self {
+                tx,
+                rx: tokio::sync::Mutex::new(Some(rx)),
+                buffer: tokio::sync::Mutex::new(Vec::new()),
+                commands: Mutex::new(Vec::new()),
+                replies: Mutex::new(HashMap::new()),
+                silent: Mutex::new(Vec::new()),
+                recording: AtomicBool::new(false),
+                wifi: AtomicBool::new(false),
+                disconnected: AtomicBool::new(false),
+                source_deleted: AtomicBool::new(false),
+                record_pushes: AtomicBool::new(true),
+                payloads: Mutex::new(Vec::new()),
+                upload_script: Mutex::new(None),
+                file_entries: Mutex::new(None),
+                notifications_count: std::sync::atomic::AtomicUsize::new(0),
+                disconnect_count: std::sync::atomic::AtomicUsize::new(0),
+                disconnect_block: Mutex::new(None),
+                write_blocks: Mutex::new(HashMap::new()),
+                block_upload_write: Mutex::new(None),
+            })
+        }
+        fn send(&self, command: &str, payload: Value) {
+            self.tx
+                .send(Ok(format!("{command}:{payload}\r\n").into_bytes()))
+                .unwrap();
+        }
+        fn respond(&self, command: &str) {
+            self.commands.lock().unwrap().push(command.to_owned());
+            if self.silent.lock().unwrap().iter().any(|s| s == command) {
+                return;
+            }
+            if command == "FILE_UPLOAD" {
+                let default = vec![
+                    UploadAction::Frame(b"FILE_UPLOAD:{\"code\":0,\"state\":\"start\",\"size\":3,\"name\":\"a.apm\"}\r\n".to_vec()),
+                    UploadAction::Frame(vec![0,1,2,3]),
+                    UploadAction::Frame(b"FILE_UPLOAD:{\"code\":0,\"state\":\"end\"}\r\n".to_vec()),
+                ];
+                let script = self
+                    .upload_script
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or(default);
+                let tx = self.tx.clone();
+                tokio::spawn(async move {
+                    for action in script {
+                        match action {
+                            UploadAction::Frame(bytes) => {
+                                let _ = tx.send(Ok(bytes));
+                            }
+                            UploadAction::Delay(duration) => tokio::time::sleep(duration).await,
+                            UploadAction::Terminal => {
+                                let _ = tx.send(Err(SdkError::Disconnected));
+                                break;
+                            }
+                        }
+                    }
+                });
+                return;
+            }
+            if command == "FILE_LIST" {
+                if let Some(entries) = self.file_entries.lock().unwrap().clone() {
+                    for entry in entries {
+                        self.send(command, entry);
+                    }
+                    self.send(command, json!({"index":-1}));
+                    return;
+                }
+            }
+            if let Some(payload) = self.replies.lock().unwrap().get(command).cloned() {
+                self.send(command, payload);
+                return;
+            }
+            let payload = match command {
+                "BATTERY" => {
+                    json!({"level":52,"levelText":"mid","isCharging":false,"voltage":3800,"adc_raw":1})
+                }
+                "STATE_INFO" => {
+                    json!({"authState":false,"recordRealtimeEnabled":false,"wifiOpen":self.wifi.load(Ordering::SeqCst),"bootType":"normal","lowPowerMode":false})
+                }
+                "BASE_INFO" => {
+                    json!({"version":"0.3.9","versionCode":309,"deviceId":"fake-card","deviceName":"DYJV2_FAKE","timestamp":1})
+                }
+                "WIFI_OPEN" => {
+                    self.wifi.store(true, Ordering::SeqCst);
+                    json!({"code":0})
+                }
+                "WIFI_CLOSE" => {
+                    self.wifi.store(false, Ordering::SeqCst);
+                    json!({"code":0})
+                }
+                "RECORD_START" => {
+                    self.recording.store(true, Ordering::SeqCst);
+                    json!({"code":0})
+                }
+                "RECORD_STOP" => {
+                    self.recording.store(false, Ordering::SeqCst);
+                    json!({"code":0})
+                }
+                "RECORD_STATUS" => {
+                    // Same-name unsolicited frame precedes the true query reply.
+                    if self.record_pushes.load(Ordering::SeqCst) {
+                        self.send(command, json!({"isRecording":!self.recording.load(Ordering::SeqCst),"realtimeEnabled":true,"reason":"button"}));
+                        // Realtime binary notify must not become a command response.
+                        self.tx.send(Ok(vec![0, 1, 2, 3])).unwrap();
+                    }
+                    json!({"isRecording":self.recording.load(Ordering::SeqCst),"realtimeEnabled":false})
+                }
+                "FILE_LIST" => {
+                    self.send(
+                        command,
+                        json!({"index":0,"name":"a.apm","size":3,"is_dir":0}),
+                    );
+                    json!({"index":-1})
+                }
+                _ => json!({"code":0}),
+            };
+            self.send(command, payload);
+        }
+    }
+    #[async_trait::async_trait]
+    impl BleTransport for FakeTransport {
+        async fn write(&self, bytes: &[u8]) -> reai_card_sdk::Result<()> {
+            // Stall the FIRST upload chunk, before it reaches the fake device.
+            let block = if bytes.starts_with(b"FILE_UPLOAD") {
+                self.block_upload_write.lock().unwrap().clone()
+            } else {
+                None
+            };
+            if let Some(block) = block {
+                block.wait().await;
+            }
+            let mut buffer = self.buffer.lock().await;
+            buffer.extend_from_slice(bytes);
+            while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
+                let line: Vec<u8> = buffer.drain(..=end).collect();
+                let line = String::from_utf8(line).unwrap();
+                let command = line.trim().split(':').next().unwrap();
+                let payload = line
+                    .trim()
+                    .split_once(':')
+                    .and_then(|(_, body)| serde_json::from_str::<Value>(body).ok())
+                    .unwrap_or(Value::Null);
+                if command == "FILE_DELETE"
+                    || (command == "FILE_UPLOAD"
+                        && payload.get("keep").and_then(Value::as_bool) != Some(true))
+                {
+                    self.source_deleted.store(true, Ordering::SeqCst);
+                }
+                self.payloads
+                    .lock()
+                    .unwrap()
+                    .push((command.to_owned(), payload));
+                self.respond(command);
+                let block = self.write_blocks.lock().unwrap().get(command).cloned();
+                if let Some(block) = block {
+                    block.wait().await;
+                }
+            }
+            Ok(())
+        }
+        async fn notifications(&self) -> reai_card_sdk::Result<NotificationStream> {
+            self.notifications_count.fetch_add(1, Ordering::SeqCst);
+            let rx = self.rx.lock().await.take().unwrap();
+            Ok(Box::pin(futures::stream::unfold(rx, |mut rx| async {
+                let item = rx.recv().await?;
+                if matches!(&item, Ok(bytes) if bytes.is_empty()) {
+                    None
+                } else {
+                    Some((item, rx))
+                }
+            })))
+        }
+        async fn disconnect(&self) -> reai_card_sdk::Result<()> {
+            let count = self.disconnect_count.fetch_add(1, Ordering::SeqCst);
+            // Only the FIRST disconnect stalls; a buggy second cleanup would
+            // return immediately and let Native wrongly cross its barrier.
+            let block = self.disconnect_block.lock().unwrap().clone();
+            if count == 0 {
+                if let Some(block) = block {
+                    block.wait().await;
+                }
+            }
+            self.disconnected.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    async fn fake_session(transport: Arc<FakeTransport>) -> Session {
+        let device = DyjDevice::from_transport(transport).await.unwrap();
+        Session {
+            connection: Some(Connection {
+                device,
+                discovered: DiscoveredDevice {
+                    id: "fake-transport".into(),
+                    name: "DYJV2_FAKE".into(),
+                    rssi: None,
+                },
+                events: tokio::spawn(std::future::pending()),
+            }),
+            ..Default::default()
+        }
+    }
+    #[tokio::test(start_paused = true)]
+    async fn optional_info_and_wifi_timeout_do_not_disconnect_valid_core_status() {
+        let t = FakeTransport::new();
+        t.wifi.store(true, Ordering::SeqCst);
+        t.silent
+            .lock()
+            .unwrap()
+            .extend(["BASE_INFO".to_owned(), "WIFI_STATUS".to_owned()]);
+        let lane = tokio::sync::Mutex::new(fake_session(t.clone()).await);
+        let result = run_in_lane(json!({"op":"status"}), discard, 1, &lane)
+            .await
+            .unwrap();
+        assert_eq!(result["battery"]["level"], 52);
+        assert_eq!(result["record"]["isRecording"], false);
+        assert!(result["info"].is_null());
+        assert!(result["wifi"].is_null());
+        assert_eq!(result["optionalErrors"]["wifi"]["code"], "timeout");
+        assert!(lane.lock().await.connection.is_some());
+        assert!(!t.disconnected.load(Ordering::SeqCst));
+    }
+    #[tokio::test(start_paused = true)]
+    async fn optional_query_has_absolute_deadline_even_if_sdk_never_finishes() {
+        let mut warnings = serde_json::Map::new();
+        let result =
+            optional_query::<Value>("info", "BASE_INFO", std::future::pending(), &mut warnings)
+                .await
+                .unwrap();
+        assert!(result.is_null());
+        assert_eq!(warnings["info"]["code"], "timeout");
+    }
+    #[tokio::test]
+    async fn optional_malformed_info_and_powered_down_wifi_are_not_connection_failure() {
+        let t = FakeTransport::new();
+        t.replies
+            .lock()
+            .unwrap()
+            .insert("BASE_INFO".into(), json!({"code":0,"version":"0.3.9"}));
+        let session = fake_session(t.clone()).await;
+        let result = snapshot(device(&session).unwrap()).await.unwrap();
+        assert!(result["info"].is_null());
+        assert_eq!(result["wifi"]["status"], "off");
+        assert!(!t
+            .commands
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s == "WIFI_STATUS"));
+        assert!(!t.disconnected.load(Ordering::SeqCst));
+    }
+    #[tokio::test(start_paused = true)]
+    async fn required_status_timeout_still_invalidates_and_releases_connection() {
+        let t = FakeTransport::new();
+        t.silent.lock().unwrap().push("BATTERY".into());
+        let lane = tokio::sync::Mutex::new(fake_session(t.clone()).await);
+        assert_eq!(
+            run_in_lane(json!({"op":"status"}), discard, 1, &lane)
+                .await
+                .unwrap_err()
+                .code,
+            "timeout"
+        );
+        assert!(lane.lock().await.connection.is_none());
+        assert!(t.disconnected.load(Ordering::SeqCst));
+    }
+    #[tokio::test(start_paused = true)]
+    async fn optional_query_timeout_preserves_lane_but_stream_disconnect_is_fatal() {
+        let t = FakeTransport::new();
+        t.wifi.store(true, Ordering::SeqCst);
+        t.silent.lock().unwrap().push("WIFI_STATUS".into());
+        let lane = tokio::sync::Mutex::new(fake_session(t.clone()).await);
+        assert_eq!(
+            run_in_lane(json!({"op":"wifiStatus"}), discard, 1, &lane)
+                .await
+                .unwrap_err()
+                .code,
+            "optionalUnavailable"
+        );
+        assert!(lane.lock().await.connection.is_some());
+        t.tx.send(Err(SdkError::Transport("fake link died".into())))
+            .unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(
+            run_in_lane(json!({"op":"status"}), discard, 2, &lane)
+                .await
+                .unwrap_err()
+                .code,
+            "disconnected"
+        );
+        assert!(t.disconnected.load(Ordering::SeqCst));
+    }
+    #[tokio::test]
+    async fn state_record_and_file_transactions_are_contiguous_despite_realtime_notifications() {
+        let t = FakeTransport::new();
+        let lane = tokio::sync::Mutex::new(fake_session(t.clone()).await);
+        let (status, stopped, files) = tokio::join!(
+            run_in_lane(json!({"op":"status"}), discard, 1, &lane),
+            run_in_lane(
+                json!({"op":"setRecording","enabled":false}),
+                discard,
+                2,
+                &lane
+            ),
+            run_in_lane(json!({"op":"listFiles"}), discard, 3, &lane)
+        );
+        assert_eq!(status.unwrap()["record"]["isRecording"], false);
+        assert_eq!(stopped.unwrap()["isRecording"], false);
+        assert_eq!(files.unwrap().as_array().unwrap().len(), 1);
+        assert_eq!(
+            *t.commands.lock().unwrap(),
+            vec![
+                "SYNC_TIME",
+                "BATTERY",
+                "STATE_INFO",
+                "RECORD_STATUS",
+                "BASE_INFO",
+                "RECORD_STOP",
+                "RECORD_STATUS",
+                "RECORD_STATUS",
+                "STATE_INFO",
+                "STATE_INFO",
+                "FILE_LIST"
+            ]
+        );
+    }
+    #[tokio::test]
+    async fn record_control_verifies_readback_and_never_accepts_push_as_query_reply() {
+        let t = FakeTransport::new();
+        let mut session = fake_session(t.clone()).await;
+        let started = execute(
+            &mut session,
+            "setRecording",
+            &json!({"enabled":true}),
+            discard,
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(started["isRecording"], true);
+        assert_eq!(started["realtimeEnabled"], false);
+        t.replies.lock().unwrap().insert(
+            "RECORD_STATUS".into(),
+            json!({"isRecording":true,"realtimeEnabled":false}),
+        );
+        let error = execute(
+            &mut session,
+            "setRecording",
+            &json!({"enabled":false}),
+            discard,
+            2,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "verification");
+    }
+    #[tokio::test]
+    async fn file_list_is_busy_while_recording_and_never_sends_file_command() {
+        let t = FakeTransport::new();
+        t.recording.store(true, Ordering::SeqCst);
+        let mut session = fake_session(t.clone()).await;
+        assert_eq!(
+            execute(&mut session, "listFiles", &json!({}), discard, 1)
+                .await
+                .unwrap_err()
+                .code,
+            "busy"
+        );
+        assert!(!t.commands.lock().unwrap().iter().any(|s| s == "FILE_LIST"));
+    }
+    #[test]
+    fn live_capture_blocks_every_multi_command_wire_transaction() {
+        for op in [
+            "status",
+            "listFiles",
+            "setRecording",
+            "recordMark",
+            "downloadFile",
+            "downloadFilePreservingSource",
+            "confirmDeleteFile",
+            "scanWifi",
+        ] {
+            assert!(live_blocks(op));
+        }
+        for op in [
+            "disconnect",
+            "stopAudioCapture",
+            "audioCaptureStatus",
+            "convertAudio",
+        ] {
+            assert!(!live_blocks(op));
+        }
+    }
+    #[tokio::test]
+    async fn safe_download_and_uncommitted_delete_require_explicit_arguments() {
+        let mut session = Session::default();
+        let req = json!({"name":"a.apm","directory":"/tmp","transport":"ble"});
+        assert_eq!(
+            download_preserving(&mut session, &req, discard, 1)
+                .await
+                .unwrap_err()
+                .code,
+            "argument"
+        );
+        assert_eq!(
+            confirm_delete(&mut session, &json!({"downloadId":"1"}))
+                .await
+                .unwrap_err()
+                .code,
+            "confirmation"
+        );
+        assert_eq!(
+            confirm_delete(
+                &mut session,
+                &json!({"downloadId":"1","repositoryCommitted":true})
+            )
+            .await
+            .unwrap_err()
+            .code,
+            "receipt"
+        );
+    }
+    #[tokio::test]
+    async fn confirmed_delete_rehashes_local_file_and_rejects_changed_content() {
+        let dir = std::env::temp_dir().join(format!("card-receipt-test-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("a.apm");
+        tokio::fs::write(&path, [1u8, 2, 3]).await.unwrap();
+        let digest = hash_local(&path, 3).await.unwrap();
+        let mut session = Session::default();
+        session.receipts.insert(
+            "receipt".into(),
+            DownloadReceipt {
+                name: "a.apm".into(),
+                device_id: "fake-card".into(),
+                transport_id: "fake-transport".into(),
+                path: path.clone(),
+                bytes: 3,
+                sha256: digest.clone(),
+                ap: false,
+                local_epoch: 0,
+                source_epoch: 0,
+                generation: None,
+                deleted: false,
+            },
+        );
+        tokio::fs::write(&path, [3u8, 2, 1]).await.unwrap();
+        let error = confirm_delete(&mut session, &json!({"downloadId":"receipt","repositoryCommitted":true,"expectedDeviceId":"fake-card","sha256":digest})).await.unwrap_err();
+        assert_eq!(error.code, "integrity"); // Rejected before accessing a device.
+        assert!(session.receipts.contains_key("receipt"));
+        assert!(hash_local(&path, 4).await.is_err());
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
     #[test]
     fn heap_string_survives_callback_return() {
         let ptr = owned_json(json!({"text":"测试\u{0}late"}));

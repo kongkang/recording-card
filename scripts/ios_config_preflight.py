@@ -20,8 +20,11 @@ def check_wiring(root):
     info = plistlib.loads((root / "app/ios/Runner/Info.plist").read_bytes())
     schemes = [scheme for url_type in info.get("CFBundleURLTypes", [])
                for scheme in url_type.get("CFBundleURLSchemes", [])]
-    if schemes != ["$(RC_OAUTH_CALLBACK_SCHEME)"]:
-        raise PreflightError("Runner must register exactly one build-setting OAuth scheme")
+    if schemes != ["recording-card"]:
+        raise PreflightError("Runner must register only recording-card; reference OAuth is private to ASWebAuthenticationSession")
+    launcher = (root / "app/lib/services/auth/web_auth_launcher.dart").read_text()
+    if "FlutterWebAuth2.authenticate(" not in launcher or "callbackUrlScheme: callbackScheme" not in launcher:
+        raise PreflightError("iOS OAuth must use the system authentication session with its exact configured callback")
     oauth = (flutter / "OAuth.xcconfig").read_text()
     assignments = re.findall(r"^RC_OAUTH_CALLBACK_SCHEME\s*=\s*(\S+)\s*$", oauth, re.M)
     if assignments != ["recording-card"] or '#include? "OAuthLocal.xcconfig"' not in oauth:

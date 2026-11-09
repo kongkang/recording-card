@@ -32,6 +32,7 @@ class ProductionRuntime {
     this.device,
     this.pipeline,
     this.sync,
+    this.fastSync,
     this.gateway,
     this.backend,
     this.uploader,
@@ -43,6 +44,7 @@ class ProductionRuntime {
   final DeviceStore device;
   final RecordingPipeline pipeline;
   final SyncCoordinator sync;
+  final SyncCoordinator fastSync;
   final CardGateway gateway;
   final RuntimeAppBackend backend;
   final HttpRecordingUploader? uploader;
@@ -67,9 +69,10 @@ class ProductionRuntime {
       await Future.wait([
         backend.cancelAllAndDrain(),
         sync.cancel(),
+        fastSync.cancel(),
         pipeline.suspend(),
       ]);
-      await sync.drained;
+      await Future.wait([sync.drained, fastSync.drained]);
     } finally {
       // DeviceBackend finally guarantees native disconnect even if flush fails.
       await device.disconnect();
@@ -88,7 +91,9 @@ class ProductionRuntime {
         await pipeline.dispose();
       } finally {
         await sync.drained;
+        await fastSync.drained;
         await sync.dispose();
+        await fastSync.dispose();
         uploader?.dispose();
         store.dispose();
         device.dispose();
@@ -167,8 +172,21 @@ class ProductionRuntime {
     final sync = SyncCoordinator(
       repository: recordings,
       settingsRepository: settings,
-      gateway: CardDownloadAdapter(gateway),
+      gateway: CardDownloadAdapter(
+        gateway,
+        cancelTransfer: gateway.cancelFileTransfer,
+      ),
       uploader: uploader,
+    );
+    final fastSync = SyncCoordinator(
+      repository: recordings,
+      settingsRepository: settings,
+      gateway: CardDownloadAdapter(
+        gateway,
+        transport: CardTransfer.ap,
+        restoreWifiAfterSession: true,
+        cancelTransfer: gateway.cancelFileTransfer,
+      ),
     );
     final backend = RuntimeAppBackend(
       recordingRepository: recordings,
@@ -180,15 +198,18 @@ class ProductionRuntime {
       backend: backend,
       persistence: RepositoryUiPersistence(recordings),
       recordUpdates: pipeline.changes,
+      retryRecordProcessing: pipeline.processPending,
     );
     final stored = await settings.load();
     store.policy = RecordingPolicy.fromJson(stored.settings.toJson());
     pipeline.policy = store.policy;
+    final firmware = FirmwareProvider(gateway);
     final serviceDevice = ServiceDeviceBackend(
       gateway: gateway,
       settingsRepository: settings,
       syncCoordinator: sync,
-      firmwareProvider: FirmwareProvider(gateway).offer,
+      fastSyncCoordinator: fastSync,
+      firmwareProvider: firmware.offer,
     );
     final deviceBackend = RuntimeDeviceBackend(
       serviceDevice,
@@ -198,9 +219,16 @@ class ProductionRuntime {
     final device = DeviceStore(
       backend: deviceBackend,
       policy: () => store.policy,
+      firmwareStatusMessage: () => firmware.lastCheck?.message,
       onSynced: () async {
-        if (store.policy.autoTranscribe) await pipeline.processPending();
         await store.reloadEvents();
+        if (store.policy.autoTranscribe) {
+          unawaited(
+            pipeline.processPending().catchError(
+              (Object e) => pipeline.reportError('sync-processing', e),
+            ),
+          );
+        }
       },
     );
     await pipeline.recoverCaptureFiles(); // no device or model request
@@ -210,6 +238,7 @@ class ProductionRuntime {
       device,
       pipeline,
       sync,
+      fastSync,
       gateway,
       backend,
       uploader,
@@ -365,11 +394,24 @@ class RuntimeAppBackend extends ServiceAppBackend {
   }
 }
 
-class RuntimeDeviceBackend implements DeviceBackend {
+class RuntimeDeviceBackend
+    implements
+        DeviceBackend,
+        RecordingDeviceBackend,
+        FileTransferDeviceBackend {
   RuntimeDeviceBackend(this.delegate, this.pipeline, this.gateway);
   final ServiceDeviceBackend delegate;
   final RecordingPipeline pipeline;
   final CardGateway gateway;
+  @override
+  DeviceSyncOutcome? get lastSyncOutcome => delegate.lastSyncOutcome;
+  @override
+  Future<void> prepareFastTransfer() => delegate.prepareFastTransfer();
+  @override
+  Future<void> cancelFastTransfer() => delegate.cancelFastTransfer();
+  @override
+  Future<void> fastSync(RecordingPolicy policy, ProgressSink onProgress) =>
+      delegate.fastSync(policy, onProgress);
   @override
   bool get available => delegate.available;
   @override
@@ -396,37 +438,25 @@ class RuntimeDeviceBackend implements DeviceBackend {
   }
 
   @override
-  Future<DeviceReading> status() async {
-    final reading = await delegate.status();
-    if (!reading.snapshot.recording) {
-      await pipeline.stopCapture();
-    } else if (pipeline.policy.autoTranscribe && pipeline.captureId == null) {
-      try {
-        await pipeline.startCapture(reading.snapshot.deviceId);
-      } catch (e) {
-        await pipeline.reportError('status-pipeline', e);
-      }
-    }
-    return reading;
-  }
+  Future<DeviceReading> status() => delegate.status();
+
+  @override
+  Future<DeviceReading> startRecording() => delegate.startRecording();
+
+  @override
+  Future<DeviceReading> stopRecording() => delegate.stopRecording();
 
   @override
   Future<void> sync(RecordingPolicy policy, ProgressSink onProgress) async {
-    await pipeline.stopCapture();
-    final snapshot = await gateway.status();
-    if (snapshot.recording) {
-      throw StateError('AP访问需要停止设备录音；本App不会暗中停止已有录音。请在设备上停止后重试。');
-    }
+    // The adapter owns BLE/AP arbitration. Status reads and ordinary BLE import
+    // must never start real-time capture or silently stop the user's recording.
     await delegate.sync(policy, onProgress);
   }
 
   @override
   Future<List<SavedWifi>> savedWifi() => delegate.savedWifi();
   @override
-  Future<List<WifiNet>> scanWifi() async {
-    await pipeline.stopCapture();
-    return delegate.scanWifi();
-  }
+  Future<List<WifiNet>> scanWifi() => delegate.scanWifi();
 
   @override
   Future<void> connectSavedWifi(String name) => delegate.connectSavedWifi(name);

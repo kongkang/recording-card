@@ -28,7 +28,9 @@ class GatewaySpy extends CardGateway {
   final downloads = <String>[];
   String? started;
   bool failStart = false, failStatus = false, recording = true;
-  int conversions = 0, stops = 0, disconnects = 0;
+  int conversions = 0, stops = 0, disconnects = 0, recordingCommands = 0;
+  final wifiCommands = <bool>[];
+  CardTransfer expectedTransport = CardTransfer.ble;
   @override
   bool get available => true;
   @override
@@ -56,12 +58,16 @@ class GatewaySpy extends CardGateway {
 
   @override
   Future<Map<String, dynamic>> setRecording(bool enabled) async {
+    recordingCommands++;
     recording = enabled;
     return {};
   }
 
   @override
-  Future<void> setWifiEnabled(bool enabled) async {}
+  Future<void> setWifiEnabled(bool enabled) async {
+    wifiCommands.add(enabled);
+  }
+
   @override
   Future<CardAudioTask> startAudioCapture({
     required String taskId,
@@ -108,6 +114,26 @@ class GatewaySpy extends CardGateway {
     for (final e in files.entries) CardFile(name: e.key, size: e.value.length),
   ];
   @override
+  Future<CardDownload> downloadFilePreservingSource(
+    String name, {
+    required String directory,
+    required String expectedDeviceId,
+    required int expectedBytes,
+    CardTransfer transport = CardTransfer.ble,
+    void Function(CardProgress)? onProgress,
+  }) async {
+    expect(expectedDeviceId, 'card:真实:device');
+    return downloadFile(
+      name,
+      directory: directory,
+      expectedBytes: expectedBytes,
+      transport: transport,
+      allowDestructive: false,
+      onProgress: onProgress,
+    );
+  }
+
+  @override
   Future<CardDownload> downloadFile(
     String name, {
     required String directory,
@@ -116,7 +142,7 @@ class GatewaySpy extends CardGateway {
     bool allowDestructive = false,
     void Function(CardProgress)? onProgress,
   }) async {
-    expect(transport, CardTransfer.ap);
+    expect(transport, expectedTransport);
     expect(allowDestructive, isFalse);
     downloads.add(name);
     final f = await File('$directory/$name').writeAsBytes(files[name]!);
@@ -307,36 +333,40 @@ void main() {
     await h.gateway.stream.close();
     await h.root.delete(recursive: true);
   });
-  test('production backend compiles, sends safe task ID and reports capture failure', () async {
-    h.gateway.failStart = true;
-    final errors = <Object>[];
-    final sub = h.pipeline.changes.listen((_) {}, onError: errors.add);
-    final delegate = ServiceDeviceBackend(
-      gateway: h.gateway,
-      settingsRepository: SettingsRepository(directory: h.root),
-    );
-    final backend = RuntimeDeviceBackend(delegate, h.pipeline, h.gateway);
-    final reading = await backend.connect('test-device');
-    expect(reading.snapshot.deviceId, 'card:真实:device');
-    expect(h.gateway.started, matches(r'^[A-Za-z0-9_-]{1,80}$'));
-    expect(h.pipeline.captureId, isNull);
-    await Future<void>.delayed(Duration.zero);
-    expect(errors, isNotEmpty);
-    expect(
-      (await h.repo.load()).metadata['error:connected-pipeline'],
-      contains('failed'),
-    );
-    await sub.cancel();
-  });
-  test('failed policy apply keeps prior policy and does not stop another owner recording', () async {
-    final old = h.pipeline.policy;
-    await h.pipeline.connected(await h.gateway.status());
-    h.gateway.failStatus = true;
-    await expectLater(h.pipeline.apply(old.toggled(2)), throwsStateError);
-    expect(h.pipeline.policy.toJson(), old.toJson());
-    expect(h.gateway.recording, isTrue);
-    h.gateway.failStatus = false;
-  });
+  test(
+    'production connect uses completed files and never starts realtime capture',
+    () async {
+      h.gateway.failStart = true;
+      final errors = <Object>[];
+      final sub = h.pipeline.changes.listen((_) {}, onError: errors.add);
+      final delegate = ServiceDeviceBackend(
+        gateway: h.gateway,
+        settingsRepository: SettingsRepository(directory: h.root),
+      );
+      final backend = RuntimeDeviceBackend(delegate, h.pipeline, h.gateway);
+      final reading = await backend.connect('test-device');
+      expect(reading.snapshot.deviceId, 'card:真实:device');
+      expect(h.gateway.started, isNull);
+      expect(h.gateway.recordingCommands, 0);
+      expect(h.pipeline.captureId, isNull);
+      expect(errors, isEmpty);
+      await sub.cancel();
+    },
+  );
+  test(
+    'settings are local policy only even when status is unavailable',
+    () async {
+      final old = h.pipeline.policy;
+      await h.pipeline.connected(await h.gateway.status());
+      h.gateway.failStatus = true;
+      await h.pipeline.apply(old.toggled(2));
+      expect(h.pipeline.policy.toJson(), old.toggled(2).toJson());
+      expect(h.gateway.recording, isTrue);
+      expect(h.gateway.recordingCommands, 0);
+      expect(h.gateway.started, isNull);
+      h.gateway.failStatus = false;
+    },
+  );
   test('APM conversion cache is source-hash bound and survives missing ASR model retry', () async {
     final event = await h.import(name: 'record.apm');
     h.pipeline.policy = const RecordingPolicy(
@@ -364,7 +394,7 @@ void main() {
     final state = await h.repo.load();
     final event = state.events.single;
     expect(event.originalTranscript, speech.text);
-    expect(event.transcriptionStatus, 'failed');
+    expect(event.transcriptionStatus, 'analysis_failed');
     expect(h.asr.calls, 1);
     await h.pipeline.dispose();
     h.pipeline = h.create()
@@ -400,59 +430,117 @@ void main() {
     },
   );
   test(
-    'six chunk burst saves every chunk and pending inference keeps identity',
+    'six completed sidecars recover all audio; no live PCM listener exists',
     () async {
       h.pipeline.policy = const RecordingPolicy(
         autoClean: false,
         inferSpeakers: false,
       );
       await h.pipeline.connected(await h.gateway.status());
-      h.asr.gate = Completer<void>();
       for (var i = 1; i <= 6; i++) {
-        await h.chunk(i, task: h.pipeline.captureId!);
+        await h.chunk(i);
       }
-      h.asr.gate!.complete();
       await h.pipeline.drained;
       expect(
-        h.asr.calls,
-        4,
-        reason: 'only four inference jobs accepted during burst',
+        (await h.repo.load()).chunks,
+        isEmpty,
+        reason: 'events cannot activate live PCM',
       );
-      expect(
-        (await h.repo.load()).chunks.length,
-        6,
-        reason: 'backpressure never discards audio',
-      );
+      await h.pipeline.recoverCaptureFiles();
+      expect((await h.repo.load()).chunks.length, 6);
+      expect(h.asr.calls, 0);
       await h.pipeline.processPending();
       final state = await h.repo.load();
       expect(state.chunks.length, 6);
       expect(h.asr.calls, 6);
       expect(state.events.where((e) => e.originalTranscript != null).length, 6);
-      expect(state.chunks.map((c) => c.recordingId).toSet().length, 1);
       expect(state.chunks.last.startMs, 150000);
     },
   );
   test(
-    'terminal capture releases native slot and later recording status restarts',
+    'record-status events, suspend and legacy capture cannot control hardware',
     () async {
-      h.pipeline.policy = const RecordingPolicy(
-        autoClean: false,
-        inferSpeakers: false,
-      );
       await h.pipeline.connected(await h.gateway.status());
-      final id = h.pipeline.captureId;
-      h.gateway.stream.add({'kind': 'audioCaptureStopped', 'taskId': id});
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(h.pipeline.captureId, isNull);
-      expect(h.gateway.stops, 1);
       h.gateway.stream.add({'kind': 'recordStatus'});
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(h.pipeline.captureId, isNotNull);
-      expect(h.pipeline.captureId, isNot(id));
+      await Future<void>.delayed(Duration.zero);
+      await expectLater(
+        h.pipeline.startCapture('fixture'),
+        throwsA(isA<CardGatewayException>()),
+      );
       await h.pipeline.suspend();
+      expect(h.gateway.started, isNull);
+      expect(h.gateway.stops, 0);
+      expect(h.gateway.recordingCommands, 0);
       expect(h.gateway.recording, isTrue);
     },
   );
+  test('missing models queue both local fragments with exact reasons, not generic failure', () async {
+    await h.import(name: 'first.wav');
+    await h.import(name: 'second.wav');
+    h.pipeline.policy = const RecordingPolicy(
+      autoClean: false,
+      inferSpeakers: false,
+    );
+    h.asr.fail = true;
+    final errors = <Object>[];
+    final sub = h.pipeline.changes.listen((_) {}, onError: errors.add);
+    await h.pipeline.processPending();
+    final state = await h.repo.load();
+    expect(state.events.length, 2);
+    expect(
+      state.events.every((e) => e.transcriptionStatus == 'waiting_model'),
+      isTrue,
+    );
+    expect(
+      state.events.every((e) => e.error!.contains('model_missing')),
+      isTrue,
+    );
+    expect(
+      state.tasks.every((t) => t.state == RecordingTaskState.queued),
+      isTrue,
+    );
+    expect(
+      state.events.every((e) => e.originalTranscript == null && e.raw.isEmpty),
+      isTrue,
+    );
+    for (final entry in state.index) {
+      expect(await h.repo.verifyRecording(entry.key), RecordingIntegrity.valid);
+    }
+    expect(errors, isEmpty);
+    expect(h.cloud.prompts, isEmpty);
+    h.asr.fail = false;
+    await h.pipeline.processPending();
+    expect(
+      (await h.repo.load()).events.every(
+        (e) => e.transcriptionStatus == 'completed',
+      ),
+      isTrue,
+    );
+    await sub.cancel();
+  });
+  test('cancelled local ASR retains audio and resumes without changing file identity', () async {
+    final event = await h.import();
+    h.pipeline.policy = const RecordingPolicy(
+      autoClean: false,
+      inferSpeakers: false,
+    );
+    h.asr.gate = Completer<void>();
+    final running = h.pipeline.transcribe(event);
+    final assertion = expectLater(running, throwsA(isA<OperationCancelled>()));
+    while (h.asr.calls == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    await h.pipeline.suspend();
+    h.asr.gate!.complete();
+    await assertion;
+    final cancelled = (await h.repo.load()).events.single;
+    expect(cancelled.transcriptionStatus, 'cancelled');
+    expect(await File(cancelled.audioPath!).exists(), isTrue);
+    await h.pipeline.connected(await h.gateway.status());
+    final retry = (await h.repo.load()).events.single;
+    expect(retry.id, event.id);
+    expect(retry.originalTranscript, speech.text);
+  });
   test(
     'only actual VAD evidence seals long silence; empty ASR does not',
     () async {
@@ -530,7 +618,8 @@ void main() {
       'rec.TXT': utf8.encode('metadata'),
       'Rec.MRK': utf8.encode('9\n2\n9\n'),
     });
-    final adapter = CardDownloadAdapter(h.gateway);
+    h.gateway.expectedTransport = CardTransfer.ap;
+    final adapter = CardDownloadAdapter(h.gateway, transport: CardTransfer.ap);
     await adapter.openSession('card:真实:device');
     final remote = (await adapter.listRecordings('card:真实:device')).single;
     final result = await adapter.downloadRecording(

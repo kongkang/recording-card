@@ -14,11 +14,19 @@ export 'recording_uploader.dart';
 class RecordingSyncResult {
   final List<RecordingImportResult> imports;
   final List<RecordingIndexEntry> uploaded;
-  const RecordingSyncResult({required this.imports, required this.uploaded});
+
+  /// Local save can succeed with source retained when Native has no safe ack.
+  final List<String> retainedSourceFileIds;
+  bool get isMoveComplete => retainedSourceFileIds.isEmpty;
+  const RecordingSyncResult({
+    required this.imports,
+    required this.uploaded,
+    this.retainedSourceFileIds = const [],
+  });
 }
 
-/// Composition root injects a B gateway adapter and an approved uploader.
-/// Download sessions finish before cloud upload begins (AP owns the SD/network).
+/// V1 sync is a local move: non-destructive pull -> durable import -> source ack.
+/// No audio is uploaded; cloud analysis is a separate text-only pipeline.
 /// Singleton per gateway; CardGateway must arbitrate recording/Wi-Fi/OTA itself.
 class SyncCoordinator {
   final RecordingRepository repository;
@@ -44,60 +52,62 @@ class SyncCoordinator {
     RecordingNetworkPolicy? networkPolicy,
   }) : networkPolicy = networkPolicy ?? RecordingNetworkPolicy();
 
-  /// Explicit local import only; never reported as "sync uploaded".
-  Future<List<RecordingImportResult>> importFromDevice(String deviceId) =>
-      _exclusive(() => _download(deviceId));
+  Future<List<RecordingImportResult>> importFromDevice(String deviceId) async =>
+      (await sync(deviceId)).imports;
 
-  /// The sync button must call this (not importFromDevice). Unconfigured upload
-  /// fails before any device/download effects. No source deletion is ever called.
-  Future<RecordingSyncResult> syncAndUpload(String deviceId) =>
-      _exclusive(() async {
-        _requireUploader();
-        await _requireNetwork();
-        final result = await _task<RecordingSyncResult>(
-          id: 'sync:${RecordingRepository.identityKey(deviceId, 'all')}',
-          kind: 'sync',
-          deviceId: deviceId,
-          action: () async {
-            final imports = await _download(deviceId);
-            _checkCancelled();
-            final uploaded = await _uploadPending(deviceId: deviceId);
-            if (imports.isEmpty && uploaded.isEmpty) {
-              final state = await repository.load();
-              if (!state.index.any(
-                (entry) =>
-                    entry.deviceId == deviceId && entry.cloudFileId != null,
-              )) {
-                throw const RecordingStorageException('没有可同步的录音文件');
-              }
-            }
-            _checkCancelled();
-            await repository.update(
-              (state) => state.copyWith(
-                metadata: {
-                  ...state.metadata,
-                  'lastSuccessfulSyncAt': DateTime.now().toIso8601String(),
-                  'lastSuccessfulSyncDeviceId': deviceId,
-                },
-              ),
-            );
-            return RecordingSyncResult(
-              imports: List.unmodifiable(imports),
-              uploaded: List.unmodifiable(uploaded),
-            );
-          },
+  /// Ordinary sync does not require login, Internet or an audio-upload endpoint.
+  /// Model readiness is deliberately downstream of the durable file transfer.
+  Future<RecordingSyncResult> sync(String deviceId) => _exclusive(
+    () => _task<RecordingSyncResult>(
+      id: 'sync:${RecordingRepository.identityKey(deviceId, 'all')}',
+      kind: 'sync',
+      deviceId: deviceId,
+      action: () async {
+        final imports = await _download(deviceId);
+        _checkCancelled();
+        if (imports.isEmpty &&
+            !(await repository.load()).index.any(
+              (entry) =>
+                  entry.deviceId == deviceId &&
+                  entry.integrity == RecordingIntegrity.valid,
+            )) {
+          throw const RecordingStorageException('没有可同步的已完成录音文件');
+        }
+        await repository.update(
+          (state) => state.copyWith(
+            metadata: {
+              ...state.metadata,
+              'lastSuccessfulSyncAt': DateTime.now().toIso8601String(),
+              'lastSuccessfulSyncDeviceId': deviceId,
+            },
+          ),
         );
-        return result;
-      });
+        final state = await repository.load();
+        return RecordingSyncResult(
+          imports: List.unmodifiable(imports),
+          uploaded: const [],
+          retainedSourceFileIds: List.unmodifiable([
+            for (final result in imports)
+              if ((state.metadata['source-commit:${result.entry.key}']
+                      as Map?)?['state'] !=
+                  'confirmed')
+                result.entry.fileId,
+          ]),
+        );
+      },
+    ),
+  );
 
-  /// Explicit restart/retry entry for local pending uploads. Doesn't require a
-  /// connected device and doesn't auto-start when loading persisted state.
+  /// Legacy composition roots use this name. It now has local sync semantics;
+  /// keeping the name temporarily must NEVER re-enable audio upload implicitly.
+  @Deprecated('V1 sync is local. Use sync(deviceId). No audio upload.')
+  Future<RecordingSyncResult> syncAndUpload(String deviceId) => sync(deviceId);
+
+  /// Persisted legacy upload tasks are retained for audit, never resumed in V1.
   Future<List<RecordingIndexEntry>> resumePendingUploads({String? deviceId}) =>
-      _exclusive(() async {
-        _requireUploader();
-        await _requireNetwork();
-        return _uploadPending(deviceId: deviceId);
-      });
+      Future.error(
+        const RecordingStorageException('V1仅本机同步与本地转写，不支持音频上传；原音频与旧任务保留'),
+      );
 
   Future<List<RecordingImportResult>> _download(String deviceId) async {
     final source = gateway;
@@ -105,6 +115,7 @@ class SyncCoordinator {
     if (deviceId.isEmpty) throw ArgumentError('Empty device ID');
     if (source.usesNetwork) await _requireNetwork();
     final results = <RecordingImportResult>[];
+    Object? primaryError;
     try {
       await source.openSession(deviceId);
       _checkCancelled();
@@ -120,7 +131,21 @@ class SyncCoordinator {
         final existing = state.index
             .where((entry) => entry.key == key)
             .firstOrNull;
+        final sourceConfirmed =
+            (state.metadata['source-commit:$key'] as Map?)?['state'] ==
+            'confirmed';
+        final canConfirmExisting =
+            sourceConfirmed ||
+            source is! RecordingSourceReceiptGateway ||
+            (source as RecordingSourceReceiptGateway).hasPendingSourceReceipt(
+              deviceId,
+              file,
+            );
         if (existing != null &&
+            canConfirmExisting &&
+            file.metadata['identityReliable'] != false &&
+            (file.metadataSizeBytes == null || existing.metadataPath != null) &&
+            (file.markSizeBytes == null || existing.markPath != null) &&
             await repository.verifyRecording(key) == RecordingIntegrity.valid) {
           if (existing.sizeBytes != file.sizeBytes ||
               (file.contentHash != null &&
@@ -129,6 +154,7 @@ class SyncCoordinator {
               '设备文件身份复用但内容变化，请提供包含 session/seq 的稳定文件 ID',
             );
           }
+          await _confirmImported(source, deviceId, file, existing);
           results.add(
             RecordingImportResult(
               entry: existing,
@@ -161,7 +187,7 @@ class SyncCoordinator {
               onProgress: _progress,
             );
             _checkCancelled();
-            return repository.importRecording(
+            final result = await repository.importRecording(
               RecordingImport(
                 sourcePath: downloaded.audioPath,
                 fileId: file.fileId,
@@ -178,76 +204,92 @@ class SyncCoordinator {
                 expectedMarkSize: file.markSizeBytes,
               ),
             );
+            _checkCancelled();
+            await _confirmImported(source, deviceId, file, result.entry);
+            return result;
           },
         );
         results.add(imported);
       }
-    } catch (_) {
+    } catch (error) {
+      primaryError = error;
       if (_cancelled) throw const RecordingSyncCancelled();
       rethrow;
     } finally {
-      // Cleanup errors are not silently reported as successful sessions. If
-      // cleanup masks a business error, persisted child tasks retain that error.
-      await source.closeSession(deviceId);
+      try {
+        await source.closeSession(deviceId);
+      } catch (error) {
+        await repository.update(
+          (state) => state.copyWith(
+            metadata: {
+              ...state.metadata,
+              'error:sync-cleanup': error.toString(),
+            },
+          ),
+        );
+        if (primaryError == null) rethrow;
+      }
     }
     return results;
   }
 
-  Future<List<RecordingIndexEntry>> _uploadPending({String? deviceId}) async {
-    final service = _requireUploader();
+  Future<void> _confirmImported(
+    RecordingDownloadGateway source,
+    String deviceId,
+    RemoteRecording file,
+    RecordingIndexEntry entry,
+  ) async {
+    _checkCancelled();
+    if (entry.deviceId != deviceId ||
+        entry.fileId != file.fileId ||
+        entry.sizeBytes != file.sizeBytes ||
+        (file.metadataSizeBytes != null && entry.metadataPath == null) ||
+        (file.markSizeBytes != null && entry.markPath == null) ||
+        (file.contentHash != null &&
+            entry.contentHash != file.contentHash!.toLowerCase()) ||
+        await repository.verifyRecording(entry.key) !=
+            RecordingIntegrity.valid) {
+      throw const RecordingStorageException('本机入库完整性校验失败，设备源文件保留');
+    }
     final state = await repository.load();
-    final entries = state.index
-        .where(
-          (entry) =>
-              entry.cloudFileId == null &&
-              (deviceId == null || entry.deviceId == deviceId),
-        )
-        .toList();
-    final uploaded = <RecordingIndexEntry>[];
-    for (final entry in entries) {
-      _checkCancelled();
-      final updated = await _task<RecordingIndexEntry>(
-        id: 'upload:${entry.key}',
-        kind: 'upload',
-        deviceId: entry.deviceId,
-        fileId: entry.fileId,
-        action: () async {
-          await _requireNetwork();
-          if (await repository.verifyRecording(entry.key) !=
-              RecordingIntegrity.valid) {
-            throw const RecordingStorageException('本地录音文件不完整，不能上传');
-          }
-          final receipt = await service.upload(
-            RecordingUploadRequest(
-              entry: entry,
-              requireNetwork: _requireNetwork,
-            ),
-            onProgress: _progress,
-          );
-          // A real accepted receipt is durable even if cancel happened while the
-          // server accepted it. Never delete the source; idempotency handles retry.
-          final result = await repository.markUploaded(
-            entry.key,
-            cloudFileId: receipt.cloudFileId,
-          );
-          _checkCancelled();
-          return result;
+    final key = 'source-commit:${entry.key}';
+    final old = state.metadata[key] as Map?;
+    if (old?['state'] == 'confirmed' &&
+        old?['contentHash'] == entry.contentHash) {
+      return;
+    }
+    final confirmed = source is RecordingSourceCommitGateway
+        ? await (source as RecordingSourceCommitGateway)
+              .confirmImportedRecording(
+                deviceId,
+                file,
+                RecordingSourceReceipt(
+                  repositoryKey: entry.key,
+                  audioPath: entry.audioPath,
+                  sizeBytes: entry.sizeBytes,
+                  contentHash: entry.contentHash,
+                  metadataPath: entry.metadataPath,
+                  markPath: entry.markPath,
+                ),
+              )
+        : false;
+    // If cancel races with acknowledged deletion, first persist the receipt:
+    // audio/index were already durable, so retry cannot lose the local source.
+    await repository.update(
+      (current) => current.copyWith(
+        metadata: {
+          ...current.metadata,
+          key: {
+            'state': confirmed ? 'confirmed' : 'source_retained',
+            'contentHash': entry.contentHash,
+            'sizeBytes': entry.sizeBytes,
+            'fileId': file.fileId,
+            'deviceId': deviceId,
+          },
         },
-      );
-      uploaded.add(updated);
-    }
-    return uploaded;
-  }
-
-  RecordingUploader _requireUploader() {
-    final service = uploader;
-    if (service == null) {
-      throw const RecordingUploadConfigurationException(
-        '同步上传服务未配置，不能将本地导入当作上传成功',
-      );
-    }
-    service.validateConfiguration();
-    return service;
+      ),
+    );
+    _checkCancelled();
   }
 
   Future<void> _requireNetwork() async {
@@ -324,7 +366,7 @@ class SyncCoordinator {
           ? error.message
           : error is RecordingUploadException
           ? error.message
-          : '任务失败，请检查设备、网络与配置后重试';
+          : error.toString();
       task = task.copyWith(
         state: cancelled
             ? RecordingTaskState.cancelled
@@ -362,10 +404,8 @@ class SyncCoordinator {
 
   Future<void> cancel() async {
     _cancelled = true;
-    await Future.wait([
-      if (gateway != null) gateway!.cancelActive(),
-      if (uploader != null) uploader!.cancelActive(),
-    ]);
+    // Never touch the legacy uploader: V1 owns no audio-upload operation.
+    await gateway?.cancelActive();
   }
 
   /// Cancel/await active work before disposing. HttpRecordingUploader is disposed

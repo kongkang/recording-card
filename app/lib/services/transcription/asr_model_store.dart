@@ -43,6 +43,15 @@ const senseVoiceTokensArtifact = ModelArtifact(
       'f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc',
 );
 
+/// Explicitly approved local development artifact, measured on 2026-11-09.
+/// This is NOT the default registry model; never accept either hash implicitly.
+const localSenseVoiceInt8Artifact = ModelArtifact(
+  fileName: 'model.int8.onnx',
+  sizeBytes: 237115547,
+  sha256Digest:
+      '12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d',
+);
+
 class AsrModelStore {
   final Directory directory;
   final ModelArtifact model;
@@ -105,11 +114,17 @@ class AsrModelStore {
         if (!allowDownload) {
           throw TranscriptionException(
             await file.exists() ? 'model_corrupt' : 'model_missing',
-            '${artifact.fileName}未安装或校验失败，请配置模型路径/显式下载',
+            '等待本地模型：${artifact.fileName}未安装或校验失败'
+            '（预期${artifact.sizeBytes} bytes，SHA256 ${artifact.sha256Digest}）。'
+            '音频保留本机，安装正确模型后重试；不会上传音频。',
           );
         }
         if (artifact.downloadUri == null) {
-          throw const TranscriptionException('model_source', '未配置受信任模型下载来源');
+          throw TranscriptionException(
+            'model_source',
+            '等待本地模型：${artifact.fileName}未配置受信任下载来源；'
+                '请安装所选artifact，音频保留本机，不会上传音频。',
+          );
         }
         await directory.create(recursive: true);
         await _download(file, artifact, token, onDownloadProgress);

@@ -8,6 +8,7 @@ enum TranscriptionStage {
   decodingAudio,
   recognizing,
   completed,
+  waitingForModel,
 }
 
 class TranscriptionException implements Exception {
@@ -111,10 +112,14 @@ class TranscriptionProgress {
   final TranscriptionStage stage;
   final int completedChunks;
   final int? totalChunks;
+  final String? errorCode;
+  final String? message;
   const TranscriptionProgress(
     this.stage, {
     this.completedChunks = 0,
     this.totalChunks,
+    this.errorCode,
+    this.message,
   });
 }
 

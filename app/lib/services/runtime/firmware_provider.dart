@@ -1,83 +1,60 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/device/card_gateway.dart';
-import '../../core/store/device_backend.dart';
 import '../../core/store/app_backend.dart';
 import '../../core/store/service_backends.dart';
+import '../firmware/firmware_check_service.dart';
 import 'runtime_config.dart';
 
+export '../firmware/firmware_check_service.dart';
+
 /// Public build-config manifest. No guessed releases, board IDs or bootloader.
-/// Packages are HTTPS fetched only after exact user confirmation in existing UI.
+/// Checking is read-only; packages are fetched only inside the consented install.
 class FirmwareProvider {
-  FirmwareProvider(this.gateway);
+  FirmwareProvider(this.gateway, {Future<String> Function()? loadManifest})
+    : _checks = FirmwareCheckService(
+        loadManifest:
+            loadManifest ?? (() async => RuntimeConfig.firmwareManifest),
+        readSnapshot: gateway.status,
+      );
   final CardGateway gateway;
-  Future<FirmwareRelease?> offer() async {
-    if (RuntimeConfig.firmwareManifest.isEmpty) {
-      throw StateError('可信固件清单未配置；不会自动发现或刷写未知包');
-    }
-    final manifest = (jsonDecode(RuntimeConfig.firmwareManifest) as Map)
-        .cast<String, dynamic>();
-    final snapshot = await gateway.status();
-    if (manifest['deviceId'] != snapshot.deviceId ||
-        snapshot.deviceId.isEmpty) {
-      throw StateError('固件清单与真实设备身份不一致');
-    }
-    final packages = (manifest['packages'] as List)
-        .map((p) => (p as Map).cast<String, dynamic>())
-        .toList();
-    if (packages.isEmpty ||
-        packages.length > 2 ||
-        packages.map((p) => p['module']).toSet().length != packages.length) {
-      throw StateError('固件清单必须是唯一的1–2个明确芯片阶段');
-    }
-    final canonicalHash = sha256
-        .convert(utf8.encode(jsonEncode(manifest)))
-        .toString();
-    String main = snapshot.fwVersion, wifi = snapshot.wifiVersion;
-    bool newer = false;
-    for (final p in packages) {
-      final module = p['module'];
-      if (module != 'main' && module != 'wifi') throw StateError('未知固件芯片');
-      final installed = module == 'main'
-          ? snapshot.versionCode
-          : snapshot.wifiVersionCode;
-      if (installed == null ||
-          p['installedVersionCode'] != installed ||
-          p['targetVersionCode'] is! int ||
-          p['targetVersionCode'] <= installed) {
-        throw StateError('包必须绑定真实已装版本且明确升级，拒绝降级/猜版本');
-      }
-      if (!RegExp(r'^[a-fA-F0-9]{64}$')
-          .hasMatch(p['sha256'] as String? ?? '')) {
-        throw StateError('固件缺少可信SHA256');
-      }
-      if (module == 'main' && (p['dfuTargetId'] as String? ?? '').isEmpty) {
-        throw StateError('缺少精确bootloader身份');
-      }
-      if (module == 'wifi' && (p['chipModel'] as String? ?? '').isEmpty) {
-        throw StateError('缺少精确Wi-Fi板型');
-      }
-      _validateUrl(p);
-      if (module == 'main') {
-        main = p['targetVersion'] as String;
-      } else {
-        wifi = p['targetVersion'] as String;
-      }
-      newer = true;
-    }
-    if (!newer) return null;
-    final offer = FirmwareOffer(
-      packageId: manifest['packageId'] as String,
-      deviceId: snapshot.deviceId,
-      targetMainVersion: main,
-      targetWifiVersion: wifi,
-      checksum: canonicalHash,
-      notes: manifest['notes'] as String? ?? '精确测试包；刷写需另行授权',
+  final FirmwareCheckService _checks;
+  FirmwareCheckResult? lastCheck;
+
+  /// Version reads do not depend on having an upgrade manifest. Supply the
+  /// DeviceStore's current snapshot to avoid a duplicate native transaction.
+  Future<FirmwareVersions> readVersions({
+    CardSnapshot? snapshot,
+    bool? connected,
+  }) => _checks.readVersions(snapshot: snapshot, connected: connected);
+
+  /// Rich result for UI integration: missing configuration, optional Wi-Fi
+  /// versions, disconnection and genuine failures must not be conflated.
+  Future<FirmwareCheckResult> check({
+    CardSnapshot? snapshot,
+    bool? connected,
+  }) async {
+    final result = await _checks.check(
+      snapshot: snapshot,
+      connected: connected,
     );
+    lastCheck = result;
+    return result;
+  }
+
+  /// Existing backend seam. Null means no *verified applicable offer*, not
+  /// "installed firmware is latest". A missing manifest never touches BLE.
+  Future<FirmwareRelease?> offer() async {
+    final result = await check();
+    if (result.error != null) throw result.error!;
+    final offer = result.offer;
+    if (offer == null) return null;
+    final packages = result.packages;
+    final snapshot = result.versions.snapshot!;
+    final canonicalHash = offer.checksum;
     return FirmwareRelease(
       offer: offer,
       install: (consent, sink) async {
@@ -90,10 +67,14 @@ class FirmwareProvider {
         for (var i = 0; i < packages.length; i++) {
           final p = packages[i];
           final current = await gateway.status();
+          final installed = p['module'] == 'main'
+              ? current.versionCode
+              : current.wifiVersionCode;
           if (current.deviceId != snapshot.deviceId ||
+              installed != p['installedVersionCode'] ||
               current.recording ||
               current.realtimeEnabled) {
-            throw StateError('OTA设备身份变化或录音/实时传输未停止');
+            throw StateError('OTA设备身份/已装版本变化或录音/实时传输未停止');
           }
           sink(
             TaskProgress(
@@ -144,24 +125,11 @@ class FirmwareProvider {
     );
   }
 
-  Uri _validateUrl(Map<String, dynamic> package) {
-    final url = Uri.parse(package['url'] as String);
-    final hosts = (package['allowedHosts'] as List).cast<String>().toSet();
-    if (url.scheme != 'https' ||
-        url.userInfo.isNotEmpty ||
-        url.hasFragment ||
-        !hosts.contains(url.host) ||
-        hosts.isEmpty) {
-      throw StateError('固件下载地址不在明确HTTPS白名单');
-    }
-    return url;
-  }
-
   Future<String> _download(
     Map<String, dynamic> package,
     Directory directory,
   ) async {
-    final url = _validateUrl(package);
+    final url = FirmwareManifest.validatePackageUrl(package);
     await directory.create(recursive: true);
     final file = File('${directory.path}/${package['sha256']}.bin');
     final size = package['sizeBytes'] as int;

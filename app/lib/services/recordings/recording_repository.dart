@@ -90,6 +90,9 @@ class RecordingRepository {
     if (next.tasks.any((task) => task.state == RecordingTaskState.running)) {
       changed = true;
     }
+    if (next.events.any((event) => event.transcriptionStatus == 'running')) {
+      changed = true;
+    }
     final summaries = next.summaries;
     final interruptedSummaries = <String>[];
     for (final summary in summaries) {
@@ -109,6 +112,13 @@ class RecordingRepository {
             event.copyWith(
               status: 'failed',
               error: 'Local audio asset is missing or corrupt',
+            )
+          else if (event.transcriptionStatus == 'running')
+            event.copyWith(
+              transcriptionStatus: event.originalTranscript == null
+                  ? 'queued'
+                  : 'analysis_failed',
+              error: '处理因重启中断；原音频与已保存原文保留，可重试',
             )
           else
             event,
@@ -439,11 +449,7 @@ class RecordingRepository {
         .where((event) => event.id == eventId)
         .firstOrNull;
     final event =
-        oldEvent?.copyWith(
-          audioPath: audioPath,
-          status: 'imported',
-          error: null,
-        ) ??
+        oldEvent?.copyWith(audioPath: audioPath) ??
         RecordEvent(
           id: eventId,
           dayOffset: 0,
@@ -467,6 +473,7 @@ class RecordingRepository {
           importedAt: entry.importedAt,
           durationMs: duration,
           marks: request.marks,
+          transcriptionStatus: 'queued',
         );
     await _persist(
       state.copyWith(

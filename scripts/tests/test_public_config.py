@@ -35,6 +35,26 @@ class PublicConfigTests(unittest.TestCase):
     def test_default_is_own_scheme_with_empty_model(self):
         self.assertEqual(validate_config(public_config()), "recording-card")
 
+    def test_local_profile_requires_approval_and_license(self):
+        profile = "reai-vibe-board-local-20261109"
+        self.assert_invalid(RC_ASR_ARTIFACT_PROFILE=profile)
+        self.assert_invalid(RC_ASR_ARTIFACT_PROFILE=profile, RC_ASR_LOCAL_ARTIFACTS_APPROVED=True)
+        self.assertEqual(validate_config(public_config(
+            RC_ASR_ARTIFACT_PROFILE=profile, RC_ASR_LOCAL_ARTIFACTS_APPROVED=True,
+            RC_ASR_LICENSE_ACCEPTED=True)), "recording-card")
+
+    def test_local_profile_never_downloads_or_replaces_pins(self):
+        for override in ({"RC_ASR_ALLOW_DOWNLOAD": True}, {"RC_ASR_MODEL_URL": "https://fixture.invalid/model"},
+                         {"RC_VAD_SIZE": 5, "RC_VAD_SHA256": "a" * 64}):
+            with self.subTest(override=override):
+                self.assert_invalid(RC_ASR_ARTIFACT_PROFILE="reai-vibe-board-local-20261109",
+                                    RC_ASR_LOCAL_ARTIFACTS_APPROVED=True, RC_ASR_LICENSE_ACCEPTED=True,
+                                    **override)
+
+    def test_unknown_profile_and_implicit_local_approval_blocked(self):
+        self.assert_invalid(RC_ASR_ARTIFACT_PROFILE="unknown-profile")
+        self.assert_invalid(RC_ASR_LOCAL_ARTIFACTS_APPROVED=True)
+
     def test_committed_example_without_model_is_valid(self):
         self.assertEqual(validate_config(load_config(ROOT / "config/device.public.example.json")), "recording-card")
 
@@ -189,8 +209,9 @@ class PublicConfigTests(unittest.TestCase):
                                       str(path), "--scheme"], capture_output=True, text=True)
             self.assertEqual(process.returncode, 0, process.stderr)
             self.assertEqual(process.stdout, "reai-mobile\n")
-            self.assertIn("uninstall", process.stderr)
-            self.assertIn("separate test phone", process.stderr)
+            self.assertIn("ASWebAuthenticationSession", process.stderr)
+            self.assertIn("do not uninstall", process.stderr)
+            self.assertIn("Android requires a separate test device", process.stderr)
             self.assertEqual(before, (path.read_bytes(), path.stat().st_mtime_ns, sorted(Path(directory).iterdir())))
 
     def test_cli_invalid_returns_two_without_secret_value(self):
@@ -223,6 +244,9 @@ class NativeWiringTests(unittest.TestCase):
             root = Path(directory)
             shutil.copytree(ROOT / "app/ios", root / "app/ios", ignore=shutil.ignore_patterns("Pods", ".symlinks", "ephemeral", "build"))
             shutil.copytree(ROOT / "app/rust/card_bridge/scripts", root / "app/rust/card_bridge/scripts")
+            launcher = root / "app/lib/services/auth/web_auth_launcher.dart"
+            launcher.parent.mkdir(parents=True)
+            shutil.copyfile(ROOT / "app/lib/services/auth/web_auth_launcher.dart", launcher)
             debug = root / "app/ios/Flutter/Debug.xcconfig"
             original = debug.read_text()
             debug.write_text(original.replace('#include "OAuth.xcconfig"', '#include "Generated.xcconfig"'))
@@ -231,6 +255,16 @@ class NativeWiringTests(unittest.TestCase):
             debug.write_text(original)
             local = root / "app/ios/Flutter/OAuthLocal.xcconfig"
             local.write_text("RC_OAUTH_CALLBACK_SCHEME = arbitrary\nOTHER_LDFLAGS = injected\n")
+            with self.assertRaises(PreflightError):
+                check_wiring(root)
+
+    def test_ios_does_not_globally_register_reference_app_scheme(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "app/ios/Runner/Info.plist"
+            target.parent.mkdir(parents=True)
+            original = (ROOT / "app/ios/Runner/Info.plist").read_text()
+            target.write_text(original.replace('<string>recording-card</string>', '<string>reai-mobile</string>'))
             with self.assertRaises(PreflightError):
                 check_wiring(root)
 

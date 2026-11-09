@@ -145,24 +145,34 @@ class FirmwareRelease {
   final Future<void> Function(FirmwareConsent, ProgressSink) install;
 }
 
-class ServiceDeviceBackend implements DeviceBackend {
+class ServiceDeviceBackend
+    implements
+        DeviceBackend,
+        RecordingDeviceBackend,
+        FileTransferDeviceBackend {
   ServiceDeviceBackend({
     required this.gateway,
     required SettingsRepository settingsRepository,
     SyncCoordinator? syncCoordinator,
+    SyncCoordinator? fastSyncCoordinator,
     this.firmwareProvider,
     this.recordedSeconds,
   }) : _settings = settingsRepository,
-       _sync = syncCoordinator;
+       _sync = syncCoordinator,
+       _fastSync = fastSyncCoordinator;
   final CardGateway gateway;
   final SettingsRepository _settings;
   final SyncCoordinator? _sync;
+  final SyncCoordinator? _fastSync;
   final Future<FirmwareRelease?> Function()? firmwareProvider;
 
   /// Bind only a verified recording duration/sample clock. Null => unknown.
   final int? Function(CardSnapshot)? recordedSeconds;
   String? _transportId;
   FirmwareRelease? _release;
+  String? _verifiedIdentity;
+  @override
+  DeviceSyncOutcome? lastSyncOutcome;
   @override
   bool get available => gateway.available;
   @override
@@ -179,7 +189,11 @@ class ServiceDeviceBackend implements DeviceBackend {
   DeviceReading _reading(CardSnapshot snapshot) {
     String? identity, wifi;
     try {
-      identity = (snapshot as dynamic).deviceId as String?;
+      final candidate = snapshot.deviceId.trim();
+      if (snapshot.infoAvailable && candidate.isNotEmpty) {
+        _verifiedIdentity = candidate;
+      }
+      identity = _verifiedIdentity;
     } on NoSuchMethodError {
       /* old isolated model */
     }
@@ -201,6 +215,8 @@ class ServiceDeviceBackend implements DeviceBackend {
 
   @override
   Future<DeviceReading> connect(String id) async {
+    _verifiedIdentity = null;
+    _release = null;
     final snapshot = await gateway.connect(id);
     _transportId = id;
     return _reading(snapshot);
@@ -212,16 +228,70 @@ class ServiceDeviceBackend implements DeviceBackend {
   Future<void> disconnect() async {
     await gateway.disconnect();
     _transportId = null;
+    _verifiedIdentity = null;
+    _release = null;
   }
 
   @override
-  Future<void> sync(RecordingPolicy policy, ProgressSink onProgress) async {
-    if (_sync == null) throw StateError('同步上传服务未配置');
+  Future<DeviceReading> startRecording() => _setRecording(true);
+
+  @override
+  Future<DeviceReading> stopRecording() => _setRecording(false);
+
+  bool _recordingBusy = false;
+  Future<DeviceReading> _setRecording(bool enabled) async {
+    if (_transportId == null) throw StateError('未连接录音卡');
+    if (_recordingBusy) throw StateError('录音控制正在进行，稍后重试');
+    _recordingBusy = true;
+    try {
+      // The native command resolves with real RECORD_STATUS, not command ACK.
+      final record = await gateway.setRecording(enabled);
+      if (record['isRecording'] != enabled) {
+        throw StateError('设备未确认${enabled ? '开始' : '停止'}录音');
+      }
+      final confirmed = await status();
+      if (!confirmed.recordingKnown ||
+          confirmed.snapshot.recording != enabled) {
+        throw StateError('设备录音状态确认未通过');
+      }
+      return confirmed;
+    } finally {
+      _recordingBusy = false;
+    }
+  }
+
+  @override
+  Future<void> sync(RecordingPolicy policy, ProgressSink onProgress) =>
+      _runSync(_sync, policy, onProgress);
+
+  @override
+  Future<void> fastSync(RecordingPolicy policy, ProgressSink onProgress) =>
+      _runSync(_fastSync, policy, onProgress);
+
+  @override
+  Future<void> prepareFastTransfer() async {
+    final current = await status();
+    if (current.snapshot.recording || current.snapshot.realtimeEnabled) {
+      throw StateError('快传需要先停止录音并关闭实时传输，不会暗中停录');
+    }
+    await gateway.setWifiEnabled(true);
+  }
+
+  @override
+  Future<void> cancelFastTransfer() => gateway.setWifiEnabled(false);
+
+  Future<void> _runSync(
+    SyncCoordinator? coordinator,
+    RecordingPolicy policy,
+    ProgressSink onProgress,
+  ) async {
+    lastSyncOutcome = null;
+    if (coordinator == null) throw StateError('本机文件传输服务未配置');
     if (_transportId == null) throw StateError('未连接录音卡');
     final state = await _settings.load();
     final next = state.settings.copyWith(wifiOnlySync: policy.wifiOnlySync);
     await _settings.save(next);
-    final subscription = (_sync.changes as Stream).listen((dynamic task) {
+    final subscription = (coordinator.changes as Stream).listen((dynamic task) {
       onProgress(
         TaskProgress(
           '同步 · ${task.stage}',
@@ -235,7 +305,11 @@ class ServiceDeviceBackend implements DeviceBackend {
       final snapshot = await status();
       final id = snapshot.targetId;
       if (id == null || id.isEmpty) throw StateError('设备未返回可验证身份');
-      await _sync.syncAndUpload(id);
+      final result = await coordinator.sync(id);
+      lastSyncOutcome = DeviceSyncOutcome(
+        savedCount: result.imports.length,
+        retainedSourceCount: result.retainedSourceFileIds.length,
+      );
     } finally {
       await subscription.cancel();
     }
@@ -291,7 +365,8 @@ class ServiceDeviceBackend implements DeviceBackend {
 
   @override
   Future<FirmwareOffer?> firmwareOffer() async {
-    if (firmwareProvider == null) throw StateError('可信固件清单与精确包配置未提供');
+    _release = null;
+    if (firmwareProvider == null) return null;
     _release = await firmwareProvider!();
     return _release?.offer;
   }
