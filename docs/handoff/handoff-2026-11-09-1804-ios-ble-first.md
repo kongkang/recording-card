@@ -204,6 +204,21 @@ E0603 接缝已修：`vendor/btleplug/src/lib.rs` 对 `NotificationDiagnostics` 
 
 保存只是把 WIP 固定下来：**BLE 短收仍未解决，手机仍无正式入库与真实转写文本，AP 继续暂停**。计数代码能编译、能过 mock 回放，但**尚未上机验证**，不能作为根因结论。
 
-### 11.4 Git 回执
+### 11.4 Git 回执（2026-11-09 18:24 实际执行）
 
-合并后补记（单列一节，见 11.5）。
+分支 `fix/ios-ap-and-ble-closure-20261109` 已推送并合入集成分支 `integrate/device-full-flow-20261109`（**不是 master**）：
+
+| 项 | 值 |
+| --- | --- |
+| PR | **#20**「阶段保存：Apple 通知流与分层计数、AP 探测收紧、短收文案修复」 |
+| 合并提交 | `21093de`（merge commit，父提交 `754a7b1` + `04989ae`） |
+| 合并时间 | 2026-11-09 18:24 |
+| 分支提交 | `c814e92` Apple 通知流与分层计数 / `a77acad` 桥侧计数回放与 AP 就绪 / `d7b92cd` 快照探测接入与短收文案 / `85cda0a` iOS 热点诊断 / `04989ae` 交接文档 |
+
+回执核验方式：合并后重新 fetch，集成分支 HEAD 就是上述 merge commit，两个父提交分别是原来的起点与本轮最后一个提交。
+
+**合并前后跑的仍是同一份源码**：Rust 桥 63 项在提交后的树上又跑过一次（63 passed），Flutter 389 项与 19 项 iOS 接线测试在相同 Dart/Swift 源码上跑过一次；合并动作没有改源码，因此没有另跑一遍。
+
+### 11.5 保存后工作树残留（故意的）
+
+`git status` 仍会看到：`app/macos/Podfile`（未跟踪）、两个 macOS `xcconfig`（已修改未提交）、`vendor/reai-card-sdk/Cargo.lock`、`.work/`、`inputs/`、`outputs/`。这些都在 §11.2 的排除清单里，属于自动生成物或本机证据/用户数据。下个对话不要把它们顺手提交进去，也不要因此以为工作树「脏得不干净」。
