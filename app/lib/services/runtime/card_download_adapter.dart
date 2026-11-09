@@ -5,6 +5,7 @@ import '../../core/device/card_gateway.dart';
 import '../../core/models/record.dart';
 import '../recordings/recording_download_gateway.dart';
 import '../recordings/recording_models.dart';
+import 'accessory_hotspot_session.dart';
 
 /// V1 completed-file pull. BLE is normal; AP is explicit fast transfer only.
 /// Neither transport may delete while downloading. SD metadata is untrusted.
@@ -19,9 +20,11 @@ class CardDownloadAdapter
     this.confirmSource,
     this.cancelTransfer,
     this.restoreWifiAfterSession = false,
+    this.hotspotSession,
   });
   final CardGateway gateway;
   final CardTransfer transport;
+  final AccessoryHotspotSession? hotspotSession;
   final bool restoreWifiAfterSession;
   final RecordingSourceCommit? confirmSource;
   final Future<void> Function()? cancelTransfer;
@@ -30,9 +33,8 @@ class CardDownloadAdapter
   final Map<String, List<CardDownload>> _receipts = {};
   bool _opened = false;
   bool _cancelled = false;
-  bool _enabledWifi = false;
   bool _wifiSessionActive = false;
-  bool get wifiSessionActive => _wifiSessionActive;
+  bool get wifiSessionActive => hotspotSession?.active ?? _wifiSessionActive;
   @override
   bool get usesNetwork => false;
   @override
@@ -50,9 +52,10 @@ class CardDownloadAdapter
       if (status.recording) {
         throw StateError('快传需要设备停止录音；请使用录音开关停止后重试，不会暗中停录');
       }
-      _wifiSessionActive = true;
-      _enabledWifi = !status.wifiOpen;
-      if (_enabledWifi) await gateway.setWifiEnabled(true);
+      final session = hotspotSession;
+      if (session == null) throw StateError('应用内快传热点会话未配置');
+      session.requireReady(deviceId);
+      if (!status.wifiOpen) throw StateError('录音卡热点已关闭，请重新准备快传');
     } else if (status.wifiOpen) {
       throw StateError('Wi-Fi芯片正在占用存储，请关闭快传后使用普通BLE传输');
     }
@@ -62,15 +65,15 @@ class CardDownloadAdapter
 
   @override
   Future<void> closeSession(String deviceId) async {
-    final restore = _enabledWifi || restoreWifiAfterSession;
     _opened = false;
-    _enabledWifi = false;
-    _deviceId = null;
-    _activeRecordingSession = null;
-    if (restore) {
+    if (transport == CardTransfer.ap && hotspotSession != null) {
+      await hotspotSession!.close();
+    } else if (restoreWifiAfterSession) {
       _wifiSessionActive = true;
       await gateway.setWifiEnabled(false);
     }
+    _deviceId = null;
+    _activeRecordingSession = null;
     _wifiSessionActive = false;
   }
 

@@ -9,6 +9,7 @@ import 'package:recording_card/core/device/card_gateway.dart';
 import 'package:recording_card/services/runtime/card_download_adapter.dart';
 
 import '../../runtime_repair_test.dart' show GatewaySpy;
+import '../../fixtures/accessory_hotspot_fixture.dart';
 
 class EarlyDeleteGateway extends GatewaySpy {
   @override
@@ -126,7 +127,13 @@ void main() {
   test('explicit AP choice opens/closes wifi but does not require Internet or stop recording', () async {
     gateway.recording = false;
     gateway.expectedTransport = CardTransfer.ap;
-    final adapter = CardDownloadAdapter(gateway, transport: CardTransfer.ap);
+    final hotspot = fixtureHotspot(gateway);
+    await hotspot.prepare('card:真实:device');
+    final adapter = CardDownloadAdapter(
+      gateway,
+      transport: CardTransfer.ap,
+      hotspotSession: hotspot,
+    );
     expect(adapter.usesNetwork, isFalse);
     await adapter.openSession('card:真实:device');
     final remote = (await adapter.listRecordings('card:真实:device')).single;
@@ -278,7 +285,13 @@ void main() {
     final repository = RecordingRepository(
       directory: Directory('${root.path}/repository'),
     );
-    final adapter = CardDownloadAdapter(native, transport: CardTransfer.ap);
+    final hotspot = fixtureHotspot(native);
+    await hotspot.prepare('card:真实:device');
+    final adapter = CardDownloadAdapter(
+      native,
+      transport: CardTransfer.ap,
+      hotspotSession: hotspot,
+    );
     final coordinator = SyncCoordinator(
       repository: repository,
       settingsRepository: SettingsRepository(directory: root),
@@ -315,7 +328,13 @@ void main() {
     final repository = RecordingRepository(
       directory: Directory('${root.path}/repository'),
     );
-    final adapter = CardDownloadAdapter(native, transport: CardTransfer.ap);
+    final hotspot = fixtureHotspot(native);
+    await hotspot.prepare('card:真实:device');
+    final adapter = CardDownloadAdapter(
+      native,
+      transport: CardTransfer.ap,
+      hotspotSession: hotspot,
+    );
     final coordinator = SyncCoordinator(
       repository: repository,
       settingsRepository: SettingsRepository(directory: root),
@@ -331,6 +350,7 @@ void main() {
       first.copyWith(originalTranscript: '原文不能被重试覆盖'),
     );
     expect(native.files.keys, ['REC.APM']);
+    await hotspot.prepare('card:真实:device');
     final result = await coordinator.sync('card:真实:device');
     expect(result.imports.single.duplicate, isTrue);
     expect(result.isMoveComplete, isTrue);

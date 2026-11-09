@@ -15,6 +15,7 @@ import '../../services/recordings/sync_coordinator.dart';
 import '../../services/settings/settings_repository.dart';
 import '../../services/analysis/analysis_service.dart';
 import '../../services/transcription/transcription_types.dart';
+import '../../services/runtime/accessory_hotspot_session.dart';
 
 class ServiceAppBackend implements AppBackend, CancelableAppBackend {
   ServiceAppBackend({
@@ -158,6 +159,7 @@ class ServiceDeviceBackend
     SyncCoordinator? fastSyncCoordinator,
     this.firmwareProvider,
     this.recordedSeconds,
+    this.hotspotSession,
   }) : _settings = settingsRepository,
        _sync = syncCoordinator,
        _fastSync = fastSyncCoordinator;
@@ -166,6 +168,7 @@ class ServiceDeviceBackend
   final SyncCoordinator? _sync;
   final SyncCoordinator? _fastSync;
   final Future<FirmwareRelease?> Function()? firmwareProvider;
+  final AccessoryHotspotSession? hotspotSession;
 
   /// Bind only a verified recording duration/sample clock. Null => unknown.
   final int? Function(CardSnapshot)? recordedSeconds;
@@ -216,6 +219,9 @@ class ServiceDeviceBackend
 
   @override
   Future<DeviceReading> connect(String id) async {
+    if (_transferBusy || _fastPreparing || hotspotSession?.active == true) {
+      throw StateError('快传会话尚未清理，不能切换设备');
+    }
     _verifiedIdentity = null;
     _release = null;
     final snapshot = await gateway.connect(id);
@@ -227,6 +233,8 @@ class ServiceDeviceBackend
   Future<DeviceReading> status() async => _reading(await gateway.status());
   @override
   Future<void> disconnect() async {
+    await cancelSync();
+    await hotspotSession?.close();
     await gateway.disconnect();
     _transportId = null;
     _verifiedIdentity = null;
@@ -241,6 +249,7 @@ class ServiceDeviceBackend
 
   bool _recordingBusy = false;
   bool _transferBusy = false;
+  bool _fastPreparing = false;
   bool _transferCancelled = false;
   SyncCoordinator? _activeSync;
   Completer<void>? _transferDrain;
@@ -263,7 +272,9 @@ class ServiceDeviceBackend
   Future<DeviceReading> _setRecording(bool enabled) async {
     if (_transportId == null) throw StateError('未连接录音卡');
     if (_recordingBusy) throw StateError('录音控制正在进行，稍后重试');
-    if (_transferBusy) throw StateError('文件传输正在进行，不能切换录音');
+    if (_transferBusy || _fastPreparing || hotspotSession?.active == true) {
+      throw StateError('文件传输或热点清理正在进行，不能切换录音');
+    }
     _recordingBusy = true;
     try {
       if (enabled) await _returnSdToBle();
@@ -293,18 +304,26 @@ class ServiceDeviceBackend
 
   @override
   Future<void> prepareFastTransfer() async {
-    if (_recordingBusy || _transferBusy) throw StateError('设备操作正在进行');
-    final current = await status();
-    if (current.snapshot.recording || current.snapshot.realtimeEnabled) {
-      throw StateError('快传需要先停止录音并关闭实时传输，不会暗中停录');
+    if (_recordingBusy || _transferBusy || _fastPreparing) {
+      throw StateError('设备操作正在进行');
     }
-    await gateway.setWifiEnabled(true);
+    if (_transportId == null) throw StateError('未连接录音卡');
+    final session = hotspotSession;
+    if (session == null) throw StateError('应用内快传热点会话未配置');
+    _fastPreparing = true;
+    try {
+      final id = _verifiedIdentity;
+      if (id == null || id.isEmpty) throw StateError('设备未返回可验证身份');
+      await session.prepare(id);
+    } finally {
+      _fastPreparing = false;
+    }
   }
 
   @override
   Future<void> cancelFastTransfer() async {
     if (_transferBusy) throw StateError('文件传输尚未结束，请先取消同步并等待清理');
-    await gateway.setWifiEnabled(false);
+    await hotspotSession?.close();
   }
 
   @override
@@ -332,9 +351,17 @@ class ServiceDeviceBackend
     bool ordinaryBle = false,
   }) async {
     lastSyncOutcome = null;
-    if (coordinator == null) throw StateError('本机文件传输服务未配置');
-    if (_transportId == null) throw StateError('未连接录音卡');
-    if (_recordingBusy || _transferBusy) throw StateError('设备操作正在进行');
+    if (_recordingBusy || _transferBusy || _fastPreparing) {
+      throw StateError('设备操作正在进行');
+    }
+    if (ordinaryBle && hotspotSession?.active == true) {
+      throw StateError('快传热点尚未清理，请先退出快传再使用普通 BLE');
+    }
+    if (!ordinaryBle &&
+        hotspotSession?.active == true &&
+        !hotspotSession!.ready) {
+      throw StateError('热点准备或清理未完成，不能开始新的同步');
+    }
     _transferBusy = true;
     _transferCancelled = false;
     _activeSync = coordinator;
@@ -342,6 +369,8 @@ class ServiceDeviceBackend
     StreamSubscription<dynamic>? subscription;
     var sessionStarted = false;
     try {
+      if (coordinator == null) throw StateError('本机文件传输服务未配置');
+      if (_transportId == null) throw StateError('未连接录音卡');
       if (ordinaryBle) {
         onProgress(const TaskProgress('正在准备普通BLE，确认SD由主控持有'));
         await _returnSdToBle();
@@ -366,6 +395,9 @@ class ServiceDeviceBackend
       _checkTransferCancelled();
       final id = snapshot.targetId;
       if (id == null || id.isEmpty) throw StateError('设备未返回可验证身份');
+      if (!ordinaryBle && hotspotSession != null) {
+        hotspotSession!.requireReady(id);
+      }
       sessionStarted = true;
       final result = await coordinator.sync(id);
       lastSyncOutcome = DeviceSyncOutcome(
@@ -379,11 +411,15 @@ class ServiceDeviceBackend
             // A prepared AP may exist before coordinator.openSession. All awaited
             // preflight commands have returned; use its existing idempotent cleanup
             // instead of opening a transfer just to cancel it.
-            await coordinator.gateway?.closeSession(_verifiedIdentity ?? '');
+            await coordinator?.gateway?.closeSession(_verifiedIdentity ?? '');
           }
         } finally {
-          await coordinator.drained;
-          await subscription?.cancel();
+          try {
+            await coordinator?.drained;
+            await subscription?.cancel();
+          } finally {
+            if (!ordinaryBle) await hotspotSession?.close();
+          }
         }
       } finally {
         _activeSync = null;
@@ -405,6 +441,7 @@ class ServiceDeviceBackend
 
   @override
   Future<List<WifiNet>> scanWifi() async {
+    if (hotspotSession?.active == true) throw StateError('请先退出快传并等待热点清理');
     await gateway.setWifiEnabled(true);
     final networks = await gateway.scanWifi() as List;
     return [
@@ -425,6 +462,7 @@ class ServiceDeviceBackend
 
   @override
   Future<void> connectSavedWifi(String name) async {
+    if (hotspotSession?.active == true) throw StateError('请先退出快传并等待热点清理');
     final state = await _settings.load();
     final network = (state.networks as List)
         .where((dynamic n) => n.ssid == name)
@@ -436,6 +474,7 @@ class ServiceDeviceBackend
 
   @override
   Future<void> joinWifi(String name, String password) async {
+    if (hotspotSession?.active == true) throw StateError('请先退出快传并等待热点清理');
     await gateway.connectWifi(name, password);
     final snapshot = await status();
     if (snapshot.connectedWifi != name) throw StateError('设备尚未确认连接到该网络');

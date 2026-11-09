@@ -29,7 +29,7 @@
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>录音卡需要蓝牙连接你的录音卡设备，同步录音与设备状态。</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>通过你手动加入的录音卡热点读取录音文件和更新指定测试设备。</string>
+	<string>在你确认加入录音卡热点后，通过本地网络快速传输录音文件；此连接不用于上网。</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

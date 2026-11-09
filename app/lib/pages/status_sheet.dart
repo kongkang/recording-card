@@ -273,14 +273,12 @@ class _MainView extends StatelessWidget {
   }
 
   Future<void> _prepareFastTransfer(BuildContext context) async {
-    if (!await store.prepareFastTransfer() || !context.mounted) return;
     final start = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text('AP 快传'),
+        title: const Text('录音卡快传'),
         content: const Text(
-          '已请求开启录音卡快传，热点启动可能需要片刻。请在手机设置中连接录音卡热点，然后返回此处开始传输。热点名称和密码以设备实际信息为准。快传结束后将关闭录音卡热点，恢复普通 BLE 模式。音频只保存到本机。',
+          'App 将调起系统加入录音卡热点确认，允许后会自动验证本地文件服务并开始快传，无需离开 App。此热点是临时本地数据连接，不需要 Internet，音频只保存到本机；手机联网可能暂时受影响。请保持 App 在前台，结束后自动清理热点连接。',
         ),
         actions: [
           TextButton(
@@ -288,13 +286,16 @@ class _MainView extends StatelessWidget {
             child: const Text('取消快传'),
           ),
           TextButton(
+            key: const Key('start-fast-transfer'),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('已连接，开始快传'),
+            child: const Text('继续快传'),
           ),
         ],
       ),
     );
-    if (start == true) {
+    if (start != true || !context.mounted) return;
+    if (!await store.prepareFastTransfer()) return;
+    if (context.mounted) {
       await store.syncNow(fast: true);
     } else {
       await store.cancelFastTransfer();
@@ -505,7 +506,7 @@ class _MainView extends StatelessWidget {
                   ),
                   PopupMenuItem(
                     value: CardTransferChoice.fast,
-                    child: Text('AP 快传'),
+                    child: Text('录音卡快传 · 系统确认加入'),
                   ),
                 ],
                 onSelected: (choice) {
@@ -587,6 +588,21 @@ class _MainView extends StatelessWidget {
               style: TextStyle(
                 fontSize: 12,
                 color: store.devStateIsError ? RCColors.danger : RCColors.sec,
+              ),
+            ),
+          ),
+        if (store.fastTransferPreparing ||
+            store.fastTransferCancelling ||
+            (store.fastTransferPrepared && store.syncState != SyncState.busy))
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              key: const Key('cancel-fast-transfer'),
+              onPressed: store.fastTransferCancelling
+                  ? null
+                  : store.cancelFastTransfer,
+              child: Text(
+                store.fastTransferCancelling ? '正在清理快传…' : '取消快传并清理热点',
               ),
             ),
           ),

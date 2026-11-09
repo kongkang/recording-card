@@ -17,6 +17,7 @@ import 'package:recording_card/services/settings/settings_repository.dart';
 import 'controller_integration_test.dart' as controller_fixture;
 import 'runtime_repair_test.dart' as fixture;
 import 'verify_narrow_test.dart' as ui_fixture;
+import 'fixtures/accessory_hotspot_fixture.dart';
 
 class TicketGateway extends fixture.GatewaySpy {
   TicketGateway() {
@@ -90,7 +91,7 @@ class PreflightGateway extends TicketGateway {
   @override
   Future<CardSnapshot> status() async {
     if (holdStatus) {
-      preflightStarted.complete();
+      if (!preflightStarted.isCompleted) preflightStarted.complete();
       await preflightFinal.future;
     }
     return super.status();
@@ -143,10 +144,11 @@ void main() {
       await Directory.systemTemp.createTemp('progressive-preflight-'),
     );
     final gateway = PreflightGateway();
+    final hotspot = fixtureHotspot(gateway);
     final adapter = CardDownloadAdapter(
       gateway,
       transport: CardTransfer.ap,
-      restoreWifiAfterSession: true,
+      hotspotSession: hotspot,
       cancelTransfer: gateway.cancelFileTransfer,
     );
     final coordinator = SyncCoordinator(
@@ -158,8 +160,11 @@ void main() {
       gateway: gateway,
       settingsRepository: SettingsRepository(directory: h.root),
       fastSyncCoordinator: coordinator,
+      hotspotSession: hotspot,
     );
     await delegate.connect('transport');
+    await delegate.prepareFastTransfer();
+    gateway.log.clear();
     gateway.holdStatus = true;
     final running = delegate.fastSync(const RecordingPolicy(), (_) {});
     final assertion = expectLater(
@@ -215,10 +220,11 @@ void main() {
       autoClean: false,
       inferSpeakers: false,
     );
+    final hotspot = fixtureHotspot(gateway);
     final adapter = CardDownloadAdapter(
       gateway,
       transport: CardTransfer.ap,
-      restoreWifiAfterSession: true,
+      hotspotSession: hotspot,
       cancelTransfer: gateway.cancelFileTransfer,
     );
     final coordinator = SyncCoordinator(
@@ -231,6 +237,7 @@ void main() {
       gateway: gateway,
       settingsRepository: SettingsRepository(directory: h.root),
       fastSyncCoordinator: coordinator,
+      hotspotSession: hotspot,
     );
     final runtime = RuntimeDeviceBackend(delegate, h.pipeline, gateway);
     final published = Completer<void>();
@@ -246,6 +253,8 @@ void main() {
       },
     );
     await runtime.connect('transport');
+    await runtime.prepareFastTransfer();
+    gateway.log.clear();
     store.fastTransferPrepared = true;
     final running = store.syncNow(fast: true);
     await gateway.secondStarted.future;
