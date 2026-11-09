@@ -25,6 +25,7 @@ import '../transcribe/utterance_builder.dart';
 import '../transcribe/wav_io.dart';
 import 'network_policy.dart';
 import 'recording_store.dart';
+import 'speaker_profile_store.dart';
 
 /// 管线阶段（用于状态块与进度条文案）。
 enum PipelineStage {
@@ -617,12 +618,45 @@ class RecordingPipeline {
 
     final cluster = clusterer.cluster(samples);
     final byId = {for (final a in cluster.assignments) a.id: a};
+
+    // 会话级编号：一次连续录音会横跨多个设备文件，同一个人的编号要跨文件稳定。
+    // 声纹表读写失败时退化为单文件编号（展示仍是「推测」），不影响转写结果。
+    var clusterToSpeaker = <int, int>{
+      for (final index in cluster.centroids.keys) index: index,
+    };
+    if (file.session.isNotEmpty && cluster.centroids.isNotEmpty) {
+      try {
+        final speechMs = <int, int>{};
+        for (final u in file.utterances) {
+          final assignment = byId[u.id];
+          if (assignment == null || !assignment.known) continue;
+          speechMs[assignment.cluster] =
+              (speechMs[assignment.cluster] ?? 0) + u.durationMs;
+        }
+        final profileStore = SpeakerProfileStore(root: await store.root());
+        final match = SessionSpeakerMatcher(
+          maxSpeakers: clusterer.maxSpeakers,
+        ).assign(
+          existing: await profileStore.load(file.session),
+          fileCentroids: cluster.centroids,
+          clusterSpeechMs: speechMs,
+          deviceName: file.deviceName,
+        );
+        clusterToSpeaker = match.clusterToSpeaker;
+        await profileStore.save(match.profiles);
+      } on Object {
+        // 只保留单文件编号：声纹表不可写不是转写失败
+      }
+    }
+
+    int sessionIndexOf(int cluster) => clusterToSpeaker[cluster] ?? cluster;
+
     file.utterances = [
       for (final u in file.utterances)
         if (byId[u.id] != null && byId[u.id]!.known)
           u.copyWith(
-            speakerCluster: byId[u.id]!.cluster,
-            speakerLabel: '说话人 ${byId[u.id]!.cluster + 1}',
+            speakerCluster: sessionIndexOf(byId[u.id]!.cluster),
+            speakerLabel: '说话人 ${sessionIndexOf(byId[u.id]!.cluster) + 1}',
             spkConfidence: byId[u.id]!.confidence,
           )
         else

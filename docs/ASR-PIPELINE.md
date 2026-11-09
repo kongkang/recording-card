@@ -60,11 +60,14 @@
 
 ## 5. 待办（P2/P3）
 
-- 声纹跨文件：session 内用 `SpeakerClusterResult.centroids` 与后续文件的簇做余弦匹配
-  （阈值 ~0.75），避免每 10 分钟说话人编号跳变；匹配不上才新建编号。
+- ~~声纹跨文件：session 内用 `SpeakerClusterResult.centroids` 与后续文件的簇做余弦匹配
+  （阈值 ~0.75），避免每 10 分钟说话人编号跳变；匹配不上才新建编号。~~
+  已实现（2026-11-09）：`services/recordings/speaker_profile_store.dart`；
+  质心按语音时长加权合并、同文件重跑不重复累加、本地 `recordings/_sessions/` 落盘。
 - 声纹置信度：低相似度（<0.5）或小簇（总时长 <2.5s）统一显示「未区分」。
 - ASR/VAD 模型生产规格：SenseVoice 官方 size/sha 待 manifest 下发；当前 dev 规格 size=0。
 - 真实双人/多人录音的聚类阈值需要用真机数据调参（当前只用重复单人音频验证了链路）。
+  跨文件匹配阈值（0.75）同样待真实双人录音校准。
 
 ## 6. 真机全链路（2026-11-09）
 

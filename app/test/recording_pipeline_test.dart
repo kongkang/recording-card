@@ -9,7 +9,9 @@ import 'package:recording_card/core/storage/storage.dart';
 import 'package:recording_card/core/store/settings_store.dart';
 import 'package:recording_card/services/analysis/chat_completion.dart';
 import 'package:recording_card/services/polish/slice_polish_service.dart';
-import 'package:recording_card/services/recordings/recording_pipeline.dart';import 'package:recording_card/services/recordings/recording_store.dart';
+import 'package:recording_card/services/recordings/recording_pipeline.dart';
+import 'package:recording_card/services/recordings/recording_store.dart';
+import 'package:recording_card/services/recordings/speaker_profile_store.dart';
 import 'package:recording_card/services/segment/segment_build_service.dart';
 import 'package:recording_card/services/transcribe/local_asr_service.dart';
 import 'package:recording_card/services/transcribe/slice_planner.dart';
@@ -24,6 +26,12 @@ class _FakeEngine implements SpeechEngine {
   bool failTranscribe = false;
   int transcribeCalls = 0;
   int embedCalls = 0;
+
+  /// 按文件（loadSpeakerEmbedding 调用）分组指定每句的声纹向量；
+  /// 用于跨文件说话人编号测试。null 时按调用奇偶交替返回两个说话人。
+  List<List<List<double>>>? embeddingPlan;
+  int labelPass = 0;
+  int _embedInFile = 0;
 
   @override
   Future<void> load({
@@ -63,7 +71,10 @@ class _FakeEngine implements SpeechEngine {
   }
 
   @override
-  Future<void> loadSpeakerEmbedding(String modelPath) async {}
+  Future<void> loadSpeakerEmbedding(String modelPath) async {
+    labelPass++;
+    _embedInFile = 0;
+  }
 
   @override
   Future<List<double>> embedSpeaker(
@@ -71,6 +82,13 @@ class _FakeEngine implements SpeechEngine {
     int sampleRate = 16000,
   }) async {
     embedCalls++;
+    final plan = embeddingPlan;
+    if (plan != null && plan.isNotEmpty) {
+      final byFile = plan[(labelPass - 1).clamp(0, plan.length - 1)];
+      final vector = byFile[_embedInFile.clamp(0, byFile.length - 1)];
+      _embedInFile++;
+      return vector;
+    }
     return embedCalls.isOdd ? [1, 0, 0] : [0, 1, 0];
   }
 
@@ -386,5 +404,46 @@ void main() {
     expect(file.utterances, isNotEmpty);
     expect(file.turns, isEmpty);
     expect(file.polishedThroughSlice, -1);
+  });
+
+  test('跨文件声纹：同一 session 的第二个文件沿用会话编号', () async {
+    // 两句话长度差异明显 → 每个文件里第 1 句都是主导说话人。
+    engine.text = '第一句话很长很长很长。第二句。';
+    // 同步按起点倒序处理：later 先处理，earlier 后处理且两句话的声纹顺序相反。
+    engine.embeddingPlan = [
+      [
+        [1, 0, 0],
+        [0, 1, 0],
+      ],
+      [
+        [0, 1, 0],
+        [1, 0, 0],
+      ],
+    ];
+    gateway.deviceFiles = [
+      apm(name: 'later.APM', startAtSec: 1730000600),
+      apm(name: 'earlier.APM', startAtSec: 1730000000),
+    ];
+
+    final report = await pipeline.sync();
+    expect(report.ready, 2);
+
+    final later = (await store.load('later.APM'))!;
+    final earlier = (await store.load('earlier.APM'))!;
+    expect(later.utterances.length, 2);
+    expect(earlier.utterances.length, 2);
+
+    // later：e1=说话人 1，e2=说话人 2
+    expect(later.utterances[0].speakerLabel, '说话人 1');
+    expect(later.utterances[1].speakerLabel, '说话人 2');
+    // earlier：本文件里 e2 才是主导，但会话编号必须沿用 → e2 仍是说话人 2
+    expect(earlier.utterances[0].speakerLabel, '说话人 2');
+    expect(earlier.utterances[1].speakerLabel, '说话人 1');
+    expect(earlier.utterances[0].speakerCluster, 1);
+    expect(earlier.utterances[1].speakerCluster, 0);
+
+    final profiles = await SpeakerProfileStore(root: root).load('S1');
+    expect(profiles.profiles.length, 2);
+    expect(profiles.contributors, {'later.APM', 'earlier.APM'});
   });
 }

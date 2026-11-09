@@ -14,8 +14,11 @@
 - **P7 真机全链路通过**（2026-11-09）：`62B1755F.APM` 25.2s →
   1 片 / 6 句 / 6 turn / 1 段 / 2 说话人，总耗时 1:06（假云端润色）。
   证据：`app/integration_test/pipeline_device_test.dart`，详见 `docs/ASR-PIPELINE.md` §6。
-- 剩余：真实云端润色/分段在真机的联调（需要 RC_MODEL_BASE/后端）、跨文件声纹质心、
-  真实双人录音调参、UI 逐帧目检、Android（不在本期）。
+- **跨文件声纹质心已接**（2026-11-09）：同 session 的多个设备文件共用一套「说话人 N」
+  编号（质心按时长加权合并，同一文件重跑不重复累加）；声纹表只落本机
+  `recordings/_sessions/`。见 `app/lib/services/recordings/speaker_profile_store.dart`。
+- 剩余：真实云端润色/分段在真机的联调（需要 RC_MODEL_BASE/后端）、
+  真实双人录音调参、UI 逐帧目检、Android 装机验证（桥已编进 APK，尚未上真机）。
 
 ## 1. 基线
 
