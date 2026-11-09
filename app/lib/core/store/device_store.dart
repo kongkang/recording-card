@@ -20,6 +20,9 @@ import '../platform/bluetooth_permission.dart';
 
 enum SyncState { idle, busy, done }
 
+/// 最近一次同步是谁触发的：自动（停止录音/后台）还是用户点同步行。
+enum SyncTrigger { auto, manual }
+
 enum DeviceView { main, upg, wifi }
 
 /// 与录音卡的蓝牙连接状态：未连接时顶栏胶囊变灰，点开进扫描流程。
@@ -122,6 +125,18 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 我们这一系列录音卡的蓝牙名前缀（如 `DYJV2_T4W25T`）。
+  ///
+  /// SDK 扫描侧已按 DYJ + NUS 广播过滤；这里再兜一层，避免个别固件不广播
+  /// NUS、或系统缓存里混入其它设备时把无关设备列给用户。
+  static const deviceNamePrefix = 'DYJ';
+
+  static bool isOurDevice(CardDevice device) =>
+      device.name.toUpperCase().startsWith(deviceNamePrefix);
+
+  /// RSSI → 1~3 格信号（与 Wi-Fi 列表同一套阈值，UI 直接复用）。
+  static int signalOf(int? rssi) => _signalOf(rssi ?? -100);
+
   /// 扫描附近录音卡（DYJ 前缀 + NUS 广播，过滤在 SDK 侧完成）。
   Future<void> startScan() async {
     if (isLinkBusy || !_gateway.available) {
@@ -152,9 +167,13 @@ class DeviceStore extends ChangeNotifier {
     try {
       final list = await _gateway.scan();
       if (epoch != _epoch) return;
-      discovered = list;
+      // 近的设备排前面：RSSI 越大信号越强（-50 比 -80 近）。无 RSSI 的排最后。
+      discovered = [
+        for (final device in list)
+          if (isOurDevice(device)) device,
+      ]..sort((a, b) => (b.rssi ?? -100).compareTo(a.rssi ?? -100));
       linkState = LinkState.disconnected;
-      linkError = list.isEmpty
+      linkError = discovered.isEmpty
           ? (bleAuth == BluetoothAuthorization.notDetermined
               ? '请允许「录音卡」使用蓝牙后重试'
               : '没有找到附近的录音卡，请确认录音卡已开机')
@@ -219,6 +238,7 @@ class DeviceStore extends ChangeNotifier {
   }
 
   void _resetLiveState() {
+    _stopClock();
     _liveBattery = null;
     _liveCharging = null;
     _liveRecording = null;
@@ -322,13 +342,11 @@ class DeviceStore extends ChangeNotifier {
     if (s.recording != (_liveRecording ?? false)) {
       _liveRecording = s.recording;
       _clockTicks = 0;
-      // 时钟只在弹层打开时跳（省电 + 测试里定时器不悬挂）
-      if (s.recording && sheetOpen) {
-        _startClock();
-      } else if (!s.recording) {
-        _stopClock();
-      }
+      // 录音计时跨页面持续走：Timeline 顶部状态块与弹层用的是同一个时钟。
+      // 只有 UI 持有（retainClock）时才真正起表；停止录音/断开立即停表。
+      if (!s.recording) _stopClock();
     }
+    if (s.recording && _clockUsers > 0) _startClock();
   }
 
   /// 弹层打开时刷新真实设备数据。
@@ -357,14 +375,27 @@ class DeviceStore extends ChangeNotifier {
   // ── 录音时钟：以设备真实录音起点为准 ───────────────────────
   int _clockTicks = 0;
   Timer? _clockTimer;
+  int _clockUsers = 0;
 
   /// 兼容旧接口：无设备时返回 0，界面不显示假时长。
   int get recSeconds => _clockTicks;
 
   bool get isRecording => _liveRecording ?? false;
 
+  /// UI 挂载时持有录音时钟（引用计数）：Timeline 状态块 / 状态弹层打开期间
+  /// 计时持续走，全部释放后停表。没有 UI 消费时不空转（也便于单元测试）。
+  void retainClock() {
+    _clockUsers++;
+    if (isRecording) _startClock();
+  }
+
+  void releaseClock() {
+    if (_clockUsers > 0) _clockUsers--;
+    if (_clockUsers == 0) _stopClock();
+  }
+
   void _startClock() {
-    _clockTimer?.cancel();
+    if (_clockTimer != null) return;
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _clockTicks++;
       notifyListeners();
@@ -385,15 +416,27 @@ class DeviceStore extends ChangeNotifier {
         '${m.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
   }
 
+  /// 录音命令进行中：UI 用它禁用开关，避免连点造成 start/stop 竞态。
+  bool recordingBusy = false;
+
   /// 开始/停止录音（真实命令）。
+  ///
+  /// 设备回包后立刻刷新快照，界面据 [isRecording] 切到「录音中 + 正计时」或
+  /// 「未录音」；计时从本次连接后的第一次开始录音算起（设备不回传起点）。
   Future<String?> toggleRecording() async {
     if (!isConnected) return '录音卡未连接';
+    if (recordingBusy) return null;
+    recordingBusy = true;
+    notifyListeners();
     try {
       await _gateway.record('toggle');
       await refreshFromDevice();
       return null;
     } on CardException catch (e) {
       return e.message;
+    } finally {
+      recordingBusy = false;
+      notifyListeners();
     }
   }
 
@@ -440,9 +483,12 @@ class DeviceStore extends ChangeNotifier {
   int get wifiVersionCode => _wifiVersionCode;
   int? get storageFreeMb => _storageFreeMb;
 
-  // ── 同步：真实 sync.start + 冷却 10s ───────────────────────
+  // ── 同步：自动同步为主，点击行 = 手动同步 ───────────────────
   SyncState syncState = SyncState.idle;
   DateTime? lastSyncAt;
+
+  /// 默认自动同步；用户点同步行后变成手动同步，行文案据此区分。
+  SyncTrigger lastSyncTrigger = SyncTrigger.auto;
   String? syncError;
   bool _syncCooldown = false;
 
@@ -460,7 +506,9 @@ class DeviceStore extends ChangeNotifier {
   String get syncText => switch (syncState) {
     SyncState.busy => '正在同步…',
     SyncState.done => '同步成功 · 刚刚',
-    SyncState.idle => '最近同步 · $syncRelText',
+    SyncState.idle =>
+      '${lastSyncTrigger == SyncTrigger.manual ? '手动同步' : '自动同步'} · '
+          '$syncRelText',
   };
 
   bool get canSync =>
@@ -469,7 +517,8 @@ class DeviceStore extends ChangeNotifier {
       !_syncCooldown &&
       !fwUpdating;
 
-  Future<void> syncNow() async {
+  /// 点击同步行 = 手动同步；设备 Wi-Fi 上传链路。
+  Future<void> syncNow({bool manual = true}) async {
     if (!canSync) return;
     syncState = SyncState.busy;
     syncError = null;
@@ -486,21 +535,41 @@ class DeviceStore extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      lastSyncAt = DateTime.now();
-      syncState = SyncState.done;
-      notifyListeners();
-      _syncCooldown = true;
-      Timer(const Duration(seconds: 10), () {
-        _syncCooldown = false;
-        syncState = SyncState.idle;
-        notifyListeners();
-      });
+      _finishSync(manual ? SyncTrigger.manual : SyncTrigger.auto);
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       syncState = SyncState.idle;
       syncError = e.message;
       notifyListeners();
     }
+  }
+
+  /// 自动同步（停止录音后由外壳触发的拉取/整理）完成后回报。
+  ///
+  /// 自动同步是静默的：只更新「自动同步 · 刚刚」与时间，不进入绿色对勾 +
+  /// 10 秒冷却（那套反馈是给用户手动点击的）。
+  void noteSyncFinished({required bool manual}) {
+    if (manual) {
+      _finishSync(SyncTrigger.manual);
+      return;
+    }
+    lastSyncAt = DateTime.now();
+    lastSyncTrigger = SyncTrigger.auto;
+    syncState = SyncState.idle;
+    notifyListeners();
+  }
+
+  void _finishSync(SyncTrigger trigger) {
+    lastSyncAt = DateTime.now();
+    lastSyncTrigger = trigger;
+    syncState = SyncState.done;
+    notifyListeners();
+    _syncCooldown = true;
+    Timer(const Duration(seconds: 10), () {
+      _syncCooldown = false;
+      syncState = SyncState.idle;
+      notifyListeners();
+    });
   }
 
   /// 轮询设备同步状态直到 running=false 或超时（默认 60s）。
@@ -551,7 +620,6 @@ class DeviceStore extends ChangeNotifier {
     sheetOpen = true;
     view = DeviceView.main;
     if (isConnected) {
-      if (isRecording) _startClock();
       unawaited(refreshFromDevice());
       unawaited(prefetchSummaryInfo());
     } else if (linkState == LinkState.unknown) {
@@ -565,7 +633,7 @@ class DeviceStore extends ChangeNotifier {
   void closeSheet() {
     if (fwUpdating) return; // 更新中弹层锁定
     sheetOpen = false;
-    _stopClock();
+    // 不停录音时钟：录音还在继续，Timeline 顶部状态块要继续计时
     notifyListeners();
   }
 

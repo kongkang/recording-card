@@ -54,4 +54,30 @@ void main() {
         find.ancestor(of: block, matching: find.byType(IgnorePointer)).first);
     expect(ignore.ignoring, isTrue);
   });
+
+  testWidgets('录音显示正计时；停止后同步态显示的阶段文案', (tester) async {
+    final controller = RecordingStatusController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_host(controller));
+
+    controller.startRecording();
+    controller.updateElapsed(65);
+    await tester.pump();
+    expect(find.text('正在录音'), findsOneWidget);
+    expect(find.textContaining('已录 00:01:05'), findsOneWidget);
+
+    controller.startSync(detail: '正在下载最新录音…');
+    await tester.pump();
+    expect(find.text('正在同步'), findsOneWidget);
+    expect(find.text('正在下载最新录音…'), findsOneWidget);
+
+    controller.updateSync('正在转写 1/2', remaining: 1);
+    await tester.pump();
+    expect(find.text('正在转写 1/2'), findsOneWidget);
+
+    // 同步完成且不在录音会话中 → 收起
+    controller.updateQueue(remaining: 0, active: false);
+    await tester.pump();
+    expect(find.byKey(const Key('recording-status-block')), findsNothing);
+  });
 }

@@ -33,11 +33,14 @@ class TimelinePage extends StatelessWidget {
       listenable: store,
       builder: (context, _) {
         final groups = store.feedGroups;
+        // 录音/同步状态块只出现在「全部/记录」的内容顶部：
+        // 勾选总结时收起（总结源列表保持干净），切到「总结」Tab 也不显示。
+        final showStatus = recordingStatus != null &&
+            !store.selMode &&
+            store.filter != FeedFilter.summary;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (recordingStatus != null)
-              RecordingStatusBlock(controller: recordingStatus!),
             _TabsBar(store: store),
             if (store.selMode) _RangeBar(store: store),
             if (store.loading || store.syncStage != null)
@@ -55,6 +58,15 @@ class TimelinePage extends StatelessWidget {
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         children: [
+                          if (showStatus)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 22,
+                              ),
+                              child: RecordingStatusBlock(
+                                controller: recordingStatus!,
+                              ),
+                            ),
                           Padding(
                             padding: const EdgeInsets.only(top: 60),
                             child: Center(
@@ -87,6 +99,10 @@ class TimelinePage extends StatelessWidget {
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.fromLTRB(22, 4, 22, 32),
                         children: [
+                          if (showStatus)
+                            RecordingStatusBlock(
+                              controller: recordingStatus!,
+                            ),
                           for (final g in groups) ...[
                             Padding(
                               padding: const EdgeInsets.only(

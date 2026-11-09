@@ -145,8 +145,33 @@ class FakeCardGateway implements CardGateway {
     current = null;
   }
 
+  /// 录音命令记录（start/stop/toggle），供状态机测试断言。
+  final List<String> recordCalls = [];
+
   @override
-  Future<void> record(String action) async {}
+  Future<void> record(String action) async {
+    recordCalls.add(action);
+    final cur = current;
+    if (cur == null) throw CardException.disconnected();
+    final recording = switch (action) {
+      'start' => true,
+      'stop' => false,
+      'toggle' => !cur.recording,
+      _ => cur.recording,
+    };
+    current = CardSnapshot(
+      batteryLevel: cur.batteryLevel,
+      isCharging: cur.isCharging,
+      wifiOpen: cur.wifiOpen,
+      recording: recording,
+      fwVersion: cur.fwVersion,
+      fwVersionCode: cur.fwVersionCode,
+      wifiVersion: cur.wifiVersion,
+      wifiVersionCode: cur.wifiVersionCode,
+      deviceName: cur.deviceName,
+      deviceId: cur.deviceId,
+    );
+  }
 
   @override
   Future<void> mark() async {}

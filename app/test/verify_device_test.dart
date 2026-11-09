@@ -67,7 +67,7 @@ void main() {
       // 未同步过：如实说「尚未同步」，不假装刚刚同步
       expect(
         tester.widget<Text>(find.byKey(const Key('sync-txt'))).data,
-        '最近同步 · 尚未同步',
+        '自动同步 · 尚未同步',
       );
       // 打开弹层时就预取概要信息：Wi-Fi 数量来自设备凭据，固件状态来自 otaInfo
       await tester.pump();
@@ -129,7 +129,7 @@ void main() {
     // 冷却结束恢复灰态 sync 图标
     await tester.pump(const Duration(seconds: 11));
     expect(find.byKey(const Key('sync-ico-idle')), findsOneWidget);
-    expect(find.textContaining('最近同步'), findsOneWidget);
+    expect(find.textContaining('手动同步'), findsOneWidget);
     await tester.tap(find.byKey(const Key('sheet-close')));
     await tester.pump();
   });

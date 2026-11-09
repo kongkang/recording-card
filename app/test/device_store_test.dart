@@ -162,7 +162,7 @@ void main() {
     await store.restoreLink();
 
     expect(store.canSync, isTrue);
-    expect(store.syncText, '最近同步 · 尚未同步');
+    expect(store.syncText, '自动同步 · 尚未同步');
 
     store.syncNow();
     await tester.pump();
@@ -188,7 +188,7 @@ void main() {
     await tester.pump(const Duration(seconds: 10));
     expect(store.syncState, SyncState.idle);
     expect(store.canSync, isTrue);
-    expect(store.syncText, contains('最近同步'));
+    expect(store.syncText, contains('手动同步'));
     expect(store.syncRelText, '刚刚');
   });
 
@@ -206,7 +206,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
     expect(store.syncState, SyncState.idle);
     expect(store.syncError, '同步未完成，请稍后重试');
-    expect(store.lastSyncAt, isNull, reason: '没成功就不该记「最近同步」');
+    expect(store.lastSyncAt, isNull, reason: '没成功就不该记同步时间');
     expect(store.canSync, isTrue, reason: '失败不冷却，用户可以直接重试');
   });
 
@@ -350,17 +350,18 @@ void main() {
     expect(store.fwValText, '有可用更新');
   });
 
-  testWidgets('录音时钟只在弹层打开且录音中才跳（从 0 开始）', (tester) async {
+  testWidgets('录音时钟由 UI 持有：录音中持续走，释放后停（从 0 开始）', (tester) async {
     final gateway = FakeCardGateway(initialSnapshot: snapshotWith(recording: true));
     final store = DeviceStore(gateway: gateway);
     addTearDown(store.dispose);
     await store.restoreLink();
 
-    // 弹层未打开：不跳
+    // 没有 UI 持有：不空转
     await tester.pump(const Duration(seconds: 3));
     expect(store.recSeconds, 0);
 
-    store.openSheet();
+    // Timeline 状态块/弹层挂载 → 开始计时
+    store.retainClock();
     await tester.pump();
     expect(store.recClockText, '00:00:00');
     await tester.pump(const Duration(seconds: 1));
@@ -368,9 +369,15 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     expect(store.recClockText, '00:00:03');
 
+    // 关弹层不停表（录音还在继续，Timeline 顶部还要计时）
     store.closeSheet();
     await tester.pump(const Duration(seconds: 2));
-    expect(store.recSeconds, 3, reason: '关掉弹层就停表');
+    expect(store.recSeconds, 5);
+
+    // 最后一个 UI 释放 → 停表
+    store.releaseClock();
+    await tester.pump(const Duration(seconds: 2));
+    expect(store.recSeconds, 5, reason: '没有 UI 持有后停表');
   });
 
   testWidgets('未连接时点开弹层：进入扫描，不给假状态', (tester) async {

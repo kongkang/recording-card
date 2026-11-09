@@ -1,5 +1,9 @@
-/// Timeline 顶部「正在录音」状态块 —— 只做状态展示，不可点击；
-/// idle 时完全收起，不占布局。
+/// Timeline 顶部「正在录音 / 正在同步」状态块 —— 只做状态展示，不可点击/勾选。
+///
+/// 语义（设计稿注释同款）：设备约 5 分钟产出一个录音切片；每片传完并转写完成后，
+/// 会作为「今天」时间轴的第一条记录出现。这块表示**当前录音中、尚未转录的部分**，
+/// 不是一条可点记录；积压最多约 30 分钟，日常约 5 分钟一段。
+/// 勾选总结 / 「总结」Tab 时由 Timeline 直接不渲染（不能把它算进总结源）。
 library;
 
 import 'package:flutter/material.dart';
@@ -32,13 +36,21 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
   /// idle/error 不跑动画，避免空闲页面持续调度帧（测试 pumpAndSettle 也会挂）。
   void _syncPulse(RecordingPhase phase) {
     final shouldPulse = phase == RecordingPhase.recording ||
-        phase == RecordingPhase.processing ||
+        phase == RecordingPhase.syncing ||
         phase == RecordingPhase.transcribing;
     if (shouldPulse && !_pulse.isAnimating) {
       _pulse.repeat(reverse: true);
     } else if (!shouldPulse && _pulse.isAnimating) {
       _pulse.stop();
     }
+  }
+
+  static String _clock(int seconds) {
+    final h = seconds ~/ 3600;
+    final m = (seconds % 3600) ~/ 60;
+    final s = seconds % 60;
+    return '${h.toString().padLeft(2, '0')}:'
+        '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -51,26 +63,40 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
         if (phase == RecordingPhase.idle) return const SizedBox.shrink();
 
         final (label, color, icon) = switch (phase) {
-          RecordingPhase.recording => ('正在录音', RCColors.danger, Icons.fiber_manual_record),
-          RecordingPhase.processing =>
-            ('正在处理录音', RCColors.ink, Icons.graphic_eq),
-          RecordingPhase.transcribing =>
-            ('正在转写', RCColors.okInk, Icons.auto_awesome),
-          RecordingPhase.error =>
-            ('录音整理中断', RCColors.danger, Icons.error_outline),
+          RecordingPhase.recording => (
+            '正在录音',
+            RCColors.danger,
+            Icons.fiber_manual_record,
+          ),
+          RecordingPhase.syncing => ('正在同步', RCColors.ink, Icons.sync),
+          RecordingPhase.transcribing => (
+            '正在转写',
+            RCColors.okInk,
+            Icons.auto_awesome,
+          ),
+          RecordingPhase.error => (
+            '录音整理中断',
+            RCColors.danger,
+            Icons.error_outline,
+          ),
           RecordingPhase.idle => ('', RCColors.sec, Icons.circle),
         };
         final pending = widget.controller.pendingSlices;
-        final subtitle = phase == RecordingPhase.transcribing && pending > 0
-            ? '剩余 $pending 段'
-            : phase == RecordingPhase.error
-                ? (widget.controller.lastError ?? '可稍后重试')
-                : null;
+        final subtitle = switch (phase) {
+          RecordingPhase.recording =>
+            '已录 ${_clock(widget.controller.elapsedSeconds)} · 未转录',
+          RecordingPhase.syncing => widget.controller.detail ?? '正在整理最近一段…',
+          RecordingPhase.transcribing => pending > 0 ? '剩余 $pending 段' : null,
+          RecordingPhase.error =>
+            widget.controller.lastError ?? '可稍后重试',
+          RecordingPhase.idle => null,
+        };
 
         return IgnorePointer(
           child: Container(
             key: const Key('recording-status-block'),
-            margin: const EdgeInsets.fromLTRB(22, 8, 22, 0),
+            // 由 Timeline 列表统一给左右 22 的边距；这里只管上下留白
+            margin: const EdgeInsets.only(top: 8, bottom: 4),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
               color: RCColors.card,

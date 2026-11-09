@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../core/store/device_store.dart';
 import '../core/theme/tokens.dart';
+import '../widgets/rc_switch.dart';
 
 /// 电池图标：仅图形不显数字；<20% 红 / <40% 橙 / ≥40% 绿
 class BatteryIcon extends StatelessWidget {
@@ -317,37 +318,85 @@ class _MainView extends StatelessWidget {
           ],
         ),
         const Divider(height: 24, color: RCColors.sep),
-        // 录音状态：红点 + 录音中 + 跳动时钟（定宽防抖动）
+        // 录音状态：关闭时显示「未录音」+ 开关；打开后红点 + 录音中 + 正计时。
+        // 开关本身就是入口，避免再去别处找「开始录音」。
         _Row(
           label: '录音状态',
-          child: Container(
-            key: const Key('recval'),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: const BoxDecoration(
-                    color: RCColors.danger,
-                    shape: BoxShape.circle,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedSwitcher(
+                key: const Key('recval'),
+                duration: const Duration(milliseconds: 220),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: SizeTransition(
+                    sizeFactor: animation,
+                    axis: Axis.horizontal,
+                    child: child,
                   ),
                 ),
-                const SizedBox(width: 5),
-                const Text('录音中', style: TextStyle(fontSize: 13)),
-                const SizedBox(width: 8),
-                Text(
-                  store.recClockText,
-                  key: const Key('rec-clock'),
-                  softWrap: false, // 等宽数字单行，不折行
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                    fontWeight: FontWeight.w600,
+                child: store.isRecording
+                    ? Row(
+                        key: const ValueKey('rec-on'),
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: const BoxDecoration(
+                              color: RCColors.danger,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          const Text('录音中', style: TextStyle(fontSize: 13)),
+                          const SizedBox(width: 8),
+                          Text(
+                            store.recClockText,
+                            key: const Key('rec-clock'),
+                            softWrap: false, // 等宽数字单行，不折行
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      )
+                    : const Text(
+                        '未录音',
+                        key: ValueKey('rec-off'),
+                        style: TextStyle(fontSize: 13, color: RCColors.sec),
+                      ),
+              ),
+              const SizedBox(width: 10),
+              Semantics(
+                label: '录音开关',
+                toggled: store.isRecording,
+                button: true,
+                child: GestureDetector(
+                  key: const Key('rec-toggle'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: store.recordingBusy
+                      ? null
+                      : () async {
+                          final error = await store.toggleRecording();
+                          if (error != null && context.mounted) {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text(error)));
+                          }
+                        },
+                  child: RCSwitch(
+                    on: store.isRecording,
+                    busy: store.recordingBusy,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
         _Row(
@@ -528,6 +577,11 @@ class _ConnectView extends StatelessWidget {
           ],
         ),
         const Divider(height: 24, color: RCColors.sep),
+        const Text(
+          '连接录音卡',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
         if (store.linkState == LinkState.scanning)
           Row(
             key: const Key('dev-scan-state'),
@@ -538,7 +592,12 @@ class _ConnectView extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
               SizedBox(width: 8),
-              Text('正在搜索附近的录音卡…', style: TextStyle(fontSize: 13)),
+              Expanded(
+                child: Text(
+                  '正在通过蓝牙扫描附近的录音卡…',
+                  style: TextStyle(fontSize: 13),
+                ),
+              ),
             ],
           )
         else if (store.linkState == LinkState.connecting)
@@ -572,7 +631,7 @@ class _ConnectView extends StatelessWidget {
           )
         else
           const Text(
-            '选择要连接的录音卡',
+            '选择要连接的录音卡（按信号强弱排序）',
             key: Key('dev-pick-hint'),
             style: TextStyle(fontSize: 13, color: RCColors.sec),
           ),
@@ -599,6 +658,8 @@ class _ConnectView extends StatelessWidget {
                       ),
                     ),
                   ),
+                  _SignalBars(strength: DeviceStore.signalOf(device.rssi)),
+                  const SizedBox(width: 10),
                   const Text(
                     '连接',
                     style: TextStyle(fontSize: 12, color: RCColors.okInk),
