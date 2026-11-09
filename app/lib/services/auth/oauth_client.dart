@@ -115,13 +115,16 @@ class OAuthClient {
 
   /// 构造授权请求。
   ///
-  /// [pkceMethod] 默认 [PkceMethod.plain]（S256 缺 crypto 依赖，见 `pkce.dart`）。
+  /// [pkceMethod] 默认 [PkceMethod.s256]。
+  ///
+  /// 服务端明确只接受 S256（`Only code_challenge_method=S256 is supported`），
+  /// plain 会被直接拒绝，所以这里不能再用 plain 兜底。
   /// 调用方拿到结果后应立即打开 [OAuthAuthorizationRequest.url]，
   /// 并保存 state + verifier 以便回调校验。
   OAuthAuthorizationRequest createAuthorizationRequest({
     String? loginHint,
     String? prompt,
-    PkceMethod pkceMethod = PkceMethod.plain,
+    PkceMethod pkceMethod = PkceMethod.s256,
   }) {
     if (!_config.isConfigured) {
       throw const OAuthNotConfiguredException();
