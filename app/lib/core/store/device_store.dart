@@ -50,6 +50,7 @@ class DeviceStore extends ChangeNotifier {
   Timer? _clock;
   Timer? _cooldown;
   bool _refreshing = false;
+  Completer<void>? _refreshDrain;
   bool statusStale = false;
   String? statusError;
   bool recordingBusy = false;
@@ -82,9 +83,9 @@ class DeviceStore extends ChangeNotifier {
   bool get isRecording => connected && reading?.snapshot.recording == true;
   bool get recordingKnown =>
       connected && reading?.recordingKnown == true && !statusStale;
-  bool get deviceBusy =>
+  bool get deviceBusy => _refreshing || _exclusiveDeviceBusy;
+  bool get _exclusiveDeviceBusy =>
       recordingBusy ||
-      _refreshing ||
       scanning ||
       connecting ||
       fwUpdating ||
@@ -92,6 +93,8 @@ class DeviceStore extends ChangeNotifier {
       syncState == SyncState.busy ||
       wifiJoining ||
       wifiScanning ||
+      fastTransferPreparing ||
+      fastTransferCancelling ||
       fastTransferPrepared ||
       fastTransferActive?.call() == true;
   bool get canControlRecording =>
@@ -311,7 +314,9 @@ class DeviceStore extends ChangeNotifier {
 
   Future<void> refreshFromDevice() async {
     if (_disposed || deviceBusy) return;
+    final drain = Completer<void>();
     _refreshing = true;
+    _refreshDrain = drain;
     _notify();
     final epoch = _connectionEpoch;
     try {
@@ -333,6 +338,8 @@ class DeviceStore extends ChangeNotifier {
           : '设备状态不可用：${_message(e)}';
     } finally {
       _refreshing = false;
+      if (identical(_refreshDrain, drain)) _refreshDrain = null;
+      drain.complete();
       _notify();
     }
   }
@@ -382,6 +389,7 @@ class DeviceStore extends ChangeNotifier {
   bool fastTransferPrepared = false;
   bool fastTransferPreparing = false;
   bool fastTransferCancelling = false;
+  int _fastPrepareEpoch = 0;
   String get syncRelText {
     if (lastSync == null) return '尚未同步';
     final s = DateTime.now().difference(lastSync!).inSeconds;
@@ -407,7 +415,9 @@ class DeviceStore extends ChangeNotifier {
           : '最近同步 · $syncRelText',
   };
   Future<bool> prepareFastTransfer() async {
-    if (!connected || deviceBusy || backend is! FileTransferDeviceBackend) {
+    if (!connected ||
+        _exclusiveDeviceBusy ||
+        backend is! FileTransferDeviceBackend) {
       devStateIsError = true;
       devStateText = '请先连接录音卡并等待当前任务完成';
       _notify();
@@ -418,9 +428,20 @@ class DeviceStore extends ChangeNotifier {
     devStateIsError = false;
     devStateText = '等待系统加入热点确认与本地文件服务就绪…';
     _notify();
+    final requestEpoch = ++_fastPrepareEpoch;
+    final connectionEpoch = _connectionEpoch;
     try {
+      // Reserve the foreground lane first: periodic polls cannot overtake it.
+      // Await the already-started status final, not just a command ACK.
+      await _refreshDrain?.future;
+      if (_disposed || requestEpoch != _fastPrepareEpoch) return false;
+      if (!connected || connectionEpoch != _connectionEpoch) {
+        throw StateError('状态刷新后录音卡连接已变化，请重新连接后快传');
+      }
       await (backend as FileTransferDeviceBackend).prepareFastTransfer();
-      if (fastTransferCancelling || fastTransferActive?.call() == false) {
+      if (requestEpoch != _fastPrepareEpoch ||
+          fastTransferCancelling ||
+          fastTransferActive?.call() == false) {
         return false;
       }
       fastTransferPrepared = true;
@@ -441,6 +462,7 @@ class DeviceStore extends ChangeNotifier {
 
   Future<void> cancelFastTransfer() async {
     if (syncState == SyncState.busy || fastTransferCancelling) return;
+    ++_fastPrepareEpoch;
     fastTransferCancelling = true;
     wifiJoining = true;
     _notify();

@@ -22,15 +22,23 @@ class AccessoryHotspotSession {
     this.probeInterval = const Duration(milliseconds: 500),
   }) : _join = join ?? _joinNative,
        _closePhone = closePhoneConfiguration ?? _closeNative,
-       _probe = probe ?? probeFileService,
-       _isIos = isIos ?? (() => Platform.isIOS);
+       _isIos = isIos ?? (() => Platform.isIOS) {
+    _probe =
+        probe ??
+        (uri, timeout) => probeFileService(
+          uri,
+          timeout,
+          onFailure: (message) => _lastProbeFailure = message,
+        );
+  }
 
   static const channel = MethodChannel('dev.kongkang.recording-card/hotspot');
   static final filesUri = Uri.parse('http://192.168.4.1/api/files');
   final CardGateway gateway;
   final Future<void> Function() _join;
   final Future<void> Function() _closePhone;
-  final Future<bool> Function(Uri, Duration) _probe;
+  late final Future<bool> Function(Uri, Duration) _probe;
+  String? _lastProbeFailure;
   final bool Function() _isIos;
   final Future<void> Function()? beforeWifiOpen;
   final Duration readyTimeout;
@@ -68,6 +76,7 @@ class AccessoryHotspotSession {
     _active = true;
     _ready = false;
     _cancelled = false;
+    _lastProbeFailure = null;
     _deviceId = deviceId;
     final operation = _prepare(deviceId);
     _preparing = operation;
@@ -117,7 +126,10 @@ class AccessoryHotspotSession {
       if (rest <= Duration.zero) break;
       await Future<void>.delayed(rest < probeInterval ? rest : probeInterval);
     }
-    throw StateError('录音卡本地文件服务未就绪，请检查本地网络权限和设备后重试');
+    throw StateError(
+      '录音卡本地文件服务未就绪，请检查本地网络权限和设备后重试'
+      '${_lastProbeFailure == null ? '' : '（$_lastProbeFailure）'}',
+    );
   }
 
   void requireReady(String deviceId) {
@@ -203,7 +215,11 @@ class AccessoryHotspotSession {
 
   /// No redirects, proxies, credentials, SSID/location or Internet checks.
   /// Read the bounded response, not just a successful TCP connection/header.
-  static Future<bool> probeFileService(Uri uri, Duration timeout) async {
+  static Future<bool> probeFileService(
+    Uri uri,
+    Duration timeout, {
+    void Function(String)? onFailure,
+  }) async {
     final client = HttpClient()
       ..connectionTimeout = timeout
       ..findProxy = (_) => 'DIRECT';
@@ -211,20 +227,40 @@ class AccessoryHotspotSession {
       final request = await client.getUrl(uri);
       request.followRedirects = false;
       final response = await request.close();
-      if (response.statusCode != HttpStatus.ok) return false;
+      if (response.statusCode != HttpStatus.ok) {
+        onFailure?.call('本地服务 HTTP ${response.statusCode}');
+        return false;
+      }
       final bytes = <int>[];
       await for (final chunk in response) {
-        if (bytes.length + chunk.length > 1024 * 1024) return false;
+        if (bytes.length + chunk.length > 1024 * 1024) {
+          onFailure?.call('本地服务响应超出安全大小限制');
+          return false;
+        }
         bytes.addAll(chunk);
       }
       final data = jsonDecode(utf8.decode(bytes));
       // SDK AccessPointFilePage is a JSON object with a files list (empty valid).
-      return data is Map && data['files'] is List;
+      final valid = data is Map && data['files'] is List;
+      if (!valid) onFailure?.call('本地服务响应不是 SDK 文件列表');
+      return valid;
     }
 
     try {
       return await request().timeout(timeout);
-    } on Exception {
+    } on TimeoutException {
+      onFailure?.call('本地连接或响应超时');
+      return false;
+    } on SocketException catch (e) {
+      onFailure?.call(
+        '局域网连接失败${e.osError == null ? '' : ': ${e.osError!.errorCode} ${e.osError!.message}'}',
+      );
+      return false;
+    } on FormatException {
+      onFailure?.call('本地服务响应不是有效 JSON');
+      return false;
+    } on Exception catch (e) {
+      onFailure?.call('本地请求失败：${e.runtimeType}');
       return false;
     } finally {
       // Abort pending socket/body reads on timeout; no orphan probe can mark a

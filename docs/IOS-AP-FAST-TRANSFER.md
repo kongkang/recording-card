@@ -18,22 +18,27 @@ MethodChannel 为 `dev.kongkang.recording-card/hotspot`，`join` 和 `close` 无
 
 Apple 没有 public 的 apply 取消 API；若 apply 不返回，不能假称取消成功。`removeConfiguration` 为 void，返回只表示移除调用已提交，不证明 RF 已断或 Internet 已恢复。`joinOnce` 连接会在 App 退后台超过15秒、设备休眠、退出等情况下移除，因此真机测试须覆盖这些中断并如实保留完整性失败。[2] [3]
 
-## 签名要求与当前阻断
+## 签名要求与已解决阻断
 
 源码 `Runner.entitlements`、Runner 的 Debug/Release/Profile 接线已经声明 `com.apple.developer.networking.HotspotConfiguration = true`。但 profile 和最终 signed App **两边都必须有实际能力**，不能沿用旧 wildcard profile 硬塞 entitlement。保持原 bundle `dev.kongkang.recordingCard`、原团队 `35N5SGDE59` 和 Keychain access group，覆盖安装不卸载，以保留登录与音频。
 
-2026-11-09 13:24 的 Xcode 实际错误是 `No Accounts: Add a new account in Accounts settings`，以及旧 `iOS Team Provisioning Profile: *` 不含 Hotspot capability/entitlement。用户需要在 Xcode Settings → Accounts 登录可访问原团队的 Developer 账号，然后让当前工作区 Runner 的自动签名生成支持该能力的新 profile。密码、验证码由用户直接输入；不能接受协议或改团队来绕过。
+2026-11-09 13:24 的 Xcode 实际错误是 `No Accounts`；用户登录后短暂仍被识别为 Personal Team，不支持 Hotspot。用户此前已支付会员费用，完成团队刷新后问题解决，无需重复付款。13:44 实际新 profile `e2c54920-599e-446c-bccb-7d8f49d94066` 的 App ID 为 `35N5SGDE59.dev.kongkang.recordingCard`、Hotspot=true、含测试手机，仍为原团队。110905/110906 均已完成合法自动签名、严格校验、覆盖安装和前台启动，登录保持。
 
 自动签名用 `CODE_SIGN_IDENTITY='Apple Development'`；固定证书 SHA 与 Automatic signing 冲突已经实际触发。允许 provisioning 更新后，仍要检查 profile、signed entitlement、设备登记、原 team/bundle/keychain 和完整签名，再打包安装。遇到不同账号/团队或协议要求，应停止并交接用户。
 
+自动签名可能省略可选的 `keychain-access-groups` 数组；Apple 规定未提供显式组时，默认访问组为 App ID。本项目 OAuth 不指定跨组访问，因此有效默认组仍为 `35N5SGDE59.dev.kongkang.recordingCard`。打包器只接受原显式组或同 App ID 隐式组，不增加共享组、不导出 token；真机覆盖后已进入登录后 Timeline。[4]
+
 ## 实际验证状态
 
-源码提交 `b3ac7bb`：全量 Flutter analyze 无问题，375 项通过 / 11 项 opt-in 跳过；热点 Native 接线13项静态检查通过。375项包含协作者72项限定回归，不重复计数。110905 的完整 iOS Release/Swift 编译已成功（70.8MB），arm64与四个 C ABI 符号已核验。自动签名目前被上述账户/profile问题拦住，未产生合法的110905可安装包，未覆盖手机。
+源码基线 `b3ac7bb` 的375项回归之外，真机110905复现了正常状态轮询随机拒绝前台快传。110906修复：先保留前台互斥、等待已启动轮询的真实final，再加入；取消代际防止迟到启动，真实设备忙仍拒绝。新增3项回归，全量378项通过 / 11项opt-in跳过、analyze无问题、Native热点13项静态检查通过。110906真实iOS编译/签名/覆盖安装成功。
 
-系统加入、用户拒绝、Local Network 权限、实际 AP HTTP/下载与原文/润色总结闭环，以及后台/休眠恢复仍未验。回环 HTTP 与静态接线不是无线真机成功。普通 BLE 的1200字节短收仍是另一未解决问题；本次没有放宽校验、删除卡源或执行 OTA。
+13:57 iPhone13mini实际由SpringBoard弹出「Recording Card想要加入无线局域网DYJ-HD-AP吗？」并有加入/取消按钮，用户无需去设置。已点击加入，随后本地HTTP探测30秒未通过，App如实清理并报错，未开始下载、不删卡源。系统 accepted 不能代替实际加入、口令正确和本地HTTP就绪的证明。
+
+110907补充不含口令、音频或响应正文的Socket/HTTP/JSON探测失败分类；2项新增回归，全量380项通过 / 11项opt-in跳过，analyze无问题。真实iOS编译、同身份Hotspot签名、严格包检查和覆盖安装均成功。14:05再次实际系统加入后，固定本地HTTP探测报「本地连接或响应超时」；蓝牙仍连接。尚不能确定权限、实际无线关联或卡端服务哪一项是根因，不能凭超时编造诊断。实际HTTP/下载与新语音本地ASR/云端闭环仍未验。用户拒绝、后台/休眠恢复仍须真机验证。普通BLE的1200字节短收仍为另一未解决问题；本轮没有放宽校验、删除卡源或执行OTA。
 
 ## References
 
 [1]: https://developer.apple.com/documentation/technotes/tn3111-ios-wifi-api-overview "Apple TN3111 iOS Wi-Fi API overview"
 [2]: https://developer.apple.com/documentation/networkextension/nehotspotconfigurationmanager "Apple NEHotspotConfigurationManager"
 [3]: https://developer.apple.com/documentation/networkextension/nehotspotconfiguration/joinonce "Apple joinOnce temporary configuration lifetime"
+[4]: https://developer.apple.com/documentation/security/ksecattraccessgroup "Apple default Keychain access group"
