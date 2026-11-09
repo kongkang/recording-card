@@ -10,6 +10,9 @@ use std::{
 use futures::StreamExt;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+mod notification_counters;
+use notification_counters::NotificationCounters;
+pub use notification_counters::SdkNotificationCounters;
 mod safe_transfer;
 pub use safe_transfer::{KeepTransferOptions, KeepTransferStats};
 use tokio::{
@@ -62,7 +65,7 @@ const AP_READY_GRACE: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
 enum Inbound {
-    Text(TextFrame),
+    Text(TextFrame, Option<Box<SdkNotificationCounters>>),
     Binary(Vec<u8>),
     Fault(String),
     Disconnected,
@@ -87,6 +90,7 @@ struct Core {
     source_epoch: Arc<AtomicU64>,
     terminal: Arc<watch::Sender<bool>>,
     disconnect_cleanup: std::sync::Mutex<Option<DisconnectCleanup>>,
+    notification_counters: Arc<NotificationCounters>,
 }
 
 struct DisconnectCleanup {
@@ -147,6 +151,7 @@ impl DyjDevice {
         let source_epoch = Arc::new(AtomicU64::new(0));
         let (terminal, _) = watch::channel(false);
         let terminal = Arc::new(terminal);
+        let notification_counters = Arc::new(NotificationCounters::default());
         spawn_notification_worker(
             stream,
             incoming_tx,
@@ -156,6 +161,7 @@ impl DyjDevice {
             ap_ready_tx.clone(),
             source_epoch.clone(),
             terminal.clone(),
+            notification_counters.clone(),
         );
 
         let device = Self {
@@ -172,6 +178,7 @@ impl DyjDevice {
                 source_epoch,
                 terminal,
                 disconnect_cleanup: std::sync::Mutex::new(None),
+                notification_counters,
             }),
         };
         device.sync_time_now().await?;
@@ -181,6 +188,17 @@ impl DyjDevice {
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<DeviceEvent> {
         self.core.events.subscribe()
+    }
+
+    /// Optional transport counters. This live cross-layer sample is not fenced
+    /// with the SDK worker and is not a firmware notification/send count.
+    pub fn notification_diagnostics(&self) -> Option<Value> {
+        self.core.transport.notification_diagnostics()
+    }
+
+    /// Connection cumulative integers; concurrent live reads are non-fenced.
+    pub fn sdk_notification_counters(&self) -> SdkNotificationCounters {
+        self.core.notification_counters.snapshot()
     }
 
     pub async fn disconnect(&self) -> Result<()> {
@@ -456,7 +474,7 @@ impl DyjDevice {
                         tracing::info!(target: "dyj.file", "📄 传输进度 name={result_name} 已传={written}/{total}字节 ({percent}%)");
                     }
                 }
-                Inbound::Text(frame) if frame.command == "FILE_UPLOAD" => {
+                Inbound::Text(frame, _) if frame.command == "FILE_UPLOAD" => {
                     ensure_success(&frame.command, &frame.payload)?;
                     match frame.payload.get("state").and_then(Value::as_str) {
                         Some("start") => {
@@ -683,11 +701,11 @@ impl DyjDevice {
         let mut networks = Vec::new();
         loop {
             match receive_next(&mut incoming, NORMAL_TIMEOUT, "WIFI_SCAN").await? {
-                Inbound::Text(frame) if frame.command == "WIFI_SCAN" => {
+                Inbound::Text(frame, _) if frame.command == "WIFI_SCAN" => {
                     ensure_success(&frame.command, &frame.payload)?;
                     started = true;
                 }
-                Inbound::Text(frame) if started && frame.command == "WIFI_LIST" => {
+                Inbound::Text(frame, _) if started && frame.command == "WIFI_LIST" => {
                     let network: WifiNetwork = serde_json::from_value(frame.payload)?;
                     if network.index == -1 {
                         tracing::info!(target: "dyj.wifi", "📶 WiFi扫描完成 共{}个网络", networks.len());
@@ -1186,7 +1204,7 @@ impl DyjDevice {
         discard_stale_inbound(&mut incoming, &command)?;
         self.write_command(&command, payload).await?;
         loop {
-            if let Inbound::Text(frame) = receive_next(&mut incoming, wait, &command).await?
+            if let Inbound::Text(frame, _) = receive_next(&mut incoming, wait, &command).await?
                 && frame.command == command
                 && !is_unsolicited_push(&frame)
             {
@@ -1227,7 +1245,7 @@ impl DyjDevice {
         self.write_command(&command, payload).await?;
         let mut count = 0usize;
         loop {
-            if let Inbound::Text(frame) =
+            if let Inbound::Text(frame, _) =
                 receive_next(&mut incoming, NORMAL_TIMEOUT, &command).await?
             {
                 if frame.command != command {
@@ -1258,7 +1276,7 @@ impl DyjDevice {
         self.write_command(&command, payload).await?;
         let mut results = Vec::with_capacity(expected_count);
         while results.len() < expected_count {
-            if let Inbound::Text(frame) =
+            if let Inbound::Text(frame, _) =
                 receive_next(&mut incoming, NORMAL_TIMEOUT, &command).await?
                 && frame.command == command
             {
@@ -1343,6 +1361,7 @@ fn spawn_notification_worker(
     ap_ready: Arc<watch::Sender<bool>>,
     source_epoch: Arc<AtomicU64>,
     terminal: Arc<watch::Sender<bool>>,
+    counters: Arc<NotificationCounters>,
 ) {
     tokio::spawn(async move {
         let mut decoder = FrameDecoder::default();
@@ -1351,16 +1370,24 @@ fn spawn_notification_worker(
         // 每段录音开始时随固件编码器一起复位（见 RealtimeAudioDecoder）。
         let mut audio_decoder = RealtimeAudioDecoder::default();
         while let Some(next) = stream.next().await {
+            if let Ok(bytes) = &next {
+                counters.observe_packet(bytes);
+            }
             match next {
                 Ok(bytes) if bytes.first() == Some(&0) => {
                     let payload = &bytes[1..];
                     if file_transfer_active.load(Ordering::SeqCst) {
-                        tracing::debug!(target: "dyj.file", "📄 收到文件二进制块 {}字节", payload.len());
-                        let _ = incoming.send(Inbound::Binary(payload.to_vec()));
+                        let sent = incoming.send(Inbound::Binary(payload.to_vec()));
+                        counters.observe_binary_enqueue(payload.len(), sent.is_ok());
                     } else {
+                        counters
+                            .inactive_audio_packets
+                            .fetch_add(1, Ordering::Relaxed);
+                        counters
+                            .inactive_audio_bytes
+                            .fetch_add(payload.len() as u64, Ordering::Relaxed);
                         let mut samples = Vec::with_capacity(payload.len() * 2);
                         audio_decoder.decode_chunk(payload, &mut samples);
-                        tracing::debug!(target: "dyj.audio", "🎙️ 音频块 {}字节 → {}样本", payload.len(), samples.len());
                         let _ = audio.send(PcmChunk {
                             samples,
                             sample_rate: SAMPLE_RATE_HZ,
@@ -1370,12 +1397,12 @@ fn spawn_notification_worker(
                     }
                 }
                 Ok(bytes) => {
-                    tracing::debug!(target: "dyj.proto", "📥 收到通知 {}字节", bytes.len());
                     let (frames, fault) = decoder.push(&bytes);
                     for frame in frames {
                         let frame = match frame {
                             Frame::Text(frame) => frame,
                             Frame::Raw(value) => {
+                                counters.raw_frames.fetch_add(1, Ordering::Relaxed);
                                 // 裸 JSON 没有命令名，不会有请求在等它，只走事件广播。
                                 tracing::info!(target: "dyj.event", "🔋 电源通知 payload={value}");
                                 let _ = events.send(event_from_raw(value));
@@ -1411,14 +1438,32 @@ fn spawn_notification_worker(
                             tracing::info!(target: "dyj.event", "🎛️ 硬件事件 cmd={} payload={}", frame.command, frame.payload);
                             let _ = events.send(event);
                         }
-                        let _ = incoming.send(Inbound::Text(frame));
+                        counters.text_frames.fetch_add(1, Ordering::Relaxed);
+                        let boundary = if frame.command == "FILE_UPLOAD" {
+                            match frame.payload.get("state").and_then(Value::as_str) {
+                                Some("start") => {
+                                    counters.upload_start_frames.fetch_add(1, Ordering::Relaxed);
+                                    Some(Box::new(counters.snapshot()))
+                                }
+                                Some("end") => {
+                                    counters.upload_end_frames.fetch_add(1, Ordering::Relaxed);
+                                    Some(Box::new(counters.snapshot()))
+                                }
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                        let _ = incoming.send(Inbound::Text(frame, boundary));
                     }
                     if let Some(message) = fault {
+                        counters.parser_faults.fetch_add(1, Ordering::Relaxed);
                         tracing::warn!(target: "dyj.proto", "⚠️ 跳过无法解析的行: {message}");
                         let _ = incoming.send(Inbound::Fault(message));
                     }
                 }
                 Err(error) => {
+                    counters.transport_errors.fetch_add(1, Ordering::Relaxed);
                     tracing::error!(target: "dyj.proto", "❌ 通知流错误，连接不可用: {error}");
                     // 流已死必须立刻以 Disconnected 终结所有等待方，
                     // 否则 take_file 等操作会一直挂到各自的超时（最长 30s）才失败。
@@ -1641,7 +1686,7 @@ fn discard_stale_inbound(
             Ok(Inbound::Disconnected) | Err(mpsc::error::TryRecvError::Disconnected) => {
                 return Err(SdkError::Disconnected);
             }
-            Ok(Inbound::Text(frame)) => {
+            Ok(Inbound::Text(frame, _)) => {
                 tracing::debug!(target: "dyj.proto", "🧹 丢弃积压帧 cmd={command} stale={} body={}", frame.command, frame.payload);
             }
             Ok(Inbound::Binary(bytes)) => {

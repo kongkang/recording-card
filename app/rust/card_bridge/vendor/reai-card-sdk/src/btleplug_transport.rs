@@ -3,6 +3,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(target_vendor = "apple")]
+use btleplug_apple as btleplug;
+
 use async_trait::async_trait;
 use btleplug::{
     api::{
@@ -139,6 +142,8 @@ impl DeviceManager {
         };
         tracing::debug!(target: "dyj.ble", "✅ NUS特征校验通过 write=6e400002 notify=6e400003");
 
+        #[cfg(target_vendor = "apple")]
+        let notification_counters = peripheral.start_notification_diagnostics(&notify);
         if let Err(error) = peripheral.subscribe(&notify).await {
             let _ = peripheral.disconnect().await;
             tracing::error!(target: "dyj.ble", "❌ 订阅通知失败: {error}，已断开");
@@ -149,6 +154,10 @@ impl DeviceManager {
             peripheral,
             write,
             adapter: self.adapter.clone(),
+            #[cfg(target_vendor = "apple")]
+            notify,
+            #[cfg(target_vendor = "apple")]
+            notification_counters,
         });
         match DyjDevice::from_transport(transport.clone()).await {
             Ok(device) => {
@@ -384,10 +393,28 @@ struct BtleplugTransport {
     peripheral: Peripheral,
     write: btleplug::api::Characteristic,
     adapter: Adapter,
+    #[cfg(target_vendor = "apple")]
+    notify: Characteristic,
+    #[cfg(target_vendor = "apple")]
+    notification_counters: Arc<btleplug::NotificationDiagnostics>,
 }
 
 #[async_trait]
 impl BleTransport for BtleplugTransport {
+    #[cfg(target_vendor = "apple")]
+    fn notification_diagnostics(&self) -> Option<serde_json::Value> {
+        let mut snapshot = serde_json::Map::new();
+        for (key, value) in self.notification_counters.snapshot() {
+            snapshot.insert(key, value.into());
+        }
+        snapshot.insert("window".into(), serde_json::json!({
+            "fenced": 0,
+            "scope": "connection target peripheral/service/characteristic; since registration before subscribe; no reset",
+            "limitations": "Relaxed non-atomic loads; queues not drained; begin/end are not a common notification cut. Layer differences or load timing do not prove loss. Raw byte counts include the leading marker. Callback errors without a resolvable service are unmeasured. Lag is receiver-wide, not target-attributed. No firmware/wireless counts, queue depth or send wait measurements."
+        }));
+        Some(serde_json::Value::Object(snapshot))
+    }
+
     async fn write(&self, bytes: &[u8]) -> Result<()> {
         tracing::trace!(target: "dyj.ble", "🔬 写入 {}字节: {:02x?}", bytes.len(), bytes);
         self.peripheral
@@ -410,11 +437,32 @@ impl BleTransport for BtleplugTransport {
         {
             return Err(SdkError::Disconnected);
         }
+        #[cfg(target_vendor = "apple")]
+        let counters = self.notification_counters.clone();
+        #[cfg(target_vendor = "apple")]
+        let notify = self.notify.clone();
+        #[cfg(target_vendor = "apple")]
+        let stream = self
+            .peripheral
+            .notifications_with_diagnostics(counters.clone())
+            .map(move |notification| {
+                if let Ok(notification) = &notification {
+                    if notification.uuid == notify.uuid
+                        && notification.service_uuid == notify.service_uuid
+                    {
+                        counters.observe_consumer(&notification.value);
+                    }
+                }
+                // Classification only: retain the original forwarding of all UUIDs.
+                notification.map_err(transport_error)
+            });
+        #[cfg(not(target_vendor = "apple"))]
         let stream = self
             .peripheral
             .notifications()
             .await
-            .map_err(transport_error)?;
+            .map_err(transport_error)?
+            .map(Ok);
         Ok(Box::pin(futures::stream::unfold(
             (stream, events, id, false),
             |(mut stream, mut events, id, finished)| async move {
@@ -430,8 +478,10 @@ impl BleTransport for BtleplugTransport {
                             None => return Some((Err(SdkError::Disconnected), (stream,events,id,true))),
                             _ => {},
                         },
-                        notification = stream.next() =>
-                            return notification.map(|notification| (Ok(notification.value),(stream,events,id,false))),
+                        notification = stream.next() => return notification.map(|notification| {
+                            let failed = notification.is_err();
+                            (notification.map(|notification| notification.value), (stream, events, id, failed))
+                        }),
                     }
                 }
             },
