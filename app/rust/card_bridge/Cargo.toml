@@ -9,6 +9,9 @@ name = "card_bridge"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
+# 与 reai-card-sdk 内部同名同版本，Cargo 会复用同一个实例；
+# 我们需要 btleplug::platform::init 处理 Android 的 JNI 初始化。
+btleplug = "0.12"
 reai-card-sdk = { git = "https://github.com/ReAI-com/reai-card-sdk.git", tag = "v0.0.6" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 serde = { version = "1", features = ["derive"] }
@@ -16,5 +19,9 @@ serde_json = "1"
 
 [dev-dependencies]
 # 仅用于诊断示例（examples/raw_scan.rs）：绕过 SDK 的服务过滤，直看广播包内容
-btleplug = "0.12"
 uuid = "1"
+
+# Android：btleplug 的 droidplug 后端需要一个 JavaVM 才能调用系统蓝牙 API。
+# Flutter 的引擎线程在加载 .so 时会调用 JNI_OnLoad，我们从那里把 env 交给 btleplug::platform::init。
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.19"

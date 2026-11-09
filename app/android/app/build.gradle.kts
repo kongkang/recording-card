@@ -120,3 +120,32 @@ tasks.whenTaskAdded {
         }
     }
 }
+
+// ── Rust 桥：Android 原生库 ────────────────────────────────────────────────────
+//
+// card_bridge 是 Rust cdylib（app/rust/card_bridge），.so 放在 src/main/jniLibs
+// 下由 AGP 自动打进 APK。jniLibs 是构建产物，所以要在打包前确保它存在。
+//
+// 设计取舍：
+// - **默认只在缺失时构建**（`rust.build=true` 可强制重建）。理由：cargo 交叉编译
+//   约 15 秒且会和其它 Flutter/Gradle 任务抢 Cargo 的全局文件锁，每次构建都跑
+//   容易卡在 "Blocking waiting for file lock"。
+// - Rust 源码或脚本改动后，用 `flutter build apk -Prust.build=true` 或直接
+//   `bash rust/build-android.sh` 重建。
+val rustSo = file("src/main/jniLibs/arm64-v8a/libcard_bridge.so")
+val forceRustBuild = project.hasProperty("rust.build")
+val skipRustBuild = project.hasProperty("rust.skip")
+
+val buildRustBridge = tasks.register<Exec>("buildRustBridge") {
+    workingDir = file("../../rust")
+    commandLine("bash", "build-android.sh")
+    inputs.dir("../../rust/card_bridge/src")
+    inputs.file("../../rust/card_bridge/Cargo.toml")
+    inputs.file("../../rust/build-android.sh")
+    outputs.dir("src/main/jniLibs")
+    isIgnoreExitValue = false
+    enabled = !skipRustBuild && (forceRustBuild || !rustSo.exists())
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }
+    .configureEach { dependsOn(buildRustBridge) }

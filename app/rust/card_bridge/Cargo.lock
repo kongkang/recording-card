@@ -158,6 +158,7 @@ name = "card_bridge"
 version = "0.1.0"
 dependencies = [
  "btleplug",
+ "jni",
  "reai-card-sdk",
  "serde",
  "serde_json",

@@ -1,0 +1,16 @@
+# Android 交叉编译配置。
+#
+# 为什么放这里而不是只靠环境变量：`ring` 等 crate 的 build script 会重新派生子进程，
+# 环境变量在部分路径上传递不可靠（表现为 cc-rs 报 failed to find tool "…-clang"）。
+# cargo 会把这些写进构建环境，子进程一定能拿到。
+#
+# 编译器路径由 rust/build-android.sh 生成的 shim 提供（NDK 只给带 API 版本的
+# 包装脚本，而 cc-rs 找的是不带版本号的命令名）。
+[target.aarch64-linux-android]
+ar = "target/android-cc/llvm-ar"
+linker = "target/android-cc/aarch64-linux-android-clang"
+
+[env]
+CC_aarch64_linux_android = { value = "target/android-cc/aarch64-linux-android-clang", relative = true }
+CXX_aarch64_linux_android = { value = "target/android-cc/aarch64-linux-android-clang++", relative = true }
+AR_aarch64_linux_android = { value = "target/android-cc/llvm-ar", relative = true }

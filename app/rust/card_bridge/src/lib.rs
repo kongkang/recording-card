@@ -520,3 +520,34 @@ unsafe fn cstr(ptr: *const c_char) -> String {
     }
     CStr::from_ptr(ptr).to_string_lossy().into_owned()
 }
+
+// ── Android：JNI 初始化 ──────────────────────────────────────
+//
+// btleplug 在 Android 上的后端（droidplug）不走 CoreBluetooth，而是通过 JNI 调
+// Android 的 BluetoothAdapter。所以必须在 JavaVM 可用时调一次
+// `btleplug::platform::init(&env)`，否则首次 scan 会 panic
+// 「Droidplug has not been initialized」。
+//
+// Flutter 加载 .so 时会调用 JNI_OnLoad，这是最早能拿到 JavaVM 的时机；
+// 在这里初始化，之后 Dart 侧的扫描/连接都直接可用。
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn JNI_OnLoad(
+    vm: *mut jni::sys::JavaVM,
+    _reserved: *mut core::ffi::c_void,
+) -> jni::sys::jint {
+    // 初始化期间不能抛 Java 异常，任何失败都只记录并返回既有版本号，
+    // 让 App 仍能启动（蓝牙功能会在首次使用时给出明确错误）。
+    let result = std::panic::catch_unwind(|| {
+        let vm = unsafe { jni::JavaVM::from_raw(vm)? };
+        let env = vm.attach_current_thread()?;
+        btleplug::platform::init(&env)?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    });
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("card_bridge: Android BLE 初始化失败: {error}"),
+        Err(_) => eprintln!("card_bridge: Android BLE 初始化 panic"),
+    }
+    jni::sys::JNI_VERSION_1_6
+}
