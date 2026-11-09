@@ -375,6 +375,13 @@ class DeviceStore extends ChangeNotifier {
     _notify();
   }
 
+  /// 二级页返回主视图；固件更新中不允许离开，避免刷写被中断。
+  void showMainView() {
+    if (fwUpdating) return;
+    view = DeviceView.main;
+    _notify();
+  }
+
   SyncState syncState = SyncState.idle;
   DateTime? lastSync;
   String syncStage = '';

@@ -26,6 +26,7 @@ class TimelinePage extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            _TitleBar(store: store),
             _TabsBar(store: store),
             if (store.selMode) _RangeBar(store: store),
             if (store.loading)
@@ -115,51 +116,27 @@ class TimelinePage extends StatelessWidget {
   }
 }
 
-class _TabsBar extends StatelessWidget {
-  const _TabsBar({required this.store});
+/// 原型 .tl-head：左侧大标题 Timeline，右侧「总结」描边胶囊按钮。
+class _TitleBar extends StatelessWidget {
+  const _TitleBar({required this.store});
   final AppStore store;
 
   @override
   Widget build(BuildContext context) {
-    Widget tab(String label, FeedFilter f, String keyName) {
-      final locked = store.tabsLocked && f != FeedFilter.event;
-      final on = store.filter == f;
-      return TextButton(
-        key: Key('tab-$keyName'),
-        onPressed: locked ? null : () => store.setFilter(f),
-        style: TextButton.styleFrom(
-          foregroundColor: on ? RCColors.label : RCColors.sec,
-          disabledForegroundColor: RCColors.ax,
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: on ? FontWeight.w700 : FontWeight.w500,
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(22, 2, 22, 0),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: RCColors.sep)),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 10, 22, 6),
       child: Row(
         children: [
-          Expanded(
-            child: Row(
-              children: [
-                tab('全部', FeedFilter.all, 'all'),
-                const SizedBox(width: 18),
-                tab('记录', FeedFilter.event, 'event'),
-                const SizedBox(width: 18),
-                tab('总结', FeedFilter.summary, 'summary'),
-              ],
+          const Expanded(
+            child: Text(
+              'Timeline',
+              key: Key('timeline-title'),
+              style: TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.6,
+                color: RCColors.label,
+              ),
             ),
           ),
           // 原型 .btn-sum：透明底 + 深色描边胶囊
@@ -171,13 +148,80 @@ class _TabsBar extends StatelessWidget {
               disabledForegroundColor: RCColors.ax,
               side: const BorderSide(color: RCColors.label),
               shape: const StadiumBorder(),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               textStyle: const TextStyle(fontSize: 13),
             ),
             child: const Text('总结'),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TabsBar extends StatelessWidget {
+  const _TabsBar({required this.store});
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget tab(String label, FeedFilter f, String keyName) {
+      final locked = store.tabsLocked && f != FeedFilter.event;
+      final on = store.filter == f;
+      // 原型 .tabs button.on：当前项下方有短下划线，其余无。
+      return Padding(
+        padding: const EdgeInsets.only(right: 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextButton(
+              key: Key('tab-$keyName'),
+              onPressed: locked ? null : () => store.setFilter(f),
+              style: TextButton.styleFrom(
+                foregroundColor: on ? RCColors.label : RCColors.sec,
+                disabledForegroundColor: RCColors.ax,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 2,
+                  vertical: 8,
+                ),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+            ),
+            Container(
+              key: Key('tab-underline-$keyName'),
+              height: 2,
+              width: 26,
+              margin: const EdgeInsets.only(bottom: 2),
+              decoration: BoxDecoration(
+                color: on ? RCColors.label : Colors.transparent,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(22, 2, 22, 0),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: RCColors.sep)),
+      ),
+      child: Row(
+        children: [
+          tab('全部', FeedFilter.all, 'all'),
+          tab('记录', FeedFilter.event, 'event'),
+          tab('总结', FeedFilter.summary, 'summary'),
         ],
       ),
     );
