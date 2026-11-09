@@ -201,6 +201,7 @@ class _Header extends StatelessWidget {
               onTap: device.openSheet,
               level: device.battery,
               connected: device.isConnected,
+              recording: device.isRecording,
             ),
           ),
         ],

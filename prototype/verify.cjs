@@ -221,6 +221,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('#conn-list .conn-item');
   await p.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
   assert(await p.$eval('[data-testid="hw-capsule"]', x => !x.classList.contains('off')));
+  // 已连接未录音 = 橙点待机（绿点只代表正在录音）
+  assert(await p.$eval('[data-testid="hw-capsule"]', x => x.classList.contains('idle')));
+  assert.equal(await p.$eval('.capsule .dot', x => getComputedStyle(x).backgroundColor), 'rgb(255, 149, 0)');
   assert(await p.$eval('.capsule .batt', x => x.classList.contains('lv-hi') && getComputedStyle(x).display !== 'none'));
   // 连上后默认未录音；录音状态行本身就是开关
   assert(await p.$eval('#rec-off', x => getComputedStyle(x).display !== 'none' && x.innerText.includes('未录音')));
@@ -228,6 +231,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="rec-toggle"]');
   assert(await p.$eval('#recval', x => x.classList.contains('on')));
   assert.equal(await p.$eval('#rec-sw', x => x.getAttribute('aria-checked')), 'true');
+  assert(!(await p.$eval('[data-testid="hw-capsule"]', x => x.classList.contains('idle'))));
+  assert.equal(await p.$eval('.capsule .dot', x => getComputedStyle(x).backgroundColor), 'rgb(52, 199, 89)');
   assert(await p.$eval('#dev-main', x => x.innerText.includes('已连接') && x.innerText.includes('可录至') && x.innerText.includes('电量高')));
   assert.equal(await p.$$eval('#dev-main .row', x => x.length), 5);
   assert.equal(await p.$$eval('.batt', x => x.length), 2);
@@ -308,6 +313,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await new Promise(r => setTimeout(r, 200));
   await p.click('[data-testid="rec-toggle"]');
   assert.equal(await p.$eval('#rec-sw', x => x.getAttribute('aria-checked')), 'false');
+  assert(await p.$eval('[data-testid="hw-capsule"]', x => x.classList.contains('idle')));
   await p.evaluate(() => closeSheet());
   await new Promise(r => setTimeout(r, 300));
   assert(await p.$eval('#live-status', x => x.innerText.includes('正在同步')));

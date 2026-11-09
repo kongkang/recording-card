@@ -68,19 +68,26 @@ class BatteryIcon extends StatelessWidget {
   }
 }
 
-/// 顶栏胶囊：绿点心跳 + 电池图标
+/// 顶栏胶囊：圆点状态 + 电池图标。
+///
+/// 圆点语义（2026-11-10 owner 定稿）：绿=正在录音（心跳）；橙=已连接但未录音
+/// （待机，说明卡在、电量为真）；灰空心=未连接（不显示电量）。
 class HwCapsule extends StatefulWidget {
   const HwCapsule({
     super.key,
     required this.onTap,
     required this.level,
     this.connected = true,
+    this.recording = false,
   });
   final VoidCallback onTap;
   final int level;
 
   /// 没连设备时只显示灰点：点击进入扫描连接流程，而不是假装已连接。
   final bool connected;
+
+  /// 是否正在录音：只有录音中才绿点心跳；已连接待机是橙点。
+  final bool recording;
 
   @override
   State<HwCapsule> createState() => _HwCapsuleState();
@@ -99,15 +106,16 @@ class _HwCapsuleState extends State<HwCapsule>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
-    if (widget.connected) _pulse.repeat();
+    if (widget.connected && widget.recording) _pulse.repeat();
   }
 
   @override
   void didUpdateWidget(HwCapsule oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.connected && !_pulse.isAnimating) {
+    final running = widget.connected && widget.recording;
+    if (running && !_pulse.isAnimating) {
       _pulse.repeat();
-    } else if (!widget.connected && _pulse.isAnimating) {
+    } else if (!running && _pulse.isAnimating) {
       _pulse.stop();
     }
   }
@@ -116,6 +124,19 @@ class _HwCapsuleState extends State<HwCapsule>
   void dispose() {
     _pulse.dispose();
     super.dispose();
+  }
+
+  Widget _dot() {
+    return Container(
+      key: const Key('capsule-dot'),
+      width: 7,
+      height: 7,
+      decoration: BoxDecoration(
+        // 绿=正在运行（录音中）；橙=已连接待机；灰空心=未连接
+        color: widget.recording ? RCColors.ok : RCColors.warn,
+        shape: BoxShape.circle,
+      ),
+    );
   }
 
   @override
@@ -134,22 +155,17 @@ class _HwCapsuleState extends State<HwCapsule>
           mainAxisSize: MainAxisSize.min,
           children: [
             if (widget.connected)
-              FadeTransition(
-                opacity: Tween(begin: 0.35, end: 1.0).animate(
-                  CurvedAnimation(
-                    parent: _pulse,
-                    curve: const Interval(0, 0.45),
-                  ),
-                ),
-                child: Container(
-                  width: 7,
-                  height: 7,
-                  decoration: const BoxDecoration(
-                    color: RCColors.ok,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              )
+              widget.recording
+                  ? FadeTransition(
+                      opacity: Tween(begin: 0.35, end: 1.0).animate(
+                        CurvedAnimation(
+                          parent: _pulse,
+                          curve: const Interval(0, 0.45),
+                        ),
+                      ),
+                      child: _dot(),
+                    )
+                  : _dot()
             else
               Container(
                 key: const Key('capsule-off'),
@@ -281,10 +297,12 @@ class _MainView extends StatelessWidget {
         Row(
           children: [
             Container(
+              key: const Key('dev-dot'),
               width: 10,
               height: 10,
-              decoration: const BoxDecoration(
-                color: RCColors.ok,
+              decoration: BoxDecoration(
+                // 与顶栏胶囊同一语义：绿=录音中，橙=已连接待机
+                color: store.isRecording ? RCColors.ok : RCColors.warn,
                 shape: BoxShape.circle,
               ),
             ),
