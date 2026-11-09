@@ -360,6 +360,8 @@ void main() {
         backend: backend,
         persistence: MemoryStorePersistence(),
       )..sheetOpen = true;
+      // Rows are only rendered when connected; this test targets the sync row.
+      store.connected = true;
       final running = store.syncNow();
       await tester.pumpWidget(sheet(store));
       expect(find.textContaining('已收 25%'), findsOneWidget);
@@ -384,6 +386,8 @@ void main() {
         persistence: MemoryStorePersistence(),
         onSynced: () => refresh.future,
       )..sheetOpen = true;
+      // Rows are only rendered when connected; this test targets the sync row.
+      store.connected = true;
       final running = store.syncNow();
       await tester.pumpWidget(sheet(store));
       await tester.tap(find.byKey(const Key('cancel-sync')));

@@ -154,7 +154,10 @@ class StatusSheetOverlay extends StatelessWidget {
       builder: (context, _) {
         if (!store.sheetOpen) return const SizedBox.shrink();
         // 真机 home indicator：卡片底边让出安全区（测试环境 inset=0，行为不变）
-        final bottomInset = MediaQuery.paddingOf(context).bottom;
+        final insets = MediaQuery.paddingOf(context);
+        final media = MediaQuery.sizeOf(context);
+        // 顶栏必须留在安全区之外，避免手指上探时误触状态栏/通知栏下拉。
+        final maxHeight = media.height * 0.8 - insets.top;
         return Positioned.fill(
           key: const Key('sheet'),
           child: GestureDetector(
@@ -168,19 +171,33 @@ class StatusSheetOverlay extends StatelessWidget {
                 child: Container(
                   key: const Key('sheet-card'),
                   width: double.infinity,
-                  constraints: const BoxConstraints(maxHeight: 620),
-                  margin: EdgeInsets.fromLTRB(10, 10, 10, 10 + bottomInset),
-                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+                  constraints: BoxConstraints(maxHeight: maxHeight),
+                  margin: EdgeInsets.fromLTRB(
+                    10,
+                    insets.top + 10,
+                    10,
+                    10 + insets.bottom,
+                  ),
                   decoration: BoxDecoration(
                     color: RCColors.card,
                     borderRadius: BorderRadius.circular(18),
                   ),
-                  child: SingleChildScrollView(
-                    child: switch (store.view) {
-                      DeviceView.main => _MainView(store: store),
-                      DeviceView.upg => _FirmwareView(store: store),
-                      DeviceView.wifi => _WifiView(store: store),
-                    },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 顶部把手：明确的可关闭语义 + 下拉手势，替代无边界的整卡拖动
+                      _SheetGrabber(store: store),
+                      Flexible(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
+                          child: switch (store.view) {
+                            DeviceView.main => _MainView(store: store),
+                            DeviceView.upg => _FirmwareView(store: store),
+                            DeviceView.wifi => _WifiView(store: store),
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -192,8 +209,66 @@ class StatusSheetOverlay extends StatelessWidget {
   }
 }
 
-class _Row extends StatelessWidget {
-  const _Row({
+/// 弹层顶部把手：常驻拖动条 + 右上关闭按钮。
+/// 固件升级期间锁定（防止误触关闭后中断刷写），其余状态随时可关。
+class _SheetGrabber extends StatelessWidget {
+  const _SheetGrabber({required this.store});
+  final DeviceStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    // 二级页需要回到主视图；主视图直接关闭整层。
+    final onBack = store.view == DeviceView.main ? null : store.showMainView;
+    final locked = store.fwUpdating;
+    return SizedBox(
+      height: 44,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // 拖动条本身也是关闭入口，给足 44 高触控区
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: locked ? null : store.closeSheet,
+            child: Center(
+              child: Container(
+                key: const Key('sheet-grabber'),
+                width: 36,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: RCColors.ax,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+          ),
+          if (onBack != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                key: const Key('sheet-back'),
+                icon: const Icon(Icons.chevron_left, size: 20),
+                color: RCColors.ink,
+                onPressed: onBack,
+                tooltip: '返回',
+              ),
+            ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              key: const Key('sheet-close-icon'),
+              icon: const Icon(Icons.close, size: 18),
+              color: RCColors.sec,
+              tooltip: locked ? '固件更新中，无法关闭' : '关闭',
+              onPressed: locked ? null : store.closeSheet,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Row extends StatelessWidget {  const _Row({
     required this.label,
     this.child,
     this.onTap,
@@ -208,8 +283,12 @@ class _Row extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final row = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 11),
+    // 原型 .row：padding 14px 0 + 底部 1px 分隔线
+    final row = Container(
+      padding: const EdgeInsets.symmetric(vertical: 13),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: RCColors.sep)),
+      ),
       child: Row(
         children: [
           Text(
@@ -352,6 +431,9 @@ class _MainView extends StatelessWidget {
           ],
         ),
         const Divider(height: 24, color: RCColors.sep),
+        // 未连接时，录音/电量/同步/Wi-Fi/固件这些行都不可用，全部隐藏，
+        // 只留扫描与重连，避免用户对着点不动的选项反复试探。
+        if (store.connected) ...[
         // 录音状态：红点 + 录音中 + 跳动时钟（定宽防抖动）
         _Row(
           label: '录音状态',
@@ -606,6 +688,7 @@ class _MainView extends StatelessWidget {
               ),
             ),
           ),
+        ],
         if (!store.connected) ...[
           const SizedBox(height: 8),
           Row(

@@ -83,7 +83,9 @@ void main() {
       await boot(tester);
       expect(find.byKey(const Key('nav-timeline')), findsOneWidget);
       expect(find.byKey(const Key('nav-setting')), findsOneWidget);
-      expect(find.text('Timeline'), findsOneWidget);
+      // 设计稿首页有 .tl-head 大标题 + 底栏同一文案，故为两处
+      expect(find.byKey(const Key('timeline-title')), findsOneWidget);
+      expect(find.text('Timeline'), findsNWidgets(2));
       expect(find.text('Setting'), findsOneWidget);
       expect(find.byKey(const Key('tab-all')), findsOneWidget);
       expect(find.byKey(const Key('tab-event')), findsOneWidget);

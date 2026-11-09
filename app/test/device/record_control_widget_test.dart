@@ -33,7 +33,28 @@ Future<void> mount(
 }
 
 void main() {
-  testWidgets('recording row switch is disabled while disconnected', (
+  testWidgets('disconnected sheet hides unusable rows and keeps scan', (
+    tester,
+  ) async {
+    // Unconnected: recording/battery/sync/Wi-Fi/firmware rows are meaningless,
+    // so they are hidden instead of rendered disabled. Only scan/reconnect stay.
+    final store = DeviceStore(
+      backend: fixture.backend(),
+      persistence: MemoryStorePersistence(),
+    );
+    await mount(tester, store);
+    expect(find.byKey(const Key('recording-switch')), findsNothing);
+    expect(find.byKey(const Key('rec-clock')), findsNothing);
+    expect(find.byKey(const Key('batt-eta')), findsNothing);
+    expect(find.byKey(const Key('sync-now')), findsNothing);
+    expect(find.byKey(const Key('wifi-row')), findsNothing);
+    expect(find.byKey(const Key('fw-update')), findsNothing);
+    expect(find.byKey(const Key('device-scan')), findsOneWidget);
+    expect(find.text('未连接'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sheet caps height and always exposes grabber and close', (
     tester,
   ) async {
     final store = DeviceStore(
@@ -41,14 +62,37 @@ void main() {
       persistence: MemoryStorePersistence(),
     );
     await mount(tester, store);
-    expect(recordingSwitch(tester).value, isFalse);
-    expect(recordingSwitch(tester).onChanged, isNull);
-    expect(find.text('未连接'), findsWidgets);
-    expect(find.text('电量未知'), findsOneWidget);
-    expect(
-      tester.widget<Text>(find.byKey(const Key('rec-clock'))).data,
-      '—:——:——',
+    // 80% of 844 with 390x844 viewport: the card must leave the status area free.
+    final card = tester.getSize(find.byKey(const Key('sheet-card')));
+    expect(card.height, lessThanOrEqualTo(844 * 0.8));
+    expect(find.byKey(const Key('sheet-grabber')), findsOneWidget);
+    expect(find.byKey(const Key('sheet-close-icon')), findsOneWidget);
+    // Closing via the header icon must actually dismiss the sheet.
+    await tester.tap(find.byKey(const Key('sheet-close-icon')));
+    await tester.pump();
+    expect(store.sheetOpen, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('grabber close is locked only while firmware is updating', (
+    tester,
+  ) async {
+    final store = DeviceStore(
+      backend: fixture.backend(),
+      persistence: MemoryStorePersistence(),
     );
+    await mount(tester, store);
+    store.fwUpdating = true;
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('sheet-close-icon')));
+    await tester.pump();
+    // Firmware write in progress: the sheet must refuse to close.
+    expect(store.sheetOpen, isTrue);
+    store.fwUpdating = false;
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('sheet-grabber')));
+    await tester.pump();
+    expect(store.sheetOpen, isFalse);
     expect(tester.takeException(), isNull);
   });
 

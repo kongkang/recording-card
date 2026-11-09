@@ -351,8 +351,53 @@ mod safe_tests {
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
     #[tokio::test]
-    async fn ap_sd_epoch_changes_and_record_mutations_invalidate_old_receipts() {
-        let dir = unique_dir("epoch");
+    async fn vanished_remote_still_keeps_complete_local_bytes_but_grants_no_source_authority() {
+        // Real-device finding: after a complete BLE keep transfer the card's own
+        // FILE_LIST no longer returns the entry. Bytes already received, synced
+        // and hashed must survive as local data; only the *delete authority*
+        // may be withheld. Dropping the file would lose a recording that the
+        // phone demonstrably received in full.
+        let dir = unique_dir("vanished");
+        let t = clean_transport();
+        let mut session = fake_session(t.clone()).await;
+        // Preflight must see the entry; it is the post-transfer re-list that
+        // comes back empty, which is exactly what the device did.
+        let entries = t.file_entries.clone();
+        t.upload_script.lock().unwrap().get_or_insert_with(|| {
+            vec![
+                UploadAction::Frame(vec![0, 99]),
+                start(3),
+                UploadAction::Frame(vec![0, 1]),
+                UploadAction::Frame(vec![0, 2]),
+                UploadAction::Frame(vec![0, 3]),
+                end(),
+            ]
+        });
+        t.vanish_after_upload.store(true, Ordering::SeqCst);
+        let receipt = download_preserving(&mut session, &request(&dir, "a.apm"), discard, 210)
+            .await
+            .unwrap();
+        let _ = entries;
+        assert_eq!(receipt["bytes"], 3);
+        assert_eq!(receipt["sourceDeleted"], false);
+        assert_eq!(receipt["sourceRetained"], true);
+        assert_eq!(receipt["generationConfirmed"], false);
+        // The preflight generation is still reported for diagnostics, but the
+        // receipt must carry no delete authority (see the confirm below).
+        assert_eq!(receipt["remoteGeneration"]["session"], "AABBCCDD");
+        let path = Path::new(receipt["path"].as_str().unwrap());
+        assert_eq!(hash_local(path, 3).await.unwrap(), receipt["sha256"]);
+        // No delete authorization: confirmation must refuse, and it must refuse
+        // because the generation is unknown rather than silently succeeding.
+        let error = confirm_delete(&mut session, &confirm(&receipt))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "source_retained");
+        no_delete(&t);
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+    #[tokio::test]
+    async fn ap_sd_epoch_changes_and_record_mutations_invalidate_old_receipts() {        let dir = unique_dir("epoch");
         let t = clean_transport();
         let mut session = fake_session(t.clone()).await;
         let receipt = download_preserving(&mut session, &request(&dir, "a.apm"), discard, 300)

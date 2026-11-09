@@ -997,7 +997,10 @@ mod tests {
         record_pushes: AtomicBool,
         payloads: Mutex<Vec<(String, Value)>>,
         upload_script: Mutex<Option<Vec<UploadAction>>>,
-        file_entries: Mutex<Option<Vec<Value>>>,
+        /// Test-only: emulate firmware dropping the entry from FILE_LIST once a
+        /// keep transfer has completed (observed on a real card).
+        vanish_after_upload: AtomicBool,
+        file_entries: Arc<Mutex<Option<Vec<Value>>>>,
         notifications_count: std::sync::atomic::AtomicUsize,
         disconnect_count: std::sync::atomic::AtomicUsize,
         disconnect_block: Mutex<Option<Arc<TestBlock>>>,
@@ -1021,7 +1024,8 @@ mod tests {
                 record_pushes: AtomicBool::new(true),
                 payloads: Mutex::new(Vec::new()),
                 upload_script: Mutex::new(None),
-                file_entries: Mutex::new(None),
+                vanish_after_upload: AtomicBool::new(false),
+                file_entries: Arc::new(Mutex::new(None)),
                 notifications_count: std::sync::atomic::AtomicUsize::new(0),
                 disconnect_count: std::sync::atomic::AtomicUsize::new(0),
                 disconnect_block: Mutex::new(None),
@@ -1052,6 +1056,8 @@ mod tests {
                     .clone()
                     .unwrap_or(default);
                 let tx = self.tx.clone();
+                let entries_handle = self.file_entries.clone();
+                let vanish = self.vanish_after_upload.load(Ordering::SeqCst);
                 tokio::spawn(async move {
                     for action in script {
                         match action {
@@ -1064,6 +1070,11 @@ mod tests {
                                 break;
                             }
                         }
+                    }
+                    if vanish {
+                        // Card behaviour under test: after a completed keep
+                        // transfer the entry is no longer listed.
+                        *entries_handle.lock().unwrap() = Some(Vec::new());
                     }
                 });
                 return;
