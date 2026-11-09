@@ -222,3 +222,57 @@ E0603 接缝已修：`vendor/btleplug/src/lib.rs` 对 `NotificationDiagnostics` 
 ### 11.5 保存后工作树残留（故意的）
 
 `git status` 仍会看到：`app/macos/Podfile`（未跟踪）、两个 macOS `xcconfig`（已修改未提交）、`vendor/reai-card-sdk/Cargo.lock`、`.work/`、`inputs/`、`outputs/`。这些都在 §11.2 的排除清单里，属于自动生成物或本机证据/用户数据。下个对话不要把它们顺手提交进去，也不要因此以为工作树「脏得不干净」。
+
+## 12. 2026-11-09 21:00 轮次：短收根因的实测结论与界面回归
+
+### 12.1 分层计数第一次守恒——缺口在卡端，不在手机
+
+110912 上一次 4.8MB 传输失败后，桥把四层整数计数一路带到了 UI。真实数字（同一连接、同一目标 characteristic）：
+
+| 层 | 包数 | 字节 |
+| --- | ---: | ---: |
+| Apple 回调（callback_copy） | 24,387 | 4,874,609 |
+| 内部路由（internal_dequeue） | 24,387 | 4,874,609 |
+| peripheral 发布（peripheral_send） | 24,387 | 4,874,609 |
+| SDK 消费（consumer） | 24,387 | 4,874,609 |
+| 其中二进制入队成功 | 24,000 包 / 4,799,912 B | 失败 0 |
+
+同一份统计里：`leading_zero_packets=24000`、`payload_200_packets=23999`、`payload_other_packets=1`（尾包 112 B）、`consumer_lag_events=0`、`broadcast_no_receiver=0`、`map_miss=0`、`read_divert=0`、`callback_error=0`。
+
+卡端 start 声明 4,800,512 B，实收 4,799,912 B，差 **600 = 3×200**。手机四层完全相等，说明接收端没有丢包，缺口来自卡端本身少发（或固件 start 声明的长度与实际可发内容不一致）。**这条结论此后可以作为定论使用：不要再在手机接收侧找丢包。**
+
+### 12.2 修复：代际无法确认时保住本地完整数据，只扣留删除授权
+
+真机连续两次暴露同一行为：keep 传输把字节完整收完、flush/sync/hash 都通过之后，收尾重新 `FILE_LIST` 时该条目已经从卡端列表消失，旧的 `validate_generation` 因此把**已经完整的本地副本一并否决**，表现为「同步失败、未入库」。
+
+改动（`src/safe_transfer.rs`）：
+
+- 生成校验从「决定成败」降级为「决定是否签发删除授权」：`generation_confirmed` 只在两次元数据完全相等时为真。
+- 不确认时仍完成 rename/目录 sync/收据，返回里带 `generationConfirmed:false`，并且收据里 `generation` 存 `None`，使任何后续 `confirm_delete` 都不可能据此授权删除。
+- 失败原因现在附带逐字段差异（size/session/seq/start_at/modified_at/synced），便于下次真机直接读出是哪一项变了。
+- 新增测试 `vanished_remote_still_keeps_complete_local_bytes_but_grants_no_source_authority`：模拟「传输完成后卡端列表变空」，断言字节保留、hash 一致、无删除授权、无 FILE_DELETE。原有「缺包必须拒绝」「代际变化拒绝旧收据」等安全测试全部保留通过。
+
+### 12.3 界面：未连接隐藏无效项 + 弹层限高与可控关闭 + 回到设计稿
+
+- **未连接时**只保留「扫描录音卡 / 重连」，录音状态、电量、同步、Wi-Fi、固件五行整体隐藏（原来是无意义的禁用态，用户会对着点不动的选项反复试探）。
+- **弹层**最高 80% 屏高并在顶部让出安全区，不再顶到刘海；新增常驻拖拽把手与右上关闭按钮；**只有固件升级期间**锁定关闭（`fwUpdating`），其余随时可关；二级页左上出现返回。
+- **对齐 `prototype/index.html`**：首页补回 `.tl-head`（大标题 Timeline + 描边「总结」胶囊，位于 tab 之上），tab 当前项加短下划线；弹层行恢复 1px 分隔线；设置页改为设计稿的三组卡片（录音 / 转录与清洗 / 同步）并补「关于录音卡」说明。
+
+### 12.4 本机验证（实际执行）
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test --lib`（card_bridge） | **64 passed**（新增 1 项代际保留测试） |
+| `cargo test`（vendor/reai-card-sdk） | 107 passed |
+| `cargo test`（vendor/btleplug） | 30 passed + 4 doctests |
+| `flutter analyze` | No issues found |
+| `flutter test` | **391 passed / 11 skipped** |
+
+被改动连带更新的既有测试：`record_control_widget_test`（未连接从「禁用」改为「隐藏」+ 新增弹层高度/把手/固件锁 3 项）、`progressive_sync_cancel_test`（两条同步行测试显式置为已连接）、`verify_narrow_test`（首页 Timeline 文案由 1 处变 2 处）。
+
+### 12.5 仍未完成（不要当成已通过）
+
+- **真机 BLE 完整闭环**：修复后尚未在真机跑完一次「完整长度 + hash + 入库 + 非空中文文本」。
+- 手机数据已按要求卸载重装清空；**ASR 模型（226MB）尚未重新 sideload**，缺模型时同步成功也只会报模型缺失。
+- 卡端积压历史文件较多，单轮同步耗时很长；本轮未做卡片端清理（删除不可逆，需 owner 授权）。
+- AP 快传仍按 owner 优先级暂停。
