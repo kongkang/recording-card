@@ -248,6 +248,30 @@ class _MainView extends StatelessWidget {
   const _MainView({required this.store});
   final DeviceStore store;
 
+  Future<void> _cancelSync(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('取消同步？'),
+        content: const Text(
+          '仅停止文件移动，登录、已保存音频与原文都会保留。将等待当前传输结束与热点清理完成，不会取消已开始的文本处理。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('继续同步'),
+          ),
+          TextButton(
+            key: const Key('confirm-cancel-sync'),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('取消同步'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await store.cancelSync();
+  }
+
   Future<void> _prepareFastTransfer(BuildContext context) async {
     if (!await store.prepareFastTransfer() || !context.mounted) return;
     final start = await showDialog<bool>(
@@ -442,6 +466,12 @@ class _MainView extends StatelessWidget {
                     size: 15,
                     color: RCColors.danger,
                   ),
+                  SyncState.cancelled => const Icon(
+                    Icons.pause_circle_outline,
+                    key: Key('sync-ico-cancelled'),
+                    size: 15,
+                    color: RCColors.sec,
+                  ),
                   SyncState.busy => const _SpinIcon(key: Key('sync-ico-busy')),
                   SyncState.done => Icon(
                     store.sourceRetained ? Icons.info_outline : Icons.check,
@@ -486,6 +516,22 @@ class _MainView extends StatelessWidget {
                   }
                 },
               ),
+              if (store.syncState == SyncState.busy &&
+                  store.backend is CancelableSyncDeviceBackend)
+                TextButton(
+                  key: const Key('cancel-sync'),
+                  onPressed: store.canCancelSync
+                      ? () => _cancelSync(context)
+                      : null,
+                  style: TextButton.styleFrom(
+                    foregroundColor: RCColors.ink,
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    textStyle: const TextStyle(fontSize: 12),
+                  ),
+                  child: Text(store.syncCancelling ? '正在取消…' : '取消同步'),
+                ),
             ],
           ),
         ),

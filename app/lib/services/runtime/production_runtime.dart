@@ -177,16 +177,27 @@ class ProductionRuntime {
         cancelTransfer: gateway.cancelFileTransfer,
       ),
       uploader: uploader,
+      onImported: (_) async {
+        await pipeline.publish();
+        if (pipeline.policy.autoTranscribe) await pipeline.processPending();
+      },
+    );
+    final fastDownload = CardDownloadAdapter(
+      gateway,
+      transport: CardTransfer.ap,
+      restoreWifiAfterSession: true,
+      cancelTransfer: gateway.cancelFileTransfer,
     );
     final fastSync = SyncCoordinator(
       repository: recordings,
       settingsRepository: settings,
-      gateway: CardDownloadAdapter(
-        gateway,
-        transport: CardTransfer.ap,
-        restoreWifiAfterSession: true,
-        cancelTransfer: gateway.cancelFileTransfer,
-      ),
+      gateway: fastDownload,
+      onImported: (_) async {
+        await pipeline.publish();
+        if (pipeline.policy.autoTranscribe) {
+          await pipeline.processPending(localOnly: true);
+        }
+      },
     );
     final backend = RuntimeAppBackend(
       recordingRepository: recordings,
@@ -224,9 +235,11 @@ class ProductionRuntime {
         await store.reloadEvents();
         if (store.policy.autoTranscribe) {
           unawaited(
-            pipeline.processPending().catchError(
-              (Object e) => pipeline.reportError('sync-processing', e),
-            ),
+            pipeline
+                .processPending(localOnly: fastDownload.wifiSessionActive)
+                .catchError(
+                  (Object e) => pipeline.reportError('sync-processing', e),
+                ),
           );
         }
       },
@@ -398,7 +411,8 @@ class RuntimeDeviceBackend
     implements
         DeviceBackend,
         RecordingDeviceBackend,
-        FileTransferDeviceBackend {
+        FileTransferDeviceBackend,
+        CancelableSyncDeviceBackend {
   RuntimeDeviceBackend(this.delegate, this.pipeline, this.gateway);
   final ServiceDeviceBackend delegate;
   final RecordingPipeline pipeline;
@@ -409,6 +423,8 @@ class RuntimeDeviceBackend
   Future<void> prepareFastTransfer() => delegate.prepareFastTransfer();
   @override
   Future<void> cancelFastTransfer() => delegate.cancelFastTransfer();
+  @override
+  Future<void> cancelSync() => delegate.cancelSync();
   @override
   Future<void> fastSync(RecordingPolicy policy, ProgressSink onProgress) =>
       delegate.fastSync(policy, onProgress);

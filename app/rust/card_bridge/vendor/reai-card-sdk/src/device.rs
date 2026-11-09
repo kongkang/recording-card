@@ -11,7 +11,7 @@ use futures::StreamExt;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 mod safe_transfer;
-pub use safe_transfer::KeepTransferOptions;
+pub use safe_transfer::{KeepTransferOptions, KeepTransferStats};
 use tokio::{
     io::{AsyncWrite, AsyncWriteExt},
     sync::{Mutex, broadcast, mpsc, watch},

@@ -349,24 +349,34 @@ fn cancellation_before_registration_is_conservative_and_never_claims_completion(
 }
 #[tokio::test]
 async fn native_short_stream_and_unwritable_destination_have_zero_receipts() {
-    for disk_failure in [false, true] {
+    for (disk_failure, early_binary) in [(false, false), (false, true), (true, false)] {
         let t = clean_transport();
         let dir = unique_dir("failed-receipt");
         if disk_failure {
             tokio::fs::write(&dir, b"not a directory").await.unwrap();
         } else {
-            *t.upload_script.lock().unwrap() =
-                Some(vec![start(3), UploadAction::Frame(vec![0, 1]), end()]);
+            let mut script = Vec::new();
+            if early_binary {
+                script.push(UploadAction::Frame(vec![0, 8, 8]));
+            }
+            script.extend([start(3), UploadAction::Frame(vec![0, 1]), end()]);
+            *t.upload_script.lock().unwrap() = Some(script);
         }
         let mut session = fake_session(t.clone()).await;
-        assert!(download_preserving(
+        let error = download_preserving(
             &mut session,
             &request(&dir, "a.apm"),
             discard,
             if disk_failure { 8400 } else { 8401 }
         )
         .await
-        .is_err());
+        .unwrap_err();
+        if !disk_failure {
+            let expected_early = if early_binary { 2 } else { 0 };
+            assert!(error.message.contains(&format!("pre_start_bytes: {expected_early}")));
+            assert!(error.message.contains("received_packets: 1"));
+            assert!(error.message.contains("end_seen: true"));
+        }
         assert!(session.receipts.is_empty());
         no_delete(&t);
         if disk_failure {

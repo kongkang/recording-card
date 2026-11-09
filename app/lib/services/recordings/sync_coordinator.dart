@@ -34,6 +34,10 @@ class SyncCoordinator {
   final RecordingDownloadGateway? gateway;
   final RecordingUploader? uploader;
   final RecordingNetworkPolicy networkPolicy;
+
+  /// Runs after the whole file group is durable and source receipt is recorded,
+  /// before the next file. Processing errors never undo a verified local save.
+  final FutureOr<void> Function(RecordingImportResult)? onImported;
   final StreamController<RecordingTask> _changes = StreamController.broadcast();
   bool _busy = false;
   bool _cancelled = false;
@@ -49,6 +53,7 @@ class SyncCoordinator {
     required this.settingsRepository,
     this.gateway,
     this.uploader,
+    this.onImported,
     RecordingNetworkPolicy? networkPolicy,
   }) : networkPolicy = networkPolicy ?? RecordingNetworkPolicy();
 
@@ -120,8 +125,17 @@ class SyncCoordinator {
       await source.openSession(deviceId);
       _checkCancelled();
       if (source.usesNetwork) await _requireNetwork();
-      final files = await source.listRecordings(deviceId);
-      for (final file in files) {
+      final files = (await source.listRecordings(deviceId)).indexed.toList()
+        ..sort((a, b) {
+          final left = _deviceFileTime(a.$2);
+          final right = _deviceFileTime(b.$2);
+          if (left == null && right == null) return a.$1.compareTo(b.$1);
+          if (left == null) return 1;
+          if (right == null) return -1;
+          final order = right.compareTo(left);
+          return order == 0 ? a.$1.compareTo(b.$1) : order;
+        });
+      for (final (_, file) in files) {
         _checkCancelled();
         if (file.sizeBytes <= 0) {
           throw const RecordingStorageException('设备文件大小无效或录音尚未完成');
@@ -164,6 +178,8 @@ class SyncCoordinator {
               duplicate: true,
             ),
           );
+          await _notifyImported(results.last);
+          _checkCancelled();
           continue;
         }
         final imported = await _task<RecordingImportResult>(
@@ -210,6 +226,8 @@ class SyncCoordinator {
           },
         );
         results.add(imported);
+        await _notifyImported(imported);
+        _checkCancelled();
       }
     } catch (error) {
       primaryError = error;
@@ -231,6 +249,36 @@ class SyncCoordinator {
       }
     }
     return results;
+  }
+
+  static int? _deviceFileTime(RemoteRecording file) {
+    if (file.recordedAt != null) return file.recordedAt!.millisecondsSinceEpoch;
+    // Listing timestamps only order files; an unsynced clock is NOT presented
+    // as a reliable recording date, and no wall clock/session/seq is invented.
+    for (final key in ['deviceStartAt', 'deviceCreatedAt']) {
+      final value = file.metadata[key];
+      if (value is num && value.isFinite && value > 0) {
+        return value.toInt() * 1000;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _notifyImported(RecordingImportResult result) async {
+    final callback = onImported;
+    if (callback == null) return;
+    try {
+      await callback(result);
+    } catch (error) {
+      await repository.update(
+        (state) => state.copyWith(
+          metadata: {
+            ...state.metadata,
+            'error:import-processing:${result.entry.key}': error.toString(),
+          },
+        ),
+      );
+    }
   }
 
   Future<void> _confirmImported(
@@ -289,7 +337,8 @@ class SyncCoordinator {
         },
       ),
     );
-    _checkCancelled();
+    // Publish an acknowledged local file even if cancel raced with the receipt.
+    // The caller checks cancellation after its progressive callback.
   }
 
   Future<void> _requireNetwork() async {

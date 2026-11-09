@@ -563,6 +563,11 @@ void main() {
         ),
         isEmpty,
       );
+      final rejected = (await h.repo.load()).events.firstWhere(
+        (e) => e.transcriptionStatus == 'no_speech',
+      );
+      expect(rejected.status, 'failed');
+      expect(rejected.error, contains('没有VAD静音证据'));
       await h.chunk(3);
       h.asr.result = const TranscriptionResult(
         text: '',
@@ -580,6 +585,14 @@ void main() {
               as Map;
       expect(pending['reason'], 'long_silence');
       expect(pending['chunkIds'], [state.events.first.id]);
+      final quiet = state.events.firstWhere((e) => e.status == 'silent');
+      expect(quiet.brief, contains('本地转写完成'));
+      expect(quiet.raw, isEmpty);
+      expect(quiet.dialog, isEmpty);
+      expect(quiet.dur, '30s');
+      final calls = h.asr.calls;
+      await h.pipeline.processPending();
+      expect(h.asr.calls, calls);
     },
   );
   test('grouped polished includes all selected raw; excludes partial rows and unselected window context', () async {

@@ -31,6 +31,8 @@ class CardDownloadAdapter
   bool _opened = false;
   bool _cancelled = false;
   bool _enabledWifi = false;
+  bool _wifiSessionActive = false;
+  bool get wifiSessionActive => _wifiSessionActive;
   @override
   bool get usesNetwork => false;
   @override
@@ -48,6 +50,7 @@ class CardDownloadAdapter
       if (status.recording) {
         throw StateError('快传需要设备停止录音；请使用录音开关停止后重试，不会暗中停录');
       }
+      _wifiSessionActive = true;
       _enabledWifi = !status.wifiOpen;
       if (_enabledWifi) await gateway.setWifiEnabled(true);
     } else if (status.wifiOpen) {
@@ -64,7 +67,11 @@ class CardDownloadAdapter
     _enabledWifi = false;
     _deviceId = null;
     _activeRecordingSession = null;
-    if (restore) await gateway.setWifiEnabled(false);
+    if (restore) {
+      _wifiSessionActive = true;
+      await gateway.setWifiEnabled(false);
+    }
+    _wifiSessionActive = false;
   }
 
   @override
@@ -115,6 +122,8 @@ class CardDownloadAdapter
             'session': f.session,
             'sequence': f.sequence,
             'clockSynced': f.clockSynced,
+            'deviceStartAt': f.startAt,
+            'deviceCreatedAt': f.createdAt,
             'identityReliable': f.session != null && f.sequence != null,
             'metadataName': metadata?.name,
             'markName': marks?.name,

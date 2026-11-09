@@ -14,6 +14,7 @@ import '../analysis/stage_summary_service.dart';
 import '../recordings/recording_repository.dart';
 import '../transcription/transcription_service.dart';
 import 'runtime_config.dart';
+import 'private_capture_path.dart';
 
 /// Private, single-writer pipeline. Audio/raw are durable before cloud work.
 /// Retry is explicit; a completed subtask is not submitted/billed again.
@@ -139,7 +140,11 @@ class RecordingPipeline {
     await disconnected();
   }
 
-  Future<void> _receive(CardAudioChunk chunk, bool infer) async {
+  Future<void> _receive(
+    CardAudioChunk chunk,
+    bool infer, {
+    bool localOnly = false,
+  }) async {
     await _restore();
     final state = await repository.load();
     final existing = state.metadata.values
@@ -214,7 +219,7 @@ class RecordingPipeline {
       if (_segments[old] != null) {
         await _metadata('segment:$old', _segments[old]!.toJson());
       }
-      if (stage != null) await _persistStage(stage);
+      if (stage != null) await _persistStage(stage, localOnly: localOnly);
     }
     await publish();
     if (infer && !_suspended) {
@@ -233,11 +238,10 @@ class RecordingPipeline {
   /// No hardware operation or model call is made by recovery itself.
   Future<void> recoverCaptureFiles() => _serial(_recoverCaptureFiles);
 
-  Future<void> _recoverCaptureFiles() async {
+  Future<void> _recoverCaptureFiles({bool localOnly = false}) async {
     final directory = Directory('${repository.directory.path}/capture');
     if (!await directory.exists()) return;
     final chunks = <CardAudioChunk>[];
-    final root = await directory.resolveSymbolicLinks();
     await for (final file in directory.list()) {
       if (file is! File ||
           !file.path.endsWith('.json') ||
@@ -252,16 +256,15 @@ class RecordingPipeline {
         if (!RegExp(r'^[A-Za-z0-9_-]{1,80}$').hasMatch(chunk.taskId)) {
           throw const FormatException('Invalid task ID');
         }
-        final audio = File(chunk.path);
-        if (!await audio.exists() ||
-            !chunk.path.endsWith('.wav') ||
-            !(await audio.resolveSymbolicLinks()).startsWith('$root/')) {
-          throw const FormatException('Invalid private capture path');
-        }
+        final audio = await resolvePrivateCaptureAudio(
+          directory,
+          file,
+          chunk.path,
+        );
         if (await audio.length() != 44 + chunk.samples * 2) {
           throw const FormatException('Incomplete capture WAV');
         }
-        chunks.add(chunk);
+        chunks.add(CardAudioChunk.fromJson({...json, 'path': audio.path}));
       } catch (e) {
         await reportError('capture-recovery', e);
       }
@@ -272,15 +275,16 @@ class RecordingPipeline {
           : a.taskId.compareTo(b.taskId),
     );
     for (final chunk in chunks) {
-      await _receive(chunk, false);
+      await _receive(chunk, false, localOnly: localOnly);
     }
   }
 
-  Future<void> processPending() => _serial(_processPending);
+  Future<void> processPending({bool localOnly = false}) =>
+      _serial(() => _processPending(localOnly: localOnly));
 
-  Future<void> _processPending() async {
+  Future<void> _processPending({bool localOnly = false}) async {
     await _restore();
-    await _recoverCaptureFiles();
+    await _recoverCaptureFiles(localOnly: localOnly);
     final state = await repository.load();
     final blocked = <String>{};
     // A failed update moves an event to the end of the snapshot. Restore source
@@ -303,6 +307,10 @@ class RecordingPipeline {
       final jobs = state.metadata['jobs:${event.id}'] as Map? ?? {};
       final needed =
           event.originalTranscript == null ||
+          (event.status == 'imported' &&
+              event.transcriptionStatus == 'completed' &&
+              event.originalTranscript?.isEmpty == true &&
+              state.metadata['asr:${event.id}'] is Map) ||
           event.transcriptionStatus == 'failed' ||
           event.transcriptionStatus == 'analysis_failed' ||
           event.transcriptionStatus == 'cancelled' ||
@@ -310,7 +318,7 @@ class RecordingPipeline {
           (policy.inferSpeakers && jobs['speakers'] != true);
       if (!needed) continue;
       try {
-        await _transcribe(event);
+        await _transcribe(event, localOnly: localOnly);
       } catch (_) {
         final latest = (await repository.load()).events.firstWhere(
           (e) => e.id == event.id,
@@ -320,7 +328,7 @@ class RecordingPipeline {
         }
       }
     }
-    if (policy.autoClean && !_suspended) await _retryStages();
+    if (!localOnly && policy.autoClean && !_suspended) await _retryStages();
   }
 
   Future<void> transcribe(
@@ -328,12 +336,14 @@ class RecordingPipeline {
     String? recordingId,
     int startMs = 0,
     int? endMs,
+    bool localOnly = false,
   }) => _serial(
     () => _transcribe(
       event,
       recordingId: recordingId,
       startMs: startMs,
       endMs: endMs,
+      localOnly: localOnly,
     ),
   );
 
@@ -342,6 +352,7 @@ class RecordingPipeline {
     String? recordingId,
     int startMs = 0,
     int? endMs,
+    bool localOnly = false,
   }) async {
     await _restore();
     final state = await repository.load();
@@ -433,7 +444,7 @@ class RecordingPipeline {
         transcript = await asr.transcribeFile(
           path,
           format: format,
-          allowModelDownload: RuntimeConfig.allowModelDownload,
+          allowModelDownload: !localOnly && RuntimeConfig.allowModelDownload,
           cancellation: token,
         );
         await _metadata('asr:${event.id}', transcript.toJson());
@@ -447,6 +458,9 @@ class RecordingPipeline {
             transcript: transcript.text,
             durationMs: transcript.audioDuration.inMilliseconds,
             transcriptionStatus: verifiedSilence ? 'completed' : 'no_speech',
+            status: verifiedSilence ? 'silent' : 'failed',
+            brief: verifiedSilence ? '本地转写完成，未检测到有效语音' : '本地转写未识别到可用文本，原始音频已保留',
+            dur: '${transcript.audioDuration.inSeconds}s',
             error: verifiedSilence ? null : 'ASR未识别到可用文本；没有VAD静音证据',
           ),
         );
@@ -460,14 +474,18 @@ class RecordingPipeline {
               milliseconds:
                   endMs ?? startMs + transcript.audioDuration.inMilliseconds,
             ),
+            localOnly: localOnly,
           );
         }
         await repository.upsertTask(
           task.copyWith(
-            state: RecordingTaskState.succeeded,
-            stage: 'complete',
+            state: verifiedSilence
+                ? RecordingTaskState.succeeded
+                : RecordingTaskState.failed,
+            stage: verifiedSilence ? 'complete' : 'local_asr_no_text',
             progress: 1,
-            clearError: true,
+            clearError: verifiedSilence,
+            error: verifiedSilence ? null : 'ASR未识别到可用文本；没有VAD静音证据',
           ),
         );
         await publish();
@@ -514,6 +532,32 @@ class RecordingPipeline {
         mark: policy.markImportant && event.marks.isNotEmpty ? '重要标记' : '',
       );
       token.throwIfCancelled();
+      if (localOnly) {
+        final pendingAnalysis =
+            (policy.autoClean && jobs['clean'] != true) ||
+            (policy.inferSpeakers && jobs['speakers'] != true);
+        await repository.upsertEvent(
+          event.copyWith(
+            transcriptionStatus: pendingAnalysis
+                ? 'analysis_pending'
+                : 'completed',
+            error: null,
+          ),
+        );
+        await repository.upsertTask(
+          task.copyWith(
+            state: pendingAnalysis
+                ? RecordingTaskState.queued
+                : RecordingTaskState.succeeded,
+            stage: pendingAnalysis ? 'analysis_pending' : 'complete',
+            progress: pendingAnalysis ? null : 1,
+            clearProgress: pendingAnalysis,
+            clearError: true,
+          ),
+        );
+        await publish();
+        return;
+      }
       if (transcript.text.trim().isNotEmpty) {
         if (recordingId != null) {
           final rid = recordingId;
@@ -714,20 +758,27 @@ class RecordingPipeline {
     }
   }
 
-  Future<void> observeSilence(String recordingId, Duration through) async {
+  Future<void> observeSilence(
+    String recordingId,
+    Duration through, {
+    bool localOnly = false,
+  }) async {
     final segment = _segments[recordingId];
     if (segment == null) return;
     final stage = segment.observeSilence(through);
     await _metadata('segment:$recordingId', segment.toJson());
-    if (stage != null) await _persistStage(stage);
+    if (stage != null) await _persistStage(stage, localOnly: localOnly);
   }
 
-  Future<void> _persistStage(TranscriptStage stage) async {
+  Future<void> _persistStage(
+    TranscriptStage stage, {
+    bool localOnly = false,
+  }) async {
     await _metadata('pending-stage:${stage.id}', {
       ...stage.toJson(),
       'chunks': stage.chunks.map((c) => c.toJson()).toList(),
     });
-    if (policy.autoClean && !_suspended && !_disposed) {
+    if (!localOnly && policy.autoClean && !_suspended && !_disposed) {
       if (!(await repository.load()).metadata.containsKey(
         'stage:${stage.id}',
       )) {

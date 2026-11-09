@@ -149,7 +149,8 @@ class ServiceDeviceBackend
     implements
         DeviceBackend,
         RecordingDeviceBackend,
-        FileTransferDeviceBackend {
+        FileTransferDeviceBackend,
+        CancelableSyncDeviceBackend {
   ServiceDeviceBackend({
     required this.gateway,
     required SettingsRepository settingsRepository,
@@ -239,11 +240,33 @@ class ServiceDeviceBackend
   Future<DeviceReading> stopRecording() => _setRecording(false);
 
   bool _recordingBusy = false;
+  bool _transferBusy = false;
+  bool _transferCancelled = false;
+  SyncCoordinator? _activeSync;
+  Completer<void>? _transferDrain;
+
+  Future<DeviceReading> _returnSdToBle() async {
+    final before = await status();
+    if (!before.snapshot.wifiOpen) return before;
+    if (before.snapshot.recording) {
+      throw StateError('录音与Wi-Fi占用SD的状态冲突，不会强制切换');
+    }
+    await gateway.setWifiEnabled(false);
+    final after = await status();
+    if (after.snapshot.wifiOpen ||
+        (before.targetId != null && after.targetId != before.targetId)) {
+      throw StateError('尚未确认SD归还主控，不能启动普通录音/传输');
+    }
+    return after;
+  }
+
   Future<DeviceReading> _setRecording(bool enabled) async {
     if (_transportId == null) throw StateError('未连接录音卡');
     if (_recordingBusy) throw StateError('录音控制正在进行，稍后重试');
+    if (_transferBusy) throw StateError('文件传输正在进行，不能切换录音');
     _recordingBusy = true;
     try {
+      if (enabled) await _returnSdToBle();
       // The native command resolves with real RECORD_STATUS, not command ACK.
       final record = await gateway.setRecording(enabled);
       if (record['isRecording'] != enabled) {
@@ -262,7 +285,7 @@ class ServiceDeviceBackend
 
   @override
   Future<void> sync(RecordingPolicy policy, ProgressSink onProgress) =>
-      _runSync(_sync, policy, onProgress);
+      _runSync(_sync, policy, onProgress, ordinaryBle: true);
 
   @override
   Future<void> fastSync(RecordingPolicy policy, ProgressSink onProgress) =>
@@ -270,6 +293,7 @@ class ServiceDeviceBackend
 
   @override
   Future<void> prepareFastTransfer() async {
+    if (_recordingBusy || _transferBusy) throw StateError('设备操作正在进行');
     final current = await status();
     if (current.snapshot.recording || current.snapshot.realtimeEnabled) {
       throw StateError('快传需要先停止录音并关闭实时传输，不会暗中停录');
@@ -278,40 +302,95 @@ class ServiceDeviceBackend
   }
 
   @override
-  Future<void> cancelFastTransfer() => gateway.setWifiEnabled(false);
+  Future<void> cancelFastTransfer() async {
+    if (_transferBusy) throw StateError('文件传输尚未结束，请先取消同步并等待清理');
+    await gateway.setWifiEnabled(false);
+  }
+
+  @override
+  Future<void> cancelSync() async {
+    final drain = _transferDrain;
+    if (drain == null) return;
+    _transferCancelled = true;
+    try {
+      final coordinator = _activeSync;
+      if (coordinator?.isBusy == true) await coordinator!.cancel();
+    } finally {
+      // Native cancel marks the current ticket; it is NOT its final event.
+      await drain.future;
+    }
+  }
+
+  void _checkTransferCancelled() {
+    if (_transferCancelled) throw const RecordingSyncCancelled();
+  }
 
   Future<void> _runSync(
     SyncCoordinator? coordinator,
     RecordingPolicy policy,
-    ProgressSink onProgress,
-  ) async {
+    ProgressSink onProgress, {
+    bool ordinaryBle = false,
+  }) async {
     lastSyncOutcome = null;
     if (coordinator == null) throw StateError('本机文件传输服务未配置');
     if (_transportId == null) throw StateError('未连接录音卡');
-    final state = await _settings.load();
-    final next = state.settings.copyWith(wifiOnlySync: policy.wifiOnlySync);
-    await _settings.save(next);
-    final subscription = (coordinator.changes as Stream).listen((dynamic task) {
-      onProgress(
-        TaskProgress(
-          '同步 · ${task.stage}',
-          percent: task.progress == null
-              ? null
-              : (task.progress as num).toDouble() * 100,
-        ),
-      );
-    });
+    if (_recordingBusy || _transferBusy) throw StateError('设备操作正在进行');
+    _transferBusy = true;
+    _transferCancelled = false;
+    _activeSync = coordinator;
+    _transferDrain = Completer<void>();
+    StreamSubscription<dynamic>? subscription;
+    var sessionStarted = false;
     try {
+      if (ordinaryBle) {
+        onProgress(const TaskProgress('正在准备普通BLE，确认SD由主控持有'));
+        await _returnSdToBle();
+      }
+      _checkTransferCancelled();
+      final state = await _settings.load();
+      _checkTransferCancelled();
+      final next = state.settings.copyWith(wifiOnlySync: policy.wifiOnlySync);
+      await _settings.save(next);
+      _checkTransferCancelled();
+      subscription = (coordinator.changes as Stream).listen((dynamic task) {
+        onProgress(
+          TaskProgress(
+            '同步 · ${task.stage}',
+            percent: task.progress == null
+                ? null
+                : (task.progress as num).toDouble() * 100,
+          ),
+        );
+      });
       final snapshot = await status();
+      _checkTransferCancelled();
       final id = snapshot.targetId;
       if (id == null || id.isEmpty) throw StateError('设备未返回可验证身份');
+      sessionStarted = true;
       final result = await coordinator.sync(id);
       lastSyncOutcome = DeviceSyncOutcome(
         savedCount: result.imports.length,
         retainedSourceCount: result.retainedSourceFileIds.length,
       );
     } finally {
-      await subscription.cancel();
+      try {
+        try {
+          if (!ordinaryBle && !sessionStarted) {
+            // A prepared AP may exist before coordinator.openSession. All awaited
+            // preflight commands have returned; use its existing idempotent cleanup
+            // instead of opening a transfer just to cancel it.
+            await coordinator.gateway?.closeSession(_verifiedIdentity ?? '');
+          }
+        } finally {
+          await coordinator.drained;
+          await subscription?.cancel();
+        }
+      } finally {
+        _activeSync = null;
+        _transferBusy = false;
+        _transferDrain!.complete();
+        _transferDrain = null;
+      }
     }
   }
 
