@@ -117,6 +117,8 @@ class ProductionRuntime {
     late final LocalOnlyAnalysisGateway modelGateway;
     final hotspot = AccessoryHotspotSession(
       gateway,
+      networkProbe: AccessoryHotspotSession.probeNativeNetwork,
+      sdkFileProbe: gateway.probeAccessPointFiles,
       beforeWifiOpen: () async {
         // Do not cancel existing text/ASR jobs. The active session blocks new
         // cloud calls while already-started work drains before switching Wi-Fi.

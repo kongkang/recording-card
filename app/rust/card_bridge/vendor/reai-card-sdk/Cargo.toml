@@ -17,7 +17,6 @@ btleplug = []
 [dependencies]
 async-trait = "0.1"
 base64 = "0.22"
-btleplug = "0.12"
 chrono = "0.4"
 crc32fast = "1"
 futures = "0.3"
@@ -30,6 +29,13 @@ tokio = { version = "1", features = ["macros", "rt", "sync", "time", "io-util", 
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# Apple-only local notification fix; Android keeps the original registry crate.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+btleplug_apple = { package = "btleplug", version = "=0.12.0", path = "../btleplug" }
+
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
+btleplug = "0.12"
 
 [dev-dependencies]
 axum = { version = "0.8", features = ["ws", "multipart"] }

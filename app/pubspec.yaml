@@ -76,6 +76,7 @@ flutter:
     - assets/models/silero_vad.onnx
     - assets/models/silero_vad.LICENSE.txt
     - rust/card_bridge/vendor/reai-card-sdk/LICENSE
+    - rust/card_bridge/vendor/btleplug/LICENSE.md
 
   # To add assets to your application, add an assets section, like this:
   # assets:

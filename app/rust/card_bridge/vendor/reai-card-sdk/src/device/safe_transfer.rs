@@ -30,6 +30,17 @@ pub struct KeepTransferStats {
     pub last_packet_bytes: usize,
     pub start_size: Option<u64>,
     pub end_seen: bool,
+    /// Before FILE_UPLOAD write, after stale drain. Live/non-fenced snapshot;
+    /// connection counters are never reset, including concurrent audio/events.
+    pub sdk_begin: Option<SdkNotificationCounters>,
+    /// Fixed prefixes captured by the same notification worker that enqueued
+    /// these FILE_UPLOAD frames. Not sampled later by the keep receiver.
+    pub sdk_start: Option<SdkNotificationCounters>,
+    pub sdk_end: Option<SdkNotificationCounters>,
+    /// Optional, live/non-fenced cross-layer samples at command begin and when
+    /// keep consumes end. None means unavailable/not reached, never measured 0.
+    pub transport_begin: Option<Value>,
+    pub transport_end: Option<Value>,
 }
 
 struct KeepGuard {
@@ -168,6 +179,8 @@ impl DyjDevice {
                 "SD/recording ownership changed during preflight; source retained".into(),
             ));
         }
+        stats.sdk_begin = Some(self.sdk_notification_counters());
+        stats.transport_begin = self.notification_diagnostics();
         self.core.file_transfer_active.store(true, Ordering::SeqCst);
         guard.active_owned = true;
         bounded!(self.write_command("FILE_UPLOAD", Some(json!({"name": name, "keep": true}))))?;
@@ -204,7 +217,15 @@ impl DyjDevice {
                     }
                     progress(written, options.expected_bytes);
                 }
-                Inbound::Text(frame) if frame.command == "FILE_UPLOAD" => {
+                Inbound::Text(frame, boundary) if frame.command == "FILE_UPLOAD" => {
+                    match frame.payload.get("state").and_then(Value::as_str) {
+                        Some("start") => stats.sdk_start = boundary.map(|snapshot| *snapshot),
+                        Some("end") => {
+                            stats.sdk_end = boundary.map(|snapshot| *snapshot);
+                            stats.transport_end = self.notification_diagnostics();
+                        }
+                        _ => {}
+                    }
                     ensure_success(&frame.command, &frame.payload)?;
                     match frame.payload.get("state").and_then(Value::as_str) {
                         Some("start") if !started => {

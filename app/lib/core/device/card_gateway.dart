@@ -352,6 +352,8 @@ abstract class CardGateway {
   Future<void> disconnect() async => _unsupported();
   Future<CardSnapshot> status() async => _unsupported();
   Future<List<CardFile>> listFiles({String? folder}) async => _unsupported();
+  Future<bool> probeAccessPointFiles(String expectedDeviceId) async =>
+      _unsupported();
   Future<CardDownload> downloadFile(
     String name, {
     required String directory,
@@ -740,6 +742,20 @@ class RealCardGateway extends CardGateway {
       (await _call('listFiles', {'folder': folder}) as List)
           .map((j) => CardFile.fromJson(_map(j)))
           .toList();
+  @override
+  Future<bool> probeAccessPointFiles(String expectedDeviceId) async {
+    final result = _map(
+      await _call('apFileServiceStatus', {
+        'expectedDeviceId': expectedDeviceId,
+      }),
+    );
+    if (result['deviceId'] != expectedDeviceId ||
+        result['fileServiceVerified'] != true) {
+      throw const CardGatewayException('protocol', 'SDK未返回可信本地文件服务验证');
+    }
+    return result['ready'] == true;
+  }
+
   @override
   Future<CardDownload> downloadFile(
     String name, {
