@@ -281,7 +281,7 @@ class AppStore extends ChangeNotifier {
     syncStage = SyncStage.listing;
     syncProgress = 0;
     syncText = '正在读取录音卡文件列表…';
-    _status?.updateQueue(remaining: 0, active: true);
+    _status?.startSync(detail: syncText);
     notifyListeners();
     try {
       final report = await pipeline.sync(onProgress: _onPipelineProgress);
@@ -297,7 +297,13 @@ class AppStore extends ChangeNotifier {
       syncStage = null;
       syncProgress = 0;
       syncText = '';
-      _status?.updateQueue(remaining: 0, active: false);
+      final error = syncError;
+      if (error != null) {
+        // 失败不静默：顶部状态块停在错误态，等下一次同步重试
+        _status?.onError(error);
+      } else {
+        _status?.updateQueue(remaining: 0, active: false);
+      }
       notifyListeners();
     }
   }
@@ -306,7 +312,7 @@ class AppStore extends ChangeNotifier {
   Future<void> processPendingRecordings() async {
     final pipeline = _pipeline;
     if (pipeline == null || pipeline.isBusy) return;
-    _status?.updateQueue(remaining: 0, active: true);
+    _status?.startSync(detail: '正在整理本地录音…');
     try {
       await pipeline.processPending(onProgress: _onPipelineProgress);
       await refreshFromStore();
@@ -324,10 +330,11 @@ class AppStore extends ChangeNotifier {
     final total = p.sliceTotal ?? 0;
     final index = p.sliceIndex ?? 0;
     final remaining = total > 0 ? (total - index).clamp(0, total) : 0;
-    _status?.updateQueue(
-      remaining: remaining,
-      active: p.stage != PipelineStage.done,
-    );
+    if (p.stage == PipelineStage.done) {
+      _status?.updateQueue(remaining: 0, active: false);
+    } else {
+      _status?.updateSync(p.text, remaining: remaining);
+    }
     notifyListeners();
   }
 

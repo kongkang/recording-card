@@ -51,27 +51,47 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     if (widget.device == null) widget.onDeviceCreated?.call(_device);
+    // Timeline 顶部状态块在录音期间一直显示计时：由外壳持有设备时钟
+    _device.retainClock();
     _device.addListener(_syncRecordingStatus);
     _syncRecordingStatus();
     // 启动即核对一次蓝牙链路：连着卡就直接展示真实状态，没连就等用户点胶囊去扫描
     unawaited(_device.restoreLink());
   }
 
-  /// 设备录音态 → Timeline 顶部状态块；转写/切片细粒度事件由后续管线接入。
+  /// 上一帧设备是否在录音：用来识别「刚停止录音」这个边沿，触发自动同步。
+  bool _wasRecording = false;
+
+  /// 设备录音态 → Timeline 顶部状态块；转写/同步细粒度事件由管线接入。
   ///
-  /// 注意：设备停止录音时不能直接清空状态——本地还在转写/润色时，
-  /// 状态块要继续显示「正在整理」；只有仍处于 recording 态才收起。
+  /// 停止录音不再直接收起状态块：先切到「正在同步」并自动拉取最新文件，
+  /// 管线跑完（或失败）才收起/报错。录音中持续把设备计时同步给状态块。
   void _syncRecordingStatus() {
-    if (_device.isRecording) {
-      if (!_recording.isRecording) _recording.startRecording();
-    } else if (_recording.phase == RecordingPhase.recording) {
-      _recording.stopRecording();
+    final recording = _device.isRecording;
+    if (recording) {
+      if (!_wasRecording) _recording.startRecording();
+      _recording.updateElapsed(_device.recSeconds);
+    } else if (_wasRecording) {
+      _recording.startSync();
+      if (_device.isConnected) {
+        unawaited(_autoSyncAfterRecording());
+      }
     }
+    _wasRecording = recording;
+  }
+
+  /// 停止录音后的自动同步：拉取最新切片 → 转写/整理 → 进入今天时间轴第一条。
+  /// 成功后把「自动同步 · 刚刚」回写到状态弹层的同步行；失败保留错误态。
+  Future<void> _autoSyncAfterRecording() async {
+    final error = await widget.store.syncRecordings();
+    if (!mounted || error != null) return;
+    _device.noteSyncFinished(manual: false);
   }
 
   @override
   void dispose() {
     _device.removeListener(_syncRecordingStatus);
+    _device.releaseClock();
     if (widget.device == null) _device.dispose();
     if (widget.recordingStatus == null) _recording.dispose();
     super.dispose();

@@ -23,6 +23,7 @@ import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/transcribe/asr_models.dart';
 import '../services/transcribe/model_manager_controller.dart';
+import '../widgets/rc_switch.dart';
 import 'privacy_page.dart';
 
 class SettingPage extends StatefulWidget {
@@ -179,7 +180,7 @@ class _SettingPageState extends State<SettingPage> {
                   // 保持与旧实现一致的「keyed 祖先 + AnimatedContainer 后代」结构
                   KeyedSubtree(
                     key: Key('sw-$index'),
-                    child: _RCSwitch(on: on),
+                    child: RCSwitch(on: on),
                   ),
                 ],
               ),
@@ -236,44 +237,6 @@ class _RowDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Divider(height: 1, thickness: 1, color: context.rc.sep);
-  }
-}
-
-/// 自绘开关（原型 `.sw`：50×30 轨道 + 24 圆点，150ms 过渡）。
-///
-/// 不自带手势（整行负责点击），只做视觉 + 状态动画；
-/// `AnimatedContainer` 是本页的视觉锚点，深/浅色都由语义色决定。
-class _RCSwitch extends StatelessWidget {
-  const _RCSwitch({required this.on});
-
-  final bool on;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.rc;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
-      width: 50,
-      height: 30,
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: on ? c.switchTrackOn : c.ax,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: AnimatedAlign(
-        duration: const Duration(milliseconds: 150),
-        curve: Curves.easeOut,
-        alignment: on ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          width: 24,
-          height: 24,
-          decoration: BoxDecoration(
-            color: c.switchThumb,
-            shape: BoxShape.circle,
-          ),
-        ),
-      ),
-    );
   }
 }
 

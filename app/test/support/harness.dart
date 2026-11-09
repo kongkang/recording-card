@@ -13,6 +13,7 @@ import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/core/store/device_store.dart';
 import 'package:recording_card/data/seed.dart';
 import 'package:recording_card/pages/app_shell.dart';
+import 'package:recording_card/services/audio/recording_status.dart';
 
 import 'fake_gateway.dart';
 import 'fake_recordings.dart';
@@ -40,6 +41,7 @@ Future<ShellHarness> pumpShell(
   DeviceStore? device,
   SummaryModel? model,
   FakeRecordingSync? recordings,
+  RecordingStatusController? recordingStatus,
   bool pumpTwice = true,
 }) async {
   final m = model ?? SummaryModel();
@@ -58,7 +60,14 @@ Future<ShellHarness> pumpShell(
   addTearDown(d.dispose);
   addTearDown(s.dispose);
   await tester.pumpWidget(
-    MaterialApp(theme: testTheme(), home: AppShell(store: s, device: d)),
+    MaterialApp(
+      theme: testTheme(),
+      home: AppShell(
+        store: s,
+        device: d,
+        recordingStatus: recordingStatus,
+      ),
+    ),
   );
   await tester.pump();
   if (pumpTwice) await tester.pump();
