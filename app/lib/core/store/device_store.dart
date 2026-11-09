@@ -333,7 +333,9 @@ class DeviceStore extends ChangeNotifier {
       if (_disposed || epoch != _connectionEpoch) return;
       _statusFailure(e);
       devStateIsError = true;
-      devStateText = connected
+      devStateText = syncState == SyncState.failed && syncError != null
+          ? syncError!
+          : connected
           ? '状态刷新失败，保留上次读取：${_message(e)}'
           : '设备状态不可用：${_message(e)}';
     } finally {
@@ -511,6 +513,8 @@ class DeviceStore extends ChangeNotifier {
     }
     syncState = SyncState.busy;
     syncError = null;
+    devStateText = '';
+    devStateIsError = false;
     syncStage = '正在同步…';
     syncPercent = null;
     syncCancelling = false;

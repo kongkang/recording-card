@@ -16,6 +16,8 @@ class AccessoryHotspotSession {
     Future<void> Function()? closePhoneConfiguration,
     Future<bool> Function(Uri, Duration)? probe,
     bool Function()? isIos,
+    this.networkProbe,
+    this.sdkFileProbe,
     this.beforeWifiOpen,
     this.readyTimeout = const Duration(seconds: 30),
     this.probeTimeout = const Duration(seconds: 3),
@@ -23,13 +25,25 @@ class AccessoryHotspotSession {
   }) : _join = join ?? _joinNative,
        _closePhone = closePhoneConfiguration ?? _closeNative,
        _isIos = isIos ?? (() => Platform.isIOS) {
+    final sdkProbe = sdkFileProbe;
     _probe =
         probe ??
-        (uri, timeout) => probeFileService(
-          uri,
-          timeout,
-          onFailure: (message) => _lastProbeFailure = message,
-        );
+        (sdkProbe == null
+            ? (uri, timeout) => probeFileService(
+                uri,
+                timeout,
+                onFailure: (message) => _lastProbeFailure = message,
+              )
+            : (uri, timeout) async {
+                try {
+                  // SDK owns its bounded request timeout and the FFI final;
+                  // do not abandon the native command via a Dart timeout.
+                  return await sdkProbe(_deviceId!);
+                } on CardGatewayException catch (error) {
+                  _lastProbeFailure = error.message;
+                  return false;
+                }
+              });
   }
 
   static const channel = MethodChannel('dev.kongkang.recording-card/hotspot');
@@ -40,6 +54,9 @@ class AccessoryHotspotSession {
   late final Future<bool> Function(Uri, Duration) _probe;
   String? _lastProbeFailure;
   final bool Function() _isIos;
+  final Future<Map<String, dynamic>> Function()? networkProbe;
+  final Future<bool> Function(String deviceId)? sdkFileProbe;
+  String? _networkDiagnosis;
   final Future<void> Function()? beforeWifiOpen;
   final Duration readyTimeout;
   final Duration probeTimeout;
@@ -67,6 +84,29 @@ class AccessoryHotspotSession {
 
   static Future<void> _closeNative() => channel.invokeMethod<void>('close');
 
+  static Future<Map<String, dynamic>> probeNativeNetwork() async =>
+      await channel.invokeMapMethod<String, dynamic>('probe') ?? {};
+
+  Future<void> _readNetworkDiagnosis() async {
+    final probe = networkProbe;
+    if (probe == null) return;
+    try {
+      final result = await probe();
+      _checkCancelled();
+      _networkDiagnosis = result['tcpReady'] == true
+          ? 'Wi-Fi本地TCP已通，仍需文件服务响应'
+          : result['localNetworkDenied'] == true
+          ? '系统报告本地网络路径权限拒绝'
+          : result['hasAccessoryWifiIPv4'] == false
+          ? '尚未取得录音卡热点IPv4地址'
+          : result['hasAccessoryWifiIPv4'] == true
+          ? '已取得热点IPv4，本地TCP尚未就绪'
+          : '未返回可验证的网络路径';
+    } on PlatformException catch (error) {
+      _networkDiagnosis = '原生路径诊断不可用：${error.code}';
+    }
+  }
+
   Future<void> prepare(String deviceId) async {
     if (_active || _closing != null || _preparing != null) {
       throw StateError('快传会话尚未清理，不能重复加入');
@@ -77,6 +117,7 @@ class AccessoryHotspotSession {
     _ready = false;
     _cancelled = false;
     _lastProbeFailure = null;
+    _networkDiagnosis = null;
     _deviceId = deviceId;
     final operation = _prepare(deviceId);
     _preparing = operation;
@@ -111,6 +152,8 @@ class AccessoryHotspotSession {
     _phoneTouched = true;
     await _join(); // accepted != connected, and not an Internet requirement.
     _checkCancelled();
+    await _readNetworkDiagnosis();
+    _checkCancelled();
     final watch = Stopwatch()..start();
     while (watch.elapsed < readyTimeout) {
       _checkCancelled();
@@ -126,8 +169,13 @@ class AccessoryHotspotSession {
       if (rest <= Duration.zero) break;
       await Future<void>.delayed(rest < probeInterval ? rest : probeInterval);
     }
+    // Re-read the current route, not the initial DHCP snapshot. Diagnostics
+    // never bypass the bounded, schema-checked HTTP files response above.
+    await _readNetworkDiagnosis();
+    _checkCancelled();
     throw StateError(
       '录音卡本地文件服务未就绪，请检查本地网络权限和设备后重试'
+      '${_networkDiagnosis == null ? '' : '（$_networkDiagnosis）'}'
       '${_lastProbeFailure == null ? '' : '（$_lastProbeFailure）'}',
     );
   }

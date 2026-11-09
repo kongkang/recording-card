@@ -116,6 +116,11 @@ class ProgressBackend extends controller_fixture.FeedbackBackend {
   }
 }
 
+class FailedStatusProgressBackend extends ProgressBackend {
+  @override
+  Future<DeviceReading> status() async => throw StateError('设备未连接');
+}
+
 class CancelableProgressBackend extends ProgressBackend
     implements CancelableSyncDeviceBackend {
   bool requested = false;
@@ -139,6 +144,45 @@ Widget sheet(DeviceStore store) => MaterialApp(
 );
 
 void main() {
+  test(
+    'status poll after BLE safe disconnect preserves its transfer failure',
+    () async {
+      final store =
+          DeviceStore(
+              backend: FailedStatusProgressBackend(),
+              persistence: MemoryStorePersistence(),
+            )
+            ..syncState = SyncState.failed
+            ..syncError = '同步失败：expected 2186240 received 2183440；keep原件保留';
+      await store.refreshFromDevice();
+      expect(store.devStateText, store.syncError);
+      expect(store.devStateText, contains('2183440'));
+      expect(store.devStateIsError, isTrue);
+      store.dispose();
+    },
+  );
+
+  test(
+    'ordinary BLE clears old AP message but preserves its own real failure',
+    () async {
+      final backend = ProgressBackend();
+      final store =
+          DeviceStore(backend: backend, persistence: MemoryStorePersistence())
+            ..devStateText = '快传准备失败：old AP timeout'
+            ..devStateIsError = true;
+      final running = store.syncNow();
+      expect(store.syncState, SyncState.busy);
+      expect(store.devStateText, isEmpty);
+      expect(store.devStateIsError, isFalse);
+      backend.transfer.completeError(StateError('BLE verified length failed'));
+      await running;
+      expect(store.syncState, SyncState.failed);
+      expect(store.devStateText, contains('BLE verified length failed'));
+      expect(store.devStateIsError, isTrue);
+      store.dispose();
+    },
+  );
+
   test('cancel during AP preflight waits preparation final then cleanup, never opens a Native transfer', () async {
     final h = fixture.Harness(
       await Directory.systemTemp.createTemp('progressive-preflight-'),
