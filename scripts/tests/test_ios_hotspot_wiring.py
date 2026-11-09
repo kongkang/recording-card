@@ -1,10 +1,11 @@
-"""Static iOS hotspot wiring regressions; these do not run iOS or prove RF/TCC behavior."""
+"""iOS hotspot static/pure lifecycle regressions; these do not prove iOS RF/TCC behavior."""
 from pathlib import Path
 import json
 import plistlib
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,9 +47,10 @@ class IosHotspotWiringTests(unittest.TestCase):
     def test_frozen_channel_and_no_arbitrary_credentials(self):
         self.assertIn('name: "dev.kongkang.recording-card/hotspot"', self.source)
         handle = body(self.source, 'handle')
-        self.assertIn('case "join", "close":', handle)
+        self.assertIn('case "join", "close", "probe":', handle)
         self.assertIn('call.arguments == nil || call.arguments is NSNull', handle)
         self.assertNotRegex(handle, r'arguments\s+as[?!]?')
+        self.assertIn('self.probe(result: result)', handle)
         self.assertIn('FlutterMethodNotImplemented', handle)
 
     def test_registration_uses_real_implicit_engine_and_preserves_generated_plugins(self):
@@ -93,7 +95,7 @@ class IosHotspotWiringTests(unittest.TestCase):
 
     def test_one_inflight_and_no_rejoin_before_close(self):
         join = body(self.source, 'join')
-        self.assertIn('guard pending == nil && !sessionOpen else', join)
+        self.assertIn('guard pending == nil && pendingProbe == nil && !sessionOpen else', join)
         self.assertIn('"hotspot_busy"', join)
         self.assertLess(join.index('pending = operation'), join.index('.shared.apply(configuration)'))
 
@@ -171,9 +173,272 @@ class IosHotspotWiringTests(unittest.TestCase):
     def test_native_never_claims_local_http_or_internet_readiness(self):
         self.assertEqual(self.source.count('["accepted": true]'), 1)
         self.assertNotIn('URLSession', self.source)
-        self.assertNotIn('192.168.4.1', self.source)
+        self.assertEqual(self.source.count('"192.168.4.1"'), 1)
+        self.assertNotIn('/api/files', self.source)
+        self.assertNotRegex(self.source, r'\.(send|receive|receiveMessage)\(')
+        self.assertNotIn('NWBrowser', self.source)
+        self.assertNotIn('NWListener', self.source)
+        self.assertNotIn('bonjour', self.source.lower())
         self.assertNotIn('NWPathMonitor', self.source)
         self.assertNotIn('SecTask', self.source)
+
+    def test_probe_is_one_fixed_tcp_connection_on_wifi_with_five_second_window(self):
+        probe = body(self.source, 'probe')
+        self.assertIn('import Network\n', self.source)
+        self.assertIn('private static let probeDeadline: TimeInterval = 5', self.source)
+        self.assertIn('guard pending == nil && pendingProbe == nil else', probe)
+        self.assertIn('NWParameters.tcp', probe)
+        self.assertIn('parameters.requiredInterfaceType = .wifi', probe)
+        self.assertIn('NWConnection(host: "192.168.4.1", port: 80, using: parameters)', probe)
+        self.assertEqual(self.source.count('NWConnection(host:'), 1)
+        self.assertLess(probe.index('pendingProbe = operation'), probe.index('connection.start('))
+        self.assertIn('connection.start(queue: .main)', probe)
+        self.assertIn('DispatchQueue.main.asyncAfter', probe)
+        self.assertIn('self.stopProbe(operation, outcome: "timeout")', probe)
+        self.assertNotIn('restart()', self.source)
+        self.assertNotIn('forceCancel()', self.source)
+
+    def test_probe_stop_and_cancel_keep_lane_and_callbacks_until_cancelled(self):
+        stop = body(self.source, 'stopProbe')
+        cancel = body(self.source, 'cancelProbe')
+        for action in (stop, cancel):
+            self.assertIn('operation.connection.cancel()', action)
+            self.assertIn('operation.deadline?.cancel()', action)
+            self.assertNotIn('pendingProbe = nil', action)
+            self.assertNotIn('operation.result = nil', action)
+            self.assertNotIn('stateUpdateHandler = nil', action)
+            self.assertNotIn('closeResult(nil)', action)
+        self.assertIn('operation.outcome == nil', stop)
+        self.assertIn('operation.outcome = "cancelled"', cancel)
+        self.assertIn('operation.tcpReady = false', cancel)
+        self.assertIn('operation.closeRequested = true', cancel)
+        update = body(self.source, 'updateProbe')
+        self.assertIn('if case .cancelled = state', update)
+        self.assertEqual(update.count('finishProbe(operation)'), 1)
+        self.assertEqual(self.source.count('finishProbe(operation)'), 1)
+        self.assertLess(update.index('finishProbe(operation)'), update.index('operation.outcome == nil'))
+        self.assertIn('operation.tcpReady = true', update)
+        self.assertIn('outcome: "ready"', update)
+        self.assertIn('outcome: "failed"', update)
+
+    def test_close_and_detach_wait_for_probe_final_without_old_engine_callbacks(self):
+        close = body(self.source, 'close')
+        branch = close[close.index('if let operation = pendingProbe'):close.index('removeOwnedConfiguration()')]
+        self.assertIn('operation.closeResults.append(result)', branch)
+        self.assertIn('cancelProbe(operation)', branch)
+        self.assertIn('return', branch)
+        self.assertNotIn('result(nil)', branch)
+        abandon = body(self.source, 'abandonEngine')
+        self.assertIn('else if let operation = pendingProbe', abandon)
+        self.assertIn('cancelProbe(operation)', abandon)
+        self.assertNotIn('pendingProbe = nil', abandon)
+        probe = body(self.source, 'probe')
+        self.assertNotIn('[weak self', probe.split('connection.stateUpdateHandler =')[1].split('let deadline =')[0])
+        finish = body(self.source, 'finishProbe')
+        self.assertIn('guard pendingProbe === operation', finish)
+        self.assertIn('if operation.closeRequested', finish)
+        self.assertLess(finish.index('removeOwnedConfiguration()'), finish.index('pendingProbe = nil'))
+        self.assertLess(finish.index('pendingProbe = nil'), finish.index('result?('))
+        self.assertLess(finish.index('operation.result = nil'), finish.index('result?('))
+        self.assertLess(finish.index('result?('), finish.index('closeResult(nil)'))
+        self.assertIn('stateUpdateHandler = nil', finish)
+        self.assertIn('pathUpdateHandler = nil', finish)
+
+    def test_probe_diagnostics_are_structured_numeric_and_not_permission_assertions(self):
+        finish = body(self.source, 'finishProbe')
+        keys = re.findall(r'^\s*"(\w+)":', finish, re.M)
+        self.assertEqual(set(keys), {'tcpReady', 'hasAccessoryWifiIPv4', 'pathStatus',
+                                    'localNetworkDenied', 'errorDomain', 'errorCode',
+                                    'outcome', 'nativeFinal'})
+        self.assertIn('"nativeFinal": true', finish)
+        self.assertIn('operation.errorCode as Any? ?? NSNull()', finish)
+        path = body(self.source, 'captureProbePath')
+        self.assertIn('path.status == .unsatisfied && path.unsatisfiedReason == .localNetworkDenied', path)
+        self.assertIn('operation.localNetworkDenied = true', path)
+        self.assertNotIn('operation.localNetworkDenied = false', path)
+        self.assertIn('operation.outcome == nil', path)
+        error = body(self.source, 'captureProbeError')
+        for domain in ('posix', 'dns', 'tls', 'unknown'):
+            self.assertIn(f'operation.errorDomain = "{domain}"', error)
+        code_only = re.sub(r'//[^\n]*', '', self.source)
+        for forbidden in ('localizedDescription', 'debugDescription', 'userInfo',
+                          'String(describing:', 'inet_ntop', 'getnameinfo'):
+            self.assertNotIn(forbidden, code_only)
+
+    def test_ipv4_check_is_only_wifi_subnet_boolean_and_frees_ifaddrs(self):
+        check = body(self.source, 'hasAccessoryWifiIPv4')
+        self.assertIn('import Darwin', self.source)
+        self.assertIn('getifaddrs(&interfaces)', check)
+        self.assertIn('defer { freeifaddrs(first) }', check)
+        self.assertIn('String(cString: interface.ifa_name) == "en0"', check)
+        self.assertIn('interface.ifa_flags & UInt32(IFF_UP) != 0', check)
+        self.assertIn('address.pointee.sa_family == UInt8(AF_INET)', check)
+        self.assertIn('UInt32(bigEndian: $0.pointee.sin_addr.s_addr)', check)
+        self.assertIn('value & 0xFFFFFF00 == 0xC0A80400', check)
+        self.assertNotIn('String(', check.split('let value =')[1])
+        self.assertNotIn('ifa_name', body(self.source, 'finishProbe'))
+
+    def test_pure_swift_probe_lifecycle_waits_for_controlled_cancelled_event(self):
+        """Execute production transition bodies with fakes, never real Network/getifaddrs.
+
+        This proves callback/lane ordering under controlled events, not Apple cancellation,
+        RF, TCC, DHCP, HTTP, identity or download behavior on a phone.
+        """
+        swiftc = shutil.which('swiftc')
+        if swiftc is None:
+            self.skipTest('swiftc unavailable; pure lifecycle harness not executed')
+        start = self.source.index('  private final class PendingProbe {')
+        end = self.source.index('  // 所有状态转换', start)
+        probe_type = self.source[start:end]
+        methods = []
+        for name in ('updateProbe', 'captureProbePath', 'captureProbeError', 'stopProbe',
+                     'cancelProbe', 'finishProbe', 'close', 'abandonEngine', 'completeJoin'):
+            start = self.source.index(f'  private func {name}(')
+            brace = self.source.index('{', start)
+            methods.append(self.source[start:brace + 1] + body(self.source, name) + '}')
+        production = (probe_type + '\n'.join(methods)).replace('Network.NWPath', 'NWPath')
+        fixture = r'''
+import Foundation
+typealias FlutterResult = (Any?) -> Void
+final class FlutterError {
+  init(code: String, message: String, details: Any?) {}
+}
+struct FakeCode { let rawValue: Int }
+enum NWError { case posix(FakeCode), dns(Int32), tls(Int32), other }
+struct NWPath {
+  enum Status { case satisfied, unsatisfied, requiresConnection }
+  enum Reason { case notAvailable, localNetworkDenied }
+  var status: Status
+  var unsatisfiedReason: Reason
+}
+final class NWConnection {
+  enum State { case setup, ready, waiting(NWError), failed(NWError), cancelled }
+  var currentPath: NWPath?
+  var stateUpdateHandler: ((State) -> Void)?
+  var pathUpdateHandler: ((NWPath) -> Void)?
+  var cancels = 0
+  // Deliberately no automatic final: tests deliver cancelled separately.
+  func cancel() { cancels += 1 }
+}
+final class ProbeHarness {
+  private final class PendingJoin {
+    var result: FlutterResult?
+    var deadline: DispatchWorkItem?
+    var cancelled = false
+    var closeResults: [FlutterResult] = []
+  }
+  private var pending: PendingJoin?
+  private var pendingProbe: PendingProbe?
+  private var ownsConfiguration = true
+  private var sessionOpen = true
+  private var detached = false
+  private var removals = 0
+  // Test seam: no host interface enumeration, no real Apple configuration calls.
+  private func hasAccessoryWifiIPv4() -> Bool { false }
+  private func removeOwnedConfiguration() {
+    if ownsConfiguration { removals += 1; ownsConfiguration = false }
+  }
+'''
+        driver = r'''
+  func run() {
+    var results: [[String: Any]] = []
+    func make() -> PendingProbe {
+      let operation = PendingProbe(connection: NWConnection()) { value in
+        precondition(Thread.isMainThread)
+        precondition(self.pendingProbe == nil)
+        results.append(value as! [String: Any])
+      }
+      operation.connection.stateUpdateHandler = { _ in }
+      operation.connection.pathUpdateHandler = { _ in }
+      pendingProbe = operation
+      return operation
+    }
+    let ready = make()
+    ready.connection.currentPath = NWPath(status: .satisfied, unsatisfiedReason: .notAvailable)
+    updateProbe(ready, state: .ready)
+    precondition(results.isEmpty && pendingProbe === ready && ready.connection.cancels > 0)
+    precondition(ready.connection.stateUpdateHandler != nil)
+    updateProbe(ready, state: .cancelled)
+    updateProbe(ready, state: .cancelled)
+    precondition(results.count == 1 && results[0]["tcpReady"] as? Bool == true)
+    precondition(results[0]["nativeFinal"] as? Bool == true)
+    precondition(results[0]["outcome"] as? String == "ready")
+    precondition(results[0]["errorCode"] is NSNull)
+    precondition(ready.connection.stateUpdateHandler == nil)
+    precondition(ready.connection.pathUpdateHandler == nil)
+    precondition(removals == 0 && sessionOpen)
+
+    let timeout = make()
+    stopProbe(timeout, outcome: "timeout")
+    updateProbe(timeout, state: .ready) // Late ready cannot turn timeout into success.
+    precondition(results.count == 1 && pendingProbe === timeout)
+    updateProbe(timeout, state: .cancelled)
+    precondition(results.count == 2 && results[1]["outcome"] as? String == "timeout")
+    precondition(results[1]["tcpReady"] as? Bool == false)
+
+    let failed = make()
+    failed.connection.currentPath = NWPath(status: .unsatisfied, unsatisfiedReason: .localNetworkDenied)
+    updateProbe(failed, state: .waiting(.posix(FakeCode(rawValue: 13))))
+    precondition(results.count == 2 && failed.connection.cancels == 0)
+    updateProbe(failed, state: .failed(.posix(FakeCode(rawValue: 13))))
+    precondition(results.count == 2 && pendingProbe === failed)
+    updateProbe(failed, state: .cancelled)
+    precondition(results.count == 3 && results[2]["localNetworkDenied"] as? Bool == true)
+    precondition(results[2]["pathStatus"] as? String == "unsatisfied")
+    precondition(results[2]["errorDomain"] as? String == "posix")
+    precondition(results[2]["errorCode"] as? Int == 13)
+
+    let closing = make()
+    updateProbe(closing, state: .ready)
+    var acknowledgements = 0
+    let ack: FlutterResult = { _ in
+      precondition(Thread.isMainThread && self.pendingProbe == nil)
+      precondition(!self.ownsConfiguration && !self.sessionOpen && self.removals == 1)
+      precondition(results.count == 4)
+      acknowledgements += 1
+    }
+    close(result: ack)
+    close(result: ack)
+    precondition(acknowledgements == 0 && results.count == 3)
+    precondition(pendingProbe === closing && ownsConfiguration && removals == 0)
+    updateProbe(closing, state: .cancelled)
+    precondition(acknowledgements == 2 && results.count == 4)
+    precondition(results[3]["outcome"] as? String == "cancelled")
+    precondition(results[3]["tcpReady"] as? Bool == false)
+
+    ownsConfiguration = true
+    sessionOpen = true
+    let abandoned = make()
+    close(result: { _ in preconditionFailure("old engine close callback") })
+    abandonEngine()
+    precondition(detached && pendingProbe === abandoned && ownsConfiguration)
+    detached = false // Simulate registrar replacement while old cancel is still pending.
+    updateProbe(abandoned, state: .ready)
+    precondition(pendingProbe === abandoned && results.count == 4)
+    updateProbe(abandoned, state: .cancelled)
+    precondition(results.count == 4 && !ownsConfiguration && removals == 2)
+    let newer = make()
+    updateProbe(abandoned, state: .cancelled)
+    precondition(pendingProbe === newer) // Stale final cannot release a new engine lane.
+    cancelProbe(newer)
+    updateProbe(newer, state: .cancelled)
+    precondition(results.count == 5)
+    print("pure Swift lifecycle: ready, timeout, failure, double close, detach, stale final OK")
+  }
+}
+ProbeHarness().run()
+'''
+        with tempfile.TemporaryDirectory(prefix='rc-hotspot-lifecycle-') as directory:
+            path = Path(directory)
+            (path / 'main.swift').write_text(fixture + production + driver)
+            compiled = subprocess.run([swiftc, '-module-cache-path', str(path / 'module-cache'),
+                                       str(path / 'main.swift'), '-o', str(path / 'probe-test')],
+                                      capture_output=True, text=True, timeout=60)
+            self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+            executed = subprocess.run([str(path / 'probe-test')], capture_output=True,
+                                      text=True, timeout=10)
+            self.assertEqual(executed.returncode, 0, executed.stdout + executed.stderr)
+            self.assertIn('stale final OK', executed.stdout)
 
 
 if __name__ == '__main__':
