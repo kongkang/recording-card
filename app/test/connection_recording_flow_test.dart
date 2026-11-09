@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/device/card_gateway.dart';
 import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/core/store/device_store.dart';
+import 'package:recording_card/core/theme/tokens.dart';
 import 'package:recording_card/services/audio/recording_status.dart';
 
 import 'support/fake_gateway.dart';
@@ -46,6 +47,14 @@ class _SyncSpy extends AppStore {
 
 Finder _statusBlock() => find.byKey(const Key('recording-status-block'));
 
+/// 顶栏胶囊圆点颜色：绿=录音中，橙=已连接待机，null=未连接（灰空心）。
+Color? _dotColor(WidgetTester tester) {
+  final f = find.byKey(const Key('capsule-dot'));
+  if (f.evaluate().isEmpty) return null;
+  final box = tester.widget<Container>(f);
+  return (box.decoration as BoxDecoration?)?.color;
+}
+
 void main() {
   testWidgets('未连接点胶囊：只列 DYJ 设备，按 RSSI 从强到弱', (tester) async {
     final gateway = FakeCardGateway(
@@ -63,6 +72,8 @@ void main() {
     await tester.pump();
     await tester.pump();
 
+    expect(find.byKey(const Key('capsule-off')), findsOneWidget);
+    expect(_dotColor(tester), isNull, reason: '未连接不显示实心点/电量');
     expect(device.discovered.map((d) => d.id), ['near', 'mid', 'far']);
     expect(gateway.scanCalls, greaterThan(0));
     expect(find.byKey(const Key('dev-connect')), findsOneWidget);
@@ -83,7 +94,8 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    // 连接成功但还没录音：状态行给开关而不是假装录音中
+    // 连接成功但还没录音：顶栏橙点（待机），状态行给开关而不是假装录音中
+    expect(_dotColor(tester), RCColors.warn);
     expect(find.text('未录音'), findsOneWidget);
     expect(find.byKey(const Key('rec-toggle')), findsOneWidget);
 
@@ -92,6 +104,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('录音中'), findsOneWidget);
     expect(find.byKey(const Key('rec-clock')), findsOneWidget);
+    expect(_dotColor(tester), RCColors.ok, reason: '录音中才是绿点心跳');
 
     await tester.pump(const Duration(seconds: 2));
     expect(find.text('00:00:02'), findsOneWidget);
@@ -101,6 +114,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('未录音'), findsOneWidget);
     expect(find.byKey(const Key('rec-clock')), findsNothing);
+    expect(_dotColor(tester), RCColors.warn, reason: '停止后回到橙色待机');
     expect(gateway.recordCalls, ['toggle', 'toggle']);
   });
 

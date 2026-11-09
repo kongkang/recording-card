@@ -23,6 +23,9 @@ abstract final class RCColors {
   static const ax = Color(0xFFC9C9C4);
   static const ok = Color(0xFF34C759);
   static const okInk = Color(0xFF1F7A34);
+
+  /// 已连接但未录音（待机）的胶囊圆点：橙=没在运行，绿=正在录音。
+  static const warn = Color(0xFFFF9500);
   static const danger = Color(0xFFFF3B30);
 }
 
