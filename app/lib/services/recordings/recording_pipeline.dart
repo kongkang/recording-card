@@ -14,6 +14,7 @@ import 'dart:typed_data';
 
 import '../../core/device/card_gateway.dart';
 import '../../core/models/recording.dart';
+import '../../core/store/settings_store.dart';
 import '../polish/slice_polish_service.dart';
 import '../segment/segment_build_service.dart';
 import '../transcribe/slice_planner.dart';
@@ -100,6 +101,7 @@ class RecordingPipeline {
     required this.store,
     required this.engine,
     required this.models,
+    this.settings,
     this.language = 'zh',
     this.slicePlanner = const SlicePlanner(),
     this.clusterer = const SpeakerClusterer(),
@@ -111,6 +113,18 @@ class RecordingPipeline {
   final RecordingStore store;
   final SpeechEngine engine;
   final SpeechModelProvider models;
+
+  /// 设置开关；null 时按默认全开（测试/旧调用）。
+  final SettingsStore? settings;
+
+  static const autoTranscribeKey = 'rc.set.trans.auto';
+  static const cleanSpeechKey = 'rc.set.trans.clean';
+  static const speakerLabelKey = 'rc.set.trans.speaker';
+
+  bool get _autoTranscribe => settings?.value(autoTranscribeKey) ?? true;
+  bool get _cleanSpeech => settings?.value(cleanSpeechKey) ?? true;
+  bool get _speakerLabel => settings?.value(speakerLabelKey) ?? true;
+
   final String language;
   final SlicePlanner slicePlanner;
   final SpeakerClusterer clusterer;
@@ -408,6 +422,20 @@ class RecordingPipeline {
       }
     }
 
+    // 4.5) 自动转录关闭：音频/切片照常落盘，但不跑 ASR；
+    // 阶段停在 transcribing，用户重新打开开关后 processPending 会续跑。
+    if (!_autoTranscribe) {
+      file
+        ..stage = RecordingStage.transcribing
+        ..error = '自动转录已关闭，未执行本地转写';
+      await store.save(file);
+      report(
+        PipelineStage.transcribing,
+        text: '${file.deviceName} 已取回；自动转录已关闭',
+      );
+      return didDownload;
+    }
+
     // 5) 逐片本地转写（每片完成立即落盘）
     await engine.load(
       modelPath: paths.asrModelPath,
@@ -459,10 +487,10 @@ class RecordingPipeline {
       }
     }
 
-    // 6) 声纹聚类（模型缺失则统一「未区分」）
+    // 6) 声纹聚类（关闭开关或模型缺失则统一「未区分」）
     if (file.utterances.isNotEmpty) {
       report(PipelineStage.labeling, text: '正在整理说话人 ${file.deviceName}');
-      if (paths.canLabelSpeakers) {
+      if (_speakerLabel && paths.canLabelSpeakers) {
         await _labelSpeakers(file, paths.speakerEmbeddingPath!);
       } else {
         file.utterances = [
@@ -475,7 +503,10 @@ class RecordingPipeline {
 
     // 7) 云端窗口润色：失败不推翻本地数据，只标 stale 供界面提示
     final polisher = polish;
-    if (polisher != null && polisher.configured && file.utterances.isNotEmpty) {
+    if (_cleanSpeech &&
+        polisher != null &&
+        polisher.configured &&
+        file.utterances.isNotEmpty) {
       report(PipelineStage.polishing, text: '正在润色 ${file.deviceName}');
       file
         ..stage = RecordingStage.polishing

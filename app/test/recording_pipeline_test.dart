@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/device/card_gateway.dart';
 import 'package:recording_card/core/models/recording.dart';
 import 'package:recording_card/core/storage/storage.dart';
+import 'package:recording_card/core/store/settings_store.dart';
 import 'package:recording_card/services/analysis/chat_completion.dart';
 import 'package:recording_card/services/polish/slice_polish_service.dart';
 import 'package:recording_card/services/recordings/recording_pipeline.dart';import 'package:recording_card/services/recordings/recording_store.dart';
@@ -21,6 +22,7 @@ class _FakeEngine implements SpeechEngine {
   List<SpeechSpan>? spans;
   String text = '第一句话。第二句话。';
   bool failTranscribe = false;
+  int transcribeCalls = 0;
   int embedCalls = 0;
 
   @override
@@ -36,6 +38,7 @@ class _FakeEngine implements SpeechEngine {
     Float32List samples, {
     int sampleRate = 16000,
   }) async {
+    transcribeCalls++;
     if (failTranscribe) throw const AsrException('注入转写失败');
     return AsrResult(
       text: text,
@@ -318,5 +321,70 @@ void main() {
     expect(file.turns.first.text, '第一句话');
     expect(file.slices, isNotEmpty);
     expect(file.segments, isNotEmpty);
+  });
+
+  RecordingPipeline withSettings(SettingsStore settings) => RecordingPipeline(
+    gateway: gateway,
+    store: store,
+    engine: engine,
+    models: models,
+    settings: settings,
+    polish: SlicePolishService(chat: chat, model: 'test-model'),
+    segments: SegmentBuildService(chat: chat, model: 'test-model'),
+  );
+
+  test('自动转录关闭：不跑 ASR，切片保留；开关恢复后 processPending 续跑', () async {
+    final settings = SettingsStore(store: InMemoryStore());
+    addTearDown(settings.dispose);
+    await settings.setValue(RecordingPipeline.autoTranscribeKey, false);
+    final p = withSettings(settings);
+    gateway.deviceFiles = [apm()];
+
+    await p.sync();
+
+    expect(engine.transcribeCalls, 0);
+    var file = (await store.loadAll(refresh: true)).single;
+    expect(file.stage, RecordingStage.transcribing);
+    expect(file.error, contains('自动转录已关闭'));
+    expect(file.slices, isNotEmpty);
+    expect(file.utterances, isEmpty);
+
+    await settings.setValue(RecordingPipeline.autoTranscribeKey, true);
+    final resumed = await p.processPending();
+    expect(resumed.ready, 1);
+    file = (await store.loadAll(refresh: true)).single;
+    expect(file.stage, RecordingStage.ready);
+    expect(file.utterances, isNotEmpty);
+  });
+
+  test('说话人开关关闭：不做声纹嵌入，统一「未区分」', () async {
+    final settings = SettingsStore(store: InMemoryStore());
+    addTearDown(settings.dispose);
+    await settings.setValue(RecordingPipeline.speakerLabelKey, false);
+    final p = withSettings(settings);
+    gateway.deviceFiles = [apm()];
+
+    await p.sync();
+
+    final file = (await store.loadAll(refresh: true)).single;
+    expect(file.utterances, isNotEmpty);
+    expect(file.utterances.map((u) => u.speakerLabel).toSet(), {'未区分'});
+    expect(engine.embedCalls, 0);
+  });
+
+  test('清洗开关关闭：跳过云端润色，原始 turn 保留', () async {
+    final settings = SettingsStore(store: InMemoryStore());
+    addTearDown(settings.dispose);
+    await settings.setValue(RecordingPipeline.cleanSpeechKey, false);
+    final p = withSettings(settings);
+    gateway.deviceFiles = [apm()];
+
+    await p.sync();
+
+    final file = (await store.loadAll(refresh: true)).single;
+    expect(file.stage, RecordingStage.ready);
+    expect(file.utterances, isNotEmpty);
+    expect(file.turns, isEmpty);
+    expect(file.polishedThroughSlice, -1);
   });
 }

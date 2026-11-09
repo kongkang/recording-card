@@ -8,8 +8,10 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/dev/dev_driver.dart';
 import 'core/platform/crash_guard.dart';
+import 'core/storage/storage.dart';
 import 'core/store/app_store.dart';
 import 'core/store/device_store.dart';
+import 'core/store/settings_store.dart';
 import 'core/theme/tokens.dart';
 import 'pages/app_shell.dart';
 import 'pages/login_page.dart';
@@ -26,14 +28,25 @@ import 'services/transcribe/model_manager_controller.dart';
 import 'services/transcribe/asr_models.dart';
 import 'services/transcribe/local_asr_service.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   // 崩溃兜底要在 runApp 之前装好，否则启动期异常会直接白屏且无迹可查
   installCrashHandlers();
-  runApp(const RecordingCardApp());
+  SettingsStore settings;
+  try {
+    settings = SettingsStore(store: await PrefsStore.open());
+    await settings.load();
+  } catch (_) {
+    // 平台通道不可用时用内存默认值，保证仍可启动
+    settings = SettingsStore(store: InMemoryStore());
+  }
+  runApp(RecordingCardApp(settings: settings));
 }
 
 class RecordingCardApp extends StatelessWidget {
-  const RecordingCardApp({super.key});
+  const RecordingCardApp({super.key, required this.settings});
+
+  final SettingsStore settings;
 
   @override
   Widget build(BuildContext context) {
@@ -51,7 +64,7 @@ class RecordingCardApp extends StatelessWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       locale: const Locale('zh', 'CN'),
-      home: const _HomeGate(),
+      home: _HomeGate(settings: settings),
     );
   }
 }
@@ -63,7 +76,9 @@ final GlobalKey _shotKey = GlobalKey();
 final DevDriver? dev = kDebugMode ? DevDriver(_shotKey) : null;
 
 class _HomeGate extends StatefulWidget {
-  const _HomeGate();
+  const _HomeGate({required this.settings});
+
+  final SettingsStore settings;
 
   @override
   State<_HomeGate> createState() => _HomeGateState();
@@ -75,6 +90,7 @@ class _HomeGateState extends State<_HomeGate> {
   // autoStart：启动即核对链路并开心跳（测试里传 false，避免悬挂定时器）
   final _device = DeviceStore(autoStart: true);
   final _recordingStatus = RecordingStatusController();
+  late final SettingsStore _settings = widget.settings;
 
   late final ModelGateway _modelGateway;
   late final ModelInstaller _installer;
@@ -107,6 +123,7 @@ class _HomeGateState extends State<_HomeGate> {
       store: _recordingStore,
       engine: _asr,
       models: _models,
+      settings: _settings,
       polish: SlicePolishService(
         chat: chat,
         model: _modelGateway.textModel,
@@ -169,6 +186,7 @@ class _HomeGateState extends State<_HomeGate> {
               device: _device,
               recordingStatus: _recordingStatus,
               modelManager: _modelManager,
+              settings: _settings,
             );
           }
           return LoginPage(

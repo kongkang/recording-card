@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
+import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/audio/recording_status.dart';
 import '../services/transcribe/model_manager_controller.dart';
@@ -25,12 +26,14 @@ class AppShell extends StatefulWidget {
     this.device,
     this.recordingStatus,
     this.modelManager,
+    this.settings,
     this.onDeviceCreated,
   });
   final AppStore store;
   final DeviceStore? device;
   final RecordingStatusController? recordingStatus;
   final ModelManagerController? modelManager;
+  final SettingsStore? settings;
 
   /// dev 驱动注册内部 DeviceStore 用（release 不传）
   final void Function(DeviceStore)? onDeviceCreated;
@@ -105,6 +108,7 @@ class _AppShellState extends State<AppShell> {
                         device: _device,
                         recordingStatus: _recording,
                         modelManager: widget.modelManager,
+                        settings: widget.settings,
                       ),
                     StatusSheetOverlay(store: _device),
                   ],
@@ -256,10 +260,12 @@ class _NarrowLayout extends StatelessWidget {
     required this.device,
     required this.recordingStatus,
     this.modelManager,
+    this.settings,
   });
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
   final ModelManagerController? modelManager;
+  final SettingsStore? settings;
 
   @override
   Widget build(BuildContext context) {
@@ -290,6 +296,7 @@ class _NarrowLayout extends StatelessWidget {
                       TimelinePage(recordingStatus: recordingStatus),
                     RootTab.setting => SettingPage(
                       modelManager: modelManager,
+                      settings: settings,
                     ),
                   },
                 ),
