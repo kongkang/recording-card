@@ -45,31 +45,52 @@ class CardSnapshot {
     this.wifiConnected = false,
     this.wifiSsid,
     this.recordingSession,
+    this.infoAvailable = true,
+    this.wifiStatusAvailable = true,
+    this.optionalErrors = const {},
   });
   factory CardSnapshot.fromJson(Map<String, dynamic> j) {
     final battery = _map(j['battery']);
     final state = _map(j['state']);
-    final info = _map(j['info']);
+    final info = j['info'] is Map ? _map(j['info']) : <String, dynamic>{};
     final record = _map(j['record']);
-    final wifi = _map(j['wifi']);
+    final wifi = j['wifi'] is Map ? _map(j['wifi']) : <String, dynamic>{};
+    // Required core readings remain fail-closed; absence is not idle/zero.
+    if (battery['level'] is! num ||
+        battery['isCharging'] is! bool ||
+        state['wifiOpen'] is! bool ||
+        record['isRecording'] is! bool ||
+        record['realtimeEnabled'] is! bool) {
+      throw const CardGatewayException('protocol', '设备响应缺少电量、主控或录音状态');
+    }
     return CardSnapshot(
       batteryLevel: (battery['level'] as num).toInt(),
       isCharging: battery['isCharging'] as bool,
       wifiOpen: state['wifiOpen'] as bool,
       // Actual RECORD_STATUS, not STATE_INFO's realtime preference.
       recording: record['isRecording'] as bool,
-      fwVersion: _requiredString(info, 'version'),
+      fwVersion: _optionalString(info['version']) ?? '',
       wifiVersion:
-          wifi['version'] as String? ?? info['wifiVersion'] as String? ?? '',
-      deviceId: _requiredString(info, 'deviceId'),
-      versionCode: (info['versionCode'] as num).toInt(),
+          _optionalString(wifi['version']) ??
+          _optionalString(info['wifiVersion']) ??
+          '',
+      deviceId: _optionalString(info['deviceId']) ?? '',
+      versionCode: _optionalInt(info['versionCode']) ?? 0,
       wifiVersionCode:
-          (wifi['versionCode'] as num?)?.toInt() ??
-          (info['wifiVersionCode'] as num?)?.toInt(),
+          _optionalInt(wifi['versionCode']) ??
+          _optionalInt(info['wifiVersionCode']),
       realtimeEnabled: record['realtimeEnabled'] as bool,
-      wifiConnected: wifi['connected'] as bool,
-      wifiSsid: wifi['ssid'] as String?,
-      recordingSession: record['session'] as String?,
+      wifiConnected: wifi['connected'] == true,
+      wifiSsid: _optionalString(wifi['ssid']),
+      recordingSession: _optionalString(record['session']),
+      infoAvailable:
+          _optionalString(info['version']) != null &&
+          _optionalString(info['deviceId']) != null &&
+          _optionalInt(info['versionCode']) != null,
+      wifiStatusAvailable: wifi['connected'] is bool,
+      optionalErrors: j['optionalErrors'] is Map
+          ? Map.unmodifiable(_map(j['optionalErrors']))
+          : const {},
     );
   }
   final int batteryLevel;
@@ -85,6 +106,13 @@ class CardSnapshot {
   final bool wifiConnected;
   final String? wifiSsid;
   final String? recordingSession;
+
+  /// Empty identity/version and zero versionCode mean unknown, never upgradeable.
+  final bool infoAvailable;
+
+  /// When false, wifiConnected=false is a compatibility value, not known STA state.
+  final bool wifiStatusAvailable;
+  final Map<String, dynamic> optionalErrors;
 }
 
 enum CardTransfer { ap, ble }
@@ -123,7 +151,7 @@ class CardFile {
   final bool? clockSynced;
   final bool isDirectory;
 
-  /// Listing channel; download still defaults to AP, not this channel.
+  /// Listing channel; safe downloads must explicitly select the same transport.
   final CardTransfer transport;
 }
 
@@ -163,6 +191,10 @@ class CardDownload {
     required this.sourceDeleted,
     this.deviceName,
     this.recordedAt,
+    this.downloadId,
+    this.deviceId,
+    this.transportId,
+    this.sha256,
   });
   factory CardDownload.fromJson(Map<String, dynamic> j) => CardDownload(
     path: _requiredString(j, 'path'),
@@ -173,6 +205,10 @@ class CardDownload {
     recordedAt: j['recordedAt'] == null
         ? null
         : DateTime.parse(j['recordedAt'] as String),
+    downloadId: j['downloadId'] as String?,
+    deviceId: j['deviceId'] as String?,
+    transportId: j['transportId'] as String?,
+    sha256: j['sha256'] as String?,
   );
   final String path;
   final int bytes;
@@ -180,6 +216,13 @@ class CardDownload {
   final bool sourceDeleted;
   final String? deviceName;
   final DateTime? recordedAt;
+
+  /// Native receipt bound to this connection, source and flushed local hash.
+  /// Legacy SDK take has no safe-move receipt; sourceDeleted is reported honestly.
+  final String? downloadId;
+  final String? deviceId;
+  final String? transportId;
+  final String? sha256;
 }
 
 class CardProgress {
@@ -317,6 +360,28 @@ abstract class CardGateway {
     bool allowDestructive = false,
     void Function(CardProgress)? onProgress,
   }) async => _unsupported();
+
+  /// Safe V1 seam. Native FILE_UPLOAD keep requires freshly verified firmware
+  /// >=309. Missing/old firmware fails without destructive take or AP fallback.
+  Future<CardDownload> downloadFilePreservingSource(
+    String name, {
+    required String directory,
+    required String expectedDeviceId,
+    required int expectedBytes,
+    CardTransfer transport = CardTransfer.ble,
+    void Function(CardProgress)? onProgress,
+  }) async => _unsupported();
+  Future<void> cancelFileTransfer() async => _unsupported();
+  Future<Map<String, dynamic>> fileTransferCapabilities() async =>
+      _unsupported();
+
+  /// Integrator attests repository commit only after complete audio/sidecar/hash
+  /// validation. verifiedPath may point to the final moved local file.
+  Future<void> confirmDeleteFile(
+    CardDownload receipt, {
+    required bool repositoryCommitted,
+    String? verifiedPath,
+  }) async => _unsupported();
   Future<String> convertAudio(
     String source, {
     required String destination,
@@ -435,6 +500,47 @@ class _Pending {
   final void Function(CardProgress)? onProgress;
 }
 
+/// FIFO submission lane shared by every request on a gateway. Response timeout
+/// does not cancel the native operation: the lane stays occupied until its late
+/// final envelope arrives. Queue expiry rejects busy without sending a command.
+/// Public only to exercise the real scheduling policy with deterministic fakes.
+class CardCommandLane {
+  Future<void> _tail = Future<void>.value();
+
+  Future<T> run<T>(
+    Future<T> Function() invoke, {
+    required String operation,
+    Duration queueWait = const Duration(seconds: 15),
+    Duration responseTimeout = const Duration(seconds: 90),
+  }) async {
+    final previous = _tail;
+    final released = Completer<void>();
+    _tail = released.future;
+    try {
+      await previous.timeout(queueWait);
+    } on TimeoutException {
+      // This expired entry must not release its successors before the actual
+      // predecessor ends, or later commands could overtake an in-flight download.
+      unawaited(previous.then((_) => released.complete()));
+      throw const CardGatewayException('busy', '设备命令车道忙，请等待当前传输/升级结束');
+    }
+    final execution = Future<T>.sync(invoke);
+    unawaited(
+      execution.then<void>(
+        (_) => released.complete(),
+        onError: (Object error, StackTrace stack) => released.complete(),
+      ),
+    );
+    return execution.timeout(
+      responseTimeout,
+      onTimeout: () => throw CardGatewayException(
+        'timeout',
+        '$operation响应超时；原生任务仍占有车道，等待最终确认前不会发送其他命令',
+      ),
+    );
+  }
+}
+
 class RealCardGateway extends CardGateway {
   RealCardGateway._(ffi.DynamicLibrary lib)
     : _request = lib.lookupFunction<_RequestNative, _RequestDart>(
@@ -494,7 +600,10 @@ class RealCardGateway extends CardGateway {
   late final ffi.NativeCallable<_CallbackNative> _listener;
   final _events = StreamController<Map<String, dynamic>>.broadcast();
   final Map<int, _Pending> _pending = {};
+  final _lane = CardCommandLane();
   int _ticket = 0;
+  int? _activeTransferTicket;
+  bool _transferCancelRequested = false;
   bool _androidInitialized = false;
   @override
   bool get available => true;
@@ -506,7 +615,17 @@ class RealCardGateway extends CardGateway {
     Map<String, dynamic> arguments = const {},
     Duration timeout = const Duration(seconds: 90),
     void Function(CardProgress)? onProgress,
-  ]) async {
+  ]) => _lane.run(
+    () => _invoke(operation, arguments, onProgress),
+    operation: operation,
+    responseTimeout: timeout,
+  );
+
+  Future<dynamic> _invoke(
+    String operation,
+    Map<String, dynamic> arguments,
+    void Function(CardProgress)? onProgress,
+  ) async {
     if (Platform.isAndroid &&
         !_androidInitialized &&
         operation != 'convertAudio') {
@@ -517,25 +636,33 @@ class RealCardGateway extends CardGateway {
         throw const CardGatewayException('platform', 'Android蓝牙桥初始化或权限请求失败');
       }
     }
+    if (operation == 'downloadFilePreservingSource' &&
+        _transferCancelRequested) {
+      throw const CardGatewayException('cancelled', '排队下载已取消，未向录音卡发送请求');
+    }
     final ticket = ++_ticket;
     final completer = Completer<dynamic>();
     _pending[ticket] = _Pending(completer, onProgress);
+    if (operation == 'downloadFilePreservingSource') {
+      _activeTransferTicket = ticket;
+    }
     final input = jsonEncode({'op': operation, ...arguments}).toNativeUtf8();
     try {
       _request(input, _listener.nativeFunction, ticket);
     } catch (e) {
       _pending.remove(ticket);
+      if (_activeTransferTicket == ticket) _activeTransferTicket = null;
       rethrow;
     } finally {
       malloc.free(input);
     }
-    return completer.future.timeout(
-      timeout,
-      onTimeout: () {
-        _pending.remove(ticket);
-        throw CardGatewayException('timeout', '$operation响应超时；请等待设备任务停止后重连');
-      },
-    );
+    // Retain pending after a Dart timeout: the final native callback frees the
+    // CString and releases the FIFO lane; a UI timeout is not native cancellation.
+    try {
+      return await completer.future;
+    } finally {
+      if (_activeTransferTicket == ticket) _activeTransferTicket = null;
+    }
   }
 
   void _onEvent(int ticket, ffi.Pointer<Utf8> ptr) {
@@ -597,8 +724,9 @@ class RealCardGateway extends CardGateway {
           .map((j) => CardDevice.fromJson(_map(j)))
           .toList();
   @override
-  Future<CardSnapshot> connect(String id) async =>
-      CardSnapshot.fromJson(_map(await _call('connect', {'id': id})));
+  Future<CardSnapshot> connect(String id) async => CardSnapshot.fromJson(
+    _map(await _call('connect', {'id': id}, const Duration(seconds: 150))),
+  );
   @override
   Future<void> disconnect() async {
     await _call('disconnect');
@@ -660,6 +788,81 @@ class RealCardGateway extends CardGateway {
     ),
     'path',
   );
+  @override
+  Future<Map<String, dynamic>> fileTransferCapabilities() async =>
+      _map(await _call('fileTransferCapabilities'));
+
+  @override
+  Future<CardDownload> downloadFilePreservingSource(
+    String name, {
+    required String directory,
+    required String expectedDeviceId,
+    required int expectedBytes,
+    CardTransfer transport = CardTransfer.ble,
+    void Function(CardProgress)? onProgress,
+  }) async {
+    _transferCancelRequested = false;
+    return CardDownload.fromJson(
+      _map(
+        await _call(
+          'downloadFilePreservingSource',
+          {
+            'name': name,
+            'directory': directory,
+            'expectedDeviceId': expectedDeviceId,
+            'expectedBytes': expectedBytes,
+            'transport': transport.name,
+          },
+          const Duration(seconds: 7500),
+          onProgress,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Future<void> cancelFileTransfer() async {
+    _transferCancelRequested = true;
+    final ticket = _activeTransferTicket;
+    if (ticket == null) return; // locally cancelled before native submission
+    final result = _map(
+      await _invoke('cancelFileTransfer', {'transferTicket': ticket}, null),
+    );
+    if (result['cancelSignalled'] != true && _pending.containsKey(ticket)) {
+      throw const CardGatewayException(
+        'cancel_pending',
+        '原生任务尚未登记取消信号；未确认停止，仍等待最终回包',
+      );
+    }
+    // Do not remove pending or release the command lane. Only the original
+    // transfer's final envelope proves it has ended and cleanup has completed.
+  }
+
+  @override
+  Future<void> confirmDeleteFile(
+    CardDownload receipt, {
+    required bool repositoryCommitted,
+    String? verifiedPath,
+  }) async {
+    if (!repositoryCommitted ||
+        receipt.sourceDeleted ||
+        receipt.downloadId == null ||
+        receipt.deviceId == null ||
+        receipt.sha256 == null) {
+      throw const CardGatewayException(
+        'confirmation',
+        '缺少保源下载收据或完整落盘/入库确认；禁止删源',
+      );
+    }
+    await _call('confirmDeleteFile', {
+      'downloadId': receipt.downloadId,
+      'expectedDeviceId': receipt.deviceId,
+      'sha256': receipt.sha256,
+      'verifiedPath': verifiedPath,
+      'repositoryCommitted': true,
+    });
+  }
+
   @override
   Future<void> setWifiEnabled(bool enabled) async {
     await _call('setWifiEnabled', {'enabled': enabled});
@@ -821,6 +1024,11 @@ Map<String, dynamic> _map(dynamic value) {
   }
   return Map<String, dynamic>.from(value);
 }
+
+String? _optionalString(dynamic value) =>
+    value is String && value.isNotEmpty ? value : null;
+int? _optionalInt(dynamic value) =>
+    value is num && value.isFinite && value >= 0 ? value.toInt() : null;
 
 String _requiredString(Map<String, dynamic> j, String key) {
   final value = j[key];

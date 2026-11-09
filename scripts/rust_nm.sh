@@ -2,7 +2,7 @@
 # Rust's prebuilt Apple objects carry LLVM sections newer than old Xcode nm.
 # Verify with the LLVM tools shipped with the SAME active Rust toolchain.
 set -euo pipefail
-export PATH="$HOME/.cargo/bin:$PATH"
+# Respect the caller's compiler selection; ~/.cargo/bin can shadow rustup.
 command -v rustc >/dev/null || { echo 'BLOCKED: missing rustc' >&2; exit 2; }
 SYSROOT="$(rustc --print sysroot)"
 RUST_VERSION="$(rustc -vV)"

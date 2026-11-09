@@ -13,21 +13,22 @@ REFERENCE_REDIRECT = "reai-mobile://callback"
 FLAGS = frozenset({
     "RC_OAUTH_REUSE_REFERENCE_CLIENT", "RC_ASR_ALLOW_DOWNLOAD",
     "RC_ASR_LICENSE_ACCEPTED", "RC_UPLOAD_RAW_CONTRACT_APPROVED",
-    "RC_UPLOAD_OAUTH_BEARER_APPROVED",
+    "RC_UPLOAD_OAUTH_BEARER_APPROVED", "RC_ASR_LOCAL_ARTIFACTS_APPROVED",
 })
 STRING_KEYS = frozenset({
     "RC_AUTH_MODE", "RC_API_BASE", "RC_OAUTH_CLIENT_ID", "RC_OAUTH_BASE_URL",
     "RC_OAUTH_REDIRECT_URI", "RC_OAUTH_SCOPE", "RC_MODEL_GATEWAY_BASE_URL",
     "RC_TEXT_MODEL", "RC_ASR_MODEL_URL", "RC_ASR_TOKENS_URL",
     "RC_ASR_DOWNLOAD_HOSTS", "RC_VAD_URL", "RC_VAD_SHA256", "RC_UPLOAD_URL",
-    "RC_UPLOAD_HOSTS", "RC_FIRMWARE_MANIFEST_JSON",
+    "RC_UPLOAD_HOSTS", "RC_FIRMWARE_MANIFEST_JSON", "RC_ASR_ARTIFACT_PROFILE",
 })
 SECRET_MARKERS = ("secret", "password", "access_token", "refresh_token",
                   "api_key", "apikey", "private_key", "authorization")
 COLLISION_WARNING = (
-    "WARNING: explicit reference-client reuse enabled. Before installing, uninstall "
-    "the reference ReAI app from the test phone or use a separate test phone; two "
-    "installed apps must NOT share reai-mobile. Token storage remains recording_card."
+    "WARNING: explicit reference-client reuse enabled. On iOS, keep only recording-card "
+    "globally registered and capture reai-mobile through ASWebAuthenticationSession; "
+    "do not uninstall the reference app. Android requires a separate test device if "
+    "another installed app registers reai-mobile. Token storage remains recording_card."
 )
 
 
@@ -101,6 +102,19 @@ def validate_config(config):
         if key in STRING_KEYS and not isinstance(value, str):
             raise ConfigError(f"{key} must be a string")
     flags = {key: parse_flag(config, key) for key in FLAGS}
+    profile = config.get("RC_ASR_ARTIFACT_PROFILE", "sensevoice-mobile-20240717")
+    if profile not in {"sensevoice-mobile-20240717", "reai-vibe-board-local-20261109"}:
+        raise ConfigError("Unknown fixed ASR artifact profile")
+    if profile == "reai-vibe-board-local-20261109":
+        if not flags["RC_ASR_LOCAL_ARTIFACTS_APPROVED"] or not flags["RC_ASR_LICENSE_ACCEPTED"]:
+            raise ConfigError("Local ASR profile requires explicit artifact approval and license acceptance")
+        if flags["RC_ASR_ALLOW_DOWNLOAD"] or any(config.get(k) for k in (
+            "RC_ASR_MODEL_URL", "RC_ASR_TOKENS_URL", "RC_ASR_DOWNLOAD_HOSTS",
+            "RC_VAD_URL", "RC_VAD_SHA256", "RC_VAD_SIZE",
+        )):
+            raise ConfigError("Local ASR profile is pinned and local-only; download/VAD overrides are prohibited")
+    elif flags["RC_ASR_LOCAL_ARTIFACTS_APPROVED"]:
+        raise ConfigError("Local artifact approval requires the explicit local profile")
     client = config.get("RC_OAUTH_CLIENT_ID", "")
     if not client or client != client.strip() or any(c.isspace() for c in client):
         raise ConfigError("RC_OAUTH_CLIENT_ID must explicitly name an approved public client")

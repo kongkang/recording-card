@@ -53,7 +53,7 @@ class TimelinePage extends StatelessWidget {
                     ),
                     TextButton(
                       key: const Key('records-retry'),
-                      onPressed: store.reloadEvents,
+                      onPressed: store.retryRecords,
                       child: const Text('重试'),
                     ),
                   ],
@@ -361,6 +361,17 @@ class _EventCardView extends StatelessWidget {
   final RecordEvent event;
   final AppStore store;
 
+  String? get processingLabel => switch (event.transcriptionStatus) {
+    'waiting_model' => '原音频已保存 · 等待本机模型',
+    'queued' => '原音频已保存 · 等待处理',
+    'running' => event.originalTranscript == null ? '正在本机转写' : '原文已保存 · 正在润色',
+    'cancelled' => '处理已取消 · 原音频与原文保留',
+    'analysis_failed' => '原文已保存 · 润色或分析失败',
+    'failed' => '处理失败 · 原音频保留',
+    'no_speech' => '未识别到可用文本',
+    _ => null,
+  };
+
   @override
   Widget build(BuildContext context) {
     final open = store.openCardId == event.id;
@@ -437,14 +448,42 @@ class _EventCardView extends StatelessWidget {
                             color: RCColors.sec,
                           ),
                         ),
+                        if (processingLabel != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            processingLabel!,
+                            key: Key('processing-${event.id}'),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color:
+                                  event.transcriptionStatus == 'failed' ||
+                                      event.transcriptionStatus ==
+                                          'analysis_failed'
+                                  ? RCColors.danger
+                                  : RCColors.sec,
+                            ),
+                          ),
+                        ],
                         if (open) ...[
                           const SizedBox(height: 10),
                           Text(
                             event.longText.isEmpty
-                                ? (event.error ?? '原始音频已保存，等待转录')
+                                ? '原始音频已保存，等待本机转写'
                                 : event.longText,
                             style: const TextStyle(fontSize: 14, height: 1.55),
                           ),
+                          if (event.error != null) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              event.error!,
+                              key: Key('processing-error-${event.id}'),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                height: 1.5,
+                                color: RCColors.danger,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 12),
                           Wrap(
                             spacing: 10,

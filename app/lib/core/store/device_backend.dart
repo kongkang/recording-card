@@ -17,13 +17,19 @@ class DeviceReading {
     this.recordedSeconds,
     this.batteryEstimate,
     this.connectedWifi,
+    this.recordingKnown = true,
+    this.batteryKnown = true,
   });
   final CardSnapshot snapshot;
   final String? id;
   final String? targetId;
+
+  /// Only a verified SDK duration/sample clock, never time since app connection.
   final int? recordedSeconds;
   final String? batteryEstimate;
   final String? connectedWifi;
+  final bool recordingKnown;
+  final bool batteryKnown;
 }
 
 class WifiNet {
@@ -80,7 +86,8 @@ abstract class DeviceBackend {
   Future<void> disconnect();
   Future<DeviceReading> status();
 
-  /// Success means the configured upload contract completed, NOT merely local download.
+  /// Success means the configured sync/import contract completed. Audio need not
+  /// be uploaded; production may bind a verified local file import instead.
   Future<void> sync(RecordingPolicy policy, ProgressSink onProgress);
   Future<List<SavedWifi>> savedWifi();
   Future<List<WifiNet>> scanWifi();
@@ -94,14 +101,60 @@ abstract class DeviceBackend {
   );
 }
 
+/// Optional capability keeps existing `implements DeviceBackend` test doubles
+/// source-compatible. Runtime wrappers must explicitly implement this interface.
+/// Resolve only with SDK-confirmed RECORD_STATUS, never a desired-state echo.
+abstract interface class RecordingDeviceBackend {
+  Future<DeviceReading> startRecording();
+  Future<DeviceReading> stopRecording();
+}
+
+class DeviceSyncOutcome {
+  const DeviceSyncOutcome({
+    required this.savedCount,
+    this.retainedSourceCount = 0,
+  });
+  final int savedCount;
+  final int retainedSourceCount;
+  bool get moveComplete => retainedSourceCount == 0;
+}
+
+/// Optional file-transfer capability; legacy injected backends stay compatible.
+abstract interface class FileTransferDeviceBackend {
+  DeviceSyncOutcome? get lastSyncOutcome;
+  Future<void> prepareFastTransfer();
+  Future<void> cancelFastTransfer();
+  Future<void> fastSync(RecordingPolicy policy, ProgressSink onProgress);
+}
+
+extension DeviceRecordingControl on DeviceBackend {
+  Future<DeviceReading> startRecording() async {
+    final control = this;
+    if (control is! RecordingDeviceBackend) {
+      throw StateError('开始录音服务未配置');
+    }
+    return (control as RecordingDeviceBackend).startRecording();
+  }
+
+  Future<DeviceReading> stopRecording() async {
+    final control = this;
+    if (control is! RecordingDeviceBackend) {
+      throw StateError('停止录音服务未配置');
+    }
+    return (control as RecordingDeviceBackend).stopRecording();
+  }
+}
+
 /// Injectable orchestration for B/C integration. Missing capabilities fail closed.
-class CallbackDeviceBackend implements DeviceBackend {
+class CallbackDeviceBackend implements DeviceBackend, RecordingDeviceBackend {
   CallbackDeviceBackend({
     required this.isAvailable,
     required this.scanDevices,
     required this.connectDevice,
     required this.readStatus,
     required this.disconnectDevice,
+    this.beginRecording,
+    this.endRecording,
     this.synchronize,
     this.listSavedWifi,
     this.scanNetworks,
@@ -115,6 +168,8 @@ class CallbackDeviceBackend implements DeviceBackend {
   final Future<DeviceReading> Function(String) connectDevice;
   final Future<DeviceReading> Function() readStatus;
   final Future<void> Function() disconnectDevice;
+  final Future<DeviceReading> Function()? beginRecording;
+  final Future<DeviceReading> Function()? endRecording;
   final Future<void> Function(RecordingPolicy, ProgressSink)? synchronize;
   final Future<List<SavedWifi>> Function()? listSavedWifi;
   final Future<List<WifiNet>> Function()? scanNetworks;
@@ -135,8 +190,20 @@ class CallbackDeviceBackend implements DeviceBackend {
   @override
   Future<void> disconnect() => disconnectDevice();
   @override
+  Future<DeviceReading> startRecording() async {
+    if (beginRecording == null) _missing('开始录音');
+    return beginRecording!();
+  }
+
+  @override
+  Future<DeviceReading> stopRecording() async {
+    if (endRecording == null) _missing('停止录音');
+    return endRecording!();
+  }
+
+  @override
   Future<void> sync(RecordingPolicy policy, ProgressSink sink) async {
-    if (synchronize == null) _missing('同步上传');
+    if (synchronize == null) _missing('文件同步');
     await synchronize!(policy, sink);
   }
 
@@ -217,5 +284,25 @@ class GatewayDeviceBackend extends CallbackDeviceBackend {
           if (gateway == null) throw StateError('蓝牙服务不可用');
           await (gateway as dynamic).disconnect();
         },
+        beginRecording: () => _setRecording(gateway, true),
+        endRecording: () => _setRecording(gateway, false),
       );
+
+  static Future<DeviceReading> _setRecording(
+    CardGateway? gateway,
+    bool enabled,
+  ) async {
+    if (gateway == null || !gateway.available) {
+      throw StateError('蓝牙服务不可用，请检查原生桥与权限');
+    }
+    final record = await gateway.setRecording(enabled);
+    if (record['isRecording'] != enabled) {
+      throw StateError('设备未确认${enabled ? '开始' : '停止'}录音');
+    }
+    final snapshot = await gateway.status();
+    if (snapshot.recording != enabled) {
+      throw StateError('设备录音状态确认未通过');
+    }
+    return DeviceReading(snapshot);
+  }
 }

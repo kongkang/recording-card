@@ -33,14 +33,8 @@ class RecordingPipeline {
   final _changes = StreamController<List<RecordEvent>>.broadcast();
   Stream<List<RecordEvent>> get changes => _changes.stream;
   RecordingPolicy policy = const RecordingPolicy();
-  StreamSubscription<CardAudioChunk>? _audio;
-  StreamSubscription<Map<String, dynamic>>? _events;
   Future<void> _tail = Future.value();
-  Future<void> _controls = Future.value();
-  int _queued = 0;
-  String? _captureId;
   String? _deviceId;
-  bool _ownsRecording = false;
   bool _disposed = false;
   bool _suspended = false;
   bool _restored = false;
@@ -48,7 +42,9 @@ class RecordingPipeline {
   final Map<String, StageSegmenter> _segments = {};
   final Set<CancellationToken> _tokens = {};
   late final _stageSummaries = StageSummaryService(gateway: analysisGateway);
-  String? get captureId => _captureId;
+
+  /// V1 never opens a realtime audio stream. Kept for old runtime callers.
+  String? get captureId => null;
   Future<void> get drained => _tail;
 
   Future<void> publish() async {
@@ -58,16 +54,16 @@ class RecordingPipeline {
   Future<void> _serial(Future<void> Function() operation) {
     final result = _tail.then((_) => operation());
     _tail = result.catchError((Object e) async {
-      await reportError('pipeline', e);
+      if (!_isWaiting(e) && e is! OperationCancelled) {
+        await reportError('pipeline', e);
+      }
     });
     return result;
   }
 
-  void _enqueue(Future<void> Function() operation) {
-    _tail = _tail.then((_) => operation()).catchError((Object error) async {
-      await reportError('pipeline', error);
-    });
-  }
+  static bool _isWaiting(Object error) =>
+      error is TranscriptionException &&
+      (error.code.startsWith('model_') || error.code == 'queue_full');
 
   Future<void> reportError(String id, Object error) async {
     await _metadata('error:$id', error.toString());
@@ -96,47 +92,11 @@ class RecordingPipeline {
     _restored = true;
   }
 
-  /// Desired policy commits only after native operations succeed. If a device
-  /// command partially succeeded, restore only recording owned by this app.
+  /// Settings control local processing only. Recording control belongs to the
+  /// explicit device switch; connect/settings must never start or stop hardware.
   Future<void> apply(RecordingPolicy next) async {
-    final before = policy;
-    if (_deviceId == null) {
-      await _applyMarks(next.markImportant);
-      policy = next;
-      return;
-    }
-    final ownedBefore = _ownsRecording;
-    try {
-      final snapshot = await gateway.status();
-      if (next.continuousRecording && !snapshot.recording) {
-        await stopCapture();
-        await gateway.setRecording(true);
-        _ownsRecording = true;
-      } else if (!next.continuousRecording && _ownsRecording) {
-        await stopCapture();
-        await gateway.setRecording(false);
-        _ownsRecording = false;
-      }
-      final current = await gateway.status();
-      if (next.autoTranscribe && current.recording && _captureId == null) {
-        await startCapture(current.deviceId);
-      }
-      if (!next.autoTranscribe) await stopCapture();
-      await _applyMarks(next.markImportant);
-      policy = next;
-    } catch (error) {
-      policy = before;
-      try {
-        if (_ownsRecording != ownedBefore) {
-          await gateway.setRecording(ownedBefore);
-          _ownsRecording = ownedBefore;
-        }
-        if (!before.autoTranscribe) await stopCapture();
-      } catch (rollback) {
-        await reportError('policy-rollback', rollback);
-      }
-      rethrow;
-    }
+    await _applyMarks(next.markImportant);
+    policy = next;
   }
 
   Future<void> _applyMarks(bool enabled) async {
@@ -154,109 +114,21 @@ class RecordingPipeline {
   Future<void> connected(CardSnapshot snapshot) async {
     _suspended = false;
     _deviceId = snapshot.deviceId;
-    _listen();
     await apply(policy);
     if (policy.autoTranscribe) await processPending();
   }
 
-  void _listen() {
-    _audio ??= gateway.audioChunks.listen((chunk) {
-      final infer = _queued < 4 && policy.autoTranscribe && !_suspended;
-      _queued++;
-      _enqueue(() async {
-        try {
-          await _receive(chunk, infer);
-        } finally {
-          _queued--;
-        }
-      });
-    }, onError: (Object e) => unawaited(reportError('capture-stream', e)));
-    _events ??= gateway.events.listen((event) {
-      final kind = event['kind'];
-      if ((kind == 'audioCaptureStopped' || kind == 'audioCaptureFailed') &&
-          event['taskId'] == _captureId) {
-        // Separate native control lane: never await stop from the audio lane.
-        _controls = _controls.then((_) async {
-          if (event['taskId'] != _captureId) return;
-          try {
-            await stopCapture();
-          } catch (e) {
-            await reportError('capture-terminal', e);
-          }
-          if (kind == 'audioCaptureFailed') {
-            await reportError('capture-native', event['error'] ?? '采集失败');
-          }
-        });
-      } else if (kind == 'recordStatus' && _deviceId != null && !_suspended) {
-        _controls = _controls.then((_) async {
-          try {
-            final status = await gateway.status();
-            if (!status.recording) {
-              await stopCapture();
-              _ownsRecording = false;
-            } else if (policy.autoTranscribe && _captureId == null) {
-              await startCapture(status.deviceId);
-            }
-          } catch (e) {
-            await reportError('record-status', e);
-          }
-        });
-      }
-    });
-  }
-
+  /// Compatibility guard for old composition roots. V1 is completed-file pull,
+  /// not live PCM; no native capture or recording command is sent.
   Future<void> startCapture(String deviceId) async {
-    if (_disposed || _suspended) throw StateError('采集服务已停止');
-    if (_captureId != null) return;
-    _listen();
-    final hash = sha256
-        .convert(utf8.encode(deviceId))
-        .toString()
-        .substring(0, 16);
-    final id = 'live_${hash}_${DateTime.now().microsecondsSinceEpoch}';
-    await _metadata('capture:$id', {'deviceId': deviceId});
-    _captureId = id;
-    try {
-      await gateway.startAudioCapture(
-        taskId: id,
-        directory: '${repository.directory.path}/capture',
-        chunkSeconds: 30,
-        startRecordingIfIdle: false,
-      );
-    } catch (error) {
-      _captureId = null;
-      await reportError('capture-start', error);
-      rethrow;
-    }
+    throw const CardGatewayException('file_pull_only', 'V1使用已完成录音文件拉取，不支持实时采集');
   }
 
-  Future<void> stopCapture() async {
-    final id = _captureId;
-    if (id == null) return;
-    _captureId = null; // terminal callback cannot stop the same task twice
-    try {
-      await gateway.stopAudioCapture(id, stopOwnedRecording: false);
-    } finally {
-      await _tail;
-      await _restore();
-      for (final entry in _segments.entries.where(
-        (e) => e.key == id || e.key.startsWith('$id-epoch-'),
-      )) {
-        final stage = entry.value.flush();
-        await _metadata('segment:${entry.key}', entry.value.toJson());
-        if (stage != null) await _persistStage(stage);
-      }
-    }
-  }
+  /// V1 has no capture to stop and never stops recording owned by the user.
+  Future<void> stopCapture() async {}
 
-  /// Disconnect/logout never stops SD recording that another owner started.
   Future<void> disconnected() async {
-    try {
-      await stopCapture();
-    } finally {
-      _deviceId = null;
-      _ownsRecording = false;
-    }
+    _deviceId = null;
   }
 
   Future<void> suspend() async {
@@ -411,7 +283,18 @@ class RecordingPipeline {
     await _recoverCaptureFiles();
     final state = await repository.load();
     final blocked = <String>{};
-    for (final event in state.events) {
+    // A failed update moves an event to the end of the snapshot. Restore source
+    // order before retry so overlapping windows remain ABC -> BCD, never ACD.
+    final pending = state.events.toList()
+      ..sort((a, b) {
+        if (a.recordingId != null && a.recordingId == b.recordingId) {
+          return (a.sourceStartMs ?? 0).compareTo(b.sourceStartMs ?? 0);
+        }
+        return (a.importedAt ?? DateTime.utc(1970)).compareTo(
+          b.importedAt ?? DateTime.utc(1970),
+        );
+      });
+    for (final event in pending) {
       if (event.recordingId != null && blocked.contains(event.recordingId)) {
         continue;
       }
@@ -421,6 +304,8 @@ class RecordingPipeline {
       final needed =
           event.originalTranscript == null ||
           event.transcriptionStatus == 'failed' ||
+          event.transcriptionStatus == 'analysis_failed' ||
+          event.transcriptionStatus == 'cancelled' ||
           (policy.autoClean && jobs['clean'] != true) ||
           (policy.inferSpeakers && jobs['speakers'] != true);
       if (!needed) continue;
@@ -471,7 +356,22 @@ class RecordingPipeline {
     );
     final token = CancellationToken();
     _tokens.add(token);
+    final taskId = 'transcription:${event.id}';
+    final oldTask = state.tasks.where((t) => t.id == taskId).firstOrNull;
+    final now = DateTime.now();
+    var task = RecordingTask(
+      id: taskId,
+      kind: 'transcription',
+      deviceId: event.deviceId,
+      fileId: event.fileId,
+      createdAt: oldTask?.createdAt ?? now,
+      updatedAt: now,
+      attempts: (oldTask?.attempts ?? 0) + 1,
+      state: RecordingTaskState.running,
+      stage: event.originalTranscript == null ? 'local_asr' : 'text_analysis',
+    );
     try {
+      await repository.upsertTask(task);
       token.throwIfCancelled();
       TranscriptionResult transcript;
       final saved = state.metadata['asr:${event.id}'];
@@ -562,6 +462,14 @@ class RecordingPipeline {
             ),
           );
         }
+        await repository.upsertTask(
+          task.copyWith(
+            state: RecordingTaskState.succeeded,
+            stage: 'complete',
+            progress: 1,
+            clearError: true,
+          ),
+        );
         await publish();
         return;
       }
@@ -752,6 +660,14 @@ class RecordingPipeline {
           error: null,
         ),
       );
+      await repository.upsertTask(
+        task.copyWith(
+          state: RecordingTaskState.succeeded,
+          stage: 'complete',
+          progress: 1,
+          clearError: true,
+        ),
+      );
       await publish();
     } catch (error) {
       final current =
@@ -759,10 +675,36 @@ class RecordingPipeline {
               .where((e) => e.id == event.id)
               .firstOrNull ??
           event;
+      final waiting = _isWaiting(error);
+      final cancelled = error is OperationCancelled;
+      final reason = error is TranscriptionException
+          ? '[${error.code}] ${error.message}'
+          : error.toString();
+      final status = cancelled
+          ? 'cancelled'
+          : waiting
+          ? (error is TranscriptionException && error.code == 'queue_full'
+                ? 'queued'
+                : 'waiting_model')
+          : current.originalTranscript != null
+          ? 'analysis_failed'
+          : 'failed';
       await repository.upsertEvent(
         current.copyWith(
-          transcriptionStatus: 'failed',
-          error: error.toString(),
+          transcriptionStatus: status,
+          error: cancelled ? '处理已取消；原音频与已保存原文保留，可重试' : reason,
+        ),
+      );
+      await repository.upsertTask(
+        task.copyWith(
+          state: cancelled
+              ? RecordingTaskState.cancelled
+              : waiting
+              ? RecordingTaskState.queued
+              : RecordingTaskState.failed,
+          stage: status,
+          error: reason,
+          clearProgress: true,
         ),
       );
       await publish();
@@ -877,10 +819,7 @@ class RecordingPipeline {
     try {
       await stopCapture();
     } finally {
-      await _audio?.cancel();
-      await _events?.cancel();
       await _tail;
-      await _controls;
       await asr.close();
       _disposed = true;
       await _changes.close();

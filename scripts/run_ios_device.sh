@@ -75,10 +75,10 @@ import plistlib, sys
 with open(sys.argv[1], 'rb') as file:
     info = plistlib.load(file)
 schemes = [scheme for entry in info.get('CFBundleURLTypes', []) for scheme in entry.get('CFBundleURLSchemes', [])]
-if schemes != [sys.argv[2]]:
-    print('BLOCKED: built Runner callback does not match approved CONFIG; no install attempted', file=sys.stderr)
+if schemes != ['recording-card']:
+    print('BLOCKED: Runner must not globally register a reference-app scheme; no install attempted', file=sys.stderr)
     sys.exit(2)
-print('Built Runner callback matches approved CONFIG; static archive arm64 and four defined FFI symbols checked.')
+print('Runner has its own global scheme; OAuth callback', sys.argv[2], 'is captured by ASWebAuthenticationSession. Static arm64/four FFI symbols checked.')
 PY
 if [[ "$MODE" == --build ]]; then
   echo 'Unsigned Runner.app produced; NOT a signed IPA or an installed/verified app.'
@@ -87,6 +87,6 @@ fi
 CURRENT_SCHEME="$(python3 "$ROOT/scripts/validate_public_config.py" "$CONFIG" --scheme)"
 [[ "$CURRENT_SCHEME" == "$SCHEME" ]] || blocked 'CONFIG callback changed during build; rerun --build/--run before installation'
 # Flutter invokes local signing configured by the user in Runner.xcworkspace.
-# Before reference reuse, uninstall the reference app or use a separate phone.
+# iOS captures reference OAuth privately; never uninstall the reference app.
 # Opening/using the app may start owned recording when connected: review manual.
 flutter run --debug -d "$RC_IOS_DEVICE_ID" --dart-define-from-file="$CONFIG"

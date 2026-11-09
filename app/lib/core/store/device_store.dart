@@ -22,6 +22,7 @@ class DeviceStore extends ChangeNotifier {
     StorePersistence? persistence,
     RecordingPolicy Function()? policy,
     this._onSynced,
+    this.firmwareStatusMessage,
   }) : backend =
            backend ?? GatewayDeviceBackend(gateway ?? RealCardGateway.maybe()),
        persistence =
@@ -32,6 +33,7 @@ class DeviceStore extends ChangeNotifier {
   final StorePersistence persistence;
   final RecordingPolicy Function() _policy;
   final Future<void> Function()? _onSynced;
+  final String? Function()? firmwareStatusMessage;
   bool _disposed = false;
   bool get liveDeviceAvailable => backend.available;
   DeviceReading? reading;
@@ -41,16 +43,24 @@ class DeviceStore extends ChangeNotifier {
   bool scanning = false;
   bool connecting = false;
   List<DeviceChoice> scannedDevices = [];
-  DateTime? _readingAt;
+  final Stopwatch _readingClock = Stopwatch();
   Timer? _clock;
   Timer? _cooldown;
   bool _refreshing = false;
+  bool statusStale = false;
+  String? statusError;
+  bool recordingBusy = false;
+  String? recordingError;
   int _connectionEpoch = 0;
   bool sheetOpen = false;
   DeviceView view = DeviceView.main;
   static const batteryLevel = 0; // Unknown, never a fake preset battery.
   int get battery => reading?.snapshot.batteryLevel.clamp(0, 100) ?? 0;
-  bool get batteryKnown => connected && reading != null;
+  bool get batteryKnown =>
+      connected &&
+      reading?.batteryKnown == true &&
+      reading!.snapshot.batteryLevel >= 0 &&
+      reading!.snapshot.batteryLevel <= 100;
   String get batteryLevelText => !batteryKnown
       ? '电量未知'
       : reading!.snapshot.isCharging
@@ -66,24 +76,118 @@ class DeviceStore extends ChangeNotifier {
       : connected
       ? '已连接 · 蓝牙'
       : '未连接 · 蓝牙';
+  bool get isRecording => connected && reading?.snapshot.recording == true;
+  bool get recordingKnown =>
+      connected && reading?.recordingKnown == true && !statusStale;
+  bool get deviceBusy =>
+      recordingBusy ||
+      _refreshing ||
+      scanning ||
+      connecting ||
+      fwUpdating ||
+      fwChecking ||
+      syncState == SyncState.busy ||
+      wifiJoining ||
+      wifiScanning ||
+      fastTransferPrepared;
+  bool get canControlRecording =>
+      liveDeviceAvailable && recordingKnown && !deviceBusy;
   String get recordingText => !connected
       ? '未连接'
-      : reading?.snapshot.recording == true
+      : !recordingKnown
+      ? '状态待确认'
+      : isRecording
       ? '录音中'
       : '未录音';
   int get recSeconds {
     final base = reading?.recordedSeconds;
-    if (base == null || !connected) return 0;
-    final elapsed = reading!.snapshot.recording && _readingAt != null
-        ? DateTime.now().difference(_readingAt!).inSeconds
+    if (base == null || base < 0 || !connected) return 0;
+    final elapsed = recordingKnown && isRecording
+        ? _readingClock.elapsed.inSeconds
         : 0;
     return (base + elapsed).clamp(0, 1 << 31);
   }
 
   String get recClockText {
-    if (!connected || reading?.recordedSeconds == null) return '—:——:——';
+    if (!recordingKnown ||
+        reading?.recordedSeconds == null ||
+        reading!.recordedSeconds! < 0) {
+      return '—:——:——';
+    }
     final s = recSeconds;
     return '${s ~/ 3600}:${((s % 3600) ~/ 60).toString().padLeft(2, '0')}:${(s % 60).toString().padLeft(2, '0')}';
+  }
+
+  Future<void> startRecording() => _controlRecording(true);
+  Future<void> stopRecording() => _controlRecording(false);
+
+  Future<void> _controlRecording(bool enabled) async {
+    if (_disposed) return;
+    if (!connected || !liveDeviceAvailable) {
+      _recordingFailure('未连接录音卡，请先连接设备');
+      return;
+    }
+    if (deviceBusy) {
+      _recordingFailure('设备任务正在运行，稍后重试');
+      return;
+    }
+    if (!recordingKnown) {
+      _recordingFailure('录音状态待确认，请等待状态刷新后重试');
+      return;
+    }
+    recordingError = null;
+    if (isRecording == enabled) {
+      _notify();
+      return;
+    }
+    final epoch = _connectionEpoch;
+    recordingBusy = true;
+    devStateIsError = false;
+    devStateText = enabled ? '正在开始录音…' : '正在停止录音…';
+    _notify();
+    try {
+      final confirmed = enabled
+          ? await backend.startRecording()
+          : await backend.stopRecording();
+      if (_disposed || epoch != _connectionEpoch) return;
+      if (!confirmed.recordingKnown ||
+          confirmed.snapshot.recording != enabled) {
+        throw StateError('设备未确认${enabled ? '开始' : '停止'}录音');
+      }
+      _accept(confirmed);
+      recordingError = null;
+      devStateIsError = false;
+      devStateText = enabled ? '设备已确认开始录音' : '设备已确认停止录音';
+    } catch (e) {
+      if (_disposed || epoch != _connectionEpoch) return;
+      // Never optimistically flip state or send a compensating hardware command.
+      // A lost confirmation may follow an applied command: retain the last
+      // reading but mark it stale until the next real status query succeeds.
+      _statusFailure(e);
+      _recordingFailure('${enabled ? '开始' : '停止'}录音失败：${_message(e)}');
+    } finally {
+      recordingBusy = false;
+      _notify();
+    }
+  }
+
+  void _recordingFailure(String message) {
+    recordingError = message;
+    devStateIsError = true;
+    devStateText = message;
+    _notify();
+  }
+
+  void _statusFailure(Object error) {
+    statusError = _message(error);
+    statusStale = true;
+    _readingClock.stop();
+    // Only an explicit transport/SDK disconnect proves physical disconnection.
+    if (error is CardGatewayException && error.code == 'disconnected') {
+      _connectionEpoch++;
+      connected = false;
+      reading = null;
+    }
   }
 
   void _notify() {
@@ -116,9 +220,10 @@ class DeviceStore extends ChangeNotifier {
   }
 
   Future<void> scanDevices() async {
-    if (scanning || connecting || fwUpdating) return;
+    if (deviceBusy) return;
     scanning = true;
     scannedDevices = [];
+    devStateIsError = false;
     devStateText = '正在扫描录音卡…';
     _notify();
     try {
@@ -127,6 +232,7 @@ class DeviceStore extends ChangeNotifier {
           ? '未发现录音卡，请检查蓝牙权限和设备电源'
           : '请选择要连接的录音卡';
     } catch (e) {
+      devStateIsError = true;
       devStateText = '扫描失败：${_message(e)}';
     } finally {
       scanning = false;
@@ -135,9 +241,10 @@ class DeviceStore extends ChangeNotifier {
   }
 
   Future<void> connectDevice(String id) async {
-    if (connecting || fwUpdating) return;
+    if (deviceBusy) return;
     _connectionEpoch++;
     connecting = true;
+    devStateIsError = false;
     devStateText = '正在连接…';
     _notify();
     try {
@@ -149,6 +256,7 @@ class DeviceStore extends ChangeNotifier {
     } catch (e) {
       connected = false;
       reading = null;
+      devStateIsError = true;
       devStateText = '连接失败：${_message(e)}';
     } finally {
       connecting = false;
@@ -166,14 +274,20 @@ class DeviceStore extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
-    if (fwUpdating) return;
+    if (recordingBusy || fwUpdating) return;
     _connectionEpoch++;
     try {
       await backend.disconnect();
       connected = false;
       reading = null;
+      statusStale = false;
+      statusError = null;
+      recordingError = null;
+      _readingClock.stop();
+      devStateIsError = false;
       devStateText = '已断开';
     } catch (e) {
+      devStateIsError = true;
       devStateText = '断开失败：${_message(e)}';
     }
     _notify();
@@ -181,32 +295,38 @@ class DeviceStore extends ChangeNotifier {
 
   void _accept(DeviceReading value) {
     reading = value;
-    _readingAt = DateTime.now();
+    _readingClock
+      ..reset()
+      ..start();
+    statusStale = false;
+    statusError = null;
     connected = true;
     if (value.id != null) lastDeviceId = value.id;
     wifiLast = value.connectedWifi ?? '';
   }
 
   Future<void> refreshFromDevice() async {
-    if (_refreshing ||
-        fwUpdating ||
-        scanning ||
-        connecting ||
-        syncState == SyncState.busy ||
-        wifiJoining) {
-      return;
-    }
+    if (_disposed || deviceBusy) return;
     _refreshing = true;
+    _notify();
     final epoch = _connectionEpoch;
     try {
       final value = await backend.status();
       if (_disposed || epoch != _connectionEpoch) return;
+      final wasStale = statusStale || recordingError != null;
       _accept(value);
+      if (wasStale) {
+        recordingError = null;
+        devStateIsError = false;
+        devStateText = '设备状态已刷新';
+      }
     } catch (e) {
       if (_disposed || epoch != _connectionEpoch) return;
-      connected = false;
-      reading = null;
-      devStateText = '设备状态不可用：${_message(e)}';
+      _statusFailure(e);
+      devStateIsError = true;
+      devStateText = connected
+          ? '状态刷新失败，保留上次读取：${_message(e)}'
+          : '设备状态不可用：${_message(e)}';
     } finally {
       _refreshing = false;
       _notify();
@@ -246,6 +366,9 @@ class DeviceStore extends ChangeNotifier {
   DateTime? lastSync;
   String syncStage = '';
   String? syncError;
+  bool sourceRetained = false;
+  int retainedSourceCount = 0;
+  bool fastTransferPrepared = false;
   String get syncRelText {
     if (lastSync == null) return '尚未同步';
     final s = DateTime.now().difference(lastSync!).inSeconds;
@@ -256,29 +379,89 @@ class DeviceStore extends ChangeNotifier {
 
   String get syncText => switch (syncState) {
     SyncState.busy => syncStage.isEmpty ? '正在同步…' : syncStage,
-    SyncState.done => '同步成功 · 刚刚',
+    SyncState.done =>
+      sourceRetained ? '已保存 · 卡端保留 $retainedSourceCount 项' : '同步成功 · 刚刚',
     SyncState.failed => '同步失败 · 点击重试',
-    SyncState.idle => lastSync == null ? '尚未同步 · 点击同步' : '最近同步 · $syncRelText',
+    SyncState.idle =>
+      sourceRetained
+          ? '卡端源保留 · 点击重试'
+          : lastSync == null
+          ? '尚未同步 · 点击同步'
+          : '最近同步 · $syncRelText',
   };
-  Future<void> syncNow() async {
+  Future<bool> prepareFastTransfer() async {
+    if (!connected || deviceBusy || backend is! FileTransferDeviceBackend) {
+      devStateIsError = true;
+      devStateText = '请先连接录音卡并等待当前任务完成';
+      _notify();
+      return false;
+    }
+    wifiJoining = true;
+    _notify();
+    try {
+      await (backend as FileTransferDeviceBackend).prepareFastTransfer();
+      fastTransferPrepared = true;
+      return true;
+    } catch (e) {
+      devStateIsError = true;
+      devStateText = '快传准备失败：${_message(e)}';
+      return false;
+    } finally {
+      wifiJoining = false;
+      _notify();
+    }
+  }
+
+  Future<void> cancelFastTransfer() async {
+    try {
+      if (fastTransferPrepared && backend is FileTransferDeviceBackend) {
+        await (backend as FileTransferDeviceBackend).cancelFastTransfer();
+      }
+    } catch (e) {
+      devStateIsError = true;
+      devStateText = '快传退出失败：${_message(e)}';
+    } finally {
+      fastTransferPrepared = false;
+      _notify();
+    }
+  }
+
+  Future<void> syncNow({bool fast = false}) async {
     if (syncState == SyncState.busy ||
         syncState == SyncState.done ||
-        fwUpdating) {
+        fwUpdating ||
+        recordingBusy) {
       return;
     }
     syncState = SyncState.busy;
     syncError = null;
     syncStage = '正在同步…';
+    sourceRetained = false;
+    retainedSourceCount = 0;
     _notify();
     try {
-      await backend.sync(_policy(), (p) {
+      void progress(TaskProgress p) {
         syncStage = p.stage;
         _notify();
-      });
-      lastSync = DateTime.now();
+      }
+
+      if (fast) {
+        if (backend is! FileTransferDeviceBackend) throw StateError('快传服务未配置');
+        await (backend as FileTransferDeviceBackend).fastSync(
+          _policy(),
+          progress,
+        );
+      } else {
+        await backend.sync(_policy(), progress);
+      }
+      final outcome = backend is FileTransferDeviceBackend
+          ? (backend as FileTransferDeviceBackend).lastSyncOutcome
+          : null;
+      retainedSourceCount = outcome?.retainedSourceCount ?? 0;
+      sourceRetained = retainedSourceCount > 0;
+      if (!sourceRetained) lastSync = DateTime.now();
       syncState = SyncState.done;
       await _persist();
-      if (_onSynced != null) await _onSynced();
       _cooldown?.cancel();
       _cooldown = Timer(const Duration(seconds: 10), () {
         syncState = SyncState.idle;
@@ -287,7 +470,12 @@ class DeviceStore extends ChangeNotifier {
     } catch (e) {
       syncState = SyncState.failed;
       syncError = '同步失败：${_message(e)}';
+      devStateIsError = true;
       devStateText = syncError!;
+    } finally {
+      if (fast) fastTransferPrepared = false;
+      // Partial imports are real local data even when a later transfer fails.
+      if (_onSynced != null) await _onSynced();
     }
     _notify();
   }
@@ -299,29 +487,45 @@ class DeviceStore extends ChangeNotifier {
   double? fwPercent;
   String fwValText = '尚未检查更新';
   String devStateText = '';
+  bool devStateIsError = false;
+  bool fwHasError = false;
   String fwStateText = '';
   String fwStageText = '等待固件任务';
   FirmwareOffer? offer;
   String get fwPctText => fwPercent == null ? '进度未知' : '${fwPercent!.round()}%';
+  static String _versionLabel(String? value) =>
+      value == null || value.trim().isEmpty ? '未知' : value;
+  String _versionComparison(String? current, String? target) {
+    final installed = _versionLabel(connected ? current : null);
+    return offer == null || target == null || target.trim().isEmpty
+        ? installed
+        : '$installed → $target';
+  }
+
   String get mainVersionText =>
-      '${reading?.snapshot.fwVersion ?? '未知'} → ${offer?.targetMainVersion ?? '未配置'}';
-  String get wifiVersionText =>
-      '${reading?.snapshot.wifiVersion ?? '未知'} → ${offer?.targetWifiVersion ?? '未配置'}';
+      _versionComparison(reading?.snapshot.fwVersion, offer?.targetMainVersion);
+  String get wifiVersionText => _versionComparison(
+    reading?.snapshot.wifiVersion,
+    offer?.targetWifiVersion,
+  );
   Future<void> checkFirmware() async {
-    if (fwChecking || fwUpdating) return;
+    if (fwChecking || fwUpdating || recordingBusy) return;
     fwChecking = true;
+    fwHasError = false;
     fwStateText = '正在检查固件清单…';
     _notify();
     try {
       offer = await backend.firmwareOffer();
+      fwHasError = offer != null && !offer!.valid;
       fwValText = offer == null
-          ? '已是最新'
+          ? firmwareStatusMessage?.call() ?? '没有适用更新'
           : offer!.valid
           ? '有可用更新'
           : '固件包信息不完整';
-      fwStateText = offer?.notes ?? '没有适用更新';
+      fwStateText = offer?.notes ?? firmwareStatusMessage?.call() ?? '没有适用更新';
     } catch (e) {
       offer = null;
+      fwHasError = true;
       fwValText = '更新检查失败';
       fwStateText = '固件检查失败：${_message(e)}';
     } finally {
@@ -341,17 +545,19 @@ class DeviceStore extends ChangeNotifier {
         consent.deviceId != package.deviceId ||
         consent.packageId != package.packageId ||
         consent.checksum != package.checksum) {
+      fwHasError = true;
       fwStateText = '升级被拒绝：请连接目标设备并确认有效固件包与校验值';
       _notify();
       return;
     }
-    if (syncState == SyncState.busy || wifiJoining) {
+    if (deviceBusy) {
       fwStateText = '设备任务正在运行，稍后重试';
       _notify();
       return;
     }
     fwUpdating = true;
     fwDone = false;
+    fwHasError = false;
     fwPercent = null;
     _notify();
     try {
@@ -374,9 +580,11 @@ class DeviceStore extends ChangeNotifier {
       fwDone = true;
       fwValText = '已是最新';
       view = DeviceView.main;
+      devStateIsError = false;
       devStateText =
           '已更新到 主控 ${verified.snapshot.fwVersion} / Wi-Fi ${verified.snapshot.wifiVersion}';
     } catch (e) {
+      fwHasError = true;
       fwStateText = '固件更新失败：${_message(e)}';
       fwValText = '更新失败';
     } finally {
@@ -418,6 +626,7 @@ class DeviceStore extends ChangeNotifier {
   Future<void> wifiScan() async {
     if (wifiScanning ||
         wifiJoining ||
+        recordingBusy ||
         fwUpdating ||
         syncState == SyncState.busy) {
       return;
@@ -467,13 +676,15 @@ class DeviceStore extends ChangeNotifier {
   }
 
   Future<void> wifiConnectSaved(String name) async {
-    if (!wifiInRange(name) || wifiJoining || fwUpdating) return;
+    if (!wifiInRange(name) || wifiJoining || fwUpdating || recordingBusy) {
+      return;
+    }
     await _join(name, () => backend.connectSavedWifi(name));
   }
 
   Future<void> wifiJoinNew(String password) async {
     final network = wifiScanRes.where((n) => n.name == wifiSelName).firstOrNull;
-    if (network == null || wifiJoining || fwUpdating) return;
+    if (network == null || wifiJoining || fwUpdating || recordingBusy) return;
     if (network.lock && password.isEmpty) {
       wifiStateText = '请输入网络密码';
       _notify();
@@ -511,6 +722,8 @@ class DeviceStore extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _connectionEpoch++;
+    _readingClock.stop();
     _clock?.cancel();
     _cooldown?.cancel();
     super.dispose();

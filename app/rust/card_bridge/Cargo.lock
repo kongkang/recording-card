@@ -157,7 +157,9 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 name = "card_bridge"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
  "btleplug",
+ "futures",
  "jni",
  "reai-card-sdk",
  "reqwest",
@@ -1126,7 +1128,6 @@ dependencies = [
 [[package]]
 name = "reai-card-sdk"
 version = "0.0.6"
-source = "git+https://github.com/ReAI-com/reai-card-sdk.git?tag=v0.0.6#32a1b864be3821493d6afd312aa5c8fb5a93b30f"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

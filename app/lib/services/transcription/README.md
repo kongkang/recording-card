@@ -23,7 +23,11 @@ Use application-support storage owned by the app, not an assumed repository asse
 
 Local files do not require a network endpoint. Downloads require all of: explicit `allowDownload: true`, `ModelArtifact.downloadUri`, HTTPS host allowlist including every redirect host, and model license acceptance. Defaults permit no download. Source URLs, hashes and file names may be overridden via artifact configuration for an audited mirror. Wrong hashes, missing models, or unaccepted license throw readable errors. Never set these flags merely to hide a missing model.
 
-Optional Silero VAD must be supplied as another `ModelArtifact` with trusted size/hash/path; this module does not bundle it. Without VAD, bounded fixed-size chunks are used and a boundary uncertainty is retained. No speaker model is installed.
+`RuntimeConfig` selects `sensevoice-mobile-20240717` by default, retaining the original exact production pins. For the explicitly approved Mac development artifact only, set `RC_ASR_ARTIFACT_PROFILE=reai-vibe-board-local-20261109`, `RC_ASR_LOCAL_ARTIFACTS_APPROVED=true`, `RC_ASR_LICENSE_ACCEPTED=true`, and `RC_ASR_ALLOW_DOWNLOAD=false`. The local model is **237115547 bytes / SHA256 12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d**, not the default registry's 239233841-byte model. Neither digest is implicitly accepted as an alternative. The local profile has no download URIs/hosts and ignores the default registry URL overrides; it never falls back to downloading other weights. Approval does not imply license acceptance. Unknown/unapproved profiles fail explicitly.
+
+`scripts/prepare_asr_models.py --profile reai-vibe-board-local-20261109 --source-directory /approved/sensevoice-int8 --vad-source /approved/silero_vad.onnx --verify-only --manifest-output /chosen/verified-manifest.json --accept-model-license` checks all three fixed pins without copying or downloading. Omit `--verify-only` and use `--directory` outside the repository to atomically copy verified local files. Metadata records the distinct profile, exact size/hash/path, and runtime defines; it is audit metadata, not a runtime remote manifest loader. No SenseVoice weights belong in Git.
+
+Runtime configuration uses the bundled MIT Silero VAD artifact, also checked for exact size/hash. Standalone `AsrModelStore` callers can omit VAD, in which case bounded fixed-size chunks retain a boundary uncertainty and do **not** prove silence. No speaker model is installed. Missing/corrupt/unlicensed models produce `waitingForModel` progress with `errorCode`/`message`, then throw; the service does not persist source recordings or queue state itself. The repository/pipeline owner must retain the recording, present the reason and retry it after installation.
 
 ## File and continuous stream entry points
 
@@ -49,6 +53,8 @@ Each file/PCM job currently creates a worker and reloads its model. This is func
 
 Defaults: mono8k/16k input or PCM16 stereo WAV downmix, maximum30 minutes and64 MiB input per file, maximum15-second recognition blocks,2 native threads,4 queued/active ASR jobs. WAV parsing respects arbitrary RIFF chunk positions and odd padding; compressed/float WAV and other sample rates are rejected explicitly.
 
+Both SenseVoice and VAD explicitly use the CPU provider. The fixed Silero ONNX requires **16kHz**, despite the reference Dart service configuring 8kHz/256-sample windows for 8k input. That native configuration exits the process with `Expected sample rate 16000`. Before native inference, `AudioDecoder.forLocalModels` linearly upsamples 8k input to 16k (exact 2:1 sample count; duration/relative offsets unchanged), without modifying the source. VAD uses 512-sample windows. A VAD-verified empty speech plan returns empty text/ranges without allocating the ASR recognizer; ASR emptiness alone is never a silence claim.
+
 Full-file decoded Float32 at the maximum30min/16k length alone occupies about109.86 MiB, in addition to source/PCM/model/native buffers. Encoder inputs are bounded per chunk, but whole-file decode is not constant-memory. Streaming15-second PCM slices are480000 bytes and bound the per-file audio cost. No iPhone peak RSS, real-time factor or power claim has been measured.
 
 Cancellation/timeout is cooperative between native chunks. Native pointers never cross isolates, every stream/VAD/recognizer is released in `finally`, terminal result/error/exit use one mailbox, and the service serial lane waits for native cleanup. A native decode that itself hangs is not safely interruptible; `close()` may wait. No force-kill is used to pretend native resources were released. Cloud adapters also cannot guarantee server-side cancellation through A's plain `complete` API; cancelled responses are not applied, and no automatic retry spends additional requests.
@@ -69,11 +75,12 @@ flutter test test/services
 The native inference test is explicitly opt-in and skipped without model+audio+license configuration:
 
 ```bash
-ASR_TEST_MODEL_DIR=/approved/model-directory \
-ASR_TEST_WAV=/approved/non-sensitive-fixture.wav \
+ASR_LOCAL_TEST_MODEL_DIR=/approved/local-model-directory \
+ASR_LOCAL_TEST_WAV=/approved/non-sensitive-fixture.wav \
+ASR_LOCAL_ARTIFACTS_APPROVED=true \
 ASR_MODEL_LICENSE_ACCEPTED=true \
-ASR_NATIVE_LIBRARY_DIR=/directory/containing/libsherpa-onnx-c-api.so \
-flutter test test/services/native_sensevoice_opt_in_test.dart
+ASR_NATIVE_LIBRARY_DIR=/directory/containing/libsherpa-onnx-c-api.dylib \
+flutter --suppress-analytics test --no-pub test/services/local_models_native_opt_in_test.dart
 ```
 
-The optional native library setting is a **directory**, not the file path; on Apple platforms it is the framework root. No real model/audio/cloud/phone invocation was performed while developing this module.
+The optional native library setting is a **directory**, not the file path: on macOS it contains the dylib, on iOS it is the framework root. On 2026-11-09 this opt-in test passed actual Mac CPU recognition of upstream `test_wavs/zh.wav` plus generated 8k/16k silence. This is not an iPhone/device validation, accuracy benchmark or user-recording test. No audio was uploaded and no cloud ASR was invoked.

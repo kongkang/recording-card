@@ -41,6 +41,7 @@ class AppStore extends ChangeNotifier {
     ExportService? exportService,
     DateTime Function()? clock,
     this.recordUpdates,
+    this.retryRecordProcessing,
   }) : events = List.of(events ?? const []),
        backend = backend ?? const UnconfiguredAppBackend(),
        persistence = persistence ?? PreferencesStorePersistence(),
@@ -52,6 +53,7 @@ class AppStore extends ChangeNotifier {
   final StorePersistence persistence;
   final ExportService exportService;
   final Stream<List<RecordEvent>>? recordUpdates;
+  final Future<void> Function()? retryRecordProcessing;
   StreamSubscription<List<RecordEvent>>? _recordSubscription;
   final Set<String> _activeGenerations = {};
   RecordingPolicy policy = const RecordingPolicy();
@@ -89,8 +91,8 @@ class AppStore extends ChangeNotifier {
   Future<void> initialize() async {
     _recordSubscription ??= recordUpdates?.listen(
       applyRecordUpdates,
-      onError: (Object _) {
-        error = '录音处理任务失败，请重试';
+      onError: (Object failure) {
+        error = '录音处理失败：${_message(failure)}';
         _notify();
       },
     );
@@ -125,6 +127,24 @@ class AppStore extends ChangeNotifier {
       error = '录音记录读取失败：${_message(e)}';
     } finally {
       loading = false;
+      _notify();
+    }
+  }
+
+  Future<void> retryRecords() async {
+    if (loading || _disposed) return;
+    loading = true;
+    error = null;
+    _notify();
+    Object? failure;
+    try {
+      await retryRecordProcessing?.call();
+    } catch (e) {
+      failure = e;
+    }
+    await reloadEvents();
+    if (failure != null) {
+      error = '录音处理失败：${_message(failure)}';
       _notify();
     }
   }

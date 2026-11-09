@@ -57,10 +57,29 @@ class TranscriptionService {
           onProgress?.call(
             const TranscriptionProgress(TranscriptionStage.checkingModel),
           );
-          final paths = await models.ensureReady(
-            allowDownload: allowModelDownload,
-            cancellation: token,
-          );
+          final AsrModelPaths paths;
+          try {
+            paths = await models.ensureReady(
+              allowDownload: allowModelDownload,
+              cancellation: token,
+            );
+          } on TranscriptionException catch (error) {
+            if ({
+              'model_missing',
+              'model_corrupt',
+              'model_license',
+              'model_source',
+            }.contains(error.code)) {
+              onProgress?.call(
+                TranscriptionProgress(
+                  TranscriptionStage.waitingForModel,
+                  errorCode: error.code,
+                  message: error.message,
+                ),
+              );
+            }
+            rethrow;
+          }
           token.throwIfCancelled();
           final result = await _backend.transcribe(
             AudioFileInput(path, format: format, sampleRate: sampleRate),

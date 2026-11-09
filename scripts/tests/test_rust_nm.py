@@ -41,6 +41,17 @@ class RustSymbolToolTests(unittest.TestCase):
         self.assertEqual(result.stdout.splitlines(),
                          ['--defined-only', '--extern-only', 'archive path with spaces.a'])
 
+    def test_home_cargo_symlink_does_not_override_selected_compiler(self):
+        cargo_bin = self.root / '.cargo/bin'
+        cargo_bin.mkdir(parents=True)
+        shadow = cargo_bin / 'rustc'
+        shadow.write_text('#!/bin/bash\necho "wrong compiler selected" >&2\nexit 9\n')
+        shadow.chmod(0o755)
+        self.install_nm('printf "%s\\n" "$@"')
+        result = self.invoke('--version')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), '--version')
+
     def test_missing_component_is_blocked_not_apple_nm_fallback(self):
         result = self.invoke('archive.a')
         self.assertEqual(result.returncode, 2)

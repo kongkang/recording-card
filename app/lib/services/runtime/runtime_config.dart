@@ -7,7 +7,21 @@ import '../transcription/bundled_vad_model.dart';
 
 /// No secrets: explicit approved model ID and audited model mirror only.
 class RuntimeConfig {
-  const RuntimeConfig();
+  const RuntimeConfig({
+    this.modelArtifactProfile = asrArtifactProfile,
+    this.localArtifactUseApproved = asrLocalArtifactsApproved,
+  });
+  static const productionArtifactProfile = 'sensevoice-mobile-20240717';
+  static const localArtifactProfile = 'reai-vibe-board-local-20261109';
+  static const asrArtifactProfile = String.fromEnvironment(
+    'RC_ASR_ARTIFACT_PROFILE',
+    defaultValue: productionArtifactProfile,
+  );
+  static const asrLocalArtifactsApproved = bool.fromEnvironment(
+    'RC_ASR_LOCAL_ARTIFACTS_APPROVED',
+  );
+  final String modelArtifactProfile;
+  final bool localArtifactUseApproved;
   static const allowModelDownload = bool.fromEnvironment(
     'RC_ASR_ALLOW_DOWNLOAD',
   );
@@ -37,31 +51,52 @@ class RuntimeConfig {
       .map((s) => s.trim().toLowerCase())
       .where((s) => s.isNotEmpty)
       .toSet();
-  AsrModelStore models(Directory directory) => AsrModelStore(
-    directory: directory,
-    licenseAccepted: licenseAccepted,
-    allowedDownloadHosts: hosts(downloadHosts),
-    model: ModelArtifact(
-      fileName: senseVoiceInt8Artifact.fileName,
-      sizeBytes: senseVoiceInt8Artifact.sizeBytes,
-      sha256Digest: senseVoiceInt8Artifact.sha256Digest,
-      downloadUri: modelUrl.isEmpty ? null : Uri.parse(modelUrl),
-    ),
-    tokens: ModelArtifact(
-      fileName: senseVoiceTokensArtifact.fileName,
-      sizeBytes: senseVoiceTokensArtifact.sizeBytes,
-      sha256Digest: senseVoiceTokensArtifact.sha256Digest,
-      downloadUri: tokensUrl.isEmpty ? null : Uri.parse(tokensUrl),
-    ),
-    vad: vadSha256.isEmpty && vadSize == 0 && vadUrl.isEmpty
-        ? BundledVadModel.artifact
-        : ModelArtifact(
-            fileName: 'silero_vad.onnx',
-            sizeBytes: vadSize,
-            sha256Digest: vadSha256,
-            downloadUri: vadUrl.isEmpty ? null : Uri.parse(vadUrl),
-          ),
-  );
+  AsrModelStore models(Directory directory) {
+    if (modelArtifactProfile == localArtifactProfile) {
+      if (!localArtifactUseApproved) {
+        throw ArgumentError(
+          '本机开发artifact必须显式批准RC_ASR_LOCAL_ARTIFACTS_APPROVED',
+        );
+      }
+      // Deliberately local-only: do not attach URLs for the DIFFERENT default
+      // registry weights, or silently replace this explicitly chosen artifact.
+      return AsrModelStore(
+        directory: directory,
+        licenseAccepted: licenseAccepted,
+        model: localSenseVoiceInt8Artifact,
+        tokens: senseVoiceTokensArtifact,
+        vad: BundledVadModel.artifact,
+      );
+    }
+    if (modelArtifactProfile != productionArtifactProfile) {
+      throw ArgumentError('未知本地ASR artifact profile：$modelArtifactProfile');
+    }
+    return AsrModelStore(
+      directory: directory,
+      licenseAccepted: licenseAccepted,
+      allowedDownloadHosts: hosts(downloadHosts),
+      model: ModelArtifact(
+        fileName: senseVoiceInt8Artifact.fileName,
+        sizeBytes: senseVoiceInt8Artifact.sizeBytes,
+        sha256Digest: senseVoiceInt8Artifact.sha256Digest,
+        downloadUri: modelUrl.isEmpty ? null : Uri.parse(modelUrl),
+      ),
+      tokens: ModelArtifact(
+        fileName: senseVoiceTokensArtifact.fileName,
+        sizeBytes: senseVoiceTokensArtifact.sizeBytes,
+        sha256Digest: senseVoiceTokensArtifact.sha256Digest,
+        downloadUri: tokensUrl.isEmpty ? null : Uri.parse(tokensUrl),
+      ),
+      vad: vadSha256.isEmpty && vadSize == 0 && vadUrl.isEmpty
+          ? BundledVadModel.artifact
+          : ModelArtifact(
+              fileName: 'silero_vad.onnx',
+              sizeBytes: vadSize,
+              sha256Digest: vadSha256,
+              downloadUri: vadUrl.isEmpty ? null : Uri.parse(vadUrl),
+            ),
+    );
+  }
 }
 
 /// Directory access is deferred to the user's analysis action, never startup.
