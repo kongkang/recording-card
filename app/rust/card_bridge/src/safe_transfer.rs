@@ -51,9 +51,48 @@ fn validate_generation(
     current: &Option<SourceGeneration>,
 ) -> Result<()> {
     if old.is_none() || old != current {
-        return Err(retained(
-            "远端文件缺失、代际未知或session/seq/时间/长度变化",
-        ));
+        // Diagnostic only: name the exact fields that differ so a real
+        // device run can be attributed instead of guessed. Values are file
+        // metadata, never audio bytes.
+        let detail = match (old, current) {
+            (None, _) => "preflight metadata missing".to_owned(),
+            (Some(old), None) => format!("remote entry disappeared; preflight={old:?}"),
+            (Some(old), Some(current)) => {
+                let mut diffs = Vec::new();
+                if old.size != current.size {
+                    diffs.push(format!("size {}->{}", old.size, current.size));
+                }
+                if old.session != current.session {
+                    diffs.push(format!(
+                        "session {:?}->{:?}",
+                        old.session, current.session
+                    ));
+                }
+                if old.seq != current.seq {
+                    diffs.push(format!("seq {:?}->{:?}", old.seq, current.seq));
+                }
+                if old.start_at != current.start_at {
+                    diffs.push(format!("start_at {:?}->{:?}", old.start_at, current.start_at));
+                }
+                if old.modified_at != current.modified_at {
+                    diffs.push(format!(
+                        "modified_at {:?}->{:?}",
+                        old.modified_at, current.modified_at
+                    ));
+                }
+                if old.synced != current.synced {
+                    diffs.push(format!("synced {:?}->{:?}", old.synced, current.synced));
+                }
+                if diffs.is_empty() {
+                    "fields equal but comparison failed".to_owned()
+                } else {
+                    diffs.join(", ")
+                }
+            }
+        };
+        return Err(retained(format!(
+            "远端文件缺失、代际未知或session/seq/时间/长度变化（{detail}）"
+        )));
     }
     Ok(())
 }
@@ -379,8 +418,16 @@ async fn download_preserving_inner(
     writer.sync_all().await?;
     drop(writer);
     let digest = hash_local(&part, bytes).await?;
+    // The bytes are complete, synced and hashed at this point; length was
+    // already enforced on receive. Generation drift only means we cannot
+    // attest that the card still holds the exact source we read, so it must
+    // de-grade the *receipt* (no atomic-delete authorization), never discard
+    // a byte-identical local copy that already passed its own length/hash.
     let current = remote_generation(&d, name, ap).await?;
-    validate_generation(&generation, &current)?;
+    let generation_confirmed = generation.is_some() && generation == current;
+    if !generation_confirmed {
+        progress(cb, ticket, "接收完成；卡端代际未确认，仅保留本机副本", Some(bytes), Some(bytes));
+    }
     if d.source_epoch() != source_epoch || d.is_terminal() {
         return Err(retained("下载期间AP/SD/录音epoch改变；不签发可删收据"));
     }
@@ -419,7 +466,10 @@ async fn download_preserving_inner(
             ap,
             local_epoch,
             source_epoch,
-            generation: generation.clone(),
+            // Only a confirmed generation may authorize any later delete
+            // attempt. An unconfirmed one is stored as None so every consumer
+            // treats this copy as "local data only, no source authority".
+            generation: if generation_confirmed { generation.clone() } else { None },
             deleted: false,
         },
     );
@@ -429,7 +479,8 @@ async fn download_preserving_inner(
         "recordedAt":naming.recorded_at.map(|at|at.to_rfc3339()),"downloadId":id,
         "deviceId":expected_id,"transportId":transport_id,"sha256":digest,
         "sourceDeleted":false,"sourceRetained":true,"sourceEpoch":source_epoch,
-        "ownershipEpoch":local_epoch,"remoteGeneration":generation,"atomicConditionalDelete":false}),
+        "ownershipEpoch":local_epoch,"remoteGeneration":generation,
+        "generationConfirmed":generation_confirmed,"atomicConditionalDelete":false}),
     )
 }
 #[cfg(test)]
