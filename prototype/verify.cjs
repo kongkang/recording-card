@@ -43,6 +43,29 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('[data-testid="hw-capsule"]', x => (x.getAttribute('aria-label') || '').includes('未连接')));
   assert.equal(await p.$eval('.capsule .batt', x => getComputedStyle(x).display), 'none');
   assert(!(await p.$eval('[data-testid="hw-capsule"]', x => /\d/.test(x.innerText))));
+  // feed 倒序：按日分组今天→昨天→更早；同一天内按时间从晚到早（不依赖数据源顺序）
+  const feedGroups = await p.evaluate(() => {
+    const groups = []; let cur = null;
+    [...document.querySelectorAll('#feed > *')].forEach(el => {
+      if (el.classList.contains('tl-date')) {
+        cur = { day: el.textContent.trim(), times: [] };
+        groups.push(cur);
+      } else if (cur && el.classList.contains('tl-item')) {
+        const card = el.querySelector('.card');
+        const when = el.querySelector('.when');
+        if (card && card.dataset.kind === 'event' && when) {
+          cur.times.push(when.textContent.split('·')[0].trim());
+        }
+      }
+    });
+    return groups;
+  });
+  for (const g of feedGroups) {
+    const mins = g.times.map(t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; });
+    for (let i = 1; i < mins.length; i++) {
+      assert(mins[i - 1] >= mins[i], `${g.day} 内时间应倒序：${g.times.join(', ')}`);
+    }
+  }
   await shot('timeline-collapsed');
 
   // 卡片展开/收起 → 详情按钮进详情页（单屏压栈）
@@ -171,7 +194,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   // 总结卡：位置在它所总结内容的最早一条之后；整卡点击直接进结果页
   const anchorInfo = await p.evaluate(() => {
     const mins = t => { const [h, m] = (t || '0:0').split(':').map(Number); return h * 60 + m; };
-    const s = summaries.find(x => x.state === 'done');
+    const s = summaries.find(x => x.state === 'done' && x.id !== 'sum-demo');
     const srcs = EVENTS.filter(e => (s.srcIds || []).includes(e.id));
     srcs.sort((a, b) => (b.off - a.off) || (mins(a.time) - mins(b.time)));
     const anchor = srcs[0];
@@ -185,7 +208,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   });
   assert(anchorInfo.hasCards, '总结卡或锚点记录不在 DOM');
   assert(anchorInfo.cardTop > anchorInfo.anchorTop, '总结卡应落在所总结内容之后（下方）');
-  await p.click('.card[data-kind="summary"]');
+  // 点「刚生成的」总结卡（demo 卡也在这条 feed 里，不能按 first 点）
+  const genSumId = await p.evaluate(() => summaries.find(s => s.state === 'done' && s.id !== 'sum-demo').id);
+  await p.click(`[data-testid="card-${genSumId}"]`);
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
   await p.click('#stabs button[data-st="src"]');
   assert(await secVis('sec-src') && !(await secVis('sec-ov')));
@@ -208,7 +233,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="summary-start"]');
   assert.equal(await p.$$eval('#feed [data-sel]', x => x.length), 6);
   await p.click('#sumbar .btn.ghost');
-  assert.equal(await p.$$eval('.card[data-kind="summary"]', x => x.length), 1);
+  // demo 卡常驻；这里只关心本次生成的卡是否被取消
+  assert.equal(await p.$$eval('.card[data-kind="summary"]:not([data-id="sum-demo"])', x => x.length), 1);
   assert.equal(await p.$$eval('#feed [data-sel]', x => x.length), 0);
   assert(!(await p.$eval('#rangebar', x => x.classList.contains('show'))));
   assert(!(await p.$eval('#sumbar', x => x.classList.contains('show'))));
@@ -416,10 +442,11 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="nav-timeline"]');
   assert(await p.$eval('#empty-pane', x => getComputedStyle(x).display === 'flex'));
   // sessionStorage 同标签页跨刷新保留：窄屏段 1 张 + 宽屏段 1 张
-  assert.equal(await p.$$eval('.card[data-kind="summary"]', x => x.length), 2);
+  // demo 卡每次初始化都会补回；这里验证 sessionStorage 里的两张生成卡
+  assert.equal(await p.$$eval('.card[data-kind="summary"]:not([data-id="sum-demo"])', x => x.length), 2);
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'connect-default', 'scan-dyj-sorted', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'connect-default', 'scan-dyj-sorted', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });
