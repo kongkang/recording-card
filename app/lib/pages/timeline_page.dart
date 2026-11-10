@@ -548,7 +548,6 @@ class _SummaryCardView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final locked = card.state != SummaryState.done;
-    final open = store.openCardId == card.id && !locked;
     Widget inner;
     switch (card.state) {
       case SummaryState.pending:
@@ -634,43 +633,26 @@ class _SummaryCardView extends StatelessWidget {
           key: const Key('sumcard-done'),
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              card.title ?? '',
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    card.title ?? '',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                // 总结没有详情页：整张卡片可点，箭头只做「会进下一页」的提示
+                const Icon(Icons.chevron_right, size: 16, color: RCColors.ax),
+              ],
             ),
             const SizedBox(height: 4),
             Text(
               '${card.time} · 已选 ${card.srcIds.length} 片段',
               style: const TextStyle(fontSize: 12, color: RCColors.sec),
             ),
-            if (open) ...[
-              const SizedBox(height: 10),
-              Text(
-                card.subDesc ?? '',
-                style: const TextStyle(fontSize: 14, height: 1.5),
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: OutlinedButton(
-                  key: const Key('open-sum'),
-                  onPressed: () => store.openSum(card.id, fresh: true),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: RCColors.label,
-                    side: const BorderSide(color: RCColors.ax),
-                    shape: const StadiumBorder(),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    textStyle: const TextStyle(fontSize: 13),
-                  ),
-                  child: const Text('查看总结结果'),
-                ),
-              ),
-            ],
           ],
         );
     }

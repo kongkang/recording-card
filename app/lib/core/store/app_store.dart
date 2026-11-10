@@ -430,17 +430,67 @@ class AppStore extends ChangeNotifier {
     final evs = events
         .where((e) => f == FeedFilter.all || f == FeedFilter.event)
         .toList();
-    final past = evs.where((e) => e.dayOffset > 0).toList();
-    final offs = past.map((e) => e.dayOffset).toSet().toList()..sort();
-    final groups = <FeedGroup>[];
-    final today = [...sums, ...evs.where((e) => e.dayOffset == 0)];
-    if (today.isNotEmpty) groups.add(FeedGroup(dayLabel(0), today));
-    for (final o in offs) {
-      groups.add(
-        FeedGroup(dayLabel(o), evs.where((e) => e.dayOffset == o).toList()),
-      );
+
+    // 先按天放记录（0=今天，其余=过去 N 天），再把总结卡插到它覆盖内容的
+    // 最后一条记录之后——总结卡应该出现在「被总结的那段时间」下面，而不是
+    // 无条件堆在今天最上面。
+    final byDay = <int, List<Object>>{0: []};
+    for (final e in evs) {
+      (byDay[e.dayOffset] ??= []).add(e);
     }
-    return groups;
+    final unanchored = <SummaryCard>[];
+    for (final s in sums) {
+      final anchor = _oldestSource(s);
+      final list = anchor == null ? null : byDay[anchor.dayOffset];
+      if (anchor == null || list == null) {
+        unanchored.add(s);
+        continue;
+      }
+      var at = list.indexWhere(
+        (x) => x is RecordEvent && x.id == anchor.id,
+      );
+      at = at < 0 ? list.length : at + 1;
+      // 同一锚点已插入的总结卡之后，保持 summaries 的先后顺序
+      while (at < list.length && list[at] is SummaryCard) {
+        at++;
+      }
+      list.insert(at, s);
+    }
+    // 找不到来源（或「总结」Tab 只显示总结）时退回今天顶部
+    byDay[0]!.insertAll(0, unanchored);
+
+    final days = byDay.keys.where((d) => byDay[d]!.isNotEmpty).toList()
+      ..sort();
+    return [for (final d in days) FeedGroup(dayLabel(d), byDay[d]!)];
+  }
+
+  /// 总结卡的时间轴锚点：覆盖记录里最早的一条（日偏移最大、同日时间最早）。
+  ///
+  /// 时间轴是倒序展示的，插在这条记录之后 = 视觉上正好落在这段内容的下方。
+  /// pending 卡还没有 srcIds，用当前勾选集推导，生成中的卡也保持在原位。
+  RecordEvent? _oldestSource(SummaryCard s) {
+    final ids = s.srcIds.isNotEmpty
+        ? s.srcIds
+        : (s.state == SummaryState.pending ? selIds.toList() : const <String>[]);
+    RecordEvent? oldest;
+    for (final id in ids) {
+      final e = eventByIdOrNull(id);
+      if (e == null || e.live) continue;
+      if (oldest == null ||
+          e.dayOffset > oldest.dayOffset ||
+          (e.dayOffset == oldest.dayOffset &&
+              _minutesOfDay(e.time) < _minutesOfDay(oldest.time))) {
+        oldest = e;
+      }
+    }
+    return oldest;
+  }
+
+  static int _minutesOfDay(String hhmm) {
+    final parts = hhmm.split(':');
+    if (parts.length != 2) return 0;
+    return (int.tryParse(parts[0]) ?? 0) * 60 +
+        (int.tryParse(parts[1]) ?? 0);
   }
 
   // ── 卡片展开/收起（互斥） ───────────────────────────────
@@ -451,7 +501,10 @@ class AppStore extends ChangeNotifier {
     }
     if (isSummary) {
       final s = summaryById(id);
-      if (s != null && s.state != SummaryState.done) return; // 未完成锁定
+      if (s == null || s.state != SummaryState.done) return; // 未完成/失败锁定
+      // 总结没有「详情」可展开：点卡片直接进总结结果页
+      openSum(id, fresh: true);
+      return;
     }
     openCardId = openCardId == id ? null : id;
     notifyListeners();

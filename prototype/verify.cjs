@@ -168,11 +168,24 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-f="all"]', x => x.disabled), false);
   assert(await p.$eval('[data-f="all"]', x => x.classList.contains('on')));
 
-  // 来源记录 tab 闭环：从总结跳回原始记录
+  // 总结卡：位置在它所总结内容的最早一条之后；整卡点击直接进结果页
+  const anchorInfo = await p.evaluate(() => {
+    const mins = t => { const [h, m] = (t || '0:0').split(':').map(Number); return h * 60 + m; };
+    const s = summaries.find(x => x.state === 'done');
+    const srcs = EVENTS.filter(e => (s.srcIds || []).includes(e.id));
+    srcs.sort((a, b) => (b.off - a.off) || (mins(a.time) - mins(b.time)));
+    const anchor = srcs[0];
+    const cardEl = document.querySelector('[data-testid="card-' + s.id + '"]');
+    const anchorEl = anchor ? document.querySelector('[data-testid="card-' + anchor.id + '"]') : null;
+    return {
+      hasCards: !!cardEl && !!anchorEl,
+      cardTop: cardEl ? cardEl.getBoundingClientRect().top : -1,
+      anchorTop: anchorEl ? anchorEl.getBoundingClientRect().top : -1,
+    };
+  });
+  assert(anchorInfo.hasCards, '总结卡或锚点记录不在 DOM');
+  assert(anchorInfo.cardTop > anchorInfo.anchorTop, '总结卡应落在所总结内容之后（下方）');
   await p.click('.card[data-kind="summary"]');
-  await p.click('.card[data-kind="summary"]');
-  assert(await p.$eval('.card[data-kind="summary"]', x => x.classList.contains('open')));
-  await p.click('[data-testid="open-sum"]');
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
   await p.click('#stabs button[data-st="src"]');
   assert(await secVis('sec-src') && !(await secVis('sec-ov')));

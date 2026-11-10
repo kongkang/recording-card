@@ -316,14 +316,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     final sumCard = find.byKey(Key('card-${h.store.summaries.first.id}'));
-    await tester.tap(sumCard); // 生成后默认展开 → 先收起
-    await tester.pump();
-    await tester.tap(sumCard); // 再展开
-    await tester.pump();
-    expect(find.byKey(const Key('open-sum')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('open-sum')));
+    // 总结没有详情页：点卡片直接进结果页（不再展开再点「查看总结结果」）
+    await tester.tap(sumCard);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const Key('sum-title')), findsOneWidget);
 
     await tapTab(tester, const Key('stab-src'));
     expect(find.byKey(const Key('sec-src')), findsOneWidget);
