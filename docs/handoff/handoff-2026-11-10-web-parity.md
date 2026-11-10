@@ -1,5 +1,8 @@
 # 交接：按官方 web 控制台对齐 App 设备链路（2026-11-10 第三轮）
 
+> **2026-11-10 二次 review 补充**：提交后又做了一轮细粒度复查，追加修了 7 处（见文末「二轮 review 追加」节），
+> 全量测试 249 项通过。参考实现：`~/Developer/reai-card-sdk`（HEAD `5571890`，v0.0.6-2）
+
 > 参考实现：`~/Developer/reai-card-sdk`（HEAD `5571890`，v0.0.6-2）
 > `examples/dyj_web.rs` + `examples/dyj_web.html` —— 同一台真卡已跑通扫描/连接/状态/电池/存储。
 > 本轮只做「照着参考实现找出并修掉 App 的偏差」，**不打包 App**（本机没有 Xcode），
@@ -79,10 +82,38 @@
 ## 二、验证
 
 - `flutter analyze`：0 issue
-- `flutter test`：**246 项全过**（原 240 + 本轮 6 项）
+- `flutter test`：**249 项全过**（原 240 + 首轮 6 项 + 二轮 review 3 项）
 - `cargo check`：通过
-- 新增测试：`app/test/web_parity_test.dart`（storage、电量未知、空快照连接、固件第二阶段、录音错误推送、停止顺序）
 - **未验证**：真机（本机无 Xcode / iphoneos SDK）；固件升级、打点、OTA 预检都需要明天装机复验。
+
+## 二·五、二轮 review 追加（2026-11-10 深夜复查）
+
+首提之后又把整份 diff 重新过了一遍，追加修掉：
+
+1. **部分快照失败会抹掉已知电量**：`_applySnapshot` 原来无条件覆盖，BATTERY 一次没读到
+   就把 82% 变成「未知」。改为：读到才更新；读不到保留上次值（断开时统一清空）。
+2. **部分快照失败会抹掉固件版本 → 假「有可用更新」**：`versionCode` 被抹成 0 后，
+   `isNewerThan(0)` 恒真——设备明明比服务器新，却提示升级，点进去等于**降级**。
+   改为版本字段只在快照真的带到时才覆盖。
+3. **SDK 超时串分类错误**：`"timed out waiting for …"` 不含 `"timeout"`，
+   会被当成设备错误、把英文原串显示给用户。补 `'timed out'` 匹配，归类为超时并给统一中文文案。
+4. **`SdkError::InvalidCommand` 的英文前缀漏给用户**：桥用 InvalidCommand 携带可执行的中文提示
+   （Wi-Fi 升级预检），Display 后变成 `invalid command \`…\``。Dart 侧剥掉前缀再展示。
+5. **`openWifi` 的 Dart 超时（20s）小于 SDK 兜底（35s）**：模块可能开成功了、界面却报超时。放宽到 45s。
+6. **录音中允许进 DFU**：web 控制台在 DFU 前会先停录音会话；App 原来没有任何处理，
+   升级会悄悄掐断录音（可能正在录会议）。改为明确拒绝：「正在录音，请先停止录音后再升级固件」。
+   同步修正了 `verify_device_test` 固件用例的夹具（原来用的就是录音中的卡，与守卫冲突；
+   该用例主题是固件，与录音无关，夹具改成未录音的卡）。
+7. **主控 DFU 前桥未收尾实时流**：实时流任务持有设备句柄，会在 DFU 期间继续发命令。
+   `ota_main` 取走设备前先发 realtime 停止信号（与 `release_device` 同一套收尾）。
+8. **Wi-Fi OTA 预检话术区分**：模块未开启（status=off）与已开启但未连路由器，两句不同的可执行提示。
+
+对应新增测试：BATTERY 字段缺失解析、部分快照保留电量/版本、录音中拒绝升级（共 3 项）。
+
+**复查后仍决定不动的**：
+- `deviceWifiOpen` / `_storageFreeMb` 的部分失败保留——Wi-Fi 行已隐藏、存储暂无 UI 消费，收益小；
+- `connectTo` 把 `_eventSeq` 归零会在重连后重放桥队列里最多 64 条旧事件——事件是幂等的
+  （只 set isRecording），无害；如以后事件类型变多再改桥侧「连接时清队列」。
 
 ## 三、明天到公司建议按这个顺序验
 

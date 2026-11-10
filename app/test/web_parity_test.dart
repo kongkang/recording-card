@@ -55,6 +55,35 @@ void main() {
     expect(store.batteryLevelText, '未知');
   });
 
+  test('BATTERY 字段缺失 → hasBattery=false，不冒充电量', () {
+    final snap = CardSnapshot.fromJson({
+      'state': {'wifiOpen': false},
+      'record': {'isRecording': false},
+    });
+
+    expect(snap.hasBattery, isFalse);
+    expect(snap.batteryLevel, 0);
+  });
+
+  testWidgets('快照部分失败：读不到电量时保留上次值，不抹成未知', (tester) async {
+    final gw = FakeCardGateway(initialSnapshot: _snap(battery: 82));
+    final store = DeviceStore(gateway: gw);
+    addTearDown(store.dispose);
+    await store.restoreLink();
+    expect(store.battery, 82);
+
+    // 下一次快照丢了 BATTERY（部分失败）：已知电量必须留住
+    gw.current = CardSnapshot.fromJson({'record': {'isRecording': false}});
+    await store.refreshFromDevice();
+
+    expect(store.batteryKnown, isTrue, reason: '单次查询失败不该清掉已知状态');
+    expect(store.battery, 82);
+    expect(store.fwVersion, '2.2.0', reason: '部分失败也不该清掉固件版本');
+    // 注意这里没有预取过 ota 信息（_otaMainInfo 为 null）→ fwAvailable 恒 false；
+    // 这条断言锚的是 fwVersionCode 不被抹成 0：一旦被抹，预取后就会误报「有可用更新」
+    expect(store.fwVersionCode, 22);
+  });
+
   testWidgets('连接返回空快照：仍然算已连接，并补一次状态读取', (tester) async {
     final gw = FakeCardGateway(
       initialSnapshot: _snap(),
@@ -125,6 +154,28 @@ void main() {
 
     expect(device.recordingError, contains('-2'));
     expect(find.byKey(const Key('rec-error')), findsOneWidget);
+  });
+
+  testWidgets('录音中不允许升级固件：拒绝并说明，不进 DFU', (tester) async {
+    final gw = FakeCardGateway(
+      initialSnapshot: _snap(recording: true),
+      devices: const [_card],
+      mainProgress: const [
+        CardProgress(stage: 'dfu', percent: 10, text: '写入主控'),
+      ],
+      progressDelay: Duration.zero,
+    );
+    final store = DeviceStore(gateway: gw);
+    addTearDown(store.dispose);
+    await store.restoreLink();
+    expect(store.isRecording, isTrue);
+
+    await store.startFwUpdate();
+
+    expect(store.fwUpdating, isFalse);
+    expect(store.fwStage, FwStage.idle, reason: '不该进入升级流程');
+    expect(store.fwError, contains('停止录音'));
+    expect(gw.callLog, isNot(contains('ota.main')), reason: '不能带着录音进 DFU');
   });
 
   testWidgets('停止录音：先关实时流，再开始取文件', (tester) async {

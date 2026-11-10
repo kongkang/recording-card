@@ -144,7 +144,20 @@ void main() {
   // verify.cjs 231-243：固件两阶段更新（真实 ota 流），更新中弹层锁定
   testWidgets('two-stage-fw / fw-lock', (tester) async {
     final gateway = FakeCardGateway(
-      initialSnapshot: defaultSnapshot,
+      // 固件用例与录音无关：录音中不允许进 DFU（startFwUpdate 有守卫），
+      // 所以这里用未录音的卡，不能用默认的录音中快照。
+      initialSnapshot: const CardSnapshot(
+        batteryLevel: 82,
+        isCharging: false,
+        wifiOpen: false,
+        recording: false,
+        fwVersion: '2.2.0',
+        fwVersionCode: 22,
+        wifiVersion: '1.5.0',
+        wifiVersionCode: 15,
+        deviceName: 'DYJV2_TEST',
+        deviceId: 'test-device',
+      ),
       devices: const [CardDevice(id: 'test-device', name: 'DYJV2_TEST')],
       mainOta: const CardOtaInfo(
         version: '2.3.0',

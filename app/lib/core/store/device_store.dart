@@ -531,14 +531,23 @@ class DeviceStore extends ChangeNotifier {
   bool? deviceWifiOpen;
 
   void _applySnapshot(CardSnapshot s) {
-    _liveBattery = s.hasBattery && s.batteryLevel > 0
-        ? s.batteryLevel.clamp(1, 100)
-        : null;
+    // 电量三态：读到 → 更新；读不到（命令失败/字段缺失）→ 保留上次值，
+    // 不把已知电量抹成未知（单次查询失败不该清状态）；设备明确报 0 → 未知。
+    if (s.hasBattery && s.batteryLevel > 0) {
+      _liveBattery = s.batteryLevel.clamp(1, 100);
+    } else if (!s.hasBattery) {
+      // 保留 _liveBattery 原值
+    } else {
+      _liveBattery = null;
+    }
     _liveCharging = s.isCharging;
-    _fwVersion = s.fwVersion;
-    _wifiVersion = s.wifiVersion;
-    _fwVersionCode = s.fwVersionCode;
-    _wifiVersionCode = s.wifiVersionCode;
+    // 固件版本只在快照真的带到时才覆盖：部分失败（如 BASE_INFO 没读到）若
+    // 把 versionCode 抹成 0，「有可用更新」的比对会误判——设备明明比服务器新，
+    // 却提示升级，点进去等于降级。断开时 _resetLiveState 统一清空。
+    if (s.fwVersion.isNotEmpty) _fwVersion = s.fwVersion;
+    if (s.fwVersionCode > 0) _fwVersionCode = s.fwVersionCode;
+    if (s.wifiVersion.isNotEmpty) _wifiVersion = s.wifiVersion;
+    if (s.wifiVersionCode > 0) _wifiVersionCode = s.wifiVersionCode;
     _storageFreeMb = s.storageFreeMb;
     deviceWifiOpen = s.wifiOpen;
     if (s.recording != (_liveRecording ?? false)) {
@@ -980,6 +989,15 @@ class DeviceStore extends ChangeNotifier {
     if (fwUpdating) return;
     if (!isConnected) {
       fwError = '录音卡未连接';
+      notifyListeners();
+      return;
+    }
+    if (isRecording) {
+      // 参考实现在 DFU 前会先停掉录音会话；对用户而言"升级悄悄掐断录音"
+      // 是破坏性的（可能正在录会议），明确拒绝、让用户自己停更安全。
+      // 停止录音会走正常的自动同步，之后再升级不丢数据。
+      fwError = '正在录音，请先停止录音后再升级固件';
+      fwStateText = fwError!;
       notifyListeners();
       return;
     }

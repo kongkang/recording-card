@@ -715,14 +715,26 @@ class RealCardGateway implements CardGateway {
   }
 
   CardException _error(String kind, String? message) {
-    final text = message ?? '未知错误';
+    var text = message ?? '未知错误';
     final lower = text.toLowerCase();
     if (lower.contains('disconnect') || text.contains('未连接')) {
       return CardException.disconnected(text);
     }
-    if (lower.contains('timeout') || text.contains('超时')) {
-      return CardException.timeout(text);
+    // SDK 的超时串是英文（"timed out waiting for `X` after Ns"），
+    // 注意 "timed out" 不含 "timeout"，漏了就会把超时当设备错误分类。
+    if (lower.contains('timeout') ||
+        lower.contains('timed out') ||
+        text.contains('超时')) {
+      // 命令名与秒数是排障细节，给用户统一的可读文案
+      return CardException.timeout();
     }
+    // 桥会用 SdkError::InvalidCommand 携带可执行的中文提示（如 Wi-Fi 升级预检），
+    // 剥掉 Display 的英文前缀，别把 "invalid command `…`" 原样给用户。
+    final wrapped = RegExp(
+      r'^invalid command `(.*)`$',
+      dotAll: true,
+    ).firstMatch(text);
+    if (wrapped != null) text = wrapped.group(1)!;
     return CardException(CardErrorKind.device, _friendlyDeviceError(text));
   }
 
@@ -994,7 +1006,10 @@ class RealCardGateway implements CardGateway {
   );
 
   @override
-  Future<void> openWifi() => _once('wifi.open');
+  Future<void> openWifi() =>
+      // SDK 对 WIFI_OPEN 有 35s 的兜底超时（模块上电 + AP 就绪宽限），
+      // Dart 侧上限必须更大，否则模块其实开成功了、界面却报超时。
+      _once('wifi.open', null, const Duration(seconds: 45));
 
   @override
   Future<void> closeWifi() => _once('wifi.close');

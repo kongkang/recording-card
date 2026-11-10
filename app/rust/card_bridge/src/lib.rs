@@ -734,6 +734,11 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), SdkError> {
     if let Some(pump) = state().event_pump.lock().await.take() {
         pump.abort();
     }
+    // 实时流若还开着先收尾：它的任务持有设备句柄，会在 DFU 期间继续发命令。
+    let stop = state().realtime_stop.lock().expect("realtime lock").take();
+    if let Some(stop) = stop {
+        let _ = stop.send(());
+    }
     state().last_device_id.lock().expect("device id lock").take();
     let device = state().device.lock().await.take();
     let Some(device) = device else {
@@ -795,13 +800,19 @@ async fn ota_wifi(payload: Value, out: Emitter) -> Result<(), SdkError> {
     let device = device.clone();
     drop(guard);
 
-    // 与网页控制台一致：模块已上电但没连路由器时，先给出可执行的提示，
-    // 而不是把固件那句看不懂的错误码原样抛给用户。WIFI_STATUS 在旧主控上
-    // 可能不可用（STATE_INFO 字段不全/模块未上电）——那就不拦，交给设备判断。
+    // 与网页控制台一致：升级前先确认模块联网，给出可执行的提示，
+    // 而不是把固件那句看不懂的错误码原样抛给用户。区分"没开模块"和
+    // "开了但没连路由器"，两句话术不同。WIFI_STATUS 在旧主控上可能不可用
+    //（STATE_INFO 字段不全/模块未上电）——那就不拦，交给设备判断。
     if let Ok(status) = device.wifi_status().await {
         if !status.connected {
+            let hint = if status.status == "off" {
+                "Wi-Fi 模块未开启，请先在录音卡弹层里打开 Wi-Fi 并连接路由器"
+            } else {
+                "Wi-Fi 模块未连接路由器，请先完成 Wi-Fi 连接后再升级"
+            };
             out.fail(SdkError::InvalidCommand(format!(
-                "Wi-Fi 模块未连接路由器（status={}），请先在设置里完成 Wi-Fi 连接后再升级",
+                "{hint}（status={}）",
                 status.status
             )));
             return Ok(());
