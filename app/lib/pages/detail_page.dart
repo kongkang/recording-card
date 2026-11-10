@@ -12,6 +12,7 @@ import '../core/models/record.dart';
 import '../core/models/segment_view.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
+import '../widgets/raw_audio_player.dart';
 import '../widgets/store_scope.dart';
 
 class DetailPage extends StatefulWidget {
@@ -373,25 +374,11 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   List<Widget> _rawWidgets(RecordEvent e, SegmentView? view) {
+    // 顶部先给"能不能听"：本地实时录音原样回放，断档会明说。
+    // 原来那段长说明压缩成一句，页面顶部不再堆解释文字。
     final widgets = <Widget>[
-      const Padding(
-        padding: EdgeInsets.only(bottom: 14),
-        child: Text(
-          '原始转写保留语气词、停顿与静音；时间标注后段为清洗版对应位置。',
-          style: TextStyle(fontSize: 12, color: RCColors.sec, height: 1.5),
-        ),
-      ),
-    ];
-
-    if (view == null) {
-      for (final l in e.raw) {
-        widgets.add(_rawBubble('${l.spk} · ${l.src}', l.text));
-      }
-      return widgets;
-    }
-
-    if (!view.file.timeSynced) {
-      widgets.add(
+      RawAudioPlayer(fileKey: view?.file.deviceName ?? e.id),
+      if (view != null && !view.file.timeSynced)
         const Padding(
           padding: EdgeInsets.only(bottom: 12),
           child: Text(
@@ -400,7 +387,13 @@ class _DetailPageState extends State<DetailPage> {
             style: TextStyle(fontSize: 12, color: RCColors.danger),
           ),
         ),
-      );
+    ];
+
+    if (view == null) {
+      for (final l in e.raw) {
+        widgets.add(_rawBubble('${l.spk} · ${l.src}', l.text));
+      }
+      return widgets;
     }
 
     if (view.slices.isEmpty) {

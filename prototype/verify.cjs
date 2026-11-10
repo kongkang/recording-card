@@ -38,9 +38,14 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   const hh = await p.$eval('header.app', x => x.offsetHeight);
   assert(hh >= 50 && hh <= 56, 'header 高度应固定 ≈52，实际 ' + hh);
   assert(!(await p.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
-  // 默认未连接：胶囊灰点、不显示电量；连接后才出现电量图标
+  // 没连设备：灰点 + 电量位置改显「无设备」（文字替代电池图标，不给用户留疑问）
   assert(await p.$eval('[data-testid="hw-capsule"]', x => x.classList.contains('off')));
-  assert(await p.$eval('[data-testid="hw-capsule"]', x => (x.getAttribute('aria-label') || '').includes('未连接')));
+  assert(await p.$eval('[data-testid="hw-capsule"]', x => (x.getAttribute('aria-label') || '').includes('无设备')));
+  assert(await p.$eval('[data-testid="capsule-nodata"]', x => x.innerText.trim() === '无设备'));
+  assert(
+    await p.$eval('[data-testid="capsule-nodata"]', x => getComputedStyle(x).display !== 'none'),
+    '无设备时电量位置必须是「无设备」文字',
+  );
   assert.equal(await p.$eval('.capsule .batt', x => getComputedStyle(x).display), 'none');
   assert(!(await p.$eval('[data-testid="hw-capsule"]', x => /\d/.test(x.innerText))));
   // feed 倒序：按日分组今天→昨天→更早；同一天内按时间从晚到早（不依赖数据源顺序）
@@ -142,6 +147,27 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await shot('event-detail');
   await p.click('[data-testid="det-tab-raw"]');
   assert(await p.$eval('#dt-raw', x => x.style.display === 'block' && x.innerText.includes('啊不对')));
+  // 原始数据顶部必须能回听：只播本机实收录音，断档如实提示，清理后只剩一行说明
+  assert(
+    await p.evaluate(() => document.getElementById('dt-raw').firstElementChild?.dataset.testid === 'raw-audio-player'),
+    '播放器应是原始数据页的第一个元素',
+  );
+  assert(await p.$eval('[data-testid="raw-audio-state"]', x => x.innerText.includes('本机原始录音')));
+  const rawTime = await p.$eval('[data-testid="raw-audio-time"]', x => x.innerText.trim());
+  assert(/^00:00 \/ \d{2}:\d{2}$/.test(rawTime), '时长格式应为 mm:ss / mm:ss，实际 ' + rawTime);
+  assert(!rawTime.endsWith('00:00'), '播放器应显示本段真实时长');
+  // 播放控件是触控目标：不低于 44
+  assert(await p.$eval('[data-testid="raw-audio-toggle"]', x => x.getBoundingClientRect().height >= 44));
+  await p.click('[data-testid="raw-audio-toggle"]');
+  await p.waitForFunction(
+    (initial) => document.querySelector('[data-testid="raw-audio-time"]').innerText.trim() !== initial,
+    { timeout: 3000 },
+    rawTime,
+  );
+  await shot('detail-raw-audio');
+  await p.click('[data-testid="raw-audio-delete"]');
+  assert(await p.$eval('[data-testid="raw-audio-cleared"]', x => x.innerText.includes('原始录音已清理')));
+  assert.equal(await p.$('[data-testid="raw-audio-player"]'), null, '清理后不应假装还能播');
   await shot('raw-data');
   await p.click('[data-testid="det-tab-dlg"]');
   await p.click('[data-testid="crumb-back"]');
@@ -507,6 +533,6 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'daily-report', 'dream-card', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'connect-default', 'scan-dyj-sorted', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'daily-report', 'dream-card', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });

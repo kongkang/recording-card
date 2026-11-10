@@ -222,7 +222,24 @@ class AppStore extends ChangeNotifier {
   }
 
   /// 从录音卡同步新录音（下载 + 转码 + 转写），完成后再刷新列表。
+  /// 是否已连着录音卡（由外壳把 DeviceStore 接进来；未接则视为可同步，由流水线自己报错）。
+  bool Function()? deviceConnected;
+
+  /// 设备是否可用：取回录音、读取文件列表都要求先连上卡。
+  bool get _deviceReady => deviceConnected?.call() ?? true;
+
   Future<String?> syncRecordings() async {
+    // 没连卡就直接告诉用户"先连设备"，不要跑下去再报成"整理中断"——
+    // 那不是故障，是条件没满足，报错反而让人以为出了问题。
+    if (!_deviceReady) {
+      syncError = null;
+      syncStage = null;
+      syncProgress = 0;
+      syncText = '';
+      _status?.stopRecording();
+      notifyListeners();
+      return '未连接录音卡，连上后可下拉取回';
+    }
     final pipeline = _pipeline;
     if (pipeline != null) return _syncWithPipeline(pipeline);
     final service = _recordings;
@@ -312,16 +329,34 @@ class AppStore extends ChangeNotifier {
   Future<void> processPendingRecordings() async {
     final pipeline = _pipeline;
     if (pipeline == null || pipeline.isBusy) return;
+    // 没连卡时不要自动跑续跑：它需要读设备文件列表核对，
+    // 跑起来只会把"暂缺音频"的条目全标成失败，白白刷出一堆红字。
+    if (!_deviceReady) return;
+    // 已经在跑就别再起：续跑被重复触发时会让同一条链路反复排队，
+    // 表现就是"录音点了没反应"——命令永远轮不到。
+    if (_pendingRunning) return;
+    _pendingRunning = true;
     _status?.startSync(detail: '正在整理本地录音…');
     try {
-      await pipeline.processPending(onProgress: _onPipelineProgress);
+      // 兜底超时：任一条录音卡死（设备少发字节等）都不能让后台占着链路不放，
+      // 否则界面会一直停在"正在整理"，录音/同步全部排队。
+      await pipeline
+          .processPending(onProgress: _onPipelineProgress)
+          .timeout(const Duration(seconds: 90));
       await refreshFromStore();
+    } on TimeoutException {
+      debugPrint('[store] 续跑超时，已中止本次整理，稍后可重试');
+      syncError = '整理超时，已停止本次处理';
     } on Object catch (e) {
       debugPrint('[store] 续跑失败：$e');
     } finally {
+      _pendingRunning = false;
       _status?.updateQueue(remaining: 0, active: false);
+      notifyListeners();
     }
   }
+
+  bool _pendingRunning = false;
 
   void _onPipelineProgress(PipelineProgress p) {
     syncStage = SyncStage.listing;

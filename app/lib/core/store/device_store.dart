@@ -32,6 +32,9 @@ enum LinkState {
   disconnected,
   scanning,
   connecting,
+
+  /// 看门狗判定掉线、正在自动重连：胶囊蓝点（区分"从没连上"与"连着断了"）。
+  reconnecting,
   connected,
 }
 
@@ -65,6 +68,9 @@ class DeviceStore extends ChangeNotifier {
 
   final CardGateway _gateway;
 
+  /// 全部真实命令都经它转发：发出与返回都视为"蓝牙传输"，供看门狗顺延。
+  late final CardGateway _gw = ActivityGateway(_gateway, _markLinkActivity);
+
   /// 供其它服务复用同一条硬件链路（录音同步、诊断）。
   CardGateway get gateway => _gateway;
 
@@ -90,14 +96,15 @@ class DeviceStore extends ChangeNotifier {
 
   /// 连接代次：异步结果回来时比对，过期丢弃。
   int _epoch = 0;
-  Timer? _heartbeatTimer;
-  int _heartbeatFailures = 0;
-  int _reconnectAttempts = 0;
-  Timer? _reconnectTimer;
 
   bool get isConnected => linkState == LinkState.connected;
+
+  /// 看门狗判掉线、正在自动重连（胶囊蓝点）。
+  bool get isReconnecting => linkState == LinkState.reconnecting;
   bool get isLinkBusy =>
-      linkState == LinkState.scanning || linkState == LinkState.connecting;
+      linkState == LinkState.scanning ||
+      linkState == LinkState.connecting ||
+      linkState == LinkState.reconnecting;
 
   /// 启动时核对一次：桥可用且已连着卡 → 已连接；否则未连接。
   Future<void> restoreLink() async {
@@ -110,12 +117,11 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
     try {
-      final snapshot = await _gateway.snapshot();
+      final snapshot = await _gw.snapshot();
       if (epoch != _epoch) return;
       _applySnapshot(snapshot);
       linkState = LinkState.connected;
       linkError = null;
-      _reconnectAttempts = 0;
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       // 未连接是正常初始态，不算错误；其它错误如实呈现
@@ -165,7 +171,7 @@ class DeviceStore extends ChangeNotifier {
     discovered = const [];
     notifyListeners();
     try {
-      final list = await _gateway.scan();
+      final list = await _gw.scan();
       if (epoch != _epoch) return;
       // 近的设备排前面：RSSI 越大信号越强（-50 比 -80 近）。无 RSSI 的排最后。
       discovered = [
@@ -193,16 +199,19 @@ class DeviceStore extends ChangeNotifier {
     linkState = LinkState.connecting;
     linkError = null;
     notifyListeners();
+    _markLinkActivity();
     try {
-      final snapshot = await _gateway.connect(device.id);
+      final snapshot = await _gw.connect(device.id);
       if (epoch != _epoch) return;
+      _markLinkActivity();
       _applySnapshot(snapshot);
       connectedName = device.name;
+      // 记住这台设备：掉线重连直接拿 id 直连，不靠扫描（已连接设备不广播）
+      _lastDevice = device;
       linkState = LinkState.connected;
       linkError = null;
-      _reconnectAttempts = 0;
-      _heartbeatFailures = 0;
-      if (_autoStart) _startHeartbeat();
+      _eventSeq = 0;
+      _startHeartbeat();
       unawaited(_afterConnect());
     } on CardException catch (e) {
       if (epoch != _epoch) return;
@@ -215,18 +224,42 @@ class DeviceStore extends ChangeNotifier {
   /// 连上后的收尾：时间同步 + 拉一次录音状态。
   Future<void> _afterConnect() async {
     try {
-      await _gateway.syncTime();
+      await _gw.syncTime();
     } on CardException {
       // 时间同步失败不致命
     }
     await refreshFromDevice();
   }
 
+  /// 用户主动断开：先把会占用链路的状态收干净，再断。
+  ///
+  /// 顺序：停录音 → 关实时流 → 停同步 → 断开。跳过任一步都可能留下半截会话，
+  /// 下次连接时设备状态与 App 对不上（这次 code -2 就吃过这个亏）。
+  Future<void> disconnectSafely() async {
+    if (isRecording) {
+      try {
+        await _gw.stopRecording().timeout(const Duration(seconds: 5));
+      } on Object {
+        // 停不下来也要继续断：不能因为一条命令失败就把用户卡在未断开状态
+      }
+      _liveRecording = false;
+    }
+    try {
+      await _gw.closeRealtime().timeout(const Duration(seconds: 3));
+    } on Object {
+      // 同上
+    }
+    await disconnectDevice();
+  }
+
   Future<void> disconnectDevice() async {
     final epoch = ++_epoch;
-    _reconnectTimer?.cancel();
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _stopSheetWatch();
+    _lastDevice = null;
     try {
-      await _gateway.disconnect();
+      await _gw.disconnect();
     } on CardException {
       // 已经断了也算成功
     }
@@ -251,71 +284,190 @@ class DeviceStore extends ChangeNotifier {
     deviceWifiOpen = null;
   }
 
-  // ── 心跳与重连 ─────────────────────────────────────────────
-  void _startHeartbeat() {
-    _heartbeatTimer?.cancel();
-    // 只在已连接时真正发命令；widget 测试里 autoStart:false 不启
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 20), (_) {
-      if (!isConnected || fwUpdating || syncing) return;
-      unawaited(_heartbeat());
+  // ── 弹层期间的状态跟随 ─────────────────────────────────────
+  Timer? _sheetWatch;
+
+  /// 弹层打开期间每 2 秒拉一次快照：设备侧按键/开关改变录音状态时界面立刻跟上。
+  /// 只在弹层可见时跑，关掉即停，不额外耗电。
+  void _startSheetWatch() {
+    _sheetWatch?.cancel();
+    // 200ms 拉一次**本地事件队列**（不访问设备，零蓝牙开销）：
+    // 设备侧拨杆/按键的状态变化是主动推上来的，这里只负责快速取走。
+    _sheetWatch = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      if (!sheetOpen || !isConnected) {
+        _stopSheetWatch();
+        return;
+      }
+      unawaited(_pullDeviceEvents());
     });
   }
 
-  Future<void> _heartbeat() async {
-    final epoch = _epoch;
+  /// 事件队列里的序号：下一次只取比它新的。
+  int _eventSeq = 0;
+
+  /// 取走设备主动推送的事件并应用到状态。
+  Future<void> _pullDeviceEvents() async {
     try {
-      final snapshot = await _gateway.snapshot();
-      if (epoch != _epoch) return;
-      _heartbeatFailures = 0;
-      _applySnapshot(snapshot);
-      notifyListeners();
-    } on CardException {
-      if (epoch != _epoch) return;
-      _heartbeatFailures++;
-      if (_heartbeatFailures >= 2) {
-        // 连续两次拿不到状态：判掉线，进入重连
-        linkState = LinkState.disconnected;
-        linkError = '与录音卡的连接已断开';
-        notifyListeners();
-        _scheduleReconnect();
+      final batch = await _gw.pullEvents(after: _eventSeq);
+      if (batch.seq == _eventSeq && batch.events.isEmpty) return;
+      _eventSeq = batch.seq;
+
+      // 录音状态变化（拨杆 / 按键 / 固件自停）：直接改状态，不等下次查设备
+      for (final item in batch.recordEvents) {
+        final status = item['event']?['status'];
+        if (status is! Map<String, dynamic>) continue;
+        _applyRecordStatus(status);
       }
+      if (batch.recordEvents.isNotEmpty) notifyListeners();
+    } on CardException {
+      // 队列读不到不影响主链路：看门狗负责判掉线
     }
   }
 
-  void _scheduleReconnect() {
-    if (!_gateway.available || _reconnectTimer != null) return;
-    if (connectedName == null) return;
-    if (_reconnectAttempts >= 5) return;
-    final delay = Duration(
-      seconds: (2 * (1 << _reconnectAttempts)).clamp(2, 30),
-    );
-    _reconnectAttempts++;
-    _reconnectTimer = Timer(delay, () async {
-      _reconnectTimer = null;
-      if (!_gateway.available) return;
-      linkState = LinkState.connecting;
-      notifyListeners();
-      try {
-        final list = await _gateway.scan();
-        final target = list.where((d) => d.name == connectedName).firstOrNull;
-        if (target == null) {
-          linkState = LinkState.disconnected;
-          notifyListeners();
-          return;
-        }
-        final snapshot = await _gateway.connect(target.id);
-        _applySnapshot(snapshot);
-        linkState = LinkState.connected;
-        linkError = null;
-        _heartbeatFailures = 0;
-        _reconnectAttempts = 0;
-      } on CardException {
-        linkState = LinkState.disconnected;
-        _scheduleReconnect();
-      }
-      notifyListeners();
+  /// 把设备推来的录音状态落到本地（与快照里的 record 段同构）。
+  void _applyRecordStatus(Map<String, dynamic> status) {
+    final recording = status['isRecording'] == true;
+    if (recording == (_liveRecording ?? false)) return;
+    _liveRecording = recording;
+    _clockTicks = 0;
+    if (!recording) _stopClock();
+    if (recording && _clockUsers > 0) _startClock();
+  }
+
+
+
+  /// 宿主被卸载（页面销毁/热重载）：登记弹层已关并停掉轮询，不发通知。
+  void markSheetDetached() {
+    sheetOpen = false;
+    _stopSheetWatch();
+  }
+
+  void _stopSheetWatch() {
+    _sheetWatch?.cancel();
+    _sheetWatch = null;
+  }
+
+  // ── 心跳（看门狗）与重连 ───────────────────────────────────
+  //
+  // 规则（2026-11-10 owner 定稿）：
+  // 1. 每 30 秒查一次状态；**若这 30 秒内发生过任何蓝牙传输，就顺延**——
+  //    只要还在用，看门狗永远不额外发查询，避免和正常通信反复抢链路。
+  // 2. 查不通 **一次** 即判掉线，胶囊立刻转蓝点重连（不再等失败两次）。
+  // 3. 重连**只试一次**、且用记住的设备标识直连——不走扫描：设备已连接时
+  //    不再广播，扫描找不到它，这正是"断了以后再也连不回去"的老根因。
+  // 4. 重连成功回绿/橙；失败回灰「无设备」。
+  static const heartbeatIdle = Duration(seconds: 30);
+  static const _reconnectDelay = Duration(milliseconds: 400);
+  static const _retryConnectTimeout = Duration(seconds: 12);
+
+  Timer? _heartbeatTimer;
+
+  /// 距离最近一次蓝牙传输过去了多久（由看门狗自己的节拍累加，用单调时钟）。
+  ///
+  /// 刻意不用 DateTime.now() 之差：测试环境是假时钟、不随 pump 推进，
+  /// 而真机上又可能被系统休眠拉长间隔；用定时器累加两边行为才一致。
+  Duration _sinceLinkActivity = Duration.zero;
+
+  /// 上一次连接用的设备：掉线时直接拿它的 id 重连，不靠扫描。
+  CardDevice? _lastDevice;
+
+  void _markLinkActivity() {
+    _sinceLinkActivity = Duration.zero;
+  }
+
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    // widget 测试里 autoStart:false 不启，避免悬挂定时器
+    if (!_autoStart) return;
+    _sinceLinkActivity = Duration.zero;
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _heartbeatTick();
     });
   }
+
+  /// 每 5 秒醒一次只为累计"空闲时长"；满 30 秒才真正探一次。
+  void _heartbeatTick() {
+    if (linkState != LinkState.connected) return;
+    // 固件升级/同步/录音命令链路忙：不插队，且这些动作本身已算活动
+    if (fwUpdating || syncing || _linkBusy) {
+      _markLinkActivity();
+      return;
+    }
+    _sinceLinkActivity += const Duration(seconds: 5);
+    if (_sinceLinkActivity < heartbeatIdle) return;
+    unawaited(_watchdogProbe());
+  }
+
+  Future<void> _watchdogProbe() async {
+    final epoch = _epoch;
+    // 先占位再发命令：探测期间又一步 tick 不该叠第二次探测
+    _sinceLinkActivity = Duration.zero;
+    try {
+      final snapshot = await _gw.snapshot();
+      if (epoch != _epoch) return;
+      _markLinkActivity();
+      _applySnapshot(snapshot);
+      notifyListeners();
+    } on CardException catch (e) {
+      if (epoch != _epoch) return;
+      debugPrint('[watchdog] 探测失败（${e.kind}）：${e.message}');
+      // 先停表：重连只许试一次，不能被后续 tick 叠成无限重试
+      _heartbeatTimer?.cancel();
+      _heartbeatTimer = null;
+      unawaited(_retryReconnect());
+    }
+  }
+
+  /// 掉线自动重连：蓝点 → 直连上次设备，只试一次。
+  Future<void> _retryReconnect() async {
+    if (linkState == LinkState.reconnecting) return; // 已在重试中，不重复
+    if (!isConnected) return;
+    // 探测失败已经说明链路不通：先立刻转蓝点，别让用户看到「已连接」再闪断
+    linkState = LinkState.reconnecting;
+    linkError = null;
+    notifyListeners();
+    final device = _lastDevice;
+    if (device == null || !_gateway.available) {
+      _dropToDisconnected('与录音卡的连接已断开');
+      return;
+    }
+
+    final epoch = _epoch;
+    try {
+      await Future<void>.delayed(_reconnectDelay);
+      if (epoch != _epoch) return;
+      _markLinkActivity();
+      final snapshot = await _gateway
+          .connect(device.id)
+          .timeout(_retryConnectTimeout);
+      if (epoch != _epoch) return;
+      _markLinkActivity();
+      _applySnapshot(snapshot);
+      linkState = LinkState.connected;
+      linkError = null;
+    } on Object catch (e, st) {
+      if (epoch != _epoch) return;
+      debugPrint('[watchdog] 重连失败：$e');
+      assert(() {
+        debugPrintStack(stackTrace: st, maxFrames: 6);
+        return true;
+      }());
+      _dropToDisconnected('与录音卡的连接已断开，请重新连接');
+    }
+    notifyListeners();
+  }
+
+  void _dropToDisconnected(String message) {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _stopClock();
+    linkState = LinkState.disconnected;
+    linkError = message;
+    notifyListeners();
+  }
+
+  /// 连接期间是否有别的命令正在占用链路（同步轮询等）。
+  bool get _linkBusy => syncState == SyncState.busy;
 
   // ── 快照应用 ───────────────────────────────────────────────
   int? _liveBattery;
@@ -354,7 +506,7 @@ class DeviceStore extends ChangeNotifier {
     if (!_gateway.available) return;
     final epoch = _epoch;
     try {
-      final snapshot = await _gateway.snapshot();
+      final snapshot = await _gw.snapshot();
       if (epoch != _epoch) return;
       _applySnapshot(snapshot);
       if (linkState != LinkState.connected) {
@@ -364,8 +516,9 @@ class DeviceStore extends ChangeNotifier {
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       if (e.kind == CardErrorKind.disconnected) {
-        linkState = LinkState.disconnected;
-        linkError = '与录音卡的连接已断开';
+        // 与看门狗同一套：先蓝点重连一次，失败才回灰
+        unawaited(_retryReconnect());
+        return;
       }
       // 超时/单次查询失败：保留上次状态，不把状态页突然翻成扫描页
     }
@@ -429,9 +582,17 @@ class DeviceStore extends ChangeNotifier {
     recordingBusy = true;
     notifyListeners();
     try {
-      await _gateway.record('toggle');
+      // 用**明确的开始/停止**而不是 toggle：
+      // toggle 依赖"App 认为的状态"与设备实际一致，一旦不一致（比如设备侧拨杆
+      // 已开录、或状态推送丢失），再切就变成"停一条没在录的音" → 设备回 code -1/-2。
+      // 硬超时也要有：设备无响应时必须给出明确结果，不能让开关永远停在"忙"。
+      final wantStart = !isRecording;
+      final action = wantStart ? _gw.startRecording() : _gw.stopRecording();
+      await action.timeout(const Duration(seconds: 15));
       await refreshFromDevice();
       return null;
+    } on TimeoutException {
+      return '录音命令超时，请重试';
     } on CardException catch (e) {
       return e.message;
     } finally {
@@ -444,7 +605,7 @@ class DeviceStore extends ChangeNotifier {
   Future<String?> markNow() async {
     if (!isConnected) return '录音卡未连接';
     try {
-      await _gateway.mark();
+      await _gw.mark();
       return null;
     } on CardException catch (e) {
       return e.message;
@@ -525,7 +686,7 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
     final epoch = _epoch;
     try {
-      await _gateway.startSync();
+      await _gw.startSync();
       // 跟进设备回报的 Sync 事件；设备不实现轮询时也能在超时后给出结论
       final ok = await _waitSyncComplete(epoch);
       if (epoch != _epoch) return;
@@ -582,7 +743,7 @@ class DeviceStore extends ChangeNotifier {
       if (epoch != _epoch) return false;
       await Future<void>.delayed(const Duration(milliseconds: 500));
       try {
-        final status = await _gateway.syncStatus();
+        final status = await _gw.syncStatus();
         if (!status.running) return true;
       } on CardException {
         return false;
@@ -599,7 +760,7 @@ class DeviceStore extends ChangeNotifier {
     final epoch = _epoch;
     if (wifiSaved.isEmpty) {
       try {
-        final creds = await _gateway.wifiCredentials();
+        final creds = await _gw.wifiCredentials();
         if (epoch != _epoch) return;
         wifiSaved = creds.map((c) => SavedWifi(c.ssid)).toList();
         notifyListeners();
@@ -622,6 +783,9 @@ class DeviceStore extends ChangeNotifier {
     if (isConnected) {
       unawaited(refreshFromDevice());
       unawaited(prefetchSummaryInfo());
+      // 弹层开着时盯住设备侧按钮/开关的录音变化：卡上按了开始，这里要马上跟上，
+      // 而不是等 30 秒看门狗或用户再点一次。
+      _startSheetWatch();
     } else if (linkState == LinkState.unknown) {
       unawaited(restoreLink());
     } else {
@@ -633,6 +797,7 @@ class DeviceStore extends ChangeNotifier {
   void closeSheet() {
     if (fwUpdating) return; // 更新中弹层锁定
     sheetOpen = false;
+    _stopSheetWatch();
     // 不停录音时钟：录音还在继续，Timeline 顶部状态块要继续计时
     notifyListeners();
   }
@@ -749,7 +914,7 @@ class DeviceStore extends ChangeNotifier {
 
     // 阶段 1：主控
     try {
-      await for (final p in _gateway.otaMain()) {
+      await for (final p in _gw.otaMain()) {
         fwProgress = p.percent.clamp(0, 50) * 1.0; // 主控占前 50%
         fwStageText = '阶段 1/2 · 主控芯片';
         fwStateText = p.text;
@@ -769,12 +934,12 @@ class DeviceStore extends ChangeNotifier {
     for (var i = 0; i < 10; i++) {
       await Future<void>.delayed(const Duration(seconds: 2));
       try {
-        final list = await _gateway.scan();
+        final list = await _gw.scan();
         final target =
             list.where((d) => d.name == connectedName).firstOrNull ??
             list.firstOrNull;
         if (target != null) {
-          final snap = await _gateway.snapshot();
+          final snap = await _gw.snapshot();
           _applySnapshot(snap);
           reconnected = true;
           break;
@@ -791,7 +956,7 @@ class DeviceStore extends ChangeNotifier {
     // 阶段 2：Wi-Fi 模组
     fwStage = FwStage.wifi;
     try {
-      await for (final p in _gateway.otaWifi()) {
+      await for (final p in _gw.otaWifi()) {
         fwProgress = 50 + p.percent.clamp(0, 100) * 0.5;
         fwStageText = '阶段 2/2 · Wi-Fi 芯片';
         fwStateText = p.text;
@@ -865,11 +1030,11 @@ class DeviceStore extends ChangeNotifier {
     try {
       // 设备侧 Wi-Fi 模块需先开启
       if (deviceWifiOpen != true) {
-        await _gateway.openWifi();
+        await _gw.openWifi();
         deviceWifiOpen = true;
       }
-      final creds = await _gateway.wifiCredentials();
-      final nets = await _gateway.scanWifi();
+      final creds = await _gw.wifiCredentials();
+      final nets = await _gw.scanWifi();
       wifiSaved = creds.map((c) => SavedWifi(c.ssid)).toList();
       wifiScanRes = nets
           .where((n) => n.ssid.isNotEmpty)
@@ -907,7 +1072,7 @@ class DeviceStore extends ChangeNotifier {
     wifiError = null;
     notifyListeners();
     try {
-      await _gateway.connectWifi(n, '');
+      await _gw.connectWifi(n, '');
       wifiLast = n;
       wifiStateText = '$n 连接成功';
     } on CardException catch (e) {
@@ -946,7 +1111,7 @@ class DeviceStore extends ChangeNotifier {
     wifiError = null;
     notifyListeners();
     try {
-      await _gateway.connectWifi(sel, pwd);
+      await _gw.connectWifi(sel, pwd);
       wifiLast = sel;
       wifiStateText = '$sel 连接成功';
       wifiSelName = null;
@@ -963,7 +1128,7 @@ class DeviceStore extends ChangeNotifier {
   /// 忘记一个已保存网络（设备端删除 + 本地刷新）。
   Future<void> wifiForget(String ssid) async {
     try {
-      await _gateway.forgetWifi(ssid);
+      await _gw.forgetWifi(ssid);
       wifiSaved = wifiSaved.where((w) => w.name != ssid).toList();
       if (wifiLast == ssid) wifiLast = null;
       notifyListeners();
@@ -977,7 +1142,8 @@ class DeviceStore extends ChangeNotifier {
   void dispose() {
     _clockTimer?.cancel();
     _heartbeatTimer?.cancel();
-    _reconnectTimer?.cancel();
+    _stopSheetWatch();
+
     super.dispose();
   }
 }

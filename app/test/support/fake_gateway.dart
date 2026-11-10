@@ -22,6 +22,23 @@ const defaultSnapshot = CardSnapshot(
   deviceId: 'test-device',
 );
 
+/// 设备侧按键/开关开始录音后的真实快照：recording=true。
+/// 关键回归点：`state.recordRealtimeEnabled` 是实时流开关，不能当作"正在录音"。
+const pressedOnDeviceSnapshot = CardSnapshot(
+  batteryLevel: 76,
+  isCharging: false,
+  wifiOpen: false,
+  recording: true,
+  realtimeEnabled: false,
+  recordReason: 'button',
+  fwVersion: '2.2.0',
+  fwVersionCode: 22,
+  wifiVersion: '1.5.0',
+  wifiVersionCode: 15,
+  deviceName: 'DYJV2_TEST',
+  deviceId: 'test-device',
+);
+
 class FakeCardGateway implements CardGateway {
   FakeCardGateway({
     CardSnapshot? initialSnapshot,
@@ -147,6 +164,91 @@ class FakeCardGateway implements CardGateway {
 
   /// 录音命令记录（start/stop/toggle），供状态机测试断言。
   final List<String> recordCalls = [];
+
+  @override
+  Future<void> startRecording() async {
+    recordCalls.add('start');
+    final cur = current;
+    if (cur == null) throw CardException.disconnected();
+    current = CardSnapshot(
+      batteryLevel: cur.batteryLevel,
+      isCharging: cur.isCharging,
+      wifiOpen: cur.wifiOpen,
+      recording: true,
+      fwVersion: cur.fwVersion,
+      fwVersionCode: cur.fwVersionCode,
+      wifiVersion: cur.wifiVersion,
+      wifiVersionCode: cur.wifiVersionCode,
+      deviceName: cur.deviceName,
+      deviceId: cur.deviceId,
+    );
+  }
+
+  @override
+  Future<void> stopRecording() async {
+    recordCalls.add('stop');
+    final cur = current;
+    if (cur == null) throw CardException.disconnected();
+    current = CardSnapshot(
+      batteryLevel: cur.batteryLevel,
+      isCharging: cur.isCharging,
+      wifiOpen: cur.wifiOpen,
+      recording: false,
+      fwVersion: cur.fwVersion,
+      fwVersionCode: cur.fwVersionCode,
+      wifiVersion: cur.wifiVersion,
+      wifiVersionCode: cur.wifiVersionCode,
+      deviceName: cur.deviceName,
+      deviceId: cur.deviceId,
+    );
+  }
+
+  /// 实时音频流：测试可先塞入 [realtimeEvents]，订阅时按序吐出。
+  final List<RealtimeAudioEvent> realtimeEvents = [];
+  int realtimeOpenCalls = 0;
+  int realtimeCloseCalls = 0;
+
+  @override
+  Stream<RealtimeAudioEvent> realtimeAudio() async* {
+    realtimeOpenCalls++;
+    for (final event in realtimeEvents) {
+      yield event;
+    }
+  }
+
+  @override
+  Future<void> closeRealtime() async {
+    realtimeCloseCalls++;
+  }
+
+  /// 设备主动推送的事件队列（测试里手动 push 模拟拨杆/按键）。
+  final List<Map<String, dynamic>> deviceEvents = [];
+  int _eventSeq = 0;
+  int pullEventCalls = 0;
+
+  void pushRecordEvent({required bool recording, String reason = 'switch'}) {
+    _eventSeq++;
+    deviceEvents.add({
+      'seq': _eventSeq,
+      'event': {
+        'kind': 'record',
+        'status': {
+          'isRecording': recording,
+          'realtimeEnabled': false,
+          'reason': reason,
+        },
+      },
+    });
+  }
+
+  @override
+  Future<DeviceEventBatch> pullEvents({int after = 0}) async {
+    pullEventCalls++;
+    final fresh = deviceEvents
+        .where((e) => ((e['seq'] as num?)?.toInt() ?? 0) > after)
+        .toList();
+    return DeviceEventBatch(seq: _eventSeq, events: fresh);
+  }
 
   @override
   Future<void> record(String action) async {

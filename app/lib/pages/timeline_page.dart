@@ -50,7 +50,18 @@ class TimelinePage extends StatelessWidget {
               child: RefreshIndicator(
                 key: const Key('timeline-refresh'),
                 onRefresh: () async {
-                  await store.syncRecordings();
+                  final error = await store.syncRecordings();
+                  // 没连设备不是错误：安静地不做事，别弹"整理中断"吓人
+                  if (error != null &&
+                      error.contains('未连接录音卡') &&
+                      context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        duration: Duration(seconds: 2),
+                        content: Text('已连接录音卡后再下拉取回'),
+                      ),
+                    );
+                  }
                 },
                 child: groups.isEmpty
                     ? ListView(
@@ -81,7 +92,12 @@ class TimelinePage extends StatelessWidget {
                                   Text(
                                     store.loadError ??
                                         (store.syncError ??
-                                            _emptyText(store)),
+                                            _emptyText(
+                                              store,
+                                              deviceReady:
+                                                  store.deviceConnected?.call() ??
+                                                  true,
+                                            )),
                                     textAlign: TextAlign.center,
                                     style: const TextStyle(
                                       color: RCColors.sec,
@@ -778,11 +794,33 @@ class _EventNoteBadge extends StatelessWidget {
   }
 }
 
-/// 空态文案：区分「没录音」「正在整理」「录了但没识别到语音」。
-String _emptyText(AppStore store) {
+/// 空态文案：区分「没录音」「正在整理」「整理失败」「录了但没识别到语音」。
+///
+/// 关键：**失败的录音不能算"正在整理"**。否则一条永远处理不完的录音
+/// 会让时间轴永远停在"正在整理"，用户既看不到失败原因，也等不到结果。
+String _emptyText(AppStore store, {bool deviceReady = true}) {
   final files = store.recordingFiles;
-  if (files.isEmpty) return '还没有录音\n下拉可从录音卡取回';
-  if (files.every((f) => f.stage != RecordingStage.ready)) {
+  if (files.isEmpty) {
+    return deviceReady
+        ? '还没有录音\n下拉可从录音卡取回'
+        : '还没有录音\n连上录音卡后下拉取回';
+  }
+  final pending = files.where((f) => f.stage != RecordingStage.ready).toList();
+  if (pending.isEmpty) return '录音里没有识别到语音';
+  // 只剩失败项：如实说失败，并带上第一条可读原因
+  if (pending.every((f) => f.stage == RecordingStage.failed)) {
+    // 没连卡时，这些只是等人来核对的历史残留，不该一打开就红着脸报错；
+    // 连上卡之后才如实说"有 N 条没处理完"。
+    if (!deviceReady) {
+      return '还没有可显示的录音\n连上录音卡后可核对并重试';
+    }
+    final reason = pending.first.error;
+    return reason == null || reason.isEmpty
+        ? '有 ${pending.length} 条录音未能处理\n下拉可重试'
+        : '有 ${pending.length} 条录音未能处理\n$reason';
+  }
+  // 还有真在跑的：才说正在整理
+  if (pending.any((f) => f.stage != RecordingStage.failed)) {
     return '正在整理本地录音…\n完成后会出现在时间轴';
   }
   return '录音里没有识别到语音';

@@ -18,6 +18,8 @@ use std::time::Duration;
 use reai_card_sdk::{
     DfuPackage, DeviceManager, DeviceEvent, DyjDevice, OtaInfo, OtaModule, SdkError,
 };
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use serde_json::{json, Value};
 
 /// Dart 注册的回调：`fn(user_data, json_utf8_ptr)`。
@@ -26,6 +28,46 @@ type Callback = extern "C" fn(user_data: *mut c_void, json: *const c_char);
 struct BridgeState {
     runtime: tokio::runtime::Runtime,
     device: tokio::sync::Mutex<Option<DyjDevice>>,
+    /// 实时音频流的停止信号：每次开始的录音会话一个。
+    realtime_stop: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    /// 设备事件订阅通道上最近一次事件的 JSON（Dart 侧按 seq 增量取走）。
+    ///
+    /// 设备是**主动推送**的：拨杆/按键触发的录音状态变化会自己发上来，
+    /// 不该靠 App 轮询去问——那是延迟的根源。
+    events: std::sync::Mutex<EventFeed>,
+}
+
+/// 事件队列：单调递增 seq + 最近 N 条，Dart 侧用 seq 做增量读。
+struct EventFeed {
+    seq: u64,
+    items: std::collections::VecDeque<Value>,
+}
+
+impl EventFeed {
+    fn new() -> Self {
+        Self { seq: 0, items: std::collections::VecDeque::new() }
+    }
+
+    fn push(&mut self, value: Value) {
+        self.seq += 1;
+        self.items.push_back(json!({"seq": self.seq, "event": value}));
+        // 只留最近 64 条：Dart 一秒拉一次，足够；防止长时间不读把内存撑大
+        while self.items.len() > 64 {
+            self.items.pop_front();
+        }
+    }
+
+    fn since(&self, after: u64) -> Value {
+        let items: Vec<Value> = self
+            .items
+            .iter()
+            .filter(|item| {
+                item.get("seq").and_then(Value::as_u64).map(|s| s > after).unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        json!({"seq": self.seq, "events": items})
+    }
 }
 
 static STATE: OnceLock<BridgeState> = OnceLock::new();
@@ -39,6 +81,8 @@ fn state() -> &'static BridgeState {
             .build()
             .expect("tokio runtime"),
         device: tokio::sync::Mutex::new(None),
+        realtime_stop: std::sync::Mutex::new(None),
+        events: std::sync::Mutex::new(EventFeed::new()),
     })
 }
 
@@ -46,6 +90,12 @@ fn emit_raw(cb: Callback, user_data: usize, value: Value) {
     let json = CString::new(value.to_string()).expect("no NUL in json");
     // into_raw：所有权交给 Dart，由它拷贝后 free_string。
     cb(user_data as *mut c_void, json.into_raw());
+}
+
+/// 需要附带诊断信息的失败：消息给人看，detail 给排障看。
+struct BridgeError {
+    message: String,
+    detail: Option<Value>,
 }
 
 /// 一条结果通道：同一个 (cb, user_data) 可发多条进度，最后一条必为终态。
@@ -69,6 +119,15 @@ impl Emitter {
             self.cb,
             self.user_data,
             json!({"ok": false, "error": error.to_string(), "final": true}),
+        );
+    }
+
+    /// 失败并附带设备侧诊断信息（排障用：只给错误码不足以定位）。
+    fn fail_detail(&self, message: String, detail: Option<Value>) {
+        emit_raw(
+            self.cb,
+            self.user_data,
+            json!({"ok": false, "error": message, "detail": detail, "final": true}),
         );
     }
 }
@@ -142,12 +201,63 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), SdkErr
         }
         "record" => {
             let action = payload.get("action").and_then(Value::as_str).unwrap_or("toggle");
-            out.ok(with_device(|d| async move {
-                match action {
+            // 失败时把命令名、动作与设备原始回包一起抛出去：
+            // 只回一句 "code -2" 无法判断是存储没挂载、还在传输、还是别的原因。
+            let device = {
+                let guard = state().device.lock().await;
+                guard.as_ref().ok_or(SdkError::Disconnected)?.clone()
+            };
+            let outcome = {
+                let d = device;
+                let d = d.clone();
+                let action = action.to_owned();
+                async move {
+                let result = match action.as_str() {
                     "start" => d.start_recording().await.and_then(|r| to_value(r)),
                     "stop" => d.stop_recording().await.and_then(|r| to_value(r)),
                     _ => d.toggle_recording().await.and_then(|r| to_value(r)),
+                };
+                if let Err(error) = &result {
+                    // 再查一次设备状态，带着当时的上下文（是否在录、实时流开没开）一起报
+                    let probe = d.record_status().await.ok();
+                    let state = d.state().await.ok();
+                    eprintln!(
+                        "[card_bridge] record 失败 action={action} error={error} record_status={probe:?} state={state:?}"
+                    );
+                    let detail = json!({
+                        "command": "RECORD",
+                        "action": action,
+                        "record": probe.map(|r| serde_json::to_value(r).unwrap_or(Value::Null)),
+                        "state": state.map(|s| serde_json::to_value(s).unwrap_or(Value::Null)),
+                    });
+                    return Err(BridgeError {
+                        message: error.to_string(),
+                        detail: Some(detail),
+                    });
                 }
+                result.map_err(|error| BridgeError {
+                    message: error.to_string(),
+                    detail: None,
+                })
+                }
+            }
+            .await;
+            match outcome {
+                Ok(value) => out.ok(value),
+                Err(error) => out.fail_detail(error.message, error.detail),
+            }
+        }
+        // 明确的开始/停止：不走 SDK 的 start_recording（它内部 state() 解析在本机固件
+        // 上会因缺 bootType 而整体失败），直接发 RECORD_START / RECORD_STOP。
+        "record.start" => {
+            out.ok(with_device(|d| async move {
+                d.raw_command("RECORD_START", None).await
+            })
+            .await?);
+        }
+        "record.stop" => {
+            out.ok(with_device(|d| async move {
+                d.raw_command("RECORD_STOP", None).await
             })
             .await?);
         }
@@ -156,6 +266,23 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), SdkErr
                 d.record_mark().await.and_then(|r| to_value(r))
             })
             .await?);
+        }
+        // 打开实时音频流（PCM 16k 单声道 i16，走 progress 回调逐块下发。
+        // 只开流不改录音状态：录音开关仍由 `record` 控制，两条命令互不干扰。
+        // 拉取设备主动推送的事件（录音状态/按键/开关/充电/电源…）。
+        // 这里**不访问设备**，只读本地队列，所以可以高频调用而不打扰蓝牙链路。
+        "events.pull" => {
+            let after = payload.get("after").and_then(Value::as_u64).unwrap_or(0);
+            let feed = state().events.lock().expect("events lock");
+            out.ok(feed.since(after));
+        }
+        "realtime.open" => realtime_open(out).await?,
+        "realtime.close" => {
+            let stop = state().realtime_stop.lock().expect("realtime lock").take();
+            if let Some(stop) = stop {
+                let _ = stop.send(());
+            }
+            out.ok(json!({"closed": true}));
         }
         "files" => {
             out.ok(with_device(|d| async move {
@@ -286,6 +413,136 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), SdkErr
 
 // ── 具体实现 ────────────────────────────────────────────────
 
+/// 常驻监听设备事件：设备（拨杆/按键/固件）主动推上来的状态变化进本地队列，
+/// 由 Dart 顺带取走。**这是"硬件侧操作能立刻反映到手机"的关键**——
+/// 靠轮询至少要等一个周期，靠推送是毫秒级。
+fn spawn_event_pump(device: DyjDevice) {
+    let mut events = device.subscribe_events();
+    tokio::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok(event) => {
+                    let value = match event {
+                        DeviceEvent::RecordStatus(status) => serde_json::to_value(&status)
+                            .map(|v| json!({"kind": "record", "status": v}))
+                            .unwrap_or(Value::Null),
+                        DeviceEvent::ToggleSwitch(_) => json!({"kind": "toggle_switch"}),
+                        DeviceEvent::Button(_) => json!({"kind": "button"}),
+                        DeviceEvent::Power(power) => serde_json::to_value(&power)
+                            .map(|v| json!({"kind": "power", "power": v}))
+                            .unwrap_or(Value::Null),
+                        DeviceEvent::Sync(sync) => serde_json::to_value(&sync)
+                            .map(|v| json!({"kind": "sync", "sync": v}))
+                            .unwrap_or(Value::Null),
+                        DeviceEvent::UploadComplete(_) => json!({"kind": "upload_complete"}),
+                        _ => continue,
+                    };
+                    if value.is_null() {
+                        continue;
+                    }
+                    let mut feed = state().events.lock().expect("events lock");
+                    feed.push(value);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break, // 链路已断：连接重建时会重新起泵
+            }
+        }
+    });
+}
+
+// ── 实时音频流 ──────────────────────────────────────────────
+
+/// 打开实时音频流：发 `RECORD_REALTIME_ENABLE(true)`，再把解码后的 PCM 逐块下发。
+///
+/// 设计要点：
+/// - **不在这里改录音状态**：录音仍由 `record` 命令控制，本命令只负责"边录边收"，
+///   所以不能在实时流里调用 `start_realtime_recording`（那会连带开始录音）。
+/// - 每块 PCM 作为一条 progress 回调（`final:false`）送出去，Dart 侧拼 WAV 落盘；
+///   同一会话的最终回调带 `final:true`。
+/// - ADPCM 解码状态跨整段录音连续，**必须**在 SDK 的通知 worker 里解码 ——
+///   这里只消费已经解码好的 `PcmChunk`，不做任何二次拼接或重新解码。
+async fn realtime_open(out: Emitter) -> Result<(), SdkError> {
+    let device = {
+        let guard = state().device.lock().await;
+        guard.as_ref().ok_or(SdkError::Disconnected)?.clone()
+    };
+    device.set_realtime_enabled(true).await?;
+
+    let mut audio = device.subscribe_audio();
+    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
+    {
+        let mut slot = state().realtime_stop.lock().expect("realtime lock");
+        if let Some(previous) = slot.take() {
+            let _ = previous.send(());
+        }
+        *slot = Some(stop_tx);
+    }
+
+    out.progress(json!({"state": "open"}));
+
+    tokio::spawn(async move {
+        let mut blocks: u64 = 0;
+        let mut samples: u64 = 0;
+        let mut gaps: u64 = 0;
+        loop {
+            tokio::select! {
+                _ = &mut stop_rx => break,
+                received = audio.recv() => match received {
+                    Ok(chunk) => {
+                        if chunk.discontinuous {
+                            gaps += 1;
+                            // 断开要如实告诉上层：这是"这一段可能不完整"的证据链
+                            out.progress(json!({
+                                "state": "gap",
+                                "gapIndex": gaps,
+                                "receivedSamples": samples,
+                            }));
+                        }
+                        // PCM 以紧凑字节数组下发，避免逐样本 JSON 撑爆回调
+                        let mut bytes = Vec::with_capacity(chunk.samples.len() * 2);
+                        for sample in &chunk.samples {
+                            let raw = i16::from_le_bytes(sample.to_le_bytes());
+                            bytes.extend_from_slice(&raw.to_le_bytes());
+                        }
+                        blocks += 1;
+                        samples += chunk.samples.len() as u64;
+                        out.progress(json!({
+                            "state": "audio",
+                            "sampleRate": chunk.sample_rate,
+                            "channels": chunk.channels,
+                            "samples": chunk.samples.len(),
+                            "receivedSamples": samples,
+                            "bytes": bytes.len(),
+                            // base64 稳定、无转义开销，Dart 侧一次解码即可
+                            "pcm": BASE64.encode(bytes),
+                        }));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        gaps += 1;
+                        out.progress(json!({
+                            "state": "gap",
+                            "gapIndex": gaps,
+                            "skipped": skipped,
+                            "receivedSamples": samples,
+                        }));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                },
+            }
+        }
+        // 收尾：关闭实时开关（不碰录音状态，录音由 `record` 管）
+        let _ = device.set_realtime_enabled(false).await;
+        out.ok(json!({
+            "closed": true,
+            "blocks": blocks,
+            "receivedSamples": samples,
+            "gaps": gaps,
+        }));
+    });
+    Ok(())
+}
+
+
 async fn connect(payload: Value) -> Result<Value, SdkError> {
     let id = str_field(&payload, "id");
     let manager = DeviceManager::new().await?;
@@ -301,14 +558,24 @@ async fn connect(payload: Value) -> Result<Value, SdkError> {
     let found = found.ok_or_else(|| SdkError::DeviceNotFound(id.clone()))?;
     let device = manager.connect(&found).await?;
     let snap = snapshot(&device).await?;
+    // 连上就把事件泵挂起来：设备侧拨杆/按键的状态变化立刻能进队列
+    spawn_event_pump(device.clone());
     *state().device.lock().await = Some(device);
     Ok(snap)
 }
 
 async fn snapshot(device: &DyjDevice) -> Result<Value, SdkError> {
     // SDK 规则：命令严格串行，顺序查询；storage 可能不支持，失败不致命。
-    let battery = device.battery().await?;
-    let state = device.state().await?;
+    // 本机固件回的字段比 SDK 严格结构少（缺 bootType / levelText），
+    // 用严格解析会让整个快照失败、界面永远拿不到状态。这里降级为原始回包。
+    let battery = match device.battery().await {
+        Ok(v) => serde_json::to_value(v).unwrap_or(Value::Null),
+        Err(_) => device.raw_command("BATTERY", None).await.unwrap_or(Value::Null),
+    };
+    let state = match device.state().await {
+        Ok(v) => serde_json::to_value(v).unwrap_or(Value::Null),
+        Err(_) => device.raw_command("STATE_INFO", None).await.unwrap_or(Value::Null),
+    };
     let info = device.device_info().await?;
     let storage = device.storage().await.ok();
     let record = device.record_status().await.ok();

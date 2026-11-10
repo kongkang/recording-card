@@ -7,6 +7,12 @@ import '../core/store/device_store.dart';
 import '../core/theme/tokens.dart';
 import '../widgets/rc_switch.dart';
 
+/// 弹层是否展示 Wi-Fi 配网行。
+///
+/// 2026-11-10 owner 决定：当前没有可用的 Wi-Fi 能力，先把整行隐藏，
+/// 避免用户点进一个什么都配不了的二级页。能力就绪后改回 true 即恢复。
+const bool showWifiRow = false;
+
 /// 电池图标：仅图形不显数字；<20% 红 / <40% 橙 / ≥40% 绿
 class BatteryIcon extends StatelessWidget {
   const BatteryIcon({
@@ -68,10 +74,11 @@ class BatteryIcon extends StatelessWidget {
   }
 }
 
-/// 顶栏胶囊：圆点状态 + 电池图标。
+/// 顶栏胶囊：圆点状态 + 电量；没连设备时电量位置改显「无设备」文字。
 ///
 /// 圆点语义（2026-11-10 owner 定稿）：绿=正在录音（心跳）；橙=已连接但未录音
-/// （待机，说明卡在、电量为真）；灰空心=未连接（不显示电量）。
+/// （待机，说明卡在、电量为真）；蓝=掉线后自动重连中（只试一次）；
+/// 灰空心=未连接（不出电量，改显「无设备」）。
 class HwCapsule extends StatefulWidget {
   const HwCapsule({
     super.key,
@@ -79,15 +86,19 @@ class HwCapsule extends StatefulWidget {
     required this.level,
     this.connected = true,
     this.recording = false,
+    this.reconnecting = false,
   });
   final VoidCallback onTap;
   final int level;
 
-  /// 没连设备时只显示灰点：点击进入扫描连接流程，而不是假装已连接。
+  /// 没连设备时只显示灰点 + 「无设备」：点击进入扫描连接流程，而不是假装已连接。
   final bool connected;
 
   /// 是否正在录音：只有录音中才绿点心跳；已连接待机是橙点。
   final bool recording;
+
+  /// 看门狗判掉线后正在自动重连：蓝点 + 「连接中…」。
+  final bool reconnecting;
 
   @override
   State<HwCapsule> createState() => _HwCapsuleState();
@@ -132,8 +143,10 @@ class _HwCapsuleState extends State<HwCapsule>
       width: 7,
       height: 7,
       decoration: BoxDecoration(
-        // 绿=正在运行（录音中）；橙=已连接待机；灰空心=未连接
-        color: widget.recording ? RCColors.ok : RCColors.warn,
+        // 蓝=掉线自动重连中；绿=正在运行（录音中）；橙=已连接待机
+        color: widget.reconnecting
+            ? RCColors.info
+            : (widget.recording ? RCColors.ok : RCColors.warn),
         shape: BoxShape.circle,
       ),
     );
@@ -141,46 +154,68 @@ class _HwCapsuleState extends State<HwCapsule>
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      key: const Key('hw-capsule'),
-      onTap: widget.onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-        decoration: BoxDecoration(
-          border: Border.all(color: RCColors.sep),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (widget.connected)
-              widget.recording
-                  ? FadeTransition(
-                      opacity: Tween(begin: 0.35, end: 1.0).animate(
-                        CurvedAnimation(
-                          parent: _pulse,
-                          curve: const Interval(0, 0.45),
+    final r = context.rc;
+    // 重连中也算"有条链路在手"，只是数据暂时不可信
+    final linked = widget.connected || widget.reconnecting;
+    return Semantics(
+      label: linked
+          ? (widget.reconnecting
+                ? '录音卡状态：连接中'
+                : (widget.recording ? '录音卡状态：已连接，录音中' : '录音卡状态：已连接，未录音'))
+          : '录音卡状态：无设备',
+      button: true,
+      child: InkWell(
+        key: const Key('hw-capsule'),
+        onTap: widget.onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          decoration: BoxDecoration(
+            border: Border.all(color: r.sep),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (linked)
+                widget.recording && widget.connected
+                    ? FadeTransition(
+                        opacity: Tween(begin: 0.35, end: 1.0).animate(
+                          CurvedAnimation(
+                            parent: _pulse,
+                            curve: const Interval(0, 0.45),
+                          ),
                         ),
-                      ),
-                      child: _dot(),
-                    )
-                  : _dot()
-            else
-              Container(
-                key: const Key('capsule-off'),
-                width: 7,
-                height: 7,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: RCColors.ax, width: 1.4),
+                        child: _dot(),
+                      )
+                    : _dot()
+              else
+                Container(
+                  key: const Key('capsule-off'),
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: RCColors.ax, width: 1.4),
+                  ),
                 ),
-              ),
-            if (widget.connected) ...[
               const SizedBox(width: 6),
-              BatteryIcon(level: widget.level, scale: 0.9),
+              if (widget.reconnecting)
+                const Text(
+                  '连接中…',
+                  key: Key('capsule-retry'),
+                  style: TextStyle(fontSize: 12, color: RCColors.sec),
+                )
+              else if (widget.connected)
+                BatteryIcon(level: widget.level, scale: 0.9)
+              else
+                const Text(
+                  '无设备',
+                  key: Key('capsule-nodata'),
+                  style: TextStyle(fontSize: 12, color: RCColors.sec),
+                ),
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -188,9 +223,24 @@ class _HwCapsuleState extends State<HwCapsule>
 }
 
 /// 弹层宿主：backdrop + 底部卡片；固件更新中锁定不关闭。
-class StatusSheetOverlay extends StatelessWidget {
+class StatusSheetOverlay extends StatefulWidget {
   const StatusSheetOverlay({super.key, required this.store});
   final DeviceStore store;
+
+  @override
+  State<StatusSheetOverlay> createState() => _StatusSheetOverlayState();
+}
+
+class _StatusSheetOverlayState extends State<StatusSheetOverlay> {
+  DeviceStore get store => widget.store;
+
+  @override
+  void dispose() {
+    // 宿主要没了：只把"弹层已关闭"这件事登记下去，不在这里触发重建。
+    // 直接调用会修改 store 并在 dispose 期间发通知，属于 build 期改状态。
+    store.markSheetDetached();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -250,23 +300,24 @@ class _Row extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 11),
       child: Row(
         children: [
-          Text(
-            label,
-            style: const TextStyle(fontSize: 14, color: RCColors.ink),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 96),
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+              style: const TextStyle(fontSize: 14, color: RCColors.ink),
+            ),
           ),
-          const Spacer(),
-          // 行值统一右对齐单行：占满剩余宽 + 右对齐，过长整体缩排，不换行不溢出
+          const SizedBox(width: 12),
+          // 行值统一右对齐单行：占满剩余宽 + 右对齐。
+          // 不再用 FittedBox 整体缩排——那会把右侧文字缩到将就看不清；
+          // 放不下时按行尾省略，保持与左侧标签同一字号。
           if (child != null)
             Expanded(
               child: Align(
                 alignment: Alignment.centerRight,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [child!],
-                  ),
-                ),
+                child: child!,
               ),
             ),
         ],
@@ -333,6 +384,22 @@ class _MainView extends StatelessWidget {
                 style: TextStyle(fontSize: 11, color: RCColors.okInk),
               ),
             ),
+            // 设备侧没有"主动断开"的入口，只能从这里断。
+            // 断开前会先停录音、停实时流、停同步，避免半截状态把链路卡住。
+            const SizedBox(width: 4),
+            Semantics(
+              button: true,
+              label: '断开连接',
+              child: IconButton(
+                key: const Key('dev-disconnect'),
+                onPressed: () => _confirmDisconnect(context, store),
+                icon: const Icon(Icons.link_off, size: 20),
+                color: RCColors.sec,
+                tooltip: '断开连接',
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              ),
+            ),
           ],
         ),
         const Divider(height: 24, color: RCColors.sep),
@@ -343,7 +410,9 @@ class _MainView extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              AnimatedSwitcher(
+              // 文本部分可压缩（录音中 + 计时可能很长），开关固定宽度不缩
+              Flexible(
+                child: AnimatedSwitcher(
                 key: const Key('recval'),
                 duration: const Duration(milliseconds: 220),
                 switchInCurve: Curves.easeOut,
@@ -370,14 +439,22 @@ class _MainView extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 5),
-                          const Text('录音中', style: TextStyle(fontSize: 13)),
+                          // 「录音中 00:00:00」放不下时省略「录音中」，计时优先保住
+                          const Flexible(
+                            child: Text(
+                              '录音中',
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                              style: TextStyle(fontSize: 14),
+                            ),
+                          ),
                           const SizedBox(width: 8),
                           Text(
                             store.recClockText,
                             key: const Key('rec-clock'),
                             softWrap: false, // 等宽数字单行，不折行
                             style: const TextStyle(
-                              fontSize: 13,
+                              fontSize: 14,
                               fontFeatures: [FontFeature.tabularFigures()],
                               fontWeight: FontWeight.w600,
                             ),
@@ -387,8 +464,9 @@ class _MainView extends StatelessWidget {
                     : const Text(
                         '未录音',
                         key: ValueKey('rec-off'),
-                        style: TextStyle(fontSize: 13, color: RCColors.sec),
+                        style: TextStyle(fontSize: 14, color: RCColors.sec),
                       ),
+                ),
               ),
               const SizedBox(width: 10),
               Semantics(
@@ -429,7 +507,8 @@ class _MainView extends StatelessWidget {
                   '${store.batteryLevelText} · 可录至 ${store.batteryEtaText}',
                   key: const Key('batt-eta'),
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13),
+                  maxLines: 1,
+                  style: const TextStyle(fontSize: 14),
                 ),
               ),
             ],
@@ -443,10 +522,14 @@ class _MainView extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                store.syncText,
-                key: const Key('sync-txt'),
-                style: const TextStyle(fontSize: 13),
+              Flexible(
+                child: Text(
+                  store.syncText,
+                  key: const Key('sync-txt'),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  style: const TextStyle(fontSize: 14),
+                ),
               ),
               const SizedBox(width: 7),
               SizedBox(
@@ -471,28 +554,34 @@ class _MainView extends StatelessWidget {
             ],
           ),
         ),
-        // › 仅用于进入二级页
-        _Row(
-          keyName: 'wifi-row',
-          label: 'Wi-Fi',
-          onTap: () => store.showView(DeviceView.wifi),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '已配置 · ${store.wifiCountShown} 个网络',
-                style: const TextStyle(fontSize: 13),
-              ),
-              const SizedBox(width: 5),
-              const Icon(
-                Icons.chevron_right,
-                key: Key('rowchev-wifi'),
-                size: 15,
-                color: RCColors.ax,
-              ),
-            ],
+        // Wi-Fi 配网整行暂时隐藏：当前固件侧该链路还没打通，留着只会让用户点进空页。
+        // 需要时把 showWifiRow 打开即可（入口、二级页都在，只是不展示）。
+        if (showWifiRow)
+          _Row(
+            keyName: 'wifi-row',
+            label: 'Wi-Fi',
+            onTap: () => store.showView(DeviceView.wifi),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    '已配置 · ${store.wifiCountShown} 个网络',
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+                const SizedBox(width: 5),
+                const Icon(
+                  Icons.chevron_right,
+                  key: Key('rowchev-wifi'),
+                  size: 15,
+                  color: RCColors.ax,
+                ),
+              ],
+            ),
           ),
-        ),
         _Row(
           keyName: 'fw-update',
           label: '固件',
@@ -500,10 +589,14 @@ class _MainView extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                store.fwValText,
-                key: const Key('fw-val'),
-                style: const TextStyle(fontSize: 13, color: RCColors.okInk),
+              Flexible(
+                child: Text(
+                  store.fwValText,
+                  key: const Key('fw-val'),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  style: const TextStyle(fontSize: 14, color: RCColors.okInk),
+                ),
               ),
               const SizedBox(width: 5),
               const Icon(Icons.chevron_right, size: 15, color: RCColors.ax),
@@ -537,6 +630,35 @@ class _MainView extends StatelessWidget {
       ],
     );
   }
+}
+
+/// 断开连接前的确认与收尾。
+///
+/// 顺序很重要：先停录音 → 关实时流 → 停同步 → 断开链路。
+/// 直接在录音/传输中途断开会留下半截会话，下一次连接容易出现状态错乱。
+Future<void> _confirmDisconnect(BuildContext context, DeviceStore store) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('断开与录音卡的连接？'),
+      content: const Text('断开后将停止录音与同步，需要时可在弹层里重新连接。'),
+      actions: [
+        TextButton(
+          key: const Key('disconnect-cancel'),
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const Key('disconnect-confirm'),
+          onPressed: () => Navigator.of(ctx).pop(true),
+          style: FilledButton.styleFrom(backgroundColor: RCColors.danger),
+          child: const Text('断开连接'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  await store.disconnectSafely();
 }
 
 /// 未连接视图：搜索并连接附近的录音卡。

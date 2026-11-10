@@ -10,6 +10,7 @@ import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
+import '../services/audio/live_audio_recorder.dart';
 import '../services/audio/recording_status.dart';
 import '../services/transcribe/model_manager_controller.dart';
 import '../widgets/store_scope.dart';
@@ -47,10 +48,18 @@ class _AppShellState extends State<AppShell> {
   late final RecordingStatusController _recording =
       widget.recordingStatus ?? RecordingStatusController();
 
+  /// 实时音频接收器：录音期间边录边把 PCM 收进本地（详情页可回听、后续比对补传）。
+  late final LiveAudioRecorder _liveAudio = LiveAudioRecorder(
+    gateway: _device.gateway,
+  );
+
   @override
   void initState() {
     super.initState();
     if (widget.device == null) widget.onDeviceCreated?.call(_device);
+    // 让 store 知道设备在不在：没连卡时下拉不要去取回录音，更不该报"整理中断"。
+    // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
+    widget.store.deviceConnected ??= () => _device.isConnected;
     // Timeline 顶部状态块在录音期间一直显示计时：由外壳持有设备时钟
     _device.retainClock();
     _device.addListener(_syncRecordingStatus);
@@ -69,10 +78,16 @@ class _AppShellState extends State<AppShell> {
   void _syncRecordingStatus() {
     final recording = _device.isRecording;
     if (recording) {
-      if (!_wasRecording) _recording.startRecording();
+      if (!_wasRecording) {
+        _recording.startRecording();
+        // 跟着录音开关走：开始录音才开实时流（不录音时开着只是白耗电耗链路）
+        unawaited(_liveAudio.start());
+      }
       _recording.updateElapsed(_device.recSeconds);
     } else if (_wasRecording) {
       _recording.startSync();
+      // 先封口本地实时音频，再做后续的切片比对/补传
+      unawaited(_liveAudio.stop());
       if (_device.isConnected) {
         unawaited(_autoSyncAfterRecording());
       }
@@ -91,6 +106,7 @@ class _AppShellState extends State<AppShell> {
   @override
   void dispose() {
     _device.removeListener(_syncRecordingStatus);
+    _liveAudio.dispose();
     _device.releaseClock();
     if (widget.device == null) _device.dispose();
     if (widget.recordingStatus == null) _recording.dispose();
@@ -202,6 +218,7 @@ class _Header extends StatelessWidget {
               level: device.battery,
               connected: device.isConnected,
               recording: device.isRecording,
+              reconnecting: device.isReconnecting,
             ),
           ),
         ],
