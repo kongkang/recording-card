@@ -116,7 +116,8 @@ void main() {
     }
     final devices = await bridge.scan(timeoutMs: 15000);
     expect(devices, isNotEmpty, reason: '没扫到录音卡');
-    final snapshot = await bridge.connect(devices.first.id);
+    final snapshot =
+        await bridge.connect(devices.first.id) ?? await bridge.snapshot();
     _log('已连接 ${devices.first.name}，电量 ${snapshot.batteryLevel}%');
 
     final support = await getApplicationSupportDirectory();

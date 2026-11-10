@@ -32,7 +32,8 @@ void main() {
 
     final devices = await bridge.scan(timeoutMs: 10000);
     expect(devices, isNotEmpty, reason: '没扫到卡：确认已开机、未被别的设备占用');
-    final snapshot = await bridge.connect(devices.first.id);
+    final snapshot =
+        await bridge.connect(devices.first.id) ?? await bridge.snapshot();
     // ignore: avoid_print
     print('[pipe] 已连接 ${devices.first.name} 电量=${snapshot.batteryLevel}%');
 

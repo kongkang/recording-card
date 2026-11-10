@@ -65,6 +65,8 @@ class FakeCardGateway implements CardGateway {
     this.failTranscode,
     this.disconnectReport,
     this.failDisconnect,
+    this.connectReturnsSnapshot = true,
+    this.clearAfterMainOta = false,
   }) : current = initialSnapshot,
        savedCredentials = List<CardWifiCredential>.of(wifiCredentials);
 
@@ -91,6 +93,15 @@ class FakeCardGateway implements CardGateway {
 
   /// connect() 的返回；null 表示连上并复用 [current]（或默认快照）。
   CardSnapshot? connectResult;
+
+  /// false = connect 只回「已连上」，不附带状态快照（真实桥的行为）。
+  bool connectReturnsSnapshot;
+
+  /// true = 主控 DFU 结束后设备复位，旧的 [current] 失效（要重新 connect）。
+  bool clearAfterMainOta;
+
+  /// 按调用顺序记录设备命令，用于断言时序（如先开实时流再发 RECORD_START）。
+  final List<String> callLog = [];
 
   List<CardWifiNetwork> wifiNetworks;
 
@@ -144,6 +155,7 @@ class FakeCardGateway implements CardGateway {
   @override
   Future<CardSnapshot> snapshot() async {
     snapshotCalls++;
+    callLog.add('snapshot');
     if (failSnapshot != null) throw failSnapshot!;
     final snap = current;
     if (snap == null) throw CardException.disconnected();
@@ -153,15 +165,22 @@ class FakeCardGateway implements CardGateway {
   @override
   Future<List<CardDevice>> scan({int timeoutMs = 6000}) async {
     scanCalls++;
+    callLog.add('scan');
     return devices;
   }
 
   @override
-  Future<CardSnapshot> connect(String deviceId) async {
+  Future<CardSnapshot?> connect(String deviceId) async {
     connectCalls++;
+    callLog.add('connect');
     disconnectCallsAtConnect.add(disconnectCalls);
     lastConnectedId = deviceId;
     if (failConnect != null) throw failConnect!;
+    if (!connectReturnsSnapshot) {
+      // 真实桥只回 connected；状态由调用方随后刷新。
+      current = connectResult ?? current ?? defaultSnapshot;
+      return null;
+    }
     final result = connectResult ?? current ?? defaultSnapshot;
     current = result;
     return result;
@@ -171,6 +190,7 @@ class FakeCardGateway implements CardGateway {
   Future<CardDisconnectReport> disconnect() async {
     disconnectCalled = true;
     disconnectCalls++;
+    callLog.add('disconnect');
     current = null;
     if (failDisconnect != null) throw failDisconnect!;
     return disconnectReport ?? CardDisconnectReport.alreadyReleased;
@@ -182,6 +202,7 @@ class FakeCardGateway implements CardGateway {
   @override
   Future<void> startRecording() async {
     recordCalls.add('start');
+    callLog.add('record.start');
     final cur = current;
     if (cur == null) throw CardException.disconnected();
     current = CardSnapshot(
@@ -201,6 +222,7 @@ class FakeCardGateway implements CardGateway {
   @override
   Future<void> stopRecording() async {
     recordCalls.add('stop');
+    callLog.add('record.stop');
     final cur = current;
     if (cur == null) throw CardException.disconnected();
     current = CardSnapshot(
@@ -225,6 +247,7 @@ class FakeCardGateway implements CardGateway {
   @override
   Stream<RealtimeAudioEvent> realtimeAudio() async* {
     realtimeOpenCalls++;
+    callLog.add('realtime.open');
     for (final event in realtimeEvents) {
       yield event;
     }
@@ -233,6 +256,7 @@ class FakeCardGateway implements CardGateway {
   @override
   Future<void> closeRealtime() async {
     realtimeCloseCalls++;
+    callLog.add('realtime.close');
   }
 
   /// 设备主动推送的事件队列（测试里手动 push 模拟拨杆/按键）。
@@ -250,6 +274,23 @@ class FakeCardGateway implements CardGateway {
           'isRecording': recording,
           'realtimeEnabled': false,
           'reason': reason,
+        },
+      },
+    });
+  }
+
+  /// 固件录音出错时主动推的状态：`isRecording=false` + `error` 码。
+  void pushRecordError({required int code, String reason = 'app'}) {
+    _eventSeq++;
+    deviceEvents.add({
+      'seq': _eventSeq,
+      'event': {
+        'kind': 'record',
+        'status': {
+          'isRecording': false,
+          'realtimeEnabled': false,
+          'reason': reason,
+          'error': code,
         },
       },
     });
@@ -411,10 +452,17 @@ class FakeCardGateway implements CardGateway {
   }
 
   @override
-  Stream<CardProgress> otaMain() => _progress(mainProgress);
+  Stream<CardProgress> otaMain() async* {
+    callLog.add('ota.main');
+    yield* _progress(mainProgress);
+    if (clearAfterMainOta) current = null;
+  }
 
   @override
-  Stream<CardProgress> otaWifi() => _progress(wifiProgress);
+  Stream<CardProgress> otaWifi() async* {
+    callLog.add('ota.wifi');
+    yield* _progress(wifiProgress);
+  }
 
   @override
   Future<void> syncTime() async {}

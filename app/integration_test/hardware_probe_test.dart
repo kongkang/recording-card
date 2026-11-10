@@ -52,7 +52,8 @@ void main() {
     }
 
     final device = devices.first;
-    final snapshot = await bridge.connect(device.id);
+    // 桥的 connect 只确认连上（与 web 控制台一致），状态要另外查
+    final snapshot = await bridge.connect(device.id) ?? await bridge.snapshot();
     // ignore: avoid_print
     print('[probe] 已连接 ${device.name}：电量 ${snapshot.batteryLevel}%'
         '（充电=${snapshot.isCharging}）固件 ${snapshot.fwVersion}'

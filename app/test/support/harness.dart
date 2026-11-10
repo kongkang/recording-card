@@ -13,6 +13,7 @@ import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/core/store/device_store.dart';
 import 'package:recording_card/data/seed.dart';
 import 'package:recording_card/pages/app_shell.dart';
+import 'package:recording_card/services/audio/live_audio_recorder.dart';
 import 'package:recording_card/services/audio/recording_status.dart';
 
 import 'fake_gateway.dart';
@@ -42,6 +43,7 @@ Future<ShellHarness> pumpShell(
   SummaryModel? model,
   FakeRecordingSync? recordings,
   RecordingStatusController? recordingStatus,
+  LiveAudioRecorder? liveAudio,
   bool pumpTwice = true,
 }) async {
   final m = model ?? SummaryModel();
@@ -66,6 +68,7 @@ Future<ShellHarness> pumpShell(
         store: s,
         device: d,
         recordingStatus: recordingStatus,
+        liveAudio: liveAudio,
       ),
     ),
   );

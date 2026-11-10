@@ -28,6 +28,7 @@ class AppShell extends StatefulWidget {
     this.recordingStatus,
     this.modelManager,
     this.settings,
+    this.liveAudio,
     this.onDeviceCreated,
   });
   final AppStore store;
@@ -35,6 +36,9 @@ class AppShell extends StatefulWidget {
   final RecordingStatusController? recordingStatus;
   final ModelManagerController? modelManager;
   final SettingsStore? settings;
+
+  /// 实时音频接收器（测试注入；不传则由外壳自行创建并负责释放）。
+  final LiveAudioRecorder? liveAudio;
 
   /// dev 驱动注册内部 DeviceStore 用（release 不传）
   final void Function(DeviceStore)? onDeviceCreated;
@@ -49,9 +53,8 @@ class _AppShellState extends State<AppShell> {
       widget.recordingStatus ?? RecordingStatusController();
 
   /// 实时音频接收器：录音期间边录边把 PCM 收进本地（详情页可回听、后续比对补传）。
-  late final LiveAudioRecorder _liveAudio = LiveAudioRecorder(
-    gateway: _device.gateway,
-  );
+  late final LiveAudioRecorder _liveAudio =
+      widget.liveAudio ?? LiveAudioRecorder(gateway: _device.gateway);
 
   @override
   void initState() {
@@ -80,19 +83,31 @@ class _AppShellState extends State<AppShell> {
     if (recording) {
       if (!_wasRecording) {
         _recording.startRecording();
-        // 跟着录音开关走：开始录音才开实时流（不录音时开着只是白耗电耗链路）
-        unawaited(_liveAudio.start());
+        // 录音状态一变 true 就开实时流（App 开关和设备拨杆/按键都走这里）；
+        // isRunning 挡住重复订阅。实时流是辅助能力，失败不影响设备继续录音。
+        if (!_liveAudio.isRunning) unawaited(_liveAudio.start());
       }
       _recording.updateElapsed(_device.recSeconds);
     } else if (_wasRecording) {
+      _wasRecording = false;
       _recording.startSync();
-      // 先封口本地实时音频，再做后续的切片比对/补传
-      unawaited(_liveAudio.stop());
-      if (_device.isConnected) {
-        unawaited(_autoSyncAfterRecording());
-      }
+      unawaited(_onRecordingStopped());
+      return;
     }
     _wasRecording = recording;
+  }
+
+  /// 停止录音后：先关实时流、封口本地 WAV，再开始取文件。
+  ///
+  /// 顺序不能反：SDK 文档明确要求取文件前不能还有实时会话/音频流在跑
+  /// （二进制通道不区分音频帧和文件帧，混流会把文件写坏）。参考实现也是
+  /// 先 session.stop()（停录 + 关实时）再列文件。
+  Future<void> _onRecordingStopped() async {
+    await _liveAudio.stop();
+    if (!mounted) return;
+    // 用户在封口期间又按下了开始：这次停止不触发自动同步（下一轮停止会）
+    if (_device.isRecording) return;
+    if (_device.isConnected) await _autoSyncAfterRecording();
   }
 
   /// 停止录音后的自动同步：拉取最新切片 → 转写/整理 → 进入今天时间轴第一条。
@@ -106,7 +121,7 @@ class _AppShellState extends State<AppShell> {
   @override
   void dispose() {
     _device.removeListener(_syncRecordingStatus);
-    _liveAudio.dispose();
+    if (widget.liveAudio == null) _liveAudio.dispose();
     _device.releaseClock();
     if (widget.device == null) _device.dispose();
     if (widget.recordingStatus == null) _recording.dispose();

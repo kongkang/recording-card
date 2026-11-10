@@ -273,8 +273,11 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), SdkErr
             .await?);
         }
         "mark" => {
+            // 与网页控制台一致：直接发 `RECORD_MARK`。
+            // SDK 的 record_mark() 会先 require_sd_on_nrf → 严格解析 STATE_INFO，
+            // 遇到字段不全的固件会在**发命令之前**就失败（录音开关已吃过同样的亏）。
             out.ok(with_device(|d| async move {
-                d.record_mark().await.and_then(|r| to_value(r))
+                d.raw_command("RECORD_MARK", None).await
             })
             .await?);
         }
@@ -627,20 +630,15 @@ async fn connect(payload: Value) -> Result<Value, SdkError> {
     }
     let found = found.ok_or_else(|| SdkError::DeviceNotFound(id.clone()))?;
     let device = manager.connect(&found).await?;
-    let snap = match snapshot(&device).await {
-        Ok(snap) => snap,
-        Err(error) => {
-            // 连上了但快照失败：必须主动断开，否则这个句柄一丢，
-            // 设备端就停在"已连接、不广播"的状态里。
-            let _ = device.disconnect().await;
-            return Err(error);
-        }
-    };
+    // 连接只负责把链路建起来，**不预拉状态快照**。
+    // 参考实现（examples/dyj_web.rs）的 connect 也立即返回：快照要连发 5 条命令，
+    // 慢的时候会把"已经连上"拖成 Dart 侧超时，任一条解析失败还会把连接判成失败。
+    // 状态由 Dart 侧连接成功后自己刷新（返回 null 即可）。
     let pump = spawn_event_pump(&device);
     *state().event_pump.lock().await = Some(pump);
     *state().last_device_id.lock().expect("device id lock") = Some(id);
     *state().device.lock().await = Some(device);
-    Ok(snap)
+    Ok(json!({"connected": true}))
 }
 
 async fn snapshot(device: &DyjDevice) -> Result<Value, SdkError> {
@@ -655,7 +653,12 @@ async fn snapshot(device: &DyjDevice) -> Result<Value, SdkError> {
         Ok(v) => serde_json::to_value(v).unwrap_or(Value::Null),
         Err(_) => device.raw_command("STATE_INFO", None).await.unwrap_or(Value::Null),
     };
-    let info = device.device_info().await?;
+    // BASE_INFO 也走降级：网页控制台从不把"设备信息读不到"当成连接失败，
+    // App 侧同样只把这一项留空，电池/录音状态照常返回。
+    let info = match device.device_info().await {
+        Ok(v) => serde_json::to_value(v).unwrap_or(Value::Null),
+        Err(_) => device.raw_command("BASE_INFO", None).await.unwrap_or(Value::Null),
+    };
     let storage = device.storage().await.ok();
     let record = device.record_status().await.ok();
     Ok(json!({
@@ -762,7 +765,10 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), SdkError> {
         })
         .await;
 
-    let _ = device.disconnect().await;
+    // DFU 后设备已复位离开应用固件，旧连接不可用：参考实现直接丢弃句柄、
+    // 不等待断连（平台回调可能永远不来）。这里给 3s 上限，绝不让
+    // "升级完成"的结局被一条断连命令卡住。
+    let _ = tokio::time::timeout(Duration::from_secs(3), device.disconnect()).await;
     match report {
         Ok(report) => out.ok(json!({
             "module": "main",
@@ -788,6 +794,19 @@ async fn ota_wifi(payload: Value, out: Emitter) -> Result<(), SdkError> {
     };
     let device = device.clone();
     drop(guard);
+
+    // 与网页控制台一致：模块已上电但没连路由器时，先给出可执行的提示，
+    // 而不是把固件那句看不懂的错误码原样抛给用户。WIFI_STATUS 在旧主控上
+    // 可能不可用（STATE_INFO 字段不全/模块未上电）——那就不拦，交给设备判断。
+    if let Ok(status) = device.wifi_status().await {
+        if !status.connected {
+            out.fail(SdkError::InvalidCommand(format!(
+                "Wi-Fi 模块未连接路由器（status={}），请先在设置里完成 Wi-Fi 连接后再升级",
+                status.status
+            )));
+            return Ok(());
+        }
+    }
 
     // 固件要求 check 与 start 在同一上电周期内先后执行。
     let check = match device.check_wifi_ota().await {

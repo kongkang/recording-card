@@ -35,6 +35,7 @@ class CardSnapshot {
     required this.deviceId,
     this.storageTotalMb,
     this.storageFreeMb,
+    this.hasBattery = true,
     this.realtimeEnabled = false,
     this.recordSession,
     this.recordErrorCode,
@@ -52,8 +53,14 @@ class CardSnapshot {
     final recordStatus = json['record'] is Map<String, dynamic>
         ? json['record'] as Map<String, dynamic>
         : const <String, dynamic>{};
+    // 电量读不到（没 level 字段）时必须表达"未知"，不能落成 0% 让上层当 1% 展示。
+    final hasBattery = battery['level'] is num;
+    // SDK 的 STORAGE 只有 total/used（没有 free）：剩余量由差值推出。
+    final storageTotal = _int(storage['total']);
+    final storageUsed = _int(storage['used']);
     return CardSnapshot(
-      batteryLevel: _int(battery['level']),
+      batteryLevel: hasBattery ? _int(battery['level']) : 0,
+      hasBattery: hasBattery,
       isCharging: battery['isCharging'] == true,
       wifiOpen: state['wifiOpen'] == true,
       recording: recordStatus['isRecording'] == true,
@@ -67,8 +74,10 @@ class CardSnapshot {
       wifiVersionCode: _int(info['wifiVersionCode']),
       deviceName: (info['deviceName'] as String?) ?? '',
       deviceId: (info['deviceId'] as String?) ?? '',
-      storageTotalMb: storage.isEmpty ? null : _int(storage['total']),
-      storageFreeMb: storage.isEmpty ? null : _int(storage['free']),
+      storageTotalMb: storage.isEmpty ? null : storageTotal,
+      storageFreeMb: storage.isEmpty
+          ? null
+          : (storageTotal - storageUsed < 0 ? 0 : storageTotal - storageUsed),
     );
   }
 
@@ -84,6 +93,9 @@ class CardSnapshot {
   final String deviceId;
   final int? storageTotalMb;
   final int? storageFreeMb;
+
+  /// 本次快照是否真的读到了电量（false = level 字段缺失，界面按「未知」展示）。
+  final bool hasBattery;
 
   /// 设备端实时流开关是否打开（**不是**"正在录音"，两者独立）。
   final bool realtimeEnabled;
@@ -441,7 +453,10 @@ abstract class CardGateway {
   bool get available;
 
   Future<List<CardDevice>> scan({int timeoutMs = 6000});
-  Future<CardSnapshot> connect(String deviceId);
+
+  /// 连上设备。返回 null 表示「只确认连上，没有附带状态快照」——
+  /// 参考实现（web 控制台）的 connect 也不预拉状态，状态由调用方随后刷新。
+  Future<CardSnapshot?> connect(String deviceId);
 
   /// 断开链路；返回桥的如实结果（是否真的释放）。
   Future<CardDisconnectReport> disconnect();
@@ -787,13 +802,11 @@ class RealCardGateway implements CardGateway {
   }
 
   @override
-  Future<CardSnapshot> connect(String deviceId) async {
-    final json = await _once('connect', {
-      'id': deviceId,
-    }, const Duration(seconds: 30));
-    return CardSnapshot.fromJson(
-      (json['data'] as Map<String, dynamic>?) ?? const {},
-    );
+  Future<CardSnapshot?> connect(String deviceId) async {
+    // 只等「链路建立」。桥里的 connect 不再预拉快照（参考实现同样如此）：
+    // 状态查询要连发 5 条命令，慢且任一条失败都不该把已建立连接判成失败。
+    await _once('connect', {'id': deviceId}, const Duration(seconds: 30));
+    return null;
   }
 
   @override
@@ -1053,7 +1066,7 @@ class UnsupportedCardGateway implements CardGateway {
   @override
   Future<List<CardDevice>> scan({int timeoutMs = 6000}) async => _fail();
   @override
-  Future<CardSnapshot> connect(String deviceId) async => _fail();
+  Future<CardSnapshot?> connect(String deviceId) async => _fail();
   @override
   Future<CardDisconnectReport> disconnect() async => _fail();
   @override
@@ -1158,7 +1171,7 @@ class ActivityGateway implements CardGateway {
       _run(() => _inner.scan(timeoutMs: timeoutMs));
 
   @override
-  Future<CardSnapshot> connect(String deviceId) =>
+  Future<CardSnapshot?> connect(String deviceId) =>
       _run(() => _inner.connect(deviceId));
 
   @override

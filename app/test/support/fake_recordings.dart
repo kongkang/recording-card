@@ -16,8 +16,13 @@ import 'package:recording_card/services/recordings/recording_sync_service.dart';
 import 'model_stub.dart';
 
 class FakeRecordingSync extends RecordingSyncService {
-  FakeRecordingSync._(this._localEvents, this._pending, this._error, ModelGateway model)
-    : super(gateway: const UnsupportedCardGateway(), model: model);
+  FakeRecordingSync._(
+    this._localEvents,
+    this._pending,
+    this._error,
+    ModelGateway model,
+    this._callLog,
+  ) : super(gateway: const UnsupportedCardGateway(), model: model);
 
   /// [result] 为同步后设备上取回的记录；为空表示「没有新录音」。
   static Future<FakeRecordingSync> create({
@@ -31,6 +36,7 @@ class FakeRecordingSync extends RecordingSyncService {
     ],
     Duration stepDelay = Duration.zero,
     String? error,
+    List<String>? callLog,
   }) async {
     // 模型网关在这里只是构造参数占位：转写路径已被本替身接管，不会被调用。
     final model = await buildModelGateway(
@@ -48,6 +54,7 @@ class FakeRecordingSync extends RecordingSyncService {
             ),
       error,
       model,
+      callLog,
     );
   }
 
@@ -56,6 +63,9 @@ class FakeRecordingSync extends RecordingSyncService {
 
   /// 没有新录音时也要能表达「同步失败」（例如设备未连接）。
   final String? _error;
+
+  /// 与网关共用的调用日志，用来断言「先关实时流、再开始同步」的时序。
+  final List<String>? _callLog;
 
   /// 本替身收到的 syncFromDevice 调用次数。
   int syncCalls = 0;
@@ -68,6 +78,7 @@ class FakeRecordingSync extends RecordingSyncService {
     void Function(SyncStage stage, double progress, String text)? onProgress,
   }) async {
     syncCalls++;
+    _callLog?.add('sync');
     final pending = _pending;
     if (pending == null) {
       onProgress?.call(SyncStage.done, 1, '没有新的录音');

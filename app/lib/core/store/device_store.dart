@@ -204,7 +204,8 @@ class DeviceStore extends ChangeNotifier {
       final snapshot = await _gw.connect(device.id);
       if (epoch != _epoch) return;
       _markLinkActivity();
-      _applySnapshot(snapshot);
+      // 桥只确认「连上」时没有快照：不要拿空数据覆盖旧状态，交给 _afterConnect 刷新。
+      if (snapshot != null) _applySnapshot(snapshot);
       connectedName = device.name;
       // 记住这台设备：掉线重连直接拿 id 直连，不靠扫描（已连接设备不广播）
       _lastDevice = device;
@@ -221,13 +222,11 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 连上后的收尾：时间同步 + 拉一次录音状态。
+  /// 连上后的收尾：拉一次真实状态。
+  ///
+  /// 时间同步不在这里做：SDK 的 connect 内部已经 `sync_time_now()`，
+  /// 再做一次只会让首屏状态多等一个命令周期（参考实现的 connect 也不做）。
   Future<void> _afterConnect() async {
-    try {
-      await _gw.syncTime();
-    } on CardException {
-      // 时间同步失败不致命
-    }
     await refreshFromDevice();
   }
 
@@ -339,6 +338,14 @@ class DeviceStore extends ChangeNotifier {
   /// 把设备推来的录音状态落到本地（与快照里的 record 段同构）。
   void _applyRecordStatus(Map<String, dynamic> status) {
     final recording = status['isRecording'] == true;
+    // 固件自停时会带 error 码（如存储异常）：必须让用户看见原因，
+    // 不能只是把开关悄悄关掉。参考实现会把整条 RECORD_STATUS 原样展示。
+    final error = status['error'];
+    if (error is num) {
+      recordingError = '录音中断（设备错误码 ${error.toInt()}）';
+    } else if (recording) {
+      recordingError = null; // 新一轮录音开始，清掉上次的失败
+    }
     if (recording == (_liveRecording ?? false)) return;
     _liveRecording = recording;
     _clockTicks = 0;
@@ -370,7 +377,10 @@ class DeviceStore extends ChangeNotifier {
   // 4. 重连成功回绿/橙；失败回灰「无设备」。
   static const heartbeatIdle = Duration(seconds: 30);
   static const _reconnectDelay = Duration(milliseconds: 400);
-  static const _retryConnectTimeout = Duration(seconds: 12);
+
+  /// 重连只发 connect（不再预拉快照），但桥内要先扫描（4s→6s 两档）再建链路，
+  /// 上限给到 20s，避免把"正在重连"误判成失败。
+  static const _retryConnectTimeout = Duration(seconds: 20);
 
   Timer? _heartbeatTimer;
 
@@ -474,7 +484,7 @@ class DeviceStore extends ChangeNotifier {
           .timeout(_retryConnectTimeout);
       if (epoch != _epoch) return;
       _markLinkActivity();
-      _applySnapshot(snapshot);
+      if (snapshot != null) _applySnapshot(snapshot);
       linkState = LinkState.connected;
       linkError = null;
       // 重连成功后必须把看门狗重新挂上：只在首次 connect 启表的话，
@@ -521,7 +531,9 @@ class DeviceStore extends ChangeNotifier {
   bool? deviceWifiOpen;
 
   void _applySnapshot(CardSnapshot s) {
-    _liveBattery = s.batteryLevel.clamp(1, 100);
+    _liveBattery = s.hasBattery && s.batteryLevel > 0
+        ? s.batteryLevel.clamp(1, 100)
+        : null;
     _liveCharging = s.isCharging;
     _fwVersion = s.fwVersion;
     _wifiVersion = s.wifiVersion;
@@ -997,6 +1009,8 @@ class DeviceStore extends ChangeNotifier {
     fwStageText = '阶段 2/2 · Wi-Fi 芯片';
     fwStateText = '正在重新连接录音卡…';
     notifyListeners();
+    // DFU 后原连接已失效：扫描到设备后必须重新 connect，不能只 snapshot——
+    // 桥里的设备句柄在 DFU 前已被取走，直接 snapshot 只会一直报「未连接」。
     var reconnected = false;
     for (var i = 0; i < 10; i++) {
       await Future<void>.delayed(const Duration(seconds: 2));
@@ -1006,8 +1020,9 @@ class DeviceStore extends ChangeNotifier {
             list.where((d) => d.name == connectedName).firstOrNull ??
             list.firstOrNull;
         if (target != null) {
-          final snap = await _gw.snapshot();
-          _applySnapshot(snap);
+          final snap = await _gw.connect(target.id);
+          _lastDevice = target;
+          if (snap != null) _applySnapshot(snap);
           reconnected = true;
           break;
         }
