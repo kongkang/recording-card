@@ -425,7 +425,15 @@ class _MainView extends StatelessWidget {
                     child: child,
                   ),
                 ),
-                child: store.isRecording
+                child: store.recordingBusy
+                    // 命令在跑：这里必须给出可见反馈。蓝牙被占时这一等可能十几秒，
+                    // 只在开关上做 50% 半透明肉眼看不出，用户会以为点坏了。
+                    ? const Text(
+                        '处理中…',
+                        key: ValueKey('rec-busy'),
+                        style: TextStyle(fontSize: 14, color: RCColors.sec),
+                      )
+                    : store.isRecording
                     ? Row(
                         key: const ValueKey('rec-on'),
                         mainAxisSize: MainAxisSize.min,
@@ -473,19 +481,15 @@ class _MainView extends StatelessWidget {
                 label: '录音开关',
                 toggled: store.isRecording,
                 button: true,
+                // 自绘开关必须自己声明启用状态：不声明的话系统（读屏/自动化）
+                // 会把它当成"不可用"，与它实际可点的事实矛盾。
+                enabled: !store.recordingBusy,
                 child: GestureDetector(
                   key: const Key('rec-toggle'),
                   behavior: HitTestBehavior.opaque,
-                  onTap: store.recordingBusy
-                      ? null
-                      : () async {
-                          final error = await store.toggleRecording();
-                          if (error != null && context.mounted) {
-                            ScaffoldMessenger.of(
-                              context,
-                            ).showSnackBar(SnackBar(content: Text(error)));
-                          }
-                        },
+                  // 忙时也保留手势：点击由 store 给出「请稍候」的可见反馈，
+                  // 而不是把点击静默吞掉。
+                  onTap: store.toggleRecording,
                   child: RCSwitch(
                     on: store.isRecording,
                     busy: store.recordingBusy,
@@ -610,6 +614,16 @@ class _MainView extends StatelessWidget {
               store.devStateText,
               key: const Key('dev-state'),
               style: const TextStyle(fontSize: 12, color: RCColors.okInk),
+            ),
+          ),
+        // 录音失败就地展示：弹层盖住整个屏幕，SnackBar 在它下面根本看不见。
+        if (store.recordingError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              store.recordingError!,
+              key: const Key('rec-error'),
+              style: const TextStyle(fontSize: 12, color: RCColors.danger),
             ),
           ),
         const SizedBox(height: 10),

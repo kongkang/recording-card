@@ -501,12 +501,23 @@ class DeviceStore extends ChangeNotifier {
     if (s.recording && _clockUsers > 0) _startClock();
   }
 
+  /// 单次设备快照的超时上限。
+  ///
+  /// 蓝牙链路是单通道：同步取回文件期间（实测能卡在同一文件上一分多钟），
+  /// 快照命令只能排队。给它一个上限，超过就当作"本次没读到"，
+  /// 由下一次心跳/轮询重试，而不是无限等待。
+  static const Duration _snapshotTimeout = Duration(seconds: 8);
+
   /// 弹层打开时刷新真实设备数据。
+  ///
+  /// **必须带超时**：蓝牙是单通道，文件传输（同步取回）会把链路占满，
+  /// 此时 `snapshot` 会一直排队不返回。没有超时的话调用方会永远挂着——
+  /// 录音开关就是这样卡在「忙」上：开关半透明、点击被吞，用户只觉得点不动。
   Future<void> refreshFromDevice() async {
     if (!_gateway.available) return;
     final epoch = _epoch;
     try {
-      final snapshot = await _gw.snapshot();
+      final snapshot = await _gw.snapshot().timeout(_snapshotTimeout);
       if (epoch != _epoch) return;
       _applySnapshot(snapshot);
       if (linkState != LinkState.connected) {
@@ -521,6 +532,10 @@ class DeviceStore extends ChangeNotifier {
         return;
       }
       // 超时/单次查询失败：保留上次状态，不把状态页突然翻成扫描页
+    } on TimeoutException {
+      // 链路被文件传输占满时 snapshot 会一直排队：这里放弃本次刷新即可，
+      // 下一次心跳/轮询会再试。绝不让调用方无限等待。
+      if (epoch != _epoch) return;
     }
     notifyListeners();
   }
@@ -572,14 +587,26 @@ class DeviceStore extends ChangeNotifier {
   /// 录音命令进行中：UI 用它禁用开关，避免连点造成 start/stop 竞态。
   bool recordingBusy = false;
 
+  /// 最近一次录音操作的失败原因。
+  ///
+  /// 由弹层**就地展示**：以前用 SnackBar，但弹层是整屏覆盖层，SnackBar 显示在
+  /// 它下面被完全挡住——用户点了开关看不到任何反馈，只会觉得"点了没反应"。
+  String? recordingError;
+
   /// 开始/停止录音（真实命令）。
   ///
   /// 设备回包后立刻刷新快照，界面据 [isRecording] 切到「录音中 + 正计时」或
   /// 「未录音」；计时从本次连接后的第一次开始录音算起（设备不回传起点）。
   Future<String?> toggleRecording() async {
     if (!isConnected) return '录音卡未连接';
-    if (recordingBusy) return null;
+    if (recordingBusy) {
+      // 上一条命令还没回来：不静默丢弃点击，明确告诉用户在等什么。
+      recordingError = '正在执行上一条命令，请稍候';
+      notifyListeners();
+      return null;
+    }
     recordingBusy = true;
+    recordingError = null;
     notifyListeners();
     try {
       // 用**明确的开始/停止**而不是 toggle：
@@ -592,8 +619,10 @@ class DeviceStore extends ChangeNotifier {
       await refreshFromDevice();
       return null;
     } on TimeoutException {
-      return '录音命令超时，请重试';
+      recordingError = '录音命令超时，请重试';
+      return recordingError;
     } on CardException catch (e) {
+      recordingError = e.message;
       return e.message;
     } finally {
       recordingBusy = false;

@@ -679,21 +679,21 @@ class RealCardGateway implements CardGateway {
   ///
   /// 固件出错时只回一个 `code`，直接抛给用户就是「code -2」这种看不懂的东西。
   /// 这里统一附上设备原码（排障要），但先说清楚发生了什么、该怎么办。
+  ///
+  /// **注意**：SDK 与固件文档里都没有设备错误码表，`-1/-2/-3` 的确切含义未知。
+  /// 所以这里只说"设备拒绝了这条命令 + 原码"，不猜具体原因（以前那句
+  /// 「请确认存储卡已插好、设备未在传输文件」是没有依据的推测话术）。
   static String _friendlyDeviceError(String raw) {
     final match = RegExp(r'code[:\s]*(-?\d+)').firstMatch(raw);
     final code = match == null ? null : int.tryParse(match.group(1)!);
-    final suffix = code == null ? '' : '（设备错误码 $code）';
-    switch (code) {
-      case -1:
-        return '录音卡拒绝了这条命令，请重连后重试$suffix';
-      case -2:
-        // 实际观测：录音起始失败通常是卡端存储/状态未就绪，最常见是 SD 未挂载或正忙
-        return '录音卡无法开始录音：请确认存储卡已插好、设备未在传输文件$suffix';
-      case -3:
-        return '录音卡当前状态不允许该操作，请稍后重试$suffix';
-      default:
-        return code == null ? raw : '录音卡返回错误$suffix';
-    }
+    if (code == null) return raw;
+    final suffix = '（设备错误码 $code）';
+    return switch (code) {
+      -1 => '录音卡拒绝了这条命令，请重连后重试$suffix',
+      -2 => '录音卡拒绝了这条命令$suffix',
+      -3 => '录音卡当前状态不允许该操作，请稍后重试$suffix',
+      _ => '录音卡返回错误$suffix',
+    };
   }
 
   /// 最近一次设备错误附带的诊断详情（null = 没有）。

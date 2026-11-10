@@ -152,6 +152,9 @@ class _SettingPageState extends State<SettingPage> {
       container: true,
       button: true,
       toggled: on,
+      // 自绘开关不带系统语义，启用状态必须显式声明：
+      // 不声明时读屏/自动化会把整行当成"不可用"，而它其实点得动。
+      enabled: true,
       label: item.semanticLabel,
       onTap: () => _toggle(item.key),
       child: ExcludeSemantics(
