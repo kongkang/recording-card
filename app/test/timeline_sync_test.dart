@@ -34,7 +34,9 @@ void main() {
       recordings: recordings,
       loadPersistedState: false,
     );
+    // 取下录音的前提是设备在场；这条用例验证的是"连上之后"的取回流程
     await pumpShell(tester, store: store);
+    store.deviceConnected = () => true;
     expect(find.byKey(const Key('timeline-empty')), findsOneWidget);
 
     // 真的做一次下拉手势（RefreshIndicator 是唯一同步入口）
@@ -85,7 +87,9 @@ void main() {
       recordings: recordings,
       loadPersistedState: false,
     );
+    // 设备「在场」但设备侧报未连接：这是真实故障路径，要如实呈现
     await pumpShell(tester, store: store);
+    store.deviceConnected = () => true;
 
     final error = await store.syncRecordings();
 

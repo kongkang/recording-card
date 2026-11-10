@@ -27,6 +27,9 @@ abstract final class RCColors {
   /// 已连接但未录音（待机）的胶囊圆点：橙=没在运行，绿=正在录音。
   static const warn = Color(0xFFFF9500);
   static const danger = Color(0xFFFF3B30);
+
+  /// 看门狗判定掉线后自动重连中：蓝点。重连一次失败即回灰（无设备）。
+  static const info = Color(0xFF007AFF);
 }
 
 abstract final class RCDims {

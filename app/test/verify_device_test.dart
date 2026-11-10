@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/device/card_gateway.dart';
 import 'package:recording_card/core/store/device_store.dart';
+import 'package:recording_card/pages/status_sheet.dart';
 
 import 'support/fake_gateway.dart';
 import 'support/harness.dart';
@@ -60,22 +61,28 @@ void main() {
       expect(find.textContaining('已连接'), findsWidgets);
       expect(find.textContaining('可录至'), findsOneWidget);
       expect(find.textContaining('电量高'), findsOneWidget);
-      // 三个可点行
+      // 可点行：同步 / 固件；Wi-Fi 行按 2026-11-10 决策整行隐藏（能力未就绪）
       expect(find.byKey(const Key('sync-now')), findsOneWidget);
-      expect(find.byKey(const Key('wifi-row')), findsOneWidget);
       expect(find.byKey(const Key('fw-update')), findsOneWidget);
+      expect(
+        find.byKey(const Key('wifi-row')),
+        findsNothing,
+        reason: 'Wi-Fi 能力未就绪，整行不应出现',
+      );
       // 未同步过：如实说「尚未同步」，不假装刚刚同步
       expect(
         tester.widget<Text>(find.byKey(const Key('sync-txt'))).data,
         '自动同步 · 尚未同步',
       );
-      // 打开弹层时就预取概要信息：Wi-Fi 数量来自设备凭据，固件状态来自 otaInfo
+      // 打开弹层时仍预取概要到内存（Wi-Fi 数量来自设备凭据），
+      // 但 Wi-Fi 行已隐藏，界面上不再显示「已配置 · N 个网络」。
       await tester.pump();
       expect(
         find.textContaining('已配置 · 1 个网络'),
-        findsOneWidget,
-        reason: '已保存网络数量来自设备凭据，不是写死的 0',
+        findsNothing,
+        reason: 'Wi-Fi 行隐藏后不应出现在弹层里',
       );
+      expect(gateway.snapshotCalls, greaterThan(0));
       expect(
         tester.widget<Text>(find.byKey(const Key('fw-val'))).data,
         '已是最新',
@@ -251,6 +258,8 @@ void main() {
 
   // verify.cjs 248-273：Wi-Fi 配网（已保存置顶/展开/范围外置灰/直连/新网络保存/计数）
   testWidgets('wifi-setup / wifi-count', (tester) async {
+    // Wi-Fi 入口按 owner 决策暂时隐藏；入口恢复时这条用例随之生效
+    if (!showWifiRow) return;
     final gateway = FakeCardGateway(
       initialSnapshot: defaultSnapshot,
       wifiCredentials: const [
@@ -330,6 +339,7 @@ void main() {
 
   // 空密码在本地就拦下，不下发到设备
   testWidgets('wifi-empty-password', (tester) async {
+    if (!showWifiRow) return;
     final gateway = FakeCardGateway(
       initialSnapshot: defaultSnapshot,
       wifiNetworks: const [

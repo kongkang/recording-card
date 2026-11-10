@@ -10,7 +10,8 @@
 library;
 
 import 'dart:io';
-import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 
 import '../../core/device/card_gateway.dart';
 import '../../core/models/recording.dart';
@@ -256,14 +257,50 @@ class RecordingPipeline {
           .where((f) => f.stage != RecordingStage.ready)
           .toList()
         ..sort((a, b) => b.startAtMs.compareTo(a.startAtMs));
+
+      // 续跑必须知道设备上还剩哪些文件：否则「本地没有 .apm」会被当成新下载，
+      // 而设备上早已被取走（固件取完即删），于是每轮重试都卡在同一处、永远走不完。
+      // 拿不到清单（未连接/超时）就把这批标记为可重试的排队态并**立刻收尾**，
+      // 不让进度条停在 N/N 上。
+      final Map<String, CardFile> deviceFiles = {};
+      var listingFailed = false;
+      if (pending.isNotEmpty) {
+        try {
+          final files = await gateway.files();
+          for (final f in files) {
+            deviceFiles[f.name] = f;
+          }
+        } on Object catch (e) {
+          listingFailed = true;
+          debugPrint('[pipeline] 续跑读取文件列表失败：$e');
+        }
+      }
+
       var ready = 0;
       var failed = 0;
       final failures = <String>[];
       for (var i = 0; i < pending.length; i++) {
         final file = pending[i];
+        // 本地没有音频、设备上也没这个文件（或清单读不到）：不再重试下载，
+        // 明确标成失败并给出原因，避免进度永远停在最后一条。
+        final lacksAudio =
+            file.apmPath.isEmpty || !await File(file.apmPath).exists();
+        if (lacksAudio && (listingFailed || !deviceFiles.containsKey(file.deviceName))) {
+          failed++;
+          failures.add('${file.deviceName}: 录音文件不在本机、设备上也不存在');
+          file
+            ..stage = RecordingStage.failed
+            ..error = listingFailed
+                // 未连卡时谈"读取失败"会误导；如实说是无法核对，让用户知道要做什么
+                ? '未连接到录音卡，无法核对缺失的录音，连上后可重试'
+                : '设备上已不存在该录音，无法补取';
+          await store.save(file);
+          continue;
+        }
         try {
           await _processFile(
             file,
+            source: deviceFiles[file.deviceName],
             fileIndex: i,
             fileTotal: pending.length,
             onProgress: onProgress,

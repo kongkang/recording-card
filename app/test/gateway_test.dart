@@ -106,7 +106,7 @@ void main() {
     test('CardSnapshot.fromJson：字段缺失/类型错都按 0 兜底，不崩', () {
       final snapshot = CardSnapshot.fromJson({
         'battery': {'level': 63, 'isCharging': true},
-        'state': {'recording': true},
+        'record': {'isRecording': true},
         'info': {'version': '2.1.0', 'versionCode': 21},
       });
       expect(snapshot.batteryLevel, 63);

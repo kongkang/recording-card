@@ -115,7 +115,8 @@ void main() {
     expect(find.text('未录音'), findsOneWidget);
     expect(find.byKey(const Key('rec-clock')), findsNothing);
     expect(_dotColor(tester), RCColors.warn, reason: '停止后回到橙色待机');
-    expect(gateway.recordCalls, ['toggle', 'toggle']);
+    // 用明确的 start/stop，而不是 toggle：状态不一致时 toggle 会把"开"变成"停"
+    expect(gateway.recordCalls, ['start', 'stop']);
   });
 
   testWidgets('停止录音自动同步：顶部状态块切到「正在同步」', (tester) async {
