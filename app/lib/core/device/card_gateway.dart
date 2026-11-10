@@ -111,6 +111,40 @@ class CardDevice {
   final int? rssi;
 }
 
+/// 断连结果：桥如实报告这次是否真的释放了 BLE 链路。
+///
+/// 以前 `disconnect()` 是 void，桥又无条件回成功——界面显示「已断开」，
+/// 设备端却还保持着连接、不对外广播。现在把结果带回来，界面才能说实话。
+class CardDisconnectReport {
+  const CardDisconnectReport({
+    required this.released,
+    this.hadDevice = false,
+    this.detail,
+  });
+
+  /// 是否确认释放（没有设备句柄也算已释放）。
+  final bool released;
+
+  /// 桥里是否存在设备句柄（false = 本来就没连）。
+  final bool hadDevice;
+
+  /// SDK 断连的原始结果（ok / timeout / error:…），用于排障。
+  final String? detail;
+
+  factory CardDisconnectReport.fromJson(Map<String, dynamic> json) {
+    final released = json['released'];
+    final sdk = json['sdk'];
+    return CardDisconnectReport(
+      // 旧桥没有 released 字段：按「已释放」兜底，避免升级期误报
+      released: released is bool ? released : true,
+      hadDevice: json['hadDevice'] == true,
+      detail: sdk?.toString(),
+    );
+  }
+
+  static const alreadyReleased = CardDisconnectReport(released: true);
+}
+
 /// 设备上的录音文件。
 ///
 /// SDK 的 `FileEntry` 除 name/size 外还带录音会话标记与时间：
@@ -408,7 +442,9 @@ abstract class CardGateway {
 
   Future<List<CardDevice>> scan({int timeoutMs = 6000});
   Future<CardSnapshot> connect(String deviceId);
-  Future<void> disconnect();
+
+  /// 断开链路；返回桥的如实结果（是否真的释放）。
+  Future<CardDisconnectReport> disconnect();
   Future<CardSnapshot> snapshot();
 
   Future<void> record(String action); // start | stop | toggle
@@ -761,7 +797,13 @@ class RealCardGateway implements CardGateway {
   }
 
   @override
-  Future<void> disconnect() => _once('disconnect');
+  Future<CardDisconnectReport> disconnect() async {
+    final json = await _once('disconnect');
+    final data = json['data'];
+    return CardDisconnectReport.fromJson(
+      data is Map<String, dynamic> ? data : const {},
+    );
+  }
 
   @override
   Future<CardSnapshot> snapshot() async {
@@ -1013,7 +1055,7 @@ class UnsupportedCardGateway implements CardGateway {
   @override
   Future<CardSnapshot> connect(String deviceId) async => _fail();
   @override
-  Future<void> disconnect() async => _fail();
+  Future<CardDisconnectReport> disconnect() async => _fail();
   @override
   Future<CardSnapshot> snapshot() async => _fail();
   @override
@@ -1120,7 +1162,7 @@ class ActivityGateway implements CardGateway {
       _run(() => _inner.connect(deviceId));
 
   @override
-  Future<void> disconnect() => _run(_inner.disconnect);
+  Future<CardDisconnectReport> disconnect() => _run(_inner.disconnect);
 
   @override
   Future<CardSnapshot> snapshot() => _run(_inner.snapshot);

@@ -258,15 +258,27 @@ class DeviceStore extends ChangeNotifier {
     _heartbeatTimer = null;
     _stopSheetWatch();
     _lastDevice = null;
+    CardDisconnectReport? report;
+    String? failure;
     try {
-      await _gw.disconnect();
-    } on CardException {
-      // 已经断了也算成功
+      // 桥会先停事件泵/实时流再断，并如实回报链路是否释放；
+      // 不能把"命令发出去了"当"已经断开"——那正是设备端一直不广播的成因。
+      report = await _gw.disconnect().timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      failure = '断开超时，蓝牙链路可能仍在连接';
+    } on CardException catch (e) {
+      // 桥不可用（模拟器）或已经断过：都不该把用户卡在"未断开"上
+      failure = e.kind == CardErrorKind.unavailable ? null : e.message;
     }
     if (epoch != _epoch) return;
     _resetLiveState();
     linkState = LinkState.disconnected;
     connectedName = null;
+    linkError = failure ??
+        (report != null && !report.released
+            ? '蓝牙链路未确认释放，请重试连接后再断开'
+            : null);
+    if (linkError != null) debugPrint('[disconnect] $linkError');
     notifyListeners();
   }
 
@@ -414,7 +426,24 @@ class DeviceStore extends ChangeNotifier {
       // 先停表：重连只许试一次，不能被后续 tick 叠成无限重试
       _heartbeatTimer?.cancel();
       _heartbeatTimer = null;
+      // 判定掉线后先让桥真正释放旧链路，再重连。
+      // 只换 UI 状态不释放链路（以前的"假断开"）会让设备端继续认为已连接、
+      // 停止对外广播，重连也就扫不到它。
+      await _releaseLink();
+      if (epoch != _epoch) return;
       unawaited(_retryReconnect());
+    }
+  }
+
+  /// 尽力释放桥里的 BLE 链路；失败只记日志，不阻断重连/断开流程。
+  Future<void> _releaseLink() async {
+    try {
+      final report = await _gw.disconnect().timeout(const Duration(seconds: 6));
+      if (!report.released) {
+        debugPrint('[watchdog] 旧链路未确认释放：${report.detail ?? "unknown"}');
+      }
+    } on Object catch (e) {
+      debugPrint('[watchdog] 释放旧链路失败：$e');
     }
   }
 
@@ -428,7 +457,10 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
     final device = _lastDevice;
     if (device == null || !_gateway.available) {
+      // 连设备 id 都没有，重连无从谈起：立刻回到灰点，别让用户干等几秒蓝点。
+      // 桥里的旧句柄仍要清掉（后台尽力而为），否则设备端可能保持连接、不重新广播。
       _dropToDisconnected('与录音卡的连接已断开');
+      await _releaseLink();
       return;
     }
 
@@ -445,6 +477,9 @@ class DeviceStore extends ChangeNotifier {
       _applySnapshot(snapshot);
       linkState = LinkState.connected;
       linkError = null;
+      // 重连成功后必须把看门狗重新挂上：只在首次 connect 启表的话，
+      // 一次掉线重连之后就再也没人探测了。
+      _startHeartbeat();
     } on Object catch (e, st) {
       if (epoch != _epoch) return;
       debugPrint('[watchdog] 重连失败：$e');
@@ -452,6 +487,9 @@ class DeviceStore extends ChangeNotifier {
         debugPrintStack(stackTrace: st, maxFrames: 6);
         return true;
       }());
+      // 半开连接也释放掉：留着它只会让下次连接更难
+      await _releaseLink();
+      if (epoch != _epoch) return;
       _dropToDisconnected('与录音卡的连接已断开，请重新连接');
     }
     notifyListeners();
