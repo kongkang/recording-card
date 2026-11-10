@@ -431,15 +431,19 @@ class AppStore extends ChangeNotifier {
         .where((e) => f == FeedFilter.all || f == FeedFilter.event)
         .toList();
 
-    // 先按天放记录（0=今天，其余=过去 N 天），再把总结卡插到它覆盖内容的
-    // 最后一条记录之后——总结卡应该出现在「被总结的那段时间」下面，而不是
-    // 无条件堆在今天最上面。
-    final byDay = <int, List<Object>>{0: []};
+    // 总结卡是「当天最后产出的卡片」：在倒序 feed 里放到它覆盖的**最新一天**
+    // 分组的最上方；找不到来源时退回今天顶部。
+    final topByDay = <int, List<SummaryCard>>{};
+    for (final s in sums) {
+      (topByDay[_latestSourceDay(s) ?? 0] ??= []).add(s);
+    }
+
+    // 记录按天分组；feed 是倒序，同一天内必须按时间从晚到早排，不依赖 events
+    // 的原始顺序。先排记录，再把总结卡插到当天最上方。
+    final byDay = <int, List<Object>>{};
     for (final e in evs) {
       (byDay[e.dayOffset] ??= []).add(e);
     }
-    // feed 是倒序：同一天内必须按时间从晚到早排，不能依赖 events 的原始顺序。
-    // 此时列表里只有记录（总结卡还没插入），可以安全按 time 排序。
     for (final list in byDay.values) {
       list.sort((a, b) {
         final ea = a as RecordEvent;
@@ -447,52 +451,28 @@ class AppStore extends ChangeNotifier {
         return _minutesOfDay(eb.time).compareTo(_minutesOfDay(ea.time));
       });
     }
-    final unanchored = <SummaryCard>[];
-    for (final s in sums) {
-      final anchor = _oldestSource(s);
-      final list = anchor == null ? null : byDay[anchor.dayOffset];
-      if (anchor == null || list == null) {
-        unanchored.add(s);
-        continue;
-      }
-      var at = list.indexWhere(
-        (x) => x is RecordEvent && x.id == anchor.id,
-      );
-      at = at < 0 ? list.length : at + 1;
-      // 同一锚点已插入的总结卡之后，保持 summaries 的先后顺序
-      while (at < list.length && list[at] is SummaryCard) {
-        at++;
-      }
-      list.insert(at, s);
+    for (final entry in topByDay.entries) {
+      (byDay[entry.key] ??= []).insertAll(0, entry.value);
     }
-    // 找不到来源（或「总结」Tab 只显示总结）时退回今天顶部
-    byDay[0]!.insertAll(0, unanchored);
 
     final days = byDay.keys.where((d) => byDay[d]!.isNotEmpty).toList()
       ..sort();
     return [for (final d in days) FeedGroup(dayLabel(d), byDay[d]!)];
   }
 
-  /// 总结卡的时间轴锚点：覆盖记录里最早的一条（日偏移最大、同日时间最早）。
-  ///
-  /// 时间轴是倒序展示的，插在这条记录之后 = 视觉上正好落在这段内容的下方。
-  /// pending 卡还没有 srcIds，用当前勾选集推导，生成中的卡也保持在原位。
-  RecordEvent? _oldestSource(SummaryCard s) {
+  /// 总结卡所属日：来源记录里**最新**的一天（日偏移最小）。跨天总结落到最新
+  /// 一天的顶部；pending 卡还没有 srcIds，用当前勾选集推导。
+  int? _latestSourceDay(SummaryCard s) {
     final ids = s.srcIds.isNotEmpty
         ? s.srcIds
         : (s.state == SummaryState.pending ? selIds.toList() : const <String>[]);
-    RecordEvent? oldest;
+    int? day;
     for (final id in ids) {
       final e = eventByIdOrNull(id);
       if (e == null || e.live) continue;
-      if (oldest == null ||
-          e.dayOffset > oldest.dayOffset ||
-          (e.dayOffset == oldest.dayOffset &&
-              _minutesOfDay(e.time) < _minutesOfDay(oldest.time))) {
-        oldest = e;
-      }
+      if (day == null || e.dayOffset < day) day = e.dayOffset;
     }
-    return oldest;
+    return day;
   }
 
   static int _minutesOfDay(String hhmm) {
