@@ -66,21 +66,66 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
       assert(mins[i - 1] >= mins[i], `${g.day} 内时间应倒序：${g.times.join(', ')}`);
     }
   }
-  // 相册缩略图：1 张单图、2~3 张层叠、>3 张第 4 层带总数遮罩；标题时间单行省略
-  assert.equal(await p.$$eval('[data-testid="pics-e1"] .pthumb', x => x.length), 1);
+  // 相册缩略图：每天最多两张带图记录；1 张单图、2 张层叠、>3 张第 4 层总数遮罩
+  assert.equal(await p.$('[data-testid="pics-e1"]'), null, 'e1 今天不带图（今天最多 e2/e3 两张）');
   assert.equal(await p.$$eval('[data-testid="pics-e2"] .pthumb', x => x.length), 2);
   assert.equal(await p.$$eval('[data-testid="pics-e3"] .pthumb', x => x.length), 4);
-  assert.equal(await p.$$eval('[data-testid="pics-e5"] .pthumb', x => x.length), 3);
+  assert.equal(await p.$$eval('[data-testid="pics-e5"] .pthumb', x => x.length), 1);
+  assert.equal(await p.$$eval('[data-testid="pics-e6"] .pthumb', x => x.length), 3);
   assert.equal(await p.$$eval('[data-testid="pics-e3"] .pthumb.count', x => x.length), 1);
   assert.equal(await p.$eval('[data-testid="pics-e3"] .pcount', x => x.textContent.trim()), '4');
-  assert.equal(await p.$eval('[data-testid="pics-e6"] .pcount', x => x.textContent.trim()), '5');
+  assert.equal(await p.$('[data-testid="pics-e6"] .pcount'), null);
   const thumbBox = await p.$eval('[data-testid="pics-e3"] .pthumb', x => { const r = x.getBoundingClientRect(); return { w: r.width, h: r.height }; });
   assert(Math.abs(thumbBox.w - thumbBox.h) < 0.5, '缩略图应为正方形');
   const stackH = await p.$eval('[data-testid="pics-e3"]', x => x.getBoundingClientRect().height);
   const textH = await p.$eval('[data-testid="card-e3"] .pc-text', x => x.getBoundingClientRect().height);
   assert(Math.abs(stackH - textH) <= 1, `缩略图应与标题时间同高：${stackH}/${textH}`);
   assert(await p.$eval('[data-testid="card-e3"] .pc-text h3', x => getComputedStyle(x).textOverflow === 'ellipsis' && getComputedStyle(x).whiteSpace === 'nowrap'));
+  // 总结卡的图片计数（含 2 张 = e2 的两张）
+  assert.equal(await p.$eval('[data-testid="card-sum-demo"] .sumphotos', x => x.textContent.trim()), '含 2 张图片');
+  // 分组内倒序：日终产物（总结/日报/未归类）在顶部，记录中间，做梦卡在底部
+  const dayKinds = await p.evaluate(() => {
+    const out = []; let cur = null;
+    [...document.querySelectorAll('#feed > *')].forEach(el => {
+      if (el.classList.contains('tl-date')) { cur = { day: el.textContent.trim(), kinds: [] }; out.push(cur); }
+      else if (cur) { const c = el.querySelector('.card'); if (c) cur.kinds.push(c.dataset.kind); }
+    });
+    return out;
+  });
+  assert.equal(dayKinds[0].day, '今天');
+  assert.deepEqual(dayKinds[0].kinds.slice(0, 2), ['summary', 'unclassified'], '总结/未归类应在今天分组顶部');
+  assert.equal(dayKinds[0].kinds[dayKinds[0].kinds.length - 1], 'dream', '做梦卡是当天最早事件，应在倒序分组底部');
+  assert.equal(dayKinds[1].kinds[0], 'daily', '日报是当天最后产物，应在昨天分组顶部');
+  assert(await p.$eval('[data-testid="card-dream-0"]', x => x.innerText.includes('做梦完成') && x.innerText.includes('知识库')));
+  assert(await p.$eval('[data-testid="card-unc-0"]', x => x.innerText.includes('今日未归类图片') && x.innerText.includes('1 张')));
+  assert(await p.$eval('[data-testid="card-daily-1"]', x => x.innerText.includes('昨日日报') && x.innerText.includes('自动生成')));
+  assert.equal(await p.$('[data-testid="card-daily-0"]'), null, '今天已有手动总结，不应出现日报');
+  const sumTop = await p.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
+  const e1Top = await p.$eval('[data-testid="card-e1"]', x => x.getBoundingClientRect().top);
+  assert(sumTop < e1Top, '总结卡应在当天记录上方');
+  // 日报可点开结果页
+  await p.evaluate(() => document.querySelector('[data-testid="card-daily-1"]').click());
+  assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
+  assert(await p.$eval('#sum-title', x => x.innerText.includes('昨日日报')));
+  await p.evaluate(() => goBack());
+  await new Promise(r => setTimeout(r, 300));
   await shot('timeline-collapsed');
+
+  // 详情：照片按时间插入对话流；标记「不属于本段」→ 外侧缩略图减少 + 移入未归类
+  await p.click('[data-testid="card-e2"]');
+  await p.click('[data-testid="detail-e2"]');
+  assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
+  assert.equal(await p.$$eval('#dt-dlg .dphoto', x => x.length), 2);
+  const flowKinds = await p.$$eval('#dt-dlg > *', els => els.map(el => el.classList.contains('dphoto') ? 'photo' : 'turn'));
+  assert(flowKinds.includes('photo') && flowKinds[0] === 'turn', '照片应插在对话中间');
+  await shot('detail-photo');
+  await p.evaluate(() => document.querySelector('#dt-dlg .dphoto-x').click());
+  assert.equal(await p.$$eval('#dt-dlg .dphoto', x => x.length), 1);
+  assert.equal(await p.$$eval('[data-testid="pics-e2"] .pthumb', x => x.length), 1);
+  assert.equal(await p.$eval('[data-testid="card-sum-demo"] .sumphotos', x => x.textContent.trim()), '含 1 张图片');
+  assert.equal(await p.$eval('[data-testid="card-unc-0"] .unccount', x => x.textContent.trim()), '2 张');
+  await p.evaluate(() => goBack());
+  await new Promise(r => setTimeout(r, 300));
 
   // 卡片展开/收起 → 详情按钮进详情页（单屏压栈）
   await p.click('[data-testid="card-e1"]');
@@ -210,7 +255,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     const mins = t => { const [h, m] = (t || '0:0').split(':').map(Number); return h * 60 + m; };
     const s = summaries.find(x => x.state === 'done' && x.id !== 'sum-demo');
     const srcs = EVENTS.filter(e => (s.srcIds || []).includes(e.id));
-    srcs.sort((a, b) => (b.off - a.off) || (mins(a.time) - mins(b.time)));
+    // 最新来源：日偏移最小、同日时间最晚；总结卡应在这条记录上方（分组顶部）
+    srcs.sort((a, b) => (a.off - b.off) || (mins(b.time) - mins(a.time)));
     const anchor = srcs[0];
     const cardEl = document.querySelector('[data-testid="card-' + s.id + '"]');
     const anchorEl = anchor ? document.querySelector('[data-testid="card-' + anchor.id + '"]') : null;
@@ -221,7 +267,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     };
   });
   assert(anchorInfo.hasCards, '总结卡或锚点记录不在 DOM');
-  assert(anchorInfo.cardTop > anchorInfo.anchorTop, '总结卡应落在所总结内容之后（下方）');
+  assert(anchorInfo.cardTop < anchorInfo.anchorTop, '总结卡应在最新来源记录上方（当天分组顶部）');
   // 点「刚生成的」总结卡（demo 卡也在这条 feed 里，不能按 first 点）
   const genSumId = await p.evaluate(() => summaries.find(s => s.state === 'done' && s.id !== 'sum-demo').id);
   await p.click(`[data-testid="card-${genSumId}"]`);
@@ -461,6 +507,6 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'connect-default', 'scan-dyj-sorted', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'daily-report', 'dream-card', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'connect-default', 'scan-dyj-sorted', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });
