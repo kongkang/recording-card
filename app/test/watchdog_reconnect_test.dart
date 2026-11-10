@@ -108,10 +108,22 @@ void main() {
 
     expect(store.linkState, LinkState.connected, reason: '重连成功后应回到已连接');
     expect(gw.connectCalls, 2, reason: '首次连接 + 看门狗重连各一次');
+    expect(gw.disconnectCalls, 1, reason: '判定掉线先真的释放旧链路');
+    expect(gw.disconnectCallsAtConnect, [0, 1],
+        reason: '重连前必须先 disconnect，不能只改 UI 状态');
     expect(
       gw.scanCalls,
       scanBefore,
       reason: '重连必须直连上次设备，不能靠扫描（已连接设备不广播）',
+    );
+
+    // 重连成功后看门狗要重新值班：再空闲 30 秒应继续探测
+    final snapshotsAfterReconnect = gw.snapshotCalls;
+    await tester.pump(const Duration(seconds: 35));
+    expect(
+      gw.snapshotCalls,
+      greaterThan(snapshotsAfterReconnect),
+      reason: '重连成功后必须重启心跳，不能从此没人探测',
     );
 
     store.dispose();
@@ -140,5 +152,7 @@ void main() {
     expect(find.text('无设备'), findsOneWidget);
     expect(find.byKey(const Key('capsule-off')), findsOneWidget);
     expect(gw.connectCalls, 2, reason: '一次成功连接 + 一次失败重连，不再多试');
+    expect(gw.disconnectCalls, 2,
+        reason: '判定掉线释放一次；重连失败后再清一次半开连接');
   });
 }

@@ -421,4 +421,58 @@ void main() {
     await store.restoreLink();
     expect(await store.toggleRecording(), isNull);
   });
+
+  testWidgets('断开：桥确认释放链路 → 状态断开且不残留错误', (tester) async {
+    final gateway = FakeCardGateway(
+      devices: const [CardDevice(id: 'dev-1', name: 'DYJV2_T4W25T', rssi: -52)],
+    );
+    final store = DeviceStore(gateway: gateway);
+    addTearDown(store.dispose);
+    await store.startScan();
+    await store.connectTo(store.discovered.single);
+    expect(store.linkState, LinkState.connected);
+
+    await store.disconnectDevice();
+
+    expect(gateway.disconnectCalls, 1, reason: '断开必须真的命令桥，不是只改 UI');
+    expect(store.linkState, LinkState.disconnected);
+    expect(store.linkError, isNull);
+  });
+
+  testWidgets('断开：桥回报链路未释放 → 如实提示，不谎报干净断开', (tester) async {
+    final gateway = FakeCardGateway(
+      devices: const [CardDevice(id: 'dev-1', name: 'DYJV2_T4W25T', rssi: -52)],
+      // 模拟 SDK 断连超时：界面可以显示未连接，但必须说明链路可能还挂着
+      disconnectReport: const CardDisconnectReport(
+        released: false,
+        hadDevice: true,
+        detail: 'timeout',
+      ),
+    );
+    final store = DeviceStore(gateway: gateway);
+    addTearDown(store.dispose);
+    await store.startScan();
+    await store.connectTo(store.discovered.single);
+
+    await store.disconnectDevice();
+
+    expect(store.linkState, LinkState.disconnected);
+    expect(store.linkError, contains('未确认释放'));
+  });
+
+  testWidgets('断开：桥不可用（模拟器）时仍然落到未连接，不卡住用户', (tester) async {
+    final gateway = FakeCardGateway(
+      devices: const [CardDevice(id: 'dev-1', name: 'DYJV2_T4W25T', rssi: -52)],
+      failDisconnect: CardException.unavailable(),
+    );
+    final store = DeviceStore(gateway: gateway);
+    addTearDown(store.dispose);
+    await store.startScan();
+    await store.connectTo(store.discovered.single);
+
+    await store.disconnectDevice();
+
+    expect(store.linkState, LinkState.disconnected);
+    expect(store.linkError, isNull, reason: '桥不可用不是用户的错，别给误导性提示');
+  });
 }

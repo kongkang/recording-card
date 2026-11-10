@@ -13,13 +13,21 @@ cd "$(dirname "$0")/card_bridge"
 
 TOOLCHAIN="${RC_RUST_TOOLCHAIN:-1.94.0}"
 RUSTUP_HOME_DIR="${RUSTUP_HOME:-$HOME/.rustup}"
-TOOLCHAIN_BIN="$RUSTUP_HOME_DIR/toolchains/$TOOLCHAIN-aarch64-apple-darwin/bin"
+# 宿主三元组不要写死：Apple Silicon 是 aarch64-apple-darwin，Intel 是 x86_64-apple-darwin。
+# 两种机器都用同一条 rustup 工具链名，按目录前缀找即可。
+TOOLCHAIN_BIN=""
+for candidate in "$RUSTUP_HOME_DIR"/toolchains/"$TOOLCHAIN"-*/bin; do
+  if [ -x "$candidate/rustc" ]; then
+    TOOLCHAIN_BIN="$candidate"
+    break
+  fi
+done
 
-if [ -x "$TOOLCHAIN_BIN/rustc" ]; then
+if [ -n "$TOOLCHAIN_BIN" ]; then
   export RUSTC="$TOOLCHAIN_BIN/rustc"
   export PATH="$TOOLCHAIN_BIN:$PATH"
 else
-  echo "warning: 未找到 rustup 工具链 $TOOLCHAIN，回退到 PATH 中的 rustc（可能缺少 iOS std）" >&2
+  echo "warning: 未找到 rustup 工具链 ${TOOLCHAIN}，回退到 PATH 中的 rustc（可能缺少 iOS std）" >&2
 fi
 
 if ! rustc --print target-list | grep -qx aarch64-apple-ios; then

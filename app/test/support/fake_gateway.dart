@@ -63,6 +63,8 @@ class FakeCardGateway implements CardGateway {
     this.transcodeSeconds = 0,
     this.failDownload,
     this.failTranscode,
+    this.disconnectReport,
+    this.failDisconnect,
   }) : current = initialSnapshot,
        savedCredentials = List<CardWifiCredential>.of(wifiCredentials);
 
@@ -118,6 +120,14 @@ class FakeCardGateway implements CardGateway {
   int snapshotCalls = 0;
   int syncStatusCalls = 0;
   bool disconnectCalled = false;
+  int disconnectCalls = 0;
+
+  /// 每次 connect 时累计的 disconnect 次数：用来断言「先释放、再重连」的顺序。
+  final List<int> disconnectCallsAtConnect = [];
+
+  /// disconnect() 返回的桥结果；null = 已释放（旧测试默认）。
+  CardDisconnectReport? disconnectReport;
+  CardException? failDisconnect;
   String? lastConnectedId;
   String? lastWifiSsid;
   String? lastWifiPassword;
@@ -149,6 +159,7 @@ class FakeCardGateway implements CardGateway {
   @override
   Future<CardSnapshot> connect(String deviceId) async {
     connectCalls++;
+    disconnectCallsAtConnect.add(disconnectCalls);
     lastConnectedId = deviceId;
     if (failConnect != null) throw failConnect!;
     final result = connectResult ?? current ?? defaultSnapshot;
@@ -157,9 +168,12 @@ class FakeCardGateway implements CardGateway {
   }
 
   @override
-  Future<void> disconnect() async {
+  Future<CardDisconnectReport> disconnect() async {
     disconnectCalled = true;
+    disconnectCalls++;
     current = null;
+    if (failDisconnect != null) throw failDisconnect!;
+    return disconnectReport ?? CardDisconnectReport.alreadyReleased;
   }
 
   /// 录音命令记录（start/stop/toggle），供状态机测试断言。

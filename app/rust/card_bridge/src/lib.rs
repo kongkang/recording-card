@@ -28,6 +28,17 @@ type Callback = extern "C" fn(user_data: *mut c_void, json: *const c_char);
 struct BridgeState {
     runtime: tokio::runtime::Runtime,
     device: tokio::sync::Mutex<Option<DyjDevice>>,
+    /// 扫描/连接共用一个 DeviceManager。
+    ///
+    /// 以前每条命令都 `DeviceManager::new()`：每次都会新建一套平台蓝牙栈
+    /// （iOS 上是 CBCentralManager）。旧管理器在 connect 返回后就被丢弃，
+    /// 而它名下的连接并不会随之释放——再连一次就会出现两条链路，
+    /// 断连只能断掉其中一条，设备端因此保持"已连接、不广播"。
+    manager: tokio::sync::OnceCell<DeviceManager>,
+    /// 设备事件泵：断连/重连时必须先停，否则它持有的句柄会把旧链路留在原地。
+    event_pump: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// 最近一次 connect 的设备 id：断开时用于日志与诊断（设备地址不是敏感数据）。
+    last_device_id: std::sync::Mutex<Option<String>>,
     /// 实时音频流的停止信号：每次开始的录音会话一个。
     realtime_stop: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     /// 设备事件订阅通道上最近一次事件的 JSON（Dart 侧按 seq 增量取走）。
@@ -81,6 +92,9 @@ fn state() -> &'static BridgeState {
             .build()
             .expect("tokio runtime"),
         device: tokio::sync::Mutex::new(None),
+        manager: tokio::sync::OnceCell::new(),
+        event_pump: tokio::sync::Mutex::new(None),
+        last_device_id: std::sync::Mutex::new(None),
         realtime_stop: std::sync::Mutex::new(None),
         events: std::sync::Mutex::new(EventFeed::new()),
     })
@@ -182,22 +196,19 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), SdkErr
     match kind {
         "scan" => {
             let timeout = payload.get("timeoutMs").and_then(Value::as_u64).unwrap_or(6000);
-            let manager = DeviceManager::new().await?;
+            let manager = manager().await?;
             let devices = manager.scan(Duration::from_millis(timeout)).await?;
             out.ok(serde_json::to_value(&devices).map_err(to_sdk)?);
         }
         "connect" => out.ok(connect(payload).await?),
-        "disconnect" => {
-            let device = state().device.lock().await.take();
-            if let Some(device) = device.as_ref() {
-                let _ = device.disconnect().await;
-            }
-            out.ok(json!({"disconnected": true}));
-        }
+        // 断开必须如实回包：调用方（Dart）据此判断链路是否真的释放了。
+        // 以前无论有没有设备、SDK 断没断成功都回 `{"disconnected":true}`，
+        // 界面显示已断开、设备端却仍保持连接，排障时完全看不到真相。
+        "disconnect" => out.ok(release_device().await),
         "snapshot" => {
-            let guard = state().device.lock().await;
-            let device = guard.as_ref().ok_or(SdkError::Disconnected)?;
-            out.ok(snapshot(device).await?);
+            // 不长期占住 device 锁：快照内部要连发 5 条命令，最长可达 50s；
+            // 期间用户点断开会被堵在锁外面。命令串行由 SDK 自己的 command_gate 保证。
+            out.ok(with_device(|d| async move { snapshot(&d).await }).await?);
         }
         "record" => {
             let action = payload.get("action").and_then(Value::as_str).unwrap_or("toggle");
@@ -416,7 +427,11 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), SdkErr
 /// 常驻监听设备事件：设备（拨杆/按键/固件）主动推上来的状态变化进本地队列，
 /// 由 Dart 顺带取走。**这是"硬件侧操作能立刻反映到手机"的关键**——
 /// 靠轮询至少要等一个周期，靠推送是毫秒级。
-fn spawn_event_pump(device: DyjDevice) {
+///
+/// 任务里**只持有事件接收端，不持有设备句柄**：以前把 `DyjDevice` clone 进任务，
+/// 它会一直给 Core 续命（自引用式的持有），断连后旧链路因此留在设备端不释放。
+/// 只拿 receiver 时，设备句柄一丢，发送端随之关闭，任务自己就结束了。
+fn spawn_event_pump(device: &DyjDevice) -> tokio::task::JoinHandle<()> {
     let mut events = device.subscribe_events();
     tokio::spawn(async move {
         loop {
@@ -447,7 +462,7 @@ fn spawn_event_pump(device: DyjDevice) {
                 Err(_) => break, // 链路已断：连接重建时会重新起泵
             }
         }
-    });
+    })
 }
 
 // ── 实时音频流 ──────────────────────────────────────────────
@@ -543,9 +558,64 @@ async fn realtime_open(out: Emitter) -> Result<(), SdkError> {
 }
 
 
+/// 全局唯一的蓝牙管理器：扫描与连接共用同一个平台栈。
+///
+/// 进程内只建一次。每次 connect 都新建 manager 会让旧连接失去可管理的句柄，
+/// 断连时只能断掉最新那条，旧链路留在设备端（真机表现：App 说已断开，
+/// 电脑侧却扫不到设备，杀掉 App 约 6 秒后才重新广播）。
+async fn manager() -> Result<&'static DeviceManager, SdkError> {
+    state().manager.get_or_try_init(DeviceManager::new).await
+}
+
+/// 释放当前链路：停事件泵 → 停实时流 → 断开并如实报告结果。
+///
+/// 返回给 Dart 的字段：
+/// - `hadDevice`：桥里是否还有设备句柄（false = 本来就没连）
+/// - `sdk`：SDK 断连调用的结果（ok / error:… / timeout）
+/// - `released`：本次是否确认释放（没句柄也算已释放，因为已无别的持有者）
+async fn release_device() -> Value {
+    // 1) 事件泵先停：它曾经持有设备句柄，会让"已经断开"的链路在设备端继续存在
+    let pump = state().event_pump.lock().await.take();
+    if let Some(pump) = pump {
+        pump.abort();
+    }
+    // 2) 实时流收尾：不先关，任务里的设备句柄会拦住释放
+    let stop = state().realtime_stop.lock().expect("realtime lock").take();
+    if let Some(stop) = stop {
+        let _ = stop.send(());
+    }
+    // 3) 取走设备与 id
+    let device = state().device.lock().await.take();
+    let device_id = state().last_device_id.lock().expect("device id lock").take();
+    let had_device = device.is_some();
+    let sdk = match device.as_ref() {
+        // SDK 内部先 `is_connected()` 再调平台断连；给硬超时，避免平台回调丢失时永远挂住。
+        Some(device) => match tokio::time::timeout(Duration::from_secs(8), device.disconnect()).await {
+            Ok(Ok(())) => json!("ok"),
+            Ok(Err(error)) => json!(format!("error: {error}")),
+            Err(_) => json!("timeout"),
+        },
+        None => Value::Null,
+    };
+    let released = !had_device || sdk == json!("ok");
+    eprintln!(
+        "[card_bridge] disconnect had_device={had_device} id={device_id:?} sdk={sdk} released={released}"
+    );
+    json!({
+        "disconnected": true,
+        "hadDevice": had_device,
+        "deviceId": device_id,
+        "sdk": sdk,
+        "released": released,
+    })
+}
+
 async fn connect(payload: Value) -> Result<Value, SdkError> {
     let id = str_field(&payload, "id");
-    let manager = DeviceManager::new().await?;
+    // 重连前先把旧链路彻底释放。否则旧句柄留在事件泵/实时流任务里，
+    // 新连接会与旧连接并存（同一台设备两条 BLE 链路），断开只能断掉新的那条。
+    release_device().await;
+    let manager = manager().await?;
     // 先按 id 找；找不到再放宽窗口重扫一次（广播有抖动）
     let mut found = None;
     for window in [Duration::from_secs(4), Duration::from_secs(6)] {
@@ -557,9 +627,18 @@ async fn connect(payload: Value) -> Result<Value, SdkError> {
     }
     let found = found.ok_or_else(|| SdkError::DeviceNotFound(id.clone()))?;
     let device = manager.connect(&found).await?;
-    let snap = snapshot(&device).await?;
-    // 连上就把事件泵挂起来：设备侧拨杆/按键的状态变化立刻能进队列
-    spawn_event_pump(device.clone());
+    let snap = match snapshot(&device).await {
+        Ok(snap) => snap,
+        Err(error) => {
+            // 连上了但快照失败：必须主动断开，否则这个句柄一丢，
+            // 设备端就停在"已连接、不广播"的状态里。
+            let _ = device.disconnect().await;
+            return Err(error);
+        }
+    };
+    let pump = spawn_event_pump(&device);
+    *state().event_pump.lock().await = Some(pump);
+    *state().last_device_id.lock().expect("device id lock") = Some(id);
     *state().device.lock().await = Some(device);
     Ok(snap)
 }
@@ -648,13 +727,18 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), SdkError> {
     };
 
     // 取出设备所有权：进 DFU 后原连接即失效，不能留旧句柄。
+    // 事件泵先停：它订阅的是即将失效的那条链路，留着也会自动结束，但先停更干净。
+    if let Some(pump) = state().event_pump.lock().await.take() {
+        pump.abort();
+    }
+    state().last_device_id.lock().expect("device id lock").take();
     let device = state().device.lock().await.take();
     let Some(device) = device else {
         out.fail(SdkError::Disconnected);
         return Ok(());
     };
 
-    let manager = match DeviceManager::new().await {
+    let manager = match manager().await {
         Ok(manager) => manager,
         Err(error) => {
             out.fail(error);
