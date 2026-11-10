@@ -438,6 +438,15 @@ class AppStore extends ChangeNotifier {
     for (final e in evs) {
       (byDay[e.dayOffset] ??= []).add(e);
     }
+    // feed 是倒序：同一天内必须按时间从晚到早排，不能依赖 events 的原始顺序。
+    // 此时列表里只有记录（总结卡还没插入），可以安全按 time 排序。
+    for (final list in byDay.values) {
+      list.sort((a, b) {
+        final ea = a as RecordEvent;
+        final eb = b as RecordEvent;
+        return _minutesOfDay(eb.time).compareTo(_minutesOfDay(ea.time));
+      });
+    }
     final unanchored = <SummaryCard>[];
     for (final s in sums) {
       final anchor = _oldestSource(s);
