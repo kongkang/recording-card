@@ -52,6 +52,7 @@ class LiveAudioSlice {
     required this.wavPath,
     this.gapCount = 0,
     this.isFinal = false,
+    this.sliceKeyOverride,
   });
 
   final String sessionId;
@@ -77,11 +78,18 @@ class LiveAudioSlice {
   /// 是否为停止录音时冲刷出的尾片。
   final bool isFinal;
 
+  /// 重检/续跑已落盘记录时直接沿用原主键，防止会话标签前缀变化派生新键。
+  final String? sliceKeyOverride;
+
   /// 作为 RecordingStore 的唯一键（可读且稳定）。
   String get sliceKey {
-    final tag = (deviceSessionId != null && deviceSessionId!.trim().isNotEmpty)
+    final override = sliceKeyOverride?.trim();
+    if (override != null && override.isNotEmpty) return override;
+    final rawTag =
+        (deviceSessionId != null && deviceSessionId!.trim().isNotEmpty)
         ? deviceSessionId!.trim()
-        : sessionId.replaceFirst('live-', '');
+        : sessionId;
+    final tag = rawTag.replaceFirst('live-', '');
     final seq = (sliceIndex + 1).toString().padLeft(4, '0');
     return 'LIVE_${tag}_$seq.WAV';
   }

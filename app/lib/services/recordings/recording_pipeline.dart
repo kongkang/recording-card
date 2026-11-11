@@ -547,6 +547,27 @@ class RecordingPipeline {
     void Function(PipelineProgress progress)? onProgress,
   }) async {
     var recovered = 0;
+    final initial = await store.loadAll(refresh: true);
+    // 先清理同 wavPath 下已被完整转写兄弟条目替代的残留半成品副本
+    final readyWavs = <String>{
+      for (final f in initial)
+        if (f.deviceName.startsWith('LIVE_') &&
+            f.stage == RecordingStage.ready &&
+            f.utterances.isNotEmpty &&
+            f.wavPath != null &&
+            f.wavPath!.isNotEmpty)
+          f.wavPath!,
+    };
+    for (final f in initial) {
+      if (f.deviceName.startsWith('LIVE_') &&
+          f.utterances.isEmpty &&
+          f.wavPath != null &&
+          readyWavs.contains(f.wavPath)) {
+        await store.remove(f.deviceName);
+        recovered++;
+      }
+    }
+
     final all = await store.loadAll(refresh: true);
     final candidates = all.where((f) {
       if (!f.deviceName.startsWith('LIVE_')) return false;
@@ -579,6 +600,7 @@ class RecordingPipeline {
           startAtMs: f.startAtMs,
           durationMs: f.durationMs,
           wavPath: f.wavPath!,
+          sliceKeyOverride: f.deviceName,
         ),
         onProgress: onProgress,
       );
@@ -769,6 +791,7 @@ class RecordingPipeline {
                 startAtMs: file.startAtMs,
                 durationMs: file.durationMs,
                 wavPath: file.wavPath!,
+                sliceKeyOverride: file.deviceName,
               ),
               onProgress: onProgress,
             );
