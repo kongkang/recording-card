@@ -5,6 +5,7 @@ target/
 
 # 会话工具状态
 .zcode/
+.manus/
 
 # 本机构建产物与隔离 HOME（装机脚本的中间态，不入库）
 .work/
