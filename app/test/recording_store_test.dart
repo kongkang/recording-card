@@ -214,5 +214,79 @@ void main() {
       await store.pruneAudio(keep: const Duration(days: 1));
       expect(await apm.exists(), isTrue);
     });
+
+    test('iOS 沙盒容器 UUID 轮换后自动迁移旧绝对路径到新容器', () async {
+      final newAppSupport = Directory('${root.path}/NewUUID/Library/Application Support');
+      final recRoot = Directory('${newAppSupport.path}/recordings');
+      await recRoot.create(recursive: true);
+      final localStore = RecordingStore(root: recRoot, jsonStore: json);
+
+      final itemDir = await localStore.dirFor('48BD758D.APM');
+      await itemDir.create(recursive: true);
+      final realApm = File('${itemDir.path}/20261110_48BD758D.apm');
+      final realWav = File('${itemDir.path}/20261110_48BD758D.apm.wav');
+      await realApm.writeAsBytes([1, 2, 3, 4]);
+      await realWav.writeAsBytes([5, 6, 7, 8]);
+
+      // 模拟旧版 App 安装容器 UUID 存下的绝对路径
+      final stale = RecordingFile(
+        deviceName: '48BD758D.APM',
+        session: '58631766',
+        seq: 1,
+        startAtMs: 1794289155000,
+        apmPath:
+            '/var/mobile/Containers/Data/Application/OLD-UUID/Library/Application Support/recordings/48BD758D.APM/20261110_48BD758D.apm',
+        wavPath:
+            '/var/mobile/Containers/Data/Application/OLD-UUID/Library/Application Support/recordings/48BD758D.APM/20261110_48BD758D.apm.wav',
+        durationMs: 9920,
+        stage: RecordingStage.failed,
+        createdAtMs: 1794289307974,
+      );
+      await localStore.save(stale);
+
+      final loaded = (await localStore.loadAll(refresh: true)).single;
+      expect(loaded.apmPath, realApm.path);
+      expect(loaded.wavPath, realWav.path);
+      expect(File(loaded.apmPath).existsSync(), isTrue);
+      expect(File(loaded.wavPath!).existsSync(), isTrue);
+    });
+
+    test('pruneMissingGhosts：清理本地无音频且卡端已不存在的失败空壳，保留有本地音频的记录', () async {
+      // 1) 纯空壳（本地没音频、卡上也没有）→ 应被清理
+      await store.save(
+        RecordingFile(
+          deviceName: 'GHOST.APM',
+          session: 'G',
+          seq: 1,
+          startAtMs: 1000,
+          apmPath: '',
+          stage: RecordingStage.failed,
+          error: '未连接到录音卡',
+          createdAtMs: 1000,
+        ),
+      );
+      // 2) 本地有音频的待续跑记录 → 绝不能删
+      final keepDir = await store.dirFor('KEEP.APM');
+      await keepDir.create(recursive: true);
+      final keepWav = File('${keepDir.path}/keep.wav');
+      await keepWav.writeAsBytes([1, 2, 3]);
+      await store.save(
+        RecordingFile(
+          deviceName: 'KEEP.APM',
+          session: 'K',
+          seq: 1,
+          startAtMs: 2000,
+          apmPath: '',
+          wavPath: keepWav.path,
+          stage: RecordingStage.failed,
+          createdAtMs: 2000,
+        ),
+      );
+
+      final removed = await store.pruneMissingGhosts({'ON_CARD.APM'});
+      expect(removed, 1);
+      final remaining = await store.loadAll(refresh: true);
+      expect(remaining.map((f) => f.deviceName), ['KEEP.APM']);
+    });
   });
 }

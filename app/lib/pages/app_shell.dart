@@ -52,9 +52,10 @@ class _AppShellState extends State<AppShell> {
   late final RecordingStatusController _recording =
       widget.recordingStatus ?? RecordingStatusController();
 
-  /// 实时音频接收器：录音期间边录边把 PCM 收进本地（详情页可回听、后续比对补传）。
+  /// 实时音频接收器：录音期间边录边把 PCM 收进本地，每满 1 分钟切片即刻送本地 ASR 转写落库。
   late final LiveAudioRecorder _liveAudio =
       widget.liveAudio ?? LiveAudioRecorder(gateway: _device.gateway);
+  StreamSubscription<LiveAudioSlice>? _liveSliceSub;
 
   @override
   void initState() {
@@ -63,6 +64,9 @@ class _AppShellState extends State<AppShell> {
     // 让 store 知道设备在不在：没连卡时下拉不要去取回录音，更不该报"整理中断"。
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
     widget.store.deviceConnected ??= () => _device.isConnected;
+    _liveSliceSub = _liveAudio.slices.listen((slice) {
+      unawaited(widget.store.ingestLiveSlice(slice));
+    });
     // Timeline 顶部状态块在录音期间一直显示计时：由外壳持有设备时钟
     _device.retainClock();
     _device.addListener(_syncRecordingStatus);
@@ -71,55 +75,60 @@ class _AppShellState extends State<AppShell> {
     unawaited(_device.restoreLink());
   }
 
-  /// 上一帧设备是否在录音：用来识别「刚停止录音」这个边沿，触发自动同步。
+  /// 上一帧设备是否在录音：用来识别「刚停止录音」这个边沿，冲刷最后一段实时切片。
   bool _wasRecording = false;
 
-  /// 设备录音态 → Timeline 顶部状态块；转写/同步细粒度事件由管线接入。
+  /// 设备录音态 → 实时音频流切片 + Timeline 顶部状态块。
   ///
-  /// 停止录音不再直接收起状态块：先切到「正在同步」并自动拉取最新文件，
-  /// 管线跑完（或失败）才收起/报错。录音中持续把设备计时同步给状态块。
+  /// 录音开启期间按固定窗口（默认 1 分钟）边录边存并本地转写落 Timeline；
+  /// 停止录音只冲刷并转写本地尾片，**不再自动从录音卡拉取 `.APM` 文件**
+  /// （蓝牙文件拉取仅作为离线录音或流断档时的手动补传通道）。
   void _syncRecordingStatus() {
     final recording = _device.isRecording;
     if (recording) {
+      _liveAudio.updateDeviceSessionId(_device.recordSession);
       if (!_wasRecording) {
+        widget.store.onLiveRecordingStarted();
         _recording.startRecording();
         // 录音状态一变 true 就开实时流（App 开关和设备拨杆/按键都走这里）；
-        // isRunning 挡住重复订阅。实时流是辅助能力，失败不影响设备继续录音。
-        if (!_liveAudio.isRunning) unawaited(_liveAudio.start());
+        // isRunning 挡住重复订阅。
+        if (!_liveAudio.isRunning) {
+          unawaited(_liveAudio.start());
+        }
       }
       _recording.updateElapsed(_device.recSeconds);
     } else if (_wasRecording) {
       _wasRecording = false;
-      _recording.startSync();
       unawaited(_onRecordingStopped());
       return;
     }
     _wasRecording = recording;
   }
 
-  /// 停止录音后：先关实时流、封口本地 WAV，再开始取文件。
-  ///
-  /// 顺序不能反：SDK 文档明确要求取文件前不能还有实时会话/音频流在跑
-  /// （二进制通道不区分音频帧和文件帧，混流会把文件写坏）。参考实现也是
-  /// 先 session.stop()（停录 + 关实时）再列文件。
+  /// 停止录音后：关闭实时流并把最后一段未满 1 分钟的尾部切片封口、完成本地转写落库。
+  /// 不再触发蓝牙文件拉取（`_autoSyncAfterRecording`）。
   Future<void> _onRecordingStopped() async {
+    final hadLiveSamples =
+        _liveAudio.isRunning && _liveAudio.recordedSeconds > 0;
+    if (hadLiveSamples) {
+      _recording.startSync(detail: '正在转写最后一段实时录音…');
+    } else {
+      _recording.stopRecording();
+    }
     await _liveAudio.stop();
+    final savedCount = await widget.store.finishLiveRecording();
     if (!mounted) return;
-    // 用户在封口期间又按下了开始：这次停止不触发自动同步（下一轮停止会）
-    if (_device.isRecording) return;
-    if (_device.isConnected) await _autoSyncAfterRecording();
-  }
-
-  /// 停止录音后的自动同步：拉取最新切片 → 转写/整理 → 进入今天时间轴第一条。
-  /// 成功后把「自动同步 · 刚刚」回写到状态弹层的同步行；失败保留错误态。
-  Future<void> _autoSyncAfterRecording() async {
-    final error = await widget.store.syncRecordings();
-    if (!mounted || error != null) return;
-    _device.noteSyncFinished(manual: false);
+    if (!_device.isRecording) {
+      _recording.stopRecording();
+      if (savedCount > 0 || hadLiveSamples) {
+        _device.noteSyncFinished(manual: false);
+      }
+    }
   }
 
   @override
   void dispose() {
+    _liveSliceSub?.cancel();
     _device.removeListener(_syncRecordingStatus);
     if (widget.liveAudio == null) _liveAudio.dispose();
     _device.releaseClock();

@@ -82,11 +82,17 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
           RecordingPhase.idle => ('', RCColors.sec, Icons.circle),
         };
         final pending = widget.controller.pendingSlices;
+        final recDetail = widget.controller.detail;
         final subtitle = switch (phase) {
           RecordingPhase.recording =>
-            '已录 ${_clock(widget.controller.elapsedSeconds)} · 未转录',
+            recDetail != null && recDetail.isNotEmpty
+                ? '已录 ${_clock(widget.controller.elapsedSeconds)} · $recDetail'
+                : '已录 ${_clock(widget.controller.elapsedSeconds)} · 未转录',
           RecordingPhase.syncing => widget.controller.detail ?? '正在整理最近一段…',
-          RecordingPhase.transcribing => pending > 0 ? '剩余 $pending 段' : null,
+          RecordingPhase.transcribing =>
+            recDetail != null && recDetail.isNotEmpty
+                ? recDetail
+                : (pending > 0 ? '剩余 $pending 段' : null),
           RecordingPhase.error =>
             widget.controller.lastError ?? '可稍后重试',
           RecordingPhase.idle => null,

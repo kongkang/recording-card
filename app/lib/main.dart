@@ -141,6 +141,7 @@ class _HomeGateState extends State<_HomeGate> {
       generator: _summaries,
       status: _recordingStatus,
     );
+    _device.onManualBleSync = () => _store.syncRecordings();
     unawaited(_boot());
     if (dev != null) {
       dev!

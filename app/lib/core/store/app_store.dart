@@ -15,6 +15,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../data/seed.dart';
 import '../../services/ai/summary_generator.dart';
+import '../../services/audio/live_audio_recorder.dart';
 import '../../services/audio/recording_status.dart';
 import '../../services/recordings/recording_pipeline.dart';
 import '../../services/recordings/recording_store.dart';
@@ -142,6 +143,65 @@ class AppStore extends ChangeNotifier {
   }
 
   SegmentView? segmentViewFor(String segmentId) => segmentViews[segmentId];
+
+  bool get hasPipeline => _pipeline != null;
+
+  int _liveSlicesInFlight = 0;
+  int _liveSlicesSavedThisRun = 0;
+  Future<void> _liveIngestTail = Future<void>.value();
+
+  /// 新一轮实时录音开始时重置本轮切片计数。
+  void onLiveRecordingStarted() {
+    _liveSlicesSavedThisRun = 0;
+  }
+
+  /// 录音进行中（或刚停录尾片）收到一份实时流切片：立即走本地 ASR 落库并刷新 Timeline。
+  Future<RecordingFile?> ingestLiveSlice(LiveAudioSlice slice) {
+    final pipeline = _pipeline;
+    if (pipeline == null) return Future<RecordingFile?>.value(null);
+
+    _liveSlicesInFlight++;
+    if (_status?.isRecording == true) {
+      _status?.setRecordingDetail('第 ${slice.sliceIndex + 1} 片正在本地转写…');
+    } else {
+      _status?.startSync(detail: '正在本地转写最后一段…');
+    }
+
+    final completer = Completer<RecordingFile?>();
+    _liveIngestTail = _liveIngestTail.then((_) async {
+      try {
+        final saved = await pipeline.ingestLiveSlice(slice);
+        await refreshFromStore();
+        _liveSlicesSavedThisRun++;
+        completer.complete(saved);
+      } on Object catch (e, st) {
+        debugPrint('[store] 实时切片转写失败：$e');
+        if (!completer.isCompleted) completer.completeError(e, st);
+      } finally {
+        _liveSlicesInFlight =
+            (_liveSlicesInFlight - 1).clamp(0, 1 << 20);
+        if (_status?.isRecording == true) {
+          _status?.setRecordingDetail(
+            _liveSlicesInFlight > 0
+                ? '剩余 $_liveSlicesInFlight 片待转写'
+                : '已存 $_liveSlicesSavedThisRun 片',
+          );
+        } else if (_liveSlicesInFlight == 0) {
+          _status?.stopRecording();
+        }
+      }
+    });
+    return completer.future;
+  }
+
+  /// 停止录音后等待本轮尾部实时切片完成本地转写（不触发蓝牙拉卡文件）。
+  Future<int> finishLiveRecording() async {
+    await _liveIngestTail;
+    if (_status?.isRecording != true && _liveSlicesInFlight == 0) {
+      _status?.stopRecording();
+    }
+    return _liveSlicesSavedThisRun;
+  }
 
   // ── 启动装载 ────────────────────────────────────────────
   /// 冷启动：恢复导航栈与历史总结卡，再拉本地录音清单。

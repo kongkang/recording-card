@@ -8,6 +8,7 @@ import 'package:recording_card/core/models/recording.dart';
 import 'package:recording_card/core/storage/storage.dart';
 import 'package:recording_card/core/store/settings_store.dart';
 import 'package:recording_card/services/analysis/chat_completion.dart';
+import 'package:recording_card/services/audio/live_audio_recorder.dart';
 import 'package:recording_card/services/polish/slice_polish_service.dart';
 import 'package:recording_card/services/recordings/recording_pipeline.dart';
 import 'package:recording_card/services/recordings/recording_store.dart';
@@ -446,4 +447,104 @@ void main() {
     expect(profiles.profiles.length, 2);
     expect(profiles.contributors, {'later.APM', 'earlier.APM'});
   });
+
+  test('实时流切片：录音期间直接本地 VAD+ASR 落库，不调云端润色；后续蓝牙同步自动跳过已覆盖卡文件', () async {
+    final liveBase = Directory('${root.path}/app_support');
+    await liveBase.create(recursive: true);
+
+    // 准备一段 2 秒的实时流音频（按 1 秒切片）
+    final pcm2s = Uint8List(32000 * 2);
+    final view = ByteData.sublistView(pcm2s);
+    for (var i = 0; i < 32000; i++) {
+      view.setInt16(i * 2, ((i % 100) - 50) * 120, Endian.little);
+    }
+    gateway.realtimeEvents.addAll([
+      const RealtimeAudioEvent(kind: RealtimeAudioKind.open),
+      RealtimeAudioEvent(kind: RealtimeAudioKind.audio, pcm: pcm2s),
+    ]);
+
+    var chatCalls = 0;
+    final countingChat = _CountingChat(() => chatCalls++);
+    final livePipeline = RecordingPipeline(
+      gateway: gateway,
+      store: store,
+      engine: engine,
+      models: models,
+      liveAudioBaseDir: liveBase,
+      polish: SlicePolishService(chat: countingChat, model: 'test-model'),
+      segments: SegmentBuildService(chat: countingChat, model: 'test-model'),
+    );
+
+    final slices = <LiveAudioSlice>[];
+    final recorder = LiveAudioRecorder(
+      gateway: gateway,
+      baseDir: liveBase,
+      sliceDuration: const Duration(seconds: 1),
+      onSliceReady: slices.add,
+    );
+    recorder.updateDeviceSessionId('1ABE9622');
+    await recorder.start();
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(recorder.isRunning, isTrue, reason: '仍在录音状态中');
+    expect(slices.length, 2);
+
+    // 在开启录音状态下直接把切片送入本地 ASR
+    engine.text = '流式切片第一分钟本地转写';
+    final f0 = await livePipeline.ingestLiveSlice(slices[0]);
+    final f1 = await livePipeline.ingestLiveSlice(slices[1]);
+    await recorder.stop();
+
+    expect(f0.stage, RecordingStage.ready);
+    expect(f1.stage, RecordingStage.ready);
+    expect(f0.utterances, isNotEmpty);
+    expect(f0.turns, isEmpty, reason: '本阶段不跑云端文本润色，保留本地原始转写');
+    expect(f0.segments.single.title, contains('流式切片第一分钟本地转写'));
+    expect(chatCalls, 0, reason: '实时流切片不得请求云端大模型');
+    expect(gateway.downloadCalls, 0, reason: '录音期间不拉取蓝牙文件');
+
+    // 随后用户手动执行一次蓝牙文件同步：
+    // 卡上有两条文件：1) 刚才实时流已无断档覆盖的 3600E239.APM；2) 蓝牙未连时离线录的 OFFLINE.APM
+    final sessionStartSec = slices[0].startAtMs ~/ 1000;
+    gateway.deviceFiles = [
+      CardFile(
+        name: '3600E239.APM',
+        size: 64000,
+        session: '1ABE9622',
+        seq: 1,
+        startAtSec: sessionStartSec,
+        createdAtSec: sessionStartSec + 2,
+      ),
+      CardFile(
+        name: 'OFFLINE.APM',
+        size: 64000,
+        session: 'OFF99999',
+        seq: 1,
+        startAtSec: sessionStartSec - 3600,
+        createdAtSec: sessionStartSec - 3540,
+      ),
+    ];
+
+    final syncReport = await livePipeline.sync();
+    expect(syncReport.skipped, 1, reason: '实时流已无断档落库的切片跳过重复蓝牙下载');
+    expect(syncReport.downloaded, 1, reason: '只补传蓝牙未同步过的离线录音');
+    expect(gateway.downloadCalls, 1);
+    expect(await store.load('3600E239.APM'), isNull, reason: '已覆盖卡文件不重复入库');
+    expect((await store.load('OFFLINE.APM'))?.stage, RecordingStage.ready);
+  });
+}
+
+class _CountingChat implements ChatCompletion {
+  _CountingChat(this.onCall);
+  final void Function() onCall;
+
+  @override
+  Future<String> complete(
+    List<ChatMessage> messages, {
+    required String model,
+    double temperature = 0.1,
+    int maxTokens = 2048,
+  }) async {
+    onCall();
+    return jsonEncode({'title': '事件', 'overview': '概述'});
+  }
 }

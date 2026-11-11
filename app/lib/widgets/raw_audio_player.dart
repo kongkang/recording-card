@@ -14,17 +14,22 @@ import 'package:flutter/material.dart';
 
 import '../core/theme/tokens.dart';
 import '../services/audio/live_audio_recorder.dart';
+import '../services/recordings/recording_store.dart';
 
 class RawAudioPlayer extends StatefulWidget {
   const RawAudioPlayer({
     super.key,
     required this.fileKey,
+    this.wavPath,
     this.baseDir,
     this.allowDelete = true,
   });
 
   /// 记录对应的设备文件名（绑定表的主键）。
   final String fileKey;
+
+  /// 记录自身已落盘的 WAV 路径（如 1 分钟实时流切片或已转码录音）；存在时优先按本段回放。
+  final String? wavPath;
   final Directory? baseDir;
   final bool allowDelete;
 
@@ -68,16 +73,25 @@ class _RawAudioPlayerState extends State<RawAudioPlayer> {
   }
 
   Future<void> _load() async {
+    String? directPath;
+    final rawWav = widget.wavPath;
+    if (rawWav != null && rawWav.isNotEmpty) {
+      final rebased = RecordingStore.rebaseAppSupportPath(rawWav);
+      if (await File(rebased).exists()) {
+        directPath = rebased;
+      }
+    }
     final session = await LiveAudioRecorder.sessionForFile(
       widget.fileKey,
       baseDir: widget.baseDir,
     );
-    final path = session == null
-        ? null
-        : await LiveAudioRecorder.audioPathOf(
-            session.id,
-            baseDir: widget.baseDir,
-          );
+    final path = directPath ??
+        (session == null
+            ? null
+            : await LiveAudioRecorder.audioPathOf(
+                session.id,
+                baseDir: widget.baseDir,
+              ));
     if (!mounted) return;
     setState(() {
       _session = session;

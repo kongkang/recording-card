@@ -15,6 +15,7 @@ import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/core/store/device_store.dart';
 import 'package:recording_card/core/theme/tokens.dart';
 import 'package:recording_card/services/audio/recording_status.dart';
+import 'package:recording_card/services/recordings/recording_sync_service.dart';
 
 import 'support/fake_gateway.dart';
 import 'support/harness.dart';
@@ -119,7 +120,9 @@ void main() {
     expect(gateway.recordCalls, ['start', 'stop']);
   });
 
-  testWidgets('停止录音自动同步：顶部状态块切到「正在同步」', (tester) async {
+  testWidgets('已连接设备层展示设备基本信息；停止录音只封口本地实时流，不自动蓝牙拉文件', (
+    tester,
+  ) async {
     final gateway = FakeCardGateway(initialSnapshot: _connected(recording: true));
     final device = DeviceStore(gateway: gateway);
     final store = _SyncSpy();
@@ -135,24 +138,54 @@ void main() {
     expect(controller.phase, RecordingPhase.recording);
     expect(store.syncCalls, 0);
 
-    // 用户关掉录音 → 外壳自动拉取最新录音
-    await device.toggleRecording();
-    await tester.pump();
-    await tester.pump();
-    expect(store.syncCalls, 1);
-    expect(controller.phase, RecordingPhase.syncing);
-    expect(find.text('正在同步'), findsOneWidget);
-    // 同步行回写为「自动同步 · 刚刚」，用户没有手动点
-    expect(device.lastSyncTrigger, SyncTrigger.auto);
-    expect(device.syncText, startsWith('自动同步'));
-
-    // 打开弹层能看到同步行的自动同步文案
+    // 打开设备管理弹层：展示所连设备名称与固件信息
     await tester.tap(find.byKey(const Key('hw-capsule')));
     await tester.pump();
     await tester.pump();
-    expect(find.textContaining('自动同步'), findsOneWidget);
+    expect(find.text('DYJV2_TEST'), findsOneWidget);
+    expect(find.textContaining('固件 2.2.0'), findsOneWidget);
     await tester.tap(find.byKey(const Key('sheet-close')));
     await tester.pump();
+
+    // 用户关掉录音 → 只收尾本地实时流，不再自动拉取录音卡上的 .APM 文件
+    await device.toggleRecording();
+    await tester.pump();
+    await tester.pump();
+    expect(store.syncCalls, 0, reason: '停止录音不应再自动触发蓝牙文件拉取');
+    expect(controller.phase, RecordingPhase.idle);
+  });
+
+  testWidgets('同步状态提示互斥：顶部状态块激活时不叠加第二条 sync-banner', (
+    tester,
+  ) async {
+    final gateway = FakeCardGateway(initialSnapshot: _connected(recording: false));
+    final device = DeviceStore(gateway: gateway);
+    final store = AppStore(events: const [], loadPersistedState: false);
+    final controller = RecordingStatusController();
+    addTearDown(controller.dispose);
+    await pumpShell(
+      tester,
+      store: store,
+      device: device,
+      recordingStatus: controller,
+    );
+
+    // 模拟流水线同步进行中：store.syncStage 非空且顶部状态块处于 syncing
+    store
+      ..syncStage = SyncStage.listing
+      ..syncProgress = 0.4
+      ..syncText = '正在取回 TEST.APM（1/2）';
+    controller.startSync(detail: '正在取回 TEST.APM（1/2）');
+    store.notifyListeners();
+    await tester.pump();
+
+    expect(_statusBlock(), findsOneWidget);
+    expect(find.text('正在同步'), findsOneWidget);
+    expect(
+      find.byKey(const Key('sync-banner')),
+      findsNothing,
+      reason: '顶部状态块已在展示同步进度时，不得同时出现冲突的 sync-banner',
+    );
   });
 
   testWidgets('状态块只在全部/记录顶部；总结 Tab 和勾选态隐藏', (tester) async {

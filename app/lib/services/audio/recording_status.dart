@@ -75,6 +75,15 @@ class RecordingStatusController extends ChangeNotifier {
     );
   }
 
+  /// 录音中更新切片进度副标题（如「第 1 片本地转写中…」「已存 1 片」），不改变 recording 相位。
+  void setRecordingDetail(String? detail) {
+    if (!_sessionActive || _phase != RecordingPhase.recording) return;
+    _commit(
+      detail: detail,
+      clearDetail: detail == null || detail.isEmpty,
+    );
+  }
+
   /// 设备计时同步：Timeline 顶部状态块据此显示「已录 h:mm:ss」。
   void updateElapsed(int seconds) {
     final next = seconds < 0 ? 0 : seconds;

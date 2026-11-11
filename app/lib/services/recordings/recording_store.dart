@@ -68,6 +68,7 @@ class RecordingStore {
     if (!refresh && cached != null) return List.unmodifiable(cached);
 
     final base = await root();
+    final appSupportPath = _inferAppSupportPath(base.path);
     final out = <RecordingFile>[];
     await for (final entity in base.list()) {
       if (entity is! Directory) continue;
@@ -78,6 +79,11 @@ class RecordingStore {
         if (decoded is! Map<String, dynamic>) continue;
         final file = RecordingFile.fromJson(decoded);
         if (file.deviceName.isEmpty) continue;
+        _rebaseRecordingPaths(
+          file,
+          entityDirPath: entity.path,
+          appSupportPath: appSupportPath,
+        );
         out.add(file);
       } on Object {
         // 单条损坏：跳过，不影响其它录音
@@ -86,6 +92,113 @@ class RecordingStore {
     out.sort((a, b) => b.startAtMs.compareTo(a.startAtMs));
     _cache = out;
     return List.unmodifiable(out);
+  }
+
+  /// iOS 每次覆盖安装/升级 App 都会轮换沙盒容器 UUID
+  /// （`/var/mobile/Containers/Data/Application/<UUID>/Library/Application Support/...`）。
+  /// `meta.json` 里若存了旧容器的绝对路径，读取时统一迁回当前容器目录，避免把已有音频误判为丢失。
+  static String rebaseAppSupportPath(
+    String rawPath, {
+    String? appSupportPath,
+    String? entityDirPath,
+  }) {
+    if (rawPath.isEmpty) return rawPath;
+    const marker = '/Library/Application Support/';
+    if (appSupportPath != null && appSupportPath.isNotEmpty) {
+      final idx = rawPath.indexOf(marker);
+      if (idx >= 0) {
+        final rel = rawPath.substring(idx + marker.length);
+        return '$appSupportPath/$rel';
+      }
+    }
+    if (entityDirPath != null && !File(rawPath).existsSync()) {
+      final slash = rawPath.lastIndexOf('/');
+      final baseName = slash >= 0 ? rawPath.substring(slash + 1) : rawPath;
+      if (baseName.isNotEmpty) {
+        final candidate = '$entityDirPath/$baseName';
+        if (File(candidate).existsSync()) return candidate;
+      }
+    }
+    return rawPath;
+  }
+
+  static String? _inferAppSupportPath(String recordingsRootPath) {
+    const suffix = '/recordings';
+    if (recordingsRootPath.endsWith(suffix)) {
+      return recordingsRootPath.substring(
+        0,
+        recordingsRootPath.length - suffix.length,
+      );
+    }
+    const marker = '/Library/Application Support';
+    final idx = recordingsRootPath.indexOf(marker);
+    if (idx >= 0) {
+      return recordingsRootPath.substring(0, idx + marker.length);
+    }
+    return null;
+  }
+
+  static void _rebaseRecordingPaths(
+    RecordingFile file, {
+    required String entityDirPath,
+    required String? appSupportPath,
+  }) {
+    file.apmPath = rebaseAppSupportPath(
+      file.apmPath,
+      appSupportPath: appSupportPath,
+      entityDirPath: entityDirPath,
+    );
+    if (file.wavPath != null && file.wavPath!.isNotEmpty) {
+      file.wavPath = rebaseAppSupportPath(
+        file.wavPath!,
+        appSupportPath: appSupportPath,
+        entityDirPath: entityDirPath,
+      );
+    }
+    if (file.slices.isNotEmpty) {
+      final sliceDir = '$entityDirPath/slices';
+      file.slices = [
+        for (final s in file.slices)
+          AudioSlice(
+            id: s.id,
+            index: s.index,
+            startMs: s.startMs,
+            endMs: s.endMs,
+            wavPath: rebaseAppSupportPath(
+              s.wavPath,
+              appSupportPath: appSupportPath,
+              entityDirPath: sliceDir,
+            ),
+            silenceAfterMs: s.silenceAfterMs,
+            stage: s.stage,
+            error: s.error,
+          ),
+      ];
+    }
+  }
+
+  /// 清理既无本地音频/转写内容、又不在当前录音卡文件列表里的历史残骸（如半截中断且卡上已删的空壳）。
+  Future<int> pruneMissingGhosts(Set<String> deviceFileNames) async {
+    final all = await loadAll(refresh: true);
+    var removed = 0;
+    for (final file in all) {
+      if (file.stage == RecordingStage.ready) continue;
+      if (deviceFileNames.contains(file.deviceName)) continue;
+      if (file.utterances.isNotEmpty ||
+          file.turns.isNotEmpty ||
+          file.segments.isNotEmpty) {
+        continue;
+      }
+      final hasApm =
+          file.apmPath.isNotEmpty && await File(file.apmPath).exists();
+      final hasWav = file.wavPath != null &&
+          file.wavPath!.isNotEmpty &&
+          await File(file.wavPath!).exists();
+      if (hasApm || hasWav) continue;
+      await remove(file.deviceName);
+      removed++;
+    }
+    return removed;
   }
 
   Future<RecordingFile?> load(String deviceName) async {

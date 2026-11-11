@@ -123,4 +123,94 @@ void main() {
     );
     expect(fallback?.id, session.id);
   });
+
+  test('录音开启期间按切片窗口滚动产出 WAV，停录时冲刷未满一片的尾片', () async {
+    final gw = FakeCardGateway();
+    // 2.5 秒音频（16kHz）：切片窗口设 1 秒 → 录音中立刻吐出 2 片，stop() 再吐第 3 片（0.5s）
+    gw.realtimeEvents.addAll([
+      const RealtimeAudioEvent(kind: RealtimeAudioKind.open),
+      RealtimeAudioEvent(kind: RealtimeAudioKind.audio, pcm: _tone(16000)),
+      RealtimeAudioEvent(kind: RealtimeAudioKind.audio, pcm: _tone(16000)),
+      RealtimeAudioEvent(kind: RealtimeAudioKind.audio, pcm: _tone(8000)),
+    ]);
+    final emitted = <LiveAudioSlice>[];
+    final recorder = LiveAudioRecorder(
+      gateway: gw,
+      baseDir: tmp,
+      sliceDuration: const Duration(seconds: 1),
+      onSliceReady: emitted.add,
+    );
+
+    recorder.updateDeviceSessionId('1ABE9622');
+    await recorder.start();
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+
+    // 关键验证：尚未调用 stop()（仍在录音中！），前两片 1 秒切片已经封口落盘并回调！
+    expect(recorder.isRunning, isTrue);
+    expect(emitted.length, 2, reason: '录音未停止时就必须按窗口吐出切片');
+    expect(emitted[0].isFinal, isFalse);
+    expect(emitted[0].sliceKey, 'LIVE_1ABE9622_0001.WAV');
+    expect(emitted[0].durationMs, 1000);
+    expect(parseWav(File(emitted[0].wavPath).readAsBytesSync()).frames, 16000);
+    expect(emitted[1].sliceKey, 'LIVE_1ABE9622_0002.WAV');
+
+    final session = await recorder.stop();
+    expect(emitted.length, 3, reason: '停录应把剩余 0.5 秒尾片封口吐出');
+    expect(emitted[2].isFinal, isTrue);
+    expect(emitted[2].sliceKey, 'LIVE_1ABE9622_0003.WAV');
+    expect(emitted[2].durationMs, 500);
+    expect(parseWav(File(emitted[2].wavPath).readAsBytesSync()).frames, 8000);
+    expect(session!.sliceKeys.length, 3);
+  });
+
+  test('coversCardFile：无断档覆盖的卡文件判跳过，离线/有断档文件保留补传', () {
+    final start = DateTime.fromMillisecondsSinceEpoch(1794387754000);
+    final cleanSession = LiveSession(
+      id: 'live-1',
+      startedAt: start,
+      deviceSessionId: '1ABE9622',
+      gapCount: 0,
+      spans: const [ReceivedSpan(startMs: 0, endMs: 120000)],
+    );
+    // 同一会话且时间落在 [start-8s, end+8s] 内 → 已覆盖
+    expect(
+      cleanSession.coversCardFile(
+        const CardFile(
+          name: '3600E239.APM',
+          size: 80000,
+          session: '1ABE9622',
+          startAtSec: 1794387753,
+          createdAtSec: 1794387870,
+        ),
+      ),
+      isTrue,
+    );
+    // 蓝牙断开后离线录的另一段 → 未覆盖，必须同步下载
+    expect(
+      cleanSession.coversCardFile(
+        const CardFile(
+          name: 'OFFLINE.APM',
+          size: 80000,
+          session: '9999AAAA',
+          startAtSec: 1794390000,
+          createdAtSec: 1794390300,
+        ),
+      ),
+      isFalse,
+    );
+    // 实时流中间有断档 → 未完整覆盖，允许蓝牙补传完整文件
+    final gapped = cleanSession.copyWith(gapCount: 1);
+    expect(
+      gapped.coversCardFile(
+        const CardFile(
+          name: '3600E239.APM',
+          size: 80000,
+          session: '1ABE9622',
+          startAtSec: 1794387753,
+          createdAtSec: 1794387870,
+        ),
+      ),
+      isFalse,
+    );
+  });
 }

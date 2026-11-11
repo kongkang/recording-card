@@ -286,12 +286,14 @@ class DeviceStore extends ChangeNotifier {
     _liveBattery = null;
     _liveCharging = null;
     _liveRecording = null;
+    _recordSession = null;
     _clockTicks = 0;
     _fwVersion = '';
     _wifiVersion = '';
     _fwVersionCode = 0;
     _wifiVersionCode = 0;
     _storageFreeMb = null;
+    _storageTotalMb = null;
     deviceWifiOpen = null;
   }
 
@@ -338,6 +340,12 @@ class DeviceStore extends ChangeNotifier {
   /// 把设备推来的录音状态落到本地（与快照里的 record 段同构）。
   void _applyRecordStatus(Map<String, dynamic> status) {
     final recording = status['isRecording'] == true;
+    final session = status['session'];
+    if (recording && session is String && session.isNotEmpty) {
+      _recordSession = session;
+    } else if (!recording) {
+      _recordSession = null;
+    }
     // 固件自停时会带 error 码（如存储异常）：必须让用户看见原因，
     // 不能只是把开关悄悄关掉。参考实现会把整条 RECORD_STATUS 原样展示。
     final error = status['error'];
@@ -521,11 +529,35 @@ class DeviceStore extends ChangeNotifier {
   int? _liveBattery;
   bool? _liveCharging;
   bool? _liveRecording;
+  String? _recordSession;
   String _fwVersion = '';
   String _wifiVersion = '';
   int _fwVersionCode = 0;
   int _wifiVersionCode = 0;
   int? _storageFreeMb;
+  int? _storageTotalMb;
+
+  /// 当前录音会话的设备端 8 位十六进制 session 号（固件 0.3.8+）。
+  String? get recordSession => _recordSession;
+
+  int? get storageTotalMb => _storageTotalMb;
+
+  /// 设备管理层副标题：展示蓝牙连接态 + 固件版本 + 可用存储等设备基本信息。
+  String get deviceSubtitleText {
+    final parts = <String>['已连接 · 蓝牙'];
+    if (_fwVersion.isNotEmpty) {
+      parts.add('固件 $_fwVersion');
+    }
+    final freeMb = _storageFreeMb;
+    if (freeMb != null && freeMb >= 0) {
+      if (freeMb >= 1024) {
+        parts.add('可用 ${(freeMb / 1024).toStringAsFixed(1)} GB');
+      } else {
+        parts.add('可用 $freeMb MB');
+      }
+    }
+    return parts.join(' · ');
+  }
 
   /// 设备端 Wi-Fi 模块是否开启（null = 未知，不冒充"已关闭"）。
   bool? deviceWifiOpen;
@@ -541,6 +573,10 @@ class DeviceStore extends ChangeNotifier {
       _liveBattery = null;
     }
     _liveCharging = s.isCharging;
+    if ((connectedName == null || connectedName!.isEmpty) &&
+        s.deviceName.isNotEmpty) {
+      connectedName = s.deviceName;
+    }
     // 固件版本只在快照真的带到时才覆盖：部分失败（如 BASE_INFO 没读到）若
     // 把 versionCode 抹成 0，「有可用更新」的比对会误判——设备明明比服务器新，
     // 却提示升级，点进去等于降级。断开时 _resetLiveState 统一清空。
@@ -548,7 +584,13 @@ class DeviceStore extends ChangeNotifier {
     if (s.fwVersionCode > 0) _fwVersionCode = s.fwVersionCode;
     if (s.wifiVersion.isNotEmpty) _wifiVersion = s.wifiVersion;
     if (s.wifiVersionCode > 0) _wifiVersionCode = s.wifiVersionCode;
-    _storageFreeMb = s.storageFreeMb;
+    if (s.storageFreeMb != null) _storageFreeMb = s.storageFreeMb;
+    if (s.storageTotalMb != null) _storageTotalMb = s.storageTotalMb;
+    if (s.recording && s.recordSession != null && s.recordSession!.isNotEmpty) {
+      _recordSession = s.recordSession;
+    } else if (!s.recording) {
+      _recordSession = null;
+    }
     deviceWifiOpen = s.wifiOpen;
     if (s.recording != (_liveRecording ?? false)) {
       _liveRecording = s.recording;
@@ -766,9 +808,44 @@ class DeviceStore extends ChangeNotifier {
       !_syncCooldown &&
       !fwUpdating;
 
-  /// 点击同步行 = 手动同步；设备 Wi-Fi 上传链路。
+  /// 正式版接入蓝牙补传管线时注入：手动点击「同步」拉取卡上尚未通过实时流同步的离线录音文件，
+  /// 而不是开启固件侧尚未配置的 Wi-Fi 云上传（开启 Wi-Fi 会抢占 SD 卡总线导致蓝牙读卡失败）。
+  /// 未注入（单元测试）时保持原 `startSync` 固件通道行为。
+  Future<String?> Function()? onManualBleSync;
+
+  /// 点击同步行 = 手动同步。
   Future<void> syncNow({bool manual = true}) async {
     if (!canSync) return;
+    final bleSync = onManualBleSync;
+    if (bleSync != null) {
+      if (isRecording) {
+        syncError = '录音期间正在实时切片转写，无需手动同步；停录后可补传离线文件';
+        notifyListeners();
+        return;
+      }
+      syncState = SyncState.busy;
+      syncError = null;
+      notifyListeners();
+      final epoch = _epoch;
+      try {
+        final err = await bleSync();
+        if (epoch != _epoch) return;
+        if (err != null && err.isNotEmpty) {
+          syncState = SyncState.idle;
+          syncError = err;
+          notifyListeners();
+          return;
+        }
+        _finishSync(manual ? SyncTrigger.manual : SyncTrigger.auto);
+      } on Object catch (e) {
+        if (epoch != _epoch) return;
+        syncState = SyncState.idle;
+        syncError = '$e';
+        notifyListeners();
+      }
+      return;
+    }
+
     syncState = SyncState.busy;
     syncError = null;
     notifyListeners();
@@ -884,6 +961,9 @@ class DeviceStore extends ChangeNotifier {
 
   void closeSheet() {
     if (fwUpdating) return; // 更新中弹层锁定
+    if (view == DeviceView.wifi && deviceWifiOpen == true && !wifiJoining) {
+      unawaited(_closeWifiQuietly());
+    }
     sheetOpen = false;
     _stopSheetWatch();
     // 不停录音时钟：录音还在继续，Timeline 顶部状态块要继续计时
@@ -891,7 +971,14 @@ class DeviceStore extends ChangeNotifier {
   }
 
   void showView(DeviceView v) {
+    final prev = view;
     view = v;
+    if (prev == DeviceView.wifi &&
+        v != DeviceView.wifi &&
+        deviceWifiOpen == true &&
+        !wifiJoining) {
+      unawaited(_closeWifiQuietly());
+    }
     if (v == DeviceView.wifi) {
       unawaited(wifiScan());
     }
@@ -899,6 +986,15 @@ class DeviceStore extends ChangeNotifier {
       unawaited(checkFirmware());
     }
     notifyListeners();
+  }
+
+  Future<void> _closeWifiQuietly() async {
+    try {
+      await _gw.closeWifi();
+      deviceWifiOpen = false;
+    } on Object {
+      // 忽略关闭失败，后续读文件前管线还会兜底再关一次
+    }
   }
 
   // ── 固件：真实两阶段（主控 BLE DFU → Wi-Fi 模组在线 OTA）──

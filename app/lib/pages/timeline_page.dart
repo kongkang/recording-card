@@ -29,8 +29,11 @@ class TimelinePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
+    final merged = recordingStatus == null
+        ? store
+        : Listenable.merge([store, recordingStatus!]);
     return ListenableBuilder(
-      listenable: store,
+      listenable: merged,
       builder: (context, _) {
         final groups = store.feedGroups;
         // 录音/同步状态块只出现在「全部/记录」的内容顶部：
@@ -38,12 +41,17 @@ class TimelinePage extends StatelessWidget {
         final showStatus = recordingStatus != null &&
             !store.selMode &&
             store.filter != FeedFilter.summary;
+        // 设计稿只有一处顶部实时状态块（#live-status）：状态块已经在展示「正在录音 / 正在同步 / 正在转写」时，
+        // 不再叠出第二条 _SyncBanner（「正在取回…」进度条），避免两块同步提示同时出现冲突。
+        final statusBlockVisible =
+            showStatus && recordingStatus!.phase != RecordingPhase.idle;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _TabsBar(store: store),
             if (store.selMode) _RangeBar(store: store),
-            if (store.loading || store.syncStage != null)
+            if ((store.loading || store.syncStage != null) &&
+                !statusBlockVisible)
               _SyncBanner(store: store),
             Expanded(
               // 下拉同步：从录音卡取回新录音（下载 + 转码 + 转写）

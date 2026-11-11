@@ -176,7 +176,9 @@ class _DetailPageState extends State<DetailPage> {
                     e.note ??
                         (view.file.polishStale
                             ? '部分内容未润色，以下为本地原始转写。'
-                            : '云端润色未完成，以下为本地原始转写。'),
+                            : (view.file.deviceName.startsWith('LIVE_')
+                                  ? '实时切片本地转写（保留原始文本，暂未接入云端润色）。'
+                                  : '云端润色未完成，以下为本地原始转写。')),
                     key: const Key('detail-note'),
                     style: const TextStyle(
                       fontSize: 12,
@@ -377,7 +379,10 @@ class _DetailPageState extends State<DetailPage> {
     // 顶部先给"能不能听"：本地实时录音原样回放，断档会明说。
     // 原来那段长说明压缩成一句，页面顶部不再堆解释文字。
     final widgets = <Widget>[
-      RawAudioPlayer(fileKey: view?.file.deviceName ?? e.id),
+      RawAudioPlayer(
+        fileKey: view?.file.deviceName ?? e.id,
+        wavPath: view?.file.wavPath,
+      ),
       if (view != null && !view.file.timeSynced)
         const Padding(
           padding: EdgeInsets.only(bottom: 12),

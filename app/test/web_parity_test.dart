@@ -178,7 +178,7 @@ void main() {
     expect(gw.callLog, isNot(contains('ota.main')), reason: '不能带着录音进 DFU');
   });
 
-  testWidgets('停止录音：先关实时流，再开始取文件', (tester) async {
+  testWidgets('停止录音：立即关实时流且不自动拉取文件，手动补同步在关流之后执行', (tester) async {
     final gw = FakeCardGateway(initialSnapshot: _snap(), devices: const [_card]);
     final sync = await FakeRecordingSync.create(result: const [], callLog: gw.callLog);
     final store = AppStore(
@@ -194,13 +194,17 @@ void main() {
     await pumpShell(tester, store: store, device: device, liveAudio: live);
     await device.toggleRecording(); // 开始
     await tester.pump();
-    await device.toggleRecording(); // 停止 → 自动同步
+    await device.toggleRecording(); // 停止 → 仅收尾实时流，不自动拉取设备文件
     await tester.pump();
 
     final close = gw.callLog.indexOf('realtime.close');
-    final started = gw.callLog.indexOf('sync');
     expect(close, isNonNegative, reason: '停止录音必须关实时开关');
-    expect(started, greaterThan(close), reason: '取文件前必须先把实时流关掉');
+    expect(gw.callLog.indexOf('sync'), -1, reason: '停止录音不应自动触发 BLE 文件同步');
+
+    await store.syncRecordings(); // 手动补传离线录音
+    await tester.pump();
+    final started = gw.callLog.indexOf('sync');
+    expect(started, greaterThan(close), reason: '手动取文件前实时流已关闭');
   });
 }
 

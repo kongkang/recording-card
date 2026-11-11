@@ -358,17 +358,28 @@ class _MainView extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '录音卡',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                    store.connectedName?.isNotEmpty == true
+                        ? store.connectedName!
+                        : '录音卡',
+                    key: const Key('dev-name'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   Text(
-                    '已连接 · 蓝牙',
-                    style: TextStyle(fontSize: 12, color: RCColors.sec),
+                    store.deviceSubtitleText,
+                    key: const Key('dev-subtitle'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
                   ),
                 ],
               ),
@@ -624,6 +635,15 @@ class _MainView extends StatelessWidget {
               store.recordingError!,
               key: const Key('rec-error'),
               style: const TextStyle(fontSize: 12, color: RCColors.danger),
+            ),
+          ),
+        if (store.syncError != null && store.syncError!.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              store.syncError!,
+              key: const Key('sync-error'),
+              style: const TextStyle(fontSize: 12, color: RCColors.sec),
             ),
           ),
         const SizedBox(height: 10),

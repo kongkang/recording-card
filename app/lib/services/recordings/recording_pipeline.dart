@@ -9,6 +9,7 @@
 /// - 每片转写完成立即落盘，杀进程后从第一片未完成的继续。
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -16,6 +17,7 @@ import 'package:flutter/foundation.dart';
 import '../../core/device/card_gateway.dart';
 import '../../core/models/recording.dart';
 import '../../core/store/settings_store.dart';
+import '../audio/live_audio_recorder.dart';
 import '../polish/slice_polish_service.dart';
 import '../segment/segment_build_service.dart';
 import '../transcribe/slice_planner.dart';
@@ -111,12 +113,16 @@ class RecordingPipeline {
     this.polish,
     this.segments,
     this.network = const NetworkPolicy(),
+    this.liveAudioBaseDir,
   });
 
   final CardGateway gateway;
   final RecordingStore store;
   final SpeechEngine engine;
   final SpeechModelProvider models;
+
+  /// 实时音频存储根目录（测试注入；生产为 null 默认走 ApplicationSupport）。
+  final Directory? liveAudioBaseDir;
 
   /// 设置开关；null 时按默认全开（测试/旧调用）。
   final SettingsStore? settings;
@@ -148,10 +154,348 @@ class RecordingPipeline {
   final SegmentBuildService? segments;
 
   bool _busy = false;
+  Completer<void>? _busyDone;
+  Future<void> _liveSerial = Future<void>.value();
 
   bool get isBusy => _busy;
 
-  /// 从设备同步新录音并处理。已完成的文件跳过；失败文件重试。
+  void _enterBusy() {
+    _busy = true;
+    _busyDone = Completer<void>();
+  }
+
+  void _exitBusy() {
+    _busy = false;
+    final done = _busyDone;
+    _busyDone = null;
+    if (done != null && !done.isCompleted) done.complete();
+  }
+
+  Future<void> _waitUntilIdle() async {
+    while (_busy) {
+      final done = _busyDone;
+      if (done == null) break;
+      await done.future;
+    }
+  }
+
+  /// 硬件侧 Wi-Fi 模块上电期间会独占 SD 卡总线，导致蓝牙 `FILE_LIST` / `FILE_UPLOAD`
+  /// 报 `SD card is owned by the WiFi module`。读卡文件前先尝试关闭 Wi-Fi 归还总线。
+  Future<void> _ensureSdCardOnMcu() async {
+    try {
+      await gateway.closeWifi();
+    } on Object {
+      // 未开启或固件不支持时静默放行
+    }
+  }
+
+  /// 判断卡端 `.APM` 是否已被本机无断档实时流切片覆盖并落库（避免慢速蓝牙重复拉取）。
+  bool _isCoveredByLiveSlices(
+    CardFile source,
+    List<LiveSession> liveSessions,
+    List<RecordingFile> localFiles,
+  ) {
+    for (final session in liveSessions) {
+      if (!session.coversCardFile(source)) continue;
+      final hasLocalSlice = localFiles.any((f) {
+        if (f.stage != RecordingStage.ready) return false;
+        if (session.sliceKeys.contains(f.deviceName)) return true;
+        if (session.deviceSessionId != null &&
+            session.deviceSessionId!.isNotEmpty &&
+            f.session == session.deviceSessionId &&
+            f.deviceName.startsWith('LIVE_')) {
+          return true;
+        }
+        return f.session == session.id;
+      });
+      if (hasLocalSlice) return true;
+    }
+    return false;
+  }
+
+  /// 录音开启期间：把刚封口的一份实时流 WAV 切片直接送入本地 VAD + SenseVoice 转写并落库。
+  ///
+  /// 关键特性：
+  /// - 不访问蓝牙文件接口（不打断正在进行的 `realtime.open` 音频推流）；
+  /// - 内部按 FIFO 排队串行推理，多片到达或刚巧遇到前序任务收尾时等待执行，绝不丢片；
+  /// - 本阶段只做本地转写与本地声纹推测并保存原始信息，**不调用云端文本润色与云端分段总结**。
+  Future<RecordingFile> ingestLiveSlice(
+    LiveAudioSlice slice, {
+    void Function(PipelineProgress progress)? onProgress,
+  }) {
+    final completer = Completer<RecordingFile>();
+    _liveSerial = _liveSerial.then((_) async {
+      await _waitUntilIdle();
+      _enterBusy();
+      try {
+        final result = await _ingestLiveSliceUnlocked(
+          slice,
+          onProgress: onProgress,
+        );
+        completer.complete(result);
+      } on Object catch (e, st) {
+        completer.completeError(e, st);
+      } finally {
+        _exitBusy();
+      }
+    });
+    return completer.future;
+  }
+
+  Future<RecordingFile> _ingestLiveSliceUnlocked(
+    LiveAudioSlice slice, {
+    void Function(PipelineProgress progress)? onProgress,
+  }) async {
+    final existing = await store.load(slice.sliceKey);
+    final sessionKey = (slice.deviceSessionId != null &&
+            slice.deviceSessionId!.trim().isNotEmpty)
+        ? slice.deviceSessionId!.trim()
+        : slice.sessionId;
+    final file = existing ??
+        RecordingFile(
+          deviceName: slice.sliceKey,
+          session: sessionKey,
+          seq: slice.sliceIndex + 1,
+          startAtMs: slice.startAtMs,
+          timeSynced: true,
+          apmPath: slice.wavPath,
+          wavPath: slice.wavPath,
+          durationMs: slice.durationMs,
+          createdAtMs: DateTime.now().millisecondsSinceEpoch,
+          stage: RecordingStage.transcribing,
+        );
+    file
+      ..apmPath = slice.wavPath
+      ..wavPath = slice.wavPath
+      ..durationMs = slice.durationMs
+      ..error = null;
+    await store.save(file);
+
+    void report(PipelineStage stage, String text) {
+      onProgress?.call(
+        PipelineProgress(
+          stage: stage,
+          fileIndex: 0,
+          fileTotal: 1,
+          fileName: file.deviceName,
+          sliceIndex: 0,
+          sliceTotal: 1,
+          text: text,
+        ),
+      );
+    }
+
+    final dir = await store.dirFor(file.deviceName);
+    if (!await dir.exists()) await dir.create(recursive: true);
+
+    SpeechModelPaths? paths;
+    try {
+      paths = await models.resolve();
+    } on Object catch (e) {
+      file
+        ..stage = RecordingStage.transcoding
+        ..error = '本地模型未就绪：$e';
+      await store.save(file);
+      return file;
+    }
+    if (paths == null || !paths.canTranscribe) {
+      file
+        ..stage = RecordingStage.transcoding
+        ..error = '本地转写模型未就绪';
+      await store.save(file);
+      return file;
+    }
+
+    final wavFile = File(slice.wavPath);
+    if (!await wavFile.exists()) {
+      file
+        ..stage = RecordingStage.failed
+        ..error = '实时切片音频不存在：${slice.wavPath}';
+      await store.save(file);
+      return file;
+    }
+
+    final wav = readWavFile(slice.wavPath);
+    if (wav.frames > 0 && file.slices.isEmpty) {
+      report(PipelineStage.slicing, '正在切分第 ${slice.sliceIndex + 1} 片实时录音');
+      await engine.loadVad(paths.vadPath);
+      final spans = await engine.detectSpeech(wav.toFloat32());
+      final planned = slicePlanner.plan(
+        speech: spans,
+        totalSamples: wav.frames,
+        sampleRate: wav.sampleRate,
+      );
+      final sliceDir = Directory('${dir.path}/slices');
+      if (!await sliceDir.exists()) await sliceDir.create(recursive: true);
+      final slices = <AudioSlice>[];
+      for (final plan in planned) {
+        final id = plan.index.toString().padLeft(4, '0');
+        final path = '${sliceDir.path}/$id.wav';
+        await File(path).writeAsBytes(
+          wav.sliceWav(plan.startSample, plan.endSample),
+          flush: true,
+        );
+        slices.add(
+          AudioSlice(
+            id: id,
+            index: plan.index,
+            startMs: plan.startMs(wav.sampleRate),
+            endMs: plan.endMs(wav.sampleRate),
+            wavPath: path,
+            silenceAfterMs: plan.silenceAfterMs(wav.sampleRate),
+          ),
+        );
+      }
+      file
+        ..slices = slices
+        ..stage = RecordingStage.transcribing;
+      await store.save(file);
+    }
+
+    if (!_autoTranscribe) {
+      file
+        ..segments = [_buildLocalSliceSegment(file, slice)]
+        ..stage = RecordingStage.ready
+        ..error = null;
+      await store.save(file);
+      return file;
+    }
+
+    if (file.slices.isNotEmpty) {
+      await engine.load(
+        modelPath: paths.asrModelPath,
+        tokensPath: paths.tokensPath,
+        language: language,
+      );
+      final total = file.slices.length;
+      for (var i = 0; i < total; i++) {
+        final sub = file.slices[i];
+        if (sub.stage == SliceStage.transcribed ||
+            sub.stage == SliceStage.polished) {
+          continue;
+        }
+        report(
+          PipelineStage.transcribing,
+          '正在本地转写第 ${slice.sliceIndex + 1} 片（${i + 1}/$total）',
+        );
+        final subWav = readWavFile(sub.wavPath);
+        final result = await engine.transcribe(subWav.toFloat32());
+        final utterances = buildUtterancesFromAsr(
+          sliceId: sub.id,
+          sliceStartMs: sub.startMs,
+          sliceEndMs: sub.endMs,
+          text: result.text,
+          tokens: result.tokens,
+          tokenTimestampsMs: result.timestampsMs,
+          lang: result.lang,
+          emotion: result.emotion,
+        );
+        file.utterances = [
+          ...file.utterances.where((u) => u.sliceId != sub.id),
+          ...utterances,
+        ]..sort((a, b) => a.startMs.compareTo(b.startMs));
+        file.slices[i] = sub.copyWith(
+          stage: SliceStage.transcribed,
+          clearError: true,
+        );
+        await store.save(file);
+      }
+    }
+
+    if (file.utterances.isNotEmpty) {
+      report(PipelineStage.labeling, '正在推测说话人');
+      if (_speakerLabel && paths.canLabelSpeakers) {
+        await _labelSpeakers(file, paths.speakerEmbeddingPath!);
+      } else {
+        file.utterances = [
+          for (final u in file.utterances) u.copyWith(speakerLabel: '未区分'),
+        ];
+      }
+      await store.save(file);
+    }
+
+    // 本阶段不做云端文本润色：直接用本地原始转写构建切片记录进入 Timeline
+    file
+      ..segments = [_buildLocalSliceSegment(file, slice)]
+      ..stage = RecordingStage.ready
+      ..error = null;
+    await store.save(file);
+    report(PipelineStage.done, '第 ${slice.sliceIndex + 1} 片已转写保存');
+    return file;
+  }
+
+  SegmentRecord _buildLocalSliceSegment(
+    RecordingFile file,
+    LiveAudioSlice slice,
+  ) {
+    final utterances = [...file.utterances]
+      ..sort((a, b) => a.startMs.compareTo(b.startMs));
+    final startAtMs = file.startAtMs;
+    final endAtMs = file.startAtMs +
+        (file.durationMs > 0
+            ? file.durationMs
+            : (utterances.isNotEmpty ? utterances.last.endMs : 1000));
+    final speakers = <String>{
+      for (final u in utterances)
+        if ((u.speakerLabel ?? '').trim().isNotEmpty &&
+            u.speakerLabel != '未区分')
+          u.speakerLabel!,
+    };
+    final sliceIds = [for (final s in file.slices) s.id];
+    final seqNo = slice.sliceIndex + 1;
+
+    if (utterances.isEmpty) {
+      final secs = (slice.durationMs / 1000).round().clamp(1, 36000);
+      return SegmentRecord(
+        id: 'seg-${file.id}-0',
+        sessionId: file.session,
+        index: slice.sliceIndex,
+        startAtMs: startAtMs,
+        endAtMs: endAtMs,
+        title: '实时切片 #$seqNo（未识别到人声）',
+        brief: '已保存 $secs 秒本地流式音频，本段未检测到清晰语音。',
+        longText: '已保存 $secs 秒本地流式音频，可在「原始数据」回听。',
+        status: SegmentStatus.closed,
+        sliceIds: sliceIds,
+      );
+    }
+
+    final lines = [
+      for (final u in utterances)
+        if (u.text.trim().isNotEmpty) u.text.trim(),
+    ];
+    final flat = lines.join(' ');
+    final longText = lines.join('\n');
+    final firstClause = lines.isEmpty
+        ? ''
+        : lines.first.split(RegExp(r'[\n。！？!?，,；;]')).first.trim();
+    final title = firstClause.isEmpty
+        ? '实时切片 #$seqNo'
+        : (firstClause.length <= 18
+              ? firstClause
+              : '${firstClause.substring(0, 18)}…');
+    final brief = flat.isEmpty
+        ? '已保存本地原始转写'
+        : (flat.length <= 68 ? flat : '${flat.substring(0, 68)}…');
+
+    return SegmentRecord(
+      id: 'seg-${file.id}-0',
+      sessionId: file.session,
+      index: slice.sliceIndex,
+      startAtMs: startAtMs,
+      endAtMs: endAtMs,
+      title: title,
+      brief: brief,
+      longText: longText,
+      speakerLabels: speakers.toList()..sort(),
+      speakerCount: speakers.length,
+      status: SegmentStatus.closed,
+      sliceIds: sliceIds,
+      mark: slice.gapCount > 0 ? '流中断 ${slice.gapCount} 次' : null,
+    );
+  }
+
+  /// 从设备同步新录音并处理。已完成的文件跳过；已被实时流无断档覆盖的文件跳过；失败文件重试。
   ///
   /// [maxFiles] / [smallestFirst] 用于真机验证：只取最小的一个文件，避免
   /// 把整卡录音都拉下来（BLE 很慢）。生产不传 = 处理全部新文件。
@@ -164,7 +508,7 @@ class RecordingPipeline {
     if (_busy) {
       throw const PipelineException('同步已在进行中');
     }
-    _busy = true;
+    _enterBusy();
     try {
       onProgress?.call(
         const PipelineProgress(
@@ -174,7 +518,9 @@ class RecordingPipeline {
           text: '正在读取录音卡文件列表…',
         ),
       );
+      await _ensureSdCardOnMcu();
       final files = await gateway.files();
+      await store.pruneMissingGhosts({for (final f in files) f.name});
       var apms = files
           .where((f) => f.isApm && f.size >= minFileSize)
           .toList();
@@ -197,6 +543,11 @@ class RecordingPipeline {
         );
       }
 
+      final liveSessions = await LiveAudioRecorder.listSessions(
+        baseDir: liveAudioBaseDir,
+      );
+      final localFiles = await store.loadAll(refresh: true);
+
       var downloaded = 0;
       var ready = 0;
       var skipped = 0;
@@ -207,6 +558,10 @@ class RecordingPipeline {
         final source = apms[i];
         final existing = await store.load(source.name);
         if (existing != null && existing.stage == RecordingStage.ready) {
+          skipped++;
+          continue;
+        }
+        if (_isCoveredByLiveSlices(source, liveSessions, localFiles)) {
           skipped++;
           continue;
         }
@@ -239,7 +594,7 @@ class RecordingPipeline {
         failures: failures,
       );
     } finally {
-      _busy = false;
+      _exitBusy();
     }
   }
 
@@ -250,26 +605,38 @@ class RecordingPipeline {
     if (_busy) {
       throw const PipelineException('处理已在进行中');
     }
-    _busy = true;
+    _enterBusy();
     try {
-      final all = await store.loadAll(refresh: true);
-      final pending = all
+      var all = await store.loadAll(refresh: true);
+      var pending = all
           .where((f) => f.stage != RecordingStage.ready)
           .toList()
         ..sort((a, b) => b.startAtMs.compareTo(a.startAtMs));
 
       // 续跑必须知道设备上还剩哪些文件：否则「本地没有 .apm」会被当成新下载，
       // 而设备上早已被取走（固件取完即删），于是每轮重试都卡在同一处、永远走不完。
-      // 拿不到清单（未连接/超时）就把这批标记为可重试的排队态并**立刻收尾**，
-      // 不让进度条停在 N/N 上。
+      // 只有真存在「缺本地音频」的条目时才去读设备文件清单，避免纯本地切片续跑误触蓝牙。
       final Map<String, CardFile> deviceFiles = {};
       var listingFailed = false;
-      if (pending.isNotEmpty) {
+      final needsDeviceCheck = pending.any((f) {
+        final hasApm = f.apmPath.isNotEmpty && File(f.apmPath).existsSync();
+        final hasWav =
+            f.wavPath != null && f.wavPath!.isNotEmpty && File(f.wavPath!).existsSync();
+        return !hasApm && !hasWav;
+      });
+      if (needsDeviceCheck) {
         try {
+          await _ensureSdCardOnMcu();
           final files = await gateway.files();
           for (final f in files) {
             deviceFiles[f.name] = f;
           }
+          await store.pruneMissingGhosts(deviceFiles.keys.toSet());
+          all = await store.loadAll(refresh: true);
+          pending = all
+              .where((f) => f.stage != RecordingStage.ready)
+              .toList()
+            ..sort((a, b) => b.startAtMs.compareTo(a.startAtMs));
         } on Object catch (e) {
           listingFailed = true;
           debugPrint('[pipeline] 续跑读取文件列表失败：$e');
@@ -281,20 +648,46 @@ class RecordingPipeline {
       final failures = <String>[];
       for (var i = 0; i < pending.length; i++) {
         final file = pending[i];
-        // 本地没有音频、设备上也没这个文件（或清单读不到）：不再重试下载，
-        // 明确标成失败并给出原因，避免进度永远停在最后一条。
-        final lacksAudio =
-            file.apmPath.isEmpty || !await File(file.apmPath).exists();
+        final hasApm =
+            file.apmPath.isNotEmpty && await File(file.apmPath).exists();
+        final hasWav = file.wavPath != null &&
+            file.wavPath!.isNotEmpty &&
+            await File(file.wavPath!).exists();
+        final lacksAudio = !hasApm && !hasWav;
         if (lacksAudio && (listingFailed || !deviceFiles.containsKey(file.deviceName))) {
           failed++;
           failures.add('${file.deviceName}: 录音文件不在本机、设备上也不存在');
           file
             ..stage = RecordingStage.failed
             ..error = listingFailed
-                // 未连卡时谈"读取失败"会误导；如实说是无法核对，让用户知道要做什么
                 ? '未连接到录音卡，无法核对缺失的录音，连上后可重试'
                 : '设备上已不存在该录音，无法补取';
           await store.save(file);
+          continue;
+        }
+        if (file.deviceName.startsWith('LIVE_') && hasWav) {
+          try {
+            await _ingestLiveSliceUnlocked(
+              LiveAudioSlice(
+                sessionId: file.session,
+                deviceSessionId: file.session,
+                sliceIndex: (file.seq - 1).clamp(0, 999999),
+                startAtMs: file.startAtMs,
+                durationMs: file.durationMs,
+                wavPath: file.wavPath!,
+              ),
+              onProgress: onProgress,
+            );
+            final refreshed = await store.load(file.deviceName);
+            if (refreshed?.stage == RecordingStage.ready) ready++;
+          } on Object catch (e) {
+            failed++;
+            failures.add('${file.deviceName}: $e');
+            file
+              ..stage = RecordingStage.failed
+              ..error = '$e';
+            await store.save(file);
+          }
           continue;
         }
         try {
@@ -323,7 +716,7 @@ class RecordingPipeline {
         failures: failures,
       );
     } finally {
-      _busy = false;
+      _exitBusy();
     }
   }
 
@@ -358,8 +751,12 @@ class RecordingPipeline {
     final dir = await store.dirFor(file.deviceName);
     if (!await dir.exists()) await dir.create(recursive: true);
 
-    // 1) 取回 .apm（本地已有则跳过）
-    if (file.apmPath.isEmpty || !await File(file.apmPath).exists()) {
+    // 1) 取回 .apm（本地已有 .apm 或已有转好的 .wav 则跳过）
+    final alreadyHasWav = file.wavPath != null &&
+        file.wavPath!.isNotEmpty &&
+        await File(file.wavPath!).exists();
+    if (!alreadyHasWav &&
+        (file.apmPath.isEmpty || !await File(file.apmPath).exists())) {
       // 「仅使用 Wi-Fi 同步」：取录音是整条链路里最贵的一步（BLE 3~8 KB/s），
       // 在真正下载前拦一次，避免用户以为设了却仍走蜂窝流量。
       final decision = await network.check(wifiOnly: _wifiOnly);
