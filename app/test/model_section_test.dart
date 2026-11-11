@@ -42,11 +42,29 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
+    expect(find.byKey(const Key('set-local-model')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('set-local-model')));
+    await tester.pumpAndSettle();
+
     expect(
       find.byKey(const Key('model-row-sensevoice-small-int8')),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('model-row-silero-vad')), findsOneWidget);
+    expect(
+      find.byKey(const Key('model-row-campplus-embedding')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('SenseVoice'), findsWidgets);
+    expect(find.textContaining('Silero VAD'), findsWidgets);
+    expect(find.textContaining('CAM++'), findsWidgets);
     expect(find.text('模型下载服务未配置'), findsOneWidget);
+    // 滚到底部确认下载按钮因未配置被禁用
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('model-install-all')),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
     final button = tester.widget<OutlinedButton>(
       find.byKey(const Key('model-install-all')),
     );

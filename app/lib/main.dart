@@ -9,6 +9,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/dev/dev_driver.dart';
 import 'core/platform/crash_guard.dart';
 import 'core/storage/storage.dart';
+import 'core/store/agent_config_store.dart';
 import 'core/store/app_store.dart';
 import 'core/store/device_store.dart';
 import 'core/store/settings_store.dart';
@@ -33,20 +34,30 @@ Future<void> main() async {
   // 崩溃兜底要在 runApp 之前装好，否则启动期异常会直接白屏且无迹可查
   installCrashHandlers();
   SettingsStore settings;
+  AgentConfigStore agentConfig;
   try {
-    settings = SettingsStore(store: await PrefsStore.open());
+    final prefs = await PrefsStore.open();
+    settings = SettingsStore(store: prefs);
     await settings.load();
+    agentConfig = AgentConfigStore(store: prefs);
+    await agentConfig.load();
   } catch (_) {
     // 平台通道不可用时用内存默认值，保证仍可启动
     settings = SettingsStore(store: InMemoryStore());
+    agentConfig = AgentConfigStore(store: InMemoryStore());
   }
-  runApp(RecordingCardApp(settings: settings));
+  runApp(RecordingCardApp(settings: settings, agentConfig: agentConfig));
 }
 
 class RecordingCardApp extends StatelessWidget {
-  const RecordingCardApp({super.key, required this.settings});
+  const RecordingCardApp({
+    super.key,
+    required this.settings,
+    this.agentConfig,
+  });
 
   final SettingsStore settings;
+  final AgentConfigStore? agentConfig;
 
   @override
   Widget build(BuildContext context) {
@@ -64,7 +75,7 @@ class RecordingCardApp extends StatelessWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       locale: const Locale('zh', 'CN'),
-      home: _HomeGate(settings: settings),
+      home: _HomeGate(settings: settings, agentConfig: agentConfig),
     );
   }
 }
@@ -76,9 +87,10 @@ final GlobalKey _shotKey = GlobalKey();
 final DevDriver? dev = kDebugMode ? DevDriver(_shotKey) : null;
 
 class _HomeGate extends StatefulWidget {
-  const _HomeGate({required this.settings});
+  const _HomeGate({required this.settings, this.agentConfig});
 
   final SettingsStore settings;
+  final AgentConfigStore? agentConfig;
 
   @override
   State<_HomeGate> createState() => _HomeGateState();
@@ -91,6 +103,8 @@ class _HomeGateState extends State<_HomeGate> {
   final _device = DeviceStore(autoStart: true);
   final _recordingStatus = RecordingStatusController();
   late final SettingsStore _settings = widget.settings;
+  late final AgentConfigStore _agentConfig =
+      widget.agentConfig ?? AgentConfigStore(store: InMemoryStore());
 
   late final ModelGateway _modelGateway;
   late final ModelInstaller _installer;
@@ -106,7 +120,10 @@ class _HomeGateState extends State<_HomeGate> {
   void initState() {
     super.initState();
     _modelGateway = ModelGateway(client: _auth.apiClient);
-    _summaries = SummaryGenerator(gateway: _modelGateway);
+    _summaries = SummaryGenerator(
+      gateway: _modelGateway,
+      agentConfig: _agentConfig,
+    );
 
     // 本地转写/润色/分段流水线（离线优先；云端未配置/未登录时自动降级）
     _installer = ModelInstaller();
@@ -151,10 +168,18 @@ class _HomeGateState extends State<_HomeGate> {
     }
   }
 
+  Future<void> _discoverAndSyncModels() async {
+    await _modelGateway.discoverModels();
+    _agentConfig.syncGatewayModels(
+      _modelGateway.discoveredTextModels,
+      primaryTextModel: _modelGateway.textModel,
+    );
+  }
+
   /// 启动装载：等鉴权恢复 → 载入历史状态与本地录音 → 登录态就绪时探测模型目录。
   Future<void> _boot() async {
     await _auth.ready;
-    if (_auth.isSignedIn) unawaited(_modelGateway.discoverModels());
+    if (_auth.isSignedIn) unawaited(_discoverAndSyncModels());
     await _store.init();
     if (mounted) setState(() => _booted = true);
     // 有本地未完成的录音就继续处理（不访问设备）；模型未装时只下载/转码排队
@@ -167,6 +192,7 @@ class _HomeGateState extends State<_HomeGate> {
     _store.dispose();
     _recordingStatus.dispose();
     _modelManager.dispose();
+    if (widget.agentConfig == null) _agentConfig.dispose();
     unawaited(_asr.dispose());
     super.dispose();
   }
@@ -188,11 +214,12 @@ class _HomeGateState extends State<_HomeGate> {
               recordingStatus: _recordingStatus,
               modelManager: _modelManager,
               settings: _settings,
+              agentConfig: _agentConfig,
             );
           }
           return LoginPage(
             auth: _auth,
-            onSignedIn: () => unawaited(_modelGateway.discoverModels()),
+            onSignedIn: () => unawaited(_discoverAndSyncModels()),
           );
         },
       ),

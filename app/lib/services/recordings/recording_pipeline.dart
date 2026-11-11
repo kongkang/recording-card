@@ -638,7 +638,7 @@ class RecordingPipeline {
       final files = await gateway.files();
       await store.pruneMissingGhosts({for (final f in files) f.name});
       var apms = files
-          .where((f) => f.isApm && f.size >= minFileSize)
+          .where((f) => f.isAudioRecording && f.size >= minFileSize)
           .toList();
       if (smallestFirst) {
         apms.sort((a, b) => a.size.compareTo(b.size));

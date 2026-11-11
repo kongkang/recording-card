@@ -85,6 +85,7 @@ class ModelGateway {
   /// 运行时从服务端探测到的模型（dart-define 没配时用它）。
   String? _discoveredAsr;
   String? _discoveredText;
+  List<GatewayModel> _discoveredModels = const [];
   bool _catalogLoaded = false;
   String? _catalogError;
 
@@ -94,6 +95,11 @@ class ModelGateway {
   /// 模型目录是否已探测过（成功或失败都算）。
   bool get catalogLoaded => _catalogLoaded;
   String? get catalogError => _catalogError;
+  List<GatewayModel> get discoveredModels => _discoveredModels;
+  List<String> get discoveredTextModels => [
+    for (final m in _discoveredModels)
+      if (m.capabilities.isEmpty || m.has('text') || m.has('chat')) m.id,
+  ];
 
   /// 实际生效的 ASR 模型名：显式配置优先，其次服务端探测结果。
   String get asrModel => _config.asrModel.trim().isNotEmpty
@@ -132,6 +138,7 @@ class ModelGateway {
         gatewayBaseUrl: _config.gatewayBaseUrl,
         timeout: timeout,
       );
+      _discoveredModels = catalog.models;
       _discoveredAsr = catalog.asrModel;
       _discoveredText = catalog.textModel;
       _catalogLoaded = true;

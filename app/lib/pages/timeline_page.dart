@@ -1,6 +1,8 @@
 /// Timeline 页 —— 按日分组倒序；两行折叠卡；勾选模式（全选今日/本周/本月 + 底部操作栏）。
 library;
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../core/models/record.dart';
@@ -54,10 +56,14 @@ class TimelinePage extends StatelessWidget {
                 !statusBlockVisible)
               _SyncBanner(store: store),
             Expanded(
-              // 下拉同步：从录音卡取回新录音（下载 + 转码 + 转写）
+              // 下拉刷新：全部/记录 Tab 从设备补传新录音；总结 Tab 仅刷新本机总结列表（不触发蓝牙取回）
               child: RefreshIndicator(
                 key: const Key('timeline-refresh'),
                 onRefresh: () async {
+                  if (store.filter == FeedFilter.summary) {
+                    await store.refreshSummariesOnly();
+                    return;
+                  }
                   final error = await store.syncRecordings();
                   if (error != null && context.mounted) {
                     if (error.contains('未连接录音卡')) {
@@ -97,21 +103,29 @@ class TimelinePage extends StatelessWidget {
                             child: Center(
                               child: Column(
                                 children: [
-                                  const Icon(
-                                    Icons.mic_none,
+                                  Icon(
+                                    store.filter == FeedFilter.summary
+                                        ? Icons.summarize_outlined
+                                        : Icons.mic_none,
                                     size: 36,
                                     color: RCColors.ax,
                                   ),
                                   const SizedBox(height: 10),
                                   Text(
-                                    store.loadError ??
-                                        (store.syncError ??
-                                            _emptyText(
-                                              store,
-                                              deviceReady:
-                                                  store.deviceConnected?.call() ??
-                                                  true,
-                                            )),
+                                    store.filter == FeedFilter.summary
+                                        ? '还没有总结\n点击右上角「总结」选择记录生成'
+                                        : (store.loadError ??
+                                              (store.syncError ??
+                                                  _emptyText(
+                                                    store,
+                                                    deviceReady:
+                                                        store.deviceConnected
+                                                            ?.call() ??
+                                                        true,
+                                                  ))),
+                                    key: store.filter == FeedFilter.summary
+                                        ? const Key('summary-empty-text')
+                                        : null,
                                     textAlign: TextAlign.center,
                                     style: const TextStyle(
                                       color: RCColors.sec,
@@ -151,12 +165,19 @@ class TimelinePage extends StatelessWidget {
                               _TimelineRail(
                                 first: i == 0,
                                 last: i == g.items.length - 1,
-                                child: item is SummaryCard
-                                    ? _SummaryCardView(card: item, store: store)
-                                    : _EventCardView(
-                                        event: item as RecordEvent,
-                                        store: store,
-                                      ),
+                                child: switch (item) {
+                                  final SummaryCard s => _SummaryCardView(
+                                    card: s,
+                                    store: store,
+                                  ),
+                                  final UnclassifiedPhotosCard u =>
+                                    _UnclassifiedPhotosCardView(card: u),
+                                  final RecordEvent e => _EventCardView(
+                                    event: e,
+                                    store: store,
+                                  ),
+                                  _ => const SizedBox.shrink(),
+                                },
                               ),
                           ],
                         ],
@@ -421,6 +442,7 @@ class _EventCardView extends StatelessWidget {
   Widget build(BuildContext context) {
     final open = store.openCardId == event.id;
     final picked = store.selMode && store.selIds.contains(event.id);
+    final activePhotos = store.activePhotosForEvent(event);
     return Padding(
       key: Key('timeline-item-${event.id}'),
       padding: const EdgeInsets.only(bottom: 36),
@@ -462,30 +484,54 @@ class _EventCardView extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        event.title,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: -0.1,
-                        ),
-                      ),
-                      if (event.live ||
-                          (event.note != null && event.note!.isNotEmpty)) ...[
-                        const SizedBox(height: 6),
-                        _EventNoteBadge(
-                          text: event.live ? '整理中' : event.note!,
-                          live: event.live,
-                        ),
-                      ],
-                      const SizedBox(height: 4),
-                      Text(
-                        '${event.time} · ${event.dur}',
-                        key: Key('when-${event.id}'),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: RCColors.sec,
-                        ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  event.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: -0.1,
+                                  ),
+                                ),
+                                if (event.live ||
+                                    (event.note != null &&
+                                        event.note!.isNotEmpty)) ...[
+                                  const SizedBox(height: 6),
+                                  _EventNoteBadge(
+                                    text: event.live ? '整理中' : event.note!,
+                                    live: event.live,
+                                  ),
+                                ],
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${event.time} · ${event.dur}',
+                                  key: Key('when-${event.id}'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: RCColors.sec,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (activePhotos.isNotEmpty) ...[
+                            const SizedBox(width: 10),
+                            _PhotoStackThumb(
+                              key: Key('pics-${event.id}'),
+                              photos: activePhotos,
+                            ),
+                          ],
+                        ],
                       ),
                       if (open) ...[
                         const SizedBox(height: 10),
@@ -661,6 +707,7 @@ class _SummaryCardView extends StatelessWidget {
           ],
         );
       case SummaryState.done:
+        final picCount = store.activePhotoCountForSummary(card);
         inner = Column(
           key: const Key('sumcard-done'),
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -670,6 +717,8 @@ class _SummaryCardView extends StatelessWidget {
                 Expanded(
                   child: Text(
                     card.title ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
@@ -681,9 +730,21 @@ class _SummaryCardView extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 4),
-            Text(
-              '${card.time} · 已选 ${card.srcIds.length} 片段',
-              style: const TextStyle(fontSize: 12, color: RCColors.sec),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${card.time} · 已选 ${card.srcIds.length} 片段',
+                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                  ),
+                ),
+                if (picCount > 0)
+                  Text(
+                    '含 $picCount 张图片',
+                    key: Key('sumpics-${card.id}'),
+                    style: const TextStyle(fontSize: 11, color: RCColors.sec),
+                  ),
+              ],
             ),
           ],
         );
@@ -840,4 +901,133 @@ String _emptyText(AppStore store, {bool deviceReady = true}) {
     return '正在整理本地录音…\n完成后会出现在时间轴';
   }
   return '录音里没有识别到语音';
+}
+
+/// 45px 正方形相册缩略图：1 张单图、2~3 张层叠、超过 3 张第 4 层显示总数遮罩。
+class _PhotoStackThumb extends StatelessWidget {
+  const _PhotoStackThumb({super.key, required this.photos});
+
+  final List<EventPhoto> photos;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = photos.length;
+    if (count == 0) return const SizedBox.shrink();
+    if (count == 1) {
+      return SizedBox(
+        width: 45,
+        height: 45,
+        child: _tile(photos.first, size: 45),
+      );
+    }
+    final layers = count > 3 ? 4 : count;
+    final tileSize = layers == 2 ? 39.0 : (layers == 3 ? 36.0 : 34.0);
+    final step = (45.0 - tileSize) / (layers - 1);
+    return SizedBox(
+      width: 45,
+      height: 45,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (var i = 0; i < layers; i++)
+            Positioned(
+              left: i * step,
+              top: (layers - 1 - i) * step,
+              width: tileSize,
+              height: tileSize,
+              child: _tile(
+                photos[i],
+                size: tileSize,
+                overlayCount: (count > 3 && i == layers - 1) ? count : null,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tile(EventPhoto p, {required double size, int? overlayCount}) {
+    final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEAEAE4),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: RCColors.card, width: 1.5),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (hasFile)
+            Image.file(File(p.path), fit: BoxFit.cover)
+          else
+            const ColoredBox(
+              color: Color(0xFFE6E6E0),
+              child: Icon(Icons.photo_outlined, size: 16, color: RCColors.sec),
+            ),
+          if (overlayCount != null)
+            ColoredBox(
+              color: const Color(0x88000000),
+              child: Center(
+                child: Text(
+                  '$overlayCount',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 当天分组顶部的「未归类图片」条目（从对话详情标记「不属于本段」后移入）。
+class _UnclassifiedPhotosCardView extends StatelessWidget {
+  const _UnclassifiedPhotosCardView({required this.card});
+
+  final UnclassifiedPhotosCard card;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      key: Key('card-unc-${card.dayOffset}'),
+      padding: const EdgeInsets.only(bottom: 28),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        decoration: BoxDecoration(
+          color: RCColors.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: RCColors.sep),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '未归类图片',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '已从录音对话排除 · 共 ${card.photos.length} 张',
+                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            _PhotoStackThumb(photos: card.photos),
+          ],
+        ),
+      ),
+    );
+  }
 }

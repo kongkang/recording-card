@@ -519,7 +519,9 @@ class _MainView extends StatelessWidget {
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
-                  '${store.batteryLevelText} · 可录至 ${store.batteryEtaText}',
+                  store.activeCapabilities.hasOnboardStorage
+                      ? '${store.batteryLevelText} · 可录至 ${store.batteryEtaText}'
+                      : store.batteryLevelText,
                   key: const Key('batt-eta'),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
@@ -529,49 +531,50 @@ class _MainView extends StatelessWidget {
             ],
           ),
         ),
-        // 同步行：行内动作，图标三态（sync → 自转 → 对勾），成功后 10s 冷却
-        _Row(
-          keyName: 'sync-now',
-          label: '同步',
-          onTap: store.syncNow,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  store.syncText,
-                  key: const Key('sync-txt'),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                  style: const TextStyle(fontSize: 14),
+        // 同步行：仅具备本地存储/文件补传能力的设备展示（如录音卡 V2、点一机 V1；键盘 V2.1 隐藏）
+        if (store.activeCapabilities.hasFileSync)
+          _Row(
+            keyName: 'sync-now',
+            label: '同步',
+            onTap: store.syncNow,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    store.syncText,
+                    key: const Key('sync-txt'),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: const TextStyle(fontSize: 14),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 7),
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: switch (store.syncState) {
-                  SyncState.idle => const Icon(
-                    Icons.sync,
-                    key: Key('sync-ico-idle'),
-                    size: 15,
-                    color: RCColors.sec,
-                  ),
-                  SyncState.busy => const _SpinIcon(key: Key('sync-ico-busy')),
-                  SyncState.done => const Icon(
-                    Icons.check,
-                    key: Key('sync-ico-done'),
-                    size: 16,
-                    color: RCColors.ok,
-                  ),
-                },
-              ),
-            ],
+                const SizedBox(width: 7),
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: switch (store.syncState) {
+                    SyncState.idle => const Icon(
+                      Icons.sync,
+                      key: Key('sync-ico-idle'),
+                      size: 15,
+                      color: RCColors.sec,
+                    ),
+                    SyncState.busy => const _SpinIcon(key: Key('sync-ico-busy')),
+                    SyncState.done => const Icon(
+                      Icons.check,
+                      key: Key('sync-ico-done'),
+                      size: 16,
+                      color: RCColors.ok,
+                    ),
+                  },
+                ),
+              ],
+            ),
           ),
-        ),
         // Wi-Fi 配网整行暂时隐藏：当前固件侧该链路还没打通，留着只会让用户点进空页。
-        // 需要时把 showWifiRow 打开即可（入口、二级页都在，只是不展示）。
-        if (showWifiRow)
+        // 需要时把 showWifiRow 打开即可（且按设备能力 hasWifiConfig 门控）。
+        if (showWifiRow && store.activeCapabilities.hasWifiConfig)
           _Row(
             keyName: 'wifi-row',
             label: 'Wi-Fi',
@@ -597,27 +600,28 @@ class _MainView extends StatelessWidget {
               ],
             ),
           ),
-        _Row(
-          keyName: 'fw-update',
-          label: '固件',
-          onTap: () => store.showView(DeviceView.upg),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  store.fwValText,
-                  key: const Key('fw-val'),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                  style: const TextStyle(fontSize: 14, color: RCColors.okInk),
+        if (store.activeCapabilities.hasDualChipOta)
+          _Row(
+            keyName: 'fw-update',
+            label: '固件',
+            onTap: () => store.showView(DeviceView.upg),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    store.fwValText,
+                    key: const Key('fw-val'),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: const TextStyle(fontSize: 14, color: RCColors.okInk),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 5),
-              const Icon(Icons.chevron_right, size: 15, color: RCColors.ax),
-            ],
+                const SizedBox(width: 5),
+                const Icon(Icons.chevron_right, size: 15, color: RCColors.ax),
+              ],
+            ),
           ),
-        ),
         if (store.devStateText.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 2),
@@ -824,12 +828,39 @@ class _ConnectView extends StatelessWidget {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      device.name,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            device.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          key: Key('dev-kind-${device.id}'),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0F0EC),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            device.modelLabel,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: RCColors.sec,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   _SignalBars(strength: DeviceStore.signalOf(device.rssi)),

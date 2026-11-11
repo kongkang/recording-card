@@ -89,6 +89,12 @@ class DeviceStore extends ChangeNotifier {
   List<CardDevice> discovered = const [];
   String? linkError;
   String? connectedName;
+  DeviceKind activeKind = DeviceKind.cardV2;
+  HardwareCapabilities activeCapabilities = HardwareCapabilities.cardV2;
+  String activeModelLabel = DeviceKind.cardV2.displayModel;
+
+  /// 点一机 V1 硬件拍照事件到达时触发（供外层同步硬件抓拍照片）。
+  VoidCallback? onHardwarePhotoCaptured;
 
   /// 蓝牙授权状态（iOS 专用；Android 恒为 unknown 由系统自行申请）。
   BluetoothAuthorization bleAuth = BluetoothAuthorization.unknown;
@@ -131,14 +137,14 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 我们这一系列录音卡的蓝牙名前缀（如 `DYJV2_T4W25T`）。
-  ///
-  /// SDK 扫描侧已按 DYJ + NUS 广播过滤；这里再兜一层，避免个别固件不广播
-  /// NUS、或系统缓存里混入其它设备时把无关设备列给用户。
+  /// 支持的硬件蓝牙广播名前缀族：
+  /// - `DYJV2_*`：录音卡 V2
+  /// - `DYJ_*`：点一机 V1
+  /// - `REAI_VB_*`：语音 AI 键盘 V2.1
   static const deviceNamePrefix = 'DYJ';
 
   static bool isOurDevice(CardDevice device) =>
-      device.name.toUpperCase().startsWith(deviceNamePrefix);
+      DeviceKind.fromBleName(device.name) != null;
 
   /// RSSI → 1~3 格信号（与 Wi-Fi 列表同一套阈值，UI 直接复用）。
   static int signalOf(int? rssi) => _signalOf(rssi ?? -100);
@@ -201,9 +207,16 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
     _markLinkActivity();
     try {
-      final snapshot = await _gw.connect(device.id);
+      final snapshot = await _gw.connect(
+        device.id,
+        name: device.name,
+        deviceKind: device.deviceKind.code,
+      );
       if (epoch != _epoch) return;
       _markLinkActivity();
+      activeKind = device.deviceKind;
+      activeCapabilities = device.resolvedCapabilities;
+      activeModelLabel = device.modelLabel;
       // 桥只确认「连上」时没有快照：不要拿空数据覆盖旧状态，交给 _afterConnect 刷新。
       if (snapshot != null) _applySnapshot(snapshot);
       connectedName = device.name;
@@ -255,6 +268,8 @@ class DeviceStore extends ChangeNotifier {
     final epoch = ++_epoch;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
+    _eventWatch?.cancel();
+    _eventWatch = null;
     _stopSheetWatch();
     _lastDevice = null;
     CardDisconnectReport? report;
@@ -295,17 +310,19 @@ class DeviceStore extends ChangeNotifier {
     _storageFreeMb = null;
     _storageTotalMb = null;
     deviceWifiOpen = null;
+    activeKind = DeviceKind.cardV2;
+    activeCapabilities = HardwareCapabilities.cardV2;
+    activeModelLabel = DeviceKind.cardV2.displayModel;
   }
 
-  // ── 弹层期间的状态跟随 ─────────────────────────────────────
+  // ── 设备事件跟随（本地内存队列，零蓝牙流量）─────────────────
   Timer? _sheetWatch;
+  Timer? _eventWatch;
 
-  /// 弹层打开期间每 2 秒拉一次快照：设备侧按键/开关改变录音状态时界面立刻跟上。
-  /// 只在弹层可见时跑，关掉即停，不额外耗电。
+  /// 弹层打开期间每 200ms 读一次本地事件队列：设备侧按键/开关/电源变化时界面立刻跟上。
+  /// 只在弹层可见时高频跑，关掉即退回后台 1s 节拍，不额外耗蓝牙电。
   void _startSheetWatch() {
     _sheetWatch?.cancel();
-    // 200ms 拉一次**本地事件队列**（不访问设备，零蓝牙开销）：
-    // 设备侧拨杆/按键的状态变化是主动推上来的，这里只负责快速取走。
     _sheetWatch = Timer.periodic(const Duration(milliseconds: 200), (_) {
       if (!sheetOpen || !isConnected) {
         _stopSheetWatch();
@@ -318,20 +335,59 @@ class DeviceStore extends ChangeNotifier {
   /// 事件队列里的序号：下一次只取比它新的。
   int _eventSeq = 0;
 
-  /// 取走设备主动推送的事件并应用到状态。
+  /// 供测试或外部主动触发一次设备事件消费（autoStart=false 时无后台定时器）。
+  Future<void> pollEventsNow() => _pullDeviceEvents();
+
+  /// 取走设备主动推送的事件（录音开关、电源/电量、物理语音键、相机拍照、被动断连）并应用到状态。
   Future<void> _pullDeviceEvents() async {
     try {
       final batch = await _gw.pullEvents(after: _eventSeq);
       if (batch.seq == _eventSeq && batch.events.isEmpty) return;
       _eventSeq = batch.seq;
 
+      if (batch.disconnectedEvents.isNotEmpty && isConnected) {
+        unawaited(_retryReconnect());
+        return;
+      }
+
+      var changed = false;
+
       // 录音状态变化（拨杆 / 按键 / 固件自停）：直接改状态，不等下次查设备
       for (final item in batch.recordEvents) {
         final status = item['event']?['status'];
         if (status is! Map<String, dynamic>) continue;
         _applyRecordStatus(status);
+        changed = true;
       }
-      if (batch.recordEvents.isNotEmpty) notifyListeners();
+
+      // 电源/充电/电量主动上报：插拔电源或充饱时立即更新，不等轮询
+      for (final item in batch.powerEvents) {
+        final battery = item['event']?['battery'];
+        if (battery is! Map<String, dynamic>) continue;
+        final level = (battery['level'] as num?)?.toInt();
+        if (level != null && level > 0) {
+          _liveBattery = level.clamp(1, 100);
+        }
+        if (battery['isCharging'] is bool) {
+          _liveCharging = battery['isCharging'] as bool;
+        }
+        changed = true;
+      }
+
+      // 语音 AI 键盘物理语音键按下：翻转统一录音开关
+      for (final item in batch.voiceKeyEvents) {
+        if (item['event']?['pressed'] == true && !recordingBusy) {
+          unawaited(toggleRecording());
+          break;
+        }
+      }
+
+      // 点一机 V1 硬件按键拍照：通知外层拉取新照片
+      if (batch.cameraEvents.isNotEmpty) {
+        onHardwarePhotoCaptured?.call();
+      }
+
+      if (changed) notifyListeners();
     } on CardException {
       // 队列读不到不影响主链路：看门狗负责判掉线
     }
@@ -384,6 +440,7 @@ class DeviceStore extends ChangeNotifier {
   //    不再广播，扫描找不到它，这正是"断了以后再也连不回去"的老根因。
   // 4. 重连成功回绿/橙；失败回灰「无设备」。
   static const heartbeatIdle = Duration(seconds: 30);
+  static const recordingHeartbeatIdle = Duration(seconds: 120);
   static const _reconnectDelay = Duration(milliseconds: 400);
 
   /// 重连只发 connect（不再预拉快照），但桥内要先扫描（4s→6s 两档）再建链路，
@@ -407,15 +464,21 @@ class DeviceStore extends ChangeNotifier {
 
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
+    _eventWatch?.cancel();
     // widget 测试里 autoStart:false 不启，避免悬挂定时器
     if (!_autoStart) return;
     _sinceLinkActivity = Duration.zero;
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _heartbeatTick();
     });
+    _eventWatch = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (isConnected && !sheetOpen) {
+        unawaited(_pullDeviceEvents());
+      }
+    });
   }
 
-  /// 每 5 秒醒一次只为累计"空闲时长"；满 30 秒才真正探一次。
+  /// 每 5 秒醒一次只为累计"空闲时长"；待机满 30 秒探一次，录音推流中降频到 120 秒探一次。
   void _heartbeatTick() {
     if (linkState != LinkState.connected) return;
     // 固件升级/同步/录音命令链路忙：不插队，且这些动作本身已算活动
@@ -424,7 +487,8 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
     _sinceLinkActivity += const Duration(seconds: 5);
-    if (_sinceLinkActivity < heartbeatIdle) return;
+    final threshold = isRecording ? recordingHeartbeatIdle : heartbeatIdle;
+    if (_sinceLinkActivity < threshold) return;
     unawaited(_watchdogProbe());
   }
 
@@ -488,7 +552,11 @@ class DeviceStore extends ChangeNotifier {
       if (epoch != _epoch) return;
       _markLinkActivity();
       final snapshot = await _gateway
-          .connect(device.id)
+          .connect(
+            device.id,
+            name: device.name,
+            deviceKind: device.deviceKind.code,
+          )
           .timeout(_retryConnectTimeout);
       if (epoch != _epoch) return;
       _markLinkActivity();
@@ -516,6 +584,8 @@ class DeviceStore extends ChangeNotifier {
   void _dropToDisconnected(String message) {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
+    _eventWatch?.cancel();
+    _eventWatch = null;
     _stopClock();
     linkState = LinkState.disconnected;
     linkError = message;
@@ -542,18 +612,20 @@ class DeviceStore extends ChangeNotifier {
 
   int? get storageTotalMb => _storageTotalMb;
 
-  /// 设备管理层副标题：展示蓝牙连接态 + 固件版本 + 可用存储等设备基本信息。
+  /// 设备管理层副标题：展示型号 + 蓝牙连接态 + 固件版本 + 可用存储等设备基本信息。
   String get deviceSubtitleText {
-    final parts = <String>['已连接 · 蓝牙'];
+    final parts = <String>['已连接 · $activeModelLabel'];
     if (_fwVersion.isNotEmpty) {
       parts.add('固件 $_fwVersion');
     }
-    final freeMb = _storageFreeMb;
-    if (freeMb != null && freeMb >= 0) {
-      if (freeMb >= 1024) {
-        parts.add('可用 ${(freeMb / 1024).toStringAsFixed(1)} GB');
-      } else {
-        parts.add('可用 $freeMb MB');
+    if (activeCapabilities.hasOnboardStorage) {
+      final freeMb = _storageFreeMb;
+      if (freeMb != null && freeMb >= 0) {
+        if (freeMb >= 1024) {
+          parts.add('可用 ${(freeMb / 1024).toStringAsFixed(1)} GB');
+        } else {
+          parts.add('可用 $freeMb MB');
+        }
       }
     }
     return parts.join(' · ');
@@ -563,6 +635,9 @@ class DeviceStore extends ChangeNotifier {
   bool? deviceWifiOpen;
 
   void _applySnapshot(CardSnapshot s) {
+    activeKind = s.effectiveKind;
+    activeCapabilities = s.resolvedCapabilities;
+    activeModelLabel = s.modelLabel;
     // 电量三态：读到 → 更新；读不到（命令失败/字段缺失）→ 保留上次值，
     // 不把已知电量抹成未知（单次查询失败不该清状态）；设备明确报 0 → 未知。
     if (s.hasBattery && s.batteryLevel > 0) {
@@ -804,6 +879,7 @@ class DeviceStore extends ChangeNotifier {
 
   bool get canSync =>
       isConnected &&
+      activeCapabilities.hasFileSync &&
       syncState == SyncState.idle &&
       !_syncCooldown &&
       !fwUpdating;
@@ -923,7 +999,7 @@ class DeviceStore extends ChangeNotifier {
   Future<void> prefetchSummaryInfo() async {
     if (!isConnected) return;
     final epoch = _epoch;
-    if (wifiSaved.isEmpty) {
+    if (activeCapabilities.hasWifiConfig && wifiSaved.isEmpty) {
       try {
         final creds = await _gw.wifiCredentials();
         if (epoch != _epoch) return;
@@ -933,7 +1009,9 @@ class DeviceStore extends ChangeNotifier {
         // Wi-Fi 模块未开启/不支持时保持空，界面显示"未配置"
       }
     }
-    if (_otaMainInfo == null && _otaWifiInfo == null) {
+    if (activeCapabilities.hasDualChipOta &&
+        _otaMainInfo == null &&
+        _otaWifiInfo == null) {
       await checkFirmware();
     }
   }
@@ -1134,7 +1212,11 @@ class DeviceStore extends ChangeNotifier {
             list.where((d) => d.name == connectedName).firstOrNull ??
             list.firstOrNull;
         if (target != null) {
-          final snap = await _gw.connect(target.id);
+          final snap = await _gw.connect(
+            target.id,
+            name: target.name,
+            deviceKind: target.deviceKind.code,
+          );
           _lastDevice = target;
           if (snap != null) _applySnapshot(snap);
           reconnected = true;
@@ -1338,6 +1420,7 @@ class DeviceStore extends ChangeNotifier {
   void dispose() {
     _clockTimer?.cancel();
     _heartbeatTimer?.cancel();
+    _eventWatch?.cancel();
     _stopSheetWatch();
 
     super.dispose();

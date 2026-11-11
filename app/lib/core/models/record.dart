@@ -9,6 +9,65 @@ class TurnLine {
   const TurnLine(this.spk, this.text, this.src);
 }
 
+/// 录音关联照片（来源：点一机 V1 硬件抓拍 `dyj_camera` / 系统相册 `system_album`）。
+class EventPhoto {
+  final String id;
+  final String time; // "14:25:10" 或 "14:25"
+  final String path; // 本地 JPEG 路径；空串时界面渲染占位缩略图
+  final int? capturedAtMs;
+  final String source; // 'dyj_camera' | 'system_album'
+  final bool excluded; // 标记「不属于本段」后移入当天顶部「未归类图片」
+
+  const EventPhoto({
+    required this.id,
+    required this.time,
+    this.path = '',
+    this.capturedAtMs,
+    this.source = 'system_album',
+    this.excluded = false,
+  });
+
+  EventPhoto copyWith({bool? excluded}) => EventPhoto(
+    id: id,
+    time: time,
+    path: path,
+    capturedAtMs: capturedAtMs,
+    source: source,
+    excluded: excluded ?? this.excluded,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    't': time,
+    if (path.isNotEmpty) 'p': path,
+    if (capturedAtMs != null) 'ms': capturedAtMs,
+    'src': source,
+    if (excluded) 'ex': true,
+  };
+
+  factory EventPhoto.fromJson(Map<String, dynamic> j) => EventPhoto(
+    id: '${j['id'] ?? ''}',
+    time: '${j['t'] ?? ''}',
+    path: '${j['p'] ?? ''}',
+    capturedAtMs: (j['ms'] as num?)?.toInt(),
+    source: '${j['src'] ?? 'system_album'}',
+    excluded: j['ex'] == true,
+  );
+}
+
+/// 当天分组顶部的「未归类图片」条目（在详情页点「不属于本段」后归入此处）。
+class UnclassifiedPhotosCard {
+  final int dayOffset;
+  final String dayLabelText;
+  final List<EventPhoto> photos;
+
+  const UnclassifiedPhotosCard({
+    required this.dayOffset,
+    required this.dayLabelText,
+    required this.photos,
+  });
+}
+
 class RecordEvent {
   final String id;
   final int dayOffset;
@@ -29,6 +88,9 @@ class RecordEvent {
   /// 降级提示（部分未润色 / 时间未校准 / 总结未完成）；null 表示正常。
   final String? note;
 
+  /// 本段录音关联照片（含初始注入或持久化恢复）。
+  final List<EventPhoto> photos;
+
   const RecordEvent({
     required this.id,
     required this.dayOffset,
@@ -44,6 +106,7 @@ class RecordEvent {
     required this.raw,
     this.live = false,
     this.note,
+    this.photos = const [],
   });
 }
 
@@ -68,6 +131,7 @@ extension RecordEventJson on RecordEvent {
         ],
         if (live) 'live': true,
         if (note != null) 'note': note,
+        if (photos.isNotEmpty) 'pics': [for (final p in photos) p.toJson()],
       };
 }
 
@@ -93,5 +157,9 @@ RecordEvent recordEventFromJson(Map<String, dynamic> j) {
     raw: turns(j['raw']),
     live: j['live'] == true,
     note: j['note'] as String?,
+    photos: [
+      for (final p in (j['pics'] as List? ?? const []))
+        if (p is Map<String, dynamic>) EventPhoto.fromJson(p),
+    ],
   );
 }

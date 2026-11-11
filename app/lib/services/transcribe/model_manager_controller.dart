@@ -41,6 +41,8 @@ class ModelManagerController extends ChangeNotifier {
 
   ModelStatus? statusFor(ModelSpec spec) => _statuses[spec.id];
 
+  bool get hasStatuses => _statuses.isNotEmpty;
+
   bool get allReady =>
       specs.every((s) => _statuses[s.id]?.installed == true);
 

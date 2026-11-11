@@ -18,6 +18,7 @@ import 'dart:convert';
 
 import '../../core/models/record.dart';
 import '../../core/models/summary.dart';
+import '../../core/store/agent_config_store.dart';
 import '../net/model_gateway.dart';
 
 class SummaryGenerationException implements Exception {
@@ -47,14 +48,52 @@ class SummaryDraft {
 }
 
 class SummaryGenerator {
-  SummaryGenerator({required ModelGateway gateway}) : _gateway = gateway;
+  SummaryGenerator({
+    required ModelGateway gateway,
+    AgentConfigStore? agentConfig,
+  }) : _gateway = gateway,
+       _agentConfig = agentConfig;
 
   final ModelGateway _gateway;
+  final AgentConfigStore? _agentConfig;
 
   /// 是否可以发起生成（配置齐全且已登录）。
   bool get ready => _gateway.ready;
 
   bool get configured => _gateway.chatAvailable;
+
+  String? _resolveModelOverride() {
+    final cfg = _agentConfig;
+    if (cfg == null || !cfg.userPickedCloudModel) return null;
+    final picked = cfg.cloudModel.trim();
+    if (picked.isEmpty) return null;
+    final gatewayTextModels = _gateway.discoveredTextModels;
+    if (gatewayTextModels.isNotEmpty && !gatewayTextModels.contains(picked)) {
+      // 若网关公布了白名单且所选不在白名单内，优先尝试所选或回退网关默认，避免硬编码失败
+      return picked;
+    }
+    return picked;
+  }
+
+  String _buildSystemPrompt() {
+    final cfg = _agentConfig;
+    if (cfg == null) return _instruction;
+    final rolePrompt = cfg.promptFor('summary').trim();
+    final skillLines = cfg.enabledSkillRules;
+    final buffer = StringBuffer()
+      ..writeln(rolePrompt.isEmpty ? _defaultRolePrompt : rolePrompt);
+    if (skillLines.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('已启用的整理技能约束：');
+      for (final rule in skillLines) {
+        buffer.writeln('- $rule');
+      }
+    }
+    buffer
+      ..writeln()
+      ..write(_jsonSchemaContract);
+    return buffer.toString();
+  }
 
   /// 生成总结。
   ///
@@ -81,8 +120,12 @@ class SummaryGenerator {
 
     onProgress?.call(0.25, '提炼要点与逻辑…');
     final raw = await _gateway.chat(
-      [ChatMessage.system(_instruction), ChatMessage.user(transcript)],
-      temperature: 0.2,
+      [
+        ChatMessage.system(_buildSystemPrompt()),
+        ChatMessage.user(transcript),
+      ],
+      model: _resolveModelOverride(),
+      temperature: _agentConfig?.temperature ?? 0.2,
       // 输出随来源条数增长，给足余量但不无上限
       maxTokens: (1200 + events.length * 400).clamp(1200, 8000),
       timeout: const Duration(seconds: 120),
@@ -94,10 +137,11 @@ class SummaryGenerator {
     return draft;
   }
 
-  static const String _instruction = '''
-你是录音整理助手。用户会给你若干条录音转写文本，每条以「[记录id] 标题（时间）」开头。
-请把它们整理成结构化总结，只依据原文内容，不要编造原文没有的事实。
+  static const String _defaultRolePrompt =
+      '你是录音整理助手。用户会给你若干条录音转写文本，每条以「[记录id] 标题（时间）」开头。'
+      '请把它们整理成结构化总结，只依据原文内容，不要编造原文没有的事实。';
 
+  static const String _jsonSchemaContract = '''
 只输出一个 JSON 对象，不要任何解释文字、不要 Markdown 代码块，字段如下：
 {
   "title": "总结标题，不超过 20 字",
@@ -108,6 +152,8 @@ class SummaryGenerator {
 }
 要求：structure 与 points 至少各一条；points 的 sources 只能使用我给你出现过的记录 id；
 行动项来自原文的待办或承诺，没有就返回空数组。''';
+
+  static const String _instruction = '$_defaultRolePrompt\n\n$_jsonSchemaContract';
 
   String _buildTranscript(List<RecordEvent> events) {
     final buffer = StringBuffer();

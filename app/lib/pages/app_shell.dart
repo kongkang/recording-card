@@ -6,6 +6,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/storage/storage.dart';
+import '../core/store/agent_config_store.dart';
 import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
@@ -16,6 +18,7 @@ import '../services/transcribe/model_manager_controller.dart';
 import '../widgets/store_scope.dart';
 import 'detail_page.dart';
 import 'setting_page.dart';
+import 'settings/setting_sub_page.dart';
 import 'status_sheet.dart';
 import 'summary_result_page.dart';
 import 'timeline_page.dart';
@@ -28,6 +31,7 @@ class AppShell extends StatefulWidget {
     this.recordingStatus,
     this.modelManager,
     this.settings,
+    this.agentConfig,
     this.liveAudio,
     this.onDeviceCreated,
   });
@@ -36,6 +40,7 @@ class AppShell extends StatefulWidget {
   final RecordingStatusController? recordingStatus;
   final ModelManagerController? modelManager;
   final SettingsStore? settings;
+  final AgentConfigStore? agentConfig;
 
   /// 实时音频接收器（测试注入；不传则由外壳自行创建并负责释放）。
   final LiveAudioRecorder? liveAudio;
@@ -51,6 +56,8 @@ class _AppShellState extends State<AppShell> {
   late final DeviceStore _device = widget.device ?? DeviceStore();
   late final RecordingStatusController _recording =
       widget.recordingStatus ?? RecordingStatusController();
+  late final AgentConfigStore _agentConfig =
+      widget.agentConfig ?? AgentConfigStore(store: InMemoryStore());
 
   /// 实时音频接收器：录音期间边录边把 PCM 收进本地，每满 1 分钟切片即刻送本地 ASR 转写落库。
   late final LiveAudioRecorder _liveAudio =
@@ -65,6 +72,13 @@ class _AppShellState extends State<AppShell> {
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
     widget.store.deviceConnected ??= () => _device.isConnected;
     widget.store.deviceRecording ??= () => _device.isRecording;
+    widget.store.deviceHasCameraMedia ??=
+        () => _device.activeCapabilities.hasCameraMedia;
+    _device.onHardwarePhotoCaptured ??= () {
+      if (_device.isConnected && _device.activeCapabilities.hasCameraMedia) {
+        unawaited(widget.store.syncHardwareCameraPhotos(_device.gateway));
+      }
+    };
     _liveSliceSub = _liveAudio.slices.listen((slice) {
       unawaited(widget.store.ingestLiveSlice(slice));
     });
@@ -137,6 +151,7 @@ class _AppShellState extends State<AppShell> {
     _device.releaseClock();
     if (widget.device == null) _device.dispose();
     if (widget.recordingStatus == null) _recording.dispose();
+    if (widget.agentConfig == null) _agentConfig.dispose();
     super.dispose();
   }
 
@@ -165,13 +180,20 @@ class _AppShellState extends State<AppShell> {
                 body: Stack(
                   children: [
                     if (wide)
-                      _WideLayout(device: _device, recordingStatus: _recording)
+                      _WideLayout(
+                        device: _device,
+                        recordingStatus: _recording,
+                        modelManager: widget.modelManager,
+                        settings: widget.settings,
+                        agentConfig: _agentConfig,
+                      )
                     else
                       _NarrowLayout(
                         device: _device,
                         recordingStatus: _recording,
                         modelManager: widget.modelManager,
                         settings: widget.settings,
+                        agentConfig: _agentConfig,
                       ),
                     StatusSheetOverlay(store: _device),
                   ],
@@ -307,23 +329,40 @@ class _BottomNav extends StatelessWidget {
 }
 
 /// 栈顶页面部件；面板内返回按钮仅宽屏双栏使用（窄屏走顶栏面包屑）
-Widget _stackTopPage(AppStore store, {required bool wide}) {
+Widget _stackTopPage(
+  AppStore store, {
+  required bool wide,
+  required AgentConfigStore agentConfig,
+  ModelManagerController? modelManager,
+}) {
   final top = store.stackTop;
   if (top == null) return const SizedBox.shrink();
   if (top.type == 'sum') {
     return SummaryResultPage(
-        summaryId: top.id, showPaneBack: wide && store.showPaneBackSum);
+      summaryId: top.id,
+      showPaneBack: wide && store.showPaneBackSum,
+    );
+  }
+  if (top.type == 'setsub') {
+    return SettingSubPage(
+      subId: top.id,
+      agentConfig: agentConfig,
+      modelManager: modelManager,
+      showPaneBack: wide && store.showPaneBackSetSub,
+    );
   }
   return DetailPage(
-      eventId: top.id,
-      showPaneBack: wide && store.showPaneBackDetail,
-      backLabel: '返回${AppStore.pageLabels[store.stackPrev?.type] ?? ''}');
+    eventId: top.id,
+    showPaneBack: wide && store.showPaneBackDetail,
+    backLabel: '返回${AppStore.pageLabels[store.stackPrev?.type] ?? ''}',
+  );
 }
 
 class _NarrowLayout extends StatelessWidget {
   const _NarrowLayout({
     required this.device,
     required this.recordingStatus,
+    required this.agentConfig,
     this.modelManager,
     this.settings,
   });
@@ -331,6 +370,7 @@ class _NarrowLayout extends StatelessWidget {
   final RecordingStatusController recordingStatus;
   final ModelManagerController? modelManager;
   final SettingsStore? settings;
+  final AgentConfigStore agentConfig;
 
   @override
   Widget build(BuildContext context) {
@@ -362,6 +402,7 @@ class _NarrowLayout extends StatelessWidget {
                     RootTab.setting => SettingPage(
                       modelManager: modelManager,
                       settings: settings,
+                      agentConfig: agentConfig,
                     ),
                   },
                 ),
@@ -371,7 +412,7 @@ class _NarrowLayout extends StatelessWidget {
                   key: ValueKey('sub-${e.type}-${e.id}'),
                   child: Offstage(
                     offstage: e != store.subStack.last,
-                    child: _subPage(store, e),
+                    child: _subPage(e, agentConfig, modelManager),
                   ),
                 ),
             ],
@@ -398,18 +439,39 @@ class _NarrowLayout extends StatelessWidget {
   }
 
   /// 栈内条目对应的页面（Navigator 页面渲染用；宽屏右栏仍走 _stackTopPage）
-  static Widget _subPage(AppStore store, RouteEntry e) {
+  static Widget _subPage(
+    RouteEntry e,
+    AgentConfigStore agentConfig,
+    ModelManagerController? modelManager,
+  ) {
     if (e.type == 'sum') {
       return SummaryResultPage(summaryId: e.id, showPaneBack: false);
+    }
+    if (e.type == 'setsub') {
+      return SettingSubPage(
+        subId: e.id,
+        agentConfig: agentConfig,
+        modelManager: modelManager,
+        showPaneBack: false,
+      );
     }
     return DetailPage(eventId: e.id, showPaneBack: false, backLabel: '');
   }
 }
 
 class _WideLayout extends StatelessWidget {
-  const _WideLayout({required this.device, required this.recordingStatus});
+  const _WideLayout({
+    required this.device,
+    required this.recordingStatus,
+    required this.agentConfig,
+    this.modelManager,
+    this.settings,
+  });
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
+  final ModelManagerController? modelManager;
+  final SettingsStore? settings;
+  final AgentConfigStore agentConfig;
 
   @override
   Widget build(BuildContext context) {
@@ -424,15 +486,29 @@ class _WideLayout extends StatelessWidget {
             children: [
               SizedBox(
                 width: 380,
-                child: TimelinePage(
-                    asLeftPane: true, recordingStatus: recordingStatus),
+                child: switch (store.rootTab) {
+                  RootTab.timeline => TimelinePage(
+                    asLeftPane: true,
+                    recordingStatus: recordingStatus,
+                  ),
+                  RootTab.setting => SettingPage(
+                    modelManager: modelManager,
+                    settings: settings,
+                    agentConfig: agentConfig,
+                  ),
+                },
               ),
               Container(width: 1, color: RCColors.sep),
               Expanded(
                 child: sub
                     ? Material(
                         color: RCColors.bg,
-                        child: _stackTopPage(store, wide: true),
+                        child: _stackTopPage(
+                          store,
+                          wide: true,
+                          agentConfig: agentConfig,
+                          modelManager: modelManager,
+                        ),
                       )
                     : const _EmptyPane(),
               ),

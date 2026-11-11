@@ -1,5 +1,6 @@
 import CoreBluetooth
 import Flutter
+import Photos
 import UIKit
 
 /// 蓝牙授权桥：让 Dart 侧能在扫描前主动申请权限并知道真实状态。
@@ -12,6 +13,7 @@ import UIKit
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var bluetoothChannel: FlutterMethodChannel?
+  private var photoChannel: FlutterMethodChannel?
 
   private var centralManager: CBCentralManager?
   private var pendingResult: FlutterResult?
@@ -39,6 +41,17 @@ import UIKit
       self?.handle(call, result: result)
     }
     bluetoothChannel = channel
+
+    if let photoRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCPhotoLibrary") {
+      let pChannel = FlutterMethodChannel(
+        name: "com.reai.recordingcard/photos",
+        binaryMessenger: photoRegistrar.messenger()
+      )
+      pChannel.setMethodCallHandler { [weak self] call, result in
+        self?.handlePhotos(call, result: result)
+      }
+      photoChannel = pChannel
+    }
   }
 
   private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -103,6 +116,112 @@ import UIKit
     guard let result = pendingResult else { return }
     pendingResult = nil
     result(statusText())
+  }
+
+  // MARK: - 系统相册录音时段对齐导入（PhotoKit）
+
+  private func handlePhotos(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "importInWindows":
+      guard let args = call.arguments as? [String: Any],
+            let windows = args["windows"] as? [[String: Any]],
+            let outputDir = args["outputDir"] as? String else {
+        result(["authorized": false, "photos": []])
+        return
+      }
+      importPhotosInWindows(windows: windows, outputDir: outputDir, result: result)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func importPhotosInWindows(
+    windows: [[String: Any]],
+    outputDir: String,
+    result: @escaping FlutterResult
+  ) {
+    let proceed: (PHAuthorizationStatus) -> Void = { status in
+      let allowed = (status == .authorized || status == .limited)
+      guard allowed else {
+        DispatchQueue.main.async {
+          result(["authorized": false, "photos": []])
+        }
+        return
+      }
+      DispatchQueue.global(qos: .userInitiated).async {
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+        var exported: [[String: Any]] = []
+        let imageManager = PHImageManager.default()
+        let reqOpts = PHImageRequestOptions()
+        reqOpts.isSynchronous = true
+        reqOpts.deliveryMode = .highQualityFormat
+        reqOpts.isNetworkAccessAllowed = false
+
+        for win in windows {
+          guard let eventId = win["eventId"] as? String,
+                let startMs = (win["startMs"] as? NSNumber)?.doubleValue,
+                let endMs = (win["endMs"] as? NSNumber)?.doubleValue,
+                endMs >= startMs else {
+            continue
+          }
+          // 留 5 秒快门时间容差
+          let startDate = Date(timeIntervalSince1970: (startMs - 5000.0) / 1000.0)
+          let endDate = Date(timeIntervalSince1970: (endMs + 5000.0) / 1000.0)
+          let fetchOpts = PHFetchOptions()
+          fetchOpts.predicate = NSPredicate(
+            format: "creationDate >= %@ AND creationDate <= %@",
+            startDate as NSDate,
+            endDate as NSDate
+          )
+          fetchOpts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+          let assets = PHAsset.fetchAssets(with: .image, options: fetchOpts)
+          let limit = min(assets.count, 12)
+          for idx in 0..<limit {
+            let asset = assets.object(at: idx)
+            let safeId = asset.localIdentifier
+              .replacingOccurrences(of: "/", with: "_")
+              .replacingOccurrences(of: ":", with: "_")
+            let filePath = (outputDir as NSString).appendingPathComponent("album_\(safeId).jpg")
+            if !fm.fileExists(atPath: filePath) {
+              var wrote = false
+              imageManager.requestImage(
+                for: asset,
+                targetSize: CGSize(width: 1280, height: 1280),
+                contentMode: .aspectFit,
+                options: reqOpts
+              ) { image, _ in
+                if let img = image, let data = img.jpegData(compressionQuality: 0.82) {
+                  try? data.write(to: URL(fileURLWithPath: filePath), options: .atomic)
+                  wrote = true
+                }
+              }
+              if !wrote && !fm.fileExists(atPath: filePath) {
+                continue
+              }
+            }
+            let capturedMs = Int64((asset.creationDate?.timeIntervalSince1970 ?? (startMs / 1000.0)) * 1000.0)
+            exported.append([
+              "id": "alb_\(safeId)",
+              "eventId": eventId,
+              "path": filePath,
+              "capturedAtMs": capturedMs,
+              "source": "system_album",
+            ])
+          }
+        }
+        DispatchQueue.main.async {
+          result(["authorized": true, "photos": exported])
+        }
+      }
+    }
+
+    let current = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    if current == .notDetermined {
+      PHPhotoLibrary.requestAuthorization(for: .readWrite, handler: proceed)
+    } else {
+      proceed(current)
+    }
   }
 }
 

@@ -1,4 +1,7 @@
-/// 录音卡硬件网关 —— 经 card_bridge（Rust FFI）把 reai-card-sdk 的能力暴露给 App。
+/// 录音硬件统一网关 —— 经 card_bridge（Rust FFI）把多款硬件 SDK 的能力解耦暴露给 App：
+/// - 录音卡 V2（`reai-card-sdk` v0.0.6，`DYJV2_*`）
+/// - 点一机 V1（`reai-dyj-sdk` v0.1.14，`DYJ_*`）
+/// - 语音 AI 键盘 V2.1（`reai-board-sdk` v0.3.5，`REAI_VB_*`）
 ///
 /// 分层：
 /// - [RealCardGateway]  桥符号可用时走真实 BLE（引用计数式单例）。
@@ -9,7 +12,7 @@
 /// 设计要点（照参考工程踩坑经验）：
 /// - **所有命令串行**：SDK 要求设备命令严格串行，这里用一个 Future 链做闸门，
 ///   避免 UI 连点导致 list_files / status 交错发帧。
-/// - **流式协议**：桥回多条消息，`final:true` 收尾；OTA 这类长任务靠它推进度。
+/// - **流式协议**：桥回多条消息，`final:true` 收尾；OTA 与实时流靠它推进度。
 /// - **回调内存所有权**：桥交出的 JSON 指针须由 Dart 拷贝后调 free_string 释放。
 library;
 
@@ -20,7 +23,135 @@ import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 
-/// 设备快照（battery/state/device_info/storage/record 的 Dart 投影）
+/// 支持的硬件设备品类。
+enum DeviceKind {
+  cardV2('card_v2', '录音卡 V2'),
+  dyjV1('dyj_v1', '点一机 V1'),
+  boardV21('board_v21', '语音AI键盘 V2.1');
+
+  const DeviceKind(this.code, this.displayModel);
+
+  final String code;
+  final String displayModel;
+
+  /// 按蓝牙广播名前缀识别设备品类：
+  /// 必须先判 `DYJV2_` 再判 `DYJ_`，避免把 V2 误判成点一机 V1。
+  static DeviceKind? fromBleName(String name) {
+    final trimmed = name.trim().toUpperCase();
+    if (trimmed.startsWith('DYJV2_') || trimmed == 'DYJV2') {
+      return DeviceKind.cardV2;
+    }
+    if (trimmed.startsWith('DYJ_') || trimmed.startsWith('DYJ')) {
+      return DeviceKind.dyjV1;
+    }
+    if (trimmed.startsWith('REAI_VB_')) {
+      return DeviceKind.boardV21;
+    }
+    return null;
+  }
+
+  static DeviceKind fromCode(String? raw, {String fallbackName = ''}) {
+    switch (raw?.trim()) {
+      case 'card_v2':
+        return DeviceKind.cardV2;
+      case 'dyj_v1':
+        return DeviceKind.dyjV1;
+      case 'board_v21':
+        return DeviceKind.boardV21;
+      default:
+        return fromBleName(fallbackName) ?? DeviceKind.cardV2;
+    }
+  }
+}
+
+/// 硬件能力矩阵 —— UI 与状态机只按能力门控展示/调用，不写死型号分支。
+@immutable
+class HardwareCapabilities {
+  const HardwareCapabilities({
+    required this.realtimeAudio,
+    required this.hasOnboardStorage,
+    required this.hasFileSync,
+    required this.hasWifiConfig,
+    required this.hasCameraMedia,
+    required this.hasPhysicalRecordToggle,
+    required this.hasMarkButton,
+    required this.otaMode,
+  });
+
+  final bool realtimeAudio;
+  final bool hasOnboardStorage;
+  final bool hasFileSync;
+  final bool hasWifiConfig;
+  final bool hasCameraMedia;
+  final bool hasPhysicalRecordToggle;
+  final bool hasMarkButton;
+  final String otaMode; // 'dual_chip' | 'none'
+
+  bool get hasDualChipOta => otaMode == 'dual_chip';
+
+  static const cardV2 = HardwareCapabilities(
+    realtimeAudio: true,
+    hasOnboardStorage: true,
+    hasFileSync: true,
+    hasWifiConfig: true,
+    hasCameraMedia: false,
+    hasPhysicalRecordToggle: true,
+    hasMarkButton: true,
+    otaMode: 'dual_chip',
+  );
+
+  static const dyjV1 = HardwareCapabilities(
+    realtimeAudio: true,
+    hasOnboardStorage: true,
+    hasFileSync: true,
+    hasWifiConfig: true,
+    hasCameraMedia: true,
+    hasPhysicalRecordToggle: true,
+    hasMarkButton: false,
+    otaMode: 'none',
+  );
+
+  static const boardV21 = HardwareCapabilities(
+    realtimeAudio: true,
+    hasOnboardStorage: false,
+    hasFileSync: false,
+    hasWifiConfig: false,
+    hasCameraMedia: false,
+    hasPhysicalRecordToggle: true,
+    hasMarkButton: false,
+    otaMode: 'none',
+  );
+
+  static HardwareCapabilities forKind(DeviceKind kind) => switch (kind) {
+    DeviceKind.cardV2 => cardV2,
+    DeviceKind.dyjV1 => dyjV1,
+    DeviceKind.boardV21 => boardV21,
+  };
+
+  factory HardwareCapabilities.fromJson(
+    Map<String, dynamic>? json, {
+    DeviceKind fallbackKind = DeviceKind.cardV2,
+  }) {
+    final fallback = forKind(fallbackKind);
+    if (json == null || json.isEmpty) return fallback;
+    bool flag(String k, bool def) => json[k] is bool ? json[k] as bool : def;
+    return HardwareCapabilities(
+      realtimeAudio: flag('realtimeAudio', fallback.realtimeAudio),
+      hasOnboardStorage: flag('hasOnboardStorage', fallback.hasOnboardStorage),
+      hasFileSync: flag('hasFileSync', fallback.hasFileSync),
+      hasWifiConfig: flag('hasWifiConfig', fallback.hasWifiConfig),
+      hasCameraMedia: flag('hasCameraMedia', fallback.hasCameraMedia),
+      hasPhysicalRecordToggle: flag(
+        'hasPhysicalRecordToggle',
+        fallback.hasPhysicalRecordToggle,
+      ),
+      hasMarkButton: flag('hasMarkButton', fallback.hasMarkButton),
+      otaMode: (json['otaMode'] as String?) ?? fallback.otaMode,
+    );
+  }
+}
+
+/// 设备快照（battery/state/device_info/storage/record/capabilities 的 Dart 投影）
 class CardSnapshot {
   const CardSnapshot({
     required this.batteryLevel,
@@ -40,6 +171,9 @@ class CardSnapshot {
     this.recordSession,
     this.recordErrorCode,
     this.recordReason,
+    this.deviceKind = DeviceKind.cardV2,
+    this.displayModel,
+    this.capabilities,
   });
 
   factory CardSnapshot.fromJson(Map<String, dynamic> json) {
@@ -47,17 +181,20 @@ class CardSnapshot {
     final state = _map(json['state']);
     final info = _map(json['info']);
     final storage = _map(json['storage']);
-    // 录音状态只认 `record.isRecording`（RECORD_STATUS 查询的真实结果）。
-    // 注意：`state.recordRealtimeEnabled` 是「实时流开关」不是「正在录音」，
-    // 早前把它当录音标志用，导致设备侧按下开关开始录音后界面仍显示「未录音」。
     final recordStatus = json['record'] is Map<String, dynamic>
         ? json['record'] as Map<String, dynamic>
         : const <String, dynamic>{};
-    // 电量读不到（没 level 字段）时必须表达"未知"，不能落成 0% 让上层当 1% 展示。
     final hasBattery = battery['level'] is num;
-    // SDK 的 STORAGE 只有 total/used（没有 free）：剩余量由差值推出。
     final storageTotal = _int(storage['total']);
     final storageUsed = _int(storage['used']);
+    final devName = (info['deviceName'] as String?) ?? '';
+    final kind = DeviceKind.fromCode(
+      json['deviceKind'] as String?,
+      fallbackName: devName,
+    );
+    final capsMap = json['capabilities'] is Map<String, dynamic>
+        ? json['capabilities'] as Map<String, dynamic>
+        : null;
     return CardSnapshot(
       batteryLevel: hasBattery ? _int(battery['level']) : 0,
       hasBattery: hasBattery,
@@ -72,12 +209,15 @@ class CardSnapshot {
       fwVersionCode: _int(info['versionCode']),
       wifiVersion: (info['wifiVersion'] as String?) ?? '',
       wifiVersionCode: _int(info['wifiVersionCode']),
-      deviceName: (info['deviceName'] as String?) ?? '',
+      deviceName: devName,
       deviceId: (info['deviceId'] as String?) ?? '',
       storageTotalMb: storage.isEmpty ? null : storageTotal,
       storageFreeMb: storage.isEmpty
           ? null
           : (storageTotal - storageUsed < 0 ? 0 : storageTotal - storageUsed),
+      deviceKind: kind,
+      displayModel: (json['displayModel'] as String?) ?? kind.displayModel,
+      capabilities: HardwareCapabilities.fromJson(capsMap, fallbackKind: kind),
     );
   }
 
@@ -109,24 +249,81 @@ class CardSnapshot {
   /// 这次录音状态变化的来源：button / switch / app / auto …
   final String? recordReason;
 
+  final DeviceKind deviceKind;
+  final String? displayModel;
+  final HardwareCapabilities? capabilities;
+
+  DeviceKind get effectiveKind =>
+      (capabilities == null &&
+          displayModel == null &&
+          deviceKind == DeviceKind.cardV2)
+      ? (DeviceKind.fromBleName(deviceName) ?? deviceKind)
+      : deviceKind;
+
+  HardwareCapabilities get resolvedCapabilities =>
+      capabilities ?? HardwareCapabilities.forKind(effectiveKind);
+
+  String get modelLabel => displayModel ?? effectiveKind.displayModel;
+
   static Map<String, dynamic> _map(Object? value) =>
       value is Map<String, dynamic> ? value : const {};
 
   static int _int(Object? value) => value is num ? value.toInt() : 0;
 }
 
-/// 扫描到的录音卡：`id` 用于 connect，`name` 是广播名（DYJ 前缀）。
+/// 扫描到的硬件设备：`id` 用于 connect，`name` 是蓝牙广播名。
 class CardDevice {
-  const CardDevice({required this.id, required this.name, this.rssi});
+  const CardDevice({
+    required this.id,
+    required this.name,
+    this.rssi,
+    this.kind,
+    this.displayModel,
+    this.capabilities,
+  });
+
   final String id;
   final String name;
   final int? rssi;
+  final DeviceKind? kind;
+  final String? displayModel;
+  final HardwareCapabilities? capabilities;
+
+  DeviceKind get deviceKind =>
+      kind ?? DeviceKind.fromBleName(name) ?? DeviceKind.cardV2;
+
+  String get modelLabel => displayModel ?? deviceKind.displayModel;
+
+  HardwareCapabilities get resolvedCapabilities =>
+      capabilities ?? HardwareCapabilities.forKind(deviceKind);
+}
+
+/// 点一机 V1 硬件抓拍照片同步结果。
+class CameraSyncItem {
+  const CameraSyncItem({
+    required this.name,
+    required this.path,
+    required this.bytesWritten,
+    this.capturedAtSec,
+    this.source = 'dyj_camera',
+  });
+
+  factory CameraSyncItem.fromJson(Map<String, dynamic> json) => CameraSyncItem(
+    name: (json['name'] as String?) ?? '',
+    path: (json['path'] as String?) ?? '',
+    bytesWritten: (json['bytesWritten'] as num?)?.toInt() ?? 0,
+    capturedAtSec: (json['capturedAt'] as num?)?.toInt(),
+    source: (json['source'] as String?) ?? 'dyj_camera',
+  );
+
+  final String name;
+  final String path;
+  final int bytesWritten;
+  final int? capturedAtSec;
+  final String source;
 }
 
 /// 断连结果：桥如实报告这次是否真的释放了 BLE 链路。
-///
-/// 以前 `disconnect()` 是 void，桥又无条件回成功——界面显示「已断开」，
-/// 设备端却还保持着连接、不对外广播。现在把结果带回来，界面才能说实话。
 class CardDisconnectReport {
   const CardDisconnectReport({
     required this.released,
@@ -134,20 +331,14 @@ class CardDisconnectReport {
     this.detail,
   });
 
-  /// 是否确认释放（没有设备句柄也算已释放）。
   final bool released;
-
-  /// 桥里是否存在设备句柄（false = 本来就没连）。
   final bool hadDevice;
-
-  /// SDK 断连的原始结果（ok / timeout / error:…），用于排障。
   final String? detail;
 
   factory CardDisconnectReport.fromJson(Map<String, dynamic> json) {
     final released = json['released'];
     final sdk = json['sdk'];
     return CardDisconnectReport(
-      // 旧桥没有 released 字段：按「已释放」兜底，避免升级期误报
       released: released is bool ? released : true,
       hadDevice: json['hadDevice'] == true,
       detail: sdk?.toString(),
@@ -157,13 +348,7 @@ class CardDisconnectReport {
   static const alreadyReleased = CardDisconnectReport(released: true);
 }
 
-/// 设备上的录音文件。
-///
-/// SDK 的 `FileEntry` 除 name/size 外还带录音会话标记与时间：
-/// - `start_at`：段开始时间（Unix 秒，来自同名 .txt 的 timestamp）
-/// - `created_at`：FAT 修改时间（`.apm` 即切片结束时间）
-/// - `session`/`seq`：主控 0.3.8+ 的会话号与段序号
-/// - `synced`：设备时钟是否已同步（false 时时间不是真实日期）
+/// 设备上的录音文件（支持录音卡 V2 `.APM` 与点一机 V1 `.amr`）。
 class CardFile {
   const CardFile({
     required this.name,
@@ -190,27 +375,21 @@ class CardFile {
   final String name;
   final int size;
   final int? index;
-
-  /// Unix 秒；FAT 修改时间（结束时间）。
   final int? createdAtSec;
-
-  /// 8 位十六进制会话号；旧固件为空。
   final String? session;
-
-  /// 会话内段序号，从 1 递增。
   final int? seq;
-
-  /// Unix 秒；段开始时间。优先用它做时间轴定位。
   final int? startAtSec;
-
-  /// 设备时钟是否已同步；false 时 [startAtSec] 不是真实日期。
   final bool? synced;
 
   bool get isApm => name.toUpperCase().endsWith('.APM');
 
+  bool get isAmr => name.toUpperCase().endsWith('.AMR');
+
+  /// 兼容 `.APM`（录音卡 V2）与 `.AMR`（点一机 V1）。
+  bool get isAudioRecording => isApm || isAmr;
+
   bool get isTxt => name.toUpperCase().endsWith('.TXT');
 
-  /// 录音起点；缺失 start_at 时无法可靠推算（等转码拿到时长后再算）。
   DateTime? get startTime => startAtSec == null
       ? null
       : DateTime.fromMillisecondsSinceEpoch(startAtSec! * 1000);
@@ -340,10 +519,7 @@ class CardProgress {
   final int? total;
 }
 
-/// 实时音频流的一个事件：PCM 数据块，或一次"断档"标记。
-///
-/// 断档是**证据**不是错误：BLE 积压被丢弃时 SDK 会标记 discontinuous，
-/// 我们要把它留给后面的"按切片比对补传"用，而不是悄悄丢掉。
+/// 实时音频流的一个事件：16kHz 16bit 单声道 PCM 数据块，或一次"断档"标记。
 class RealtimeAudioEvent {
   const RealtimeAudioEvent({
     required this.kind,
@@ -354,19 +530,15 @@ class RealtimeAudioEvent {
   });
 
   final RealtimeAudioKind kind;
-
-  /// 16bit 单声道小端 PCM 字节（仅 [RealtimeAudioKind.audio] 有值，其余为 null）。
   final Uint8List? pcm;
   final int sampleRate;
-
-  /// 截至本事件累计收到的样本数（含断档之前的）。
   final int receivedSamples;
   final int gapIndex;
 }
 
 enum RealtimeAudioKind { open, audio, gap, closed }
 
-/// 一次事件拉取的结果：序号 + 自上次以来新到的事件。
+/// 一次事件拉取的结果：序号 + 自上次以来新到的事件（零蓝牙流量，读内存队列）。
 class DeviceEventBatch {
   const DeviceEventBatch({required this.seq, required this.events});
   const DeviceEventBatch.empty(this.seq) : events = const [];
@@ -374,11 +546,26 @@ class DeviceEventBatch {
   final int seq;
   final List<Map<String, dynamic>> events;
 
-  /// 其中属于录音状态变化的那些（设备侧拨杆/按键触发）。
+  /// 录音状态变化（设备侧拨杆/按键触发）。
   Iterable<Map<String, dynamic>> get recordEvents =>
       events.where((e) => e['event']?['kind'] == 'record');
-}
 
+  /// 电源/充电/电量主动上报（解决充饱电或插拔电源不刷新的问题）。
+  Iterable<Map<String, dynamic>> get powerEvents =>
+      events.where((e) => e['event']?['kind'] == 'power');
+
+  /// 语音 AI 键盘物理语音键按下事件。
+  Iterable<Map<String, dynamic>> get voiceKeyEvents =>
+      events.where((e) => e['event']?['kind'] == 'voice_key');
+
+  /// 点一机 V1 硬件按键拍照事件。
+  Iterable<Map<String, dynamic>> get cameraEvents =>
+      events.where((e) => e['event']?['kind'] == 'camera');
+
+  /// 蓝牙链路被动断开通知。
+  Iterable<Map<String, dynamic>> get disconnectedEvents =>
+      events.where((e) => e['event']?['kind'] == 'disconnected');
+}
 
 /// 长任务终态。
 class CardOtaResult {
@@ -397,7 +584,7 @@ class CardOtaResult {
   final String? version;
 }
 
-/// 转码结果（设备 .apm → WAV）。
+/// 转码结果（设备 `.apm` / `.amr` → 16kHz 单声道 WAV）。
 class CardAudio {
   const CardAudio({
     required this.path,
@@ -414,21 +601,12 @@ class CardAudio {
   final double durationSecs;
 }
 
-/// 网关错误的分类 —— 界面据此给不同文案，不把"卡没开机"和"桥没链上"混为一谈。
+/// 网关错误的分类。
 enum CardErrorKind {
-  /// 桥不可用（模拟器 / 未链接静态库）
   unavailable,
-
-  /// 未连接（或连接已断开）
   disconnected,
-
-  /// 设备明确返回业务错误（固件 code/msg）
   device,
-
-  /// 超时
   timeout,
-
-  /// 其他
   unknown,
 }
 
@@ -449,37 +627,26 @@ class CardException implements Exception {
 }
 
 abstract class CardGateway {
-  /// 真实桥是否就绪。
   bool get available;
 
   Future<List<CardDevice>> scan({int timeoutMs = 6000});
 
-  /// 连上设备。返回 null 表示「只确认连上，没有附带状态快照」——
-  /// 参考实现（web 控制台）的 connect 也不预拉状态，状态由调用方随后刷新。
-  Future<CardSnapshot?> connect(String deviceId);
+  Future<CardSnapshot?> connect(
+    String deviceId, {
+    String? name,
+    String? deviceKind,
+  });
 
-  /// 断开链路；返回桥的如实结果（是否真的释放）。
   Future<CardDisconnectReport> disconnect();
   Future<CardSnapshot> snapshot();
 
   Future<void> record(String action); // start | stop | toggle
-
-  /// 明确开始录音（RECORD_START）。比 toggle 可靠：不依赖 App 与设备状态一致。
   Future<void> startRecording();
-
-  /// 明确停止录音（RECORD_STOP）。设备本就没在录时属于正常情况，不报错。
   Future<void> stopRecording();
 
-  /// 打开实时音频流（录音期间边录边收 PCM）。
   Stream<RealtimeAudioEvent> realtimeAudio();
-
-  /// 关闭实时音频流。幂等：没开也能调。
   Future<void> closeRealtime();
 
-  /// 拉取设备主动推送的事件增量（不访问设备，只读本地队列）。
-  ///
-  /// 拨杆/按键改变录音状态时，设备自己会推上来；靠这个接口才能在毫秒级跟上，
-  /// 而不是等轮询周期。
   Future<DeviceEventBatch> pullEvents({int after = 0});
   Future<void> mark();
 
@@ -487,8 +654,14 @@ abstract class CardGateway {
   Future<CardDownload> download(String name, String dir);
   Future<void> deleteFile(String name);
 
-  /// 把设备落地文件（.apm）转成 WAV（16kHz/16bit 单声道），供 ASR 上传。
+  /// 把设备落地文件（`.apm` / `.amr`）转成 WAV（16kHz/16bit 单声道）。
   Future<CardAudio> transcode(String apmPath, String wavPath);
+
+  /// 点一机 V1 抓拍照片同步到本地目录（非相机设备安全返回空列表）。
+  Future<List<CameraSyncItem>> syncCameraPhotos(
+    String dir, {
+    String? serverOrigin,
+  });
 
   Future<List<CardWifiNetwork>> scanWifi();
   Future<void> connectWifi(String ssid, String password);
@@ -507,7 +680,6 @@ abstract class CardGateway {
 
   Future<void> syncTime();
 
-  /// 释放资源（进程退出/测试收尾）。
   Future<void> dispose();
 }
 
@@ -550,7 +722,6 @@ class RealCardGateway implements CardGateway {
 
   static RealCardGateway? _instance;
 
-  /// 桥符号存在则返回单例，否则 null。
   static RealCardGateway? maybe() {
     if (_instance != null) return _instance;
     ffi.DynamicLibrary lib;
@@ -579,17 +750,14 @@ class RealCardGateway implements CardGateway {
   final Map<int, StreamController<Map<String, dynamic>>> _pending = {};
   int _ticket = 0;
 
-  /// 命令串行闸：SDK 要求设备命令严格串行。
   Future<void> _queue = Future<void>.value();
 
   @override
   bool get available => true;
 
-  /// 桥版本串（含 SDK 版本），用于「关于」页与排障。
   String get bridgeVersion {
     final ptr = _version();
     if (ptr == ffi.nullptr) return '';
-    // version 返回的是 Rust 侧静态 CString，不归 Dart 释放
     return ptr.toDartString();
   }
 
@@ -607,9 +775,6 @@ class RealCardGateway implements CardGateway {
     return completer.future;
   }
 
-  // ── 命令通道 ──
-
-  /// 打开一条命令通道，返回该 ticket 的流。
   Stream<Map<String, dynamic>> _open(
     String kind, [
     Map<String, dynamic>? payload,
@@ -651,7 +816,6 @@ class RealCardGateway implements CardGateway {
       if (payloadPtr != ffi.nullptr) malloc.free(payloadPtr);
     }
 
-    // 终态到达时关掉计时器
     return controller.stream.transform(
       StreamTransformer<
         Map<String, dynamic>,
@@ -665,7 +829,6 @@ class RealCardGateway implements CardGateway {
     );
   }
 
-  /// 单次命令：等第一条终态消息。
   Future<Map<String, dynamic>> _once(
     String kind, [
     Map<String, dynamic>? payload,
@@ -680,7 +843,6 @@ class RealCardGateway implements CardGateway {
     });
   }
 
-  /// 流式命令：进度逐条推，终态收尾。
   Stream<CardProgress> _progress(
     String kind,
     Map<String, dynamic>? payload,
@@ -720,16 +882,11 @@ class RealCardGateway implements CardGateway {
     if (lower.contains('disconnect') || text.contains('未连接')) {
       return CardException.disconnected(text);
     }
-    // SDK 的超时串是英文（"timed out waiting for `X` after Ns"），
-    // 注意 "timed out" 不含 "timeout"，漏了就会把超时当设备错误分类。
     if (lower.contains('timeout') ||
         lower.contains('timed out') ||
         text.contains('超时')) {
-      // 命令名与秒数是排障细节，给用户统一的可读文案
       return CardException.timeout();
     }
-    // 桥会用 SdkError::InvalidCommand 携带可执行的中文提示（如 Wi-Fi 升级预检），
-    // 剥掉 Display 的英文前缀，别把 "invalid command `…`" 原样给用户。
     final wrapped = RegExp(
       r'^invalid command `(.*)`$',
       dotAll: true,
@@ -738,14 +895,6 @@ class RealCardGateway implements CardGateway {
     return CardException(CardErrorKind.device, _friendlyDeviceError(text));
   }
 
-  /// 把设备回的错误码翻成人话。
-  ///
-  /// 固件出错时只回一个 `code`，直接抛给用户就是「code -2」这种看不懂的东西。
-  /// 这里统一附上设备原码（排障要），但先说清楚发生了什么、该怎么办。
-  ///
-  /// **注意**：SDK 与固件文档里都没有设备错误码表，`-1/-2/-3` 的确切含义未知。
-  /// 所以这里只说"设备拒绝了这条命令 + 原码"，不猜具体原因（以前那句
-  /// 「请确认存储卡已插好、设备未在传输文件」是没有依据的推测话术）。
   static String _friendlyDeviceError(String raw) {
     final match = RegExp(r'code[:\s]*(-?\d+)').firstMatch(raw);
     final code = match == null ? null : int.tryParse(match.group(1)!);
@@ -759,7 +908,6 @@ class RealCardGateway implements CardGateway {
     };
   }
 
-  /// 最近一次设备错误附带的诊断详情（null = 没有）。
   static Map<String, dynamic>? lastDeviceErrorDetail;
 
   void _onEvent(int ticket, ffi.Pointer<Utf8> json) {
@@ -794,8 +942,6 @@ class RealCardGateway implements CardGateway {
 
   @override
   Future<List<CardDevice>> scan({int timeoutMs = 6000}) async {
-    // 扫描窗口之外还要算上设备管理器初始化与首次蓝牙授权弹窗的等待，
-    // 所以这里给足余量（iPone 上首次授权是阻塞式对话框）。
     final json = await _once('scan', {
       'timeoutMs': timeoutMs,
     }, Duration(milliseconds: timeoutMs + 30000));
@@ -803,10 +949,24 @@ class RealCardGateway implements CardGateway {
     return list
         .whereType<Map<String, dynamic>>()
         .map((d) {
+          final name = (d['name'] as String?) ?? '录音卡';
+          final kind = DeviceKind.fromCode(
+            d['deviceKind'] as String?,
+            fallbackName: name,
+          );
+          final capsMap = d['capabilities'] is Map<String, dynamic>
+              ? d['capabilities'] as Map<String, dynamic>
+              : null;
           return CardDevice(
             id: (d['id'] as String?) ?? '',
-            name: (d['name'] as String?) ?? '录音卡',
+            name: name,
             rssi: (d['rssi'] as num?)?.toInt(),
+            kind: kind,
+            displayModel: (d['displayModel'] as String?) ?? kind.displayModel,
+            capabilities: HardwareCapabilities.fromJson(
+              capsMap,
+              fallbackKind: kind,
+            ),
           );
         })
         .where((d) => d.id.isNotEmpty)
@@ -814,10 +974,21 @@ class RealCardGateway implements CardGateway {
   }
 
   @override
-  Future<CardSnapshot?> connect(String deviceId) async {
-    // 只等「链路建立」。桥里的 connect 不再预拉快照（参考实现同样如此）：
-    // 状态查询要连发 5 条命令，慢且任一条失败都不该把已建立连接判成失败。
-    await _once('connect', {'id': deviceId}, const Duration(seconds: 30));
+  Future<CardSnapshot?> connect(
+    String deviceId, {
+    String? name,
+    String? deviceKind,
+  }) async {
+    await _once(
+      'connect',
+      {
+        'id': deviceId,
+        if (name != null && name.isNotEmpty) 'name': name,
+        if (deviceKind != null && deviceKind.isNotEmpty)
+          'deviceKind': deviceKind,
+      },
+      const Duration(seconds: 30),
+    );
     return null;
   }
 
@@ -849,7 +1020,6 @@ class RealCardGateway implements CardGateway {
     try {
       await _once('record.stop');
     } on CardException catch (e) {
-      // 设备本就没在录：固件回「当前没有录音在进行」，这是正常情况
       if (e.message.contains('没有录音')) return;
       rethrow;
     }
@@ -857,8 +1027,6 @@ class RealCardGateway implements CardGateway {
 
   @override
   Stream<RealtimeAudioEvent> realtimeAudio() {
-    // 实时流长连接：不设单次超时，靠 closeRealtime() 收尾；
-    // 这里不走 _serial 串行闸——实时流只读，不占用设备命令队列。
     final controller = StreamController<RealtimeAudioEvent>();
     final ticket = ++_ticket;
     _pending[ticket] = StreamController<Map<String, dynamic>>();
@@ -874,8 +1042,7 @@ class RealCardGateway implements CardGateway {
         return;
       }
       final state = progress['state']?.toString();
-      final received =
-          (progress['receivedSamples'] as num?)?.toInt() ?? 0;
+      final received = (progress['receivedSamples'] as num?)?.toInt() ?? 0;
       if (state == 'audio') {
         final b64 = progress['pcm']?.toString() ?? '';
         controller.add(
@@ -901,7 +1068,6 @@ class RealCardGateway implements CardGateway {
       }
     }
 
-    // 复用一个转发器把桥消息送进 stream，终态时收尾
     final inner = _pending[ticket]!;
     inner.stream.listen(
       emit,
@@ -928,7 +1094,7 @@ class RealCardGateway implements CardGateway {
     try {
       await _once('realtime.close', const {}, const Duration(seconds: 10));
     } on CardException {
-      // 收尾失败不影响录音本身：下次开始录音会重置开关
+      // 收尾失败不影响录音本身
     }
   }
 
@@ -989,6 +1155,28 @@ class RealCardGateway implements CardGateway {
   }
 
   @override
+  Future<List<CameraSyncItem>> syncCameraPhotos(
+    String dir, {
+    String? serverOrigin,
+  }) async {
+    final json = await _once(
+      'camera.sync',
+      {
+        'dir': dir,
+        if (serverOrigin != null && serverOrigin.isNotEmpty)
+          'serverOrigin': serverOrigin,
+      },
+      const Duration(minutes: 3),
+    );
+    final list = (json['data'] as List<dynamic>? ?? const []);
+    return list
+        .whereType<Map<String, dynamic>>()
+        .map(CameraSyncItem.fromJson)
+        .where((p) => p.path.isNotEmpty)
+        .toList();
+  }
+
+  @override
   Future<List<CardWifiNetwork>> scanWifi() async {
     final json = await _once('wifi.scan', null, const Duration(seconds: 40));
     final list = (json['data'] as List<dynamic>? ?? const []);
@@ -1007,8 +1195,6 @@ class RealCardGateway implements CardGateway {
 
   @override
   Future<void> openWifi() =>
-      // SDK 对 WIFI_OPEN 有 35s 的兜底超时（模块上电 + AP 就绪宽限），
-      // Dart 侧上限必须更大，否则模块其实开成功了、界面却报超时。
       _once('wifi.open', null, const Duration(seconds: 45));
 
   @override
@@ -1081,27 +1267,26 @@ class UnsupportedCardGateway implements CardGateway {
   @override
   Future<List<CardDevice>> scan({int timeoutMs = 6000}) async => _fail();
   @override
-  Future<CardSnapshot?> connect(String deviceId) async => _fail();
+  Future<CardSnapshot?> connect(
+    String deviceId, {
+    String? name,
+    String? deviceKind,
+  }) async => _fail();
   @override
   Future<CardDisconnectReport> disconnect() async => _fail();
   @override
   Future<CardSnapshot> snapshot() async => _fail();
   @override
   Future<void> record(String action) async => _fail();
-
   @override
   Future<void> startRecording() async => _fail();
-
   @override
   Future<void> stopRecording() async => _fail();
-
   @override
   Stream<RealtimeAudioEvent> realtimeAudio() =>
       Stream<RealtimeAudioEvent>.error(CardException.unavailable());
-
   @override
   Future<void> closeRealtime() async {}
-
   @override
   Future<DeviceEventBatch> pullEvents({int after = 0}) async =>
       DeviceEventBatch.empty(after);
@@ -1115,6 +1300,11 @@ class UnsupportedCardGateway implements CardGateway {
   Future<void> deleteFile(String name) async => _fail();
   @override
   Future<CardAudio> transcode(String apmPath, String wavPath) async => _fail();
+  @override
+  Future<List<CameraSyncItem>> syncCameraPhotos(
+    String dir, {
+    String? serverOrigin,
+  }) async => _fail();
   @override
   Future<List<CardWifiNetwork>> scanWifi() async => _fail();
   @override
@@ -1145,15 +1335,10 @@ class UnsupportedCardGateway implements CardGateway {
   Future<void> dispose() async {}
 }
 
-/// 生产环境取网关：桥可用用真实实现，否则显式不支持。
 CardGateway realOrUnsupported() =>
     RealCardGateway.maybe() ?? const UnsupportedCardGateway();
 
 /// 命令转发网关：每条 BLE 命令"发出"和"返回"都回调一次 [onActivity]。
-///
-/// 用途只有一个——给状态机的看门狗提供"最近一次真实蓝牙传输"的时刻：
-/// 正在同步/轮询/读状态时不该再额外发心跳探测，而应顺延。
-/// 不改变任何命令语义，异常与返回值原样透传。
 class ActivityGateway implements CardGateway {
   ActivityGateway(this._inner, this.onActivity);
 
@@ -1186,8 +1371,13 @@ class ActivityGateway implements CardGateway {
       _run(() => _inner.scan(timeoutMs: timeoutMs));
 
   @override
-  Future<CardSnapshot?> connect(String deviceId) =>
-      _run(() => _inner.connect(deviceId));
+  Future<CardSnapshot?> connect(
+    String deviceId, {
+    String? name,
+    String? deviceKind,
+  }) => _run(
+    () => _inner.connect(deviceId, name: name, deviceKind: deviceKind),
+  );
 
   @override
   Future<CardDisconnectReport> disconnect() => _run(_inner.disconnect);
@@ -1233,6 +1423,12 @@ class ActivityGateway implements CardGateway {
   @override
   Future<CardAudio> transcode(String apmPath, String wavPath) =>
       _run(() => _inner.transcode(apmPath, wavPath));
+
+  @override
+  Future<List<CameraSyncItem>> syncCameraPhotos(
+    String dir, {
+    String? serverOrigin,
+  }) => _run(() => _inner.syncCameraPhotos(dir, serverOrigin: serverOrigin));
 
   @override
   Future<List<CardWifiNetwork>> scanWifi() => _run(_inner.scanWifi);
