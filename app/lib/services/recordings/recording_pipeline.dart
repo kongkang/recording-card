@@ -316,15 +316,46 @@ class RecordingPipeline {
     }
 
     final wav = readWavFile(slice.wavPath);
+    var usedAcousticFallback = false;
     if (wav.frames > 0 && file.slices.isEmpty) {
       report(PipelineStage.slicing, '正在切分第 ${slice.sliceIndex + 1} 片实时录音');
       await engine.loadVad(paths.vadPath);
-      final spans = await engine.detectSpeech(wav.toFloat32());
-      final planned = slicePlanner.plan(
+      final rawSamples = wav.toFloat32();
+      final conditioned = conditionSpeechSamples(
+        rawSamples,
+        sampleRate: wav.sampleRate,
+      );
+      final spans = await engine.detectSpeech(conditioned);
+      var planned = slicePlanner.plan(
         speech: spans,
         totalSamples: wav.frames,
         sampleRate: wav.sampleRate,
       );
+      // 兜底：若 VAD 未检出区间，但去直流后存在明显高于底噪的声学能量，
+      // 按 30 秒窗口直接送入 SenseVoice 由 ASR 模型自身判定是否有人声。
+      if (planned.isEmpty &&
+          hasAcousticSpeechCandidate(rawSamples, sampleRate: wav.sampleRate)) {
+        usedAcousticFallback = true;
+        final chunkSamples = wav.sampleRate * 30;
+        final fallback = <PlannedSlice>[];
+        var idx = 0;
+        for (var s = 0; s < wav.frames; s += chunkSamples) {
+          final e = (s + chunkSamples < wav.frames)
+              ? s + chunkSamples
+              : wav.frames;
+          if (e > s) {
+            fallback.add(
+              PlannedSlice(
+                index: idx++,
+                startSample: s,
+                endSample: e,
+                silenceAfterSamples: 0,
+              ),
+            );
+          }
+        }
+        planned = fallback;
+      }
       final sliceDir = Directory('${dir.path}/slices');
       if (!await sliceDir.exists()) await sliceDir.create(recursive: true);
       final slices = <AudioSlice>[];
@@ -379,7 +410,7 @@ class RecordingPipeline {
           '正在本地转写第 ${slice.sliceIndex + 1} 片（${i + 1}/$total）',
         );
         final subWav = readWavFile(sub.wavPath);
-        final result = await engine.transcribe(subWav.toFloat32());
+        final result = await engine.transcribe(subWav.toSpeechFloat32());
         final utterances = buildUtterancesFromAsr(
           sliceId: sub.id,
           sliceStartMs: sub.startMs,
@@ -398,6 +429,10 @@ class RecordingPipeline {
           stage: SliceStage.transcribed,
           clearError: true,
         );
+        await store.save(file);
+      }
+      if (usedAcousticFallback && file.utterances.isEmpty) {
+        file.slices = [];
         await store.save(file);
       }
     }
@@ -465,7 +500,17 @@ class RecordingPipeline {
         if (u.text.trim().isNotEmpty) u.text.trim(),
     ];
     final flat = lines.join(' ');
-    final longText = lines.join('\n');
+    final cleanedClauses = [
+      for (final line in lines)
+        line.replaceAll(RegExp(r'[，,。！？!?；;\s]+$'), '').trim(),
+    ].where((s) => s.isNotEmpty).toList();
+    final paragraph = cleanedClauses.join('，');
+    // Timeline 展开简介只需 3~5 行（完整对话进详情页查看），避免整段原文撑满时间轴
+    final longText = paragraph.isEmpty
+        ? '已保存本地原始转写'
+        : (paragraph.length <= 120
+              ? '$paragraph。'
+              : '${paragraph.substring(0, 120)}…');
     final firstClause = lines.isEmpty
         ? ''
         : lines.first.split(RegExp(r'[\n。！？!?，,；;]')).first.trim();
@@ -493,6 +538,55 @@ class RecordingPipeline {
       sliceIds: sliceIds,
       mark: slice.gapCount > 0 ? '流中断 ${slice.gapCount} 次' : null,
     );
+  }
+
+  /// 对本地已有 WAV 但此前因直流偏置被误判为「未识别到人声」的 `LIVE_*` 切片做一次性本地重检。
+  ///
+  /// 纯本机磁盘 + 本地模型推理，不访问蓝牙设备；每条记录通过目录内 `.dc_rechecked_v1` 标记确保最多重检一次。
+  Future<int> reprocessSilentLiveSlices({
+    void Function(PipelineProgress progress)? onProgress,
+  }) async {
+    var recovered = 0;
+    final all = await store.loadAll(refresh: true);
+    final candidates = all.where((f) {
+      if (!f.deviceName.startsWith('LIVE_')) return false;
+      if (f.utterances.isNotEmpty) return false;
+      final wp = f.wavPath;
+      return wp != null && wp.isNotEmpty && File(wp).existsSync();
+    }).toList()
+      ..sort((a, b) => a.startAtMs.compareTo(b.startAtMs));
+
+    for (final f in candidates) {
+      final dir = await store.dirFor(f.deviceName);
+      final marker = File('${dir.path}/.dc_rechecked_v1');
+      if (await marker.exists()) continue;
+      if (!await dir.exists()) await dir.create(recursive: true);
+      await marker.writeAsString('1', flush: true);
+
+      // 清空旧空壳分段，重新走带去直流与增益归一化的本地推理
+      f
+        ..slices = []
+        ..utterances = []
+        ..segments = []
+        ..stage = RecordingStage.transcribing
+        ..error = null;
+      await store.save(f);
+      final updated = await ingestLiveSlice(
+        LiveAudioSlice(
+          sessionId: f.session,
+          deviceSessionId: f.session,
+          sliceIndex: (f.seq - 1).clamp(0, 999999),
+          startAtMs: f.startAtMs,
+          durationMs: f.durationMs,
+          wavPath: f.wavPath!,
+        ),
+        onProgress: onProgress,
+      );
+      if (updated.utterances.isNotEmpty) {
+        recovered++;
+      }
+    }
+    return recovered;
   }
 
   /// 从设备同步新录音并处理。已完成的文件跳过；已被实时流无断档覆盖的文件跳过；失败文件重试。
@@ -842,7 +936,7 @@ class RecordingPipeline {
     if (file.slices.isEmpty) {
       report(PipelineStage.slicing, text: '正在切分 ${file.deviceName}');
       await engine.loadVad(paths.vadPath);
-      final spans = await engine.detectSpeech(wav.toFloat32());
+      final spans = await engine.detectSpeech(wav.toSpeechFloat32());
       final planned = slicePlanner.plan(
         speech: spans,
         totalSamples: wav.frames,
@@ -917,7 +1011,7 @@ class RecordingPipeline {
       );
       try {
         final sliceWav = readWavFile(slice.wavPath);
-        final result = await engine.transcribe(sliceWav.toFloat32());
+        final result = await engine.transcribe(sliceWav.toSpeechFloat32());
         final utterances = buildUtterancesFromAsr(
           sliceId: slice.id,
           sliceStartMs: slice.startMs,
@@ -1038,7 +1132,7 @@ class RecordingPipeline {
       final start = startFrame.clamp(0, wav.frames);
       final end = endFrame.clamp(start, wav.frames);
       if (end - start < wav.sampleRate * 6 ~/ 10) continue; // <0.6s 不做声纹
-      final pcm = pcmCache[slice.id] ??= wav.toFloat32();
+      final pcm = pcmCache[slice.id] ??= wav.toSpeechFloat32();
       final vector = await engine.embedSpeaker(pcm.sublist(start, end));
       if (vector.isEmpty) continue;
       samples.add(

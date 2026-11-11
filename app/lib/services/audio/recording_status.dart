@@ -37,6 +37,9 @@ class RecordingStatusController extends ChangeNotifier {
 
   bool get isTranscribing => _phase == RecordingPhase.transcribing;
 
+  /// 当前是否处于活跃录音会话中（含录音期间后台切片转写态）。
+  bool get sessionActive => _sessionActive;
+
   /// 开始（或重启）一次录音会话，清空上一轮错误与待处理计数。
   void startRecording() {
     _sessionActive = true;
@@ -47,6 +50,16 @@ class RecordingStatusController extends ChangeNotifier {
       clearError: true,
       clearDetail: true,
     );
+  }
+
+  /// 确保录音态可见（下拉刷新或重绘恢复时不重置已录秒数与待转写切片计数）。
+  void ensureRecording() {
+    _sessionActive = true;
+    if (_phase == RecordingPhase.recording ||
+        _phase == RecordingPhase.transcribing) {
+      return;
+    }
+    _commit(phase: RecordingPhase.recording, clearError: true);
   }
 
   /// 停止录音：回到 idle 并把待处理计数归零，避免遗留切片继续触发状态。

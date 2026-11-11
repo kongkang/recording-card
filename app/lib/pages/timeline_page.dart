@@ -59,16 +59,22 @@ class TimelinePage extends StatelessWidget {
                 key: const Key('timeline-refresh'),
                 onRefresh: () async {
                   final error = await store.syncRecordings();
-                  // 没连设备不是错误：安静地不做事，别弹"整理中断"吓人
-                  if (error != null &&
-                      error.contains('未连接录音卡') &&
-                      context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        duration: Duration(seconds: 2),
-                        content: Text('已连接录音卡后再下拉取回'),
-                      ),
-                    );
+                  if (error != null && context.mounted) {
+                    if (error.contains('未连接录音卡')) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          duration: Duration(seconds: 2),
+                          content: Text('已连接录音卡后再下拉取回'),
+                        ),
+                      );
+                    } else if (error.contains('录音进行中')) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          duration: Duration(seconds: 2),
+                          content: Text('正在录音中，每满 1 分钟自动转写保存'),
+                        ),
+                      );
+                    }
                   }
                 },
                 child: groups.isEmpty
@@ -485,6 +491,8 @@ class _EventCardView extends StatelessWidget {
                         const SizedBox(height: 10),
                         Text(
                           event.longText,
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 14, height: 1.55),
                         ),
                         const SizedBox(height: 12),

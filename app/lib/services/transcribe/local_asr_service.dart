@@ -463,9 +463,9 @@ void _asrWorkerMain(SendPort mainPort) {
             config: sherpa.VadModelConfig(
               sileroVad: sherpa.SileroVadModelConfig(
                 model: msg['vadPath'] as String,
-                threshold: 0.25,
+                threshold: 0.20,
                 minSilenceDuration: 0.5,
-                minSpeechDuration: 0.25,
+                minSpeechDuration: 0.20,
                 windowSize: 512,
                 maxSpeechDuration: 10,
               ),
@@ -473,7 +473,7 @@ void _asrWorkerMain(SendPort mainPort) {
               numThreads: 1,
               debug: false,
             ),
-            bufferSizeInSeconds: 30,
+            bufferSizeInSeconds: 120,
           );
           reply(id, {'ok': true});
 
@@ -484,17 +484,21 @@ void _asrWorkerMain(SendPort mainPort) {
             break;
           }
           final samples = msg['samples'] as Float32List;
-          // Silero VAD 必须按 512 采样窗口喂；一次性喂长音频会超出内部
-          // 环形缓冲（30s），导致只保留最后一段。
+          // Silero VAD 按 512 采样窗口喂，并边喂边排空已检出的语音段，防止长音频溢出环形缓冲。
           const window = 512;
+          final spans = <List<int>>[];
           for (var i = 0; i < samples.length; i += window) {
             final end = i + window < samples.length
                 ? i + window
                 : samples.length;
             detector.acceptWaveform(Float32List.sublistView(samples, i, end));
+            while (!detector.isEmpty()) {
+              final segment = detector.front();
+              spans.add([segment.start, segment.start + segment.samples.length]);
+              detector.pop();
+            }
           }
           detector.flush();
-          final spans = <List<int>>[];
           while (!detector.isEmpty()) {
             final segment = detector.front();
             spans.add([segment.start, segment.start + segment.samples.length]);

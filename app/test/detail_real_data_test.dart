@@ -1,10 +1,15 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/models/recording.dart';
 import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/pages/detail_page.dart';
 import 'package:recording_card/pages/timeline_page.dart';
+import 'package:recording_card/services/audio/recording_status.dart';
 import 'package:recording_card/services/recordings/segment_projection.dart';
+import 'package:recording_card/services/transcribe/wav_io.dart';
 import 'package:recording_card/widgets/store_scope.dart';
 
 import 'support/test_transitions.dart';
@@ -141,5 +146,154 @@ void main() {
     expect(find.text('整理中'), findsOneWidget);
     expect(find.byKey(const Key('detail-seg1')), findsNothing);
     expect(find.byKey(const Key('selbox-seg1')), findsNothing);
+  });
+
+  testWidgets('原始数据：播放器吸顶不随列表滚走、带可拖拽进度条、按切片自身时长展示并支持点卡片快进', (
+    tester,
+  ) async {
+    late Directory tmp;
+    late String wavPath;
+    await tester.runAsync(() async {
+      tmp = await Directory.systemTemp.createTemp('rc-detail-raw-');
+      wavPath = '${tmp.path}/slice_0005.wav';
+      // 生成真实 60 秒 16kHz 单声道 WAV
+      await File(wavPath).writeAsBytes(
+        encodeWav(Float32List(16000 * 60)),
+        flush: true,
+      );
+    });
+    addTearDown(() async {
+      await tester.runAsync(() async {
+        if (await tmp.exists()) await tmp.delete(recursive: true);
+      });
+    });
+
+    final start = DateTime.now()
+        .subtract(const Duration(minutes: 10))
+        .millisecondsSinceEpoch;
+    final manyUtterances = [
+      for (var i = 0; i < 18; i++)
+        RawUtterance(
+          id: '0001u$i',
+          sliceId: '0001',
+          startMs: i * 3000,
+          endMs: i * 3000 + 2000,
+          text: '第 $i 句测试语音内容用于验证列表滚动与时间戳快进联动',
+          speakerLabel: '说话人 1',
+        ),
+    ];
+    final file = RecordingFile(
+      deviceName: 'LIVE_2DD798CE_0006.WAV',
+      session: '2DD798CE',
+      seq: 6,
+      startAtMs: start,
+      apmPath: wavPath,
+      wavPath: wavPath,
+      createdAtMs: start,
+      durationMs: 60000,
+      timeSynced: true,
+      slices: [
+        AudioSlice(
+          id: '0001',
+          index: 0,
+          startMs: 0,
+          endMs: 60000,
+          wavPath: wavPath,
+        ),
+      ],
+      utterances: manyUtterances,
+      segments: [
+        SegmentRecord(
+          id: 'seg6',
+          sessionId: '2DD798CE',
+          index: 5,
+          startAtMs: start,
+          endAtMs: start + 60000,
+          title: '第六片实时切片',
+          brief: '摘要',
+          longText: '一\n二\n三\n四\n五\n六\n七',
+          status: SegmentStatus.closed,
+          sliceIds: const ['0001'],
+        ),
+      ],
+    );
+
+    final store = _storeFor(file);
+    addTearDown(store.dispose);
+    await tester.pumpWidget(_host(store, const DetailPage(eventId: 'seg6')));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('det-tab-raw')));
+    await tester.pump();
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    await tester.pump();
+
+    expect(find.byKey(const Key('raw-sticky-player')), findsOneWidget);
+    expect(find.byKey(const Key('raw-audio-slider')), findsOneWidget);
+    expect(
+      find.text('00:00 / 01:00'),
+      findsOneWidget,
+      reason: '第 6 个切片应只显示自身 1 分钟时长，而非整场 6 分钟',
+    );
+
+    final topBefore = tester
+        .getTopLeft(find.byKey(const Key('raw-audio-player')))
+        .dy;
+    // 持续滚动原始数据列表直到底部第 10 句卡片出现，验证吸顶播放器位置纹丝不动
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('raw-utt-0001u10')),
+      180,
+      scrollable: find.descendant(
+        of: find.byType(ListView),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.pump();
+    final topAfter = tester
+        .getTopLeft(find.byKey(const Key('raw-audio-player')))
+        .dy;
+    expect(topAfter, topBefore, reason: '播放器必须 sticky 固定在原始数据顶部');
+
+    // 点击第 10 句卡片（startMs = 30000ms = 00:30），进度立即跳到 00:30 / 01:00
+    await tester.tap(find.byKey(const Key('raw-utt-0001u10')));
+    await tester.pump();
+    expect(find.text('00:30 / 01:00'), findsOneWidget);
+  });
+
+  testWidgets('Timeline：展开简介最多 4 行，且录音中下拉刷新不会丢失顶部录音状态块', (
+    tester,
+  ) async {
+    final status = RecordingStatusController()..startRecording();
+    status.updateElapsed(125);
+    addTearDown(status.dispose);
+    final result = SegmentProjection.build([_file()]);
+    final store = AppStore(events: result.events, status: status)
+      ..segmentViews = result.views;
+    addTearDown(store.dispose);
+    store.deviceConnected = () => true;
+    store.deviceRecording = () => true;
+
+    await tester.pumpWidget(
+      _host(store, TimelinePage(recordingStatus: status)),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('recording-status-block')), findsOneWidget);
+    expect(status.phase, RecordingPhase.recording);
+
+    // 展开事件卡片，确认简介设置了 maxLines = 4 截断
+    await tester.tap(find.byKey(const Key('card-seg1')));
+    await tester.pump();
+    final summaryText = tester.widget<Text>(find.text('详细概述'));
+    expect(summaryText.maxLines, 4);
+    expect(summaryText.overflow, TextOverflow.ellipsis);
+
+    // 录音期间触发下拉刷新：顶部「正在录音」状态块不得被冲掉
+    await store.syncRecordings();
+    await tester.pump();
+    expect(status.phase, RecordingPhase.recording);
+    expect(find.byKey(const Key('recording-status-block')), findsOneWidget);
   });
 }

@@ -62,12 +62,14 @@ class AppStore extends ChangeNotifier {
     List<RecordEvent>? events,
     RecordingSyncService? recordings,
     SummaryGenerator? generator,
+    RecordingStatusController? status,
     JsonStore? jsonStore,
     bool loadPersistedState = true,
   }) : events = events ?? const [],
        _seedOverride = events,
        _recordings = recordings,
        _generator = generator,
+       _status = status,
        _json = jsonStore,
        _loadPersisted = loadPersistedState;
 
@@ -285,10 +287,27 @@ class AppStore extends ChangeNotifier {
   /// 是否已连着录音卡（由外壳把 DeviceStore 接进来；未接则视为可同步，由流水线自己报错）。
   bool Function()? deviceConnected;
 
+  /// 设备是否正在录音（录音期间走实时流切片自动落盘，下拉刷新不抢蓝牙总线、不冲掉顶部录音块）。
+  bool Function()? deviceRecording;
+
   /// 设备是否可用：取回录音、读取文件列表都要求先连上卡。
   bool get _deviceReady => deviceConnected?.call() ?? true;
 
+  bool get _isActivelyRecording =>
+      (deviceRecording?.call() ?? false) || (_status?.sessionActive ?? false);
+
   Future<String?> syncRecordings() async {
+    // 录音进行中下拉刷新：只刷新本机已落盘列表并守护顶部「正在录音」状态块，
+    // 不发起蓝牙文件列表/下载，更不能把 RecordingStatusController 切回 idle。
+    if (_isActivelyRecording) {
+      syncError = null;
+      syncStage = null;
+      syncProgress = 0;
+      syncText = '';
+      _status?.ensureRecording();
+      await refreshEvents();
+      return '录音进行中，实时切片正自动入库';
+    }
     // 没连卡就直接告诉用户"先连设备"，不要跑下去再报成"整理中断"——
     // 那不是故障，是条件没满足，报错反而让人以为出了问题。
     if (!_deviceReady) {
@@ -388,16 +407,24 @@ class AppStore extends ChangeNotifier {
   /// 启动/切前台时继续处理本地未完成的录音（不访问设备）。
   Future<void> processPendingRecordings() async {
     final pipeline = _pipeline;
-    if (pipeline == null || pipeline.isBusy) return;
-    // 没连卡时不要自动跑续跑：它需要读设备文件列表核对，
-    // 跑起来只会把"暂缺音频"的条目全标成失败，白白刷出一堆红字。
-    if (!_deviceReady) return;
-    // 已经在跑就别再起：续跑被重复触发时会让同一条链路反复排队，
-    // 表现就是"录音点了没反应"——命令永远轮不到。
+    if (pipeline == null || pipeline.isBusy || _isActivelyRecording) return;
     if (_pendingRunning) return;
     _pendingRunning = true;
-    _status?.startSync(detail: '正在整理本地录音…');
     try {
+      // 1) 纯本机一次性重检此前因直流偏置误判为「未识别到人声」的实时切片（无需连接录音卡）
+      try {
+        final recovered = await pipeline.reprocessSilentLiveSlices();
+        if (recovered > 0) {
+          await refreshFromStore();
+        }
+      } on Object catch (e) {
+        debugPrint('[store] 本地实时切片重检失败：$e');
+      }
+
+      // 2) 没连卡时不要自动跑设备关联续跑：它需要读设备文件列表核对，
+      // 跑起来只会把"暂缺音频"的条目全标成失败，白白刷出一堆红字。
+      if (!_deviceReady || _isActivelyRecording) return;
+      _status?.startSync(detail: '正在整理本地录音…');
       // 兜底超时：任一条录音卡死（设备少发字节等）都不能让后台占着链路不放，
       // 否则界面会一直停在"正在整理"，录音/同步全部排队。
       await pipeline
@@ -411,7 +438,9 @@ class AppStore extends ChangeNotifier {
       debugPrint('[store] 续跑失败：$e');
     } finally {
       _pendingRunning = false;
-      _status?.updateQueue(remaining: 0, active: false);
+      if (!_isActivelyRecording) {
+        _status?.updateQueue(remaining: 0, active: false);
+      }
       notifyListeners();
     }
   }

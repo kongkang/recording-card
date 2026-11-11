@@ -18,6 +18,7 @@ import 'package:recording_card/services/transcribe/local_asr_service.dart';
 import 'package:recording_card/services/transcribe/slice_planner.dart';
 import 'package:recording_card/services/transcribe/speech_engine.dart';
 import 'package:recording_card/services/transcribe/speech_models.dart';
+import 'package:recording_card/services/transcribe/wav_io.dart';
 
 import 'support/fake_gateway.dart';
 
@@ -530,6 +531,65 @@ void main() {
     expect(gateway.downloadCalls, 1);
     expect(await store.load('3600E239.APM'), isNull, reason: '已覆盖卡文件不重复入库');
     expect((await store.load('OFFLINE.APM'))?.stage, RecordingStage.ready);
+  });
+
+  test('直流偏置去除 + 远场弱语音兜底 + 历史误判空切片一次性重检', () async {
+    // 复现真机 ADPCM 实时流：+10000 直流偏置 + 幅值约 800 (-32 dBFS) 的人声交流分量
+    final n = 16000; // 1 秒
+    final dcSpeech = Float32List(n);
+    for (var i = 0; i < n; i++) {
+      final ac = (((i % 80) - 40) / 40.0) * (800 / 32768.0);
+      dcSpeech[i] = (10000 / 32768.0) + ac;
+    }
+    expect(hasAcousticSpeechCandidate(dcSpeech), isTrue);
+    final conditioned = conditionSpeechSamples(dcSpeech);
+    var mean = 0.0;
+    var peak = 0.0;
+    for (final v in conditioned) {
+      mean += v;
+      if (v.abs() > peak) peak = v.abs();
+    }
+    mean /= conditioned.length;
+    expect(mean.abs(), lessThan(0.01), reason: '去直流后均值回到 0 附近');
+    expect(peak, greaterThan(0.15), reason: '弱人声归一化到模型可识别幅值');
+
+    // 纯硬件底噪（振幅 ~11/32768）加同样直流偏置：去直流后不应被误放大成假语音
+    final dcSilence = Float32List(n);
+    for (var i = 0; i < n; i++) {
+      dcSilence[i] = (10000 / 32768.0) + ((i.isEven ? 11 : -11) / 32768.0);
+    }
+    expect(hasAcousticSpeechCandidate(dcSilence), isFalse);
+
+    // 即使 VAD 返回空 spans，只要存在明显声学能量，也走 SenseVoice 兜底并成功识别；
+    // 同时验证旧版误判为「未识别到人声」的 LIVE_* 记录能被 reprocessSilentLiveSlices 恢复一次。
+    final wavPath = '${root.path}/dc_slice.wav';
+    await File(wavPath).writeAsBytes(encodeWav(dcSpeech), flush: true);
+
+    final oldSilent = RecordingFile(
+      deviceName: 'LIVE_2DD798CE_0007.WAV',
+      session: '2DD798CE',
+      seq: 7,
+      startAtMs: 1794390972609,
+      timeSynced: true,
+      apmPath: wavPath,
+      wavPath: wavPath,
+      durationMs: 1000,
+      createdAtMs: 1794390973609,
+      stage: RecordingStage.ready,
+    );
+    await store.save(oldSilent);
+
+    engine.spans = const []; // 模拟 VAD 未检出区间
+    engine.text = '第七分钟一直在说话的内容';
+    final recovered = await pipeline.reprocessSilentLiveSlices();
+    expect(recovered, 1, reason: '应自动重检并恢复被直流偏置淹没的实时切片');
+
+    final updated = (await store.load('LIVE_2DD798CE_0007.WAV'))!;
+    expect(updated.utterances, isNotEmpty);
+    expect(updated.utterances.first.text, contains('第七分钟一直在说话'));
+
+    // 再次调用不会重复重检（由 .dc_rechecked_v1 标记幂等保护）
+    expect(await pipeline.reprocessSilentLiveSlices(), 0);
   });
 }
 

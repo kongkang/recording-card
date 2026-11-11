@@ -64,6 +64,7 @@ class _AppShellState extends State<AppShell> {
     // 让 store 知道设备在不在：没连卡时下拉不要去取回录音，更不该报"整理中断"。
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
     widget.store.deviceConnected ??= () => _device.isConnected;
+    widget.store.deviceRecording ??= () => _device.isRecording;
     _liveSliceSub = _liveAudio.slices.listen((slice) {
       unawaited(widget.store.ingestLiveSlice(slice));
     });
@@ -95,6 +96,8 @@ class _AppShellState extends State<AppShell> {
         if (!_liveAudio.isRunning) {
           unawaited(_liveAudio.start());
         }
+      } else {
+        _recording.ensureRecording();
       }
       _recording.updateElapsed(_device.recSeconds);
     } else if (_wasRecording) {

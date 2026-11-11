@@ -6,6 +6,8 @@
 /// 没有视图时（旧数据/设计样例）回退 [RecordEvent] 的 dialog/raw。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/models/record.dart';
@@ -35,6 +37,62 @@ class DetailPage extends StatefulWidget {
 
 class _DetailPageState extends State<DetailPage> {
   String _tab = 'dlg'; // dlg | raw | refs
+  final GlobalKey<RawAudioPlayerState> _playerKey =
+      GlobalKey<RawAudioPlayerState>();
+  int? _activeFilePosMs;
+
+  @override
+  void didUpdateWidget(covariant DetailPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.eventId != widget.eventId) {
+      _activeFilePosMs = null;
+    }
+  }
+
+  void _seekRawAudio(int fileMs) {
+    final player = _playerKey.currentState;
+    if (player == null) return;
+    unawaited(player.seekToFileMs(fileMs, autoPlay: true));
+  }
+
+  ({int? clipStartMs, int? clipEndMs, int? gapCountOverride}) _audioClipFor(
+    SegmentView? view,
+  ) {
+    if (view == null) {
+      return (clipStartMs: null, clipEndMs: null, gapCountOverride: null);
+    }
+    int? gapCount;
+    if (view.file.deviceName.startsWith('LIVE_')) {
+      final mark = view.segment.mark ?? '';
+      final m = RegExp(r'流中断\s*(\d+)\s*次').firstMatch(mark);
+      gapCount = m != null ? int.tryParse(m.group(1)!) ?? 0 : 0;
+    }
+    if (view.file.segments.length > 1) {
+      final start = (view.segment.startAtMs - view.file.startAtMs).clamp(
+        0,
+        1 << 30,
+      );
+      final segEndMs =
+          view.segment.endAtMs ??
+          (view.file.startAtMs + view.file.durationMs);
+      final end = (segEndMs - view.file.startAtMs).clamp(
+        start,
+        1 << 30,
+      );
+      if (end > start) {
+        return (
+          clipStartMs: start,
+          clipEndMs: end,
+          gapCountOverride: gapCount,
+        );
+      }
+    }
+    return (
+      clipStartMs: 0,
+      clipEndMs: view.file.durationMs > 0 ? view.file.durationMs : null,
+      gapCountOverride: gapCount,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -163,6 +221,35 @@ class _DetailPageState extends State<DetailPage> {
             style: TextStyle(fontSize: 11.5, height: 1.5, color: context.rc.sec),
           ),
         ),
+        if (_tab == 'raw')
+          Builder(
+            builder: (context) {
+              final clip = _audioClipFor(view);
+              return Container(
+                key: const Key('raw-sticky-player'),
+                padding: const EdgeInsets.fromLTRB(22, 10, 22, 8),
+                decoration: const BoxDecoration(
+                  color: RCColors.bg,
+                  border: Border(bottom: BorderSide(color: RCColors.sep)),
+                ),
+                child: RawAudioPlayer(
+                  key: _playerKey,
+                  fileKey: view?.file.deviceName ?? e.id,
+                  wavPath: view?.file.wavPath,
+                  durationHintMs: view?.file.durationMs,
+                  clipStartMs: clip.clipStartMs,
+                  clipEndMs: clip.clipEndMs,
+                  gapCountOverride: clip.gapCountOverride,
+                  padding: EdgeInsets.zero,
+                  onFilePositionChanged: (ms) {
+                    if (mounted && _activeFilePosMs != ms) {
+                      setState(() => _activeFilePosMs = ms);
+                    }
+                  },
+                ),
+              );
+            },
+          ),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.fromLTRB(22, 14, 22, 32),
@@ -376,13 +463,8 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   List<Widget> _rawWidgets(RecordEvent e, SegmentView? view) {
-    // 顶部先给"能不能听"：本地实时录音原样回放，断档会明说。
-    // 原来那段长说明压缩成一句，页面顶部不再堆解释文字。
+    // 播放器已置顶吸顶在「原始数据」tab 顶部（raw-sticky-player），此处只滚句子流。
     final widgets = <Widget>[
-      RawAudioPlayer(
-        fileKey: view?.file.deviceName ?? e.id,
-        wavPath: view?.file.wavPath,
-      ),
       if (view != null && !view.file.timeSynced)
         const Padding(
           padding: EdgeInsets.only(bottom: 12),
@@ -395,8 +477,17 @@ class _DetailPageState extends State<DetailPage> {
     ];
 
     if (view == null) {
-      for (final l in e.raw) {
-        widgets.add(_rawBubble('${l.spk} · ${l.src}', l.text));
+      for (var i = 0; i < e.raw.length; i++) {
+        final l = e.raw[i];
+        final parsedMs = _parseRelativeClockMs(l.src);
+        widgets.add(
+          _rawBubble(
+            '${l.spk} · ${l.src}',
+            l.text,
+            bubbleKey: Key('raw-utt-$i'),
+            onTap: parsedMs != null ? () => _seekRawAudio(parsedMs) : null,
+          ),
+        );
       }
       return widgets;
     }
@@ -411,11 +502,16 @@ class _DetailPageState extends State<DetailPage> {
         );
       } else {
         for (final u in view.utterances) {
+          final pos = _activeFilePosMs;
+          final active = pos != null && pos >= u.startMs && pos <= u.endMs;
           widgets.add(
             _rawBubble(
               '${_speakerText(u.speakerLabel ?? '未区分')} · '
               '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
               u.text,
+              bubbleKey: Key('raw-utt-${u.id}'),
+              active: active,
+              onTap: () => _seekRawAudio(u.startMs),
             ),
           );
         }
@@ -430,24 +526,36 @@ class _DetailPageState extends State<DetailPage> {
       widgets.add(
         Padding(
           padding: const EdgeInsets.only(bottom: 8, top: 4),
-          child: Text(
-            '[${_hms(view.file.startAtMs + slice.startMs)}—'
-            '${_hms(view.file.startAtMs + slice.endMs)}]',
-            key: Key('raw-slice-${slice.id}'),
-            style: const TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w600,
-              color: RCColors.sec,
+          child: InkWell(
+            onTap: () => _seekRawAudio(slice.startMs),
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Text(
+                '[${_hms(view.file.startAtMs + slice.startMs)}—'
+                '${_hms(view.file.startAtMs + slice.endMs)}]',
+                key: Key('raw-slice-${slice.id}'),
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: RCColors.sec,
+                ),
+              ),
             ),
           ),
         ),
       );
       for (final u in sliceUtterances) {
+        final pos = _activeFilePosMs;
+        final active = pos != null && pos >= u.startMs && pos <= u.endMs;
         widgets.add(
           _rawBubble(
             '${_speakerText(u.speakerLabel ?? '未区分')} · '
             '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
             u.text,
+            bubbleKey: Key('raw-utt-${u.id}'),
+            active: active,
+            onTap: () => _seekRawAudio(u.startMs),
           ),
         );
       }
@@ -467,28 +575,75 @@ class _DetailPageState extends State<DetailPage> {
     return widgets;
   }
 
-  Widget _rawBubble(String meta, String text) {
+  Widget _rawBubble(
+    String meta,
+    String text, {
+    Key? bubbleKey,
+    bool active = false,
+    VoidCallback? onTap,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF6F6F2),
+      child: Material(
+        color: active ? RCColors.card : const Color(0xFFF6F6F2),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          key: bubbleKey,
+          onTap: onTap,
           borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              meta,
-              style: const TextStyle(fontSize: 11, color: RCColors.sec),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: active ? RCColors.label : Colors.transparent,
+                width: 1.2,
+              ),
             ),
-            const SizedBox(height: 3),
-            Text(text, style: const TextStyle(fontSize: 14, height: 1.55)),
-          ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        meta,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: active ? RCColors.ink : RCColors.sec,
+                          fontWeight:
+                              active ? FontWeight.w600 : FontWeight.w400,
+                        ),
+                      ),
+                    ),
+                    if (onTap != null)
+                      Icon(
+                        active
+                            ? Icons.graphic_eq_rounded
+                            : Icons.play_circle_outline_rounded,
+                        size: 14,
+                        color: active ? RCColors.label : RCColors.ax,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(text, style: const TextStyle(fontSize: 14, height: 1.55)),
+              ],
+            ),
+          ),
         ),
       ),
     );
+  }
+
+  static int? _parseRelativeClockMs(String raw) {
+    final m = RegExp(r'(\d{1,2}):(\d{2})(?::(\d{2}))?').firstMatch(raw);
+    if (m == null) return null;
+    final a = int.tryParse(m.group(1)!) ?? 0;
+    final b = int.tryParse(m.group(2)!) ?? 0;
+    final c = m.group(3) != null ? int.tryParse(m.group(3)!) : null;
+    if (c != null) return null; // HH:mm:ss 绝对墙钟无法单独推算文件相对毫秒
+    return (a * 60 + b) * 1000;
   }
 
   static String _speakerText(String label) {
