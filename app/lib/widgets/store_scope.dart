@@ -10,4 +10,7 @@ class StoreScope extends InheritedNotifier<AppStore> {
 
   static AppStore of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<StoreScope>()!.notifier!;
+
+  static AppStore? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<StoreScope>()?.notifier;
 }

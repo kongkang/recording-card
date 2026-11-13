@@ -33,15 +33,14 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
     super.dispose();
   }
 
-  /// idle/error 不跑动画，避免空闲页面持续调度帧（测试 pumpAndSettle 也会挂）。
+  /// 仅录音中让圆点脉冲呼吸；其余静态显示（测试 pumpAndSettle 不会挂死）。
   void _syncPulse(RecordingPhase phase) {
-    final shouldPulse = phase == RecordingPhase.recording ||
-        phase == RecordingPhase.syncing ||
-        phase == RecordingPhase.transcribing;
+    final shouldPulse = phase == RecordingPhase.recording;
     if (shouldPulse && !_pulse.isAnimating) {
       _pulse.repeat(reverse: true);
     } else if (!shouldPulse && _pulse.isAnimating) {
       _pulse.stop();
+      _pulse.value = 1.0;
     }
   }
 
@@ -58,28 +57,25 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
     return ListenableBuilder(
       listenable: widget.controller,
       builder: (context, _) {
+        final c = context.rc;
         final phase = widget.controller.phase;
         _syncPulse(phase);
         if (phase == RecordingPhase.idle) return const SizedBox.shrink();
 
-        final (label, color, icon) = switch (phase) {
-          RecordingPhase.recording => (
-            '正在录音',
-            RCColors.danger,
-            Icons.fiber_manual_record,
-          ),
-          RecordingPhase.syncing => ('正在同步', RCColors.ink, Icons.sync),
-          RecordingPhase.transcribing => (
-            '正在转写',
-            RCColors.okInk,
-            Icons.auto_awesome,
-          ),
-          RecordingPhase.error => (
-            '录音整理中断',
-            RCColors.danger,
-            Icons.error_outline,
-          ),
-          RecordingPhase.idle => ('', RCColors.sec, Icons.circle),
+        final isError = phase == RecordingPhase.error;
+        final errorTextColor = c.isDark
+            ? const Color(0xFFFF6961)
+            : const Color(0xFFB00020);
+        final syncingDotColor = c.isDark
+            ? const Color(0xFFF5F5F7)
+            : const Color(0xFF1D1D1F);
+
+        final (label, dotColor) = switch (phase) {
+          RecordingPhase.recording => ('正在录音', const Color(0xFFFF3B30)),
+          RecordingPhase.syncing => ('正在同步', syncingDotColor),
+          RecordingPhase.transcribing => ('正在转写', const Color(0xFF34C759)),
+          RecordingPhase.error => ('录音整理中断', const Color(0xFFFF3B30)),
+          RecordingPhase.idle => ('', c.sec),
         };
         final pending = widget.controller.pendingSlices;
         final recDetail = widget.controller.detail;
@@ -87,50 +83,80 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
           RecordingPhase.recording =>
             recDetail != null && recDetail.isNotEmpty
                 ? '已录 ${_clock(widget.controller.elapsedSeconds)} · $recDetail'
-                : '已录 ${_clock(widget.controller.elapsedSeconds)} · 未转录',
+                : '已录 ${_clock(widget.controller.elapsedSeconds)} · 每满 1 分钟本地转写',
           RecordingPhase.syncing => widget.controller.detail ?? '正在整理最近一段…',
           RecordingPhase.transcribing =>
             recDetail != null && recDetail.isNotEmpty
                 ? recDetail
-                : (pending > 0 ? '剩余 $pending 段' : null),
-          RecordingPhase.error =>
-            widget.controller.lastError ?? '可稍后重试',
+                : (pending > 0 ? '剩余 $pending 段' : '本地语音引擎处理中'),
+          RecordingPhase.error => widget.controller.lastError ?? '可稍后重试',
           RecordingPhase.idle => null,
         };
+
+        final dot = Container(
+          key: const Key('recording-status-dot'),
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+        );
 
         return IgnorePointer(
           child: Container(
             key: const Key('recording-status-block'),
-            // 由 Timeline 列表统一给左右 22 的边距；这里只管上下留白
+            // 由 Timeline 列表统一给左右 22 的边距；这里只管上下留白；样式 1:1 对齐原型 `.live`
             margin: const EdgeInsets.only(top: 8, bottom: 4),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
             decoration: BoxDecoration(
-              color: RCColors.card,
+              color: isError
+                  ? (c.isDark
+                        ? const Color(0xFF2C1517)
+                        : const Color(0xFFFFF8F7))
+                  : c.card,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: RCColors.sep),
+              border: Border.all(
+                color: isError
+                    ? (c.isDark
+                          ? const Color(0xFF6E2A2E)
+                          : const Color(0xFFFFD2CE))
+                    : c.sep,
+                width: isError ? 1.0 : 0.5,
+              ),
             ),
             child: Row(
               children: [
-                FadeTransition(
-                  opacity: Tween<double>(begin: 0.35, end: 1).animate(_pulse),
-                  child: Icon(icon, size: 16, color: color),
+                if (phase == RecordingPhase.recording)
+                  FadeTransition(
+                    opacity: Tween<double>(begin: 0.32, end: 1.0).animate(_pulse),
+                    child: dot,
+                  )
+                else
+                  dot,
+                const SizedBox(width: 10),
+                Text(
+                  label,
+                  key: const Key('recording-status-text'),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: isError ? errorTextColor : c.label,
+                  ),
                 ),
-                const SizedBox(width: 8),
-                Text(label,
-                    key: const Key('recording-status-text'),
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: color)),
                 if (subtitle != null) ...[
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 10),
                   Expanded(
-                    child: Text(subtitle,
-                        key: const Key('recording-status-subtitle'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 12, color: RCColors.sec)),
+                    child: Text(
+                      subtitle,
+                      key: const Key('recording-status-subtitle'),
+                      textAlign: TextAlign.right,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.3,
+                        color: isError ? errorTextColor : c.sec,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
                   ),
                 ],
               ],

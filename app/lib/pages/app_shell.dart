@@ -6,16 +6,21 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/storage/storage.dart';
+import '../core/store/agent_config_store.dart';
 import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/audio/live_audio_recorder.dart';
 import '../services/audio/recording_status.dart';
+import '../services/auth_service.dart';
+import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/model_manager_controller.dart';
 import '../widgets/store_scope.dart';
 import 'detail_page.dart';
 import 'setting_page.dart';
+import 'settings/setting_sub_page.dart';
 import 'status_sheet.dart';
 import 'summary_result_page.dart';
 import 'timeline_page.dart';
@@ -28,19 +33,24 @@ class AppShell extends StatefulWidget {
     this.recordingStatus,
     this.modelManager,
     this.settings,
+    this.agentConfig,
     this.liveAudio,
+    this.authService,
+    this.photoLibrary,
+    this.supportsDynamicIslandOverride,
     this.onDeviceCreated,
   });
+
   final AppStore store;
   final DeviceStore? device;
   final RecordingStatusController? recordingStatus;
   final ModelManagerController? modelManager;
   final SettingsStore? settings;
-
-  /// 实时音频接收器（测试注入；不传则由外壳自行创建并负责释放）。
+  final AgentConfigStore? agentConfig;
   final LiveAudioRecorder? liveAudio;
-
-  /// dev 驱动注册内部 DeviceStore 用（release 不传）
+  final AuthService? authService;
+  final PhotoLibraryService? photoLibrary;
+  final bool? supportsDynamicIslandOverride;
   final void Function(DeviceStore)? onDeviceCreated;
 
   @override
@@ -51,11 +61,18 @@ class _AppShellState extends State<AppShell> {
   late final DeviceStore _device = widget.device ?? DeviceStore();
   late final RecordingStatusController _recording =
       widget.recordingStatus ?? RecordingStatusController();
+  late final AgentConfigStore _agentConfig =
+      widget.agentConfig ?? AgentConfigStore(store: InMemoryStore());
 
   /// 实时音频接收器：录音期间边录边把 PCM 收进本地，每满 1 分钟切片即刻送本地 ASR 转写落库。
   late final LiveAudioRecorder _liveAudio =
       widget.liveAudio ?? LiveAudioRecorder(gateway: _device.gateway);
   StreamSubscription<LiveAudioSlice>? _liveSliceSub;
+  StreamSubscription<LiveAudioSlice>? _phoneSliceSub;
+  bool _supportsDynamicIsland = false;
+
+  bool get _resolvedSupportsDynamicIsland =>
+      widget.supportsDynamicIslandOverride ?? _supportsDynamicIsland;
 
   @override
   void initState() {
@@ -65,9 +82,29 @@ class _AppShellState extends State<AppShell> {
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
     widget.store.deviceConnected ??= () => _device.isConnected;
     widget.store.deviceRecording ??= () => _device.isRecording;
+    widget.store.deviceHasCameraMedia ??=
+        () => _device.activeCapabilities.hasCameraMedia;
+    _device.onHardwarePhotoCaptured ??= () {
+      if (_device.isConnected && _device.activeCapabilities.hasCameraMedia) {
+        unawaited(widget.store.syncHardwareCameraPhotos(_device.gateway));
+      }
+    };
     _liveSliceSub = _liveAudio.slices.listen((slice) {
       unawaited(widget.store.ingestLiveSlice(slice));
     });
+    _phoneSliceSub = _device.phoneAudioSlices.listen((slice) {
+      unawaited(widget.store.ingestLiveSlice(slice));
+    });
+    _device.liveActivityService.onActionButtonToggle = () {
+      unawaited(
+        _device.togglePhoneRecording(
+          islandEnabled: _agentConfig.islandEnabled,
+        ),
+      );
+    };
+    if (widget.supportsDynamicIslandOverride == null) {
+      unawaited(_loadLiveActivityCaps());
+    }
     // Timeline 顶部状态块在录音期间一直显示计时：由外壳持有设备时钟
     _device.retainClock();
     _device.addListener(_syncRecordingStatus);
@@ -76,30 +113,47 @@ class _AppShellState extends State<AppShell> {
     unawaited(_device.restoreLink());
   }
 
+  Future<void> _loadLiveActivityCaps() async {
+    final caps = await _device.liveActivityService.queryCapabilities();
+    if (!mounted) return;
+    if (_supportsDynamicIsland != caps.supportsDynamicIsland) {
+      setState(() => _supportsDynamicIsland = caps.supportsDynamicIsland);
+    }
+  }
+
   /// 上一帧设备是否在录音：用来识别「刚停止录音」这个边沿，冲刷最后一段实时切片。
   bool _wasRecording = false;
 
-  /// 设备录音态 → 实时音频流切片 + Timeline 顶部状态块。
+  /// 设备录音态 / 本机录音态 → 实时音频流切片 + Timeline 顶部状态块。
   ///
   /// 录音开启期间按固定窗口（默认 1 分钟）边录边存并本地转写落 Timeline；
   /// 停止录音只冲刷并转写本地尾片，**不再自动从录音卡拉取 `.APM` 文件**
   /// （蓝牙文件拉取仅作为离线录音或流断档时的手动补传通道）。
   void _syncRecordingStatus() {
-    final recording = _device.isRecording;
+    final hwRecording = _device.isRecording;
+    final phoneRecording = _device.isPhoneRecording;
+    final recording = hwRecording || phoneRecording;
     if (recording) {
-      _liveAudio.updateDeviceSessionId(_device.recordSession);
+      if (hwRecording) {
+        _liveAudio.updateDeviceSessionId(_device.recordSession);
+      } else if (_liveAudio.isRunning) {
+        // 硬件切换至本机录音（如 OTA 交接）：停掉蓝牙实时流，保持状态块不中断
+        unawaited(_liveAudio.stop());
+      }
       if (!_wasRecording) {
         widget.store.onLiveRecordingStarted();
         _recording.startRecording();
         // 录音状态一变 true 就开实时流（App 开关和设备拨杆/按键都走这里）；
         // isRunning 挡住重复订阅。
-        if (!_liveAudio.isRunning) {
+        if (hwRecording && !_liveAudio.isRunning) {
           unawaited(_liveAudio.start());
         }
       } else {
         _recording.ensureRecording();
       }
-      _recording.updateElapsed(_device.recSeconds);
+      _recording.updateElapsed(
+        hwRecording ? _device.recSeconds : _device.phoneRecSeconds,
+      );
     } else if (_wasRecording) {
       _wasRecording = false;
       unawaited(_onRecordingStopped());
@@ -121,7 +175,7 @@ class _AppShellState extends State<AppShell> {
     await _liveAudio.stop();
     final savedCount = await widget.store.finishLiveRecording();
     if (!mounted) return;
-    if (!_device.isRecording) {
+    if (!_device.isRecording && !_device.isPhoneRecording) {
       _recording.stopRecording();
       if (savedCount > 0 || hadLiveSamples) {
         _device.noteSyncFinished(manual: false);
@@ -132,11 +186,13 @@ class _AppShellState extends State<AppShell> {
   @override
   void dispose() {
     _liveSliceSub?.cancel();
+    _phoneSliceSub?.cancel();
     _device.removeListener(_syncRecordingStatus);
     if (widget.liveAudio == null) _liveAudio.dispose();
     _device.releaseClock();
     if (widget.device == null) _device.dispose();
     if (widget.recordingStatus == null) _recording.dispose();
+    if (widget.agentConfig == null) _agentConfig.dispose();
     super.dispose();
   }
 
@@ -165,15 +221,34 @@ class _AppShellState extends State<AppShell> {
                 body: Stack(
                   children: [
                     if (wide)
-                      _WideLayout(device: _device, recordingStatus: _recording)
+                      _WideLayout(
+                        device: _device,
+                        recordingStatus: _recording,
+                        modelManager: widget.modelManager,
+                        settings: widget.settings,
+                        agentConfig: _agentConfig,
+                        authService: widget.authService,
+                        photoLibrary: widget.photoLibrary,
+                        supportsDynamicIsland: _resolvedSupportsDynamicIsland,
+                      )
                     else
                       _NarrowLayout(
                         device: _device,
                         recordingStatus: _recording,
                         modelManager: widget.modelManager,
                         settings: widget.settings,
+                        agentConfig: _agentConfig,
+                        authService: widget.authService,
+                        photoLibrary: widget.photoLibrary,
+                        supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                       ),
-                    StatusSheetOverlay(store: _device),
+                    ListenableBuilder(
+                      listenable: _agentConfig,
+                      builder: (context, _) => StatusSheetOverlay(
+                        store: _device,
+                        islandEnabled: _agentConfig.islandEnabled,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -245,6 +320,8 @@ class _Header extends StatelessWidget {
               level: device.battery,
               connected: device.isConnected,
               recording: device.isRecording,
+              phoneRecording: device.isPhoneRecording,
+              charging: device.isCharging,
               reconnecting: device.isReconnecting,
             ),
           ),
@@ -307,30 +384,56 @@ class _BottomNav extends StatelessWidget {
 }
 
 /// 栈顶页面部件；面板内返回按钮仅宽屏双栏使用（窄屏走顶栏面包屑）
-Widget _stackTopPage(AppStore store, {required bool wide}) {
+Widget _stackTopPage(
+  AppStore store, {
+  required bool wide,
+  required AgentConfigStore agentConfig,
+  ModelManagerController? modelManager,
+  AuthService? authService,
+}) {
   final top = store.stackTop;
   if (top == null) return const SizedBox.shrink();
   if (top.type == 'sum') {
     return SummaryResultPage(
-        summaryId: top.id, showPaneBack: wide && store.showPaneBackSum);
+      summaryId: top.id,
+      showPaneBack: wide && store.showPaneBackSum,
+    );
+  }
+  if (top.type == 'setsub') {
+    return SettingSubPage(
+      subId: top.id,
+      agentConfig: agentConfig,
+      modelManager: modelManager,
+      authService: authService,
+      showPaneBack: wide && store.showPaneBackSetSub,
+    );
   }
   return DetailPage(
-      eventId: top.id,
-      showPaneBack: wide && store.showPaneBackDetail,
-      backLabel: '返回${AppStore.pageLabels[store.stackPrev?.type] ?? ''}');
+    eventId: top.id,
+    showPaneBack: wide && store.showPaneBackDetail,
+    backLabel: '返回${AppStore.pageLabels[store.stackPrev?.type] ?? ''}',
+  );
 }
 
 class _NarrowLayout extends StatelessWidget {
   const _NarrowLayout({
     required this.device,
     required this.recordingStatus,
+    required this.agentConfig,
     this.modelManager,
     this.settings,
+    this.authService,
+    this.photoLibrary,
+    this.supportsDynamicIsland = false,
   });
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
   final ModelManagerController? modelManager;
   final SettingsStore? settings;
+  final AgentConfigStore agentConfig;
+  final AuthService? authService;
+  final PhotoLibraryService? photoLibrary;
+  final bool supportsDynamicIsland;
 
   @override
   Widget build(BuildContext context) {
@@ -362,6 +465,10 @@ class _NarrowLayout extends StatelessWidget {
                     RootTab.setting => SettingPage(
                       modelManager: modelManager,
                       settings: settings,
+                      agentConfig: agentConfig,
+                      authService: authService,
+                      photoLibrary: photoLibrary,
+                      supportsDynamicIsland: supportsDynamicIsland,
                     ),
                   },
                 ),
@@ -371,7 +478,12 @@ class _NarrowLayout extends StatelessWidget {
                   key: ValueKey('sub-${e.type}-${e.id}'),
                   child: Offstage(
                     offstage: e != store.subStack.last,
-                    child: _subPage(store, e),
+                    child: _subPage(
+                      e,
+                      agentConfig,
+                      modelManager,
+                      authService,
+                    ),
                   ),
                 ),
             ],
@@ -398,18 +510,47 @@ class _NarrowLayout extends StatelessWidget {
   }
 
   /// 栈内条目对应的页面（Navigator 页面渲染用；宽屏右栏仍走 _stackTopPage）
-  static Widget _subPage(AppStore store, RouteEntry e) {
+  static Widget _subPage(
+    RouteEntry e,
+    AgentConfigStore agentConfig,
+    ModelManagerController? modelManager,
+    AuthService? authService,
+  ) {
     if (e.type == 'sum') {
       return SummaryResultPage(summaryId: e.id, showPaneBack: false);
+    }
+    if (e.type == 'setsub') {
+      return SettingSubPage(
+        subId: e.id,
+        agentConfig: agentConfig,
+        modelManager: modelManager,
+        authService: authService,
+        showPaneBack: false,
+      );
     }
     return DetailPage(eventId: e.id, showPaneBack: false, backLabel: '');
   }
 }
 
 class _WideLayout extends StatelessWidget {
-  const _WideLayout({required this.device, required this.recordingStatus});
+  const _WideLayout({
+    required this.device,
+    required this.recordingStatus,
+    required this.agentConfig,
+    this.modelManager,
+    this.settings,
+    this.authService,
+    this.photoLibrary,
+    this.supportsDynamicIsland = false,
+  });
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
+  final ModelManagerController? modelManager;
+  final SettingsStore? settings;
+  final AgentConfigStore agentConfig;
+  final AuthService? authService;
+  final PhotoLibraryService? photoLibrary;
+  final bool supportsDynamicIsland;
 
   @override
   Widget build(BuildContext context) {
@@ -424,15 +565,33 @@ class _WideLayout extends StatelessWidget {
             children: [
               SizedBox(
                 width: 380,
-                child: TimelinePage(
-                    asLeftPane: true, recordingStatus: recordingStatus),
+                child: switch (store.rootTab) {
+                  RootTab.timeline => TimelinePage(
+                    asLeftPane: true,
+                    recordingStatus: recordingStatus,
+                  ),
+                  RootTab.setting => SettingPage(
+                    modelManager: modelManager,
+                    settings: settings,
+                    agentConfig: agentConfig,
+                    authService: authService,
+                    photoLibrary: photoLibrary,
+                    supportsDynamicIsland: supportsDynamicIsland,
+                  ),
+                },
               ),
               Container(width: 1, color: RCColors.sep),
               Expanded(
                 child: sub
                     ? Material(
                         color: RCColors.bg,
-                        child: _stackTopPage(store, wide: true),
+                        child: _stackTopPage(
+                          store,
+                          wide: true,
+                          agentConfig: agentConfig,
+                          modelManager: modelManager,
+                          authService: authService,
+                        ),
                       )
                     : const _EmptyPane(),
               ),

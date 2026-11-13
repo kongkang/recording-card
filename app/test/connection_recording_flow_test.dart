@@ -80,9 +80,9 @@ void main() {
     expect(find.byKey(const Key('dev-connect')), findsOneWidget);
     expect(find.text('JBL Speaker'), findsNothing);
 
-    final nearY = tester.getTopLeft(find.text('DYJV2_NEAR')).dy;
-    final midY = tester.getTopLeft(find.text('DYJV2_MID')).dy;
-    final farY = tester.getTopLeft(find.text('DYJV2_FAR')).dy;
+    final nearY = tester.getTopLeft(find.text('NEAR')).dy;
+    final midY = tester.getTopLeft(find.text('MID')).dy;
+    final farY = tester.getTopLeft(find.text('FAR')).dy;
     expect(nearY < midY && midY < farY, isTrue, reason: '信号强的排上面');
   });
 
@@ -142,7 +142,7 @@ void main() {
     await tester.tap(find.byKey(const Key('hw-capsule')));
     await tester.pump();
     await tester.pump();
-    expect(find.text('DYJV2_TEST'), findsOneWidget);
+    expect(find.text('TEST'), findsOneWidget);
     expect(find.textContaining('固件 2.2.0'), findsOneWidget);
     await tester.tap(find.byKey(const Key('sheet-close')));
     await tester.pump();

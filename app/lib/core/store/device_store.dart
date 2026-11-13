@@ -15,6 +15,9 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../services/audio/live_audio_recorder.dart';
+import '../../services/audio/phone_mic_service.dart';
+import '../../services/platform/live_activity_service.dart';
 import '../device/card_gateway.dart';
 import '../platform/bluetooth_permission.dart';
 
@@ -54,9 +57,18 @@ class SavedWifi {
 enum FwStage { idle, checking, main, wifi, done, failed }
 
 class DeviceStore extends ChangeNotifier {
-  DeviceStore({CardGateway? gateway, bool autoStart = false})
-    : _gateway = gateway ?? realOrUnsupported(),
-      _autoStart = autoStart {
+  DeviceStore({
+    CardGateway? gateway,
+    bool autoStart = false,
+    PhoneMicBackend? phoneMicBackend,
+    PhoneMicRecorder? phoneMicRecorder,
+    LiveActivityService? liveActivityService,
+  }) : _gateway = gateway ?? realOrUnsupported(),
+       _autoStart = autoStart,
+       _phoneMicBackend = phoneMicBackend ?? PlatformPhoneMicBackend(),
+       _ownsPhoneMicRecorder = phoneMicRecorder == null,
+       _phoneMicRecorder = phoneMicRecorder ?? PhoneMicRecorder(),
+       _liveActivityService = liveActivityService ?? LiveActivityService() {
     if (autoStart) {
       unawaited(restoreLink());
       _startHeartbeat();
@@ -67,6 +79,10 @@ class DeviceStore extends ChangeNotifier {
   final bool _autoStart;
 
   final CardGateway _gateway;
+  final PhoneMicBackend _phoneMicBackend;
+  final bool _ownsPhoneMicRecorder;
+  final PhoneMicRecorder _phoneMicRecorder;
+  final LiveActivityService _liveActivityService;
 
   /// 全部真实命令都经它转发：发出与返回都视为"蓝牙传输"，供看门狗顺延。
   late final CardGateway _gw = ActivityGateway(_gateway, _markLinkActivity);
@@ -89,6 +105,20 @@ class DeviceStore extends ChangeNotifier {
   List<CardDevice> discovered = const [];
   String? linkError;
   String? connectedName;
+  DeviceKind activeKind = DeviceKind.cardV2;
+  HardwareCapabilities activeCapabilities = HardwareCapabilities.cardV2;
+  String activeModelLabel = DeviceKind.cardV2.displayModel;
+
+  /// UI 展示的设备短名：剥离代际广播前缀（仅保留下划线后的蓝牙编号）。
+  /// [connectedName] 保持完整原始广播名供 DFU 重连等底层匹配使用。
+  String get connectedDisplayName {
+    final raw = connectedName?.trim() ?? '';
+    if (raw.isEmpty) return '录音卡';
+    return DeviceKind.bleShortId(raw);
+  }
+
+  /// 点一机 V1 硬件拍照事件到达时触发（供外层同步硬件抓拍照片）。
+  VoidCallback? onHardwarePhotoCaptured;
 
   /// 蓝牙授权状态（iOS 专用；Android 恒为 unknown 由系统自行申请）。
   BluetoothAuthorization bleAuth = BluetoothAuthorization.unknown;
@@ -122,6 +152,12 @@ class DeviceStore extends ChangeNotifier {
       _applySnapshot(snapshot);
       linkState = LinkState.connected;
       linkError = null;
+      if (sheetOpen) {
+        _startSheetWatch();
+        unawaited(prefetchSummaryInfo());
+      } else if (_autoStart) {
+        unawaited(prefetchSummaryInfo());
+      }
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       // 未连接是正常初始态，不算错误；其它错误如实呈现
@@ -131,14 +167,14 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 我们这一系列录音卡的蓝牙名前缀（如 `DYJV2_T4W25T`）。
-  ///
-  /// SDK 扫描侧已按 DYJ + NUS 广播过滤；这里再兜一层，避免个别固件不广播
-  /// NUS、或系统缓存里混入其它设备时把无关设备列给用户。
+  /// 支持的硬件蓝牙广播名前缀族：
+  /// - `DYJV2_*`：录音卡 V2
+  /// - `DYJ_*`：点一机 V1
+  /// - `REAI_VB_*`：语音 AI 键盘 V2.1
   static const deviceNamePrefix = 'DYJ';
 
   static bool isOurDevice(CardDevice device) =>
-      device.name.toUpperCase().startsWith(deviceNamePrefix);
+      DeviceKind.fromBleName(device.name) != null;
 
   /// RSSI → 1~3 格信号（与 Wi-Fi 列表同一套阈值，UI 直接复用）。
   static int signalOf(int? rssi) => _signalOf(rssi ?? -100);
@@ -201,33 +237,50 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
     _markLinkActivity();
     try {
-      final snapshot = await _gw.connect(device.id);
+      var snapshot = await _gw.connect(
+        device.id,
+        name: device.name,
+        deviceKind: device.deviceKind.code,
+      );
+      if (epoch != _epoch) return;
+      snapshot ??= await _gw.snapshot().timeout(_snapshotTimeout);
       if (epoch != _epoch) return;
       _markLinkActivity();
-      // 桥只确认「连上」时没有快照：不要拿空数据覆盖旧状态，交给 _afterConnect 刷新。
-      if (snapshot != null) _applySnapshot(snapshot);
+      activeKind = device.deviceKind;
+      activeCapabilities = device.resolvedCapabilities;
+      activeModelLabel = device.modelLabel;
       connectedName = device.name;
+      _applySnapshot(snapshot);
       // 记住这台设备：掉线重连直接拿 id 直连，不靠扫描（已连接设备不广播）
       _lastDevice = device;
       linkState = LinkState.connected;
       linkError = null;
       _eventSeq = 0;
       _startHeartbeat();
-      unawaited(_afterConnect());
+      if (sheetOpen) {
+        _startSheetWatch();
+      }
+      unawaited(_afterConnect(epoch));
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       linkState = LinkState.disconnected;
       linkError = e.message;
+    } on TimeoutException {
+      if (epoch != _epoch) return;
+      linkState = LinkState.disconnected;
+      linkError = '读取设备状态超时，请重试连接';
     }
     notifyListeners();
   }
 
-  /// 连上后的收尾：拉一次真实状态。
-  ///
-  /// 时间同步不在这里做：SDK 的 connect 内部已经 `sync_time_now()`，
-  /// 再做一次只会让首屏状态多等一个命令周期（参考实现的 connect 也不做）。
-  Future<void> _afterConnect() async {
-    await refreshFromDevice();
+  /// 连上后的收尾：若快照缺失关键状态则补拉一次，并立刻预取概要与版本检查。
+  Future<void> _afterConnect(int epoch) async {
+    if (epoch != _epoch || !isConnected) return;
+    if (_fwVersionCode == 0 || _liveBattery == null) {
+      await refreshFromDevice();
+      if (epoch != _epoch) return;
+    }
+    await prefetchSummaryInfo();
   }
 
   /// 用户主动断开：先把会占用链路的状态收干净，再断。
@@ -255,6 +308,8 @@ class DeviceStore extends ChangeNotifier {
     final epoch = ++_epoch;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
+    _eventWatch?.cancel();
+    _eventWatch = null;
     _stopSheetWatch();
     _lastDevice = null;
     CardDisconnectReport? report;
@@ -292,20 +347,26 @@ class DeviceStore extends ChangeNotifier {
     _wifiVersion = '';
     _fwVersionCode = 0;
     _wifiVersionCode = 0;
+    _otaMainInfo = null;
+    _otaWifiInfo = null;
+    _otaChecked = false;
+    _wifiSummaryProbed = false;
     _storageFreeMb = null;
     _storageTotalMb = null;
     deviceWifiOpen = null;
+    activeKind = DeviceKind.cardV2;
+    activeCapabilities = HardwareCapabilities.cardV2;
+    activeModelLabel = DeviceKind.cardV2.displayModel;
   }
 
-  // ── 弹层期间的状态跟随 ─────────────────────────────────────
+  // ── 设备事件跟随（本地内存队列，零蓝牙流量）─────────────────
   Timer? _sheetWatch;
+  Timer? _eventWatch;
 
-  /// 弹层打开期间每 2 秒拉一次快照：设备侧按键/开关改变录音状态时界面立刻跟上。
-  /// 只在弹层可见时跑，关掉即停，不额外耗电。
+  /// 弹层打开期间每 200ms 读一次本地事件队列：设备侧按键/开关/电源变化时界面立刻跟上。
+  /// 只在弹层可见时高频跑，关掉即退回后台 1s 节拍，不额外耗蓝牙电。
   void _startSheetWatch() {
     _sheetWatch?.cancel();
-    // 200ms 拉一次**本地事件队列**（不访问设备，零蓝牙开销）：
-    // 设备侧拨杆/按键的状态变化是主动推上来的，这里只负责快速取走。
     _sheetWatch = Timer.periodic(const Duration(milliseconds: 200), (_) {
       if (!sheetOpen || !isConnected) {
         _stopSheetWatch();
@@ -318,20 +379,59 @@ class DeviceStore extends ChangeNotifier {
   /// 事件队列里的序号：下一次只取比它新的。
   int _eventSeq = 0;
 
-  /// 取走设备主动推送的事件并应用到状态。
+  /// 供测试或外部主动触发一次设备事件消费（autoStart=false 时无后台定时器）。
+  Future<void> pollEventsNow() => _pullDeviceEvents();
+
+  /// 取走设备主动推送的事件（录音开关、电源/电量、物理语音键、相机拍照、被动断连）并应用到状态。
   Future<void> _pullDeviceEvents() async {
     try {
       final batch = await _gw.pullEvents(after: _eventSeq);
       if (batch.seq == _eventSeq && batch.events.isEmpty) return;
       _eventSeq = batch.seq;
 
+      if (batch.disconnectedEvents.isNotEmpty && isConnected) {
+        unawaited(_retryReconnect());
+        return;
+      }
+
+      var changed = false;
+
       // 录音状态变化（拨杆 / 按键 / 固件自停）：直接改状态，不等下次查设备
       for (final item in batch.recordEvents) {
         final status = item['event']?['status'];
         if (status is! Map<String, dynamic>) continue;
         _applyRecordStatus(status);
+        changed = true;
       }
-      if (batch.recordEvents.isNotEmpty) notifyListeners();
+
+      // 电源/充电/电量主动上报：插拔电源或充饱时立即更新，不等轮询
+      for (final item in batch.powerEvents) {
+        final battery = item['event']?['battery'];
+        if (battery is! Map<String, dynamic>) continue;
+        final level = (battery['level'] as num?)?.toInt();
+        if (level != null && level > 0) {
+          _liveBattery = level.clamp(1, 100);
+        }
+        if (battery['isCharging'] is bool) {
+          _liveCharging = battery['isCharging'] as bool;
+        }
+        changed = true;
+      }
+
+      // 语音 AI 键盘物理语音键按下：翻转统一录音开关
+      for (final item in batch.voiceKeyEvents) {
+        if (item['event']?['pressed'] == true && !recordingBusy) {
+          unawaited(toggleRecording());
+          break;
+        }
+      }
+
+      // 点一机 V1 硬件按键拍照：通知外层拉取新照片
+      if (batch.cameraEvents.isNotEmpty) {
+        onHardwarePhotoCaptured?.call();
+      }
+
+      if (changed) notifyListeners();
     } on CardException {
       // 队列读不到不影响主链路：看门狗负责判掉线
     }
@@ -384,11 +484,12 @@ class DeviceStore extends ChangeNotifier {
   //    不再广播，扫描找不到它，这正是"断了以后再也连不回去"的老根因。
   // 4. 重连成功回绿/橙；失败回灰「无设备」。
   static const heartbeatIdle = Duration(seconds: 30);
+  static const recordingHeartbeatIdle = Duration(seconds: 120);
   static const _reconnectDelay = Duration(milliseconds: 400);
 
   /// 重连只发 connect（不再预拉快照），但桥内要先扫描（4s→6s 两档）再建链路，
   /// 上限给到 20s，避免把"正在重连"误判成失败。
-  static const _retryConnectTimeout = Duration(seconds: 20);
+  static const _retryConnectTimeout = Duration(seconds: 25);
 
   Timer? _heartbeatTimer;
 
@@ -407,15 +508,21 @@ class DeviceStore extends ChangeNotifier {
 
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
+    _eventWatch?.cancel();
     // widget 测试里 autoStart:false 不启，避免悬挂定时器
     if (!_autoStart) return;
     _sinceLinkActivity = Duration.zero;
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _heartbeatTick();
     });
+    _eventWatch = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (isConnected && !sheetOpen) {
+        unawaited(_pullDeviceEvents());
+      }
+    });
   }
 
-  /// 每 5 秒醒一次只为累计"空闲时长"；满 30 秒才真正探一次。
+  /// 每 5 秒醒一次只为累计"空闲时长"；待机满 30 秒探一次，录音推流中降频到 120 秒探一次。
   void _heartbeatTick() {
     if (linkState != LinkState.connected) return;
     // 固件升级/同步/录音命令链路忙：不插队，且这些动作本身已算活动
@@ -424,7 +531,8 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
     _sinceLinkActivity += const Duration(seconds: 5);
-    if (_sinceLinkActivity < heartbeatIdle) return;
+    final threshold = isRecording ? recordingHeartbeatIdle : heartbeatIdle;
+    if (_sinceLinkActivity < threshold) return;
     unawaited(_watchdogProbe());
   }
 
@@ -487,17 +595,27 @@ class DeviceStore extends ChangeNotifier {
       await Future<void>.delayed(_reconnectDelay);
       if (epoch != _epoch) return;
       _markLinkActivity();
-      final snapshot = await _gateway
-          .connect(device.id)
+      var snapshot = await _gateway
+          .connect(
+            device.id,
+            name: device.name,
+            deviceKind: device.deviceKind.code,
+          )
           .timeout(_retryConnectTimeout);
       if (epoch != _epoch) return;
+      snapshot ??= await _gw.snapshot().timeout(_snapshotTimeout);
+      if (epoch != _epoch) return;
       _markLinkActivity();
-      if (snapshot != null) _applySnapshot(snapshot);
+      _applySnapshot(snapshot);
       linkState = LinkState.connected;
       linkError = null;
       // 重连成功后必须把看门狗重新挂上：只在首次 connect 启表的话，
       // 一次掉线重连之后就再也没人探测了。
       _startHeartbeat();
+      if (sheetOpen) {
+        _startSheetWatch();
+      }
+      unawaited(prefetchSummaryInfo());
     } on Object catch (e, st) {
       if (epoch != _epoch) return;
       debugPrint('[watchdog] 重连失败：$e');
@@ -516,6 +634,8 @@ class DeviceStore extends ChangeNotifier {
   void _dropToDisconnected(String message) {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
+    _eventWatch?.cancel();
+    _eventWatch = null;
     _stopClock();
     linkState = LinkState.disconnected;
     linkError = message;
@@ -542,27 +662,19 @@ class DeviceStore extends ChangeNotifier {
 
   int? get storageTotalMb => _storageTotalMb;
 
-  /// 设备管理层副标题：展示蓝牙连接态 + 固件版本 + 可用存储等设备基本信息。
+  /// 设备管理层副标题：紧跟蓝牙图标，仅保留固件版本（去掉「已连接」与可用容量）。
   String get deviceSubtitleText {
-    final parts = <String>['已连接 · 蓝牙'];
-    if (_fwVersion.isNotEmpty) {
-      parts.add('固件 $_fwVersion');
-    }
-    final freeMb = _storageFreeMb;
-    if (freeMb != null && freeMb >= 0) {
-      if (freeMb >= 1024) {
-        parts.add('可用 ${(freeMb / 1024).toStringAsFixed(1)} GB');
-      } else {
-        parts.add('可用 $freeMb MB');
-      }
-    }
-    return parts.join(' · ');
+    if (_fwVersion.isEmpty) return '';
+    return '固件 $_fwVersion';
   }
 
   /// 设备端 Wi-Fi 模块是否开启（null = 未知，不冒充"已关闭"）。
   bool? deviceWifiOpen;
 
   void _applySnapshot(CardSnapshot s) {
+    activeKind = s.effectiveKind;
+    activeCapabilities = s.resolvedCapabilities;
+    activeModelLabel = s.modelLabel;
     // 电量三态：读到 → 更新；读不到（命令失败/字段缺失）→ 保留上次值，
     // 不把已知电量抹成未知（单次查询失败不该清状态）；设备明确报 0 → 未知。
     if (s.hasBattery && s.batteryLevel > 0) {
@@ -745,6 +857,119 @@ class DeviceStore extends ChangeNotifier {
   // ── 电量 ───────────────────────────────────────────────────
   int get battery => _liveBattery ?? 0;
   bool get batteryKnown => _liveBattery != null;
+  bool get isCharging => _liveCharging == true;
+
+  // ── 本机录音（手机麦克风 + 灵动岛 + OTA 接力）────────────
+  bool _phoneRecording = false;
+  bool _phoneRecordingBusy = false;
+  int _phoneRecSec = 0;
+  Timer? _phoneClockTimer;
+  String? _phoneRecordingError;
+  DateTime? _phoneRecordingStartedAt;
+  bool _otaHandoverPhoneRecording = false;
+
+  bool get isPhoneRecording => _phoneRecording;
+  bool get phoneRecordingBusy => _phoneRecordingBusy;
+  int get phoneRecSeconds => _phoneRecSec;
+  String? get phoneRecordingError => _phoneRecordingError;
+  DateTime? get phoneRecordingStartedAt => _phoneRecordingStartedAt;
+  Stream<LiveAudioSlice> get phoneAudioSlices => _phoneMicRecorder.slices;
+  LiveActivityService get liveActivityService => _liveActivityService;
+
+  String get phoneRecClockText {
+    final s = _phoneRecSec;
+    final h = s ~/ 3600;
+    final m = (s % 3600) ~/ 60;
+    final sec = s % 60;
+    return '${h.toString().padLeft(2, '0')}:'
+        '${m.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+  }
+
+  Future<PhoneMicPermission> checkPhoneMicPermission() =>
+      _phoneMicBackend.checkPermission();
+
+  Future<PhoneMicPermission> requestPhoneMicPermission() =>
+      _phoneMicBackend.requestPermission();
+
+  Future<bool> startPhoneRecording({
+    bool forOtaHandover = false,
+    bool islandEnabled = true,
+  }) async {
+    if (_phoneRecording) return true;
+    if (_phoneRecordingBusy) return false;
+    _phoneRecordingBusy = true;
+    _phoneRecordingError = null;
+    notifyListeners();
+    try {
+      var perm = await _phoneMicBackend.checkPermission();
+      if (perm == PhoneMicPermission.notDetermined) {
+        perm = await _phoneMicBackend.requestPermission();
+      }
+      if (perm != PhoneMicPermission.granted) {
+        _phoneRecordingError = '需要开启麦克风权限才能使用本机录音';
+        return false;
+      }
+      final startedAt = DateTime.now();
+      await _phoneMicRecorder.start(startedAt: startedAt);
+      await _phoneMicBackend.startCapture(
+        _phoneMicRecorder.ingestPcm,
+        onError: (err) {
+          _phoneRecordingError = err;
+          unawaited(stopPhoneRecording());
+        },
+      );
+      _phoneRecording = true;
+      _phoneRecordingStartedAt = startedAt;
+      _phoneRecSec = 0;
+      _otaHandoverPhoneRecording = forOtaHandover;
+      _phoneClockTimer?.cancel();
+      _phoneClockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        _phoneRecSec++;
+        notifyListeners();
+      });
+      if (islandEnabled) {
+        unawaited(
+          _liveActivityService.startLocalRecordingActivity(startedAt: startedAt),
+        );
+      }
+      return true;
+    } on Object catch (e) {
+      await _phoneMicRecorder.stop();
+      _phoneRecording = false;
+      _phoneRecordingError = '本机录音启动失败：$e';
+      return false;
+    } finally {
+      _phoneRecordingBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> stopPhoneRecording() async {
+    if (!_phoneRecording && !_phoneRecordingBusy) return;
+    _phoneRecordingBusy = true;
+    notifyListeners();
+    try {
+      await _phoneMicBackend.stopCapture();
+      await _phoneMicRecorder.stop();
+    } finally {
+      _phoneClockTimer?.cancel();
+      _phoneClockTimer = null;
+      _phoneRecording = false;
+      _otaHandoverPhoneRecording = false;
+      _phoneRecordingStartedAt = null;
+      _phoneRecordingBusy = false;
+      unawaited(_liveActivityService.stopLocalRecordingActivity());
+      notifyListeners();
+    }
+  }
+
+  Future<bool> togglePhoneRecording({bool islandEnabled = true}) async {
+    if (_phoneRecording) {
+      await stopPhoneRecording();
+      return false;
+    }
+    return startPhoneRecording(islandEnabled: islandEnabled);
+  }
 
   String get batteryLevelText {
     if (_liveCharging == true) return '充电中';
@@ -804,6 +1029,7 @@ class DeviceStore extends ChangeNotifier {
 
   bool get canSync =>
       isConnected &&
+      activeCapabilities.hasFileSync &&
       syncState == SyncState.idle &&
       !_syncCooldown &&
       !fwUpdating;
@@ -917,23 +1143,27 @@ class DeviceStore extends ChangeNotifier {
     return false;
   }
 
+  bool _wifiSummaryProbed = false;
+  bool _otaChecked = false;
+
   /// 预取弹层首屏要展示的概要信息（Wi-Fi 已配置数量、固件是否有更新）。
   ///
   /// 不做的话，用户不点进二级页就永远看到"0 个网络 / 已是最新"——那是假信息。
   Future<void> prefetchSummaryInfo() async {
     if (!isConnected) return;
     final epoch = _epoch;
-    if (wifiSaved.isEmpty) {
+    if (activeCapabilities.hasWifiConfig && !_wifiSummaryProbed) {
       try {
-        final creds = await _gw.wifiCredentials();
+        final creds = await _gw.wifiCredentials(passive: true);
         if (epoch != _epoch) return;
+        _wifiSummaryProbed = true;
         wifiSaved = creds.map((c) => SavedWifi(c.ssid)).toList();
         notifyListeners();
       } on CardException {
-        // Wi-Fi 模块未开启/不支持时保持空，界面显示"未配置"
+        // 卡片尚未记录被动缓存或设备暂不支持时保持原状
       }
     }
-    if (_otaMainInfo == null && _otaWifiInfo == null) {
+    if (activeCapabilities.hasDualChipOta && !_otaChecked) {
       await checkFirmware();
     }
   }
@@ -948,6 +1178,9 @@ class DeviceStore extends ChangeNotifier {
     if (isConnected) {
       unawaited(refreshFromDevice());
       unawaited(prefetchSummaryInfo());
+      if (fwStage == FwStage.failed) {
+        unawaited(checkFirmware());
+      }
       // 弹层开着时盯住设备侧按钮/开关的录音变化：卡上按了开始，这里要马上跟上，
       // 而不是等 30 秒看门狗或用户再点一次。
       _startSheetWatch();
@@ -1007,14 +1240,21 @@ class DeviceStore extends ChangeNotifier {
   CardOtaInfo? _otaMainInfo;
   CardOtaInfo? _otaWifiInfo;
 
-  bool get fwAvailable =>
-      _otaMainInfo?.isNewerThan(_fwVersionCode) == true ||
+  bool get mainNeedsUpdate =>
+      _otaMainInfo?.isNewerThan(_fwVersionCode) == true;
+
+  bool get wifiNeedsUpdate =>
       _otaWifiInfo?.isNewerThan(_wifiVersionCode) == true;
 
-  /// 固件行右侧文案：有更新才提示，否则"已是最新"。
+  bool get fwAvailable => mainNeedsUpdate || wifiNeedsUpdate;
+
+  /// 固件行右侧文案：未查完显示「正在检查…」，失败显示「检查失败」，有更新提示「有可用更新」，否则「已是最新」。
   String get fwValText {
     if (fwStage == FwStage.failed) return '检查失败';
     if (fwUpdating) return fwPctText;
+    if (!_otaChecked && activeCapabilities.hasDualChipOta && isConnected) {
+      return '正在检查…';
+    }
     return fwAvailable ? '有可用更新' : '已是最新';
   }
 
@@ -1030,58 +1270,86 @@ class DeviceStore extends ChangeNotifier {
 
   String get fwPctText => '${fwProgress.round()}%';
 
-  /// 固件更新页的版本对比行：设备当前版本 → 服务器最新版本（读不到就显示当前版本）。
+  /// 固件更新页的版本对比行：有更新时显示当前版本 → 目标版本，无更新时标「已是最新」。
   String get mainVersionCompare {
     final target = _otaMainInfo;
     final current = _fwVersion.isEmpty ? '—' : _fwVersion;
-    if (target == null || target.version.isEmpty || !target.isNewerThan(_fwVersionCode)) {
-      return current;
+    if (mainNeedsUpdate && target != null && target.version.isNotEmpty) {
+      return '$current → ${target.version}';
     }
-    return '$current → ${target.version}';
+    if (fwStage == FwStage.checking && target == null) return current;
+    if (_fwVersion.isNotEmpty) return '$_fwVersion · 已是最新';
+    if (target != null && target.versionCode > 0) return '已是最新';
+    return current;
   }
 
   String get wifiVersionCompare {
     final target = _otaWifiInfo;
     final current = _wifiVersion.isEmpty ? '—' : _wifiVersion;
-    if (target == null || target.version.isEmpty || !target.isNewerThan(_wifiVersionCode)) {
-      return current;
+    if (wifiNeedsUpdate && target != null && target.version.isNotEmpty) {
+      return '$current → ${target.version}';
     }
-    return '$current → ${target.version}';
+    if (fwStage == FwStage.checking && target == null) return current;
+    if (_wifiVersion.isNotEmpty) return '$_wifiVersion · 已是最新';
+    if (target != null && target.versionCode > 0) return '已是最新';
+    return current;
+  }
+
+  Future<CardOtaInfo> _fetchOtaModule(String module) async {
+    try {
+      return await _gateway.otaInfo(module);
+    } on CardException {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      return _gateway.otaInfo(module);
+    }
   }
 
   /// 查服务器最新版本（只读，不写设备）。
   Future<void> checkFirmware() async {
     if (!isConnected) return;
+    final epoch = _epoch;
     fwStage = FwStage.checking;
     fwError = null;
     notifyListeners();
     try {
+      if (activeCapabilities.hasWifiConfig && !_wifiSummaryProbed) {
+        try {
+          final creds = await _gw.wifiCredentials(passive: true);
+          if (epoch != _epoch) return;
+          _wifiSummaryProbed = true;
+          wifiSaved = creds.map((c) => SavedWifi(c.ssid)).toList();
+        } on CardException {
+          // 读取被动缓存失败不阻断检查服务器最新版本
+        }
+      }
       final results = await Future.wait([
-        _gateway
-            .otaInfo('main')
-            .catchError(
-              (Object _) =>
-                  const CardOtaInfo(version: '', versionCode: 0, url: ''),
-            ),
-        _gateway
-            .otaInfo('wifi')
-            .catchError(
-              (Object _) =>
-                  const CardOtaInfo(version: '', versionCode: 0, url: ''),
-            ),
+        _fetchOtaModule('main'),
+        _fetchOtaModule('wifi'),
       ]);
+      if (epoch != _epoch) return;
       _otaMainInfo = results[0];
       _otaWifiInfo = results[1];
+      _otaChecked = true;
       fwStage = FwStage.idle;
     } on CardException catch (e) {
+      if (epoch != _epoch) return;
+      _otaMainInfo = null;
+      _otaWifiInfo = null;
+      _otaChecked = false;
       fwError = e.message;
       fwStage = FwStage.failed;
     }
     notifyListeners();
   }
 
-  /// 执行升级：先主控（BLE DFU），再 Wi-Fi 模组（设备侧在线 OTA）。
-  Future<void> startFwUpdate() async {
+  /// 执行升级：按模块独立门控（仅主控 / 仅 Wi-Fi / 两阶段）。
+  ///
+  /// [allowStopRecordingAndHandover] 为 true 时：若硬件正在录音，先停止硬件录音，
+  /// 无缝切到手机「本机录音」（并亮起灵动岛），待固件升级且硬件重连后再自动停止本机录音。
+  Future<void> startFwUpdate({
+    bool allowStopRecordingAndHandover = false,
+    bool islandEnabled = true,
+  }) async {
     if (fwUpdating) return;
     if (!isConnected) {
       fwError = '录音卡未连接';
@@ -1089,78 +1357,146 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
     if (isRecording) {
-      // 参考实现在 DFU 前会先停掉录音会话；对用户而言"升级悄悄掐断录音"
-      // 是破坏性的（可能正在录会议），明确拒绝、让用户自己停更安全。
-      // 停止录音会走正常的自动同步，之后再升级不丢数据。
-      fwError = '正在录音，请先停止录音后再升级固件';
-      fwStateText = fwError!;
+      if (!allowStopRecordingAndHandover) {
+        fwError = '正在录音，请先停止录音后再升级固件';
+        fwStateText = fwError!;
+        notifyListeners();
+        return;
+      }
+      final startedHandover = await startPhoneRecording(
+        forOtaHandover: true,
+        islandEnabled: islandEnabled,
+      );
+      if (!startedHandover) {
+        fwError = _phoneRecordingError ?? '请先开启麦克风权限，确保升级期间录音数据不断';
+        fwStateText = fwError!;
+        notifyListeners();
+        return;
+      }
+      try {
+        await _gw.stopRecording().timeout(const Duration(seconds: 15));
+        _liveRecording = false;
+        _recordSession = null;
+        _stopClock();
+        notifyListeners();
+      } on Object catch (e) {
+        await stopPhoneRecording();
+        fwError = '停止硬件录音失败：$e';
+        fwStateText = fwError!;
+        notifyListeners();
+        return;
+      }
+    }
+
+    if (_otaMainInfo == null && _otaWifiInfo == null) {
+      await checkFirmware();
+      if (fwStage == FwStage.failed) return;
+    }
+
+    final doMain = mainNeedsUpdate;
+    var doWifi = wifiNeedsUpdate;
+    if (!doMain && !doWifi) {
+      fwError = null;
+      fwStage = FwStage.idle;
+      await refreshFromDevice();
       notifyListeners();
       return;
     }
+
+    // 记录升级前设备端 Wi-Fi 开关模式：Stage 1 DFU 重启会把 nRF 的 wifiOpen 复位，
+    // 升级结束后按此模式精准还原，不强制关掉原本就开着的 Wi-Fi。
+    final priorWifiOpen = deviceWifiOpen == true;
+
     fwUpdating = true;
     fwError = null;
     fwProgress = 0;
-    fwStage = FwStage.main;
-    fwStageText = '阶段 1/2 · 主控芯片';
-    fwStateText = '正在准备…';
-    notifyListeners();
 
-    // 阶段 1：主控
-    try {
-      await for (final p in _gw.otaMain()) {
-        fwProgress = p.percent.clamp(0, 50) * 1.0; // 主控占前 50%
-        fwStageText = '阶段 1/2 · 主控芯片';
-        fwStateText = p.text;
-        notifyListeners();
-      }
-    } on CardException catch (e) {
-      _failFw('主控固件升级失败：${e.message}');
-      return;
-    }
+    // 阶段 1：主控（仅在主控确实有新版本时执行）
+    if (doMain) {
+      final mainStageLabel = doWifi ? '阶段 1/2 · 主控芯片' : '阶段 1/1 · 主控芯片';
+      fwStage = FwStage.main;
+      fwStageText = mainStageLabel;
+      fwStateText = '正在准备…';
+      notifyListeners();
 
-    // DFU 后原连接失效：重新连卡再来第二阶段
-    fwProgress = 50;
-    fwStageText = '阶段 2/2 · Wi-Fi 芯片';
-    fwStateText = '正在重新连接录音卡…';
-    notifyListeners();
-    // DFU 后原连接已失效：扫描到设备后必须重新 connect，不能只 snapshot——
-    // 桥里的设备句柄在 DFU 前已被取走，直接 snapshot 只会一直报「未连接」。
-    var reconnected = false;
-    for (var i = 0; i < 10; i++) {
-      await Future<void>.delayed(const Duration(seconds: 2));
       try {
-        final list = await _gw.scan();
-        final target =
-            list.where((d) => d.name == connectedName).firstOrNull ??
-            list.firstOrNull;
-        if (target != null) {
-          final snap = await _gw.connect(target.id);
-          _lastDevice = target;
-          if (snap != null) _applySnapshot(snap);
-          reconnected = true;
-          break;
+        await for (final p in _gw.otaMain()) {
+          fwProgress = p.percent.clamp(0, 100) * (doWifi ? 0.5 : 0.85);
+          fwStageText = mainStageLabel;
+          fwStateText = p.text;
+          notifyListeners();
         }
-      } on CardException {
-        continue;
+      } on CardException catch (e) {
+        _failFw('主控固件升级失败：${e.message}');
+        return;
       }
-    }
-    if (!reconnected) {
-      _failFw('升级后未能重新连接录音卡，请手动重连');
-      return;
+
+      // DFU 后原连接失效：扫描并重连，拉取最新 snapshot 刷新版本号
+      fwProgress = doWifi ? 50 : 90;
+      fwStageText = doWifi ? '阶段 2/2 · Wi-Fi 芯片' : mainStageLabel;
+      fwStateText = '正在重新连接录音卡…';
+      notifyListeners();
+      var reconnected = false;
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        try {
+          final list = await _gw.scan();
+          final target =
+              list.where((d) => d.name == connectedName).firstOrNull ??
+              list.firstOrNull;
+          if (target != null) {
+            final snap = await _gw.connect(
+              target.id,
+              name: target.name,
+              deviceKind: target.deviceKind.code,
+            );
+            _lastDevice = target;
+            if (snap != null) _applySnapshot(snap);
+            reconnected = true;
+            break;
+          }
+        } on CardException {
+          continue;
+        }
+      }
+      if (!reconnected) {
+        _failFw('升级后未能重新连接录音卡，请手动重连');
+        return;
+      }
+      await refreshFromDevice();
+      doWifi = doWifi && wifiNeedsUpdate;
+      if (!doWifi && priorWifiOpen && deviceWifiOpen != true) {
+        try {
+          await _gw.openWifi();
+          await refreshFromDevice();
+        } on CardException {
+          // 恢复开启失败不覆盖已完成的主控升级结果
+        }
+      }
     }
 
-    // 阶段 2：Wi-Fi 模组
-    fwStage = FwStage.wifi;
-    try {
-      await for (final p in _gw.otaWifi()) {
-        fwProgress = 50 + p.percent.clamp(0, 100) * 0.5;
-        fwStageText = '阶段 2/2 · Wi-Fi 芯片';
-        fwStateText = p.text;
-        notifyListeners();
+    // 阶段 2（或独立阶段 1）：Wi-Fi 模组
+    if (doWifi) {
+      final wifiStageLabel = doMain ? '阶段 2/2 · Wi-Fi 芯片' : '阶段 1/1 · Wi-Fi 芯片';
+      fwStage = FwStage.wifi;
+      fwStageText = wifiStageLabel;
+      fwStateText = '正在检查 Wi-Fi 模块…';
+      notifyListeners();
+      try {
+        await for (final p in _gw.otaWifi(restoreWifiOpen: priorWifiOpen)) {
+          fwProgress = doMain
+              ? 50 + p.percent.clamp(0, 100) * 0.5
+              : p.percent.clamp(0, 100) * 1.0;
+          fwStageText = wifiStageLabel;
+          fwStateText = p.text;
+          notifyListeners();
+        }
+      } on CardException catch (e) {
+        await refreshFromDevice();
+        _failFw('Wi-Fi 模组升级失败：${e.message}');
+        return;
       }
-    } on CardException catch (e) {
-      _failFw('Wi-Fi 模组升级失败：${e.message}');
-      return;
+      await refreshFromDevice();
     }
 
     fwUpdating = false;
@@ -1169,7 +1505,10 @@ class DeviceStore extends ChangeNotifier {
     view = DeviceView.main;
     _otaMainInfo = null;
     _otaWifiInfo = null;
-    await refreshFromDevice();
+    _otaChecked = true;
+    if (_otaHandoverPhoneRecording && _phoneRecording) {
+      await stopPhoneRecording();
+    }
     notifyListeners();
   }
 
@@ -1337,8 +1676,13 @@ class DeviceStore extends ChangeNotifier {
   @override
   void dispose() {
     _clockTimer?.cancel();
+    _phoneClockTimer?.cancel();
     _heartbeatTimer?.cancel();
+    _eventWatch?.cancel();
     _stopSheetWatch();
+    if (_ownsPhoneMicRecorder) {
+      _phoneMicRecorder.dispose();
+    }
 
     super.dispose();
   }

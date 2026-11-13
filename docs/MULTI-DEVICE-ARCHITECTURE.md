@@ -1,0 +1,145 @@
+# 多硬件录音设备解耦与无缝多源切换架构设计
+
+> 状态：Phase 1（统一抽象层 + 自研三款设备单连接落地）已实施；Phase 2（多设备并发连接、RSSI/链路质量无缝切换、第三方开源协议插件化）架构定稿
+> 更新日期：2026-11-11
+
+---
+
+## 1. 设计目标与产品定位
+
+本客户端定位为 **Always-On 全天候个人语音记忆终端的最优解**。硬件不应成为业务层（时间轴、本地 ASR、声纹聚类、相册对齐、Agent 总结）的耦合点：
+
+1. **自研三款硬件全量接入（今晚 Phase 1 落地，单活跃连接）**：
+   - **录音卡 V2**（`reai-card-sdk` v0.0.6，广播前缀 `DYJV2_`）：nRF + ESP32 双芯，IMA-ADPCM 实时流 + SD 卡 `.APM` 离线存储 + 两阶段固件 OTA。
+   - **点一机 V1**（`reai-dyj-sdk` v0.1.14，广播前缀 `DYJ_`）：Android 智能硬件，AMR-WB 12.65kbps 实时流 + `.amr` 落盘 + 物理按键拍照/录像（`files/camera`）+ SoftAP 8788 快传与远端同步。
+   - **语音 AI 键盘 V2.1**（`reai-board-sdk` v0.3.5，广播前缀 `REAI_VB_`）：桌面/移动常开蓝牙麦克风键盘，Vendor GATT（`0xFE60`）mSBC 16kHz 实时流（`AudioStreamScope::Timeline` 租约续期）+ 物理 AI 语音键事件（`AiVoiceKey`），**无板载存储**。
+2. **第三方开源蓝牙录音硬件平滑扩展（Phase 2 插件化）**：
+   - **飞书录音豆**、**钉钉录音卡（DingTalk Card）**、**得到 Get 笔记录音卡** 等公开 BLE GATT 协议设备，只需实现统一 `HardwareDriver` 适配器，无需改动上层切片器、ASR 管线与 UI 状态机。
+3. **多设备并发作为协同数据源（Phase 2 多源融合）**：
+   - 桌面办公用「语音 AI 键盘 V2.1」常开供电收音；起身离开工位自动无缝切到随身佩戴的「录音卡 V2 / 点一机 V1」；会议拍照由「点一机 V1」或「手机系统相册」按时间戳自动对齐插入同一条对话流。
+
+---
+
+## 2. 核心解耦分层（四层架构）
+
+```mermaid
+flowchart TD
+    subgraph UI["表现层（Flutter Pages & Capability-Gated Sheet）"]
+        ScanSheet["统一蓝牙扫描面板（型号徽章 + RSSI 排序）"]
+        StatusSheet["能力驱动设备管理层（按 Capabilities 裁剪同步/固件/相机行）"]
+        Timeline["Timeline / 对话详情（1 分钟实时切片 + 时间戳照片流）"]
+    end
+
+    subgraph Orchestrator["设备编排与多源路由层（Dart DeviceStore + SourceRouter）"]
+        SingleConn["Phase 1：单活跃设备会话管理"]
+        MultiRouter["Phase 2：多连接池 + LinkScore 仲裁器 + 无缝切源器"]
+        PhotoSync["跨源媒体对齐器（DYJ V1 相机 + iOS PhotoKit 系统相册）"]
+    end
+
+    subgraph Pipeline["统一音频与本地智能管线（硬件无关）"]
+        PcmContract["标准音频契约：16kHz / Mono / i16 Little-Endian PCM + Discontinuity 标记"]
+        LiveSlicer["1 分钟滚动 WAV 切片器 + 离线文件 SHA/时间窗去重对账"]
+        LocalAI["SenseVoice INT8 转写 + Silero VAD + CAM++ 声纹推测"]
+    end
+
+    subgraph Bridge["Rust 统一硬件桥（app/rust/card_bridge · C ABI）"]
+        Trait["HardwareDriver Trait + HardwareCapabilities 描述符"]
+        D_V2["CardV2Driver\n(reai-card-sdk · ADPCM)"]
+        D_V1["DyjV1Driver\n(reai-dyj-sdk · AMR-WB + Camera)"]
+        D_Board["BoardV21Driver\n(reai-board-sdk · mSBC Timeline Lease)"]
+        D_3rd["OpenBleProtocolDriver\n(飞书豆 / 钉钉卡 / Get笔记卡)"]
+    end
+
+    UI --> Orchestrator
+    Orchestrator --> Pipeline
+    Orchestrator --> Bridge
+    Trait --> D_V2
+    Trait --> D_V1
+    Trait --> D_Board
+    Trait --> D_3rd
+```
+
+---
+
+## 3. 硬件能力矩阵与统一协议契约
+
+UI 与同步调度器**严禁写 `if (deviceKind == 'board_v21')` 之类的型号硬编码判断**，一律读取设备连接时声明的 `HardwareCapabilities` 能力位进行裁剪：
+
+| 能力字段 (`HardwareCapabilities`) | 录音卡 V2 (`card_v2`) | 点一机 V1 (`dyj_v1`) | 语音 AI 键盘 V2.1 (`board_v21`) | 飞书录音豆 / 钉钉卡 / Get卡（规划） | UI / 业务层行为映射 |
+|---|---|---|---|---|---|
+| `blePrefix` / 广播识别 | `DYJV2_*` | `DYJ_*`（排除 `DYJV2_`） | `REAI_VB_*`（含系统已配对 GATT） | Service UUID + 厂商广播头 | 统一扫描面板自动识别型号徽章 |
+| `realtimePcm16k`（实时流） | ✅ IMA-ADPCM → 16k PCM | ✅ AMR-WB 12.65k → 16k PCM | ✅ mSBC (`FE63`) → 16k PCM | ✅ Opus / ADPCM / mSBC → 16k PCM | 开启录音即走 1 分钟本地流式切片 + SenseVoice 转写 |
+| `hasOnboardStorage`（板载落盘） | ✅ SD 卡 `.APM` | ✅ `/data` 分区 `.amr` | ❌ 无存储（纯流式麦克风） | 视具体型号声明 `true/false` | `false` 时隐藏「剩余可录空间估算」与离线补传提示 |
+| `hasFileSync`（离线文件回补） | ✅ BLE 分块下载 | ✅ SoftAP 8788 / Server 回拉 | ❌ 不支持 | ✅ BLE / Wi-Fi 快传 | `false` 时设备弹层隐藏「同步」行，停止录音不触发文件拉取 |
+| `hasCameraMedia`（硬件拍照/媒体） | ❌ | ✅ 物理键抓拍 `img_*.jpg` | ❌ | 部分支持 | `true` 时监听相机事件并拉取照片按时间戳归入当前对话 |
+| `hasPhysicalRecordToggle` | ✅ 拨杆 + 按键打点 | ✅ 单击/双击/长按手势事件 | ✅ 物理 AI 语音键 (`AiVoiceKey`) | ✅ 物理按键事件 | 硬件侧操作经 `events.pull` 1s 内同步翻转 App 录音开关 |
+| `hasWifiConfig`（设备配网） | ✅ 2.4GHz Wi-Fi 配置 | ✅ Wi-Fi 扫描/连接/忘记 | ❌ 不需要 | 视型号声明 | `false` 时设备弹层隐藏「Wi-Fi 网络」行 |
+| `otaMode`（固件升级形态） | `dual_chip`（主控 DFU + ESP32） | `single_ota`（清单检查/安装） | `usb_only`（移动端隐藏） | `ble_dfu` / `none` | `none`/`usb_only` 时移动端设备弹层隐藏「固件更新」行 |
+
+### 3.1 统一实时音频流契约（Rust → Dart）
+
+所有硬件驱动在 Rust 层完成各自的帧重组、丢包检测与编解码器状态维护（IMA-ADPCM / vendored `opencore-amrwb` / `msbc-decoder`），向 Dart 层只输出唯一标准格式：
+
+- **采样率**：`16,000 Hz`
+- **声道数**：`1`（单声道）
+- **样本格式**：`i16` Little-Endian（Base64 批量帧回调）
+- **断裂信号（`state: "gap"`）**：无论是 BLE 通知序号跳变（V1 `seq_le` / V2 分块 / 键盘 `SequenceTracker`）还是解码丢帧，统一向 Dart 发送 `gap` 进度帧，记录该切片存在物理链路丢包，供后续离线文件对账决定是否需要补齐。
+
+### 3.2 统一事件语义（`events.pull` 零蓝牙开销本地队列）
+
+各硬件 SDK 的异构推送事件在 `card_bridge` 内统一归一为标准语义事件：
+
+- `{"kind": "record", "status": {"recording": bool, ...}}`：硬件主动开始/停止录音或分段滚动（`record.segment`）。
+- `{"kind": "power", "power": {"charging": bool, "level": u8?}}`：插入/拔出充电线、电量变化（键盘 `DeviceInfo`、卡片 `PowerEvent`）。
+- `{"kind": "voice_key", "pressed": bool}`：键盘物理 AI 语音键或点一机手势键触发录音切换。
+- `{"kind": "camera", "event": ...}`：点一机硬件按键拍照完成事件，通知 App 记录照片锚点并在合适通道同步原图。
+
+---
+
+## 4. 第三方开源蓝牙录音设备接入规范（飞书 / 钉钉 / 得到 Get 笔记）
+
+市面上主流 AI 录音配件（飞书录音豆、钉钉录音卡、得到 Get 笔记录音卡）在 BLE 协议层高度同构，均由「控制命令特征（Write/Notify）+ 压缩音频流特征（Notify）+ 可选文件块/Wi-Fi 快传」组成。接入任意新设备的标准四步：
+
+1. **广播指纹注册（`ScanMatcher`）**：
+   - 支持按 `local_name` 前缀、Manufacturer Data（Company ID）或 16/128-bit Service UUID 匹配，不污染其他设备的扫描过滤。
+2. **音频解码器适配（`CodecAdapter`）**：
+   - 录音卡 V2 使用 `IMA-ADPCM`，点一机 V1 使用 `AMR-WB`，键盘 V2.1 使用 `mSBC`。
+   - 飞书录音豆 / 钉钉卡 / Get 笔记卡常见编码为 **Opus（16kHz CBR/VBR 16~32kbps）** 或 **IMA-ADPCM / AAC-LC**。在 `card_bridge` 新增纯 Rust/FFI `OpusDecoderAdapter`（输出 `Vec<i16>` @ 16kHz），即可零改动接入现有 1 分钟实时切片与 SenseVoice 转写管线。
+3. **控制面最小子集实现（`HardwareDriver`）**：
+   - 必选：`connect`、`disconnect`、`battery_snapshot`、`open_realtime_stream`、`close_realtime_stream`。
+   - 可选（按 `HardwareCapabilities` 声明）：`start_onboard_record`、`list_files`、`download_file`、`wifi_config`。
+4. **离线切片与实时切片对账（`TimeWindowReconciler`）**：
+   - 统一按 `[recordingStartEpochMs, recordingEndEpochMs]` 时间区间对账：若某段录音期间实时流 `gaps == 0` 且已落盘完整 16kHz WAV，离线同步自动跳过该文件，避免重复蓝牙拉取耗电；若实时流期间发生断连或高丢包（`gaps > threshold`），才回补对应时间窗的板载录音文件。
+
+---
+
+## 5. Phase 2：多设备并发连接与无缝切源设计（Near-Me Source Arbitration）
+
+当前版本（Phase 1）已完成统一扫描与单活跃设备连接；Phase 2 将 `BridgeState.device: Option<ActiveDevice>` 升级为连接池 `HashMap<DeviceId, ActiveDeviceSession>`，实现多设备同时在线与智能选源。
+
+### 5.1 为什么多设备是 Always-On 的终极形态？
+
+| 场景 | 在线设备组合 | 期望协同行为 |
+|---|---|---|
+| 工位办公 | 语音 AI 键盘 V2.1（USB 供电常开）+ 胸牌录音卡 V2 | 键盘距离嘴更近、供电无限、双麦阵列信噪比更高 → **主选键盘流**，录音卡待机省电 |
+| 起身去会议室 / 走廊交谈 | 键盘信号衰减（RSSI 从 `-52 dBm` 跌至 `-85 dBm` 或断连），胸牌录音卡 V2 稳定 `-58 dBm` | **2 秒平滑交叉切换**至录音卡 V2 实时流，同一条会议上下文不断流 |
+| 白板讨论抓拍 | 录音卡 V2 录音中 + 点一机 V1 按键拍白板（或 iPhone 系统相机拍照） | 音频取自录音卡 V2，照片取自点一机 V1 / 系统相册，按毫秒级墙钟对齐进同一场对话详情 |
+
+### 5.2 链路质量评分（`LinkQualityScore`）与防抖切换算法
+
+为每个已连接设备维护 5 秒滑动窗口评分 $S_i \in [0, 100]$：
+
+$$S_i = 0.45 \cdot f_{\text{RSSI}}(\overline{\text{RSSI}}_i) + 0.35 \cdot (1 - \text{PacketLossRate}_i) \cdot 100 + 0.20 \cdot \text{PowerBonus}_i$$
+
+- $f_{\text{RSSI}}$：`-50 dBm` 以上满分 `100`，`-90 dBm` 为 `0`，使用指数移动平均（EMA，$\alpha = 0.3$）滤除人体遮挡瞬时波动。
+- $\text{PacketLossRate}_i$：过去 5 秒实时音频帧序号缺失率（断连记为 `1.0`）。
+- $\text{PowerBonus}_i$：外接电源/充电中设备（如桌面键盘）赋 `100`，高电量随身设备赋 `60`，低电量（`<20%`）降权为 `10` 以保护续航。
+
+**无缝切源迟滞准则（Hysteresis，严防乒乓切换）**：
+1. **主动切源条件**：候选设备 $B$ 的评分连续 **4 秒** 高于当前主源 $A$ 超过 **18 分**（$S_B - S_A > 18$），或主源 $A$ 连续 **1.5 秒** 无音频包到达（突发断连）。
+2. **先建后断（Make-Before-Break）**：
+   - 先打开设备 $B$ 的实时流（`B.realtime.open`），等待首包有效 PCM 到达；
+   - 在 200ms 重叠窗口内按能量包络对齐拼接点（零交叉点切入），再关闭设备 $A$ 的实时流（`A.realtime.close`），实现无空洞切换；
+   - 每个切片元数据记录 `sourceSegments: [{deviceId, deviceKind, offsetMs, endMs}]`，原始数据页如实展示声音来源轨迹。
+3. **交叉补盲（Cross-Device Gap Healing）**：
+   - 若设备 $A$ 在切换前 3 秒出现蓝牙丢包（`gap`），而设备 $B$（如录音卡 V2 / 点一机 V1）开启了板载落盘，后续空闲同步时仅截取缺失时间窗重跑本地 SenseVoice，自动修补缺字。

@@ -19,24 +19,49 @@ import 'package:flutter/material.dart';
 
 import '../core/platform/app_info.dart';
 import '../core/storage/storage.dart';
+import '../core/store/agent_config_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
+import '../services/auth_service.dart';
+import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/asr_models.dart';
 import '../services/transcribe/model_manager_controller.dart';
 import '../widgets/rc_switch.dart';
+import '../widgets/store_scope.dart';
 import 'privacy_page.dart';
+import 'settings/setting_sub_page.dart';
 
 class SettingPage extends StatefulWidget {
-  /// [settings] 可选注入（调用方负责 `await store.load()`）。
+  /// [settings] / [agentConfig] 可选注入（调用方负责 `await store.load()`）。
   ///
   /// 不传时页面自建：先用内存实现渲染首帧（默认值即原型默认），再异步打开
   /// `PrefsStore` 并 load —— 这样「无参构造」在测试（无平台通道）和真机上都能用。
-  const SettingPage({super.key, this.settings, this.modelManager});
+  const SettingPage({
+    super.key,
+    this.settings,
+    this.modelManager,
+    this.agentConfig,
+    this.authService,
+    this.photoLibrary,
+    this.supportsDynamicIsland = false,
+  });
 
   final SettingsStore? settings;
 
-  /// 本地转写模型管理；null 时不展示模型区块（旧测试/预览）。
+  /// 本地转写模型管理；二级页「本地语音引擎」使用。
   final ModelManagerController? modelManager;
+
+  /// Agent 与云端模型设置状态。
+  final AgentConfigStore? agentConfig;
+
+  /// 鉴权服务；用于展示外脑与第三方登录授权状态及退出登录。
+  final AuthService? authService;
+
+  /// 系统相册权限与对齐导入服务（默认走 PhotoKit 通道）。
+  final PhotoLibraryService? photoLibrary;
+
+  /// 是否显示「灵动岛与操作按钮」（仅支持灵动岛机型显示）。
+  final bool supportsDynamicIsland;
 
   @override
   State<SettingPage> createState() => _SettingPageState();
@@ -45,8 +70,13 @@ class SettingPage extends StatefulWidget {
 class _SettingPageState extends State<SettingPage> {
   /// 是否自建 store（自建的要自己 dispose，注入的归调用方）。
   late final bool _ownsStore = widget.settings == null;
+  late final bool _ownsAgent = widget.agentConfig == null;
 
   late SettingsStore _store;
+  late AgentConfigStore _agent;
+  String? _photoImportHint;
+  int _versionTapCount = 0;
+  DateTime? _lastVersionTapAt;
 
   /// 版本号只读一次（FutureBuilder 每帧重建不该重复走平台通道）。
   ///
@@ -65,6 +95,24 @@ class _SettingPageState extends State<SettingPage> {
         ..addListener(_onStoreChanged);
       unawaited(_openPersistentStore());
     }
+
+    final injectedAgent = widget.agentConfig;
+    if (injectedAgent != null) {
+      _agent = injectedAgent..addListener(_onStoreChanged);
+    } else {
+      _agent = AgentConfigStore(store: InMemoryStore())
+        ..addListener(_onStoreChanged);
+      unawaited(_openPersistentAgentStore());
+    }
+
+    final mm = widget.modelManager;
+    if (mm != null) {
+      mm.addListener(_onStoreChanged);
+      if (!mm.hasStatuses) {
+        unawaited(mm.refresh());
+      }
+    }
+    widget.authService?.addListener(_onStoreChanged);
   }
 
   /// 自建路径：打开 shared_preferences 并读回已保存的值。
@@ -98,48 +146,325 @@ class _SettingPageState extends State<SettingPage> {
     });
   }
 
+  Future<void> _openPersistentAgentStore() async {
+    AgentConfigStore next;
+    try {
+      next = AgentConfigStore(store: await PrefsStore.open());
+      await next.load();
+    } catch (_) {
+      return;
+    }
+    if (!mounted) {
+      next.dispose();
+      return;
+    }
+    setState(() {
+      _agent.removeListener(_onStoreChanged);
+      _agent.dispose();
+      _agent = next..addListener(_onStoreChanged);
+    });
+  }
+
   void _onStoreChanged() {
     if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    widget.authService?.removeListener(_onStoreChanged);
+    widget.modelManager?.removeListener(_onStoreChanged);
     _store.removeListener(_onStoreChanged);
     if (_ownsStore) _store.dispose();
+    _agent.removeListener(_onStoreChanged);
+    if (_ownsAgent) _agent.dispose();
     super.dispose();
   }
 
   void _toggle(String key) => unawaited(_store.toggle(key));
 
+  void _openSub(BuildContext context, String subId) {
+    final appStore = StoreScope.maybeOf(context);
+    if (appStore != null) {
+      appStore.openSettingSub(subId);
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingSubPage(
+          subId: subId,
+          agentConfig: _agent,
+          modelManager: widget.modelManager,
+          authService: widget.authService,
+          standalone: true,
+        ),
+      ),
+    );
+  }
+
+  void _handleVersionTap() {
+    final now = DateTime.now();
+    if (_lastVersionTapAt != null &&
+        now.difference(_lastVersionTapAt!).inMilliseconds > 1600) {
+      _versionTapCount = 0;
+    }
+    _lastVersionTapAt = now;
+    _versionTapCount += 1;
+    if (_versionTapCount >= 7) {
+      _versionTapCount = 0;
+      final next = !_agent.developerMode;
+      unawaited(_agent.setDeveloperMode(next));
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(next ? '已开启开发者模式' : '已关闭开发者模式'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _importAlbumPhotos(BuildContext context) async {
+    final photoLib = widget.photoLibrary ?? const PhotoLibraryService();
+    var status = await photoLib.checkPermission();
+    if (status != PhotoPermissionState.granted) {
+      if (!context.mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          key: const Key('photo-perm-dialog'),
+          title: const Text('开启系统相册访问权限'),
+          content: const Text('仅按录音时段在本地匹配对应照片用于内容补充，原始照片不上传云端。'),
+          actions: <Widget>[
+            TextButton(
+              key: const Key('photo-perm-cancel'),
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              key: const Key('photo-perm-grant'),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('前往授权'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      status = await photoLib.requestPermission();
+      if (status != PhotoPermissionState.granted) {
+        if (!mounted) return;
+        setState(() => _photoImportHint = '未获得相册权限');
+        return;
+      }
+    }
+
+    await _agent.setPhotoLinkEnabled(true);
+    if (!context.mounted) return;
+    final appStore = StoreScope.maybeOf(context);
+    if (appStore == null) {
+      if (!mounted) return;
+      setState(() => _photoImportHint = '已开启');
+      return;
+    }
+    final added = await appStore.importSystemAlbumPhotos();
+    if (!mounted) return;
+    setState(() {
+      _photoImportHint = added > 0 ? '已对齐导入 $added 张照片' : '暂无录音时段新照片';
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
     var index = 0; // 开关的全局序号：测试锚点 sw-0 … sw-5
+    final mm = widget.modelManager;
+    final localVal = mm == null
+        ? '3 个端侧模型'
+        : (mm.allReady ? '已就绪 · 3 项' : '待补齐');
+    final voiceVal = mm == null
+        ? '本地聚类'
+        : (mm.statusFor(campplusEmbeddingSpec)?.installed == true
+              ? '已就绪'
+              : '待安装');
+    final auth = widget.authService;
+    final authVal = auth == null
+        ? '外脑 OAuth'
+        : (auth.isSignedIn
+              ? (auth.session?.account.isNotEmpty == true
+                    ? auth.session!.account
+                    : '已授权')
+              : '未登录');
     return ColoredBox(
       // 自己的底色：深色主题下即使外层容器仍是浅色也不会出现「深底浅框」
       color: c.bg,
-      child: ListView(
+      child: SingleChildScrollView(
         key: const Key('setting-list'),
         padding: const EdgeInsets.fromLTRB(22, 8, 22, 40),
-        children: <Widget>[
-          for (final group in SettingsStore.groups) ...<Widget>[
-            _GroupTitle(text: group.title),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            const _GroupTitle(text: '账号与云端鉴权'),
             _GroupCard(
               children: <Widget>[
-                for (var i = 0; i < group.items.length; i++)
-                  if (i == 0)
-                    _switchRow(context, index++, group.items[i])
-                  else ...<Widget>[
-                    const _RowDivider(),
-                    _switchRow(context, index++, group.items[i]),
-                  ],
+                _navRow(
+                  context,
+                  keyName: 'set-auth-entry',
+                  label: '云端账号授权',
+                  value: authVal,
+                  valueKey: const Key('sv-auth'),
+                  onTap: () => _openSub(context, 'login'),
+                ),
               ],
             ),
+            const _GroupTitle(text: '模型与智能体'),
+            _GroupCard(
+              children: <Widget>[
+                _navRow(
+                  context,
+                  keyName: 'set-local-model',
+                  label: '本地语音引擎',
+                  value: localVal,
+                  valueKey: const Key('sv-local'),
+                  onTap: () => _openSub(context, 'local'),
+                ),
+                const _RowDivider(),
+                _navRow(
+                  context,
+                  keyName: 'set-cloud-model',
+                  label: '云端模型设置',
+                  value: _agent.cloudStatusSummary,
+                  valueKey: const Key('sv-cloud'),
+                  onTap: () => _openSub(context, 'cloud'),
+                ),
+                const _RowDivider(),
+                _navRow(
+                  context,
+                  keyName: 'set-prompts',
+                  label: '预设风格与提示词',
+                  value: _agent.presetLabel,
+                  valueKey: const Key('sv-preset'),
+                  onTap: () => _openSub(context, 'prompts'),
+                ),
+                const _RowDivider(),
+                _navRow(
+                  context,
+                  keyName: 'set-voiceprint',
+                  label: '声纹识别',
+                  value: voiceVal,
+                  valueKey: const Key('sv-voiceprint'),
+                  onTap: () => _openSub(context, 'voiceprint'),
+                ),
+                const _RowDivider(),
+                _navRow(
+                  context,
+                  keyName: 'set-extensions',
+                  label: '扩展能力',
+                  value: '已启用 ${_agent.enabledExtensionCount} 项',
+                  valueKey: const Key('sv-ext'),
+                  onTap: () => _openSub(context, 'ext'),
+                ),
+                if (widget.supportsDynamicIsland) ...<Widget>[
+                  const _RowDivider(),
+                  _navRow(
+                    context,
+                    keyName: 'set-dynamic-island',
+                    label: '灵动岛与操作按钮',
+                    value: _agent.islandEnabled ? '已开启' : '已关闭',
+                    valueKey: const Key('sv-island'),
+                    onTap: () => _openSub(context, 'island'),
+                  ),
+                ],
+              ],
+            ),
+            for (final group in SettingsStore.groups) ...<Widget>[
+              _GroupTitle(text: group.title),
+              _GroupCard(
+                children: <Widget>[
+                  for (var i = 0; i < group.items.length; i++)
+                    if (i == 0)
+                      _switchRow(context, index++, group.items[i])
+                    else ...<Widget>[
+                      const _RowDivider(),
+                      _switchRow(context, index++, group.items[i]),
+                    ],
+                  if (group.title == '录音') ...<Widget>[
+                    const _RowDivider(),
+                    _navRow(
+                      context,
+                      keyName: 'set-photo-import',
+                      label: '关联录音期间系统相册照片',
+                      value:
+                          _photoImportHint ??
+                          (_agent.photoLinkEnabled ? '已开启' : '未授权'),
+                      valueKey: const Key('sv-photo-import'),
+                      onTap: () => unawaited(_importAlbumPhotos(context)),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+            _AboutSection(
+              version: _version,
+              developerMode: _agent.developerMode,
+              onVersionTap: _handleVersionTap,
+            ),
           ],
-          if (widget.modelManager != null)
-            _ModelSection(controller: widget.modelManager!),
-          _AboutSection(version: _version),
-        ],
+        ),
+      ),
+    );
+  }
+
+  Widget _navRow(
+    BuildContext context, {
+    required String keyName,
+    required String label,
+    required String value,
+    Key? valueKey,
+    required VoidCallback onTap,
+  }) {
+    final c = context.rc;
+    return Semantics(
+      container: true,
+      button: true,
+      label: label,
+      onTap: onTap,
+      child: ExcludeSemantics(
+        child: GestureDetector(
+          key: Key(keyName),
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: RCDims.settingRow),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 15,
+                        height: 1.3,
+                        color: c.label,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      value,
+                      key: valueKey,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(fontSize: 13, color: c.sec),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.chevron_right, size: 18, color: c.ax),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -248,9 +573,15 @@ class _RowDivider extends StatelessWidget {
 /// 文案语义对齐原型：与设备保持蓝牙连接、边录边实时同步、自动转录整理为
 /// 对话记录、内容仅保存在本机、未经确认不会上传。
 class _AboutSection extends StatelessWidget {
-  const _AboutSection({required this.version});
+  const _AboutSection({
+    required this.version,
+    this.developerMode = false,
+    this.onVersionTap,
+  });
 
   final Future<String> version;
+  final bool developerMode;
+  final VoidCallback? onVersionTap;
 
   static const String _body =
       '录音卡与设备保持蓝牙连接，录音内容边录边实时同步到手机，'
@@ -292,40 +623,44 @@ class _AboutSection extends StatelessWidget {
                 ),
               ),
               const _RowDivider(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 13, 16, 13),
-                child: Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: Text(
-                        '版本',
-                        style: TextStyle(
-                          fontSize: 14,
-                          height: 1.3,
-                          color: c.label,
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onVersionTap,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 13, 16, 13),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          developerMode ? '版本（开发者）' : '版本',
+                          style: TextStyle(
+                            fontSize: 14,
+                            height: 1.3,
+                            color: c.label,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Flexible(
-                      child: FutureBuilder<String>(
-                        future: version,
-                        builder: (context, snap) {
-                          final text = snap.data ?? '读取中…';
-                          return Text(
-                            text,
-                            key: const Key('setting-version'),
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                              fontSize: 14,
-                              height: 1.3,
-                              color: c.sec,
-                            ),
-                          );
-                        },
+                      const SizedBox(width: 12),
+                      Flexible(
+                        child: FutureBuilder<String>(
+                          future: version,
+                          builder: (context, snap) {
+                            final text = snap.data ?? '读取中…';
+                            return Text(
+                              text,
+                              key: const Key('setting-version'),
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                fontSize: 14,
+                                height: 1.3,
+                                color: c.sec,
+                              ),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               const _RowDivider(),
@@ -391,176 +726,3 @@ class _PrivacyEntry extends StatelessWidget {
   }
 }
 
-/// 「本地转写模型」区块：状态 / 下载 / 删除 / 进度。
-///
-/// 模型体积大（SenseVoice ~230MB），只在用户点「下载」时走网络；VAD 随包，
-/// 首次安装时复制。地址未配置时明确提示，不假装可用。
-class _ModelSection extends StatefulWidget {
-  const _ModelSection({required this.controller});
-
-  final ModelManagerController controller;
-
-  @override
-  State<_ModelSection> createState() => _ModelSectionState();
-}
-
-class _ModelSectionState extends State<_ModelSection> {
-  @override
-  void initState() {
-    super.initState();
-    unawaited(widget.controller.refresh());
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.rc;
-    return ListenableBuilder(
-      listenable: widget.controller,
-      builder: (context, _) {
-        final controller = widget.controller;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _GroupTitle(text: '本地转写模型'),
-            _GroupCard(
-              children: [
-                for (var i = 0; i < controller.specs.length; i++) ...[
-                  if (i > 0) const _RowDivider(),
-                  _row(context, controller.specs[i]),
-                ],
-                const _RowDivider(),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              controller.allReady
-                                  ? '本地转写已就绪'
-                                  : (controller.configured
-                                      ? '本地模型未安装，无法转录'
-                                      : '模型下载服务未配置'),
-                              style: TextStyle(
-                                fontSize: 13,
-                                height: 1.4,
-                                color: c.sec,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          OutlinedButton(
-                            key: const Key('model-install-all'),
-                            onPressed:
-                                controller.busy || !controller.configured
-                                ? null
-                                : () => unawaited(controller.installAll()),
-                            child: Text(
-                              controller.allReady ? '重新下载' : '下载',
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (controller.busy) ...[
-                        const SizedBox(height: 10),
-                        LinearProgressIndicator(
-                          value: controller.progress > 0 ? controller.progress : null,
-                          minHeight: 4,
-                          backgroundColor: c.sep,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          controller.text,
-                          key: const Key('model-progress-text'),
-                          style: TextStyle(fontSize: 12, color: c.sec),
-                        ),
-                      ],
-                      if (controller.error != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          controller.error!,
-                          key: const Key('model-error'),
-                          style: TextStyle(
-                            fontSize: 12,
-                            height: 1.4,
-                            color: c.danger,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _row(BuildContext context, ModelSpec spec) {
-    final c = context.rc;
-    final status = widget.controller.statusFor(spec);
-    final installed = status?.installed ?? false;
-    return Padding(
-      key: Key('model-row-${spec.id}'),
-      padding: const EdgeInsets.symmetric(vertical: 11),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  spec.displayName,
-                  style: TextStyle(fontSize: 15, height: 1.3, color: c.label),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${_kindLabel(spec.kind)} · ${installed ? _bytes(status?.presentBytes ?? 0) : _expectedSize(spec)}',
-                  style: TextStyle(fontSize: 12, color: c.sec),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          if (installed)
-            TextButton(
-              key: Key('model-delete-${spec.id}'),
-              onPressed: widget.controller.busy
-                  ? null
-                  : () => unawaited(widget.controller.delete(spec)),
-              child: const Text('删除'),
-            )
-          else
-            Text(
-              spec.bundled ? '随包' : '未安装',
-              style: TextStyle(fontSize: 12, color: c.sec),
-            ),
-        ],
-      ),
-    );
-  }
-
-  static String _kindLabel(LocalModelKind kind) => switch (kind) {
-    LocalModelKind.asr => '语音转写',
-    LocalModelKind.vad => '语音活动检测',
-    LocalModelKind.speakerSegmentation => '声纹分割',
-    LocalModelKind.speakerEmbedding => '声纹识别',
-  };
-
-  static String _expectedSize(ModelSpec spec) {
-    if (spec.id == sileroVadSpec.id) return '随包安装';
-    if (spec.id == senseVoiceSpec.id) return '约 230MB';
-    if (spec.id == campplusEmbeddingSpec.id) return '约 27MB';
-    return spec.totalBytes > 0 ? _bytes(spec.totalBytes) : '未知大小';
-  }
-
-  static String _bytes(int bytes) {
-    if (bytes <= 0) return '—';
-    final mb = bytes / (1024 * 1024);
-    return mb >= 100 ? '${mb.toStringAsFixed(0)}MB' : '${mb.toStringAsFixed(1)}MB';
-  }
-}

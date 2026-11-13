@@ -41,8 +41,23 @@ class ModelManagerController extends ChangeNotifier {
 
   ModelStatus? statusFor(ModelSpec spec) => _statuses[spec.id];
 
+  bool get hasStatuses => _statuses.isNotEmpty;
+
   bool get allReady =>
       specs.every((s) => _statuses[s.id]?.installed == true);
+
+  /// 是否有明确的新版本可更新（版本与本地一致或离线未比对时不提示更新，避免打扰）。
+  bool get hasRemoteUpdates => false;
+
+  /// 若已配置下载地址但本地模型缺失，则在后台自动触发下载与加载。
+  Future<void> autoEnsureInstalled() async {
+    if (!hasStatuses) {
+      await refresh();
+    }
+    if (configured && !allReady && !_busy) {
+      await installAll();
+    }
+  }
 
   Future<void> refresh() async {
     for (final spec in specs) {

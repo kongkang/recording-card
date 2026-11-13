@@ -67,11 +67,23 @@ class FakeCardGateway implements CardGateway {
     this.failDisconnect,
     this.connectReturnsSnapshot = true,
     this.clearAfterMainOta = false,
-  }) : current = initialSnapshot,
+    this.postMainOtaSnapshot,
+    this.postWifiOtaSnapshot,
+    this.failMainOta,
+    this.failWifiOta,
+    this.cameraPhotos = const [],
+  }) : _initialSnapshot = initialSnapshot,
+       current = initialSnapshot,
        savedCredentials = List<CardWifiCredential>.of(wifiCredentials);
+
+  final CardSnapshot? _initialSnapshot;
 
   /// files() 返回的设备文件；默认空（保持旧测试行为）。
   List<CardFile> deviceFiles;
+
+  /// syncCameraPhotos() 返回的硬件抓拍照片。
+  List<CameraSyncItem> cameraPhotos;
+  int syncCameraCalls = 0;
 
   /// download() 是否真的落盘（管线测试用）。
   bool writeDownload;
@@ -140,6 +152,8 @@ class FakeCardGateway implements CardGateway {
   CardDisconnectReport? disconnectReport;
   CardException? failDisconnect;
   String? lastConnectedId;
+  String? lastConnectedName;
+  String? lastConnectedKind;
   String? lastWifiSsid;
   String? lastWifiPassword;
   String? lastForgottenWifi;
@@ -151,6 +165,14 @@ class FakeCardGateway implements CardGateway {
   CardException? failWifiScan;
   CardException? failWifiConnect;
   CardException? failSyncStatus;
+  CardException? failMainOta;
+  CardException? failWifiOta;
+  CardSnapshot? postMainOtaSnapshot;
+  CardSnapshot? postWifiOtaSnapshot;
+  int? lastStartDurationSecs;
+  bool? lastOtaWifiRestoreOpen;
+  int openWifiCalls = 0;
+  int closeWifiCalls = 0;
 
   @override
   Future<CardSnapshot> snapshot() async {
@@ -169,19 +191,92 @@ class FakeCardGateway implements CardGateway {
     return devices;
   }
 
+  CardSnapshot _copySnapshot(
+    CardSnapshot cur, {
+    int? batteryLevel,
+    bool? isCharging,
+    bool? wifiOpen,
+    bool? recording,
+  }) {
+    return CardSnapshot(
+      batteryLevel: batteryLevel ?? cur.batteryLevel,
+      isCharging: isCharging ?? cur.isCharging,
+      wifiOpen: wifiOpen ?? cur.wifiOpen,
+      recording: recording ?? cur.recording,
+      fwVersion: cur.fwVersion,
+      fwVersionCode: cur.fwVersionCode,
+      wifiVersion: cur.wifiVersion,
+      wifiVersionCode: cur.wifiVersionCode,
+      deviceName: cur.deviceName,
+      deviceId: cur.deviceId,
+      storageTotalMb: cur.storageTotalMb,
+      storageFreeMb: cur.storageFreeMb,
+      hasBattery: cur.hasBattery,
+      realtimeEnabled: cur.realtimeEnabled,
+      recordSession: cur.recordSession,
+      recordErrorCode: cur.recordErrorCode,
+      recordReason: cur.recordReason,
+      deviceKind: cur.deviceKind,
+      displayModel: cur.displayModel,
+      capabilities: cur.capabilities,
+    );
+  }
+
   @override
-  Future<CardSnapshot?> connect(String deviceId) async {
+  Future<CardSnapshot?> connect(
+    String deviceId, {
+    String? name,
+    String? deviceKind,
+  }) async {
     connectCalls++;
     callLog.add('connect');
     disconnectCallsAtConnect.add(disconnectCalls);
     lastConnectedId = deviceId;
+    lastConnectedName = name;
+    lastConnectedKind = deviceKind;
     if (failConnect != null) throw failConnect!;
+    final source =
+        current ?? postMainOtaSnapshot ?? _initialSnapshot ?? defaultSnapshot;
+    CardSnapshot adapted = source;
+    final matched = devices.where((d) => d.id == deviceId).firstOrNull;
+    final resolvedName = name ?? matched?.name;
+    final resolvedKind = deviceKind != null || resolvedName != null
+        ? DeviceKind.fromCode(deviceKind, fallbackName: resolvedName ?? '')
+        : matched?.deviceKind;
+    if (resolvedKind != null &&
+        (resolvedKind != source.effectiveKind ||
+            (resolvedName != null && resolvedName != source.deviceName))) {
+      adapted = CardSnapshot(
+        batteryLevel: source.batteryLevel,
+        isCharging: source.isCharging,
+        wifiOpen: source.wifiOpen,
+        recording: source.recording,
+        fwVersion: source.fwVersion,
+        fwVersionCode: source.fwVersionCode,
+        wifiVersion: resolvedKind == DeviceKind.cardV2 ? source.wifiVersion : '',
+        wifiVersionCode: resolvedKind == DeviceKind.cardV2
+            ? source.wifiVersionCode
+            : 0,
+        deviceName: resolvedName ?? source.deviceName,
+        deviceId: deviceId,
+        storageTotalMb: source.storageTotalMb,
+        storageFreeMb: source.storageFreeMb,
+        hasBattery: source.hasBattery,
+        realtimeEnabled: source.realtimeEnabled,
+        recordSession: source.recordSession,
+        recordErrorCode: source.recordErrorCode,
+        recordReason: source.recordReason,
+        deviceKind: resolvedKind,
+        displayModel: resolvedKind.displayModel,
+        capabilities: HardwareCapabilities.forKind(resolvedKind),
+      );
+    }
     if (!connectReturnsSnapshot) {
       // 真实桥只回 connected；状态由调用方随后刷新。
-      current = connectResult ?? current ?? defaultSnapshot;
+      current = connectResult ?? adapted;
       return null;
     }
-    final result = connectResult ?? current ?? defaultSnapshot;
+    final result = connectResult ?? adapted;
     current = result;
     return result;
   }
@@ -200,23 +295,13 @@ class FakeCardGateway implements CardGateway {
   final List<String> recordCalls = [];
 
   @override
-  Future<void> startRecording() async {
+  Future<void> startRecording({int? durationSecs}) async {
+    lastStartDurationSecs = durationSecs;
     recordCalls.add('start');
     callLog.add('record.start');
     final cur = current;
     if (cur == null) throw CardException.disconnected();
-    current = CardSnapshot(
-      batteryLevel: cur.batteryLevel,
-      isCharging: cur.isCharging,
-      wifiOpen: cur.wifiOpen,
-      recording: true,
-      fwVersion: cur.fwVersion,
-      fwVersionCode: cur.fwVersionCode,
-      wifiVersion: cur.wifiVersion,
-      wifiVersionCode: cur.wifiVersionCode,
-      deviceName: cur.deviceName,
-      deviceId: cur.deviceId,
-    );
+    current = _copySnapshot(cur, recording: true);
   }
 
   @override
@@ -225,18 +310,7 @@ class FakeCardGateway implements CardGateway {
     callLog.add('record.stop');
     final cur = current;
     if (cur == null) throw CardException.disconnected();
-    current = CardSnapshot(
-      batteryLevel: cur.batteryLevel,
-      isCharging: cur.isCharging,
-      wifiOpen: cur.wifiOpen,
-      recording: false,
-      fwVersion: cur.fwVersion,
-      fwVersionCode: cur.fwVersionCode,
-      wifiVersion: cur.wifiVersion,
-      wifiVersionCode: cur.wifiVersionCode,
-      deviceName: cur.deviceName,
-      deviceId: cur.deviceId,
-    );
+    current = _copySnapshot(cur, recording: false);
   }
 
   /// 实时音频流：测试可先塞入 [realtimeEvents]，订阅时按序吐出。
@@ -296,6 +370,61 @@ class FakeCardGateway implements CardGateway {
     });
   }
 
+  /// 设备电源/电量变化主动推送。
+  void pushPowerEvent({required int level, required bool charging}) {
+    _eventSeq++;
+    if (current != null) {
+      current = _copySnapshot(
+        current!,
+        batteryLevel: level,
+        isCharging: charging,
+      );
+    }
+    deviceEvents.add({
+      'seq': _eventSeq,
+      'event': {
+        'kind': 'power',
+        'battery': {
+          'level': level,
+          'isCharging': charging,
+        },
+      },
+    });
+  }
+
+  /// 语音 AI 键盘物理语音键按下事件。
+  void pushVoiceKeyEvent({bool pressed = true}) {
+    _eventSeq++;
+    deviceEvents.add({
+      'seq': _eventSeq,
+      'event': {
+        'kind': 'voice_key',
+        'pressed': pressed,
+      },
+    });
+  }
+
+  /// 点一机 V1 硬件拍照通知事件。
+  void pushCameraEvent({String? name}) {
+    _eventSeq++;
+    deviceEvents.add({
+      'seq': _eventSeq,
+      'event': {
+        'kind': 'camera',
+        'name': ?name,
+      },
+    });
+  }
+
+  /// 蓝牙被动断连事件。
+  void pushDisconnectedEvent() {
+    _eventSeq++;
+    deviceEvents.add({
+      'seq': _eventSeq,
+      'event': {'kind': 'disconnected'},
+    });
+  }
+
   @override
   Future<DeviceEventBatch> pullEvents({int after = 0}) async {
     pullEventCalls++;
@@ -316,18 +445,7 @@ class FakeCardGateway implements CardGateway {
       'toggle' => !cur.recording,
       _ => cur.recording,
     };
-    current = CardSnapshot(
-      batteryLevel: cur.batteryLevel,
-      isCharging: cur.isCharging,
-      wifiOpen: cur.wifiOpen,
-      recording: recording,
-      fwVersion: cur.fwVersion,
-      fwVersionCode: cur.fwVersionCode,
-      wifiVersion: cur.wifiVersion,
-      wifiVersionCode: cur.wifiVersionCode,
-      deviceName: cur.deviceName,
-      deviceId: cur.deviceId,
-    );
+    current = _copySnapshot(cur, recording: recording);
   }
 
   @override
@@ -349,6 +467,19 @@ class FakeCardGateway implements CardGateway {
       await File(path).writeAsBytes(Uint8List(64), flush: true);
     }
     return CardDownload(path: path, bytesWritten: 64, originalName: name);
+  }
+
+  @override
+  Future<CardDownload> takeOldestFile(String dir) async {
+    callLog.add('file.takeOldest');
+    final pending = deviceFiles.where((f) => f.isAudioRecording).toList();
+    if (pending.isEmpty) {
+      throw const CardException(CardErrorKind.device, '没有可取回的录音文件');
+    }
+    final oldest = pending.first;
+    final res = await download(oldest.name, dir);
+    deviceFiles = deviceFiles.where((f) => f.name != oldest.name).toList();
+    return res;
   }
 
   @override
@@ -376,6 +507,16 @@ class FakeCardGateway implements CardGateway {
   }
 
   @override
+  Future<List<CameraSyncItem>> syncCameraPhotos(
+    String dir, {
+    String? serverOrigin,
+  }) async {
+    syncCameraCalls++;
+    callLog.add('camera.sync');
+    return cameraPhotos;
+  }
+
+  @override
   Future<List<CardWifiNetwork>> scanWifi() async {
     if (failWifiScan != null) throw failWifiScan!;
     return wifiNetworks;
@@ -393,28 +534,40 @@ class FakeCardGateway implements CardGateway {
     if (!savedCredentials.any((c) => c.ssid == ssid)) {
       savedCredentials = [...savedCredentials, CardWifiCredential(ssid: ssid)];
     }
-    current = CardSnapshot(
-      batteryLevel: current?.batteryLevel ?? 82,
-      isCharging: current?.isCharging ?? false,
-      wifiOpen: true,
-      recording: current?.recording ?? false,
-      fwVersion: current?.fwVersion ?? '2.2.0',
-      fwVersionCode: current?.fwVersionCode ?? 22,
-      wifiVersion: current?.wifiVersion ?? '1.5.0',
-      wifiVersionCode: current?.wifiVersionCode ?? 15,
-      deviceName: current?.deviceName ?? 'DYJV2_TEST',
-      deviceId: current?.deviceId ?? 'test-device',
-    );
+    if (current != null) {
+      current = _copySnapshot(current!, wifiOpen: true);
+    } else {
+      current = _copySnapshot(defaultSnapshot, wifiOpen: true);
+    }
   }
 
   @override
-  Future<void> openWifi() async {}
+  Future<void> openWifi() async {
+    openWifiCalls++;
+    callLog.add('wifi.open');
+    if (current != null) {
+      current = _copySnapshot(current!, wifiOpen: true);
+    }
+  }
 
   @override
-  Future<void> closeWifi() async {}
+  Future<void> closeWifi() async {
+    closeWifiCalls++;
+    callLog.add('wifi.close');
+    if (current != null) {
+      current = _copySnapshot(current!, wifiOpen: false);
+    }
+  }
+
+  bool? lastWifiCredentialsPassive;
 
   @override
-  Future<List<CardWifiCredential>> wifiCredentials() async => savedCredentials;
+  Future<List<CardWifiCredential>> wifiCredentials({
+    bool passive = false,
+  }) async {
+    lastWifiCredentialsPassive = passive;
+    return savedCredentials;
+  }
 
   @override
   Future<void> forgetWifi(String ssid) async {
@@ -437,9 +590,23 @@ class FakeCardGateway implements CardGateway {
   @override
   Future<void> setUploadUrl(String url) async {}
 
+  Future<CardOtaInfo> Function(String module)? otaInfoOverride;
+  Object? failMainOtaInfo;
+  Object? failWifiOtaInfo;
+
   @override
-  Future<CardOtaInfo> otaInfo(String module) async =>
-      module == 'wifi' ? wifiOta : mainOta;
+  Future<CardOtaInfo> otaInfo(String module) async {
+    if (otaInfoOverride != null) {
+      return otaInfoOverride!(module);
+    }
+    if (module == 'wifi' && failWifiOtaInfo != null) {
+      throw failWifiOtaInfo!;
+    }
+    if (module == 'main' && failMainOtaInfo != null) {
+      throw failMainOtaInfo!;
+    }
+    return module == 'wifi' ? wifiOta : mainOta;
+  }
 
   /// 按 [progressDelay] 逐条推进度；事件推完即流关闭（等价于设备侧 final:true）。
   Stream<CardProgress> _progress(List<CardProgress> events) async* {
@@ -455,13 +622,43 @@ class FakeCardGateway implements CardGateway {
   Stream<CardProgress> otaMain() async* {
     callLog.add('ota.main');
     yield* _progress(mainProgress);
-    if (clearAfterMainOta) current = null;
+    if (failMainOta != null) throw failMainOta!;
+    if (clearAfterMainOta) {
+      current = null;
+    } else if (postMainOtaSnapshot != null) {
+      current = postMainOtaSnapshot;
+    }
   }
 
   @override
-  Stream<CardProgress> otaWifi() async* {
+  Stream<CardProgress> otaWifi({bool? restoreWifiOpen}) async* {
     callLog.add('ota.wifi');
+    lastOtaWifiRestoreOpen = restoreWifiOpen;
+    final prevWifiOpen = current?.wifiOpen ?? false;
+    final targetWifiOpen = restoreWifiOpen ?? prevWifiOpen;
+    if (!prevWifiOpen) {
+      openWifiCalls++;
+      if (current != null) {
+        current = _copySnapshot(current!, wifiOpen: true);
+      }
+    }
     yield* _progress(wifiProgress);
+    if (failWifiOta != null) {
+      if (current != null) {
+        current = _copySnapshot(current!, wifiOpen: targetWifiOpen);
+      }
+      if (!targetWifiOpen) {
+        closeWifiCalls++;
+      }
+      throw failWifiOta!;
+    }
+    final nextSnap = postWifiOtaSnapshot ?? current;
+    if (nextSnap != null) {
+      current = _copySnapshot(nextSnap, wifiOpen: targetWifiOpen);
+    }
+    if (!targetWifiOpen) {
+      closeWifiCalls++;
+    }
   }
 
   @override

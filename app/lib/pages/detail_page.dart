@@ -7,6 +7,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -319,7 +320,7 @@ class _DetailPageState extends State<DetailPage> {
   ) {
     switch (_tab) {
       case 'dlg':
-        return _dialogWidgets(e, view);
+        return _dialogWidgets(store, e, view);
       case 'raw':
         return _rawWidgets(e, view);
       case 'refs':
@@ -370,44 +371,57 @@ class _DetailPageState extends State<DetailPage> {
     }
   }
 
-  List<Widget> _dialogWidgets(RecordEvent e, SegmentView? view) {
-    final lines = <({String spk, String text, String meta})>[];
+  List<Widget> _dialogWidgets(
+    AppStore store,
+    RecordEvent e,
+    SegmentView? view,
+  ) {
+    final lines = <({String spk, String text, String meta, int sortSec})>[];
     if (view != null && view.turns.isNotEmpty) {
       for (final t in view.turns) {
+        final ts = view.file.startAtMs + t.startMs;
         lines.add((
           spk: t.speakerLabel,
           text: t.text,
           meta:
               '${_speakerText(t.speakerLabel)} · '
-              '${_hms(view.file.startAtMs + t.startMs)}—'
-              '${_hms(view.file.startAtMs + t.endMs)}',
+              '${_hms(ts)}—${_hms(view.file.startAtMs + t.endMs)}',
+          sortSec: _secOfDayFromEpoch(ts),
         ));
       }
     } else if (view != null && view.utterances.isNotEmpty) {
       for (final u in view.utterances) {
         final label = u.speakerLabel ?? '未区分';
+        final ts = view.file.startAtMs + u.startMs;
         lines.add((
           spk: label,
           text: u.text,
           meta:
               '${_speakerText(label)} · '
-              '${_hms(view.file.startAtMs + u.startMs)}—'
-              '${_hms(view.file.startAtMs + u.endMs)}',
+              '${_hms(ts)}—${_hms(view.file.startAtMs + u.endMs)}',
+          sortSec: _secOfDayFromEpoch(ts),
         ));
       }
     } else {
       for (final l in e.dialog) {
+        final rawClock = l.src.replaceFirst('来源 ', '');
         lines.add((
           spk: l.spk,
           text: l.text,
-          meta: '说话人 ${l.spk} · ${l.src.replaceFirst('来源 ', '')}',
+          meta: '说话人 ${l.spk} · $rawClock',
+          sortSec: _secOfDayFromClock(rawClock) ?? _secOfDayFromClock(e.time) ?? 0,
         ));
       }
     }
 
-    return [
-      for (final l in lines)
-        Padding(
+    final activePhotos = store.activePhotosForEvent(e);
+    final entries = <({int sortSec, int order, Widget widget})>[];
+    var order = 0;
+    for (final l in lines) {
+      entries.add((
+        sortSec: l.sortSec,
+        order: order++,
+        widget: Padding(
           padding: const EdgeInsets.only(bottom: 14),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -459,7 +473,123 @@ class _DetailPageState extends State<DetailPage> {
             ],
           ),
         ),
-    ];
+      ));
+    }
+
+    for (var i = 0; i < activePhotos.length; i++) {
+      final p = activePhotos[i];
+      final sortSec = p.capturedAtMs != null
+          ? _secOfDayFromEpoch(p.capturedAtMs!)
+          : (_secOfDayFromClock(p.time) ?? _secOfDayFromClock(e.time) ?? 0);
+      entries.add((
+        sortSec: sortSec,
+        order: order++,
+        widget: _inlinePhotoCard(store, e, p, i),
+      ));
+    }
+
+    entries.sort((a, b) {
+      final cmp = a.sortSec.compareTo(b.sortSec);
+      return cmp != 0 ? cmp : a.order.compareTo(b.order);
+    });
+
+    return [for (final item in entries) item.widget];
+  }
+
+  Widget _inlinePhotoCard(
+    AppStore store,
+    RecordEvent e,
+    EventPhoto p,
+    int index,
+  ) {
+    final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
+    final srcLabel = p.source == 'dyj_camera' ? '点一机抓拍' : '系统相册';
+    return Padding(
+      key: Key('dphoto-${e.id}-$index'),
+      padding: const EdgeInsets.only(left: 38, bottom: 14),
+      child: Container(
+        decoration: BoxDecoration(
+          color: RCColors.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: RCColors.sep),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: 156,
+              child: hasFile
+                  ? Image.file(File(p.path), fit: BoxFit.cover)
+                  : Container(
+                      color: const Color(0xFFEAEAE4),
+                      alignment: Alignment.center,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.photo_camera_outlined,
+                            size: 28,
+                            color: RCColors.sec,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '$srcLabel · ${p.time}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: RCColors.sec,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '照片 · ${p.time} · $srcLabel',
+                      style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                    ),
+                  ),
+                  TextButton(
+                    key: Key('dphoto-exclude-${e.id}-$index'),
+                    onPressed: () => store.excludePhoto(e.id, p.id),
+                    style: TextButton.styleFrom(
+                      foregroundColor: RCColors.sec,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      textStyle: const TextStyle(fontSize: 12),
+                    ),
+                    child: const Text('不属于本段'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static int _secOfDayFromEpoch(int epochMs) {
+    final d = DateTime.fromMillisecondsSinceEpoch(epochMs);
+    return d.hour * 3600 + d.minute * 60 + d.second;
+  }
+
+  static int? _secOfDayFromClock(String raw) {
+    final m = RegExp(r'(\d{1,2}):(\d{2})(?::(\d{2}))?').firstMatch(raw);
+    if (m == null) return null;
+    final h = int.tryParse(m.group(1)!) ?? 0;
+    final min = int.tryParse(m.group(2)!) ?? 0;
+    final sec = m.group(3) != null ? (int.tryParse(m.group(3)!) ?? 0) : 0;
+    return h * 3600 + min * 60 + sec;
   }
 
   List<Widget> _rawWidgets(RecordEvent e, SegmentView? view) {

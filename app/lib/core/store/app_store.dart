@@ -17,11 +17,13 @@ import '../../data/seed.dart';
 import '../../services/ai/summary_generator.dart';
 import '../../services/audio/live_audio_recorder.dart';
 import '../../services/audio/recording_status.dart';
+import '../../services/photos/photo_library_service.dart';
 import '../../services/recordings/recording_pipeline.dart';
 import '../../services/recordings/recording_store.dart';
 import '../../services/recordings/recordings_manifest.dart';
 import '../../services/recordings/recording_sync_service.dart';
 import '../../services/recordings/segment_projection.dart';
+import '../device/card_gateway.dart';
 import '../models/record.dart';
 import '../models/recording.dart';
 import '../models/segment_view.dart';
@@ -93,6 +95,9 @@ class AppStore extends ChangeNotifier {
   /// 分段详情视图：Timeline 与详情页共用同一份 turns/utterances。
   Map<String, SegmentView> segmentViews = const {};
 
+  /// 按记录 ID 存储的关联照片（含点一机 V1 硬件抓拍与系统相册对齐导入，及排除状态）。
+  Map<String, List<EventPhoto>> eventPhotos = {};
+
   bool loading = false;
   String? loadError;
   SyncStage? syncStage;
@@ -118,7 +123,11 @@ class AppStore extends ChangeNotifier {
   double _genProgress = 0;
   String _genStep = '';
 
-  static const pageLabels = {'sum': '总结', 'detail': '记录'};
+  static const pageLabels = {
+    'sum': '总结',
+    'detail': '记录',
+    'setsub': 'Setting',
+  };
 
   void attachServices({
     required RecordingSyncService recordings,
@@ -290,6 +299,36 @@ class AppStore extends ChangeNotifier {
   /// 设备是否正在录音（录音期间走实时流切片自动落盘，下拉刷新不抢蓝牙总线、不冲掉顶部录音块）。
   bool Function()? deviceRecording;
 
+  /// 当前已连接设备是否具备硬件拍照媒体能力（如点一机 V1）。
+  bool Function()? deviceHasCameraMedia;
+
+  /// 总结 Tab 下拉刷新：只刷新本机已保存总结，不发起蓝牙设备文件同步。
+  Future<void> refreshSummariesOnly() async {
+    if (_loadPersisted) {
+      final store = await _jsonStore();
+      final data = await store.read('route');
+      if (data != null && data['sums'] is List) {
+        final persisted = [
+          for (final j in (data['sums'] as List))
+            if (j is Map<String, dynamic>) SummaryCard.fromJson(j),
+        ];
+        final activeIds = summaries
+            .where((s) => s.state != SummaryState.done)
+            .map((s) => s.id)
+            .toSet();
+        final inFlight = summaries
+            .where((s) => activeIds.contains(s.id))
+            .toList();
+        summaries = [
+          ...inFlight,
+          for (final s in persisted)
+            if (!activeIds.contains(s.id)) s,
+        ];
+      }
+    }
+    notifyListeners();
+  }
+
   /// 设备是否可用：取回录音、读取文件列表都要求先连上卡。
   bool get _deviceReady => deviceConnected?.call() ?? true;
 
@@ -382,6 +421,13 @@ class AppStore extends ChangeNotifier {
     try {
       final report = await pipeline.sync(onProgress: _onPipelineProgress);
       await refreshFromStore();
+      if (deviceHasCameraMedia?.call() == true) {
+        try {
+          await syncHardwareCameraPhotos(pipeline.gateway);
+        } on Object catch (e) {
+          debugPrint('[store] 硬件照片同步失败：$e');
+        }
+      }
       if (report.failed > 0) {
         syncError = '${report.failed} 条录音处理失败：${report.failures.first}';
       }
@@ -491,11 +537,16 @@ class AppStore extends ChangeNotifier {
     navSub(RouteEntry('sum', id), fresh: fresh);
   }
 
+  void openSettingSub(String id, {bool fresh = true}) =>
+      navSub(RouteEntry('setsub', id), fresh: fresh);
+
   void goBack() {
     if (subStack.length > 1) {
       subStack = subStack.sublist(0, subStack.length - 1);
       _persist();
       notifyListeners();
+    } else if (stackTop?.type == 'setsub') {
+      go(RootTab.setting);
     } else {
       go(RootTab.timeline);
     }
@@ -520,12 +571,19 @@ class AppStore extends ChangeNotifier {
   RouteEntry? get stackTop => subStack.isEmpty ? null : subStack.last;
   RouteEntry? get stackPrev =>
       subStack.length > 1 ? subStack[subStack.length - 2] : null;
-  String get crumbDest => stackPrev == null
-      ? 'Timeline'
-      : (pageLabels[stackPrev!.type] ?? 'Timeline');
+  String get crumbDest {
+    if (stackPrev != null) {
+      return pageLabels[stackPrev!.type] ?? 'Timeline';
+    }
+    if (stackTop?.type == 'setsub') return 'Setting';
+    return 'Timeline';
+  }
+
   bool get showPaneBackDetail =>
       subStack.length > 1 && stackTop!.type == 'detail';
   bool get showPaneBackSum => subStack.length > 1 && stackTop!.type == 'sum';
+  bool get showPaneBackSetSub =>
+      subStack.length > 1 && stackTop!.type == 'setsub';
 
   SummaryCard? summaryById(String id) =>
       summaries.where((s) => s.id == id).firstOrNull;
@@ -544,6 +602,209 @@ class AppStore extends ChangeNotifier {
   List<SummaryCard> doneSummariesReferencing(String eventId) => summaries
       .where((s) => s.state == SummaryState.done && s.srcIds.contains(eventId))
       .toList();
+
+  // ── 照片关联（点一机 V1 硬件抓拍 + 系统相册录音时段对齐）────
+
+  /// 合并事件自带照片与持久化关联照片（同 ID 以持久化状态为准，保证排除标记生效）。
+  List<EventPhoto> photosForEvent(RecordEvent e) {
+    final persisted = eventPhotos[e.id] ?? const <EventPhoto>[];
+    if (e.photos.isEmpty) return persisted;
+    if (persisted.isEmpty) return e.photos;
+    final byId = <String, EventPhoto>{
+      for (final p in e.photos) p.id: p,
+      for (final p in persisted) p.id: p,
+    };
+    return byId.values.toList();
+  }
+
+  /// 未被标记「不属于本段」的有效照片（按时间升序）。
+  List<EventPhoto> activePhotosForEvent(RecordEvent e) =>
+      photosForEvent(e).where((p) => !p.excluded).toList();
+
+  /// 总结卡来源记录中未排除的图片总数（右侧箭头下展示「含 X 张图片」）。
+  int activePhotoCountForSummary(SummaryCard s) {
+    var total = 0;
+    for (final id in s.srcIds) {
+      final e = eventByIdOrNull(id);
+      if (e != null) {
+        total += activePhotosForEvent(e).length;
+      }
+    }
+    return total;
+  }
+
+  /// 标记某张照片「不属于本段」：外侧缩略图同步减少，并归入当天分组顶部「未归类图片」。
+  void excludePhoto(String eventId, String photoId) {
+    final event = eventByIdOrNull(eventId);
+    final merged = event != null
+        ? List<EventPhoto>.of(photosForEvent(event))
+        : List<EventPhoto>.of(eventPhotos[eventId] ?? const []);
+    var updated = false;
+    for (var i = 0; i < merged.length; i++) {
+      if (merged[i].id == photoId && !merged[i].excluded) {
+        merged[i] = merged[i].copyWith(excluded: true);
+        updated = true;
+      }
+    }
+    if (!updated) return;
+    eventPhotos = {...eventPhotos, eventId: merged};
+    _persist();
+    notifyListeners();
+  }
+
+  /// 向指定记录附加或更新照片（若此前已被排除则保留排除状态）。
+  bool attachPhotoToEvent(String eventId, EventPhoto photo) {
+    final event = eventByIdOrNull(eventId);
+    final merged = event != null
+        ? List<EventPhoto>.of(photosForEvent(event))
+        : List<EventPhoto>.of(eventPhotos[eventId] ?? const []);
+    final idx = merged.indexWhere((p) => p.id == photo.id);
+    if (idx >= 0) {
+      final prev = merged[idx];
+      if (prev.path == photo.path && prev.time == photo.time) return false;
+      merged[idx] = EventPhoto(
+        id: photo.id,
+        time: photo.time,
+        path: photo.path.isNotEmpty ? photo.path : prev.path,
+        capturedAtMs: photo.capturedAtMs ?? prev.capturedAtMs,
+        source: photo.source,
+        excluded: prev.excluded,
+      );
+    } else {
+      merged.add(photo);
+    }
+    eventPhotos = {...eventPhotos, eventId: merged};
+    _persist();
+    notifyListeners();
+    return idx < 0;
+  }
+
+  ({int startMs, int endMs}) _windowForEvent(RecordEvent e) {
+    final view = segmentViews[e.id];
+    if (view != null) {
+      final start = view.segment.startAtMs;
+      final end =
+          view.segment.endAtMs ?? (view.file.startAtMs + view.file.durationMs);
+      if (end >= start && start > 0) {
+        return (startMs: start, endMs: end);
+      }
+    }
+    final now = DateTime.now();
+    final dayBase = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).subtract(Duration(days: e.dayOffset));
+    final mins = _minutesOfDay(e.time);
+    final start = dayBase.add(Duration(minutes: mins)).millisecondsSinceEpoch;
+    final durSec = _parseDurationSeconds(e.dur);
+    return (startMs: start, endMs: start + math.max(60, durSec) * 1000);
+  }
+
+  static int _parseDurationSeconds(String dur) {
+    var sec = 0;
+    final m = RegExp(r'(\d+)\s*分').firstMatch(dur);
+    final s = RegExp(r'(\d+)\s*秒').firstMatch(dur);
+    if (m != null) sec += (int.tryParse(m.group(1)!) ?? 0) * 60;
+    if (s != null) sec += int.tryParse(s.group(1)!) ?? 0;
+    return sec > 0 ? sec : 300;
+  }
+
+  static String _formatClockHms(int epochMs) {
+    final d = DateTime.fromMillisecondsSinceEpoch(epochMs);
+    return '${d.hour.toString().padLeft(2, '0')}:'
+        '${d.minute.toString().padLeft(2, '0')}:'
+        '${d.second.toString().padLeft(2, '0')}';
+  }
+
+  /// 导入录音窗口内的系统相册照片（iOS PhotoKit）。
+  Future<int> importSystemAlbumPhotos({
+    PhotoLibraryService service = const PhotoLibraryService(),
+    String? outputDirOverride,
+  }) async {
+    final windows = <PhotoWindow>[
+      for (final e in events)
+        if (!e.live)
+          () {
+            final w = _windowForEvent(e);
+            return PhotoWindow(
+              eventId: e.id,
+              startMs: w.startMs,
+              endMs: w.endMs,
+            );
+          }(),
+    ];
+    final report = await service.importInWindows(
+      windows,
+      outputDirOverride: outputDirOverride,
+    );
+    var added = 0;
+    for (final p in report.photos) {
+      final created = attachPhotoToEvent(
+        p.eventId,
+        EventPhoto(
+          id: p.id,
+          time: _formatClockHms(p.capturedAtMs),
+          path: p.path,
+          capturedAtMs: p.capturedAtMs,
+          source: p.source,
+        ),
+      );
+      if (created) added++;
+    }
+    return added;
+  }
+
+  /// 同步点一机 V1 硬件按键抓拍照片并按拍摄时间戳对齐到最近一段录音记录。
+  Future<int> syncHardwareCameraPhotos(
+    CardGateway gateway, {
+    PhotoLibraryService photoService = const PhotoLibraryService(),
+    String? outputDirOverride,
+    String? serverOrigin,
+  }) async {
+    final outDir =
+        outputDirOverride ?? (await photoService.photosDirectory()).path;
+    final items = await gateway.syncCameraPhotos(
+      outDir,
+      serverOrigin: serverOrigin,
+    );
+    if (items.isEmpty || events.isEmpty) return 0;
+    var added = 0;
+    for (final item in items) {
+      final capturedMs = item.capturedAtSec != null
+          ? item.capturedAtSec! * 1000
+          : DateTime.now().millisecondsSinceEpoch;
+      RecordEvent? matched;
+      int? bestDelta;
+      for (final e in events) {
+        final w = _windowForEvent(e);
+        if (capturedMs >= w.startMs - 15000 && capturedMs <= w.endMs + 15000) {
+          matched = e;
+          break;
+        }
+        final delta = capturedMs < w.startMs
+            ? w.startMs - capturedMs
+            : capturedMs - w.endMs;
+        if (delta <= 30 * 60 * 1000 && (bestDelta == null || delta < bestDelta)) {
+          bestDelta = delta;
+          matched = e;
+        }
+      }
+      matched ??= events.first;
+      final created = attachPhotoToEvent(
+        matched.id,
+        EventPhoto(
+          id: 'dyj_${item.name}',
+          time: _formatClockHms(capturedMs),
+          path: item.path,
+          capturedAtMs: capturedMs,
+          source: item.source,
+        ),
+      );
+      if (created) added++;
+    }
+    return added;
+  }
 
   // ── Timeline 渲染数据 ───────────────────────────────────
   List<FeedGroup> get feedGroups {
@@ -577,6 +838,32 @@ class AppStore extends ChangeNotifier {
     }
     for (final entry in topByDay.entries) {
       (byDay[entry.key] ??= []).insertAll(0, entry.value);
+    }
+
+    // 详情页标记「不属于本段」的照片归入当天分组顶部的「未归类图片」条目（排在总结卡之后、普通记录之前）。
+    if (f == FeedFilter.all) {
+      final excludedByDay = <int, List<EventPhoto>>{};
+      for (final e in events) {
+        final ex = photosForEvent(e).where((p) => p.excluded).toList();
+        if (ex.isNotEmpty) {
+          (excludedByDay[e.dayOffset] ??= []).addAll(ex);
+        }
+      }
+      for (final entry in excludedByDay.entries) {
+        final dayList = byDay[entry.key] ??= [];
+        final insertAt = (topByDay[entry.key]?.length ?? 0).clamp(
+          0,
+          dayList.length,
+        );
+        dayList.insert(
+          insertAt,
+          UnclassifiedPhotosCard(
+            dayOffset: entry.key,
+            dayLabelText: dayLabel(entry.key),
+            photos: entry.value,
+          ),
+        );
+      }
     }
 
     final days = byDay.keys.where((d) => byDay[d]!.isNotEmpty).toList()
@@ -842,6 +1129,12 @@ class AppStore extends ChangeNotifier {
       for (final s in summaries.where((s) => s.state == SummaryState.done))
         s.toJson(),
     ],
+    if (eventPhotos.isNotEmpty)
+      'photos': {
+        for (final entry in eventPhotos.entries)
+          if (entry.value.isNotEmpty)
+            entry.key: [for (final p in entry.value) p.toJson()],
+      },
   };
 
   void restoreState(Map<String, dynamic>? data) {
@@ -850,10 +1143,26 @@ class AppStore extends ChangeNotifier {
       for (final j in (data['sums'] as List? ?? []))
         if (j is Map<String, dynamic>) SummaryCard.fromJson(j),
     ];
+    final rawPhotos = data['photos'];
+    if (rawPhotos is Map) {
+      final restored = <String, List<EventPhoto>>{};
+      for (final entry in rawPhotos.entries) {
+        final key = '${entry.key}';
+        final val = entry.value;
+        if (val is List) {
+          restored[key] = [
+            for (final item in val)
+              if (item is Map<String, dynamic>) EventPhoto.fromJson(item),
+          ];
+        }
+      }
+      eventPhotos = restored;
+    }
     subStack = [
       for (final e in (data['stack'] as List? ?? []))
         if (e is Map<String, dynamic> &&
             ((e['t'] == 'detail') ||
+                (e['t'] == 'setsub') ||
                 (e['t'] == 'sum' && summaries.any((s) => s.id == e['id']))))
           RouteEntry(e['t'] as String, e['id'] as String),
     ];

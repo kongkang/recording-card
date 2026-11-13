@@ -57,31 +57,25 @@ void main() {
 
       expect(find.byKey(const Key('sheet')), findsOneWidget);
       expect(find.byKey(const Key('dev-main')), findsOneWidget);
-      // 行内容：已连接 / 可录至 / 电量高（来自设备快照）
-      expect(find.textContaining('已连接'), findsWidgets);
+      // 顶部设备识别徽章 + 蓝牙协议 icon + 无边界断开 icon，不再显示冗余「已连接」文字
+      expect(find.byKey(const Key('dev-bt-icon')), findsOneWidget);
+      expect(find.byKey(const Key('dev-header-kind')), findsOneWidget);
+      expect(find.byKey(const Key('dev-disconnect')), findsOneWidget);
+      expect(find.textContaining('已连接'), findsNothing);
       expect(find.textContaining('可录至'), findsOneWidget);
       expect(find.textContaining('电量高'), findsOneWidget);
-      // 可点行：同步 / 固件；Wi-Fi 行按 2026-11-10 决策整行隐藏（能力未就绪）
+      // 可点行：同步 / Wi-Fi / 固件
       expect(find.byKey(const Key('sync-now')), findsOneWidget);
+      expect(find.byKey(const Key('wifi-row')), findsOneWidget);
       expect(find.byKey(const Key('fw-update')), findsOneWidget);
-      expect(
-        find.byKey(const Key('wifi-row')),
-        findsNothing,
-        reason: 'Wi-Fi 能力未就绪，整行不应出现',
-      );
       // 未同步过：如实说「尚未同步」，不假装刚刚同步
       expect(
         tester.widget<Text>(find.byKey(const Key('sync-txt'))).data,
         '自动同步 · 尚未同步',
       );
-      // 打开弹层时仍预取概要到内存（Wi-Fi 数量来自设备凭据），
-      // 但 Wi-Fi 行已隐藏，界面上不再显示「已配置 · N 个网络」。
+      // 打开弹层时预取概要到内存（Wi-Fi 数量来自设备凭据），刷新后显示「已配置 · 1 个网络」。
       await tester.pump();
-      expect(
-        find.textContaining('已配置 · 1 个网络'),
-        findsNothing,
-        reason: 'Wi-Fi 行隐藏后不应出现在弹层里',
-      );
+      expect(find.textContaining('已配置 · 1 个网络'), findsOneWidget);
       expect(gateway.snapshotCalls, greaterThan(0));
       expect(
         tester.widget<Text>(find.byKey(const Key('fw-val'))).data,
