@@ -104,6 +104,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('[data-testid="card-dream-0"]', x => x.innerText.includes('做梦完成') && x.innerText.includes('知识库')));
   assert.equal(await p.$eval('[data-testid="tbc-dream"]', x => x.innerText.trim()), 'TBC');
   assert(await p.$eval('[data-testid="card-unc-0"]', x => x.innerText.includes('今日未归类图片') && x.innerText.includes('1 张')));
+  assert.equal(await p.$('[data-testid="tbc-unc"]'), null, '未归类图片卡片本身已对齐上线，外层不再标 TBC');
   assert(await p.$eval('[data-testid="card-daily-0"]', x => x.innerText.includes('今日睡前日记') && x.innerText.includes('待标注 3')));
   assert(await p.$eval('[data-testid="card-daily-1"]', x => x.innerText.includes('昨日睡前日记') && x.innerText.includes('已标注')));
   assert.equal(await p.$eval('[data-testid="tbc-daily"]', x => x.innerText.trim()), 'TBC');
@@ -168,6 +169,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   // 未归类图片卡：点开分拣抽屉 → 按时间最近推荐一键归位 → 外侧缩略图与总结张数同步更新
   await p.click('[data-testid="card-unc-0"]');
   assert(await p.$eval('#unc-wrap', x => x.classList.contains('show')));
+  assert(await p.$eval('#unc-wrap h2 .tbc-badge', x => x.innerText.trim() === 'TBC'));
   assert.equal(await p.$$eval('#unc-body .unc-item', x => x.length), 2);
   assert(await p.$eval('[data-testid="unc-reassign-e2-0-e2"]', x => x.classList.contains('best') && x.innerText.includes('时间最接近')));
   await p.click('[data-testid="unc-reassign-e2-0-e2"]');
@@ -428,7 +430,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await shot('setting');
   assert.equal(await p.$eval('[data-testid="tbc-sw-continuous"]', x => x.innerText.trim()), 'TBC');
   assert.equal(await p.$eval('[data-testid="tbc-sw-mark"]', x => x.innerText.trim()), 'TBC');
-  assert.equal(await p.$eval('[data-testid="tbc-sw-wifi"]', x => x.innerText.trim()), 'TBC');
+  assert.equal(await p.$('[data-testid="tbc-sw-wifi"]'), null, '仅使用 Wi-Fi 同步已在 App 实装，不再标 TBC');
   const sw = await p.$eval('#p-setting [aria-label="自动转录开关"]', x => x.getAttribute('aria-checked'));
   await p.click('#p-setting [aria-label="自动转录开关"]');
   assert.notEqual(await p.$eval('#p-setting [aria-label="自动转录开关"]', x => x.getAttribute('aria-checked')), sw);
@@ -489,6 +491,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   for (let i = 0; i < 7; i++) {
     await p.click('[data-testid="setting-version"]');
   }
+  assert.equal(await p.$eval('#lbl-version', x => x.innerText.trim()), '版本（开发者）');
   await p.click('[data-testid="set-cloud-model"]');
   await p.click('[data-testid="model-opt-qwen-max"]');
   assert(await p.$('[data-testid="temp-0.2"]'));
@@ -516,7 +519,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="preset-meeting"]');
   await p.click('[data-testid="prompt-save"]');
   await p.click('[data-testid="crumb-back"]');
-  assert.equal(await p.$eval('#sv-preset', x => x.innerText.trim()), '会议决策');
+  assert.equal(await p.$eval('#sv-preset', x => x.innerText.trim()), '深度会议');
   await p.click('[data-testid="set-extensions"]');
   assert.equal(await p.$eval('[data-testid="tbc-mcp"]', x => x.innerText.trim()), 'TBC');
   await p.click('[data-testid="sw-sk-risk"]');
@@ -547,11 +550,11 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$('[data-testid="agent-push-a"]'), null);
   assert(!(await p.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
   await p.click('[data-testid="crumb-back"]');
+  assert.equal(await p.$$eval('.app-badge', x => x.length), 0, '已对齐项不应再展示不同步/已同步对比徽标');
   await p.click('[data-testid="parity-btn"]');
   assert(await p.$eval('#parity-wrap', x => x.classList.contains('show')));
-  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 14);
-  await p.click('#parity-tabs [data-pt="app"]');
-  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 9);
+  assert.equal(await p.$('#parity-tabs'), null, '清理后不再保留 App 超前对比分页');
+  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 12);
   await p.evaluate(() => closeParity());
   await p.click('[data-testid="hw-capsule"]');
   assert(await p.$eval('#sheet', x => x.classList.contains('show')));
@@ -583,7 +586,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.evaluate(() => document.querySelector('[data-testid="dev-header-kind"]').getBoundingClientRect().left < document.getElementById('dev-name').getBoundingClientRect().left));
   assert(await p.$('[data-testid="dev-bt-icon"]'));
   assert(await p.$eval('[data-testid="dev-disconnect"]', x => getComputedStyle(x).borderStyle === 'none' || getComputedStyle(x).borderWidth === '0px'));
-  assert.equal(await p.$eval('[data-testid="tbc-hw-wifi"]', x => x.innerText.trim()), 'TBC');
+  assert.equal(await p.$('[data-testid="tbc-hw-wifi"]'), null, '硬件 Wi-Fi 配网已在 App 实装，不再标 TBC');
   assert(await p.$eval('[data-testid="hw-capsule"]', x => !x.classList.contains('off')));
   // 已连接未录音 = 橙点待机（绿点只代表正在录音）
   assert(await p.$eval('[data-testid="hw-capsule"]', x => x.classList.contains('idle')));
@@ -658,6 +661,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   // Wi-Fi 二级页：已保存置顶（前3+展开）→ 扫描 → 范围外置灰 → 直连 → 新网络保存
   await p.click('[data-testid="wifi-row"]');
   assert(await p.$eval('#dev-wifi', x => !x.hidden));
+  assert.equal(await p.$('#dev-wifi .tbc-badge'), null);
   assert.equal(await p.$$eval('#wsaved .witem', x => x.length), 3);
   assert(await p.$eval('#wmore', x => !x.hidden && x.innerText.includes('查看更多已保存')));
   assert(await p.$eval('#wstate', x => x.innerText.includes('正在扫描')));
