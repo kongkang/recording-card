@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 import '../core/platform/app_info.dart';
 import '../core/storage/storage.dart';
 import '../core/store/agent_config_store.dart';
+import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/auth_service.dart';
@@ -39,6 +40,7 @@ class SettingPage extends StatefulWidget {
   const SettingPage({
     super.key,
     this.settings,
+    this.device,
     this.modelManager,
     this.agentConfig,
     this.authService,
@@ -47,6 +49,9 @@ class SettingPage extends StatefulWidget {
   });
 
   final SettingsStore? settings;
+
+  /// 设备与本机录音状态；供云端账号授权页在退出登录前检查并关闭录音。
+  final DeviceStore? device;
 
   /// 本地转写模型管理；二级页「本地语音引擎」使用。
   final ModelManagerController? modelManager;
@@ -193,6 +198,7 @@ class _SettingPageState extends State<SettingPage> {
         builder: (_) => SettingSubPage(
           subId: subId,
           agentConfig: _agent,
+          device: widget.device,
           modelManager: widget.modelManager,
           authService: widget.authService,
           standalone: true,

@@ -441,6 +441,29 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$('[data-testid="auth-bind-google"]'));
   assert(await p.$('[data-testid="auth-bind-github"]'));
   assert(await p.$('[data-testid="auth-bind-facebook"]'));
+  await p.evaluate(() => {
+    window.__prevPhotoState = { p: agCfg.photoPerm, a: agCfg.askedPhotoOnRec };
+    startPhoneRec(false);
+  });
+  await p.click('[data-testid="auth-signout-btn"]');
+  assert(await p.$eval('#signout-rec-wrap', x => x.classList.contains('show')));
+  assert(await p.$eval('[data-testid="signout-recording-confirm-dialog"]', x => x.innerText.includes('自动关闭录音')));
+  await p.click('[data-testid="signout-recording-cancel"]');
+  assert.equal(await p.$eval('#signout-rec-wrap', x => x.classList.contains('show')), false);
+  assert.equal(await p.evaluate(() => phoneRec.on && agCfg.auth), true);
+  await p.click('[data-testid="auth-signout-btn"]');
+  await p.click('[data-testid="signout-recording-confirm"]');
+  assert.equal(await p.evaluate(() => phoneRec.on), false);
+  assert.equal(await p.evaluate(() => agCfg.auth), false);
+  await p.click('[data-testid="auth-signin-btn"]');
+  assert.equal(await p.evaluate(() => agCfg.auth), true);
+  await p.evaluate(() => {
+    if (window.__prevPhotoState) {
+      agCfg.photoPerm = window.__prevPhotoState.p;
+      agCfg.askedPhotoOnRec = window.__prevPhotoState.a;
+      delete window.__prevPhotoState;
+    }
+  });
   await p.click('[data-testid="crumb-back"]');
   // 本地语音三引擎：移除校验、就绪隐藏下载、右上角垃圾桶删除前必弹风险确认框
   await p.click('[data-testid="set-local-model"]');

@@ -115,10 +115,12 @@ class _HomeGateState extends State<_HomeGate> {
   late final ModelManagerController _modelManager;
   late final SummaryGenerator _summaries;
   bool _booted = false;
+  bool _wasSignedIn = false;
 
   @override
   void initState() {
     super.initState();
+    _auth.addListener(_onAuthChanged);
     _modelGateway = ModelGateway(
       client: _auth.apiClient,
       enabledCheck: () => _agentConfig.cloudEnabled,
@@ -185,6 +187,7 @@ class _HomeGateState extends State<_HomeGate> {
   /// 启动装载：等鉴权恢复 → 载入历史状态与本地录音 → 登录态就绪时探测模型目录。
   Future<void> _boot() async {
     await _auth.ready;
+    _wasSignedIn = _auth.isSignedIn;
     if (_auth.isSignedIn) {
       unawaited(_discoverAndSyncModels());
       // 已登录用户后台预热微信 SDK（决定设置页未来入口可用性），不阻塞启动。
@@ -201,8 +204,19 @@ class _HomeGateState extends State<_HomeGate> {
     unawaited(_store.processPendingRecordings());
   }
 
+  void _onAuthChanged() {
+    final signedIn = _auth.isSignedIn;
+    if (_wasSignedIn && !signedIn) {
+      unawaited(_device.stopAllRecordingsForSignOut());
+      _device.closeSheet();
+      _store.go(RootTab.timeline);
+    }
+    _wasSignedIn = signedIn;
+  }
+
   @override
   void dispose() {
+    _auth.removeListener(_onAuthChanged);
     _device.dispose();
     _store.dispose();
     _recordingStatus.dispose();

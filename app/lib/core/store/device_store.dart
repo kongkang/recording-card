@@ -971,6 +971,47 @@ class DeviceStore extends ChangeNotifier {
     return startPhoneRecording(islandEnabled: islandEnabled);
   }
 
+  /// 当前是否存在本机或硬件录音。
+  bool get hasActiveRecording =>
+      _phoneRecording || (isConnected && isRecording);
+
+  /// 退出登录前安全关闭硬件录音（异常不阻塞退出登录流程）。
+  Future<void> stopHardwareRecordingIfActive() async {
+    if (!isConnected || !isRecording) return;
+    if (recordingBusy) return;
+    recordingBusy = true;
+    recordingError = null;
+    notifyListeners();
+    try {
+      await _gw.stopRecording().timeout(const Duration(seconds: 6));
+      await refreshFromDevice();
+    } on TimeoutException {
+      recordingError = '停止录音超时';
+      debugPrint('[device] signOut stopRecording timeout');
+    } on CardException catch (e) {
+      recordingError = e.message;
+      debugPrint('[device] signOut stopRecording failed: ${e.message}');
+    } on Object catch (e) {
+      recordingError = '$e';
+      debugPrint('[device] signOut stopRecording failed: $e');
+    } finally {
+      recordingBusy = false;
+      notifyListeners();
+    }
+  }
+
+  /// 退出登录或会话失效时统一关闭本机/硬件录音与灵动岛，防止数据归属跨账号泄漏。
+  Future<void> stopAllRecordingsForSignOut() async {
+    if (_phoneRecording || _phoneRecordingBusy) {
+      await stopPhoneRecording();
+    } else {
+      unawaited(_liveActivityService.stopLocalRecordingActivity());
+    }
+    if (isConnected && isRecording) {
+      await stopHardwareRecordingIfActive();
+    }
+  }
+
   String get batteryLevelText {
     if (_liveCharging == true) return '充电中';
     final level = battery;

@@ -9,6 +9,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/store/agent_config_store.dart';
+import '../../core/store/device_store.dart';
 import '../../core/theme/tokens.dart';
 import '../../services/auth_service.dart';
 import '../../services/transcribe/asr_models.dart';
@@ -21,6 +22,7 @@ class SettingSubPage extends StatelessWidget {
     super.key,
     required this.subId,
     required this.agentConfig,
+    this.device,
     this.modelManager,
     this.authService,
     this.showPaneBack = false,
@@ -29,6 +31,7 @@ class SettingSubPage extends StatelessWidget {
 
   final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'island'
   final AgentConfigStore agentConfig;
+  final DeviceStore? device;
   final ModelManagerController? modelManager;
   final AuthService? authService;
   final bool showPaneBack;
@@ -113,7 +116,10 @@ class SettingSubPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 14),
                   switch (subId) {
-                    'login' => _LoginAuthBody(authService: authService),
+                    'login' => _LoginAuthBody(
+                      authService: authService,
+                      device: device,
+                    ),
                     'local' => _LocalEngineBody(controller: modelManager),
                     'cloud' => _CloudModelBody(config: agentConfig),
                     'prompts' => _AgentPromptsBody(config: agentConfig),
@@ -1306,9 +1312,10 @@ class _SubSectionLabel extends StatelessWidget {
 // ── 0) 云端账号授权与第三方绑定 ──────────────────────────────
 
 class _LoginAuthBody extends StatefulWidget {
-  const _LoginAuthBody({required this.authService});
+  const _LoginAuthBody({required this.authService, this.device});
 
   final AuthService? authService;
+  final DeviceStore? device;
 
   @override
   State<_LoginAuthBody> createState() => _LoginAuthBodyState();
@@ -1316,6 +1323,73 @@ class _LoginAuthBody extends StatefulWidget {
 
 class _LoginAuthBodyState extends State<_LoginAuthBody> {
   String? _statusMsg;
+  bool _signingOut = false;
+
+  Future<void> _handleSignOut(BuildContext context) async {
+    final auth = widget.authService;
+    if (auth == null || _signingOut) return;
+
+    final device = widget.device;
+    final appStore = StoreScope.maybeOf(context);
+    final phoneRec = device?.isPhoneRecording ?? false;
+    final hwRec = (device?.isConnected ?? false) && (device?.isRecording ?? false);
+
+    if (!phoneRec && !hwRec) {
+      auth.signOut();
+      return;
+    }
+
+    final c = context.rc;
+    final recDesc = phoneRec && hwRec
+        ? '当前正在进行本机与硬件录音，退出登录将自动关闭录音并保存当前片段，避免不同账号间的数据归属混淆。'
+        : phoneRec
+            ? '当前正在进行本机录音，退出登录将自动关闭录音并保存当前片段，避免不同账号间的数据归属混淆。'
+            : '当前录音卡正在录音，退出登录将自动关闭录音并保存当前片段，避免不同账号间的数据归属混淆。';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const Key('signout-recording-confirm-dialog'),
+        title: const Text('退出登录并关闭录音？'),
+        content: Text(recDesc),
+        actions: <Widget>[
+          TextButton(
+            key: const Key('signout-recording-cancel'),
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('signout-recording-confirm'),
+            style: FilledButton.styleFrom(
+              backgroundColor: c.danger,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('关闭录音并退出'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _signingOut = true);
+    try {
+      await device?.stopAllRecordingsForSignOut();
+      // 让 PhoneMicRecorder 广播流在同一登录态微任务中把尾片投递给 AppShell._phoneSliceSub
+      await Future<void>.value();
+      await Future<void>.value();
+      if (appStore != null) {
+        await appStore
+            .finishLiveRecording()
+            .timeout(const Duration(seconds: 5), onTimeout: () => 0);
+      }
+      auth.signOut();
+    } finally {
+      if (mounted) {
+        setState(() => _signingOut = false);
+      }
+    }
+  }
 
   Future<void> _triggerOAuth({String? provider}) async {
     final auth = widget.authService;
@@ -1384,7 +1458,9 @@ class _LoginAuthBodyState extends State<_LoginAuthBody> {
                     if (signedIn)
                       TextButton(
                         key: const Key('auth-signout-btn'),
-                        onPressed: () => auth?.signOut(),
+                        onPressed: _signingOut
+                            ? null
+                            : () => unawaited(_handleSignOut(context)),
                         style: TextButton.styleFrom(
                           foregroundColor: c.danger,
                           minimumSize: Size.zero,
@@ -1393,7 +1469,7 @@ class _LoginAuthBodyState extends State<_LoginAuthBody> {
                             vertical: 4,
                           ),
                         ),
-                        child: const Text('退出登录'),
+                        child: Text(_signingOut ? '正在关闭录音…' : '退出登录'),
                       )
                     else
                       FilledButton(
