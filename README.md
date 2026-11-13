@@ -10,10 +10,10 @@ recording-card/
 ├── README.md
 ├── app/                     # Flutter 工程（开发期主交付物）
 │   ├── lib/                 # core 分层参考 reai_mobile_app
-│   └── test/                # 等价验收测试（对齐 prototype/verify.cjs 84 项）
+│   └── test/                # 等价验收测试（对齐 prototype/verify.cjs 86 项）
 ├── prototype/               # 设计参考真源（只读）
 │   ├── index.html           # 主原型：单文件内联 CSS/JS，无构建、无外部资源
-│   ├── verify.cjs           # 验收脚本（puppeteer-core + Chrome），84 项 = 需求清单
+│   ├── verify.cjs           # 验收脚本（puppeteer-core + Chrome），86 项 = 需求清单
 │   ├── package.json
 │   └── screenshots/         # 验收截图（verify.cjs 自动刷新）
 ├── docs/

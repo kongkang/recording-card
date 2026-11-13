@@ -6,10 +6,10 @@
 
 PR #7 已把正式版基线（真实 BLE 桥 + OAuth + 模型网关 + 真实总结 + 导出）合并进 master（`664211f`）。
 本阶段在 `stage/asr-polish-timeline` 上实现「设备文件 → 本地切片 → 本地转写 → 云端窗口改写 → 话题分段 → 三处展示」，
-完整计划见 `docs/handoff/handoff-2026-11-08-asr-polish-plan.md`（owner 已确认，2026-11-08）。
+完整计划见 `docs/handoff/handoff-2026-11-08-asr-polish-plan.md`（owner 已确认，2026-11-08）；**2026-11-13 设计升级（声纹标记、三元记忆图谱、睡前日记、4~6 格梦境漫画与 Skill 养成、物理按键 × 灵动岛 × A/B 双推送）与待 owner 回复确认的 12 项疑问清单见 `docs/handoff/handoff-2026-11-13-memory-diary-agent.md`**。
 
 - `app/` 是 Flutter 工程（主交付物）。分层参考 reai_mobile_app：`lib/core`（config/models/theme/store）、`lib/services`、`lib/pages`、`lib/widgets`；测试在 `app/test/`。
-- **验收基准 = `prototype/verify.cjs` 的 84 项检查**（2026-11-09 新增连接/录音/自动同步 7 项、2026-11-10 新增 feed 倒序、相册缩略图、详情照片、日报、做梦 5 项、2026-11-13 双向对齐 App 超前项 + TBC 标注、总结图片融入/逻辑树双层图权重/行动项按需元信息、声纹标记与上下文呼语称呼推断、三元记忆图谱、睡前日记与轻标注、4~6 格梦境漫画与重复事项 Skill 提炼、物理按键 × 灵动岛 × A/B 双阶段消息推送后共 84 项；以脚本 checks 为准）：Flutter 侧在 `app/test/` 建等价 widget/集成测试逐项对齐，命名与检查项一一对应。
+- **验收基准 = `prototype/verify.cjs` 的 86 项检查**（2026-11-09 新增连接/录音/自动同步 7 项、2026-11-10 新增 feed 倒序、相册缩略图、详情照片、日报、做梦 5 项、2026-11-13 双向对齐 App 超前项 + TBC 标注、总结图片融入/逻辑树双层图权重/行动项按需元信息、声纹标记与上下文呼语称呼推断 + 合并与单段防串音解绑、三元记忆图谱 + 不在场提及人保护与关系状态新陈代谢、睡前日记与轻标注、4~6 格梦境漫画与重复事项 Skill 提炼、物理按键 × 灵动岛 × A/B 双阶段消息推送后共 86 项；以脚本 checks 为准）：Flutter 侧在 `app/test/` 建等价 widget/集成测试逐项对齐，命名与检查项一一对应。
 - `prototype/` 降级为**设计参考真源（只读）**：还原有疑义以它和「设计基线」节为准，不再直接改它；如确需改设计，先与 owner 确认，并同步 `prototype/verify.cjs` 与 Flutter 测试。
 - 本阶段硬约束：
   - **本地转写优先**（SenseVoice + Silero VAD）；云端只做润色与分段总结。模型缺失时音频入库排队，**不上传音频、不编造文本**。
