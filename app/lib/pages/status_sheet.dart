@@ -360,9 +360,7 @@ class _MainView extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    store.connectedName?.isNotEmpty == true
-                        ? store.connectedName!
-                        : '录音卡',
+                    store.connectedDisplayName,
                     key: const Key('dev-name'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -609,7 +607,14 @@ class _MainView extends StatelessWidget {
                     key: const Key('fw-val'),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
-                    style: const TextStyle(fontSize: 14, color: RCColors.okInk),
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: store.fwValText == '正在检查…'
+                          ? RCColors.sec
+                          : (store.fwStage == FwStage.failed
+                                ? RCColors.danger
+                                : RCColors.okInk),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 5),
@@ -827,7 +832,7 @@ class _ConnectView extends StatelessWidget {
                       children: [
                         Flexible(
                           child: Text(
-                            device.name,
+                            device.shortName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(

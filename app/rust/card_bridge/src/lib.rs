@@ -425,8 +425,12 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
             out.ok(wifi_close(&active).await?);
         }
         "wifi.credentials" => {
+            let passive = payload
+                .get("passive")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let active = active_device().await?;
-            out.ok(wifi_credentials(&active).await?);
+            out.ok(wifi_credentials(&active, passive).await?);
         }
         "wifi.forget" => {
             let ssid = str_field(&payload, "ssid");
@@ -637,20 +641,52 @@ async fn connect_device(payload: Value) -> Result<Value, BridgeError> {
 
     release_device().await;
 
-    match target_kind {
-        DeviceKind::CardV2 => connect_card_v2(&id, target_name.as_deref()).await,
+    let mut res = match target_kind {
+        DeviceKind::CardV2 => connect_card_v2(&id, target_name.as_deref()).await?,
         DeviceKind::DyjV1 => {
             let name = target_name.ok_or_else(|| {
                 BridgeError::from(format!("点一机 V1 连接需要设备广播名称（id={id}）"))
             })?;
-            connect_dyj_v1(&id, &name).await
+            connect_dyj_v1(&id, &name).await?
         }
         DeviceKind::BoardV21 => {
             let name = target_name.ok_or_else(|| {
                 BridgeError::from(format!("语音 AI 键盘连接需要设备广播名称（id={id}）"))
             })?;
-            connect_board_v21(&id, &name).await
+            connect_board_v21(&id, &name).await?
         }
+    };
+    if let Ok(active) = active_device().await {
+        if let Ok(snap) = snapshot_device(&active).await {
+            res["snapshot"] = snap;
+        }
+    }
+    Ok(res)
+}
+
+async fn bootstrap_card_v2_ble_metadata_if_missing(device: &CardV2Device) {
+    if let Ok(Some(_)) = device.wifi_firmware_version().await {
+        return;
+    }
+    if device
+        .record_status()
+        .await
+        .map(|r| r.is_recording)
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let was_open = device.state().await.map(|s| s.wifi_open).unwrap_or(false);
+    if !was_open && device.open_wifi().await.is_err() {
+        return;
+    }
+    let _ = device.wait_for_ap_ready(Duration::from_secs(4)).await;
+    let _ = device.wifi_status().await;
+    if let Ok(creds) = device.list_wifi_credentials().await {
+        sync_ble_wifi_creds_kv(device, &creds).await;
+    }
+    if !was_open {
+        close_wifi_quietly(device).await;
     }
 }
 
@@ -671,6 +707,7 @@ async fn connect_card_v2(id: &str, name_hint: Option<&str>) -> Result<Value, Bri
     let found = found.ok_or_else(|| CardSdkError::DeviceNotFound(id.to_string()))?;
     let connected_name = found.name.clone();
     let device = manager.connect(&found).await?;
+    bootstrap_card_v2_ble_metadata_if_missing(&device).await;
     let pump = spawn_card_v2_event_pump(&device);
     *state().event_pump.lock().await = Some(pump);
     *state().last_device_id.lock().expect("device id lock") = Some(id.to_string());
@@ -990,29 +1027,67 @@ async fn snapshot_device(active: &ActiveDevice) -> Result<Value, BridgeError> {
     let kind = active.kind();
     match active {
         ActiveDevice::CardV2 { device, name } => {
-            let battery = match device.battery().await {
+            let battery_res = match device.battery().await {
+                Ok(v) if v.level > 0 => Ok(v),
+                _ => {
+                    tokio::time::sleep(Duration::from_millis(120)).await;
+                    device.battery().await
+                }
+            };
+            let battery = match battery_res {
                 Ok(v) => serde_json::to_value(v).unwrap_or(Value::Null),
                 Err(_) => device
                     .raw_command("BATTERY", None)
                     .await
                     .unwrap_or(Value::Null),
             };
-            let state_val = match device.state().await {
+            let state_res = match device.state().await {
+                Ok(v) => Ok(v),
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_millis(120)).await;
+                    device.state().await
+                }
+            };
+            let wifi_open_now = state_res.as_ref().map(|s| s.wifi_open).unwrap_or(false);
+            let state_val = match state_res {
                 Ok(v) => serde_json::to_value(v).unwrap_or(Value::Null),
                 Err(_) => device
                     .raw_command("STATE_INFO", None)
                     .await
                     .unwrap_or(Value::Null),
             };
-            let info = match device.device_info().await {
+            let info_res = match device.device_info().await {
+                Ok(v) if !v.version.trim().is_empty() => Ok(v),
+                _ => {
+                    tokio::time::sleep(Duration::from_millis(120)).await;
+                    device.device_info().await
+                }
+            };
+            let info = match info_res {
                 Ok(v) => serde_json::to_value(v).unwrap_or(Value::Null),
                 Err(_) => device
                     .raw_command("BASE_INFO", None)
                     .await
                     .unwrap_or(Value::Null),
             };
-            let storage = device.storage().await.ok();
-            let record = device.record_status().await.ok();
+            let storage = if wifi_open_now {
+                None
+            } else {
+                match device.storage().await {
+                    Ok(v) => Some(v),
+                    Err(_) => {
+                        tokio::time::sleep(Duration::from_millis(120)).await;
+                        device.storage().await.ok()
+                    }
+                }
+            };
+            let record = match device.record_status().await {
+                Ok(v) => Some(v),
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_millis(120)).await;
+                    device.record_status().await.ok()
+                }
+            };
             Ok(json!({
                 "deviceKind": kind.as_str(),
                 "displayModel": kind.display_model(),
@@ -1831,6 +1906,74 @@ async fn wifi_scan(active: &ActiveDevice) -> Result<Value, BridgeError> {
     }
 }
 
+const BLE_WIFI_CRED_SUMMARY_KEY: &str = "ble_wcred";
+
+fn encode_ssid_list_kv(ssids: &[String]) -> String {
+    let clean: Vec<&str> = ssids
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let header = format!("{}|", clean.len());
+    if clean.is_empty() {
+        return header;
+    }
+    let full = format!("{header}{}", clean.join("\n"));
+    if full.len() <= 63 {
+        return full;
+    }
+    let mut end = 63;
+    while !full.is_char_boundary(end) {
+        end -= 1;
+    }
+    full[..end].to_owned()
+}
+
+fn decode_ssid_list_kv(raw: &str) -> Vec<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let Some((count_str, body)) = trimmed.split_once('|') else {
+        return trimmed
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect();
+    };
+    let count = count_str.trim().parse::<usize>().unwrap_or(0).min(16);
+    if count == 0 {
+        return Vec::new();
+    }
+    let mut items: Vec<String> = body
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if items.len() > count {
+        items.truncate(count);
+    }
+    while items.len() < count {
+        items.push(format!("已保存网络 {}", items.len() + 1));
+    }
+    items
+}
+
+async fn sync_ble_wifi_creds_kv(
+    device: &CardV2Device,
+    creds: &[reai_card_sdk::WifiCredential],
+) {
+    let ssids: Vec<String> = creds
+        .iter()
+        .map(|c| c.ssid.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let encoded = encode_ssid_list_kv(&ssids);
+    let _ = device.set_config(BLE_WIFI_CRED_SUMMARY_KEY, &encoded).await;
+}
+
 async fn wifi_connect(
     active: &ActiveDevice,
     ssid: &str,
@@ -1839,7 +1982,11 @@ async fn wifi_connect(
     match active {
         ActiveDevice::CardV2 { device, .. } => {
             ensure_wifi_open_card_v2(device).await?;
-            Ok(device.connect_wifi(ssid, password).await.and_then(to_value)?)
+            let connected = device.connect_wifi(ssid, password).await?;
+            if let Ok(creds) = device.list_wifi_credentials().await {
+                sync_ble_wifi_creds_kv(device, &creds).await;
+            }
+            Ok(to_value(connected)?)
         }
         ActiveDevice::DyjV1 { device, .. } => {
             let pwd = if password.is_empty() {
@@ -1870,12 +2017,28 @@ async fn wifi_close(active: &ActiveDevice) -> Result<Value, BridgeError> {
     }
 }
 
-async fn wifi_credentials(active: &ActiveDevice) -> Result<Value, BridgeError> {
+async fn wifi_credentials(active: &ActiveDevice, passive: bool) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => {
             let was_open = device.state().await?.wifi_open;
             if was_open {
-                return Ok(device.list_wifi_credentials().await.and_then(to_value)?);
+                let creds = device.list_wifi_credentials().await?;
+                sync_ble_wifi_creds_kv(device, &creds).await;
+                return Ok(to_value(creds)?);
+            }
+            if passive {
+                let cached = device
+                    .config_value(BLE_WIFI_CRED_SUMMARY_KEY)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|raw| decode_ssid_list_kv(&raw))
+                    .unwrap_or_default();
+                let arr: Vec<Value> = cached
+                    .into_iter()
+                    .map(|ssid| json!({"ssid": ssid}))
+                    .collect();
+                return Ok(Value::Array(arr));
             }
             if device
                 .record_status()
@@ -1890,6 +2053,9 @@ async fn wifi_credentials(active: &ActiveDevice) -> Result<Value, BridgeError> {
             device.open_wifi().await?;
             let _ = device.wait_for_ap_ready(Duration::from_secs(5)).await;
             let creds = device.list_wifi_credentials().await;
+            if let Ok(ref list) = creds {
+                sync_ble_wifi_creds_kv(device, list).await;
+            }
             close_wifi_quietly(device).await;
             Ok(creds.and_then(to_value)?)
         }
@@ -1910,7 +2076,13 @@ async fn wifi_forget(active: &ActiveDevice, ssid: &str) -> Result<Value, BridgeE
         ActiveDevice::CardV2 { device, .. } => {
             let was_open = device.state().await?.wifi_open;
             if was_open {
-                return Ok(device.delete_wifi_credential(ssid).await.and_then(to_value)?);
+                let res = device.delete_wifi_credential(ssid).await;
+                if res.is_ok() {
+                    if let Ok(creds) = device.list_wifi_credentials().await {
+                        sync_ble_wifi_creds_kv(device, &creds).await;
+                    }
+                }
+                return Ok(res.and_then(to_value)?);
             }
             if device
                 .record_status()
@@ -1925,6 +2097,11 @@ async fn wifi_forget(active: &ActiveDevice, ssid: &str) -> Result<Value, BridgeE
             device.open_wifi().await?;
             let _ = device.wait_for_ap_ready(Duration::from_secs(5)).await;
             let res = device.delete_wifi_credential(ssid).await;
+            if res.is_ok() {
+                if let Ok(creds) = device.list_wifi_credentials().await {
+                    sync_ble_wifi_creds_kv(device, &creds).await;
+                }
+            }
             close_wifi_quietly(device).await;
             Ok(res.and_then(to_value)?)
         }
@@ -2415,5 +2592,30 @@ mod tests {
         assert!(should_restore_wifi_open(&json!({"restoreWifiOpen": null}), true));
         assert!(should_restore_wifi_open(&json!({"restoreWifiOpen": true}), false));
         assert!(!should_restore_wifi_open(&json!({"restoreWifiOpen": false}), true));
+    }
+
+    #[test]
+    fn encodes_and_decodes_ble_wifi_credential_summary() {
+        let empty = encode_ssid_list_kv(&[]);
+        assert_eq!(empty, "0|");
+        assert!(decode_ssid_list_kv(&empty).is_empty());
+
+        let normal = encode_ssid_list_kv(&["Office-2.4G".into(), "Home".into()]);
+        assert_eq!(normal, "2|Office-2.4G\nHome");
+        assert_eq!(
+            decode_ssid_list_kv(&normal),
+            vec!["Office-2.4G".to_string(), "Home".to_string()]
+        );
+
+        // UTF-8 multibyte SSIDs truncated within 63-byte nRF KV cap without panicking
+        let long = vec![
+            "实验室无线路由器一二三四五六七".to_string(),
+            "备用路由器甲乙丙丁".to_string(),
+            "第三路由器".to_string(),
+        ];
+        let encoded = encode_ssid_list_kv(&long);
+        assert!(encoded.len() <= 63);
+        let decoded = decode_ssid_list_kv(&encoded);
+        assert_eq!(decoded.len(), 3);
     }
 }

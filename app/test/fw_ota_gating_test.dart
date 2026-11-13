@@ -8,6 +8,8 @@
 // ⑤ reai-card-sdk v0.0.8：startRecording(durationSecs) 与 takeOldestFile。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/device/card_gateway.dart';
@@ -517,5 +519,107 @@ void main() {
     expect(mainOnlyGw.callLog, contains('wifi.open'));
     expect(mainOnlyGw.callLog, isNot(contains('ota.wifi')));
     expect(mainOnlyStore.deviceWifiOpen, isTrue);
+  });
+
+  test('蓝牙短编号解析与 connectedDisplayName：去掉产品前缀，保留原始 connectedName', () {
+    expect(DeviceKind.bleShortId('DYJV2_A1B2C3'), 'A1B2C3');
+    expect(DeviceKind.bleShortId('REAI_VB_8801'), '8801');
+    expect(DeviceKind.bleShortId('DYJ_001A'), '001A');
+    expect(DeviceKind.bleShortId('CUSTOM_NAME'), 'CUSTOM_NAME');
+
+    const dev = CardDevice(id: 'dev-1', name: 'DYJV2_A1B2C3', rssi: -50);
+    expect(dev.shortName, 'A1B2C3');
+  });
+
+  testWidgets(
+    '连接即拉齐快照 + 固件检查完成前显示「正在检查…」+ 被动读取 Wi-Fi 凭据不开 Wi-Fi',
+    (tester) async {
+      final otaCompleter = Completer<CardOtaInfo>();
+      final gateway = FakeCardGateway(
+        devices: const [
+          CardDevice(id: 'dev-ota', name: 'DYJV2_T4W25T', rssi: -45),
+        ],
+        connectResult: _cardSnap(
+          fwVersion: '0.3.12',
+          fwVersionCode: 312,
+          wifiVersion: '0.1.3',
+          wifiVersionCode: 103,
+        ),
+        connectReturnsSnapshot: false,
+        wifiCredentials: const [CardWifiCredential(ssid: 'OfficeWiFi')],
+      );
+      gateway.otaInfoOverride = (module) => otaCompleter.future;
+
+      final store = DeviceStore(gateway: gateway);
+      await pumpShell(tester, device: store);
+
+      await tester.tap(find.byKey(const Key('hw-capsule')));
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.text('T4W25T'));
+      await tester.pump();
+      await tester.pump();
+
+      // 原始名称保留，UI 只展示后缀短号；即使 connect() 返回 null 也通过 snapshot() 补齐电量与版本
+      expect(store.connectedName, 'DYJV2_T4W25T');
+      expect(store.connectedDisplayName, 'T4W25T');
+      expect(find.text('T4W25T'), findsOneWidget);
+      expect(store.battery, 88);
+      expect(store.fwVersionCode, 312);
+      expect(store.wifiVersionCode, 103);
+
+      // OTA 查询尚未返回：必须显示「正在检查…」，不能误报「已是最新」
+      expect(store.fwValText, '正在检查…');
+      expect(find.text('正在检查…'), findsOneWidget);
+      expect(find.text('已是最新'), findsNothing);
+
+      // 预取凭据使用 passive: true，不主动开 ESP32 Wi-Fi
+      expect(gateway.lastWifiCredentialsPassive, isTrue);
+      expect(gateway.openWifiCalls, 0);
+
+      // 完成 OTA 查询：立即切为「有可用更新」
+      otaCompleter.complete(
+        const CardOtaInfo(
+          version: '0.3.17',
+          versionCode: 317,
+          url: 'https://ota.invalid/317.zip',
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(store.fwValText, '有可用更新');
+      expect(find.text('有可用更新'), findsOneWidget);
+    },
+  );
+
+  testWidgets('未知固件版本号(0)不误判更新，且 checkFirmware 网络失败显式报「检查失败」', (tester) async {
+    const ota = CardOtaInfo(
+      version: '0.3.17',
+      versionCode: 317,
+      url: 'https://ota.invalid/317.zip',
+    );
+    expect(ota.isNewerThan(0), isFalse);
+    expect(ota.isNewerThan(312), isTrue);
+
+    final gateway = FakeCardGateway(
+      initialSnapshot: _cardSnap(),
+      devices: const [_card],
+    );
+    gateway.failMainOtaInfo = const CardException(
+      CardErrorKind.device,
+      'network error',
+    );
+    final store = DeviceStore(gateway: gateway);
+    addTearDown(store.dispose);
+
+    await store.restoreLink();
+    final fut = store.checkFirmware();
+    await tester.pump(const Duration(milliseconds: 300));
+    await fut;
+
+    expect(store.fwStage, FwStage.failed);
+    expect(store.fwValText, '检查失败');
   });
 }

@@ -50,6 +50,21 @@ enum DeviceKind {
     return null;
   }
 
+  /// 剥离已知代际广播前缀（`DYJV2_`、`REAI_VB_`、`DYJ_`），仅保留下划线后的蓝牙编号。
+  /// 若剥离后为空或无已知前缀，则回退原名称（去除首尾空白）。
+  static String bleShortId(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final upper = trimmed.toUpperCase();
+    for (final prefix in const ['DYJV2_', 'REAI_VB_', 'DYJ_']) {
+      if (upper.startsWith(prefix)) {
+        final suffix = trimmed.substring(prefix.length).trim();
+        return suffix.isNotEmpty ? suffix : trimmed;
+      }
+    }
+    return trimmed;
+  }
+
   static DeviceKind fromCode(String? raw, {String fallbackName = ''}) {
     switch (raw?.trim()) {
       case 'card_v2':
@@ -292,6 +307,8 @@ class CardDevice {
   DeviceKind get deviceKind =>
       kind ?? DeviceKind.fromBleName(name) ?? DeviceKind.cardV2;
 
+  String get shortName => DeviceKind.bleShortId(name);
+
   String get modelLabel => displayModel ?? deviceKind.displayModel;
 
   HardwareCapabilities get resolvedCapabilities =>
@@ -498,7 +515,7 @@ class CardOtaInfo {
   final String url;
 
   bool isNewerThan(int installedVersionCode) =>
-      versionCode > installedVersionCode;
+      installedVersionCode > 0 && versionCode > installedVersionCode;
 }
 
 /// 长任务进度（OTA 等）。
@@ -676,7 +693,7 @@ abstract class CardGateway {
   Future<void> connectWifi(String ssid, String password);
   Future<void> openWifi();
   Future<void> closeWifi();
-  Future<List<CardWifiCredential>> wifiCredentials();
+  Future<List<CardWifiCredential>> wifiCredentials({bool passive = false});
   Future<void> forgetWifi(String ssid);
 
   Future<void> startSync();
@@ -988,7 +1005,7 @@ class RealCardGateway implements CardGateway {
     String? name,
     String? deviceKind,
   }) async {
-    await _once(
+    final json = await _once(
       'connect',
       {
         'id': deviceId,
@@ -996,9 +1013,14 @@ class RealCardGateway implements CardGateway {
         if (deviceKind != null && deviceKind.isNotEmpty)
           'deviceKind': deviceKind,
       },
-      const Duration(seconds: 30),
+      const Duration(seconds: 35),
     );
-    return null;
+    final data = json['data'];
+    if (data is Map<String, dynamic> &&
+        data['snapshot'] is Map<String, dynamic>) {
+      return CardSnapshot.fromJson(data['snapshot'] as Map<String, dynamic>);
+    }
+    return await snapshot();
   }
 
   @override
@@ -1225,8 +1247,11 @@ class RealCardGateway implements CardGateway {
   Future<void> closeWifi() => _once('wifi.close');
 
   @override
-  Future<List<CardWifiCredential>> wifiCredentials() async {
-    final json = await _once('wifi.credentials');
+  Future<List<CardWifiCredential>> wifiCredentials({bool passive = false}) async {
+    final json = await _once(
+      'wifi.credentials',
+      passive ? {'passive': true} : null,
+    );
     final list = (json['data'] as List<dynamic>? ?? const []);
     return list
         .whereType<Map<String, dynamic>>()
@@ -1344,7 +1369,8 @@ class UnsupportedCardGateway implements CardGateway {
   @override
   Future<void> closeWifi() async => _fail();
   @override
-  Future<List<CardWifiCredential>> wifiCredentials() async => _fail();
+  Future<List<CardWifiCredential>> wifiCredentials({bool passive = false}) async =>
+      _fail();
   @override
   Future<void> forgetWifi(String ssid) async => _fail();
   @override
@@ -1480,8 +1506,8 @@ class ActivityGateway implements CardGateway {
   Future<void> closeWifi() => _run(_inner.closeWifi);
 
   @override
-  Future<List<CardWifiCredential>> wifiCredentials() =>
-      _run(_inner.wifiCredentials);
+  Future<List<CardWifiCredential>> wifiCredentials({bool passive = false}) =>
+      _run(() => _inner.wifiCredentials(passive: passive));
 
   @override
   Future<void> forgetWifi(String ssid) => _run(() => _inner.forgetWifi(ssid));

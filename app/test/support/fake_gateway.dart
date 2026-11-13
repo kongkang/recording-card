@@ -559,8 +559,15 @@ class FakeCardGateway implements CardGateway {
     }
   }
 
+  bool? lastWifiCredentialsPassive;
+
   @override
-  Future<List<CardWifiCredential>> wifiCredentials() async => savedCredentials;
+  Future<List<CardWifiCredential>> wifiCredentials({
+    bool passive = false,
+  }) async {
+    lastWifiCredentialsPassive = passive;
+    return savedCredentials;
+  }
 
   @override
   Future<void> forgetWifi(String ssid) async {
@@ -583,9 +590,23 @@ class FakeCardGateway implements CardGateway {
   @override
   Future<void> setUploadUrl(String url) async {}
 
+  Future<CardOtaInfo> Function(String module)? otaInfoOverride;
+  Object? failMainOtaInfo;
+  Object? failWifiOtaInfo;
+
   @override
-  Future<CardOtaInfo> otaInfo(String module) async =>
-      module == 'wifi' ? wifiOta : mainOta;
+  Future<CardOtaInfo> otaInfo(String module) async {
+    if (otaInfoOverride != null) {
+      return otaInfoOverride!(module);
+    }
+    if (module == 'wifi' && failWifiOtaInfo != null) {
+      throw failWifiOtaInfo!;
+    }
+    if (module == 'main' && failMainOtaInfo != null) {
+      throw failMainOtaInfo!;
+    }
+    return module == 'wifi' ? wifiOta : mainOta;
+  }
 
   /// 按 [progressDelay] 逐条推进度；事件推完即流关闭（等价于设备侧 final:true）。
   Stream<CardProgress> _progress(List<CardProgress> events) async* {

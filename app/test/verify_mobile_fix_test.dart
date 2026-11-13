@@ -77,7 +77,7 @@ void main() {
 
     expect(find.byKey(const Key('dev-connect')), findsOneWidget);
     expect(gateway.scanCalls, greaterThan(0), reason: '点开即进入扫描流程');
-    expect(find.text('DYJV2_T4W25T'), findsOneWidget);
+    expect(find.text('T4W25T'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('dev-item-dev-1')));
     await tester.pump();

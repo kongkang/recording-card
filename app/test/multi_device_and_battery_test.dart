@@ -49,9 +49,9 @@ void main() {
     expect(find.text('录音卡 V2'), findsOneWidget);
     expect(find.text('点一机 V1'), findsOneWidget);
 
-    final kbdY = tester.getTopLeft(find.text('REAI_VB_8801')).dy;
-    final v2Y = tester.getTopLeft(find.text('DYJV2_9920')).dy;
-    final v1Y = tester.getTopLeft(find.text('DYJ_001A')).dy;
+    final kbdY = tester.getTopLeft(find.text('8801')).dy;
+    final v2Y = tester.getTopLeft(find.text('9920')).dy;
+    final v1Y = tester.getTopLeft(find.text('001A')).dy;
     expect(kbdY < v2Y && v2Y < v1Y, isTrue, reason: '按信号由强到弱排列');
   });
 

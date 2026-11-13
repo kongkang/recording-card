@@ -1216,8 +1216,8 @@ dependencies = [
 
 [[package]]
 name = "reai-card-sdk"
-version = "0.0.8"
-source = "git+https://github.com/ReAI-com/reai-card-sdk.git?tag=v0.0.8#d042dfc5011805b84cab08d185269f909c4cd5c2"
+version = "0.0.9"
+source = "git+https://github.com/ReAI-com/reai-card-sdk.git?rev=3b7a5c59dcaf31ca531fc1cd7de33ffebd7a1bcb#3b7a5c59dcaf31ca531fc1cd7de33ffebd7a1bcb"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

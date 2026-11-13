@@ -93,6 +93,14 @@ class DeviceStore extends ChangeNotifier {
   HardwareCapabilities activeCapabilities = HardwareCapabilities.cardV2;
   String activeModelLabel = DeviceKind.cardV2.displayModel;
 
+  /// UI 展示的设备短名：剥离代际广播前缀（仅保留下划线后的蓝牙编号）。
+  /// [connectedName] 保持完整原始广播名供 DFU 重连等底层匹配使用。
+  String get connectedDisplayName {
+    final raw = connectedName?.trim() ?? '';
+    if (raw.isEmpty) return '录音卡';
+    return DeviceKind.bleShortId(raw);
+  }
+
   /// 点一机 V1 硬件拍照事件到达时触发（供外层同步硬件抓拍照片）。
   VoidCallback? onHardwarePhotoCaptured;
 
@@ -128,6 +136,12 @@ class DeviceStore extends ChangeNotifier {
       _applySnapshot(snapshot);
       linkState = LinkState.connected;
       linkError = null;
+      if (sheetOpen) {
+        _startSheetWatch();
+        unawaited(prefetchSummaryInfo());
+      } else if (_autoStart) {
+        unawaited(prefetchSummaryInfo());
+      }
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       // 未连接是正常初始态，不算错误；其它错误如实呈现
@@ -207,40 +221,50 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
     _markLinkActivity();
     try {
-      final snapshot = await _gw.connect(
+      var snapshot = await _gw.connect(
         device.id,
         name: device.name,
         deviceKind: device.deviceKind.code,
       );
       if (epoch != _epoch) return;
+      snapshot ??= await _gw.snapshot().timeout(_snapshotTimeout);
+      if (epoch != _epoch) return;
       _markLinkActivity();
       activeKind = device.deviceKind;
       activeCapabilities = device.resolvedCapabilities;
       activeModelLabel = device.modelLabel;
-      // 桥只确认「连上」时没有快照：不要拿空数据覆盖旧状态，交给 _afterConnect 刷新。
-      if (snapshot != null) _applySnapshot(snapshot);
       connectedName = device.name;
+      _applySnapshot(snapshot);
       // 记住这台设备：掉线重连直接拿 id 直连，不靠扫描（已连接设备不广播）
       _lastDevice = device;
       linkState = LinkState.connected;
       linkError = null;
       _eventSeq = 0;
       _startHeartbeat();
-      unawaited(_afterConnect());
+      if (sheetOpen) {
+        _startSheetWatch();
+      }
+      unawaited(_afterConnect(epoch));
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       linkState = LinkState.disconnected;
       linkError = e.message;
+    } on TimeoutException {
+      if (epoch != _epoch) return;
+      linkState = LinkState.disconnected;
+      linkError = '读取设备状态超时，请重试连接';
     }
     notifyListeners();
   }
 
-  /// 连上后的收尾：拉一次真实状态。
-  ///
-  /// 时间同步不在这里做：SDK 的 connect 内部已经 `sync_time_now()`，
-  /// 再做一次只会让首屏状态多等一个命令周期（参考实现的 connect 也不做）。
-  Future<void> _afterConnect() async {
-    await refreshFromDevice();
+  /// 连上后的收尾：若快照缺失关键状态则补拉一次，并立刻预取概要与版本检查。
+  Future<void> _afterConnect(int epoch) async {
+    if (epoch != _epoch || !isConnected) return;
+    if (_fwVersionCode == 0 || _liveBattery == null) {
+      await refreshFromDevice();
+      if (epoch != _epoch) return;
+    }
+    await prefetchSummaryInfo();
   }
 
   /// 用户主动断开：先把会占用链路的状态收干净，再断。
@@ -309,6 +333,7 @@ class DeviceStore extends ChangeNotifier {
     _wifiVersionCode = 0;
     _otaMainInfo = null;
     _otaWifiInfo = null;
+    _otaChecked = false;
     _wifiSummaryProbed = false;
     _storageFreeMb = null;
     _storageTotalMb = null;
@@ -448,7 +473,7 @@ class DeviceStore extends ChangeNotifier {
 
   /// 重连只发 connect（不再预拉快照），但桥内要先扫描（4s→6s 两档）再建链路，
   /// 上限给到 20s，避免把"正在重连"误判成失败。
-  static const _retryConnectTimeout = Duration(seconds: 20);
+  static const _retryConnectTimeout = Duration(seconds: 25);
 
   Timer? _heartbeatTimer;
 
@@ -554,7 +579,7 @@ class DeviceStore extends ChangeNotifier {
       await Future<void>.delayed(_reconnectDelay);
       if (epoch != _epoch) return;
       _markLinkActivity();
-      final snapshot = await _gateway
+      var snapshot = await _gateway
           .connect(
             device.id,
             name: device.name,
@@ -562,13 +587,19 @@ class DeviceStore extends ChangeNotifier {
           )
           .timeout(_retryConnectTimeout);
       if (epoch != _epoch) return;
+      snapshot ??= await _gw.snapshot().timeout(_snapshotTimeout);
+      if (epoch != _epoch) return;
       _markLinkActivity();
-      if (snapshot != null) _applySnapshot(snapshot);
+      _applySnapshot(snapshot);
       linkState = LinkState.connected;
       linkError = null;
       // 重连成功后必须把看门狗重新挂上：只在首次 connect 启表的话，
       // 一次掉线重连之后就再也没人探测了。
       _startHeartbeat();
+      if (sheetOpen) {
+        _startSheetWatch();
+      }
+      unawaited(prefetchSummaryInfo());
     } on Object catch (e, st) {
       if (epoch != _epoch) return;
       debugPrint('[watchdog] 重连失败：$e');
@@ -997,6 +1028,7 @@ class DeviceStore extends ChangeNotifier {
   }
 
   bool _wifiSummaryProbed = false;
+  bool _otaChecked = false;
 
   /// 预取弹层首屏要展示的概要信息（Wi-Fi 已配置数量、固件是否有更新）。
   ///
@@ -1006,24 +1038,16 @@ class DeviceStore extends ChangeNotifier {
     final epoch = _epoch;
     if (activeCapabilities.hasWifiConfig && !_wifiSummaryProbed) {
       try {
-        final creds = await _gw.wifiCredentials();
+        final creds = await _gw.wifiCredentials(passive: true);
         if (epoch != _epoch) return;
         _wifiSummaryProbed = true;
         wifiSaved = creds.map((c) => SavedWifi(c.ssid)).toList();
-        if (activeCapabilities.hasDualChipOta &&
-            _wifiVersionCode == 0 &&
-            !isRecording) {
-          await refreshFromDevice();
-          if (epoch != _epoch) return;
-        }
         notifyListeners();
       } on CardException {
-        // Wi-Fi 模块未开启/不支持或录音中时保持原状
+        // 卡片尚未记录被动缓存或设备暂不支持时保持原状
       }
     }
-    if (activeCapabilities.hasDualChipOta &&
-        _otaMainInfo == null &&
-        _otaWifiInfo == null) {
+    if (activeCapabilities.hasDualChipOta && !_otaChecked) {
       await checkFirmware();
     }
   }
@@ -1038,6 +1062,9 @@ class DeviceStore extends ChangeNotifier {
     if (isConnected) {
       unawaited(refreshFromDevice());
       unawaited(prefetchSummaryInfo());
+      if (fwStage == FwStage.failed) {
+        unawaited(checkFirmware());
+      }
       // 弹层开着时盯住设备侧按钮/开关的录音变化：卡上按了开始，这里要马上跟上，
       // 而不是等 30 秒看门狗或用户再点一次。
       _startSheetWatch();
@@ -1105,10 +1132,13 @@ class DeviceStore extends ChangeNotifier {
 
   bool get fwAvailable => mainNeedsUpdate || wifiNeedsUpdate;
 
-  /// 固件行右侧文案：有更新才提示，否则"已是最新"。
+  /// 固件行右侧文案：未查完显示「正在检查…」，失败显示「检查失败」，有更新提示「有可用更新」，否则「已是最新」。
   String get fwValText {
     if (fwStage == FwStage.failed) return '检查失败';
     if (fwUpdating) return fwPctText;
+    if (!_otaChecked && activeCapabilities.hasDualChipOta && isConnected) {
+      return '正在检查…';
+    }
     return fwAvailable ? '有可用更新' : '已是最新';
   }
 
@@ -1149,6 +1179,15 @@ class DeviceStore extends ChangeNotifier {
     return current;
   }
 
+  Future<CardOtaInfo> _fetchOtaModule(String module) async {
+    try {
+      return await _gateway.otaInfo(module);
+    } on CardException {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      return _gateway.otaInfo(module);
+    }
+  }
+
   /// 查服务器最新版本（只读，不写设备）。
   Future<void> checkFirmware() async {
     if (!isConnected) return;
@@ -1157,39 +1196,30 @@ class DeviceStore extends ChangeNotifier {
     fwError = null;
     notifyListeners();
     try {
-      if (activeCapabilities.hasDualChipOta &&
-          _wifiVersionCode == 0 &&
-          !isRecording &&
-          !_wifiSummaryProbed) {
+      if (activeCapabilities.hasWifiConfig && !_wifiSummaryProbed) {
         try {
-          final creds = await _gw.wifiCredentials();
+          final creds = await _gw.wifiCredentials(passive: true);
           if (epoch != _epoch) return;
           _wifiSummaryProbed = true;
           wifiSaved = creds.map((c) => SavedWifi(c.ssid)).toList();
-          await refreshFromDevice();
-          if (epoch != _epoch) return;
         } on CardException {
-          // 读取失败不阻断检查服务器最新版本
+          // 读取被动缓存失败不阻断检查服务器最新版本
         }
       }
       final results = await Future.wait([
-        _gateway
-            .otaInfo('main')
-            .catchError(
-              (Object _) =>
-                  const CardOtaInfo(version: '', versionCode: 0, url: ''),
-            ),
-        _gateway
-            .otaInfo('wifi')
-            .catchError(
-              (Object _) =>
-                  const CardOtaInfo(version: '', versionCode: 0, url: ''),
-            ),
+        _fetchOtaModule('main'),
+        _fetchOtaModule('wifi'),
       ]);
+      if (epoch != _epoch) return;
       _otaMainInfo = results[0];
       _otaWifiInfo = results[1];
+      _otaChecked = true;
       fwStage = FwStage.idle;
     } on CardException catch (e) {
+      if (epoch != _epoch) return;
+      _otaMainInfo = null;
+      _otaWifiInfo = null;
+      _otaChecked = false;
       fwError = e.message;
       fwStage = FwStage.failed;
     }
@@ -1331,6 +1361,7 @@ class DeviceStore extends ChangeNotifier {
     view = DeviceView.main;
     _otaMainInfo = null;
     _otaWifiInfo = null;
+    _otaChecked = true;
     notifyListeners();
   }
 
