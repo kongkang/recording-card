@@ -185,6 +185,35 @@ class OAuthClient {
     });
   }
 
+  /// 用微信一次性授权码换 token（后端扩展 grant：
+  /// `grant_type=urn:wainao:params:oauth:grant-type:wechat`）。
+  ///
+  /// 客户端只上送 `code`；后端拿 AppID/AppSecret 与微信交换 openid/unionid
+  /// 并签发本服务 token（客户端不持有 AppSecret）。`wechat_app_id` 仅在
+  /// 配置了合法 AppID 时上送，供后端在多微信应用场景下路由对应的 Secret。
+  Future<OAuthTokenResponse> exchangeWechatCodeForToken({
+    required String code,
+    String? lang,
+  }) {
+    final trimmedCode = code.trim();
+    if (trimmedCode.isEmpty) {
+      throw const OAuthServerException(
+        code: 'invalid_request',
+        message: '微信授权码缺失，请重新登录',
+      );
+    }
+    return _postToken({
+      'grant_type': OAuthConfig.wechatGrantType,
+      'client_id': _config.clientId,
+      'code': trimmedCode,
+      'app_type': OAuthConfig.wechatAppType,
+      if (_config.wechatScope.trim().isNotEmpty)
+        'scope': _config.wechatScope.trim(),
+      if (lang != null && lang.trim().isNotEmpty) 'lang': lang.trim(),
+      if (_config.isWechatConfigured) 'wechat_app_id': _config.wechatAppId,
+    });
+  }
+
   /// 撤销 token（RFC 7009，服务端通常恒返回 200）。
   ///
   /// 尽力而为：登出时即使失败也不该阻塞用户退出，调用方可吞掉异常。
@@ -341,6 +370,9 @@ class OAuthClient {
       case 'invalid_client':
       case 'unauthorized_client':
         return '登录服务配置有误';
+      case 'unsupported_grant_type':
+        // 后端环境未给该 client_id 放行微信扩展 grant 时兜底，不让英文透出。
+        return '当前客户端未开通微信登录';
       case 'access_denied':
         return '已取消登录';
       case 'invalid_request':

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 微信登录 Universal Link 回调（https://app.cn.reai.com/link/）；
+	     对应 AASA 见 docs/RELEASE.md「微信登录联调」节。
+	     前置：Apple Developer 后台对应 App ID 需开启 Associated Domains capability。 -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:app.cn.reai.com</string>
+	</array>
+</dict>
+</plist>

@@ -1,0 +1,9 @@
+// 微信开放平台移动应用 AppID 是公开客户端标识，不是 AppSecret。
+// AppSecret 只能配置在后端站点密钥，严禁写入此文件。
+//
+// 未获批微信 AppID 前保留占位 scheme，防止 Info.plist 的
+// $(WECHAT_APP_ID) 展开出空 <string></string>（App Store 上传报 ITMS-90158）。
+// 获批后改为 WECHAT_APP_ID=wx... 并同步构建参数 --dart-define=RC_WECHAT_APP_ID=wx...
+// —— 两处必须同值，否则 iOS 回调 scheme 与 SDK 注册的 AppID 不一致，授权回不来。
+// （Dart 侧 OAuthConfig.isWechatConfigured 会严格校验 wx 前缀，占位串会被判为未配置。）
+WECHAT_APP_ID=rc-wechat-disabled

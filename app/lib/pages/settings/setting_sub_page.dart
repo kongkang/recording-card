@@ -1323,7 +1323,9 @@ class _LoginAuthBodyState extends State<_LoginAuthBody> {
       setState(() => _statusMsg = '当前页面未连接鉴权服务');
       return;
     }
-    final err = await auth.signInWithOAuth(loginHint: provider);
+    final err = (provider == 'wechat' && auth.shouldShowWechatSignIn)
+        ? await auth.signInWithWechat()
+        : await auth.signInWithOAuth(loginHint: provider);
     if (!mounted) return;
     setState(() {
       _statusMsg = err ?? (auth.isSignedIn ? '外脑账号已授权' : '已取消授权');

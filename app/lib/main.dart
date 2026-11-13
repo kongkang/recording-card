@@ -185,8 +185,13 @@ class _HomeGateState extends State<_HomeGate> {
     await _auth.ready;
     if (_auth.isSignedIn) {
       unawaited(_discoverAndSyncModels());
+      // 已登录用户后台预热微信 SDK（决定设置页未来入口可用性），不阻塞启动。
+      unawaited(_auth.prewarmWechat());
     } else {
       unawaited(_modelManager.autoEnsureInstalled());
+      // 未登录：等预热完成拿到「是否安装微信」，登录页据此决定微信按钮显隐；
+      // 预热内部吞异常 + 5s 超时，不会卡住 Splash。
+      await _auth.prewarmWechat();
     }
     await _store.init();
     if (mounted) setState(() => _booted = true);
