@@ -170,6 +170,9 @@ class FakeCardGateway implements CardGateway {
   CardSnapshot? postMainOtaSnapshot;
   CardSnapshot? postWifiOtaSnapshot;
   int? lastStartDurationSecs;
+  bool? lastOtaWifiRestoreOpen;
+  int openWifiCalls = 0;
+  int closeWifiCalls = 0;
 
   @override
   Future<CardSnapshot> snapshot() async {
@@ -539,10 +542,22 @@ class FakeCardGateway implements CardGateway {
   }
 
   @override
-  Future<void> openWifi() async {}
+  Future<void> openWifi() async {
+    openWifiCalls++;
+    callLog.add('wifi.open');
+    if (current != null) {
+      current = _copySnapshot(current!, wifiOpen: true);
+    }
+  }
 
   @override
-  Future<void> closeWifi() async {}
+  Future<void> closeWifi() async {
+    closeWifiCalls++;
+    callLog.add('wifi.close');
+    if (current != null) {
+      current = _copySnapshot(current!, wifiOpen: false);
+    }
+  }
 
   @override
   Future<List<CardWifiCredential>> wifiCredentials() async => savedCredentials;
@@ -595,12 +610,33 @@ class FakeCardGateway implements CardGateway {
   }
 
   @override
-  Stream<CardProgress> otaWifi() async* {
+  Stream<CardProgress> otaWifi({bool? restoreWifiOpen}) async* {
     callLog.add('ota.wifi');
+    lastOtaWifiRestoreOpen = restoreWifiOpen;
+    final prevWifiOpen = current?.wifiOpen ?? false;
+    final targetWifiOpen = restoreWifiOpen ?? prevWifiOpen;
+    if (!prevWifiOpen) {
+      openWifiCalls++;
+      if (current != null) {
+        current = _copySnapshot(current!, wifiOpen: true);
+      }
+    }
     yield* _progress(wifiProgress);
-    if (failWifiOta != null) throw failWifiOta!;
-    if (postWifiOtaSnapshot != null) {
-      current = postWifiOtaSnapshot;
+    if (failWifiOta != null) {
+      if (current != null) {
+        current = _copySnapshot(current!, wifiOpen: targetWifiOpen);
+      }
+      if (!targetWifiOpen) {
+        closeWifiCalls++;
+      }
+      throw failWifiOta!;
+    }
+    final nextSnap = postWifiOtaSnapshot ?? current;
+    if (nextSnap != null) {
+      current = _copySnapshot(nextSnap, wifiOpen: targetWifiOpen);
+    }
+    if (!targetWifiOpen) {
+      closeWifiCalls++;
     }
   }
 

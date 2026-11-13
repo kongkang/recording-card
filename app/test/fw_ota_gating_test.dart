@@ -23,10 +23,11 @@ CardSnapshot _cardSnap({
   int fwVersionCode = 312,
   String wifiVersion = '0.1.4',
   int wifiVersionCode = 104,
+  bool wifiOpen = false,
 }) => CardSnapshot(
   batteryLevel: 88,
   isCharging: false,
-  wifiOpen: false,
+  wifiOpen: wifiOpen,
   recording: false,
   fwVersion: fwVersion,
   fwVersionCode: fwVersionCode,
@@ -357,5 +358,164 @@ void main() {
     });
     expect(wpa.secured, isTrue);
     expect(open.secured, isFalse);
+  });
+
+  testWidgets('⑥ Wi-Fi 初始关闭时升级：自动开启并在成功与失败后均恢复关闭', (tester) async {
+    final gw = FakeCardGateway(
+      initialSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.3',
+        wifiVersionCode: 103,
+        wifiOpen: false,
+      ),
+      devices: const [_card],
+      postWifiOtaSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.4',
+        wifiVersionCode: 104,
+        wifiOpen: true, // 即便升级中途曾打开，结束后也应回到 false
+      ),
+      mainOta: const CardOtaInfo(
+        version: '0.3.17',
+        versionCode: 317,
+        url: 'https://ota.invalid/main_317.zip',
+      ),
+      wifiOta: const CardOtaInfo(
+        version: '0.1.4',
+        versionCode: 104,
+        url: 'https://ota.invalid/wifi_104.bin',
+      ),
+      failWifiOta: const CardException(CardErrorKind.device, '下载超时'),
+      wifiProgress: const [
+        CardProgress(stage: 'wifi', percent: 40, text: 'Wi-Fi 模组写入中…'),
+      ],
+      progressDelay: Duration.zero,
+    );
+    final store = DeviceStore(gateway: gw);
+    addTearDown(store.dispose);
+    await store.restoreLink();
+    await store.checkFirmware();
+    expect(store.deviceWifiOpen, isFalse);
+
+    // 失败场景：自动开启过，失败退出前恢复关闭
+    await store.startFwUpdate();
+    expect(store.fwStage, FwStage.failed);
+    expect(gw.lastOtaWifiRestoreOpen, isFalse);
+    expect(gw.openWifiCalls, greaterThanOrEqualTo(1));
+    expect(gw.closeWifiCalls, greaterThanOrEqualTo(1));
+    expect(store.deviceWifiOpen, isFalse);
+
+    // 清除故障重试成功：结束后仍恢复为关闭
+    gw.failWifiOta = null;
+    await store.startFwUpdate();
+    expect(store.fwStage, FwStage.done);
+    expect(gw.lastOtaWifiRestoreOpen, isFalse);
+    expect(gw.openWifiCalls, greaterThanOrEqualTo(2));
+    expect(gw.closeWifiCalls, greaterThanOrEqualTo(2));
+    expect(store.deviceWifiOpen, isFalse);
+  });
+
+  testWidgets('⑦ Wi-Fi 初始开启时升级：单 Wi-Fi / 双模块 / 仅主控均恢复开启模式', (tester) async {
+    // (a) 双模块升级：Stage 1 主控 DFU 重启后 wifiOpen=false，Stage 2 仍按 priorWifiOpen=true 还原为开启
+    final dualGw = FakeCardGateway(
+      initialSnapshot: _cardSnap(
+        fwVersion: '0.3.12',
+        fwVersionCode: 312,
+        wifiVersion: '0.1.3',
+        wifiVersionCode: 103,
+        wifiOpen: true,
+      ),
+      devices: const [_card],
+      postMainOtaSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.3',
+        wifiVersionCode: 103,
+        wifiOpen: false, // 主控 DFU 重启后硬件默认关闭
+      ),
+      postWifiOtaSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.4',
+        wifiVersionCode: 104,
+        wifiOpen: false,
+      ),
+      clearAfterMainOta: true,
+      mainOta: const CardOtaInfo(
+        version: '0.3.17',
+        versionCode: 317,
+        url: 'https://ota.invalid/main_317.zip',
+      ),
+      wifiOta: const CardOtaInfo(
+        version: '0.1.4',
+        versionCode: 104,
+        url: 'https://ota.invalid/wifi_104.bin',
+      ),
+      progressDelay: Duration.zero,
+    );
+    final dualStore = DeviceStore(gateway: dualGw);
+    addTearDown(dualStore.dispose);
+    await dualStore.restoreLink();
+    await dualStore.checkFirmware();
+    expect(dualStore.deviceWifiOpen, isTrue);
+
+    final doneDual = dualStore.startFwUpdate();
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await doneDual;
+
+    expect(dualStore.fwStage, FwStage.done);
+    expect(dualGw.lastOtaWifiRestoreOpen, isTrue);
+    expect(dualStore.deviceWifiOpen, isTrue);
+
+    // (b) 仅主控升级且初始 Wi-Fi 开启：重连后自动恢复 openWifi
+    final mainOnlyGw = FakeCardGateway(
+      initialSnapshot: _cardSnap(
+        fwVersion: '0.3.12',
+        fwVersionCode: 312,
+        wifiVersion: '0.1.4',
+        wifiVersionCode: 104,
+        wifiOpen: true,
+      ),
+      devices: const [_card],
+      postMainOtaSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.4',
+        wifiVersionCode: 104,
+        wifiOpen: false,
+      ),
+      clearAfterMainOta: true,
+      mainOta: const CardOtaInfo(
+        version: '0.3.17',
+        versionCode: 317,
+        url: 'https://ota.invalid/main_317.zip',
+      ),
+      wifiOta: const CardOtaInfo(
+        version: '0.1.4',
+        versionCode: 104,
+        url: 'https://ota.invalid/wifi_104.bin',
+      ),
+      progressDelay: Duration.zero,
+    );
+    final mainOnlyStore = DeviceStore(gateway: mainOnlyGw);
+    addTearDown(mainOnlyStore.dispose);
+    await mainOnlyStore.restoreLink();
+    await mainOnlyStore.checkFirmware();
+    expect(mainOnlyStore.deviceWifiOpen, isTrue);
+
+    final doneMain = mainOnlyStore.startFwUpdate();
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await doneMain;
+
+    expect(mainOnlyStore.fwStage, FwStage.done);
+    expect(mainOnlyGw.callLog, contains('wifi.open'));
+    expect(mainOnlyGw.callLog, isNot(contains('ota.wifi')));
+    expect(mainOnlyStore.deviceWifiOpen, isTrue);
   });
 }

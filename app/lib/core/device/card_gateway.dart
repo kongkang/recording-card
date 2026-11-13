@@ -685,7 +685,7 @@ abstract class CardGateway {
 
   Future<CardOtaInfo> otaInfo(String module); // main | wifi
   Stream<CardProgress> otaMain();
-  Stream<CardProgress> otaWifi();
+  Stream<CardProgress> otaWifi({bool? restoreWifiOpen});
 
   Future<void> syncTime();
 
@@ -1265,7 +1265,11 @@ class RealCardGateway implements CardGateway {
   Stream<CardProgress> otaMain() => _progress('ota.main', null, null);
 
   @override
-  Stream<CardProgress> otaWifi() => _progress('ota.wifi', null, null);
+  Stream<CardProgress> otaWifi({bool? restoreWifiOpen}) => _progress(
+    'ota.wifi',
+    restoreWifiOpen == null ? null : {'restoreWifiOpen': restoreWifiOpen},
+    null,
+  );
 
   @override
   Future<void> syncTime() => _once('time.sync');
@@ -1354,7 +1358,8 @@ class UnsupportedCardGateway implements CardGateway {
   @override
   Stream<CardProgress> otaMain() => Stream.error(CardException.unavailable());
   @override
-  Stream<CardProgress> otaWifi() => Stream.error(CardException.unavailable());
+  Stream<CardProgress> otaWifi({bool? restoreWifiOpen}) =>
+      Stream.error(CardException.unavailable());
   @override
   Future<void> syncTime() async => _fail();
   @override
@@ -1498,7 +1503,8 @@ class ActivityGateway implements CardGateway {
   Stream<CardProgress> otaMain() => _pipe(_inner.otaMain());
 
   @override
-  Stream<CardProgress> otaWifi() => _pipe(_inner.otaWifi());
+  Stream<CardProgress> otaWifi({bool? restoreWifiOpen}) =>
+      _pipe(_inner.otaWifi(restoreWifiOpen: restoreWifiOpen));
 
   @override
   Future<void> syncTime() => _run(_inner.syncTime);

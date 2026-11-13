@@ -307,6 +307,9 @@ class DeviceStore extends ChangeNotifier {
     _wifiVersion = '';
     _fwVersionCode = 0;
     _wifiVersionCode = 0;
+    _otaMainInfo = null;
+    _otaWifiInfo = null;
+    _wifiSummaryProbed = false;
     _storageFreeMb = null;
     _storageTotalMb = null;
     deviceWifiOpen = null;
@@ -993,20 +996,29 @@ class DeviceStore extends ChangeNotifier {
     return false;
   }
 
+  bool _wifiSummaryProbed = false;
+
   /// 预取弹层首屏要展示的概要信息（Wi-Fi 已配置数量、固件是否有更新）。
   ///
   /// 不做的话，用户不点进二级页就永远看到"0 个网络 / 已是最新"——那是假信息。
   Future<void> prefetchSummaryInfo() async {
     if (!isConnected) return;
     final epoch = _epoch;
-    if (activeCapabilities.hasWifiConfig && wifiSaved.isEmpty) {
+    if (activeCapabilities.hasWifiConfig && !_wifiSummaryProbed) {
       try {
         final creds = await _gw.wifiCredentials();
         if (epoch != _epoch) return;
+        _wifiSummaryProbed = true;
         wifiSaved = creds.map((c) => SavedWifi(c.ssid)).toList();
+        if (activeCapabilities.hasDualChipOta &&
+            _wifiVersionCode == 0 &&
+            !isRecording) {
+          await refreshFromDevice();
+          if (epoch != _epoch) return;
+        }
         notifyListeners();
       } on CardException {
-        // Wi-Fi 模块未开启/不支持时保持空，界面显示"未配置"
+        // Wi-Fi 模块未开启/不支持或录音中时保持原状
       }
     }
     if (activeCapabilities.hasDualChipOta &&
@@ -1140,10 +1152,26 @@ class DeviceStore extends ChangeNotifier {
   /// 查服务器最新版本（只读，不写设备）。
   Future<void> checkFirmware() async {
     if (!isConnected) return;
+    final epoch = _epoch;
     fwStage = FwStage.checking;
     fwError = null;
     notifyListeners();
     try {
+      if (activeCapabilities.hasDualChipOta &&
+          _wifiVersionCode == 0 &&
+          !isRecording &&
+          !_wifiSummaryProbed) {
+        try {
+          final creds = await _gw.wifiCredentials();
+          if (epoch != _epoch) return;
+          _wifiSummaryProbed = true;
+          wifiSaved = creds.map((c) => SavedWifi(c.ssid)).toList();
+          await refreshFromDevice();
+          if (epoch != _epoch) return;
+        } on CardException {
+          // 读取失败不阻断检查服务器最新版本
+        }
+      }
       final results = await Future.wait([
         _gateway
             .otaInfo('main')
@@ -1200,6 +1228,10 @@ class DeviceStore extends ChangeNotifier {
       notifyListeners();
       return;
     }
+
+    // 记录升级前设备端 Wi-Fi 开关模式：Stage 1 DFU 重启会把 nRF 的 wifiOpen 复位，
+    // 升级结束后按此模式精准还原，不强制关掉原本就开着的 Wi-Fi。
+    final priorWifiOpen = deviceWifiOpen == true;
 
     fwUpdating = true;
     fwError = null;
@@ -1259,6 +1291,14 @@ class DeviceStore extends ChangeNotifier {
       }
       await refreshFromDevice();
       doWifi = doWifi && wifiNeedsUpdate;
+      if (!doWifi && priorWifiOpen && deviceWifiOpen != true) {
+        try {
+          await _gw.openWifi();
+          await refreshFromDevice();
+        } on CardException {
+          // 恢复开启失败不覆盖已完成的主控升级结果
+        }
+      }
     }
 
     // 阶段 2（或独立阶段 1）：Wi-Fi 模组
@@ -1269,7 +1309,7 @@ class DeviceStore extends ChangeNotifier {
       fwStateText = '正在检查 Wi-Fi 模块…';
       notifyListeners();
       try {
-        await for (final p in _gw.otaWifi()) {
+        await for (final p in _gw.otaWifi(restoreWifiOpen: priorWifiOpen)) {
           fwProgress = doMain
               ? 50 + p.percent.clamp(0, 100) * 0.5
               : p.percent.clamp(0, 100) * 1.0;
