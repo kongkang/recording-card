@@ -267,13 +267,16 @@ class AuthService extends ChangeNotifier {
       _lastError = null;
       return null;
     } on OAuthCancelledException {
-      // 用户主动取消：不当错误提示，UI 静默留在登录页。
+      // 用户主动取消：不当错误提示，UI 静默留在登录页并清空旧错误。
+      _lastError = null;
       return null;
     } on OAuthException catch (e) {
+      if (epoch != _authFlowEpoch) return null;
       final message = e.message;
       _lastError = message;
       return message;
     } catch (e) {
+      if (epoch != _authFlowEpoch) return null;
       // 兜底：不吞异常语义，给用户一个明确文案，细节只进日志。
       debugPrint('[AuthService] 登录异常: $e');
       const message = '登录失败，请稍后重试';
@@ -296,7 +299,7 @@ class AuthService extends ChangeNotifier {
   /// 返回 null 表示成功或用户取消（取消静默、并清空旧错误文案）；
   /// 非 null 是可直接展示的错误文案。
   Future<String?> signInWithWechat() async {
-    if (_busy) return _fail('登录正在进行中，请稍候');
+    if (_busy) return '登录正在进行中，请稍候';
     final blocked = wechatSignInBlockedReason;
     if (blocked != null) return _fail(blocked);
 
@@ -315,8 +318,10 @@ class AuthService extends ChangeNotifier {
         lang: authorization.lang,
       );
     } on WechatLoginException catch (e) {
+      if (epoch != _authFlowEpoch) return null;
       return _failWechat(e);
     } catch (e) {
+      if (epoch != _authFlowEpoch) return null;
       debugPrint('[AuthService] 微信登录异常: $e');
       const message = '登录失败，请稍后重试';
       _lastError = message;
@@ -336,7 +341,7 @@ class AuthService extends ChangeNotifier {
     required String code,
     String? lang,
   }) async {
-    if (_busy) return _fail('登录正在进行中，请稍候');
+    if (_busy) return '登录正在进行中，请稍候';
     final blocked = wechatSignInBlockedReason;
     if (blocked != null) return _fail(blocked);
 
@@ -383,7 +388,14 @@ class AuthService extends ChangeNotifier {
       _lastError = null;
       return null;
     } on OAuthException catch (e) {
+      if (epoch != _authFlowEpoch) return null;
       final message = e.message;
+      _lastError = message;
+      return message;
+    } catch (e) {
+      if (epoch != _authFlowEpoch) return null;
+      debugPrint('[AuthService] 微信登录换票异常: $e');
+      const message = '登录失败，请稍后重试';
       _lastError = message;
       return message;
     }
@@ -410,7 +422,6 @@ class AuthService extends ChangeNotifier {
     switch (e.kind) {
       case WechatLoginFailureKind.cancelled:
         _lastError = null;
-        _notify();
         return null;
       case WechatLoginFailureKind.notConfigured:
         return _fail('当前未配置微信登录，请使用上方方式登录');
@@ -464,6 +475,7 @@ class AuthService extends ChangeNotifier {
     _authFlowEpoch++;
     _busy = false;
     _activeChannel = AuthChannel.none;
+    _wechat.cancelPendingAuthorization();
     _dropSessionLocally();
     unawaited(_revokeAndClearRemote());
   }
@@ -486,6 +498,7 @@ class AuthService extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _wechat.cancelPendingAuthorization();
     _apiClient?.close();
     _apiClient = null;
     if (_ownsOAuthClient) _client.close();

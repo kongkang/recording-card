@@ -167,6 +167,7 @@ class _FakeWechatGateway implements WechatLoginGateway {
 
   int initializeCalls = 0;
   int authorizeCalls = 0;
+  int cancelCalls = 0;
 
   /// authorize 的行为；缺省返回固定 code。
   final Future<WechatAuthorizationCode> Function(
@@ -191,6 +192,11 @@ class _FakeWechatGateway implements WechatLoginGateway {
       );
     }
     return handler(this);
+  }
+
+  @override
+  void cancelPendingAuthorization() {
+    cancelCalls++;
   }
 }
 
@@ -655,6 +661,103 @@ void main() {
       await envOff.auth.prewarmWechat();
       expect(off.initializeCalls, 0);
     });
+
+    test('真实 WechatLoginService 挂起期间登出 → 立即重置单飞锁，再次登录可正常完成', () async {
+      final sdk = _TestWechatSdkAdapter();
+      final service = WechatLoginService(
+        sdk: sdk,
+        wechatAppId: 'wxtest1234567890abcd',
+        timeout: const Duration(minutes: 2),
+      );
+      final server = _FakeAuthServer();
+      final secure = InMemorySecureStore();
+      final config = kStubOAuthConfig.copyWith(
+        wechatAppId: 'wxtest1234567890abcd',
+      );
+      final auth = AuthService(
+        oauthConfig: config,
+        oauthClient: OAuthClient(config: config, httpClient: server.client),
+        launcher: _EchoLauncher(),
+        wechatGateway: service,
+        secureStore: secure,
+      );
+      addTearDown(auth.dispose);
+
+      final first = auth.signInWithWechat();
+      await Future<void>.delayed(Duration.zero);
+      expect(auth.isBusy, isTrue);
+      expect(sdk.listeners, hasLength(1));
+
+      auth.signOut();
+      expect(await first, isNull);
+      expect(auth.isBusy, isFalse);
+      expect(sdk.listeners, isEmpty);
+
+      // 不等 2 分钟超时，立即发起第二次微信登录必须能拉起并成功建会话
+      final second = auth.signInWithWechat();
+      await Future<void>.delayed(Duration.zero);
+      expect(sdk.listeners, hasLength(1));
+      sdk.emit(
+        WechatSdkAuthResponse(
+          errorCode: 0,
+          code: 'wx-code-2',
+          state: sdk.lastState,
+          lang: 'zh_CN',
+        ),
+      );
+      expect(await second, isNull);
+      expect(auth.isSignedIn, isTrue);
+      expect(auth.session!.account, '康康');
+    });
+
+    test('浏览器登录在途时误触微信登录 → 返回提示但不写脏 lastError；随后取消浏览器登录仍保持静默', () async {
+      final server = _FakeAuthServer();
+      final launcher = _EchoLauncher(
+        cancelled: true,
+        launchDelay: const Duration(milliseconds: 20),
+      );
+      final config = kStubOAuthConfig.copyWith(
+        wechatAppId: 'wxtest1234567890abcd',
+      );
+      final auth = AuthService(
+        oauthConfig: config,
+        oauthClient: OAuthClient(config: config, httpClient: server.client),
+        launcher: launcher,
+        wechatGateway: _FakeWechatGateway(),
+        secureStore: InMemorySecureStore(),
+      );
+      addTearDown(auth.dispose);
+
+      final oauthFuture = auth.signInWithOAuth();
+      await Future<void>.delayed(Duration.zero);
+      expect(auth.isBusy, isTrue);
+
+      expect(await auth.signInWithWechat(), '登录正在进行中，请稍候');
+      expect(auth.lastError, isNull, reason: '在途并发拦截不得写脏 lastError');
+
+      expect(await oauthFuture, isNull);
+      expect(auth.lastError, isNull);
+      expect(auth.isBusy, isFalse);
+    });
+
+    test('挂起流程在 signOut 之后抛错 → 旧代次异常被忽略，不写脏 lastError', () async {
+      final pending = Completer<WechatAuthorizationCode>();
+      final env = _buildWechatAuth(
+        wechatGateway: _FakeWechatGateway(onAuthorize: (_) => pending.future),
+      );
+      addTearDown(env.auth.dispose);
+
+      final inFlight = env.auth.signInWithWechat();
+      await Future<void>.delayed(Duration.zero);
+
+      env.auth.signOut();
+      expect(env.wechat.cancelCalls, 1);
+      pending.completeError(const WechatLoginException(WechatLoginFailureKind.timedOut));
+
+      expect(await inFlight, isNull);
+      expect(env.auth.lastError, isNull, reason: '旧代次超时不得污染已登出后的 lastError');
+      expect(env.auth.isSignedIn, isFalse);
+    });
   });
 
   group('登录页（微信入口显隐与并发）', () {
@@ -843,5 +946,45 @@ class _GateHarnessState extends State<_GateHarness> {
               onSignedIn: () => widget.onSignedIn?.call(),
             ),
     );
+  }
+}
+
+class _TestWechatSdkAdapter implements WechatSdkAdapter {
+  String? lastState;
+  final List<void Function(WechatSdkAuthResponse)> listeners = [];
+
+  void emit(WechatSdkAuthResponse response) {
+    for (final listener in listeners.toList()) {
+      listener(response);
+    }
+  }
+
+  @override
+  Future<bool> registerApi({
+    required String appId,
+    required String universalLink,
+  }) async =>
+      true;
+
+  @override
+  Future<bool> get isInstalled async => true;
+
+  @override
+  Future<bool> requestAuth({
+    required String scope,
+    required String state,
+  }) async {
+    lastState = state;
+    return true;
+  }
+
+  @override
+  void addResponseListener(void Function(WechatSdkAuthResponse) listener) {
+    listeners.add(listener);
+  }
+
+  @override
+  void removeResponseListener(void Function(WechatSdkAuthResponse) listener) {
+    listeners.remove(listener);
   }
 }

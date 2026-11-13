@@ -67,6 +67,9 @@ abstract interface class WechatLoginGateway {
 
   /// 拉起微信授权，拿到一次性 `code`；取消抛 [WechatLoginFailureKind.cancelled]。
   Future<WechatAuthorizationCode> authorize();
+
+  /// 中止当前挂起的微信授权等待（如登出或销毁时复位单飞锁与回调监听）。
+  void cancelPendingAuthorization();
 }
 
 abstract interface class WechatSdkAdapter {
@@ -168,6 +171,7 @@ class WechatLoginService implements WechatLoginGateway {
   bool _registered = false;
   bool _authorizing = false;
   bool? _cachedIsInstalled;
+  Completer<WechatAuthorizationCode>? _pendingCompleter;
 
   WechatLoginService({
     WechatSdkAdapter? sdk,
@@ -266,6 +270,7 @@ class WechatLoginService implements WechatLoginGateway {
 
       final state = _stateGenerator();
       final completer = Completer<WechatAuthorizationCode>();
+      _pendingCompleter = completer;
 
       void listener(WechatSdkAuthResponse response) {
         if (completer.isCompleted) return;
@@ -316,10 +321,21 @@ class WechatLoginService implements WechatLoginGateway {
               throw const WechatLoginException(WechatLoginFailureKind.timedOut),
         );
       } finally {
+        if (identical(_pendingCompleter, completer)) _pendingCompleter = null;
         _sdk.removeResponseListener(listener);
       }
     } finally {
       _authorizing = false;
+    }
+  }
+
+  @override
+  void cancelPendingAuthorization() {
+    final pending = _pendingCompleter;
+    if (pending != null && !pending.isCompleted) {
+      pending.completeError(
+        const WechatLoginException(WechatLoginFailureKind.cancelled),
+      );
     }
   }
 

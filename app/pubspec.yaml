@@ -67,7 +67,7 @@ fluwx:
 
 # pdf 3.12.0 把 archive 钉在 <4.1.0，而 image 4.11 的 PNG 解码依赖 archive 4.1 的
 # decodeLazy；4.10.2 的 PNG 解码走 decodeBytes，三者可共存（已实测 PDF 组装通过）。
-# 升 pdf 到 3.13 需 Dart >=3.12，当前 Flutter 3.38.5 / Dart 3.10.4 升不上去。
+# 锁 4.10.2 以满足 pdf 3.12.0 对 archive <4.1.0 的约束。
 dependency_overrides:
   image: 4.10.2
 

@@ -214,6 +214,34 @@ void main() {
       sdk.emit(_okResponse(sdk.lastState!));
       expect((await first).code, 'wx-code-1');
     });
+
+    test('cancelPendingAuthorization 中止挂起授权、摘除监听并立即释放单飞锁供下次重试', () async {
+      final sdk = _FakeWechatSdk();
+      final service = WechatLoginService(
+        sdk: sdk,
+        wechatAppId: 'wx1234567890abcdef',
+        timeout: const Duration(minutes: 2),
+      );
+
+      final first = service.authorize();
+      await Future<void>.delayed(Duration.zero);
+      expect(sdk.listeners, hasLength(1));
+
+      service.cancelPendingAuthorization();
+      await expectLater(
+        first,
+        throwsA(isA<WechatLoginException>().having(
+          (e) => e.kind, 'kind', WechatLoginFailureKind.cancelled)),
+      );
+      expect(sdk.listeners, isEmpty, reason: '中止后必须立即摘掉响应监听');
+
+      // 单飞锁必须已释放，无需等 2 分钟超时即可发起新一轮授权
+      final second = service.authorize();
+      await Future<void>.delayed(Duration.zero);
+      expect(sdk.listeners, hasLength(1));
+      sdk.emit(_okResponse(sdk.lastState!));
+      expect((await second).code, 'wx-code-1');
+    });
   });
 
   group('安装探测与注册', () {
