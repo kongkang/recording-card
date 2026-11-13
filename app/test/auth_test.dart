@@ -7,6 +7,7 @@
 // - state 不匹配 / 用户取消 / 组件不可用时都能如实反馈，且不产生会话。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -21,6 +22,7 @@ import 'package:recording_card/pages/app_shell.dart';
 import 'package:recording_card/pages/login_page.dart';
 import 'package:recording_card/services/auth/auth.dart';
 import 'package:recording_card/services/auth_service.dart';
+import 'package:recording_card/services/wechat_login/wechat_login_service.dart';
 
 import 'support/model_stub.dart';
 
@@ -66,14 +68,26 @@ class _EchoLauncher implements WebAuthLauncher {
 
 /// 假服务端：token 端点 + profile 端点。返回的请求都留在 [requests] 里供断言。
 class _FakeAuthServer {
-  _FakeAuthServer({this.profileStatus = 200});
+  _FakeAuthServer({this.profileStatus = 200, this.wechatTokenError});
 
   final int profileStatus;
+
+  /// 非空时，微信扩展 grant 的 /oauth/token 请求回 400 {error: <该值>}。
+  final String? wechatTokenError;
+
   final List<http.Request> requests = [];
 
   MockClient get client => MockClient((request) async {
     requests.add(request);
     if (request.url.path.endsWith('/oauth/token')) {
+      final body = Uri.splitQueryString(request.body);
+      final isWechatGrant = body['grant_type'] == OAuthConfig.wechatGrantType;
+      if (isWechatGrant && wechatTokenError != null) {
+        return http.Response(
+          '{"error":"$wechatTokenError","error_description":"not enabled"}',
+          400,
+        );
+      }
       return _json({
         'access_token': 'access-1',
         'refresh_token': 'refresh-1',
@@ -133,6 +147,83 @@ _buildAuth({
     secureStore: secure,
   );
   return (auth: auth, server: server, launcher: launcher, secure: secure);
+}
+
+/// 微信网关替身：authorize 行为可注入（挂起 / 抛错 / 返回 code）。
+class _FakeWechatGateway implements WechatLoginGateway {
+  _FakeWechatGateway({
+    bool configured = true,
+    bool? installed,
+    this.onAuthorize,
+  })  : isConfigured = configured,
+        cachedIsInstalled = installed;
+
+  @override
+  final bool isConfigured;
+
+  /// 三态安装缓存（null = 未探测）。
+  @override
+  bool? cachedIsInstalled;
+
+  int initializeCalls = 0;
+  int authorizeCalls = 0;
+
+  /// authorize 的行为；缺省返回固定 code。
+  final Future<WechatAuthorizationCode> Function(
+      _FakeWechatGateway gateway)? onAuthorize;
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  Future<void> initialize() async {
+    initializeCalls++;
+    cachedIsInstalled ??= true;
+  }
+
+  @override
+  Future<WechatAuthorizationCode> authorize() {
+    authorizeCalls++;
+    final handler = onAuthorize;
+    if (handler == null) {
+      return Future.value(
+        const WechatAuthorizationCode(code: 'wx-code-1', lang: 'zh_CN'),
+      );
+    }
+    return handler(this);
+  }
+}
+
+/// 组装「微信已配置」的 AuthService（网络 / 浏览器 / 微信网关全部替身）。
+({AuthService auth, _FakeAuthServer server, _EchoLauncher launcher, InMemorySecureStore secure, _FakeWechatGateway wechat})
+_buildWechatAuth({
+  String? wechatTokenError,
+  _FakeWechatGateway? wechatGateway,
+  String oauthClientId = 'test-client',
+}) {
+  final server = _FakeAuthServer(wechatTokenError: wechatTokenError);
+  final launcher = _EchoLauncher();
+  final secure = InMemorySecureStore();
+  final config = oauthClientId == 'test-client'
+      ? kStubOAuthConfig.copyWith(wechatAppId: 'wxtest1234567890abcd')
+      : kStubOAuthConfig.copyWith(
+          clientId: oauthClientId, wechatAppId: 'wxtest1234567890abcd');
+  final client = OAuthClient(config: config, httpClient: server.client);
+  final wechat = wechatGateway ?? _FakeWechatGateway();
+  final auth = AuthService(
+    oauthConfig: config,
+    oauthClient: client,
+    launcher: launcher,
+    wechatGateway: wechat,
+    secureStore: secure,
+  );
+  return (
+    auth: auth,
+    server: server,
+    launcher: launcher,
+    secure: secure,
+    wechat: wechat,
+  );
 }
 
 void main() {
@@ -415,6 +506,309 @@ void main() {
       expect(find.byKey(const Key('login-error')), findsOneWidget);
       expect(env.auth.isSignedIn, isFalse);
       expect(find.byType(AppShell), findsNothing);
+    });
+  });
+
+  group('AuthService（微信原生登录链路）', () {
+    test('成功：authorize → 微信扩展 grant 换 token → 拉 profile → 落库 → 建会话', () async {
+      final env = _buildWechatAuth();
+      addTearDown(env.auth.dispose);
+
+      final error = await env.auth.signInWithWechat();
+      expect(error, isNull);
+      expect(env.auth.isSignedIn, isTrue);
+      expect(env.auth.session!.account, '康康');
+
+      final tokenReq = env.server.requests.firstWhere(
+        (r) => r.url.path.endsWith('/oauth/token'),
+      );
+      final body = Uri.splitQueryString(tokenReq.body);
+      expect(body['grant_type'], OAuthConfig.wechatGrantType);
+      expect(body['client_id'], 'test-client');
+      expect(body['code'], 'wx-code-1');
+      expect(body['app_type'], 'app');
+      expect(body['scope'], 'mobile:full profile:read');
+      expect(body['lang'], 'zh_CN');
+      expect(body['wechat_app_id'], 'wxtest1234567890abcd',
+          reason: '多微信应用路由字段：配置了合法 AppID 必须上送');
+      expect(env.secure.snapshot['rc_oauth_token_bundle'], contains('access-1'));
+    });
+
+    test('用户在微信内取消 → 返回 null、无会话、无错误文案（静默）', () async {
+      final env = _buildWechatAuth(
+        wechatGateway: _FakeWechatGateway(
+          onAuthorize: (_) =>
+              throw const WechatLoginException(WechatLoginFailureKind.cancelled),
+        ),
+      );
+      addTearDown(env.auth.dispose);
+
+      expect(await env.auth.signInWithWechat(), isNull);
+      expect(env.auth.isSignedIn, isFalse);
+      expect(env.auth.lastError, isNull);
+      expect(env.auth.isBusy, isFalse);
+      expect(env.auth.activeChannel, AuthChannel.none);
+    });
+
+    test('微信拒绝（-4）→ 明确中文文案，不建会话', () async {
+      final env = _buildWechatAuth(
+        wechatGateway: _FakeWechatGateway(
+          onAuthorize: (_) =>
+              throw const WechatLoginException(WechatLoginFailureKind.denied),
+        ),
+      );
+      addTearDown(env.auth.dispose);
+
+      expect(await env.auth.signInWithWechat(), '微信授权已拒绝，请重试或使用上方方式登录');
+      expect(env.auth.isSignedIn, isFalse);
+    });
+
+    test('未安装微信 → 「未检测到微信」文案（不说「请先安装微信」）', () async {
+      final env = _buildWechatAuth(
+        wechatGateway: _FakeWechatGateway(
+          onAuthorize: (_) => throw const WechatLoginException(
+              WechatLoginFailureKind.notInstalled),
+        ),
+      );
+      addTearDown(env.auth.dispose);
+
+      expect(await env.auth.signInWithWechat(), '未检测到微信，请使用上方方式登录');
+    });
+
+    test('后端未放行微信 grant（unsupported_grant_type）→ 中文兜底文案', () async {
+      final env = _buildWechatAuth(wechatTokenError: 'unsupported_grant_type');
+      addTearDown(env.auth.dispose);
+
+      expect(await env.auth.signInWithWechat(), '当前客户端未开通微信登录');
+      expect(env.auth.isSignedIn, isFalse);
+    });
+
+    test('authorize 挂起期间登出 → 迟到 code 被代次拦截，不换 token、不复活会话', () async {
+      final pending = Completer<WechatAuthorizationCode>();
+      final env = _buildWechatAuth(
+        wechatGateway: _FakeWechatGateway(onAuthorize: (_) => pending.future),
+      );
+      addTearDown(env.auth.dispose);
+
+      final inFlight = env.auth.signInWithWechat();
+      await Future<void>.delayed(Duration.zero);
+      expect(env.auth.isBusy, isTrue);
+
+      env.auth.signOut();
+      pending.complete(
+        const WechatAuthorizationCode(code: 'late-code', lang: 'zh_CN'),
+      );
+
+      expect(await inFlight, isNull);
+      expect(env.auth.isSignedIn, isFalse);
+      expect(
+        env.server.requests.any((r) => r.url.path.endsWith('/oauth/token')),
+        isFalse,
+        reason: '登出后到期的授权码不得再去换 token',
+      );
+    });
+
+    test('微信授权在途时发起浏览器登录 → 被统一 busy 拒绝（防双通道并发）', () async {
+      final pending = Completer<WechatAuthorizationCode>();
+      final env = _buildWechatAuth(
+        wechatGateway: _FakeWechatGateway(onAuthorize: (_) => pending.future),
+      );
+      addTearDown(env.auth.dispose);
+
+      final inFlight = env.auth.signInWithWechat();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(await env.auth.signInWithOAuth(), '登录正在进行中，请稍候');
+      expect(env.launcher.lastAuthorizeUrl, isNull, reason: '不得拉起浏览器授权');
+      expect(env.auth.activeChannel, AuthChannel.wechat);
+
+      pending.complete(
+        const WechatAuthorizationCode(code: 'wx-code-1', lang: 'zh_CN'),
+      );
+      expect(await inFlight, isNull);
+      expect(env.auth.isSignedIn, isTrue);
+    });
+
+    test('OAuth 服务整体未配置（client id 空）→ 微信入口也被连坐禁用', () async {
+      final env = _buildWechatAuth(oauthClientId: '');
+      addTearDown(env.auth.dispose);
+
+      expect(env.auth.signInBlockedReason, '未配置登录服务，暂时无法登录');
+      expect(env.auth.wechatSignInBlockedReason, '未配置登录服务，暂时无法登录');
+      expect(await env.auth.signInWithWechat(), '未配置登录服务，暂时无法登录');
+    });
+
+    test('prewarmWechat：预热调 gateway.initialize 并刷新显隐依据，异常不外泄', () async {
+      final gateway = _FakeWechatGateway(installed: false);
+      final env = _buildWechatAuth(wechatGateway: gateway);
+      addTearDown(env.auth.dispose);
+
+      await env.auth.prewarmWechat();
+      expect(gateway.initializeCalls, 1);
+      expect(env.auth.shouldShowWechatSignIn, isFalse,
+          reason: '明确未装微信 → 登录页隐藏微信按钮');
+
+      // 未配置的网关：预热 no-op，不触达 SDK
+      final off = _FakeWechatGateway(configured: false);
+      final envOff = _buildWechatAuth(wechatGateway: off);
+      addTearDown(envOff.auth.dispose);
+      await envOff.auth.prewarmWechat();
+      expect(off.initializeCalls, 0);
+    });
+  });
+
+  group('登录页（微信入口显隐与并发）', () {
+    Future<void> pumpLogin(
+      WidgetTester tester,
+      AuthService auth, {
+      VoidCallback? onSignedIn,
+    }) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(home: _GateHarness(auth: auth, onSignedIn: onSignedIn)),
+      );
+      await tester.pump();
+    }
+
+    testWidgets('默认构建（未配置微信 AppID）→ 微信按钮隐藏，底部文案不提微信', (tester) async {
+      final env = _buildAuth(); // 未注入微信网关，编译默认 AppID 为空
+      addTearDown(env.auth.dispose);
+      await pumpLogin(tester, env.auth);
+
+      expect(find.byKey(const Key('login-wechat')), findsNothing);
+      expect(
+        find.text('登录将在系统浏览器中完成，App 不会获取你的密码。'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('微信已配置（缓存未探测）→ 按钮可见，底部文案含微信', (tester) async {
+      final env = _buildWechatAuth();
+      addTearDown(env.auth.dispose);
+      await pumpLogin(tester, env.auth);
+
+      expect(find.byKey(const Key('login-wechat')), findsOneWidget);
+      expect(
+        find.text('授权将在系统浏览器或微信中完成，App 不会获取你的密码。'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('明确未安装微信（缓存 false）→ 按钮隐藏（App Store 4.2.3）', (tester) async {
+      final env = _buildWechatAuth(
+        wechatGateway: _FakeWechatGateway(installed: false),
+      );
+      addTearDown(env.auth.dispose);
+      await pumpLogin(tester, env.auth);
+
+      expect(find.byKey(const Key('login-wechat')), findsNothing);
+      expect(
+        find.text('登录将在系统浏览器中完成，App 不会获取你的密码。'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('登录服务关闭（client id 空）→ 浏览器与微信按钮双双禁用', (tester) async {
+      final env = _buildWechatAuth(oauthClientId: '');
+      addTearDown(env.auth.dispose);
+      await pumpLogin(tester, env.auth);
+
+      expect(
+        tester.widget<FilledButton>(find.byKey(const Key('login-submit'))).onPressed,
+        isNull,
+      );
+      final wechat = find.byKey(const Key('login-wechat'));
+      expect(wechat, findsOneWidget, reason: '微信网关本身已配置 → 按钮可见但禁用');
+      expect(
+        tester.widget<OutlinedButton>(wechat).onPressed,
+        isNull,
+        reason: '换 token 走同一端点/client_id，OAuth 未配置必须连坐禁用',
+      );
+      expect(find.byKey(const Key('login-blocked')), findsOneWidget);
+    });
+
+    testWidgets('微信授权在途 → 微信按钮转圈、浏览器按钮禁用、回车不并发拉浏览器', (tester) async {
+      final pending = Completer<WechatAuthorizationCode>();
+      final env = _buildWechatAuth(
+        wechatGateway: _FakeWechatGateway(onAuthorize: (_) => pending.future),
+      );
+      addTearDown(env.auth.dispose);
+      await pumpLogin(tester, env.auth);
+
+      await tester.tap(find.byKey(const Key('login-wechat')));
+      await tester.pump();
+
+      expect(find.byKey(const Key('login-wechat-busy')), findsOneWidget);
+      expect(
+        tester.widget<FilledButton>(find.byKey(const Key('login-submit'))).onPressed,
+        isNull,
+        reason: '微信授权期间浏览器登录必须禁用',
+      );
+
+      // 账号框回车（旧路径的并发入口）也不得拉起浏览器
+      await tester.enterText(find.byKey(const Key('login-account')), 'k@example.com');
+      tester.widget<TextField>(find.byKey(const Key('login-account')))
+          .onSubmitted!('k@example.com');
+      await tester.pump();
+      expect(env.launcher.lastAuthorizeUrl, isNull);
+
+      pending.complete(
+        const WechatAuthorizationCode(code: 'wx-code-1', lang: 'zh_CN'),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(env.auth.isSignedIn, isTrue);
+      expect(find.byType(AppShell), findsOneWidget);
+    });
+
+    testWidgets('微信登录成功 → 进入应用外壳（onSignedIn 以会话建立为准）', (tester) async {
+      final env = _buildWechatAuth();
+      addTearDown(env.auth.dispose);
+      var signedIn = 0;
+      await pumpLogin(tester, env.auth, onSignedIn: () => signedIn++);
+
+      await tester.tap(find.byKey(const Key('login-wechat')));
+      await tester.pump();
+      await tester.pump();
+
+      expect(env.auth.isSignedIn, isTrue);
+      expect(signedIn, 1);
+      expect(find.byType(AppShell), findsOneWidget);
+    });
+
+    testWidgets('先报错再取消：错误文案展示后取消登录 → 旧错清空、按钮恢复可点', (tester) async {
+      var call = 0;
+      final env = _buildWechatAuth(
+        wechatGateway: _FakeWechatGateway(onAuthorize: (_) {
+          call++;
+          if (call == 1) {
+            throw const WechatLoginException(WechatLoginFailureKind.denied);
+          }
+          throw const WechatLoginException(WechatLoginFailureKind.cancelled);
+        }),
+      );
+      addTearDown(env.auth.dispose);
+      await pumpLogin(tester, env.auth);
+
+      // 第一发：拒绝 → 显示错误
+      await tester.tap(find.byKey(const Key('login-wechat')));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const Key('login-error')), findsOneWidget);
+
+      // 第二发：取消 → 静默，旧错误被清空，按钮回到可点
+      await tester.tap(find.byKey(const Key('login-wechat')));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const Key('login-error')), findsNothing);
+      expect(env.auth.lastError, isNull);
+      expect(
+        tester.widget<OutlinedButton>(find.byKey(const Key('login-wechat'))).onPressed,
+        isNotNull,
+      );
+      expect(env.auth.isSignedIn, isFalse);
     });
   });
 }

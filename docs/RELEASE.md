@@ -232,6 +232,25 @@ flutter analyze && flutter test
   `--dart-define=RC_MODEL_ASR=... --dart-define=RC_MODEL_REFINE=...` 显式覆盖。
 - **后端地址**：`RC_API_BASE` 编译默认 `https://block2-api.wainao.chat`。
 
+## 微信登录配置（2026-11-13 起）
+
+客户端只持有微信一次性授权码，换 token 由后端 `/oauth/token` 扩展 grant
+（`urn:wainao:params:oauth:grant-type:wechat`）完成；AppSecret 只在后端。
+
+- **AppID 两处同值**（不变式，不一致则授权回不来）：
+  1. `app/ios/Flutter/Wechat.xcconfig` 的 `WECHAT_APP_ID`（展开为 Info.plist 的 `$(WECHAT_APP_ID)` 回调 scheme；未获批前用占位串 `rc-wechat-disabled`，防空 scheme 触发 App Store ITMS-90158）；
+  2. 构建参数 `--dart-define=RC_WECHAT_APP_ID=wx...`（兼容回退 `WECHAT_APP_ID`；Dart 侧 `OAuthConfig.isWechatConfigured` 严格校验 `wx` 前缀，占位串/空串均判未配置 → 登录页隐藏微信按钮，fail-closed）。
+- **iOS 前置（一次性）**：
+  1. Apple Developer 后台为 App ID（开发 `dev.kongkang.recordingCard` 与正式 `com.reai.recordingcard`）开启 **Associated Domains** capability（`Runner.entitlements` 已声明 `applinks:app.cn.reai.com`，三个 build configuration 均已挂载）；
+  2. `https://app.cn.reai.com/.well-known/apple-app-site-association` 的 `details` 同时包含两个 appID、paths `/link/*`（改 AASA 后 Apple CDN 缓存 24~48h）；
+  3. 微信开放平台登记「录音卡」移动应用：iOS bundle id + Universal Link `https://app.cn.reai.com/link/`；Android 侧补登记包名 + 签名 MD5（登记前 Android 真机微信登录不可用）。
+- **后端前置**：`/oauth/token` 微信 grant 支持可选 `wechat_app_id` 表单字段（多微信应用路由对应 Secret）；账号归一以 **unionid** 为准（同一主体多应用的 openid 不同）。
+- **联调自检**：
+  1. 真机装包后在「设置 → Safari → 高级」清 Cookie 不需要；微信授权页能被 `weixinULAPI://` 拉起即说明 scheme 与 queries 白名单生效；
+  2. 授权后回不到 App：依次查 `Wechat.xcconfig` 与 dart-define 是否同值 → AASA 是否含当前 bundle id（`curl -s https://app.cn.reai.com/.well-known/apple-app-site-association`）→ 开放平台登记的 bundle id 是否与实际一致（不一致微信会以 errCode -6 拒绝）；
+  3. 后端未放行微信 grant 时 App 报「当前客户端未开通微信登录」（`unsupported_grant_type` 映射）。
+- **Android R8**：fluwx 自带 consumer-proguard 规则；出包前跑 `flutter build apk --release -Prust.skip=true` 确认混淆构建不挂。
+
 ## 平台能力现状
 
 | 平台 | 界面/登录/转写/总结/导出 | 蓝牙硬件链路 |

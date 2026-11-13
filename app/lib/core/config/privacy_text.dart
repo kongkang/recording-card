@@ -6,7 +6,7 @@
 library;
 
 /// 政策生效日期（App Store Connect / Play Console 里填写的隐私政策日期需一致）。
-const String privacyUpdatedAt = '2026-11-08';
+const String privacyUpdatedAt = '2026-11-13';
 
 /// 隐私问题联系邮箱（与商店后台填写的支持邮箱保持一致）。
 const String privacyContactEmail = 'privacy@reai.chat';
@@ -31,6 +31,7 @@ const List<PrivacySection> privacySections = [
     '设备信息：录音卡的蓝牙名称、电量、固件版本、Wi-Fi 配置状态。这些信息只用于连接设备与展示状态。',
     '配网信息：你输入的 Wi-Fi 名称与口令。它们只保存在本机与被配置的录音卡上，不上传服务器。',
     '账号信息（仅在你登录时）：账号标识与登录令牌。令牌保存在系统密钥库（iOS Keychain / Android Keystore），不落明文文件。',
+    '微信登录（仅在你选择时）：点击「微信登录」后，App 通过微信 OpenSDK 拉起微信授权页，仅获取一次性授权码用于登录，不读取你在微信的其他信息。',
   ]),
   PrivacySection('二、录音内容存在哪里', [
     '默认只存本机沙盒目录，不自动上传。卸载 App 即随沙盒一起清除。',

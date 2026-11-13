@@ -1,6 +1,6 @@
 # 录音卡 · 隐私政策
 
-- **生效日期**：2026-11-08
+- **生效日期**：2026-11-13
 - **适用产品**：「录音卡」iOS / Android App（bundle id `com.reai.recordingcard`）及配套硬件录音卡
 - **运营方**：ReAI（下称「我们」）
 - **联系邮箱**：privacy@reai.chat
@@ -81,8 +81,9 @@
 | `path_provider` | 访问沙盒目录（录音、导出文件） | 无 |
 | `share_plus` | 导出时调起系统分享面板 | 无（由你选择分享目标） |
 | `pdf` | 本地生成 PDF 导出文件 | 无 |
+| 微信 OpenSDK（`fluwx` 封装，iOS `WechatOpenSDK-XCFramework` / Android 微信 OpenSDK） | 仅在你主动点击「微信登录」时拉起微信授权页，获取一次性授权码用于登录 | 授权码经我们后端换取登录令牌；不读取你在微信的其他资料，不后台自启，不采集设备标识 |
 
-App 未集成任何广告、统计（Analytics）、推送或社交登录 SDK。若未来新增，本清单与商店隐私表单必须同步更新。
+App 未集成任何广告、统计（Analytics）或推送 SDK；社交登录仅接入上表的微信 OpenSDK，且只在你主动发起登录时调用。若未来新增 SDK，本清单与商店隐私表单必须同步更新。
 
 ---
 
