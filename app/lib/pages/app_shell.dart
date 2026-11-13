@@ -205,6 +205,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    _device.liveActivityService.onActionButtonToggle = null;
     _liveSliceSub?.cancel();
     _phoneSliceSub?.cancel();
     _device.removeListener(_syncRecordingStatus);
@@ -408,6 +409,7 @@ Widget _stackTopPage(
   AppStore store, {
   required bool wide,
   required AgentConfigStore agentConfig,
+  DeviceStore? device,
   ModelManagerController? modelManager,
   AuthService? authService,
 }) {
@@ -423,6 +425,7 @@ Widget _stackTopPage(
     return SettingSubPage(
       subId: top.id,
       agentConfig: agentConfig,
+      device: device,
       modelManager: modelManager,
       authService: authService,
       showPaneBack: wide && store.showPaneBackSetSub,
@@ -483,6 +486,7 @@ class _NarrowLayout extends StatelessWidget {
                     RootTab.timeline =>
                       TimelinePage(recordingStatus: recordingStatus),
                     RootTab.setting => SettingPage(
+                      device: device,
                       modelManager: modelManager,
                       settings: settings,
                       agentConfig: agentConfig,
@@ -501,6 +505,7 @@ class _NarrowLayout extends StatelessWidget {
                     child: _subPage(
                       e,
                       agentConfig,
+                      device,
                       modelManager,
                       authService,
                     ),
@@ -533,6 +538,7 @@ class _NarrowLayout extends StatelessWidget {
   static Widget _subPage(
     RouteEntry e,
     AgentConfigStore agentConfig,
+    DeviceStore device,
     ModelManagerController? modelManager,
     AuthService? authService,
   ) {
@@ -543,6 +549,7 @@ class _NarrowLayout extends StatelessWidget {
       return SettingSubPage(
         subId: e.id,
         agentConfig: agentConfig,
+        device: device,
         modelManager: modelManager,
         authService: authService,
         showPaneBack: false,
@@ -591,6 +598,7 @@ class _WideLayout extends StatelessWidget {
                     recordingStatus: recordingStatus,
                   ),
                   RootTab.setting => SettingPage(
+                    device: device,
                     modelManager: modelManager,
                     settings: settings,
                     agentConfig: agentConfig,
@@ -609,6 +617,7 @@ class _WideLayout extends StatelessWidget {
                           store,
                           wide: true,
                           agentConfig: agentConfig,
+                          device: device,
                           modelManager: modelManager,
                           authService: authService,
                         ),
