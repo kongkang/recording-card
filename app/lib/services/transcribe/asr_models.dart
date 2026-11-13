@@ -61,18 +61,18 @@ class ModelSpec {
   int get totalBytes => files.fold<int>(0, (a, f) => a + f.sizeBytes);
 }
 
-/// SenseVoice int8。
-///
-/// 注意：`model.int8.onnx` 的 size/sha 留空是有意的——开发期用本机已有的模型
-/// 副本（与 reai 注册表里的 239MB 版本不是同一份）；正式发布前必须用 manifest
-/// 下发的官方规格替换，否则供应链校验等于没有。
+/// SenseVoice int8（已对齐 Apple-Hosted Background Assets `sensevoice-small-int8` v1）。
 const ModelSpec senseVoiceSpec = ModelSpec(
   id: 'sensevoice-small-int8',
   displayName: '本地转写模型',
   version: '2024-07-17',
   kind: LocalModelKind.asr,
   files: [
-    ModelFileSpec(relPath: 'model.int8.onnx'),
+    ModelFileSpec(
+      relPath: 'model.int8.onnx',
+      sizeBytes: 237115547,
+      sha256: '12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d',
+    ),
     ModelFileSpec(
       relPath: 'tokens.txt',
       sizeBytes: 315894,

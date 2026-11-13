@@ -51,6 +51,8 @@ final class AppleAssetPackBridge: NSObject, FlutterStreamHandler {
     switch call.method {
     case "isAvailable":
       result(isAppleHostingAvailable())
+    case "availablePackIds":
+      fetchAvailablePackIds(result: result)
     case "installAssetPack":
       guard let args = call.arguments as? [String: Any],
             let packId = args["packId"] as? String,
@@ -79,6 +81,36 @@ final class AppleAssetPackBridge: NSObject, FlutterStreamHandler {
     let hasManaged = (info?["BAHasManagedAssetPacks"] as? Bool) == true
     let usesAppleHosting = (info?["BAUsesAppleHosting"] as? Bool) == true
     return hasManaged && usesAppleHosting
+  }
+
+  private func fetchAvailablePackIds(result: @escaping FlutterResult) {
+    guard #available(iOS 26.0, *), isAppleHostingAvailable() else {
+      result([String]())
+      return
+    }
+    Task {
+      do {
+        let ids: [String]
+        if #available(iOS 27.0, *) {
+          let manifest = try await AssetPackManager.shared.manifest
+          ids = manifest.assetPacks.map(\.id)
+        } else {
+          let packs = try await AssetPackManager.shared.allAssetPacks
+          ids = packs.map(\.id)
+        }
+        DispatchQueue.main.async {
+          result(ids)
+        }
+      } catch {
+        DispatchQueue.main.async {
+          result(FlutterError(
+            code: "MANIFEST_FAILED",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      }
+    }
   }
 
   private func installAssetPack(
@@ -114,11 +146,13 @@ final class AppleAssetPackBridge: NSObject, FlutterStreamHandler {
     files: [[String: String]],
     result: @escaping FlutterResult
   ) async {
+    emitProgress(packId: packId, stage: "began", progress: 0.01)
+
     let progressTask = Task { [weak self] in
       for await update in AssetPackManager.shared.statusUpdates(forAssetPackWithID: packId) {
         switch update {
         case .began:
-          self?.emitProgress(packId: packId, stage: "began", progress: 0.0)
+          self?.emitProgress(packId: packId, stage: "began", progress: 0.01)
         case .paused:
           self?.emitProgress(packId: packId, stage: "paused", progress: 0.0)
         case .downloading(_, let progress):
@@ -166,6 +200,21 @@ final class AppleAssetPackBridge: NSObject, FlutterStreamHandler {
 
       DispatchQueue.main.async {
         result(true)
+      }
+    } catch let error as ManagedBackgroundAssetsError {
+      let code: String
+      switch error {
+      case .assetPackNotFound:
+        code = "ASSET_PACK_NOT_FOUND"
+      default:
+        code = "APPLE_ASSET_FAILED"
+      }
+      DispatchQueue.main.async {
+        result(FlutterError(
+          code: code,
+          message: error.localizedDescription,
+          details: nil
+        ))
       }
     } catch {
       DispatchQueue.main.async {
