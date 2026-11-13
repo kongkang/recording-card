@@ -119,7 +119,11 @@ class _HomeGateState extends State<_HomeGate> {
   @override
   void initState() {
     super.initState();
-    _modelGateway = ModelGateway(client: _auth.apiClient);
+    _modelGateway = ModelGateway(
+      client: _auth.apiClient,
+      enabledCheck: () => _agentConfig.cloudEnabled,
+      apiBaseOverride: () => _agentConfig.customApiBase,
+    );
     _summaries = SummaryGenerator(
       gateway: _modelGateway,
       agentConfig: _agentConfig,
@@ -179,7 +183,11 @@ class _HomeGateState extends State<_HomeGate> {
   /// 启动装载：等鉴权恢复 → 载入历史状态与本地录音 → 登录态就绪时探测模型目录。
   Future<void> _boot() async {
     await _auth.ready;
-    if (_auth.isSignedIn) unawaited(_discoverAndSyncModels());
+    if (_auth.isSignedIn) {
+      unawaited(_discoverAndSyncModels());
+    } else {
+      unawaited(_modelManager.autoEnsureInstalled());
+    }
     await _store.init();
     if (mounted) setState(() => _booted = true);
     // 有本地未完成的录音就继续处理（不访问设备）；模型未装时只下载/转码排队
@@ -215,6 +223,7 @@ class _HomeGateState extends State<_HomeGate> {
               modelManager: _modelManager,
               settings: _settings,
               agentConfig: _agentConfig,
+              authService: _auth,
             );
           }
           return LoginPage(

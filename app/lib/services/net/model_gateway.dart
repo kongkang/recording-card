@@ -74,13 +74,31 @@ class ModelGateway {
     required AuthorizedHttpClient client,
     ModelGatewayConfig? config,
     Duration defaultTimeout = const Duration(seconds: 60),
-  })  : _client = client,
-        _config = config ?? ModelGatewayConfig.fromEnvironment(),
-        _defaultTimeout = defaultTimeout;
+    bool Function()? enabledCheck,
+    String Function()? apiBaseOverride,
+  }) : _client = client,
+       _config = config ?? ModelGatewayConfig.fromEnvironment(),
+       _defaultTimeout = defaultTimeout,
+       _enabledCheck = enabledCheck,
+       _apiBaseOverride = apiBaseOverride;
 
   final AuthorizedHttpClient _client;
   final ModelGatewayConfig _config;
   final Duration _defaultTimeout;
+  final bool Function()? _enabledCheck;
+  final String Function()? _apiBaseOverride;
+
+  bool get isCloudEnabled => _enabledCheck?.call() ?? true;
+
+  ModelGatewayConfig get _effectiveConfig {
+    final override = _apiBaseOverride?.call().trim() ?? '';
+    if (override.isEmpty) return _config;
+    return ModelGatewayConfig(
+      baseUrl: override,
+      asrModel: _config.asrModel,
+      refineModel: _config.refineModel,
+    );
+  }
 
   /// 运行时从服务端探测到的模型（dart-define 没配时用它）。
   String? _discoveredAsr;
@@ -90,7 +108,7 @@ class ModelGateway {
   String? _catalogError;
 
   /// 当前配置（只读，便于 UI 展示「哪一项没配」）。
-  ModelGatewayConfig get config => _config;
+  ModelGatewayConfig get config => _effectiveConfig;
 
   /// 模型目录是否已探测过（成功或失败都算）。
   bool get catalogLoaded => _catalogLoaded;
@@ -113,21 +131,23 @@ class ModelGateway {
 
   /// 网关端点与两个模型名都配齐（纯配置判断，与登录态无关）。
   bool get configured =>
-      _config.asrConfigured ||
-      _config.refineConfigured ||
+      _effectiveConfig.asrConfigured ||
+      _effectiveConfig.refineConfigured ||
       (asrModel.isNotEmpty && textModel.isNotEmpty);
 
   /// 转写能力是否**配置齐全**（配置或探测到模型 + https 端点）。
-  bool get asrAvailable => _config.configured && asrModel.isNotEmpty;
+  bool get asrAvailable => _effectiveConfig.configured && asrModel.isNotEmpty;
 
-  /// 总结能力是否**配置齐全**（配置或探测到模型 + https 端点）。
-  bool get chatAvailable => _config.configured && textModel.isNotEmpty;
+  /// 总结能力是否**配置齐全**（配置或探测到模型 + https 端点 + 未被开关关闭）。
+  bool get chatAvailable =>
+      isCloudEnabled && _effectiveConfig.configured && textModel.isNotEmpty;
 
   /// 登录后调用一次：向服务端问有哪些模型可用，填上未显式配置的模型名。
   ///
   /// 失败不抛异常（探测只是增强），把原因记在 [catalogError] 里供「关于」页排障。
   Future<void> discoverModels({Duration? timeout}) async {
-    if (!_config.configured) {
+    final cfg = _effectiveConfig;
+    if (!cfg.configured) {
       _catalogLoaded = true;
       _catalogError = '未配置后端地址';
       return;
@@ -135,7 +155,7 @@ class ModelGateway {
     try {
       final catalog = await ModelCatalog.fetch(
         _client,
-        gatewayBaseUrl: _config.gatewayBaseUrl,
+        gatewayBaseUrl: cfg.gatewayBaseUrl,
         timeout: timeout,
       );
       _discoveredModels = catalog.models;
@@ -154,9 +174,9 @@ class ModelGateway {
   /// 语义刻意只反映「配置」：模型名从 dart-define 读，空则 false。
   /// 未登录时该值仍为 true，真正发请求会抛 [ApiUnauthorizedException]。
   /// 需要「配置 + 登录态都就绪」的 UI 门控请用 [ready]。
-  bool get available => configured;
+  bool get available => isCloudEnabled && configured;
 
-  /// 可以立即发起请求（配置齐全且已有登录态）。
+  /// 可以立即发起请求（配置齐全、开启云端模型且已有登录态）。
   bool get ready => available && _client.hasSession;
 
   /// 语音转写。
@@ -235,7 +255,10 @@ class ModelGateway {
     int maxTokens = 2048,
     Duration? timeout,
   }) async {
-    final url = _config.chatCompletionsUrl;
+    if (!isCloudEnabled) {
+      throw const ApiNotConfiguredException('已在设置中关闭云端模型');
+    }
+    final url = _effectiveConfig.chatCompletionsUrl;
     final resolvedModel = (model ?? textModel).trim();
     if (url == null || resolvedModel.isEmpty) {
       throw const ApiNotConfiguredException('未配置总结服务，暂时无法生成总结');

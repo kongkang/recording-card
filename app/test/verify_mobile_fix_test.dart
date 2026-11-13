@@ -85,7 +85,9 @@ void main() {
 
     expect(gateway.connectCalls, 1);
     expect(gateway.lastConnectedId, 'dev-1');
-    expect(find.text('已连接'), findsWidgets);
+    expect(find.byKey(const Key('dev-main')), findsOneWidget);
+    expect(find.byKey(const Key('dev-bt-icon')), findsOneWidget);
+    expect(find.byKey(const Key('dev-header-kind')), findsOneWidget);
     expect(find.byKey(const Key('capsule-off')), findsNothing);
     // 状态值来自设备快照（默认 82% → 电量高）
     expect(find.textContaining('电量高'), findsOneWidget);

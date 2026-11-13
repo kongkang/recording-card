@@ -48,6 +48,10 @@
 	<string>录音卡通过蓝牙与你的录音卡设备保持连接，用于同步录音、查看电量与录音状态、下发录音命令。不开启蓝牙将无法连接设备。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>为录音卡设备配置 Wi-Fi 时，App 需要访问局域网，以发现设备热点并完成配网；聊天记录与个人资料不会因此上传。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>开启本机录音或在固件升级期间无缝接力录音时，录音卡需要使用手机麦克风采集音频；音频仅在本地处理，不上传原始录音。</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>录音卡仅读取你在录音时间段内拍摄的系统相册照片，将其按拍摄时间插入对应录音对话详情中，不会访问其它时间段照片，也不会未经允许上传。</string>
 	<key>NSBonjourServices</key>
@@ -110,6 +114,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
+		<string>audio</string>
 	</array>
 </dict>
 </plist>

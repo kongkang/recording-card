@@ -17,6 +17,15 @@
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		AA11BB22CC33DD44EE55FF77 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FF66 /* SceneDelegate.swift */; };
+		BC1122330003000000000001 /* RecordingCardActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000001 /* RecordingCardActivityAttributes.swift */; };
+		BC1122330003000000000002 /* PhoneMicBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000002 /* PhoneMicBridge.swift */; };
+		BC1122330003000000000003 /* LiveActivityBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000003 /* LiveActivityBridge.swift */; };
+		BC1122330003000000000004 /* RecordingCardActionIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000004 /* RecordingCardActionIntent.swift */; };
+		BC1122330003000000000005 /* RecordingCardActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000001 /* RecordingCardActivityAttributes.swift */; };
+		BC1122330003000000000006 /* RecordingCardLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000005 /* RecordingCardLiveActivityBundle.swift */; };
+		BC1122330003000000000007 /* RecordingCardLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000006 /* RecordingCardLiveActivityWidget.swift */; };
+		BC1122330003000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000008 /* Assets.xcassets */; };
+		BC1122330003000000000009 /* RecordingCardLiveActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000009 /* RecordingCardLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		EFF522EEECFBB043C44CF98C /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FA1C2EDD4B2BFC7263509CEF /* Pods_RunnerTests.framework */; };
 /* End PBXBuildFile section */
 
@@ -28,9 +37,27 @@
 			remoteGlobalIDString = 97C146ED1CF9000F007C117D;
 			remoteInfo = Runner;
 		};
+		BC1122330005000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97C146E61CF9000F007C117D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BC1122330005000000000001;
+			remoteInfo = RecordingCardLiveActivity;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		BC1122330004000000000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				BC1122330003000000000009 /* RecordingCardLiveActivity.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		9705A1C41CF9048500538489 /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -66,6 +93,15 @@
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FF66 /* SceneDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		AE820503CF5E2035444BECC7 /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
+		BC1122330001000000000001 /* RecordingCardActivityAttributes.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RecordingCardActivityAttributes.swift; sourceTree = "<group>"; };
+		BC1122330001000000000002 /* PhoneMicBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PhoneMicBridge.swift; sourceTree = "<group>"; };
+		BC1122330001000000000003 /* LiveActivityBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LiveActivityBridge.swift; sourceTree = "<group>"; };
+		BC1122330001000000000004 /* RecordingCardActionIntent.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RecordingCardActionIntent.swift; sourceTree = "<group>"; };
+		BC1122330001000000000005 /* RecordingCardLiveActivityBundle.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RecordingCardLiveActivityBundle.swift; sourceTree = "<group>"; };
+		BC1122330001000000000006 /* RecordingCardLiveActivityWidget.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RecordingCardLiveActivityWidget.swift; sourceTree = "<group>"; };
+		BC1122330001000000000007 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		BC1122330001000000000008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		BC1122330001000000000009 /* RecordingCardLiveActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RecordingCardLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E5FC05DDB7BBCD9935DC9E30 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
 		EAE308D8D721271F357FF3B2 /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
 		FA1C2EDD4B2BFC7263509CEF /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -78,6 +114,13 @@
 			files = (
 				78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */,
 				50CF06829065DA7CCBA15C6D /* Pods_Runner.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BC1122330004000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -131,6 +174,8 @@
 			children = (
 				9740EEB11CF90186004384FC /* Flutter */,
 				97C146F01CF9000F007C117D /* Runner */,
+				BC1122330002000000000001 /* Shared */,
+				BC1122330002000000000002 /* RecordingCardLiveActivity */,
 				97C146EF1CF9000F007C117D /* Products */,
 				331C8082294A63A400263BE5 /* RunnerTests */,
 				6A832B86EC5A74542E8DB416 /* Pods */,
@@ -143,6 +188,7 @@
 			children = (
 				97C146EE1CF9000F007C117D /* Runner.app */,
 				331C8081294A63A400263BE5 /* RunnerTests.xctest */,
+				BC1122330001000000000009 /* RecordingCardLiveActivity.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -158,9 +204,31 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				AA11BB22CC33DD44EE55FF66 /* SceneDelegate.swift */,
+				BC1122330001000000000002 /* PhoneMicBridge.swift */,
+				BC1122330001000000000003 /* LiveActivityBridge.swift */,
+				BC1122330001000000000004 /* RecordingCardActionIntent.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
+			sourceTree = "<group>";
+		};
+		BC1122330002000000000001 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				BC1122330001000000000001 /* RecordingCardActivityAttributes.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		BC1122330002000000000002 /* RecordingCardLiveActivity */ = {
+			isa = PBXGroup;
+			children = (
+				BC1122330001000000000005 /* RecordingCardLiveActivityBundle.swift */,
+				BC1122330001000000000006 /* RecordingCardLiveActivityWidget.swift */,
+				BC1122330001000000000007 /* Info.plist */,
+				BC1122330001000000000008 /* Assets.xcassets */,
+			);
+			path = RecordingCardLiveActivity;
 			sourceTree = "<group>";
 		};
 		9CEE16A71CCCAF2748C1E6A7 /* Frameworks */ = {
@@ -205,11 +273,13 @@
 				97C146EB1CF9000F007C117D /* Frameworks */,
 				97C146EC1CF9000F007C117D /* Resources */,
 				9705A1C41CF9048500538489 /* Embed Frameworks */,
+				BC1122330004000000000001 /* Embed App Extensions */,
 				3B06AD1E1E4923F5004D2608 /* Thin Binary */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				BC1122330005000000000003 /* PBXTargetDependency */,
 			);
 			name = Runner;
 			packageProductDependencies = (
@@ -218,6 +288,23 @@
 			productName = Runner;
 			productReference = 97C146EE1CF9000F007C117D /* Runner.app */;
 			productType = "com.apple.product-type.application";
+		};
+		BC1122330005000000000001 /* RecordingCardLiveActivity */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BC1122330006000000000001 /* Build configuration list for PBXNativeTarget "RecordingCardLiveActivity" */;
+			buildPhases = (
+				BC1122330004000000000002 /* Sources */,
+				BC1122330004000000000003 /* Frameworks */,
+				BC1122330004000000000004 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RecordingCardLiveActivity;
+			productName = RecordingCardLiveActivity;
+			productReference = BC1122330001000000000009 /* RecordingCardLiveActivity.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -236,6 +323,9 @@
 					97C146ED1CF9000F007C117D = {
 						CreatedOnToolsVersion = 7.3.1;
 						LastSwiftMigration = 1100;
+					};
+					BC1122330005000000000001 = {
+						CreatedOnToolsVersion = 15.0;
 					};
 				};
 			};
@@ -257,6 +347,7 @@
 			targets = (
 				97C146ED1CF9000F007C117D /* Runner */,
 				331C8080294A63A400263BE5 /* RunnerTests */,
+				BC1122330005000000000001 /* RecordingCardLiveActivity */,
 			);
 		};
 /* End PBXProject section */
@@ -277,6 +368,14 @@
 				3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */,
 				97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */,
 				97C146FC1CF9000F007C117D /* Main.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BC1122330004000000000004 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BC1122330003000000000008 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -394,7 +493,21 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				AA11BB22CC33DD44EE55FF77 /* SceneDelegate.swift in Sources */,
+				BC1122330003000000000001 /* RecordingCardActivityAttributes.swift in Sources */,
+				BC1122330003000000000002 /* PhoneMicBridge.swift in Sources */,
+				BC1122330003000000000003 /* LiveActivityBridge.swift in Sources */,
+				BC1122330003000000000004 /* RecordingCardActionIntent.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BC1122330004000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BC1122330003000000000005 /* RecordingCardActivityAttributes.swift in Sources */,
+				BC1122330003000000000006 /* RecordingCardLiveActivityBundle.swift in Sources */,
+				BC1122330003000000000007 /* RecordingCardLiveActivityWidget.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -405,6 +518,11 @@
 			isa = PBXTargetDependency;
 			target = 97C146ED1CF9000F007C117D /* Runner */;
 			targetProxy = 331C8085294A63A400263BE5 /* PBXContainerItemProxy */;
+		};
+		BC1122330005000000000003 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BC1122330005000000000001 /* RecordingCardLiveActivity */;
+			targetProxy = BC1122330005000000000002 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -777,9 +895,98 @@
 			};
 			name = Release;
 		};
+		BC1122330006000000000002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 35N5SGDE59;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kongkang.recordingCard.liveactivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		BC1122330006000000000003 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 35N5SGDE59;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kongkang.recordingCard.liveactivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		BC1122330006000000000004 /* Profile */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 35N5SGDE59;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kongkang.recordingCard.liveactivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Profile;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		BC1122330006000000000001 /* Build configuration list for PBXNativeTarget "RecordingCardLiveActivity" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BC1122330006000000000002 /* Debug */,
+				BC1122330006000000000003 /* Release */,
+				BC1122330006000000000004 /* Profile */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		331C8087294A63A400263BE5 /* Build configuration list for PBXNativeTarget "RunnerTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

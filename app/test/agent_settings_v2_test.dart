@@ -101,6 +101,12 @@ void main() {
     expect(find.byKey(const Key('sv-cloud')), findsOneWidget);
     expect(
       tester.widget<Text>(find.byKey(const Key('sv-cloud'))).data,
+      '已开启',
+    );
+    await agentConfig.setDeveloperMode(true);
+    await tester.pump();
+    expect(
+      tester.widget<Text>(find.byKey(const Key('sv-cloud'))).data,
       'deepseek-v3',
     );
 
@@ -112,6 +118,8 @@ void main() {
     expect(find.text('Setting'), findsWidgets);
 
     await tester.tap(find.byKey(const Key('model-opt-qwen-max')));
+    await tester.pump();
+    await tester.ensureVisible(find.byKey(const Key('temp-0.5')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('temp-0.5')));
     await tester.pump();
@@ -199,6 +207,7 @@ void main() {
     addTearDown(agentConfig.dispose);
     await agentConfig.load();
 
+    await agentConfig.setDeveloperMode(true);
     await agentConfig.setCloudModel('claude-3-7-sonnet');
     await agentConfig.setTemperature(0.8);
     await agentConfig.savePrompt('summary', '【自定义纪要准则】必须逐条核对交付风险。');

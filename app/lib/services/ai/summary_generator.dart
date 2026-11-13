@@ -64,7 +64,9 @@ class SummaryGenerator {
 
   String? _resolveModelOverride() {
     final cfg = _agentConfig;
-    if (cfg == null || !cfg.userPickedCloudModel) return null;
+    if (cfg == null || !cfg.developerMode || !cfg.userPickedCloudModel) {
+      return null;
+    }
     final picked = cfg.cloudModel.trim();
     if (picked.isEmpty) return null;
     final gatewayTextModels = _gateway.discoveredTextModels;
@@ -105,6 +107,9 @@ class SummaryGenerator {
     if (events.isEmpty) {
       throw const SummaryGenerationException('没有可总结的记录');
     }
+    if (!_gateway.isCloudEnabled) {
+      throw const SummaryGenerationException('已在设置中关闭云端模型');
+    }
     if (!configured) {
       throw const SummaryGenerationException('未配置总结服务，暂时无法生成');
     }
@@ -119,13 +124,16 @@ class SummaryGenerator {
     }
 
     onProgress?.call(0.25, '提炼要点与逻辑…');
+    final temp = (_agentConfig != null && _agentConfig.developerMode)
+        ? _agentConfig.temperature
+        : 0.2;
     final raw = await _gateway.chat(
       [
         ChatMessage.system(_buildSystemPrompt()),
         ChatMessage.user(transcript),
       ],
       model: _resolveModelOverride(),
-      temperature: _agentConfig?.temperature ?? 0.2,
+      temperature: temp,
       // 输出随来源条数增长，给足余量但不无上限
       maxTokens: (1200 + events.length * 400).clamp(1200, 8000),
       timeout: const Duration(seconds: 120),

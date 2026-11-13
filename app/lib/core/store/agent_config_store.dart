@@ -96,14 +96,19 @@ class AgentConfigStore extends ChangeNotifier {
       desc: '结构化逻辑与行动项抽取稳定，适合多人会议纪要',
     ),
     CloudModelOption(
+      id: 'doubao-pro',
+      name: 'doubao-pro',
+      desc: '中文对话理解与日常摘要梳理自然流畅',
+    ),
+    CloudModelOption(
+      id: 'glm-4-plus',
+      name: 'glm-4-plus',
+      desc: '中文语境与多轮对话整理稳定可靠',
+    ),
+    CloudModelOption(
       id: 'gpt-4o',
       name: 'gpt-4o',
       desc: '跨语种与图文对齐理解强，适合中英混杂与白板拍照场景',
-    ),
-    CloudModelOption(
-      id: 'claude-3-7-sonnet',
-      name: 'claude-3-7-sonnet',
-      desc: '深度访谈、思辨复盘与长上下文细节保留细腻',
     ),
   ];
 
@@ -212,10 +217,23 @@ class AgentConfigStore extends ChangeNotifier {
     'mcp-kb': false,
   };
 
+  bool cloudEnabled = true;
+  String customApiBase = '';
+  bool developerMode = false;
+  bool photoLinkEnabled = false;
+  bool islandEnabled = true;
+
   String cloudModel = 'deepseek-v3';
   bool userPickedCloudModel = false;
   String contextMode = 'full_day'; // 'full_day' | 'scoped'
   double temperature = 0.2;
+
+  String get cloudStatusSummary {
+    if (!cloudEnabled) return '已关闭';
+    if (developerMode) return cloudModel;
+    if (customApiBase.trim().isNotEmpty) return '已开启 · 自定义接口';
+    return '已开启';
+  }
 
   String presetId = 'general'; // 'general' | 'meeting' | 'interview' | 'todo' | 'custom'
   late Map<String, String> prompts = _promptsFromPreset(presets.first);
@@ -264,7 +282,8 @@ class AgentConfigStore extends ChangeNotifier {
         result.add(b);
       }
     }
-    return result;
+    // 普通及开发者视图最多仅展示 5 个候选模型，避免冗长干扰选择
+    return result.take(5).toList(growable: false);
   }
 
   String get presetLabel {
@@ -296,6 +315,21 @@ class AgentConfigStore extends ChangeNotifier {
   Future<void> load() async {
     final data = await _json.read(_storageKey);
     if (data == null) return;
+    if (data['cloudEnabled'] is bool) {
+      cloudEnabled = data['cloudEnabled'] as bool;
+    }
+    if (data['customApiBase'] is String) {
+      customApiBase = data['customApiBase'] as String;
+    }
+    if (data['devMode'] is bool) {
+      developerMode = data['devMode'] as bool;
+    }
+    if (data['photoLinkEnabled'] is bool) {
+      photoLinkEnabled = data['photoLinkEnabled'] as bool;
+    }
+    if (data['islandEnabled'] is bool) {
+      islandEnabled = data['islandEnabled'] as bool;
+    }
     if (data['model'] is String && (data['model'] as String).isNotEmpty) {
       cloudModel = data['model'] as String;
     }
@@ -333,6 +367,36 @@ class AgentConfigStore extends ChangeNotifier {
       ];
     }
     notifyListeners();
+  }
+
+  Future<void> setCloudEnabled(bool value) async {
+    cloudEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setCustomApiBase(String url) async {
+    customApiBase = url.trim().replaceFirst(RegExp(r'/+$'), '');
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setDeveloperMode(bool value) async {
+    developerMode = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setPhotoLinkEnabled(bool value) async {
+    photoLinkEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setIslandEnabled(bool value) async {
+    islandEnabled = value;
+    notifyListeners();
+    await _save();
   }
 
   Future<void> setCloudModel(String id) async {
@@ -426,6 +490,11 @@ class AgentConfigStore extends ChangeNotifier {
 
   Future<void> _save() async {
     await _json.write(_storageKey, {
+      'cloudEnabled': cloudEnabled,
+      if (customApiBase.isNotEmpty) 'customApiBase': customApiBase,
+      if (developerMode) 'devMode': developerMode,
+      if (photoLinkEnabled) 'photoLinkEnabled': photoLinkEnabled,
+      'islandEnabled': islandEnabled,
       'model': cloudModel,
       'pickedModel': userPickedCloudModel,
       'ctx': contextMode,

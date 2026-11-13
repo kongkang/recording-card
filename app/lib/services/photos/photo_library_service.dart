@@ -54,12 +54,50 @@ class PhotoImportReport {
   });
 }
 
+enum PhotoPermissionState { granted, denied, notDetermined }
+
 class PhotoLibraryService {
   const PhotoLibraryService({
     MethodChannel channel = const MethodChannel('com.reai.recordingcard/photos'),
-  }) : _channel = channel;
+    Future<PhotoPermissionState> Function()? statusOverride,
+    Future<PhotoPermissionState> Function()? requestOverride,
+  }) : _channel = channel,
+       _statusOverride = statusOverride,
+       _requestOverride = requestOverride;
 
   final MethodChannel _channel;
+  final Future<PhotoPermissionState> Function()? _statusOverride;
+  final Future<PhotoPermissionState> Function()? _requestOverride;
+
+  static PhotoPermissionState _parsePermission(String? raw) => switch (raw) {
+    'granted' => PhotoPermissionState.granted,
+    'notDetermined' => PhotoPermissionState.notDetermined,
+    _ => PhotoPermissionState.denied,
+  };
+
+  Future<PhotoPermissionState> checkPermission() async {
+    if (_statusOverride != null) return _statusOverride();
+    try {
+      final raw = await _channel.invokeMethod<String>('status');
+      return _parsePermission(raw);
+    } on MissingPluginException {
+      return PhotoPermissionState.denied;
+    } on PlatformException {
+      return PhotoPermissionState.denied;
+    }
+  }
+
+  Future<PhotoPermissionState> requestPermission() async {
+    if (_requestOverride != null) return _requestOverride();
+    try {
+      final raw = await _channel.invokeMethod<String>('request');
+      return _parsePermission(raw);
+    } on MissingPluginException {
+      return PhotoPermissionState.denied;
+    } on PlatformException {
+      return PhotoPermissionState.denied;
+    }
+  }
 
   Future<Directory> photosDirectory() async {
     final support = await getApplicationSupportDirectory();

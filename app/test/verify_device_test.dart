@@ -57,8 +57,11 @@ void main() {
 
       expect(find.byKey(const Key('sheet')), findsOneWidget);
       expect(find.byKey(const Key('dev-main')), findsOneWidget);
-      // 行内容：已连接 / 可录至 / 电量高（来自设备快照）
-      expect(find.textContaining('已连接'), findsWidgets);
+      // 顶部设备识别徽章 + 蓝牙协议 icon + 无边界断开 icon，不再显示冗余「已连接」文字
+      expect(find.byKey(const Key('dev-bt-icon')), findsOneWidget);
+      expect(find.byKey(const Key('dev-header-kind')), findsOneWidget);
+      expect(find.byKey(const Key('dev-disconnect')), findsOneWidget);
+      expect(find.textContaining('已连接'), findsNothing);
       expect(find.textContaining('可录至'), findsOneWidget);
       expect(find.textContaining('电量高'), findsOneWidget);
       // 可点行：同步 / Wi-Fi / 固件

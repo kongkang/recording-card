@@ -52,6 +52,13 @@ import UIKit
       }
       photoChannel = pChannel
     }
+
+    if let micRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCPhoneMic") {
+      PhoneMicBridge.shared.register(with: micRegistrar.messenger())
+    }
+    if let islandRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCLiveActivity") {
+      LiveActivityBridge.shared.register(with: islandRegistrar.messenger())
+    }
   }
 
   private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -120,8 +127,35 @@ import UIKit
 
   // MARK: - 系统相册录音时段对齐导入（PhotoKit）
 
+  private static func photoPermissionText(_ status: PHAuthorizationStatus) -> String {
+    switch status {
+    case .authorized, .limited:
+      return "granted"
+    case .notDetermined:
+      return "notDetermined"
+    case .denied, .restricted:
+      return "denied"
+    @unknown default:
+      return "denied"
+    }
+  }
+
   private func handlePhotos(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
+    case "status":
+      let st = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+      result(Self.photoPermissionText(st))
+    case "request":
+      let current = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+      if current == .notDetermined {
+        PHPhotoLibrary.requestAuthorization(for: .readWrite) { updated in
+          DispatchQueue.main.async {
+            result(Self.photoPermissionText(updated))
+          }
+        }
+      } else {
+        result(Self.photoPermissionText(current))
+      }
     case "importInWindows":
       guard let args = call.arguments as? [String: Any],
             let windows = args["windows"] as? [[String: Any]],

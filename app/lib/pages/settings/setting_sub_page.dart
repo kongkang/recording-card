@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/store/agent_config_store.dart';
 import '../../core/theme/tokens.dart';
+import '../../services/auth_service.dart';
 import '../../services/transcribe/asr_models.dart';
 import '../../services/transcribe/model_manager_controller.dart';
 import '../../widgets/rc_switch.dart';
@@ -21,21 +22,26 @@ class SettingSubPage extends StatelessWidget {
     required this.subId,
     required this.agentConfig,
     this.modelManager,
+    this.authService,
     this.showPaneBack = false,
     this.standalone = false,
   });
 
-  final String subId; // 'local' | 'cloud' | 'prompts' | 'ext'
+  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'island'
   final AgentConfigStore agentConfig;
   final ModelManagerController? modelManager;
+  final AuthService? authService;
   final bool showPaneBack;
   final bool standalone;
 
   String get _title => switch (subId) {
+    'login' => '云端账号授权',
     'local' => '本地语音引擎',
     'cloud' => '云端模型设置',
     'prompts' => '预设风格与提示词',
+    'voiceprint' => '声纹识别',
     'ext' => '扩展能力（Skills · Tools · MCP）',
+    'island' => '灵动岛与操作按钮',
     _ => '设置详情',
   };
 
@@ -107,10 +113,13 @@ class SettingSubPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 14),
                   switch (subId) {
+                    'login' => _LoginAuthBody(authService: authService),
                     'local' => _LocalEngineBody(controller: modelManager),
                     'cloud' => _CloudModelBody(config: agentConfig),
                     'prompts' => _AgentPromptsBody(config: agentConfig),
+                    'voiceprint' => _VoiceprintBody(controller: modelManager),
                     'ext' => _AgentExtensionsBody(config: agentConfig),
+                    'island' => _DynamicIslandBody(config: agentConfig),
                     _ => const SizedBox.shrink(),
                   },
                 ],
@@ -135,8 +144,6 @@ class _LocalEngineBody extends StatefulWidget {
 }
 
 class _LocalEngineBodyState extends State<_LocalEngineBody> {
-  String? _verifyHint;
-
   @override
   void initState() {
     super.initState();
@@ -146,14 +153,40 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     }
   }
 
-  Future<void> _verifyNow(ModelManagerController ctrl) async {
-    await ctrl.refresh();
-    if (!mounted) return;
-    setState(() {
-      _verifyHint = ctrl.allReady
-          ? '校验完成：三大端侧模型文件完整可用'
-          : '校验完成：部分模型尚未安装，点击右侧可补齐';
-    });
+  Future<void> _confirmDeleteModel(
+    BuildContext context,
+    ModelManagerController ctrl,
+    ModelSpec spec,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const Key('model-delete-confirm-dialog'),
+        title: const Text('确认删除本地语音模型？'),
+        content: const Text(
+          '删除后将无法自动离线语音转文字，仅能切换到付费云端模式；原享有的终身本地转写服务也会失效，且语音上行云端存在隐私泄露风险。',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('model-delete-cancel-btn'),
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('model-delete-confirm-btn'),
+            style: FilledButton.styleFrom(
+              backgroundColor: context.rc.danger,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('确认删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ctrl.delete(spec);
+    }
   }
 
   @override
@@ -166,6 +199,8 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
 
     Widget content() {
       final allReady = ctrl?.allReady ?? false;
+      final showDownloadBtn =
+          ctrl != null && (!allReady || ctrl.hasRemoteUpdates);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -176,42 +211,30 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: c.sep),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: allReady ? RCColors.ok : RCColors.warn,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        allReady ? '离线语音管线已就绪' : '离线语音管线待补齐模型',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: c.label,
-                        ),
-                      ),
-                    ),
-                  ],
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: allReady ? RCColors.ok : RCColors.warn,
+                  ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  '录音在手机本地按「Silero VAD 切分有效人声 → SenseVoice 离线转写文字 → CAM++ 声纹聚类区分说话人」三步流水线执行。音频切片与声纹向量全程留在本机，不上传云端。',
-                  style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    allReady
+                        ? '本地语音引擎已就绪，切片与转写全程留在本机。'
+                        : '本地语音引擎待补齐，音频与声纹均不上传云端。',
+                    style: TextStyle(fontSize: 12.5, height: 1.45, color: c.sec),
+                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 18),
-          _SubSectionLabel('端侧模型分工（共 ${specs.length} 项）'),
+          const SizedBox(height: 16),
+          _SubSectionLabel('本地语音三引擎（共 ${specs.length} 项）'),
           for (final spec in specs) ...[
             const SizedBox(height: 10),
             _buildSpecCard(context, spec, ctrl),
@@ -235,7 +258,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                           ctrl.allReady
                               ? '本地转写已就绪'
                               : (ctrl.configured
-                                    ? '本地模型未安装，无法转录'
+                                    ? '本地模型待下载补齐'
                                     : '模型下载服务未配置'),
                           style: TextStyle(
                             fontSize: 13,
@@ -244,29 +267,16 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                           ),
                         ),
                       ),
-                      TextButton(
-                        key: const Key('local-verify-btn'),
-                        onPressed: ctrl.busy ? null : () => _verifyNow(ctrl),
-                        child: const Text('校验完整性'),
-                      ),
-                      const SizedBox(width: 4),
-                      OutlinedButton(
-                        key: const Key('model-install-all'),
-                        onPressed: ctrl.busy || !ctrl.configured
-                            ? null
-                            : () => unawaited(ctrl.installAll()),
-                        child: Text(ctrl.allReady ? '重新下载' : '下载'),
-                      ),
+                      if (showDownloadBtn)
+                        OutlinedButton(
+                          key: const Key('model-install-all'),
+                          onPressed: ctrl.busy || !ctrl.configured
+                              ? null
+                              : () => unawaited(ctrl.installAll()),
+                          child: Text(ctrl.hasRemoteUpdates ? '更新' : '下载'),
+                        ),
                     ],
                   ),
-                  if (_verifyHint != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      _verifyHint!,
-                      key: const Key('local-verify-hint'),
-                      style: TextStyle(fontSize: 12, color: c.sec),
-                    ),
-                  ],
                   if (ctrl.busy) ...[
                     const SizedBox(height: 10),
                     LinearProgressIndicator(
@@ -338,7 +348,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                 child: Text(
                   meta.title,
                   style: TextStyle(
-                    fontSize: 15,
+                    fontSize: 14.5,
                     fontWeight: FontWeight.w700,
                     color: c.label,
                   ),
@@ -360,6 +370,23 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                   ),
                 ),
               ),
+              if (ctrl != null && installed && !spec.bundled) ...[
+                const SizedBox(width: 4),
+                IconButton(
+                  key: Key('model-delete-${spec.id}'),
+                  tooltip: '删除模型',
+                  onPressed: ctrl.busy
+                      ? null
+                      : () => unawaited(_confirmDeleteModel(context, ctrl, spec)),
+                  icon: Icon(Icons.delete_outline, size: 17, color: c.sec),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 26,
+                    minHeight: 26,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 4),
@@ -367,32 +394,13 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
             '${meta.stageTag} · $sizeText',
             style: TextStyle(fontSize: 12, color: c.sec),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             meta.explanation,
-            style: TextStyle(fontSize: 12.5, height: 1.5, color: c.ink),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 12.5, height: 1.4, color: c.ink),
           ),
-          if (ctrl != null && installed && !spec.bundled) ...[
-            const SizedBox(height: 6),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                key: Key('model-delete-${spec.id}'),
-                onPressed: ctrl.busy ? null : () => unawaited(ctrl.delete(spec)),
-                style: TextButton.styleFrom(
-                  foregroundColor: c.sec,
-                  minimumSize: Size.zero,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  textStyle: const TextStyle(fontSize: 12),
-                ),
-                child: const Text('删除模型文件'),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -402,29 +410,26 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
   _roleMeta(ModelSpec spec) {
     if (spec.id == senseVoiceSpec.id) {
       return (
-        title: 'SenseVoice Small INT8（离线语音转写）',
-        stageTag: '阶段 2 · 语音转文字主模型',
+        title: 'SenseVoice 离线转写',
+        stageTag: '离线语音转文字',
         expectedSize: '约 230MB',
-        explanation:
-            '阿里 FunAudioLLM 多语种离线识别模型（sherpa-onnx INT8 量化版），负责把切好的语音段在手机本地转成中英文本并标注语气情绪。',
+        explanation: '在本机将切片语音转写为中英文文本。',
       );
     }
     if (spec.id == sileroVadSpec.id) {
       return (
-        title: 'Silero VAD（语音活动检测）',
-        stageTag: '阶段 1 · 人声与静音切分',
-        expectedSize: '随包约 1.8MB',
-        explanation:
-            '轻量级人声活动检测模型（随安装包内置），先滤除长静音并按停顿切出单句边界，避免把空白噪音送进主模型产生幻觉词。',
+        title: 'Silero VAD 人声检测',
+        stageTag: '人声静音切分',
+        expectedSize: '约 1.8MB',
+        explanation: '过滤长静音片段并精准切分单句边界。',
       );
     }
     if (spec.id == campplusEmbeddingSpec.id) {
       return (
-        title: '3D-Speaker CAM++（声纹特征嵌入）',
-        stageTag: '阶段 3 · 说话人聚类推测',
+        title: 'CAM++ 声纹识别',
+        stageTag: '说话人聚类推测',
         expectedSize: '约 27MB',
-        explanation:
-            '达摩院 3D-Speaker 声纹特征提取模型，在本机对每句话提取声学向量并聚类区分「说话人 1 / 2（推测）」，不断言真实身份且不上传声纹。',
+        explanation: '提取说话人声纹特征进行聚类推测。',
       );
     }
     return (
@@ -446,10 +451,41 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
 
 // ── 2) 云端模型设置 ──────────────────────────────────────────
 
-class _CloudModelBody extends StatelessWidget {
+class _CloudModelBody extends StatefulWidget {
   const _CloudModelBody({required this.config});
 
   final AgentConfigStore config;
+
+  @override
+  State<_CloudModelBody> createState() => _CloudModelBodyState();
+}
+
+class _CloudModelBodyState extends State<_CloudModelBody> {
+  late final TextEditingController _apiCtrl = TextEditingController(
+    text: widget.config.customApiBase,
+  );
+  bool _savedHint = false;
+
+  AgentConfigStore get config => widget.config;
+
+  @override
+  void dispose() {
+    _apiCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveApi() async {
+    await config.setCustomApiBase(_apiCtrl.text);
+    if (!mounted) return;
+    setState(() => _savedHint = true);
+  }
+
+  Future<void> _resetApi() async {
+    _apiCtrl.clear();
+    await config.setCustomApiBase('');
+    if (!mounted) return;
+    setState(() => _savedHint = false);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -462,71 +498,200 @@ class _CloudModelBody extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '云端模型仅接收本地转写后的纯文本，用于手动生成总结、日报与未来的自动合并润色；原始录音永不上传。',
-              style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
+              '仅上行本地转写纯文本用于总结与整理；原始音频不上传云端。',
+              style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
             ),
             const SizedBox(height: 16),
-            const _SubSectionLabel('总结与 Agent 推理模型'),
-            const SizedBox(height: 8),
             Container(
               decoration: BoxDecoration(
                 color: c.card,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: c.sep),
               ),
+              child: InkWell(
+                key: const Key('cloud-enable-switch'),
+                borderRadius: BorderRadius.circular(12),
+                onTap: () =>
+                    unawaited(config.setCloudEnabled(!config.cloudEnabled)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 13,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '开启云端模型',
+                              style: TextStyle(
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w600,
+                                color: c.label,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              config.cloudEnabled
+                                  ? '已开启，支持云端总结生成'
+                                  : '已关闭，仅使用本地能力',
+                              style: TextStyle(fontSize: 12, color: c.sec),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      RCSwitch(on: config.cloudEnabled),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const _SubSectionLabel('自定义 API 地址'),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (var i = 0; i < models.length; i++) ...[
-                    if (i > 0)
-                      Divider(height: 1, thickness: 1, color: c.sep),
-                    _modelRow(context, models[i]),
+                  TextField(
+                    key: const Key('cloud-custom-api-input'),
+                    controller: _apiCtrl,
+                    style: TextStyle(fontSize: 13.5, color: c.label),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText: 'https://api.example.com（留空走默认网关）',
+                      hintStyle: TextStyle(fontSize: 13, color: c.ax),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(9),
+                        borderSide: BorderSide(color: c.sep),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(9),
+                        borderSide: BorderSide(color: c.sep),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 11,
+                        vertical: 10,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      if (_savedHint)
+                        const Expanded(
+                          child: Text(
+                            '已保存接口地址',
+                            key: Key('cloud-custom-api-saved'),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: RCColors.okInk,
+                            ),
+                          ),
+                        )
+                      else
+                        const Spacer(),
+                      if (config.customApiBase.isNotEmpty ||
+                          _apiCtrl.text.trim().isNotEmpty) ...[
+                        TextButton(
+                          key: const Key('cloud-custom-api-reset'),
+                          onPressed: _resetApi,
+                          child: const Text('恢复默认'),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      FilledButton(
+                        key: const Key('cloud-custom-api-save'),
+                        onPressed: _saveApi,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: c.label,
+                          foregroundColor: Colors.white,
+                          shape: const StadiumBorder(),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text('保存', style: TextStyle(fontSize: 12.5)),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            if (config.developerMode) ...[
+              const SizedBox(height: 20),
+              const _SubSectionLabel('开发者模式 · 总结与 Agent 推理模型'),
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: c.card,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: c.sep),
+                ),
+                child: Column(
+                  children: [
+                    for (var i = 0; i < models.length; i++) ...[
+                      if (i > 0)
+                        Divider(height: 1, thickness: 1, color: c.sep),
+                      _modelRow(context, models[i]),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            const _SubSectionLabel('上下文组织策略'),
-            const SizedBox(height: 8),
-            Container(
-              decoration: BoxDecoration(
-                color: c.card,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: c.sep),
+              const SizedBox(height: 20),
+              const _SubSectionLabel('上下文组织策略'),
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: c.card,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: c.sep),
+                ),
+                child: Column(
+                  children: [
+                    _ctxRow(
+                      context,
+                      keyName: 'ctx-full-day',
+                      mode: 'full_day',
+                      title: '全天连续单上下文（推荐）',
+                      subtitle: '同一天录音共享上下文线程，增量追加新切片。',
+                    ),
+                    Divider(height: 1, thickness: 1, color: c.sep),
+                    _ctxRow(
+                      context,
+                      keyName: 'ctx-scoped',
+                      mode: 'scoped',
+                      title: '仅所选记录独立上下文',
+                      subtitle: '每次仅发送当前勾选记录文本。',
+                    ),
+                  ],
+                ),
               ),
-              child: Column(
+              const SizedBox(height: 20),
+              const _SubSectionLabel('输出采样温度（Temperature）'),
+              const SizedBox(height: 8),
+              Row(
                 children: [
-                  _ctxRow(
-                    context,
-                    keyName: 'ctx-full-day',
-                    mode: 'full_day',
-                    title: '全天连续单上下文（推荐）',
-                    subtitle:
-                        '同一天的连续录音共享同一对话线程，增量追加新切片，避免重复发送前文并提升上下文缓存命中率。',
-                  ),
-                  Divider(height: 1, thickness: 1, color: c.sep),
-                  _ctxRow(
-                    context,
-                    keyName: 'ctx-scoped',
-                    mode: 'scoped',
-                    title: '仅所选记录独立上下文',
-                    subtitle:
-                        '每次生成总结仅发送当前勾选的记录文本，不引用同日其它时段的背景上下文。',
-                  ),
+                  _tempChip(context, 0.2, '0.2 严谨纪要'),
+                  const SizedBox(width: 8),
+                  _tempChip(context, 0.5, '0.5 均衡提炼'),
+                  const SizedBox(width: 8),
+                  _tempChip(context, 0.8, '0.8 发散洞察'),
                 ],
               ),
-            ),
-            const SizedBox(height: 20),
-            const _SubSectionLabel('输出采样温度（Temperature）'),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                _tempChip(context, 0.2, '0.2 严谨纪要'),
-                const SizedBox(width: 8),
-                _tempChip(context, 0.5, '0.5 均衡提炼'),
-                const SizedBox(width: 8),
-                _tempChip(context, 0.8, '0.8 发散洞察'),
-              ],
-            ),
+            ],
           ],
         );
       },
@@ -1133,6 +1298,387 @@ class _SubSectionLabel extends StatelessWidget {
         fontSize: 12,
         fontWeight: FontWeight.w600,
         color: context.rc.sec,
+      ),
+    );
+  }
+}
+
+// ── 0) 云端账号授权与第三方绑定 ──────────────────────────────
+
+class _LoginAuthBody extends StatefulWidget {
+  const _LoginAuthBody({required this.authService});
+
+  final AuthService? authService;
+
+  @override
+  State<_LoginAuthBody> createState() => _LoginAuthBodyState();
+}
+
+class _LoginAuthBodyState extends State<_LoginAuthBody> {
+  String? _statusMsg;
+
+  Future<void> _triggerOAuth({String? provider}) async {
+    final auth = widget.authService;
+    if (auth == null) {
+      setState(() => _statusMsg = '当前页面未连接鉴权服务');
+      return;
+    }
+    final err = await auth.signInWithOAuth(loginHint: provider);
+    if (!mounted) return;
+    setState(() {
+      _statusMsg = err ?? (auth.isSignedIn ? '外脑账号已授权' : '已取消授权');
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final auth = widget.authService;
+
+    Widget buildBody() {
+      final signedIn = auth?.isSignedIn ?? false;
+      final session = auth?.session;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '统一由外脑（Wainao）账号鉴权；微信、Google、GitHub 与 Facebook 绑定均基于外脑账号体系完成授权。',
+            style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: c.sep),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: signedIn ? RCColors.ok : c.ax,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        signedIn
+                            ? (session?.account ?? '外脑账号已授权')
+                            : '未授权外脑账号',
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w700,
+                          color: c.label,
+                        ),
+                      ),
+                    ),
+                    if (signedIn)
+                      TextButton(
+                        key: const Key('auth-signout-btn'),
+                        onPressed: () => auth?.signOut(),
+                        style: TextButton.styleFrom(
+                          foregroundColor: c.danger,
+                          minimumSize: Size.zero,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                        ),
+                        child: const Text('退出登录'),
+                      )
+                    else
+                      FilledButton(
+                        key: const Key('auth-wainao-login-btn'),
+                        onPressed: auth?.isBusy == true
+                            ? null
+                            : () => unawaited(_triggerOAuth()),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: c.label,
+                          foregroundColor: Colors.white,
+                          shape: const StadiumBorder(),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: Text(
+                          auth?.isBusy == true ? '授权中…' : '外脑授权登录',
+                          style: const TextStyle(fontSize: 12.5),
+                        ),
+                      ),
+                  ],
+                ),
+                if (session?.email != null && session!.email!.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    session.email!,
+                    style: TextStyle(fontSize: 12, color: c.sec),
+                  ),
+                ],
+                if (_statusMsg != null || auth?.lastError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    auth?.lastError ?? _statusMsg ?? '',
+                    key: const Key('auth-status-msg'),
+                    style: TextStyle(fontSize: 12, color: c.sec),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          const _SubSectionLabel('第三方账号绑定'),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: c.sep),
+            ),
+            child: Column(
+              children: [
+                _providerRow(
+                  context,
+                  keyName: 'auth-bind-wechat',
+                  title: '微信绑定',
+                  subtitle: '中国地区推荐，通过外脑鉴权关联微信身份',
+                  onTap: () => unawaited(_triggerOAuth(provider: 'wechat')),
+                ),
+                Divider(height: 1, thickness: 1, color: c.sep),
+                _providerRow(
+                  context,
+                  keyName: 'auth-bind-google',
+                  title: 'Google 绑定',
+                  subtitle: '关联 Google 账号用于跨端会话',
+                  onTap: () => unawaited(_triggerOAuth(provider: 'google')),
+                ),
+                Divider(height: 1, thickness: 1, color: c.sep),
+                _providerRow(
+                  context,
+                  keyName: 'auth-bind-github',
+                  title: 'GitHub 绑定',
+                  subtitle: '开发者身份登录与授权',
+                  onTap: () => unawaited(_triggerOAuth(provider: 'github')),
+                ),
+                Divider(height: 1, thickness: 1, color: c.sep),
+                _providerRow(
+                  context,
+                  keyName: 'auth-bind-facebook',
+                  title: 'Facebook 登录',
+                  subtitle: '通过外脑认证关联 Facebook',
+                  onTap: () => unawaited(_triggerOAuth(provider: 'facebook')),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (auth == null) return buildBody();
+    return ListenableBuilder(
+      listenable: auth,
+      builder: (context, _) => buildBody(),
+    );
+  }
+
+  Widget _providerRow(
+    BuildContext context, {
+    required String keyName,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    final c = context.rc;
+    return InkWell(
+      key: Key(keyName),
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                      color: c.label,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 12, color: c.sec),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 18, color: c.ax),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── 5) 声纹识别说明 ───────────────────────────────────────────
+
+class _VoiceprintBody extends StatelessWidget {
+  const _VoiceprintBody({required this.controller});
+
+  final ModelManagerController? controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final ctrl = controller;
+    Widget content() {
+      final installed =
+          ctrl?.statusFor(campplusEmbeddingSpec)?.installed ?? false;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: c.sep),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '说话人聚类（推测）',
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w700,
+                          color: c.label,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      installed ? '已就绪' : '待下载',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: installed ? RCColors.okInk : c.sec,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '基于本机声纹特征将对话归类为「说话人 1 / 2（推测）」，原始声纹特征仅留存在本机，不断言真实身份。',
+                  style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (ctrl == null) return content();
+    return ListenableBuilder(
+      listenable: ctrl,
+      builder: (context, _) => content(),
+    );
+  }
+}
+
+// ── 6) 灵动岛与操作按钮 ───────────────────────────────────────
+
+class _DynamicIslandBody extends StatelessWidget {
+  const _DynamicIslandBody({required this.config});
+
+  final AgentConfigStore config;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    return ListenableBuilder(
+      listenable: config,
+      builder: (context, _) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: c.sep),
+            ),
+            child: InkWell(
+              key: const Key('island-enable-switch'),
+              borderRadius: BorderRadius.circular(12),
+              onTap: () =>
+                  unawaited(config.setIslandEnabled(!config.islandEnabled)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '开启本机录音灵动岛',
+                            style: TextStyle(
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w600,
+                              color: c.label,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '本机录音开启时，在灵动岛展示 App Logo 运行状态。',
+                            style: TextStyle(fontSize: 12, color: c.sec),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    RCSwitch(on: config.islandEnabled),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const _SubSectionLabel('iPhone 操作按钮快捷方式'),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: c.sep),
+            ),
+            child: Text(
+              '前往系统「设置 → 操作按钮 → 快捷指令」，选择「录音卡 · 切换本机录音」即可一键开启或关闭本机录音。',
+              style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
+            ),
+          ),
+        ],
       ),
     );
   }

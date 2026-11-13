@@ -1,68 +1,143 @@
 /// 录音卡状态胶囊 + 弹层（main / 固件更新 / Wi-Fi 设置 三个视图）。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/store/device_store.dart';
+import '../core/theme/rc_icons.dart';
 import '../core/theme/tokens.dart';
+import '../services/audio/phone_mic_service.dart';
 import '../widgets/rc_switch.dart';
 
 /// 弹层是否展示 Wi-Fi 配网行（随硬件能力 hasWifiConfig 门控）。
 const bool showWifiRow = true;
 
-/// 电池图标：仅图形不显数字；<20% 红 / <40% 橙 / ≥40% 绿
-class BatteryIcon extends StatelessWidget {
+/// 电池图标：仅图形不显数字；<20% 红 / <40% 橙 / ≥40% 绿；充电时内部呼吸并叠加闪电。
+class BatteryIcon extends StatefulWidget {
   const BatteryIcon({
     super.key,
     this.level = 0,
     this.scale = 1,
+    this.charging = false,
   });
   final int level;
   final double scale;
+  final bool charging;
+
+  @override
+  State<BatteryIcon> createState() => _BatteryIconState();
+}
+
+class _BatteryIconState extends State<BatteryIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _breathe = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.charging) {
+      _breathe.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void didUpdateWidget(BatteryIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.charging && !_breathe.isAnimating) {
+      _breathe.repeat(reverse: true);
+    } else if (!widget.charging && _breathe.isAnimating) {
+      _breathe.stop();
+      _breathe.value = 1.0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _breathe.dispose();
+    super.dispose();
+  }
 
   // 电量未知（未连接/未回报）显示中性灰，不假装"电量低"
-  Color get _color => level <= 0
-      ? RCColors.ax
-      : level < 20
-      ? RCColors.danger
-      : level < 40
-      ? const Color(0xFFFF9500)
-      : RCColors.ok;
+  Color get _color {
+    if (widget.charging && widget.level <= 0) return RCColors.ok;
+    return widget.level <= 0
+        ? RCColors.ax
+        : widget.level < 20
+        ? RCColors.danger
+        : widget.level < 40
+        ? const Color(0xFFFF9500)
+        : RCColors.ok;
+  }
 
   @override
   Widget build(BuildContext context) {
-    // 原型 SVG 23×11：电池体 + 间隙 + 正极凸起（凸起独立于体外右侧，不叠在边框上）
+    final s = widget.scale;
+    final maxFillWidth = 19 * s - 3.2 * s - 2.6 * s;
+    final rawWidth = widget.charging && widget.level <= 0
+        ? maxFillWidth * 0.55
+        : (maxFillWidth * widget.level / 100);
+    final fillWidth = rawWidth.clamp(1.5, maxFillWidth);
+    final opacityAnim = widget.charging
+        ? Tween<double>(begin: 0.35, end: 1.0).animate(
+            CurvedAnimation(parent: _breathe, curve: Curves.easeInOut),
+          )
+        : const AlwaysStoppedAnimation<double>(1.0);
+
+    // 原型 SVG 23×11：电池体 + 间隙 + 正极凸起；充电中内部填充呼吸 + 居中闪电覆盖。
     return SizedBox(
-      width: 23 * scale,
-      height: 11 * scale,
+      width: 23 * s,
+      height: 11 * s,
       child: Row(
         children: [
-          Container(
-            key: const Key('batt'),
-            width: 19 * scale,
-            height: 11 * scale,
-            decoration: BoxDecoration(
-              border: Border.all(color: _color, width: 1.3),
-              borderRadius: BorderRadius.circular(3 * scale),
-            ),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Container(
-                key: const Key('batt-fill'),
-                margin: EdgeInsets.all(1.6 * scale),
-                width: ((19 * scale - 3.2 * scale - 2.6 * scale) * level / 100)
-                    .clamp(1.5, 19 * scale),
-                color: _color,
+          Stack(
+            alignment: Alignment.center,
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                key: const Key('batt'),
+                width: 19 * s,
+                height: 11 * s,
+                decoration: BoxDecoration(
+                  border: Border.all(color: _color, width: 1.3),
+                  borderRadius: BorderRadius.circular(3 * s),
+                ),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FadeTransition(
+                    opacity: opacityAnim,
+                    child: Container(
+                      key: const Key('batt-fill'),
+                      margin: EdgeInsets.all(1.6 * s),
+                      width: fillWidth,
+                      decoration: BoxDecoration(
+                        color: _color,
+                        borderRadius: BorderRadius.circular(1 * s),
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
+              if (widget.charging)
+                RCIcon(
+                  RCIconKind.bolt,
+                  key: const Key('batt-bolt'),
+                  size: 10.5 * s,
+                  color: RCColors.label,
+                ),
+            ],
           ),
-          SizedBox(width: 1.2 * scale),
+          SizedBox(width: 1.2 * s),
           Container(
-            width: 2 * scale,
-            height: 4.5 * scale,
+            width: 2 * s,
+            height: 4.5 * s,
             decoration: BoxDecoration(
               color: _color,
-              borderRadius: BorderRadius.circular(1 * scale),
+              borderRadius: BorderRadius.circular(1 * s),
             ),
           ),
         ],
@@ -71,7 +146,7 @@ class BatteryIcon extends StatelessWidget {
   }
 }
 
-/// 顶栏胶囊：圆点状态 + 电量；没连设备时电量位置改显「无设备」文字。
+/// 顶栏胶囊：圆点状态 + 电量；没连设备时电量位置改显「无设备」文字（或「本机录音」）。
 ///
 /// 圆点语义（2026-11-10 owner 定稿）：绿=正在录音（心跳）；橙=已连接但未录音
 /// （待机，说明卡在、电量为真）；蓝=掉线后自动重连中（只试一次）；
@@ -84,6 +159,8 @@ class HwCapsule extends StatefulWidget {
     this.connected = true,
     this.recording = false,
     this.reconnecting = false,
+    this.charging = false,
+    this.phoneRecording = false,
   });
   final VoidCallback onTap;
   final int level;
@@ -97,6 +174,12 @@ class HwCapsule extends StatefulWidget {
   /// 看门狗判掉线后正在自动重连：蓝点 + 「连接中…」。
   final bool reconnecting;
 
+  /// 设备是否正在充电。
+  final bool charging;
+
+  /// 本机麦克风是否在录音（无硬件也可独立运行）。
+  final bool phoneRecording;
+
   @override
   State<HwCapsule> createState() => _HwCapsuleState();
 }
@@ -104,6 +187,10 @@ class HwCapsule extends StatefulWidget {
 class _HwCapsuleState extends State<HwCapsule>
     with SingleTickerProviderStateMixin {
   late final AnimationController _pulse;
+
+  bool get _isRunning =>
+      (widget.connected && widget.recording) ||
+      (!widget.connected && !widget.reconnecting && widget.phoneRecording);
 
   @override
   void initState() {
@@ -114,13 +201,13 @@ class _HwCapsuleState extends State<HwCapsule>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
-    if (widget.connected && widget.recording) _pulse.repeat();
+    if (_isRunning) _pulse.repeat();
   }
 
   @override
   void didUpdateWidget(HwCapsule oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final running = widget.connected && widget.recording;
+    final running = _isRunning;
     if (running && !_pulse.isAnimating) {
       _pulse.repeat();
     } else if (!running && _pulse.isAnimating) {
@@ -134,16 +221,16 @@ class _HwCapsuleState extends State<HwCapsule>
     super.dispose();
   }
 
-  Widget _dot() {
+  Widget _dot({bool forceOk = false}) {
     return Container(
       key: const Key('capsule-dot'),
       width: 7,
       height: 7,
       decoration: BoxDecoration(
-        // 蓝=掉线自动重连中；绿=正在运行（录音中）；橙=已连接待机
+        // 蓝=掉线自动重连中；绿=正在运行（录音中/本机录音）；橙=已连接待机
         color: widget.reconnecting
             ? RCColors.info
-            : (widget.recording ? RCColors.ok : RCColors.warn),
+            : ((forceOk || widget.recording) ? RCColors.ok : RCColors.warn),
         shape: BoxShape.circle,
       ),
     );
@@ -154,12 +241,13 @@ class _HwCapsuleState extends State<HwCapsule>
     final r = context.rc;
     // 重连中也算"有条链路在手"，只是数据暂时不可信
     final linked = widget.connected || widget.reconnecting;
+    final localRec = !linked && widget.phoneRecording;
     return Semantics(
       label: linked
           ? (widget.reconnecting
                 ? '录音卡状态：连接中'
                 : (widget.recording ? '录音卡状态：已连接，录音中' : '录音卡状态：已连接，未录音'))
-          : '录音卡状态：无设备',
+          : (localRec ? '录音卡状态：本机录音中' : '录音卡状态：无设备'),
       button: true,
       child: InkWell(
         key: const Key('hw-capsule'),
@@ -186,6 +274,16 @@ class _HwCapsuleState extends State<HwCapsule>
                         child: _dot(),
                       )
                     : _dot()
+              else if (localRec)
+                FadeTransition(
+                  opacity: Tween(begin: 0.35, end: 1.0).animate(
+                    CurvedAnimation(
+                      parent: _pulse,
+                      curve: const Interval(0, 0.45),
+                    ),
+                  ),
+                  child: _dot(forceOk: true),
+                )
               else
                 Container(
                   key: const Key('capsule-off'),
@@ -204,7 +302,17 @@ class _HwCapsuleState extends State<HwCapsule>
                   style: TextStyle(fontSize: 12, color: RCColors.sec),
                 )
               else if (widget.connected)
-                BatteryIcon(level: widget.level, scale: 0.9)
+                BatteryIcon(
+                  level: widget.level,
+                  scale: 0.9,
+                  charging: widget.charging,
+                )
+              else if (localRec)
+                const Text(
+                  '本机录音',
+                  key: Key('capsule-phone-rec'),
+                  style: TextStyle(fontSize: 12, color: RCColors.label),
+                )
               else
                 const Text(
                   '无设备',
@@ -221,8 +329,13 @@ class _HwCapsuleState extends State<HwCapsule>
 
 /// 弹层宿主：backdrop + 底部卡片；固件更新中锁定不关闭。
 class StatusSheetOverlay extends StatefulWidget {
-  const StatusSheetOverlay({super.key, required this.store});
+  const StatusSheetOverlay({
+    super.key,
+    required this.store,
+    this.islandEnabled = true,
+  });
   final DeviceStore store;
+  final bool islandEnabled;
 
   @override
   State<StatusSheetOverlay> createState() => _StatusSheetOverlayState();
@@ -269,8 +382,14 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay> {
                   ),
                   child: SingleChildScrollView(
                     child: switch (store.view) {
-                      DeviceView.main => _MainView(store: store),
-                      DeviceView.upg => _FirmwareView(store: store),
+                      DeviceView.main => _MainView(
+                        store: store,
+                        islandEnabled: widget.islandEnabled,
+                      ),
+                      DeviceView.upg => _FirmwareView(
+                        store: store,
+                        islandEnabled: widget.islandEnabled,
+                      ),
                       DeviceView.wifi => _WifiView(store: store),
                     },
                   ),
@@ -330,36 +449,186 @@ class _Row extends StatelessWidget {
   }
 }
 
-class _MainView extends StatelessWidget {
-  const _MainView({required this.store});
+Future<void> _togglePhoneRecordingWithPermission(
+  BuildContext context,
+  DeviceStore store, {
+  required bool islandEnabled,
+}) async {
+  if (store.isPhoneRecording) {
+    await store.stopPhoneRecording();
+    return;
+  }
+  var perm = await store.checkPhoneMicPermission();
+  if (perm == PhoneMicPermission.notDetermined) {
+    perm = await store.requestPhoneMicPermission();
+  }
+  if (perm != PhoneMicPermission.granted) {
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const Key('mic-perm-dialog'),
+        title: const Text('需要麦克风权限'),
+        content: const Text('使用手机「本机录音」需开启系统麦克风权限，请前往系统设置允许后重试。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+    return;
+  }
+  await store.startPhoneRecording(islandEnabled: islandEnabled);
+}
+
+/// 共用的手机「本机录音」行：无硬件时也可独立使用；开启期间同步驱动灵动岛。
+class _PhoneRecRow extends StatelessWidget {
+  const _PhoneRecRow({
+    required this.store,
+    required this.islandEnabled,
+  });
+
   final DeviceStore store;
+  final bool islandEnabled;
 
   @override
   Widget build(BuildContext context) {
-    if (!store.isConnected) return _ConnectView(store: store);
+    final on = store.isPhoneRecording;
+    final busy = store.phoneRecordingBusy;
+    return Column(
+      key: const Key('phone-rec-row'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Row(
+          label: '本机录音',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: busy
+                    ? const Text(
+                        '处理中…',
+                        style: TextStyle(fontSize: 13, color: RCColors.sec),
+                      )
+                    : on
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: const BoxDecoration(
+                              color: RCColors.danger,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          const Flexible(
+                            child: Text(
+                              '本机录音中',
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                              style: TextStyle(fontSize: 13),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            store.phoneRecClockText,
+                            key: const Key('phone-rec-clock'),
+                            softWrap: false,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      )
+                    : const Text(
+                        '使用手机麦克风',
+                        style: TextStyle(fontSize: 13, color: RCColors.sec),
+                      ),
+              ),
+              const SizedBox(width: 10),
+              Semantics(
+                label: '本机录音开关',
+                toggled: on,
+                button: true,
+                enabled: !busy,
+                child: GestureDetector(
+                  key: const Key('phone-rec-toggle'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => unawaited(
+                    _togglePhoneRecordingWithPermission(
+                      context,
+                      store,
+                      islandEnabled: islandEnabled,
+                    ),
+                  ),
+                  child: RCSwitch(on: on, busy: busy),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (store.phoneRecordingError != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              store.phoneRecordingError!,
+              key: const Key('phone-rec-error'),
+              style: const TextStyle(fontSize: 12, color: RCColors.danger),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _MainView extends StatelessWidget {
+  const _MainView({
+    required this.store,
+    this.islandEnabled = true,
+  });
+  final DeviceStore store;
+  final bool islandEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!store.isConnected) {
+      return _ConnectView(store: store, islandEnabled: islandEnabled);
+    }
     return Column(
       key: const Key('dev-main'),
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              key: const Key('dev-dot'),
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                // 与顶栏胶囊同一语义：绿=录音中，橙=已连接待机
-                color: store.isRecording ? RCColors.ok : RCColors.warn,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
+            Row(
+              children: [
+                Container(
+                  key: const Key('dev-dot'),
+                  width: 9,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    // 绿=录音中，橙=已连接待机
+                    color: store.isRecording ? RCColors.ok : RCColors.warn,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                DeviceKindBadge(
+                  key: const Key('dev-header-kind'),
+                  kind: store.activeKind,
+                  label: store.activeModelLabel,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
                     store.connectedDisplayName,
                     key: const Key('dev-name'),
                     maxLines: 1,
@@ -369,41 +638,52 @@ class _MainView extends StatelessWidget {
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  Text(
-                    store.deviceSubtitleText,
-                    key: const Key('dev-subtitle'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                ),
+                Semantics(
+                  button: true,
+                  label: '断开连接',
+                  child: GestureDetector(
+                    key: const Key('dev-disconnect'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _confirmDisconnect(context, store),
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: RCIcon(
+                        RCIconKind.disconnect,
+                        size: 18,
+                        color: RCColors.sec,
+                      ),
+                    ),
                   ),
+                ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 16, top: 2),
+              child: Row(
+                children: [
+                  const RCIcon(
+                    RCIconKind.bluetooth,
+                    key: Key('dev-bt-icon'),
+                    size: 12,
+                    color: RCColors.sec,
+                  ),
+                  if (store.deviceSubtitleText.isNotEmpty) ...[
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        store.deviceSubtitleText,
+                        key: const Key('dev-subtitle'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: RCColors.sec,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE8F5EA),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: const Text(
-                '已连接',
-                style: TextStyle(fontSize: 11, color: RCColors.okInk),
-              ),
-            ),
-            // 设备侧没有"主动断开"的入口，只能从这里断。
-            // 断开前会先停录音、停实时流、停同步，避免半截状态把链路卡住。
-            const SizedBox(width: 4),
-            Semantics(
-              button: true,
-              label: '断开连接',
-              child: IconButton(
-                key: const Key('dev-disconnect'),
-                onPressed: () => _confirmDisconnect(context, store),
-                icon: const Icon(Icons.link_off, size: 20),
-                color: RCColors.sec,
-                tooltip: '断开连接',
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
               ),
             ),
           ],
@@ -510,7 +790,7 @@ class _MainView extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              BatteryIcon(level: store.battery),
+              BatteryIcon(level: store.battery, charging: store.isCharging),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
@@ -526,6 +806,7 @@ class _MainView extends StatelessWidget {
             ],
           ),
         ),
+        _PhoneRecRow(store: store, islandEnabled: islandEnabled),
         // 同步行：仅具备本地存储/文件补传能力的设备展示（如录音卡 V2、点一机 V1；键盘 V2.1 隐藏）
         if (store.activeCapabilities.hasFileSync)
           _Row(
@@ -549,17 +830,17 @@ class _MainView extends StatelessWidget {
                   width: 16,
                   height: 16,
                   child: switch (store.syncState) {
-                    SyncState.idle => const Icon(
-                      Icons.sync,
+                    SyncState.idle => const RCIcon(
+                      RCIconKind.sync,
                       key: Key('sync-ico-idle'),
                       size: 15,
                       color: RCColors.sec,
                     ),
                     SyncState.busy => const _SpinIcon(key: Key('sync-ico-busy')),
-                    SyncState.done => const Icon(
-                      Icons.check,
+                    SyncState.done => const RCIcon(
+                      RCIconKind.check,
                       key: Key('sync-ico-done'),
-                      size: 16,
+                      size: 15,
                       color: RCColors.ok,
                     ),
                   },
@@ -584,8 +865,8 @@ class _MainView extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 5),
-                const Icon(
-                  Icons.chevron_right,
+                const RCIcon(
+                  RCIconKind.chevronRight,
                   key: Key('rowchev-wifi'),
                   size: 15,
                   color: RCColors.ax,
@@ -618,7 +899,7 @@ class _MainView extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 5),
-                const Icon(Icons.chevron_right, size: 15, color: RCColors.ax),
+                const RCIcon(RCIconKind.chevronRight, size: 15, color: RCColors.ax),
               ],
             ),
           ),
@@ -699,12 +980,14 @@ Future<void> _confirmDisconnect(BuildContext context, DeviceStore store) async {
   await store.disconnectSafely();
 }
 
-/// 未连接视图：搜索并连接附近的录音卡。
-///
-/// 顶栏胶囊在未连接时点开直接进这里——扫描是进入动作，不是藏在二级页里的开关。
+/// 未连接视图：搜索并连接附近的录音卡，并支持无硬件独立开启「本机录音」。
 class _ConnectView extends StatelessWidget {
-  const _ConnectView({required this.store});
+  const _ConnectView({
+    required this.store,
+    this.islandEnabled = true,
+  });
   final DeviceStore store;
+  final bool islandEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -721,7 +1004,10 @@ class _ConnectView extends StatelessWidget {
               height: 10,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: RCColors.ax, width: 1.4),
+                color: store.isPhoneRecording ? RCColors.ok : null,
+                border: store.isPhoneRecording
+                    ? null
+                    : Border.all(color: RCColors.ax, width: 1.4),
               ),
             ),
             const SizedBox(width: 8),
@@ -733,9 +1019,19 @@ class _ConnectView extends StatelessWidget {
                     '录音卡',
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
                   ),
-                  Text(
-                    '未连接 · 蓝牙',
-                    style: TextStyle(fontSize: 12, color: RCColors.sec),
+                  Row(
+                    children: [
+                      RCIcon(
+                        RCIconKind.bluetooth,
+                        size: 12,
+                        color: RCColors.sec,
+                      ),
+                      SizedBox(width: 4),
+                      Text(
+                        '待连接硬件',
+                        style: TextStyle(fontSize: 12, color: RCColors.sec),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -754,7 +1050,9 @@ class _ConnectView extends StatelessWidget {
             ),
           ],
         ),
-        const Divider(height: 24, color: RCColors.sep),
+        const Divider(height: 20, color: RCColors.sep),
+        _PhoneRecRow(store: store, islandEnabled: islandEnabled),
+        const Divider(height: 18, color: RCColors.sep),
         const Text(
           '连接录音卡',
           style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
@@ -830,6 +1128,12 @@ class _ConnectView extends StatelessWidget {
                   Expanded(
                     child: Row(
                       children: [
+                        DeviceKindBadge(
+                          key: Key('dev-kind-${device.id}'),
+                          kind: device.deviceKind,
+                          label: device.modelLabel,
+                        ),
+                        const SizedBox(width: 8),
                         Flexible(
                           child: Text(
                             device.shortName,
@@ -838,25 +1142,6 @@ class _ConnectView extends StatelessWidget {
                             style: const TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Container(
-                          key: Key('dev-kind-${device.id}'),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF0F0EC),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            device.modelLabel,
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: RCColors.sec,
                             ),
                           ),
                         ),
@@ -870,7 +1155,11 @@ class _ConnectView extends StatelessWidget {
                     style: TextStyle(fontSize: 12, color: RCColors.okInk),
                   ),
                   const SizedBox(width: 4),
-                  const Icon(Icons.chevron_right, size: 15, color: RCColors.ax),
+                  const RCIcon(
+                    RCIconKind.chevronRight,
+                    size: 15,
+                    color: RCColors.ax,
+                  ),
                 ],
               ),
             ),
@@ -928,13 +1217,78 @@ class _SpinIconState extends State<_SpinIcon>
   @override
   Widget build(BuildContext context) => RotationTransition(
     turns: _c,
-    child: const Icon(Icons.sync, size: 15, color: RCColors.ink),
+    child: const RCIcon(RCIconKind.sync, size: 15, color: RCColors.ink),
   );
 }
 
 class _FirmwareView extends StatelessWidget {
-  const _FirmwareView({required this.store});
+  const _FirmwareView({
+    required this.store,
+    this.islandEnabled = true,
+  });
   final DeviceStore store;
+  final bool islandEnabled;
+
+  Future<void> _onStartPressed(BuildContext context) async {
+    if (!store.isRecording) {
+      await store.startFwUpdate(islandEnabled: islandEnabled);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const Key('ota-rec-confirm-dialog'),
+        title: const Text('当前正在录音，开始更新会导致录音停止'),
+        content: const Text(
+          '升级期间硬件录音将暂停并重启。确认后将自动切换到手机「本机录音」无缝接力，'
+          '待硬件升级重连后自动关闭本机录音，确保录音数据不断。',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('ota-rec-cancel'),
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('ota-rec-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: RCColors.label),
+            child: const Text('继续更新'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    var perm = await store.checkPhoneMicPermission();
+    if (perm == PhoneMicPermission.notDetermined) {
+      perm = await store.requestPhoneMicPermission();
+    }
+    if (perm != PhoneMicPermission.granted) {
+      if (!context.mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          key: const Key('ota-mic-perm-dialog'),
+          title: const Text('需要开启麦克风权限'),
+          content: const Text(
+            '硬件升级重连期间需使用手机麦克风进行「本机录音」接力以防数据中断，'
+            '请先允许「录音卡」访问麦克风后再重试更新。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    await store.startFwUpdate(
+      allowStopRecordingAndHandover: true,
+      islandEnabled: islandEnabled,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1058,7 +1412,7 @@ class _FirmwareView extends StatelessWidget {
                     store.fwStage == FwStage.checking ||
                     !store.fwAvailable)
                 ? null
-                : store.startFwUpdate,
+                : () => unawaited(_onStartPressed(context)),
             style: FilledButton.styleFrom(
               backgroundColor: RCColors.label,
               disabledBackgroundColor: RCColors.ax,
@@ -1154,7 +1508,11 @@ class _WifiViewState extends State<_WifiView> {
             IconButton(
               key: const Key('wifi-back'),
               onPressed: () => store.showView(DeviceView.main),
-              icon: const Icon(Icons.chevron_left, size: 22),
+              icon: const RCIcon(
+                RCIconKind.chevronLeft,
+                size: 18,
+                color: RCColors.ink,
+              ),
               color: RCColors.ink,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
@@ -1337,7 +1695,7 @@ class _WifiViewState extends State<_WifiView> {
             ],
             const Spacer(),
             if (r.lock) ...[
-              const Icon(Icons.lock, size: 12, color: RCColors.sec),
+              const RCIcon(RCIconKind.lock, size: 12, color: RCColors.sec),
               const SizedBox(width: 5),
             ],
             _SignalBars(strength: r.signal),

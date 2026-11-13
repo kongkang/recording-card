@@ -15,6 +15,9 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../services/audio/live_audio_recorder.dart';
+import '../../services/audio/phone_mic_service.dart';
+import '../../services/platform/live_activity_service.dart';
 import '../device/card_gateway.dart';
 import '../platform/bluetooth_permission.dart';
 
@@ -54,9 +57,18 @@ class SavedWifi {
 enum FwStage { idle, checking, main, wifi, done, failed }
 
 class DeviceStore extends ChangeNotifier {
-  DeviceStore({CardGateway? gateway, bool autoStart = false})
-    : _gateway = gateway ?? realOrUnsupported(),
-      _autoStart = autoStart {
+  DeviceStore({
+    CardGateway? gateway,
+    bool autoStart = false,
+    PhoneMicBackend? phoneMicBackend,
+    PhoneMicRecorder? phoneMicRecorder,
+    LiveActivityService? liveActivityService,
+  }) : _gateway = gateway ?? realOrUnsupported(),
+       _autoStart = autoStart,
+       _phoneMicBackend = phoneMicBackend ?? PlatformPhoneMicBackend(),
+       _ownsPhoneMicRecorder = phoneMicRecorder == null,
+       _phoneMicRecorder = phoneMicRecorder ?? PhoneMicRecorder(),
+       _liveActivityService = liveActivityService ?? LiveActivityService() {
     if (autoStart) {
       unawaited(restoreLink());
       _startHeartbeat();
@@ -67,6 +79,10 @@ class DeviceStore extends ChangeNotifier {
   final bool _autoStart;
 
   final CardGateway _gateway;
+  final PhoneMicBackend _phoneMicBackend;
+  final bool _ownsPhoneMicRecorder;
+  final PhoneMicRecorder _phoneMicRecorder;
+  final LiveActivityService _liveActivityService;
 
   /// 全部真实命令都经它转发：发出与返回都视为"蓝牙传输"，供看门狗顺延。
   late final CardGateway _gw = ActivityGateway(_gateway, _markLinkActivity);
@@ -646,23 +662,10 @@ class DeviceStore extends ChangeNotifier {
 
   int? get storageTotalMb => _storageTotalMb;
 
-  /// 设备管理层副标题：展示型号 + 蓝牙连接态 + 固件版本 + 可用存储等设备基本信息。
+  /// 设备管理层副标题：紧跟蓝牙图标，仅保留固件版本（去掉「已连接」与可用容量）。
   String get deviceSubtitleText {
-    final parts = <String>['已连接 · $activeModelLabel'];
-    if (_fwVersion.isNotEmpty) {
-      parts.add('固件 $_fwVersion');
-    }
-    if (activeCapabilities.hasOnboardStorage) {
-      final freeMb = _storageFreeMb;
-      if (freeMb != null && freeMb >= 0) {
-        if (freeMb >= 1024) {
-          parts.add('可用 ${(freeMb / 1024).toStringAsFixed(1)} GB');
-        } else {
-          parts.add('可用 $freeMb MB');
-        }
-      }
-    }
-    return parts.join(' · ');
+    if (_fwVersion.isEmpty) return '';
+    return '固件 $_fwVersion';
   }
 
   /// 设备端 Wi-Fi 模块是否开启（null = 未知，不冒充"已关闭"）。
@@ -854,6 +857,119 @@ class DeviceStore extends ChangeNotifier {
   // ── 电量 ───────────────────────────────────────────────────
   int get battery => _liveBattery ?? 0;
   bool get batteryKnown => _liveBattery != null;
+  bool get isCharging => _liveCharging == true;
+
+  // ── 本机录音（手机麦克风 + 灵动岛 + OTA 接力）────────────
+  bool _phoneRecording = false;
+  bool _phoneRecordingBusy = false;
+  int _phoneRecSec = 0;
+  Timer? _phoneClockTimer;
+  String? _phoneRecordingError;
+  DateTime? _phoneRecordingStartedAt;
+  bool _otaHandoverPhoneRecording = false;
+
+  bool get isPhoneRecording => _phoneRecording;
+  bool get phoneRecordingBusy => _phoneRecordingBusy;
+  int get phoneRecSeconds => _phoneRecSec;
+  String? get phoneRecordingError => _phoneRecordingError;
+  DateTime? get phoneRecordingStartedAt => _phoneRecordingStartedAt;
+  Stream<LiveAudioSlice> get phoneAudioSlices => _phoneMicRecorder.slices;
+  LiveActivityService get liveActivityService => _liveActivityService;
+
+  String get phoneRecClockText {
+    final s = _phoneRecSec;
+    final h = s ~/ 3600;
+    final m = (s % 3600) ~/ 60;
+    final sec = s % 60;
+    return '${h.toString().padLeft(2, '0')}:'
+        '${m.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+  }
+
+  Future<PhoneMicPermission> checkPhoneMicPermission() =>
+      _phoneMicBackend.checkPermission();
+
+  Future<PhoneMicPermission> requestPhoneMicPermission() =>
+      _phoneMicBackend.requestPermission();
+
+  Future<bool> startPhoneRecording({
+    bool forOtaHandover = false,
+    bool islandEnabled = true,
+  }) async {
+    if (_phoneRecording) return true;
+    if (_phoneRecordingBusy) return false;
+    _phoneRecordingBusy = true;
+    _phoneRecordingError = null;
+    notifyListeners();
+    try {
+      var perm = await _phoneMicBackend.checkPermission();
+      if (perm == PhoneMicPermission.notDetermined) {
+        perm = await _phoneMicBackend.requestPermission();
+      }
+      if (perm != PhoneMicPermission.granted) {
+        _phoneRecordingError = '需要开启麦克风权限才能使用本机录音';
+        return false;
+      }
+      final startedAt = DateTime.now();
+      await _phoneMicRecorder.start(startedAt: startedAt);
+      await _phoneMicBackend.startCapture(
+        _phoneMicRecorder.ingestPcm,
+        onError: (err) {
+          _phoneRecordingError = err;
+          unawaited(stopPhoneRecording());
+        },
+      );
+      _phoneRecording = true;
+      _phoneRecordingStartedAt = startedAt;
+      _phoneRecSec = 0;
+      _otaHandoverPhoneRecording = forOtaHandover;
+      _phoneClockTimer?.cancel();
+      _phoneClockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        _phoneRecSec++;
+        notifyListeners();
+      });
+      if (islandEnabled) {
+        unawaited(
+          _liveActivityService.startLocalRecordingActivity(startedAt: startedAt),
+        );
+      }
+      return true;
+    } on Object catch (e) {
+      await _phoneMicRecorder.stop();
+      _phoneRecording = false;
+      _phoneRecordingError = '本机录音启动失败：$e';
+      return false;
+    } finally {
+      _phoneRecordingBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> stopPhoneRecording() async {
+    if (!_phoneRecording && !_phoneRecordingBusy) return;
+    _phoneRecordingBusy = true;
+    notifyListeners();
+    try {
+      await _phoneMicBackend.stopCapture();
+      await _phoneMicRecorder.stop();
+    } finally {
+      _phoneClockTimer?.cancel();
+      _phoneClockTimer = null;
+      _phoneRecording = false;
+      _otaHandoverPhoneRecording = false;
+      _phoneRecordingStartedAt = null;
+      _phoneRecordingBusy = false;
+      unawaited(_liveActivityService.stopLocalRecordingActivity());
+      notifyListeners();
+    }
+  }
+
+  Future<bool> togglePhoneRecording({bool islandEnabled = true}) async {
+    if (_phoneRecording) {
+      await stopPhoneRecording();
+      return false;
+    }
+    return startPhoneRecording(islandEnabled: islandEnabled);
+  }
 
   String get batteryLevelText {
     if (_liveCharging == true) return '充电中';
@@ -1227,7 +1343,13 @@ class DeviceStore extends ChangeNotifier {
   }
 
   /// 执行升级：按模块独立门控（仅主控 / 仅 Wi-Fi / 两阶段）。
-  Future<void> startFwUpdate() async {
+  ///
+  /// [allowStopRecordingAndHandover] 为 true 时：若硬件正在录音，先停止硬件录音，
+  /// 无缝切到手机「本机录音」（并亮起灵动岛），待固件升级且硬件重连后再自动停止本机录音。
+  Future<void> startFwUpdate({
+    bool allowStopRecordingAndHandover = false,
+    bool islandEnabled = true,
+  }) async {
     if (fwUpdating) return;
     if (!isConnected) {
       fwError = '录音卡未连接';
@@ -1235,13 +1357,35 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
     if (isRecording) {
-      // 参考实现在 DFU 前会先停掉录音会话；对用户而言"升级悄悄掐断录音"
-      // 是破坏性的（可能正在录会议），明确拒绝、让用户自己停更安全。
-      // 停止录音会走正常的自动同步，之后再升级不丢数据。
-      fwError = '正在录音，请先停止录音后再升级固件';
-      fwStateText = fwError!;
-      notifyListeners();
-      return;
+      if (!allowStopRecordingAndHandover) {
+        fwError = '正在录音，请先停止录音后再升级固件';
+        fwStateText = fwError!;
+        notifyListeners();
+        return;
+      }
+      final startedHandover = await startPhoneRecording(
+        forOtaHandover: true,
+        islandEnabled: islandEnabled,
+      );
+      if (!startedHandover) {
+        fwError = _phoneRecordingError ?? '请先开启麦克风权限，确保升级期间录音数据不断';
+        fwStateText = fwError!;
+        notifyListeners();
+        return;
+      }
+      try {
+        await _gw.stopRecording().timeout(const Duration(seconds: 15));
+        _liveRecording = false;
+        _recordSession = null;
+        _stopClock();
+        notifyListeners();
+      } on Object catch (e) {
+        await stopPhoneRecording();
+        fwError = '停止硬件录音失败：$e';
+        fwStateText = fwError!;
+        notifyListeners();
+        return;
+      }
     }
 
     if (_otaMainInfo == null && _otaWifiInfo == null) {
@@ -1362,6 +1506,9 @@ class DeviceStore extends ChangeNotifier {
     _otaMainInfo = null;
     _otaWifiInfo = null;
     _otaChecked = true;
+    if (_otaHandoverPhoneRecording && _phoneRecording) {
+      await stopPhoneRecording();
+    }
     notifyListeners();
   }
 
@@ -1529,9 +1676,13 @@ class DeviceStore extends ChangeNotifier {
   @override
   void dispose() {
     _clockTimer?.cancel();
+    _phoneClockTimer?.cancel();
     _heartbeatTimer?.cancel();
     _eventWatch?.cancel();
     _stopSheetWatch();
+    if (_ownsPhoneMicRecorder) {
+      _phoneMicRecorder.dispose();
+    }
 
     super.dispose();
   }
