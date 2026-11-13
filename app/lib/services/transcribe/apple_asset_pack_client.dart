@@ -28,8 +28,11 @@ class AppleAssetPackFile {
 }
 
 class AppleAssetPackException implements Exception {
-  const AppleAssetPackException(this.message);
+  const AppleAssetPackException(this.message, {this.code = 'APPLE_ASSET_FAILED'});
   final String message;
+  final String code;
+
+  bool get isNotFound => code == 'ASSET_PACK_NOT_FOUND';
 
   @override
   String toString() => message;
@@ -66,6 +69,19 @@ class AppleAssetPackClient {
     }
   }
 
+  /// 查询当前 Apple 托管清单中已发布的资源包 ID 列表；查询失败返回 null（由实际下载兜底判断）。
+  Future<Set<String>?> availablePackIds() async {
+    if (!_isIOS) return null;
+    try {
+      final result = await _methodChannel.invokeListMethod<String>('availablePackIds');
+      return result?.toSet();
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
   Future<void> installAssetPack({
     required String packId,
     required String displayName,
@@ -73,7 +89,10 @@ class AppleAssetPackClient {
     void Function(double progress, String text)? onProgress,
   }) async {
     if (!_isIOS) {
-      throw const AppleAssetPackException('当前平台不支持 Apple-Hosted Background Assets');
+      throw const AppleAssetPackException(
+        '当前平台不支持 Apple-Hosted Background Assets',
+        code: 'UNSUPPORTED_OS',
+      );
     }
 
     onProgress?.call(0, '正在准备下载 $displayName…');
@@ -108,9 +127,15 @@ class AppleAssetPackClient {
       });
       onProgress?.call(1.0, '$displayName已就绪');
     } on PlatformException catch (e) {
-      throw AppleAssetPackException(e.message ?? 'Apple 资源包下载失败（${e.code}）');
+      throw AppleAssetPackException(
+        e.message ?? 'Apple 资源包下载失败（${e.code}）',
+        code: e.code,
+      );
     } on MissingPluginException {
-      throw const AppleAssetPackException('原生 Apple 资源桥未注册');
+      throw const AppleAssetPackException(
+        '原生 Apple 资源桥未注册',
+        code: 'MISSING_PLUGIN',
+      );
     } finally {
       await sub?.cancel();
     }

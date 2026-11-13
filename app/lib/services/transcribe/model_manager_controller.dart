@@ -28,6 +28,7 @@ class ModelManagerController extends ChangeNotifier {
   final Future<void> Function()? onInstalled;
 
   final Map<String, ModelStatus> _statuses = {};
+  final Set<String> _unavailableRemotePacks = {};
   bool _busy = false;
   double _progress = 0;
   String _text = '';
@@ -55,8 +56,17 @@ class ModelManagerController extends ChangeNotifier {
 
   bool get hasStatuses => _statuses.isNotEmpty;
 
+  /// 核心离线转写（SenseVoice + VAD）是否已就绪。
+  bool get asrReady =>
+      _statuses[senseVoiceSpec.id]?.installed == true &&
+      _statuses[sileroVadSpec.id]?.installed == true;
+
   bool get allReady =>
       specs.every((s) => _statuses[s.id]?.installed == true);
+
+  bool get _allAvailableSpecsReady => specs
+      .where((s) => !_unavailableRemotePacks.contains(s.id))
+      .every((s) => _statuses[s.id]?.installed == true);
 
   /// 是否有明确的新版本可更新（版本与本地一致或离线未比对时不提示更新，避免打扰）。
   bool get hasRemoteUpdates => false;
@@ -66,7 +76,7 @@ class ModelManagerController extends ChangeNotifier {
     if (!hasStatuses) {
       await refresh();
     }
-    if (configured && !allReady && !_busy) {
+    if (configured && !_allAvailableSpecsReady && !_busy) {
       await installAll();
     }
   }
@@ -89,7 +99,7 @@ class ModelManagerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> installAll() async {
+  Future<void> installAll({bool force = false}) async {
     if (_busy) return;
     await _ensureAppleAssetsChecked();
     if (!configured) {
@@ -122,10 +132,17 @@ class ModelManagerController extends ChangeNotifier {
           _error = '声纹模型下载失败：$e（转写仍可用）';
         }
       } else {
-        await _installFromAppleAssets(senseVoiceSpec);
-        // 声纹模型失败不影响转写：只提示，不把整个安装判失败
+        await _installFromAppleAssets(senseVoiceSpec, force: force);
+        // 声纹模型为可选能力：若远端尚未上架该资源包则静默标记跳过；真实下载/校验故障如实提示
         try {
-          await _installFromAppleAssets(campplusEmbeddingSpec);
+          await _installFromAppleAssets(campplusEmbeddingSpec, force: force);
+          _unavailableRemotePacks.remove(campplusEmbeddingSpec.id);
+        } on AppleAssetPackException catch (e) {
+          if (e.isNotFound) {
+            _unavailableRemotePacks.add(campplusEmbeddingSpec.id);
+          } else {
+            _error = '声纹模型下载失败：$e（转写仍可用）';
+          }
         } on Object catch (e) {
           _error = '声纹模型下载失败：$e（转写仍可用）';
         }
@@ -140,7 +157,16 @@ class ModelManagerController extends ChangeNotifier {
     }
   }
 
-  Future<void> _installFromAppleAssets(ModelSpec spec) async {
+  Future<void> _installFromAppleAssets(
+    ModelSpec spec, {
+    bool force = false,
+  }) async {
+    if (!force) {
+      final current = await _installer.status(spec);
+      if (current.installed) {
+        return;
+      }
+    }
     final files = <AppleAssetPackFile>[];
     for (final f in spec.files) {
       files.add(

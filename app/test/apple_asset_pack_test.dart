@@ -52,11 +52,26 @@ class _FakeAppleAssetPackClient extends AppleAssetPackClient {
   }
 }
 
+Future<void> _seedSparseInstalled(
+  ModelInstaller installer,
+  ModelSpec spec,
+) async {
+  final dir = await installer.dirFor(spec);
+  await dir.create(recursive: true);
+  for (final f in spec.files) {
+    final file = File('${dir.path}/${f.relPath}');
+    await file.parent.create(recursive: true);
+    final raf = await file.open(mode: FileMode.write);
+    await raf.truncate(f.sizeBytes > 0 ? f.sizeBytes : 1024);
+    await raf.close();
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('ModelManagerController + AppleAssetPackClient', () {
-    test('iOS Apple-Hosted 可用且未配置 RC_MODEL_BASE 时标记为已配置并走 Apple 资源包', () async {
+    test('iOS Apple-Hosted 可用且未配置 RC_MODEL_BASE 时标记为已配置并校验文件完整性', () async {
       final root = await Directory.systemTemp.createTemp('rc-apple-assets-');
       addTearDown(() => root.deleteSync(recursive: true));
 
@@ -67,13 +82,7 @@ void main() {
           for (final f in files) {
             final file = File(f.destPath);
             await file.parent.create(recursive: true);
-            if (f.assetPath.endsWith('tokens.txt')) {
-              // skip sha mismatch by not checking? Wait: tokens.txt has real sha256!
-              // Let's test that sha256 verification catches bad content!
-              await file.writeAsString('bad');
-            } else {
-              await file.writeAsBytes(const [1, 2, 3]);
-            }
+            await file.writeAsString('corrupted');
           }
         },
       );
@@ -91,8 +100,47 @@ void main() {
 
       await controller.installAll();
       expect(fakeApple.installedPacks, contains('sensevoice-small-int8'));
-      // tokens.txt 校验应拦截损坏文件
-      expect(controller.error, contains('tokens.txt'));
+      // model.int8.onnx 大小/SHA 校验应拦截损坏文件
+      expect(controller.error, contains('model.int8.onnx'));
+    });
+
+    test('已安装的模型不重复触发 Apple 资源包下载；可选声纹包未上架时静默跳过且不循环重试', () async {
+      final root = await Directory.systemTemp.createTemp('rc-apple-skip-');
+      addTearDown(() => root.deleteSync(recursive: true));
+
+      final installer = ModelInstaller(root: root);
+      await _seedSparseInstalled(installer, senseVoiceSpec);
+
+      final fakeApple = _FakeAppleAssetPackClient(
+        available: true,
+        onInstall: (packId, files, onProgress) async {
+          if (packId == campplusEmbeddingSpec.id) {
+            throw const AppleAssetPackException(
+              'Asset pack not found',
+              code: 'ASSET_PACK_NOT_FOUND',
+            );
+          }
+        },
+      );
+
+      final controller = ModelManagerController(
+        installer: installer,
+        appleAssets: fakeApple,
+        baseUrl: '',
+      );
+      addTearDown(controller.dispose);
+
+      await controller.autoEnsureInstalled();
+      // senseVoice 已安装，不应重复调用 installAssetPack
+      expect(fakeApple.installedPacks, isNot(contains(senseVoiceSpec.id)));
+      // campplus 尝试一次发现未上架后静默记录，不报错
+      expect(fakeApple.installedPacks, [campplusEmbeddingSpec.id]);
+      expect(controller.asrReady, isTrue);
+      expect(controller.error, isNull);
+
+      // 再次调用 autoEnsureInstalled 不应循环重试未上架的可选包
+      await controller.autoEnsureInstalled();
+      expect(fakeApple.installedPacks, [campplusEmbeddingSpec.id]);
     });
 
     test('配置了 RC_MODEL_BASE 时优先走 HTTP 而非 Apple 资源包', () async {

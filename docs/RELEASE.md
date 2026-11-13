@@ -10,7 +10,7 @@
 | App Apple ID (iOS) | `6834316655` |
 | Android applicationId / namespace | `com.reai.recordingcard` |
 | 显示名 | 录音卡 |
-| 版本 | pubspec `version: 1.0.0+2026111305` → iOS `1.0.0 (2026111305)`、Android versionName `1.0.0` / versionCode `2026111305` |
+| 版本 | pubspec `version: 1.0.0+2026111306` → iOS `1.0.0 (2026111306)`、Android versionName `1.0.0` / versionCode `2026111306` |
 | 最低系统 | iOS 15.0、Android 7.0（minSdk 24） |
 | 目标系统 | Android targetSdk 36（Play 新应用要求 ≥ 35） |
 
