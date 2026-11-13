@@ -30,11 +30,24 @@ class OAuthConfig {
     required this.clientId,
     required this.redirectUri,
     required this.scope,
+    this.wechatAppId = '',
+    this.wechatUniversalLink = defaultWechatUniversalLink,
+    this.wechatScope = 'mobile:full profile:read',
     this.accessTokenDefaultTtl = const Duration(hours: 1),
     this.refreshTokenDefaultTtl = const Duration(days: 30),
     this.pendingAuthorizationTtl = const Duration(minutes: 10),
     this.requestTimeout = const Duration(seconds: 20),
   });
+
+  /// 微信 Universal Link（与 app.cn.reai.com 的 AASA `/link/*` 路径绑定）。
+  static const String defaultWechatUniversalLink = 'https://app.cn.reai.com/link/';
+
+  /// 微信扩展 grant 的固定协议常量（与后端约定，不随环境变化）。
+  static const String wechatGrantType =
+      'urn:wainao:params:oauth:grant-type:wechat';
+
+  /// `/oauth/token` 微信 grant 的 `app_type` 固定值。
+  static const String wechatAppType = 'app';
 
   /// 从编译期环境解析配置。
   factory OAuthConfig.fromEnvironment({ClientConfig? clientConfig}) {
@@ -75,7 +88,23 @@ class OAuthConfig {
       clientId: cfg.normalizedOAuthClientId,
       redirectUri: redirect,
       scope: scope,
+      wechatAppId: _resolveWechatAppId(),
     );
+  }
+
+  /// 微信 AppID：`RC_WECHAT_APP_ID` 优先（本仓命名规范），回退兼容 reai 的
+  /// `WECHAT_APP_ID`。缺省为空 = 未配置（fail-closed，登录页隐藏微信入口）。
+  ///
+  /// 注意与 `ios/Flutter/Wechat.xcconfig` 的 `WECHAT_APP_ID` 必须同值，
+  /// 否则 iOS 回调 scheme 与注册的 AppID 不一致导致授权回不来。
+  static String _resolveWechatAppId() {
+    if (const bool.hasEnvironment('RC_WECHAT_APP_ID')) {
+      return const String.fromEnvironment('RC_WECHAT_APP_ID').trim();
+    }
+    if (const bool.hasEnvironment('WECHAT_APP_ID')) {
+      return const String.fromEnvironment('WECHAT_APP_ID').trim();
+    }
+    return '';
   }
 
   /// 当前编译产物使用的配置（全局单例语义，测试请直接 new 自己的实例）。
@@ -105,6 +134,18 @@ class OAuthConfig {
   /// 申请的 scope（空则不传该参数）。
   final String scope;
 
+  /// 微信开放平台移动应用 AppID（公开客户端标识，不是 AppSecret）。
+  ///
+  /// 合法值必须以 `wx` 开头；空串或 `Wechat.xcconfig` 的占位符均视为未配置
+  /// （见 [isWechatConfigured]，fail-closed）。
+  final String wechatAppId;
+
+  /// 微信回调 Universal Link（iOS UL 校验 + AASA 绑定）。
+  final String wechatUniversalLink;
+
+  /// 微信 grant 申请的 scope（与 reai_mobile_app 一致；待后端最终确认）。
+  final String wechatScope;
+
   /// access_token 缺省有效期（服务端未返回 `expires_in` 时兜底）。
   final Duration accessTokenDefaultTtl;
 
@@ -120,6 +161,13 @@ class OAuthConfig {
   /// 是否可用于登录（client id 与两个核心端点都齐）。
   bool get isConfigured =>
       clientId.trim().isNotEmpty && authUrl != null && tokenUrl != null;
+
+  /// 微信登录是否配置就绪：合法 AppID 必须以 `wx` 开头（真 AppID 形如 `wx` + 16 位）。
+  ///
+  /// `Wechat.xcconfig` 占位串（如 `rc-wechat-disabled`）与空串都会判 false——
+  /// iOS 侧 URL scheme 需要非空占位防 ITMS-90158，Dart 侧在此严格拦下。
+  bool get isWechatConfigured =>
+      wechatAppId.startsWith('wx') && wechatAppId.length > 2;
 
   /// 回调 scheme（`recording-card://callback` → `recording-card`）。
   String get callbackScheme {
@@ -137,6 +185,9 @@ class OAuthConfig {
     String? clientId,
     String? redirectUri,
     String? scope,
+    String? wechatAppId,
+    String? wechatUniversalLink,
+    String? wechatScope,
     Duration? accessTokenDefaultTtl,
     Duration? refreshTokenDefaultTtl,
     Duration? pendingAuthorizationTtl,
@@ -151,6 +202,9 @@ class OAuthConfig {
       clientId: clientId ?? this.clientId,
       redirectUri: redirectUri ?? this.redirectUri,
       scope: scope ?? this.scope,
+      wechatAppId: wechatAppId ?? this.wechatAppId,
+      wechatUniversalLink: wechatUniversalLink ?? this.wechatUniversalLink,
+      wechatScope: wechatScope ?? this.wechatScope,
       accessTokenDefaultTtl:
           accessTokenDefaultTtl ?? this.accessTokenDefaultTtl,
       refreshTokenDefaultTtl:

@@ -30,6 +30,10 @@ import '../core/config/remote/client_config.dart';
 import '../core/storage/secure_store.dart';
 import 'auth/auth.dart';
 import 'net/authorized_http_client.dart';
+import 'wechat_login/wechat_login_service.dart';
+
+/// 当前登录流程的通道（UI 据此决定哪个按钮转圈）。
+enum AuthChannel { none, oauth, wechat }
 
 /// 登录会话（进程内快照；真正的 token 在 [OAuthTokenStore] / 系统密钥库里）。
 class AuthSession {
@@ -76,6 +80,7 @@ class AuthService extends ChangeNotifier {
     ClientConfig? config,
     OAuthConfig? oauthConfig,
     WebAuthLauncher? launcher,
+    WechatLoginGateway? wechatGateway,
     OAuthClient? oauthClient,
     OAuthTokenStore? tokenStore,
     SecureStore? secureStore,
@@ -85,6 +90,11 @@ class AuthService extends ChangeNotifier {
             OAuthConfig.fromEnvironment(clientConfig: config),
         _clock = clock ?? DateTime.now {
     _launcher = launcher ?? const FlutterWebAuthLauncher();
+    _wechat = wechatGateway ??
+        WechatLoginService(
+          wechatAppId: _oauthConfig.wechatAppId,
+          universalLink: _oauthConfig.wechatUniversalLink,
+        );
     final client = oauthClient ?? OAuthClient(config: _oauthConfig);
     _ownsOAuthClient = oauthClient == null;
     _client = client;
@@ -107,6 +117,7 @@ class AuthService extends ChangeNotifier {
   final DateTime Function() _clock;
 
   late final WebAuthLauncher _launcher;
+  late final WechatLoginGateway _wechat;
   bool _ownsOAuthClient = false;
 
   AuthSession? _session;
@@ -114,6 +125,9 @@ class AuthService extends ChangeNotifier {
   bool _busy = false;
   bool _disposed = false;
   _PendingAuthorization? _pending;
+
+  /// 当前在途流程的通道（none = 空闲）；UI 据此决定哪个按钮转圈。
+  AuthChannel _activeChannel = AuthChannel.none;
 
   /// 授权流程代次：登出会 +1，让在途流程的回调自我作废（防「登出后又被登录」）。
   int _authFlowEpoch = 0;
@@ -140,6 +154,9 @@ class AuthService extends ChangeNotifier {
   /// 是否正在进行授权（UI 可用来转圈 / 禁用按钮）。
   bool get isBusy => _busy;
 
+  /// 当前在途流程的通道；UI 据此决定哪个按钮显示转圈。
+  AuthChannel get activeChannel => _activeChannel;
+
   /// 登录服务是否配置齐全（client id + 端点）。
   bool get isOAuthConfigured => _oauthConfig.isConfigured;
 
@@ -155,6 +172,27 @@ class AuthService extends ChangeNotifier {
     if (!_launcher.isSupported) return '当前构建未内置浏览器授权组件，暂时无法完成登录';
     return null;
   }
+
+  /// 微信登录的预检文案；null = 可以发起微信登录。
+  ///
+  /// 门控拆分：OAuth 服务整体未配置时**连坐禁用**微信按钮（换 token 也走同一
+  /// 端点/client_id）；仅浏览器组件缺失不连坐（不影响微信原生链路）。
+  String? get wechatSignInBlockedReason {
+    if (!kIsOAuthAuthMode) return '当前构建未启用登录服务';
+    if (!_oauthConfig.isConfigured) return '未配置登录服务，暂时无法登录';
+    if (!_wechat.isSupported) return '当前构建不支持微信登录';
+    if (!_wechat.isConfigured) return '当前未配置微信登录，请使用上方方式登录';
+    return null;
+  }
+
+  /// 登录页是否展示微信按钮：平台支持 + 已配置 AppID + 未探测到「明确未安装微信」。
+  ///
+  /// `cachedIsInstalled` 为 null（预热未完成 / 超时 / 未跑 _boot 的测试）时
+  /// 照常展示，点击后 [WechatLoginService.authorize] 会实时复查并兜底提示。
+  bool get shouldShowWechatSignIn =>
+      _wechat.isSupported &&
+      _wechat.isConfigured &&
+      _wechat.cachedIsInstalled != false;
 
   /// 首次本地会话恢复完成（测试里 `await auth.ready` 可拿到确定的初始状态）。
   Future<void> get ready => _bootstrapFuture;
@@ -191,6 +229,7 @@ class AuthService extends ChangeNotifier {
 
     final epoch = ++_authFlowEpoch;
     _busy = true;
+    _activeChannel = AuthChannel.oauth;
     _lastError = null;
     _notify();
 
@@ -228,13 +267,16 @@ class AuthService extends ChangeNotifier {
       _lastError = null;
       return null;
     } on OAuthCancelledException {
-      // 用户主动取消：不当错误提示，UI 静默留在登录页。
+      // 用户主动取消：不当错误提示，UI 静默留在登录页并清空旧错误。
+      _lastError = null;
       return null;
     } on OAuthException catch (e) {
+      if (epoch != _authFlowEpoch) return null;
       final message = e.message;
       _lastError = message;
       return message;
     } catch (e) {
+      if (epoch != _authFlowEpoch) return null;
       // 兜底：不吞异常语义，给用户一个明确文案，细节只进日志。
       debugPrint('[AuthService] 登录异常: $e');
       const message = '登录失败，请稍后重试';
@@ -242,8 +284,157 @@ class AuthService extends ChangeNotifier {
       return message;
     } finally {
       _pending = null;
-      if (epoch == _authFlowEpoch) _busy = false;
+      if (epoch == _authFlowEpoch) {
+        _busy = false;
+        _activeChannel = AuthChannel.none;
+      }
       _notify();
+    }
+  }
+
+  /// 微信原生登录：拉起微信授权 → 换 token → 拉 profile → 落密钥库 → 建立会话。
+  ///
+  /// 与 [signInWithOAuth] 共用 `_busy` / `_authFlowEpoch` / 门控，
+  /// 在途期间浏览器登录按钮同样被禁用（防双通道并发）。
+  /// 返回 null 表示成功或用户取消（取消静默、并清空旧错误文案）；
+  /// 非 null 是可直接展示的错误文案。
+  Future<String?> signInWithWechat() async {
+    if (_busy) return '登录正在进行中，请稍候';
+    final blocked = wechatSignInBlockedReason;
+    if (blocked != null) return _fail(blocked);
+
+    final epoch = ++_authFlowEpoch;
+    _busy = true;
+    _activeChannel = AuthChannel.wechat;
+    _lastError = null;
+    _notify();
+
+    try {
+      final authorization = await _wechat.authorize();
+      if (epoch != _authFlowEpoch) return null; // 期间已登出 / 已有新流程
+      return await _completeWechatLogin(
+        epoch,
+        code: authorization.code,
+        lang: authorization.lang,
+      );
+    } on WechatLoginException catch (e) {
+      if (epoch != _authFlowEpoch) return null;
+      return _failWechat(e);
+    } catch (e) {
+      if (epoch != _authFlowEpoch) return null;
+      debugPrint('[AuthService] 微信登录异常: $e');
+      const message = '登录失败，请稍后重试';
+      _lastError = message;
+      return message;
+    } finally {
+      if (epoch == _authFlowEpoch) {
+        _busy = false;
+        _activeChannel = AuthChannel.none;
+      }
+      _notify();
+    }
+  }
+
+  /// 用已取得的微信授权码完成登录（[signInWithWechat] 的后半段；
+  /// 公开给单测直接注入 code 验证换 token 链路）。
+  Future<String?> signInWithWechatCode({
+    required String code,
+    String? lang,
+  }) async {
+    if (_busy) return '登录正在进行中，请稍候';
+    final blocked = wechatSignInBlockedReason;
+    if (blocked != null) return _fail(blocked);
+
+    final epoch = ++_authFlowEpoch;
+    _busy = true;
+    _activeChannel = AuthChannel.wechat;
+    _lastError = null;
+    _notify();
+    try {
+      return await _completeWechatLogin(epoch, code: code, lang: lang);
+    } finally {
+      if (epoch == _authFlowEpoch) {
+        _busy = false;
+        _activeChannel = AuthChannel.none;
+      }
+      _notify();
+    }
+  }
+
+  Future<String?> _completeWechatLogin(
+    int epoch, {
+    required String code,
+    String? lang,
+  }) async {
+    try {
+      final tokenResponse = await _client.exchangeWechatCodeForToken(
+        code: code,
+        lang: lang,
+      );
+      if (epoch != _authFlowEpoch) return null;
+
+      // 换到 token 后立刻用 /profile 确认身份（也验证 token 真的可用）。
+      final account = await _client.fetchProfile(tokenResponse.accessToken);
+      if (epoch != _authFlowEpoch) {
+        // 期间登出：把刚拿到的 token 落库反而会「复活」会话，直接丢弃。
+        unawaited(
+          _revokeQuietly(tokenResponse.refreshToken ?? tokenResponse.accessToken),
+        );
+        return null;
+      }
+
+      await _tokens.saveTokens(tokenResponse, account: account);
+      _applySession(account);
+      _lastError = null;
+      return null;
+    } on OAuthException catch (e) {
+      if (epoch != _authFlowEpoch) return null;
+      final message = e.message;
+      _lastError = message;
+      return message;
+    } catch (e) {
+      if (epoch != _authFlowEpoch) return null;
+      debugPrint('[AuthService] 微信登录换票异常: $e');
+      const message = '登录失败，请稍后重试';
+      _lastError = message;
+      return message;
+    }
+  }
+
+  /// 启动预热：注册微信 SDK 并探测是否安装（更新 [WechatLoginGateway.cachedIsInstalled]，
+  /// 登录页据此决定微信按钮显隐）。
+  ///
+  /// 异常一律吞掉（未配置 / 无通道 / 超时都不阻塞 App 启动）——预热的唯一
+  /// 目的是降低首次点击微信登录的延迟与提供按钮显隐依据。
+  Future<void> prewarmWechat() async {
+    final gateway = _wechat;
+    if (_disposed || !gateway.isSupported || !gateway.isConfigured) return;
+    try {
+      await gateway.initialize().timeout(const Duration(seconds: 5));
+    } catch (e) {
+      debugPrint('[AuthService] 微信预注册跳过: $e');
+    }
+    _notify();
+  }
+
+  /// 微信失败枚举 → 用户文案；取消返回 null 且清空旧错误（静默）。
+  String? _failWechat(WechatLoginException e) {
+    switch (e.kind) {
+      case WechatLoginFailureKind.cancelled:
+        _lastError = null;
+        return null;
+      case WechatLoginFailureKind.notConfigured:
+        return _fail('当前未配置微信登录，请使用上方方式登录');
+      case WechatLoginFailureKind.notInstalled:
+        return _fail('未检测到微信，请使用上方方式登录');
+      case WechatLoginFailureKind.denied:
+        return _fail('微信授权已拒绝，请重试或使用上方方式登录');
+      case WechatLoginFailureKind.timedOut:
+        return _fail('微信授权超时，请重试');
+      case WechatLoginFailureKind.registrationFailed:
+      case WechatLoginFailureKind.launchFailed:
+      case WechatLoginFailureKind.invalidResponse:
+        return _fail('无法拉起微信授权，请稍后重试或使用上方方式登录');
     }
   }
 
@@ -283,6 +474,8 @@ class AuthService extends ChangeNotifier {
     // 让在途授权流程的回调自我作废，并解除「登录中」状态。
     _authFlowEpoch++;
     _busy = false;
+    _activeChannel = AuthChannel.none;
+    _wechat.cancelPendingAuthorization();
     _dropSessionLocally();
     unawaited(_revokeAndClearRemote());
   }
@@ -305,6 +498,7 @@ class AuthService extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _wechat.cancelPendingAuthorization();
     _apiClient?.close();
     _apiClient = null;
     if (_ownsOAuthClient) _client.close();
