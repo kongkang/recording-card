@@ -102,18 +102,34 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(dayKinds[0].kinds[dayKinds[0].kinds.length - 1], 'dream', '做梦卡是当天最早事件，应在倒序分组底部');
   assert.equal(dayKinds[1].kinds[0], 'daily', '日报是当天最后产物，应在昨天分组顶部');
   assert(await p.$eval('[data-testid="card-dream-0"]', x => x.innerText.includes('做梦完成') && x.innerText.includes('知识库')));
+  assert.equal(await p.$eval('[data-testid="tbc-dream"]', x => x.innerText.trim()), 'TBC');
   assert(await p.$eval('[data-testid="card-unc-0"]', x => x.innerText.includes('今日未归类图片') && x.innerText.includes('1 张')));
   assert(await p.$eval('[data-testid="card-daily-1"]', x => x.innerText.includes('昨日日报') && x.innerText.includes('自动生成')));
+  assert.equal(await p.$eval('[data-testid="tbc-daily"]', x => x.innerText.trim()), 'TBC');
+  assert.equal(await p.$eval('[data-testid="tbc-slice-merge"]', x => x.innerText.trim()), 'TBC');
   assert.equal(await p.$('[data-testid="card-daily-0"]'), null, '今天已有手动总结，不应出现日报');
   const sumTop = await p.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
   const e1Top = await p.$eval('[data-testid="card-e1"]', x => x.getBoundingClientRect().top);
   assert(sumTop < e1Top, '总结卡应在当天记录上方');
-  // 日报可点开结果页
+  // 日报可点开结果页（全天脉络结构）
   await p.evaluate(() => document.querySelector('[data-testid="card-daily-1"]').click());
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
   assert(await p.$eval('#sum-title', x => x.innerText.includes('昨日日报')));
+  assert.equal(await p.$eval('#sec-map .mroot', x => x.innerText.trim()), '全天脉络');
+  assert(await p.$eval('#sec-map', x => x.innerText.includes('日内时间脉络') && x.innerText.includes('次日衔接提醒')));
   await p.evaluate(() => goBack());
   await new Promise(r => setTimeout(r, 300));
+  // 做梦卡：点开夜间做梦整理抽屉 → 审阅并移除单条推测记忆、切换提炼技能开关 → 外侧计数同步
+  await p.evaluate(() => document.querySelector('[data-testid="card-dream-0"]').click());
+  assert(await p.$eval('#dream-wrap', x => x.classList.contains('show')));
+  assert.equal(await p.$$eval('#drm-body .drm-mem', x => x.length), 6);
+  await p.click('[data-testid="dream-rm-0"]');
+  assert.equal(await p.$$eval('#drm-body .drm-mem', x => x.length), 5);
+  assert(await p.$eval('[data-testid="card-dream-0"]', x => x.innerText.includes('加入知识库 5 条')));
+  await p.click('[data-testid="dream-skill-sw"]');
+  assert(await p.$eval('[data-testid="card-dream-0"]', x => x.innerText.includes('提炼技能 0 个')));
+  await p.click('[data-testid="dream-skill-sw"]');
+  await p.evaluate(() => closeDreamSheet());
   await shot('timeline-collapsed');
 
   // 详情：照片按时间插入对话流；标记「不属于本段」→ 外侧缩略图减少 + 移入未归类
@@ -131,6 +147,18 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-testid="card-unc-0"] .unccount', x => x.textContent.trim()), '2 张');
   await p.evaluate(() => goBack());
   await new Promise(r => setTimeout(r, 300));
+  // 未归类图片卡：点开分拣抽屉 → 按时间最近推荐一键归位 → 外侧缩略图与总结张数同步更新
+  await p.click('[data-testid="card-unc-0"]');
+  assert(await p.$eval('#unc-wrap', x => x.classList.contains('show')));
+  assert.equal(await p.$$eval('#unc-body .unc-item', x => x.length), 2);
+  assert(await p.$eval('[data-testid="unc-reassign-e2-0-e2"]', x => x.classList.contains('best') && x.innerText.includes('时间最接近')));
+  await p.click('[data-testid="unc-reassign-e2-0-e2"]');
+  assert.equal(await p.$$eval('#unc-body .unc-item', x => x.length), 1);
+  assert.equal(await p.$eval('[data-testid="card-unc-0"] .unccount', x => x.textContent.trim()), '1 张');
+  assert.equal(await p.$$eval('[data-testid="pics-e2"] .pthumb', x => x.length), 2);
+  assert.equal(await p.$eval('[data-testid="card-sum-demo"] .sumphotos', x => x.textContent.trim()), '含 2 张图片');
+  await p.evaluate(() => { closeUncSheet(); excludePhoto('e2', 0); });
+  assert.equal(await p.$eval('[data-testid="card-unc-0"] .unccount', x => x.textContent.trim()), '2 张');
 
   // 卡片展开/收起 → 详情按钮进详情页（单屏压栈）
   await p.click('[data-testid="card-e1"]');
@@ -164,6 +192,10 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     { timeout: 3000 },
     rawTime,
   );
+  assert(await p.$('[data-testid="raw-audio-slider"]'));
+  await p.click('[data-testid="rawline-e1-2"]');
+  assert(await p.$eval('[data-testid="raw-audio-time"]', x => x.innerText.startsWith('06:0')));
+  assert(await p.$eval('[data-testid="rawline-e1-2"]', x => x.classList.contains('active')));
   await shot('detail-raw-audio');
   await p.click('[data-testid="raw-audio-delete"]');
   assert(await p.$eval('[data-testid="raw-audio-cleared"]', x => x.innerText.includes('原始录音已清理')));
@@ -220,6 +252,27 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#sum-sub', x => x.innerText.includes('条记录') && !x.innerText.includes('来源')));
   assert.deepEqual(await p.$$eval('#stabs button', e => e.map(x => x.innerText.trim())), ['全部', '概览', '逻辑结构', '信息点', '行动项', '来源记录']);
   assert(await secVis('sec-ov') && await secVis('sec-map') && await secVis('sec-pt') && await secVis('sec-todo') && await secVis('sec-src'));
+  // 总结结果页图文融入：概览内嵌关键画面带；逻辑结构双层图片权重（微缩图=核心实证 vs 图标=辅助附图）；信息点按时间窗挂图
+  assert(await p.$('[data-testid="sum-ov-photos"]'));
+  assert.equal(await p.$('[data-testid="mleaf-key-e2-0"]'), null, '已排除照片节点应自动降级为纯文字胶囊');
+  assert(await p.$eval('[data-testid="mleaf-key-e2-1"]', x => !!x.querySelector('img.mleaf-thumb') && x.innerText.includes('重置现状')));
+  assert(await p.$eval('[data-testid="mleaf-aux-e3-1"]', x => !!x.querySelector('svg') && !x.querySelector('img')));
+  assert(await p.$('[data-testid="map-photo-legend"]'));
+  assert.equal(await p.$('[data-testid="pt-picpill-0"]'), null, 'e1 无照片，对应信息点不应出现图片胶囊');
+  assert(await p.$('[data-testid="pt-picpill-1"]'), 'e2 有照片，对应信息点标题应显示图片胶囊');
+  assert(await p.$('[data-testid="pt-picpill-3"]'), 'e3 10:14-10:15 对应信息点标题应显示图片胶囊');
+  assert.equal(await p.$('[data-testid="pt-figs-0"]'), null);
+  assert(await p.$('[data-testid="pt-figs-1"]'));
+  assert(await p.$('[data-testid="pt-figs-3"]'));
+  // 行动项按需元信息芯片 + 极简版切换
+  assert.equal(await p.$('[data-testid="td-meta-0"]'), null, '无额外元信息的行动项应保持极简单行');
+  assert(await p.$eval('[data-testid="td-who-2"]', x => x.innerText.includes('@说话人 2（推测）')));
+  assert(await p.$eval('[data-testid="td-due-2"]', x => x.innerText.includes('周五前')));
+  assert(await p.$eval('[data-testid="td-src-2"]', x => x.innerText.includes('14:31')));
+  await p.click('[data-testid="todo-mode-plain"]');
+  assert.equal(await p.$('[data-testid="td-meta-2"]'), null);
+  await p.click('[data-testid="todo-mode-rich"]');
+  assert(await p.$('[data-testid="td-meta-2"]'));
   assert.equal(await p.$('#sum-md'), null);
   await shot('summary-result');
   // 目录浮钮：滚动中持续右上角；全部视图信息点默认收起
@@ -300,6 +353,11 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
   await p.click('#stabs button[data-st="src"]');
   assert(await secVis('sec-src') && !(await secVis('sec-ov')));
+  // 来源记录：带图片 icon 的结构化信息卡片（有图记录显示 SVG 图片 icon + 张数，无图记录不显示）
+  assert.equal(await p.$('[data-testid="src-picbadge-e1"]'), null, '无图记录不应展示图片 icon 徽标');
+  assert(await p.$eval('[data-testid="src-picbadge-e2"]', x => x.innerText.includes('1 张图片') && !!x.querySelector('svg')));
+  assert(await p.$eval('[data-testid="src-picbadge-e3"]', x => x.innerText.includes('4 张图片') && !!x.querySelector('svg')));
+  assert(await p.$eval('[data-testid="src-e2"] .src-brief', x => x.innerText.includes('回访')));
   await p.click('[data-testid="src-e1"]');
   assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
   await p.click('[data-testid="crumb-back"]');
@@ -327,24 +385,58 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-f="all"]', x => x.disabled), false);
   assert(await p.$eval('[data-f="all"]', x => x.classList.contains('on')));
 
-  // Setting 与录音卡状态页
+  // Setting 与录音卡状态页（含 App 反向同步的 V2 模型/提示词/扩展/隐私页，以及未实现项 TBC 标记）
   await p.click('[data-testid="nav-setting"]');
   await shot('setting');
+  assert.equal(await p.$eval('[data-testid="tbc-sw-continuous"]', x => x.innerText.trim()), 'TBC');
+  assert.equal(await p.$eval('[data-testid="tbc-sw-mark"]', x => x.innerText.trim()), 'TBC');
+  assert.equal(await p.$eval('[data-testid="tbc-sw-wifi"]', x => x.innerText.trim()), 'TBC');
   const sw = await p.$eval('.sw', x => x.getAttribute('aria-checked'));
   await p.click('.sw');
   assert.notEqual(await p.$eval('.sw', x => x.getAttribute('aria-checked')), sw);
+  await p.click('[data-testid="set-local-model"]');
+  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('SenseVoice')));
+  await p.click('[data-testid="crumb-back"]');
+  assert(await p.$eval('#p-setting', x => x.classList.contains('show')));
+  await p.click('[data-testid="set-cloud-model"]');
+  await p.click('[data-testid="model-opt-qwen-max"]');
+  assert.equal(await p.$eval('[data-testid="tbc-ctx-fullday"]', x => x.innerText.trim()), 'TBC');
+  await p.click('[data-testid="crumb-back"]');
+  assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), 'qwen-max');
+  await p.click('[data-testid="set-prompts"]');
+  await p.click('[data-testid="preset-meeting"]');
+  await p.click('[data-testid="prompt-save"]');
+  await p.click('[data-testid="crumb-back"]');
+  assert.equal(await p.$eval('#sv-preset', x => x.innerText.trim()), '会议决策');
+  await p.click('[data-testid="set-extensions"]');
+  assert.equal(await p.$eval('[data-testid="tbc-mcp"]', x => x.innerText.trim()), 'TBC');
+  await p.click('[data-testid="sw-sk-risk"]');
+  await p.click('[data-testid="crumb-back"]');
+  assert.equal(await p.$eval('#sv-ext', x => x.innerText.trim()), '已启用 6 项');
+  await p.click('[data-testid="privacy-entry"]');
+  assert(await p.$eval('#p-setsub', x => x.innerText.includes('privacy@reai.chat')));
+  await p.click('[data-testid="crumb-back"]');
+  await p.click('[data-testid="parity-btn"]');
+  assert(await p.$eval('#parity-wrap', x => x.classList.contains('show')));
+  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 11);
+  await p.click('#parity-tabs [data-pt="app"]');
+  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 9);
+  await p.evaluate(() => closeParity());
   await p.click('[data-testid="hw-capsule"]');
   assert(await p.$eval('#sheet', x => x.classList.contains('show')));
-  // 默认未连接：弹层先给「连接录音卡」引导，自动扫描；只列 DYJ 系列，按 RSSI 从强到弱
+  // 默认未连接：弹层先给连接引导，自动扫描三款自有硬件（DYJ* / REAI_VB_*），按 RSSI 从强到弱
   assert(await p.$eval('#dev-connect', x => !x.hidden));
   assert(await p.$eval('#dev-main', x => x.hidden));
   assert(await p.$eval('#conn-sub', x => x.innerText.includes('扫描')));
   await p.waitForFunction(() => document.querySelectorAll('#conn-list .conn-item').length === 3, { timeout: 5000 });
-  assert.deepEqual(await p.$$eval('#conn-list .cn', e => e.map(x => x.innerText.trim())), ['DYJV2_T4W25T', 'DYJV2_B7K9Q2', 'DYJV2_L3M8N1']);
-  assert.equal(await p.$$eval('#conn-list .conn-item', e => e.length), 3, '非 DYJ 设备不应出现');
+  assert.deepEqual(await p.$$eval('#conn-list .cn', e => e.map(x => x.innerText.trim())), ['DYJV2_T4W25T', 'DYJ_B7K9Q2', 'REAI_VB_L3M8N1']);
+  assert.deepEqual(await p.$$eval('#conn-list .cbadge', e => e.map(x => x.innerText.trim())), ['录音卡 V2', '点一机 V1', '语音AI键盘 V2.1']);
+  assert.equal(await p.$$eval('#conn-list .conn-item', e => e.length), 3, '非自有硬件设备不应出现');
   await shot('device-connect');
   await p.click('#conn-list .conn-item');
   await p.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
+  assert(await p.$('[data-testid="dev-disconnect"]'));
+  assert.equal(await p.$eval('[data-testid="tbc-hw-wifi"]', x => x.innerText.trim()), 'TBC');
   assert(await p.$eval('[data-testid="hw-capsule"]', x => !x.classList.contains('off')));
   // 已连接未录音 = 橙点待机（绿点只代表正在录音）
   assert(await p.$eval('[data-testid="hw-capsule"]', x => x.classList.contains('idle')));
@@ -387,6 +479,13 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#sync-ico.okcheck', x => !!x));
   await p.click('[data-testid="fw-update"]');
   assert(await p.$eval('#dev-upg', x => !x.hidden && x.innerText.includes('主控芯片') && x.innerText.includes('2.1.0 → 2.2.0') && x.innerText.includes('1.4.2 → 1.5.0')));
+  // 录音进行中禁止升级固件（与 App DFU 保护对齐）
+  await p.click('#upg-btn');
+  assert(await p.$eval('#upg-rec-err', x => !x.hidden && x.innerText.includes('正在录音')));
+  assert.equal(await p.$eval('#upg-back', x => x.disabled), false);
+  await p.click('#upg-back');
+  await p.click('[data-testid="rec-toggle"]');
+  await p.click('[data-testid="fw-update"]');
   await p.click('#upg-btn');
   assert(await p.$eval('#upg-back', x => x.disabled));
   assert(await p.$eval('#upg-warn', x => !x.hidden));
@@ -398,9 +497,10 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.waitForFunction(() => document.getElementById('upg-back') && document.getElementById('upg-back').disabled === false, { timeout: 15000 });
   assert.equal(await p.$eval('#fw-val', x => x.innerText.trim()), '已是最新');
   assert(await p.$eval('#dev-state', x => x.innerText.includes('已更新到 主控 2.2.0 / Wi-Fi 1.5.0')));
-  // 同步冷却结束后恢复箭头
+  // 同步冷却结束后恢复箭头，再开启录音以验收 Timeline 顶部实时状态块
   await p.waitForFunction(() => document.querySelector('#sync-ico.syncidle'), { timeout: 13000 });
   assert(await p.$eval('#sync-txt', x => x.innerText.includes('手动同步')));
+  await p.click('[data-testid="rec-toggle"]');
   // Wi-Fi 二级页：已保存置顶（前3+展开）→ 扫描 → 范围外置灰 → 直连 → 新网络保存
   await p.click('[data-testid="wifi-row"]');
   assert(await p.$eval('#dev-wifi', x => !x.hidden));
@@ -533,6 +633,6 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'daily-report', 'dream-card', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'point-expand', 'point-trace', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'daily-report', 'daily-maproot', 'dream-card', 'dream-sheet', 'unc-triage-sheet', 'tbc-markers', 'parity-drawer', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'raw-seek', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'sum-contextual-photos', 'map-photo-hierarchy', 'todo-progressive-meta', 'point-expand', 'point-trace', 'src-photo-infocards', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'setting-v2-subpages', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'multi-hw-scan', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'dfu-rec-guard', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });
