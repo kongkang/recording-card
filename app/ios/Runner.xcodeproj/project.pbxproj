@@ -13,7 +13,7 @@
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
 		4807168A6B913FDB742D252F /* BackgroundDownloadHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF16A8F5E7BF8208BDB546E7 /* BackgroundDownloadHandler.swift */; };
 		50CF06829065DA7CCBA15C6D /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 67525C360F1891128411E53E /* Pods_Runner.framework */; };
-		693C70E9913219C961EAD576 /* BackgroundDownloadHandler.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E6A419A3554B9EC06007BCF0 /* BackgroundDownloadHandler.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		693C70E9913219C961EAD576 /* BackgroundDownloadHandler.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = E6A419A3554B9EC06007BCF0 /* BackgroundDownloadHandler.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6A537810121167C9FBC77512 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 494790D83A10B6F7C8238162 /* StoreKit.framework */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
@@ -82,15 +82,15 @@
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		F036B0727C3AF0B49416FF83 /* Embed Foundation Extensions */ = {
+		F036B0727C3AF0B49416FF83 /* Embed ExtensionKit Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
+			dstPath = "$(EXTENSIONS_FOLDER_PATH)";
+			dstSubfolderSpec = 16;
 			files = (
-				693C70E9913219C961EAD576 /* BackgroundDownloadHandler.appex in Embed Foundation Extensions */,
+				693C70E9913219C961EAD576 /* BackgroundDownloadHandler.appex in Embed ExtensionKit Extensions */,
 			);
-			name = "Embed Foundation Extensions";
+			name = "Embed ExtensionKit Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -134,7 +134,7 @@
 		CC01EE02DD33FF44AA55BB66 /* Runner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Runner.entitlements; sourceTree = "<group>"; };
 		D10D3EFC92FF071495784E60 /* BackgroundAssets.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = BackgroundAssets.framework; path = System/Library/Frameworks/BackgroundAssets.framework; sourceTree = SDKROOT; };
 		E5FC05DDB7BBCD9935DC9E30 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
-		E6A419A3554B9EC06007BCF0 /* BackgroundDownloadHandler.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; name = BackgroundDownloadHandler.appex; path = BackgroundDownloadHandler.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		E6A419A3554B9EC06007BCF0 /* BackgroundDownloadHandler.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; name = BackgroundDownloadHandler.appex; path = BackgroundDownloadHandler.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EAE308D8D721271F357FF3B2 /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
 		EF16A8F5E7BF8208BDB546E7 /* BackgroundDownloadHandler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundDownloadHandler.swift; sourceTree = "<group>"; };
 		FA1C2EDD4B2BFC7263509CEF /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -345,7 +345,7 @@
 				97C146EC1CF9000F007C117D /* Resources */,
 				9705A1C41CF9048500538489 /* Embed Frameworks */,
 				BC1122330004000000000001 /* Embed App Extensions */,
-				F036B0727C3AF0B49416FF83 /* Embed Foundation Extensions */,
+				F036B0727C3AF0B49416FF83 /* Embed ExtensionKit Extensions */,
 				3B06AD1E1E4923F5004D2608 /* Thin Binary */,
 				B155059393A2D8D3AD403AC3 /* [CP] Copy Pods Resources */,
 			);
@@ -683,11 +683,16 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111304;
+				CURRENT_PROJECT_VERSION = 2026111305;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.BackgroundDownloadHandler;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -853,11 +858,16 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111304;
+				CURRENT_PROJECT_VERSION = 2026111305;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.BackgroundDownloadHandler;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1079,11 +1089,16 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111304;
+				CURRENT_PROJECT_VERSION = 2026111305;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.BackgroundDownloadHandler;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1100,7 +1115,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111304;
+				CURRENT_PROJECT_VERSION = 2026111305;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
@@ -1127,7 +1142,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111304;
+				CURRENT_PROJECT_VERSION = 2026111305;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
@@ -1153,7 +1168,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111304;
+				CURRENT_PROJECT_VERSION = 2026111305;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
