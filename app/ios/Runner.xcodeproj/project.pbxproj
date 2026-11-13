@@ -8,11 +8,16 @@
 
 /* Begin PBXBuildFile section */
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
+		1FA4DDD74F5618ED69F02529 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE5C4E913EA6AC2821AD21A9 /* Foundation.framework */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
+		4807168A6B913FDB742D252F /* BackgroundDownloadHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF16A8F5E7BF8208BDB546E7 /* BackgroundDownloadHandler.swift */; };
 		50CF06829065DA7CCBA15C6D /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 67525C360F1891128411E53E /* Pods_Runner.framework */; };
+		693C70E9913219C961EAD576 /* BackgroundDownloadHandler.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E6A419A3554B9EC06007BCF0 /* BackgroundDownloadHandler.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		6A537810121167C9FBC77512 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 494790D83A10B6F7C8238162 /* StoreKit.framework */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
+		8E18C72B88AAF14619CD8A6A /* BackgroundAssets.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D10D3EFC92FF071495784E60 /* BackgroundAssets.framework */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
@@ -26,7 +31,9 @@
 		BC1122330003000000000007 /* RecordingCardLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000006 /* RecordingCardLiveActivityWidget.swift */; };
 		BC1122330003000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000008 /* Assets.xcassets */; };
 		BC1122330003000000000009 /* RecordingCardLiveActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000009 /* RecordingCardLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		CD9FCA54448E50F54EB23CF7 /* AppleAssetPackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00DA80CA6233BE9B872D8BC /* AppleAssetPackBridge.swift */; };
 		EFF522EEECFBB043C44CF98C /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FA1C2EDD4B2BFC7263509CEF /* Pods_RunnerTests.framework */; };
+		F59F8B47EA35E277F8C46242 /* BackgroundAssets.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D10D3EFC92FF071495784E60 /* BackgroundAssets.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -44,9 +51,26 @@
 			remoteGlobalIDString = BC1122330005000000000001;
 			remoteInfo = RecordingCardLiveActivity;
 		};
+		E5DB21CBBA3160CD04156478 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97C146E61CF9000F007C117D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A4C3442F63A0D680AD8E129B;
+			remoteInfo = BackgroundDownloadHandler;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		9705A1C41CF9048500538489 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		BC1122330004000000000001 /* Embed App Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -58,14 +82,15 @@
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		9705A1C41CF9048500538489 /* Embed Frameworks */ = {
+		F036B0727C3AF0B49416FF83 /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
-			dstSubfolderSpec = 10;
+			dstSubfolderSpec = 13;
 			files = (
+				693C70E9913219C961EAD576 /* BackgroundDownloadHandler.appex in Embed Foundation Extensions */,
 			);
-			name = "Embed Frameworks";
+			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -78,6 +103,8 @@
 		331C807B294A618700263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
+		494790D83A10B6F7C8238162 /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
+		567C35CCBD2FEF6FB70B3FAE /* BackgroundDownloadHandler.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BackgroundDownloadHandler.entitlements; sourceTree = "<group>"; };
 		67525C360F1891128411E53E /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -93,6 +120,7 @@
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FF66 /* SceneDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		AE820503CF5E2035444BECC7 /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
+		B00DA80CA6233BE9B872D8BC /* AppleAssetPackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppleAssetPackBridge.swift; sourceTree = "<group>"; };
 		BC1122330001000000000001 /* RecordingCardActivityAttributes.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RecordingCardActivityAttributes.swift; sourceTree = "<group>"; };
 		BC1122330001000000000002 /* PhoneMicBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PhoneMicBridge.swift; sourceTree = "<group>"; };
 		BC1122330001000000000003 /* LiveActivityBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LiveActivityBridge.swift; sourceTree = "<group>"; };
@@ -102,10 +130,15 @@
 		BC1122330001000000000007 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		BC1122330001000000000008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BC1122330001000000000009 /* RecordingCardLiveActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RecordingCardLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C8F37D93C7EA171FC36AAE5F /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		CC01EE02DD33FF44AA55BB66 /* Runner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Runner.entitlements; sourceTree = "<group>"; };
+		D10D3EFC92FF071495784E60 /* BackgroundAssets.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = BackgroundAssets.framework; path = System/Library/Frameworks/BackgroundAssets.framework; sourceTree = SDKROOT; };
 		E5FC05DDB7BBCD9935DC9E30 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
+		E6A419A3554B9EC06007BCF0 /* BackgroundDownloadHandler.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; name = BackgroundDownloadHandler.appex; path = BackgroundDownloadHandler.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EAE308D8D721271F357FF3B2 /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
+		EF16A8F5E7BF8208BDB546E7 /* BackgroundDownloadHandler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundDownloadHandler.swift; sourceTree = "<group>"; };
 		FA1C2EDD4B2BFC7263509CEF /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		FE5C4E913EA6AC2821AD21A9 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -115,6 +148,17 @@
 			files = (
 				78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */,
 				50CF06829065DA7CCBA15C6D /* Pods_Runner.framework in Frameworks */,
+				F59F8B47EA35E277F8C46242 /* BackgroundAssets.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9D6682A072386BF3A0C37BC7 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1FA4DDD74F5618ED69F02529 /* Foundation.framework in Frameworks */,
+				8E18C72B88AAF14619CD8A6A /* BackgroundAssets.framework in Frameworks */,
+				6A537810121167C9FBC77512 /* StoreKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -181,6 +225,7 @@
 				331C8082294A63A400263BE5 /* RunnerTests */,
 				6A832B86EC5A74542E8DB416 /* Pods */,
 				9CEE16A71CCCAF2748C1E6A7 /* Frameworks */,
+				EB893E88D82D14B262B25A53 /* BackgroundDownloadHandler */,
 			);
 			sourceTree = "<group>";
 		};
@@ -190,6 +235,7 @@
 				97C146EE1CF9000F007C117D /* Runner.app */,
 				331C8081294A63A400263BE5 /* RunnerTests.xctest */,
 				BC1122330001000000000009 /* RecordingCardLiveActivity.appex */,
+				E6A419A3554B9EC06007BCF0 /* BackgroundDownloadHandler.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -210,8 +256,21 @@
 				BC1122330001000000000004 /* RecordingCardActionIntent.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 				CC01EE02DD33FF44AA55BB66 /* Runner.entitlements */,
+				B00DA80CA6233BE9B872D8BC /* AppleAssetPackBridge.swift */,
 			);
 			path = Runner;
+			sourceTree = "<group>";
+		};
+		9CEE16A71CCCAF2748C1E6A7 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				67525C360F1891128411E53E /* Pods_Runner.framework */,
+				FA1C2EDD4B2BFC7263509CEF /* Pods_RunnerTests.framework */,
+				D10D3EFC92FF071495784E60 /* BackgroundAssets.framework */,
+				CC4ABAE1A20937793768FE74 /* iOS */,
+				494790D83A10B6F7C8238162 /* StoreKit.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		BC1122330002000000000001 /* Shared */ = {
@@ -233,13 +292,23 @@
 			path = RecordingCardLiveActivity;
 			sourceTree = "<group>";
 		};
-		9CEE16A71CCCAF2748C1E6A7 /* Frameworks */ = {
+		CC4ABAE1A20937793768FE74 /* iOS */ = {
 			isa = PBXGroup;
 			children = (
-				67525C360F1891128411E53E /* Pods_Runner.framework */,
-				FA1C2EDD4B2BFC7263509CEF /* Pods_RunnerTests.framework */,
+				FE5C4E913EA6AC2821AD21A9 /* Foundation.framework */,
 			);
-			name = Frameworks;
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		EB893E88D82D14B262B25A53 /* BackgroundDownloadHandler */ = {
+			isa = PBXGroup;
+			children = (
+				EF16A8F5E7BF8208BDB546E7 /* BackgroundDownloadHandler.swift */,
+				C8F37D93C7EA171FC36AAE5F /* Info.plist */,
+				567C35CCBD2FEF6FB70B3FAE /* BackgroundDownloadHandler.entitlements */,
+			);
+			name = BackgroundDownloadHandler;
+			path = BackgroundDownloadHandler;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -276,6 +345,7 @@
 				97C146EC1CF9000F007C117D /* Resources */,
 				9705A1C41CF9048500538489 /* Embed Frameworks */,
 				BC1122330004000000000001 /* Embed App Extensions */,
+				F036B0727C3AF0B49416FF83 /* Embed Foundation Extensions */,
 				3B06AD1E1E4923F5004D2608 /* Thin Binary */,
 				B155059393A2D8D3AD403AC3 /* [CP] Copy Pods Resources */,
 			);
@@ -283,6 +353,7 @@
 			);
 			dependencies = (
 				BC1122330005000000000003 /* PBXTargetDependency */,
+				EA0A7AADB24D1D99F1708F8F /* PBXTargetDependency */,
 			);
 			name = Runner;
 			packageProductDependencies = (
@@ -291,6 +362,23 @@
 			productName = Runner;
 			productReference = 97C146EE1CF9000F007C117D /* Runner.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A4C3442F63A0D680AD8E129B /* BackgroundDownloadHandler */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C8A5B11E5A4424776A4F9C8D /* Build configuration list for PBXNativeTarget "BackgroundDownloadHandler" */;
+			buildPhases = (
+				D06852F000F78133B17D4172 /* Sources */,
+				9D6682A072386BF3A0C37BC7 /* Frameworks */,
+				9B57648BAA8AC4E053A8FCD4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BackgroundDownloadHandler;
+			productName = BackgroundDownloadHandler;
+			productReference = E6A419A3554B9EC06007BCF0 /* BackgroundDownloadHandler.appex */;
+			productType = "com.apple.product-type.extensionkit-extension";
 		};
 		BC1122330005000000000001 /* RecordingCardLiveActivity */ = {
 			isa = PBXNativeTarget;
@@ -351,6 +439,7 @@
 				97C146ED1CF9000F007C117D /* Runner */,
 				331C8080294A63A400263BE5 /* RunnerTests */,
 				BC1122330005000000000001 /* RecordingCardLiveActivity */,
+				A4C3442F63A0D680AD8E129B /* BackgroundDownloadHandler */,
 			);
 		};
 /* End PBXProject section */
@@ -371,6 +460,13 @@
 				3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */,
 				97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */,
 				97C146FC1CF9000F007C117D /* Main.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9B57648BAA8AC4E053A8FCD4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -518,6 +614,7 @@
 				BC1122330003000000000003 /* LiveActivityBridge.swift in Sources */,
 				BC1122330003000000000004 /* RecordingCardActionIntent.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
+				CD9FCA54448E50F54EB23CF7 /* AppleAssetPackBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -528,6 +625,14 @@
 				BC1122330003000000000005 /* RecordingCardActivityAttributes.swift in Sources */,
 				BC1122330003000000000006 /* RecordingCardLiveActivityBundle.swift in Sources */,
 				BC1122330003000000000007 /* RecordingCardLiveActivityWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D06852F000F78133B17D4172 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4807168A6B913FDB742D252F /* BackgroundDownloadHandler.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -543,6 +648,12 @@
 			isa = PBXTargetDependency;
 			target = BC1122330005000000000001 /* RecordingCardLiveActivity */;
 			targetProxy = BC1122330005000000000002 /* PBXContainerItemProxy */;
+		};
+		EA0A7AADB24D1D99F1708F8F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BackgroundDownloadHandler;
+			target = A4C3442F63A0D680AD8E129B /* BackgroundDownloadHandler */;
+			targetProxy = E5DB21CBBA3160CD04156478 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -566,6 +677,28 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
+		0E2234CA6A9070A1C2F237B7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2026111304;
+				DEVELOPMENT_TEAM = 35N5SGDE59;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.BackgroundDownloadHandler;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		249021D3217E4FDB00AE95B9 /* Profile */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -711,6 +844,28 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Runner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Runner";
+			};
+			name = Profile;
+		};
+		93AD6C35A973783C2031C904 /* Profile */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2026111304;
+				DEVELOPMENT_TEAM = 35N5SGDE59;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.BackgroundDownloadHandler;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
 			};
 			name = Profile;
 		};
@@ -918,13 +1073,34 @@
 			};
 			name = Release;
 		};
+		A2B2BFDF51C8C3537DC9D2B8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2026111304;
+				DEVELOPMENT_TEAM = 35N5SGDE59;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.BackgroundDownloadHandler;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		BC1122330006000000000002 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111303;
+				CURRENT_PROJECT_VERSION = 2026111304;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
@@ -951,7 +1127,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111303;
+				CURRENT_PROJECT_VERSION = 2026111304;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
@@ -977,7 +1153,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111303;
+				CURRENT_PROJECT_VERSION = 2026111304;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
@@ -1000,16 +1176,6 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		BC1122330006000000000001 /* Build configuration list for PBXNativeTarget "RecordingCardLiveActivity" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				BC1122330006000000000002 /* Debug */,
-				BC1122330006000000000003 /* Release */,
-				BC1122330006000000000004 /* Profile */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		331C8087294A63A400263BE5 /* Build configuration list for PBXNativeTarget "RunnerTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -1036,6 +1202,26 @@
 				97C147061CF9000F007C117D /* Debug */,
 				97C147071CF9000F007C117D /* Release */,
 				249021D4217E4FDB00AE95B9 /* Profile */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BC1122330006000000000001 /* Build configuration list for PBXNativeTarget "RecordingCardLiveActivity" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BC1122330006000000000002 /* Debug */,
+				BC1122330006000000000003 /* Release */,
+				BC1122330006000000000004 /* Profile */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C8A5B11E5A4424776A4F9C8D /* Build configuration list for PBXNativeTarget "BackgroundDownloadHandler" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0E2234CA6A9070A1C2F237B7 /* Release */,
+				A2B2BFDF51C8C3537DC9D2B8 /* Debug */,
+				93AD6C35A973783C2031C904 /* Profile */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

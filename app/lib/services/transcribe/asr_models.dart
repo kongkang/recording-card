@@ -307,6 +307,35 @@ class ModelInstaller {
     if (await dir.exists()) await dir.delete(recursive: true);
   }
 
+  /// 校验由外部通道（如 iOS Apple-Hosted Background Assets）写入的模型文件。
+  Future<void> verifyInstalledFiles(ModelSpec spec) async {
+    final dir = await dirFor(spec);
+    for (final file in spec.files) {
+      final target = File('${dir.path}/${file.relPath}');
+      if (!await target.exists()) {
+        throw ModelInstallException('${file.relPath} 缺失');
+      }
+      if (file.sizeBytes > 0) {
+        final actualSize = await target.length();
+        if (actualSize != file.sizeBytes) {
+          await target.delete();
+          throw ModelInstallException(
+            '${file.relPath} 大小不符（期望 ${file.sizeBytes}，实际 $actualSize）',
+          );
+        }
+      }
+      if (file.sha256.isNotEmpty) {
+        final actual = await _sha256File(target);
+        if (actual != file.sha256) {
+          await target.delete();
+          throw ModelInstallException(
+            '${file.relPath} 校验失败（期望 ${file.sha256.substring(0, 8)}…，实际 ${actual.substring(0, 8)}…）',
+          );
+        }
+      }
+    }
+  }
+
   static Uri _resolveUrl(Uri baseUri, String path) {
     final base = baseUri.toString().endsWith('/')
         ? baseUri

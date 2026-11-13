@@ -13,6 +13,7 @@ import UIKit
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var bluetoothChannel: FlutterMethodChannel?
+  private var appleAssetBridge: AppleAssetPackBridge?
   private var photoChannel: FlutterMethodChannel?
 
   private var centralManager: CBCentralManager?
@@ -41,6 +42,7 @@ import UIKit
       self?.handle(call, result: result)
     }
     bluetoothChannel = channel
+    appleAssetBridge = AppleAssetPackBridge.register(with: engineBridge.pluginRegistry)
 
     if let photoRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCPhotoLibrary") {
       let pChannel = FlutterMethodChannel(

@@ -135,5 +135,11 @@
 		<string>bluetooth-central</string>
 		<string>audio</string>
 	</array>
+	<key>BAHasManagedAssetPacks</key>
+	<true/>
+	<key>BAUsesAppleHosting</key>
+	<true/>
+	<key>BAAppGroupID</key>
+	<string>group.com.reai.recordingcard</string>
 </dict>
 </plist>
