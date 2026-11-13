@@ -325,13 +325,57 @@ class CameraSyncItem {
     this.source = 'dyj_camera',
   });
 
-  factory CameraSyncItem.fromJson(Map<String, dynamic> json) => CameraSyncItem(
-    name: (json['name'] as String?) ?? '',
-    path: (json['path'] as String?) ?? '',
-    bytesWritten: (json['bytesWritten'] as num?)?.toInt() ?? 0,
-    capturedAtSec: (json['capturedAt'] as num?)?.toInt(),
-    source: (json['source'] as String?) ?? 'dyj_camera',
-  );
+  factory CameraSyncItem.fromJson(Map<String, dynamic> json) {
+    final name = (json['name'] as String?) ?? '';
+    return CameraSyncItem(
+      name: name,
+      path: (json['path'] as String?) ?? '',
+      bytesWritten:
+          (json['bytesWritten'] as num?)?.toInt() ??
+          (json['bytes'] as num?)?.toInt() ??
+          0,
+      capturedAtSec:
+          (json['capturedAt'] as num?)?.toInt() ??
+          (json['capturedAtSec'] as num?)?.toInt() ??
+          (json['createdAt'] as num?)?.toInt() ??
+          _parseCapturedEpochSec(name),
+      source: (json['source'] as String?) ?? 'dyj_camera',
+    );
+  }
+
+  static int? _parseCapturedEpochSec(String name) {
+    final ymd = RegExp(
+      r'(20\d{2})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})',
+    ).firstMatch(name);
+    if (ymd != null) {
+      final y = int.tryParse(ymd.group(1)!);
+      final m = int.tryParse(ymd.group(2)!);
+      final d = int.tryParse(ymd.group(3)!);
+      final hh = int.tryParse(ymd.group(4)!);
+      final mm = int.tryParse(ymd.group(5)!);
+      final ss = int.tryParse(ymd.group(6)!);
+      if (y != null &&
+          m != null &&
+          d != null &&
+          hh != null &&
+          mm != null &&
+          ss != null &&
+          m >= 1 &&
+          m <= 12 &&
+          d >= 1 &&
+          d <= 31 &&
+          hh <= 23 &&
+          mm <= 59 &&
+          ss <= 59) {
+        return DateTime(y, m, d, hh, mm, ss).millisecondsSinceEpoch ~/ 1000;
+      }
+    }
+    final epoch = RegExp(r'(?<!\d)(1[6-9]\d{8}|2\d{9})(?!\d)').firstMatch(name);
+    if (epoch != null) {
+      return int.tryParse(epoch.group(1)!);
+    }
+    return null;
+  }
 
   final String name;
   final String path;
@@ -1214,10 +1258,20 @@ class RealCardGateway implements CardGateway {
       },
       const Duration(minutes: 3),
     );
-    final list = (json['data'] as List<dynamic>? ?? const []);
+    final rawData = json['data'];
+    final list = switch (rawData) {
+      final List<dynamic> l => l,
+      final Map<String, dynamic> m => m['photos'] as List<dynamic>? ?? const [],
+      final Map<Object?, Object?> m => m['photos'] as List<dynamic>? ?? const [],
+      _ => const <dynamic>[],
+    };
     return list
-        .whereType<Map<String, dynamic>>()
-        .map(CameraSyncItem.fromJson)
+        .whereType<Map<Object?, Object?>>()
+        .map(
+          (item) => CameraSyncItem.fromJson({
+            for (final e in item.entries) '${e.key}': e.value,
+          }),
+        )
         .where((p) => p.path.isNotEmpty)
         .toList();
   }

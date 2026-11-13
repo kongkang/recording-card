@@ -220,7 +220,7 @@ class AgentConfigStore extends ChangeNotifier {
   bool cloudEnabled = true;
   String customApiBase = '';
   bool developerMode = false;
-  bool photoLinkEnabled = false;
+  bool photoLinkEnabled = true;
   bool islandEnabled = true;
 
   String cloudModel = 'deepseek-v3';
@@ -358,6 +358,9 @@ class AgentConfigStore extends ChangeNotifier {
         for (final e in rawExt.entries)
           if (e.value is bool) '${e.key}': e.value as bool,
       };
+      if (data['photoLinkEnabled'] is! bool && rawExt['tl-photo'] is bool) {
+        photoLinkEnabled = rawExt['tl-photo'] as bool;
+      }
     }
     final rawCustom = data['customMcps'];
     if (rawCustom is List) {
@@ -389,6 +392,7 @@ class AgentConfigStore extends ChangeNotifier {
 
   Future<void> setPhotoLinkEnabled(bool value) async {
     photoLinkEnabled = value;
+    extensionStates = {...extensionStates, 'tl-photo': value};
     notifyListeners();
     await _save();
   }
@@ -455,6 +459,9 @@ class AgentConfigStore extends ChangeNotifier {
   Future<void> toggleExtension(String id) async {
     final next = !isExtensionOn(id);
     extensionStates = {...extensionStates, id: next};
+    if (id == 'tl-photo') {
+      photoLinkEnabled = next;
+    }
     notifyListeners();
     await _save();
   }
@@ -493,7 +500,7 @@ class AgentConfigStore extends ChangeNotifier {
       'cloudEnabled': cloudEnabled,
       if (customApiBase.isNotEmpty) 'customApiBase': customApiBase,
       if (developerMode) 'devMode': developerMode,
-      if (photoLinkEnabled) 'photoLinkEnabled': photoLinkEnabled,
+      'photoLinkEnabled': photoLinkEnabled,
       'islandEnabled': islandEnabled,
       'model': cloudModel,
       'pickedModel': userPickedCloudModel,

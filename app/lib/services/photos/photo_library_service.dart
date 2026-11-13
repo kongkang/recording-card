@@ -61,13 +61,27 @@ class PhotoLibraryService {
     MethodChannel channel = const MethodChannel('com.reai.recordingcard/photos'),
     Future<PhotoPermissionState> Function()? statusOverride,
     Future<PhotoPermissionState> Function()? requestOverride,
+    Future<PhotoImportReport> Function(
+      List<PhotoWindow> windows, {
+      bool promptIfNeeded,
+    })?
+    importOverride,
+    Future<Directory> Function()? directoryOverride,
   }) : _channel = channel,
        _statusOverride = statusOverride,
-       _requestOverride = requestOverride;
+       _requestOverride = requestOverride,
+       _importOverride = importOverride,
+       _directoryOverride = directoryOverride;
 
   final MethodChannel _channel;
   final Future<PhotoPermissionState> Function()? _statusOverride;
   final Future<PhotoPermissionState> Function()? _requestOverride;
+  final Future<PhotoImportReport> Function(
+    List<PhotoWindow> windows, {
+    bool promptIfNeeded,
+  })?
+  _importOverride;
+  final Future<Directory> Function()? _directoryOverride;
 
   static PhotoPermissionState _parsePermission(String? raw) => switch (raw) {
     'granted' => PhotoPermissionState.granted,
@@ -100,10 +114,17 @@ class PhotoLibraryService {
   }
 
   Future<Directory> photosDirectory() async {
+    if (_directoryOverride != null) {
+      final dir = await _directoryOverride();
+      if (!dir.existsSync()) {
+        dir.createSync(recursive: true);
+      }
+      return dir;
+    }
     final support = await getApplicationSupportDirectory();
     final dir = Directory('${support.path}/photos');
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
     }
     return dir;
   }
@@ -111,17 +132,28 @@ class PhotoLibraryService {
   Future<PhotoImportReport> importInWindows(
     List<PhotoWindow> windows, {
     String? outputDirOverride,
+    bool promptIfNeeded = false,
   }) async {
     if (windows.isEmpty) {
       return const PhotoImportReport(authorized: true, photos: []);
     }
+    if (_importOverride != null) {
+      return _importOverride(windows, promptIfNeeded: promptIfNeeded);
+    }
     try {
+      if (!promptIfNeeded) {
+        final perm = await checkPermission();
+        if (perm != PhotoPermissionState.granted) {
+          return const PhotoImportReport(authorized: false, photos: []);
+        }
+      }
       final outDir = outputDirOverride ?? (await photosDirectory()).path;
       final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
         'importInWindows',
         {
           'windows': [for (final w in windows) w.toJson()],
           'outputDir': outDir,
+          'promptIfNeeded': promptIfNeeded,
         },
       );
       if (raw == null) {

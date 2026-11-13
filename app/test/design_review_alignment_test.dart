@@ -598,12 +598,20 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('set-dynamic-island')), findsNothing);
 
-    // 点击关联系统相册照片：先弹权限说明框，点击授权后才启用
+    // 关联录音期间系统相册照片：默认开启；先关闭再重新开启时弹权限说明框，授权后恢复开启
     await tester.scrollUntilVisible(
       find.byKey(const Key('set-photo-import')),
       160,
       scrollable: find.byType(Scrollable).first,
     );
+    expect(agentConfig.photoLinkEnabled, isTrue);
+    expect(find.byKey(const Key('sw-photo-sync')), findsOneWidget);
+    expect(find.text('已开启 · 每分钟随切片自动对齐'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('set-photo-import')));
+    await tester.pumpAndSettle();
+    expect(agentConfig.photoLinkEnabled, isFalse);
+    expect(find.text('已关闭'), findsOneWidget);
+
     await tester.tap(find.byKey(const Key('set-photo-import')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('photo-perm-dialog')), findsOneWidget);
@@ -611,6 +619,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(reqCount, 1);
     expect(agentConfig.photoLinkEnabled, isTrue);
+    expect(find.text('已开启 · 每分钟随切片自动对齐'), findsOneWidget);
 
     // 2) supportsDynamicIsland=true 时展示「灵动岛与操作按钮」
     await tester.pumpWidget(

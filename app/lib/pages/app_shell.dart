@@ -67,9 +67,12 @@ class _AppShellState extends State<AppShell> {
   /// 实时音频接收器：录音期间边录边把 PCM 收进本地，每满 1 分钟切片即刻送本地 ASR 转写落库。
   late final LiveAudioRecorder _liveAudio =
       widget.liveAudio ?? LiveAudioRecorder(gateway: _device.gateway);
+  late final PhotoLibraryService _photoLib =
+      widget.photoLibrary ?? const PhotoLibraryService();
   StreamSubscription<LiveAudioSlice>? _liveSliceSub;
   StreamSubscription<LiveAudioSlice>? _phoneSliceSub;
   bool _supportsDynamicIsland = false;
+  bool _askedPhotoPermThisSession = false;
 
   bool get _resolvedSupportsDynamicIsland =>
       widget.supportsDynamicIslandOverride ?? _supportsDynamicIsland;
@@ -84,8 +87,13 @@ class _AppShellState extends State<AppShell> {
     widget.store.deviceRecording ??= () => _device.isRecording;
     widget.store.deviceHasCameraMedia ??=
         () => _device.activeCapabilities.hasCameraMedia;
+    widget.store.photoLibrary = _photoLib;
+    widget.store.photoSyncEnabled ??= () => _agentConfig.photoLinkEnabled;
+    widget.store.deviceGateway ??= () => _device.gateway;
     _device.onHardwarePhotoCaptured ??= () {
-      if (_device.isConnected && _device.activeCapabilities.hasCameraMedia) {
+      if (_agentConfig.photoLinkEnabled &&
+          _device.isConnected &&
+          _device.activeCapabilities.hasCameraMedia) {
         unawaited(widget.store.syncHardwareCameraPhotos(_device.gateway));
       }
     };
@@ -124,6 +132,17 @@ class _AppShellState extends State<AppShell> {
   /// 上一帧设备是否在录音：用来识别「刚停止录音」这个边沿，冲刷最后一段实时切片。
   bool _wasRecording = false;
 
+  Future<void> _ensurePhotoPermissionOnRecordStart() async {
+    if (!_agentConfig.photoLinkEnabled || _askedPhotoPermThisSession) return;
+    final status = await _photoLib.checkPermission();
+    if (status == PhotoPermissionState.notDetermined) {
+      _askedPhotoPermThisSession = true;
+      await _photoLib.requestPermission();
+    } else if (status == PhotoPermissionState.granted) {
+      _askedPhotoPermThisSession = true;
+    }
+  }
+
   /// 设备录音态 / 本机录音态 → 实时音频流切片 + Timeline 顶部状态块。
   ///
   /// 录音开启期间按固定窗口（默认 1 分钟）边录边存并本地转写落 Timeline；
@@ -143,6 +162,7 @@ class _AppShellState extends State<AppShell> {
       if (!_wasRecording) {
         widget.store.onLiveRecordingStarted();
         _recording.startRecording();
+        unawaited(_ensurePhotoPermissionOnRecordStart());
         // 录音状态一变 true 就开实时流（App 开关和设备拨杆/按键都走这里）；
         // isRunning 挡住重复订阅。
         if (hwRecording && !_liveAudio.isRunning) {
@@ -228,7 +248,7 @@ class _AppShellState extends State<AppShell> {
                         settings: widget.settings,
                         agentConfig: _agentConfig,
                         authService: widget.authService,
-                        photoLibrary: widget.photoLibrary,
+                        photoLibrary: _photoLib,
                         supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                       )
                     else
@@ -239,7 +259,7 @@ class _AppShellState extends State<AppShell> {
                         settings: widget.settings,
                         agentConfig: _agentConfig,
                         authService: widget.authService,
-                        photoLibrary: widget.photoLibrary,
+                        photoLibrary: _photoLib,
                         supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                       ),
                     ListenableBuilder(

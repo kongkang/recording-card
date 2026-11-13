@@ -162,6 +162,8 @@ class _HomeGateState extends State<_HomeGate> {
       generator: _summaries,
       status: _recordingStatus,
     );
+    _store.photoSyncEnabled = () => _agentConfig.photoLinkEnabled;
+    _store.deviceGateway = () => _device.gateway;
     _device.onManualBleSync = () => _store.syncRecordings();
     unawaited(_boot());
     if (dev != null) {

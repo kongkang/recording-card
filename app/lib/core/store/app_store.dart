@@ -98,6 +98,21 @@ class AppStore extends ChangeNotifier {
   /// 按记录 ID 存储的关联照片（含点一机 V1 硬件抓拍与系统相册对齐导入，及排除状态）。
   Map<String, List<EventPhoto>> eventPhotos = {};
 
+  /// 系统相册访问服务（可在测试中注入假实现）。
+  PhotoLibraryService photoLibrary = const PhotoLibraryService();
+
+  /// 是否允许自动关联照片（由 AgentConfigStore.photoLinkEnabled 注入；未注入时默认开启）。
+  bool Function()? photoSyncEnabled;
+
+  /// 当前设备网关（用于自动拉取点一机 V1 硬件抓拍照片）。
+  CardGateway? Function()? deviceGateway;
+
+  bool get _isPhotoSyncEnabled => photoSyncEnabled?.call() ?? true;
+  bool _disposed = false;
+  bool _photoSyncRunning = false;
+  bool _photoSyncQueued = false;
+  bool _photoSyncQueuedFull = false;
+
   bool loading = false;
   String? loadError;
   SyncStage? syncStage;
@@ -183,6 +198,7 @@ class AppStore extends ChangeNotifier {
       try {
         final saved = await pipeline.ingestLiveSlice(slice);
         await refreshFromStore();
+        await syncPhotosAutomatically(recentOnly: true, targetFile: saved);
         _liveSlicesSavedThisRun++;
         completer.complete(saved);
       } on Object catch (e, st) {
@@ -208,6 +224,7 @@ class AppStore extends ChangeNotifier {
   /// 停止录音后等待本轮尾部实时切片完成本地转写（不触发蓝牙拉卡文件）。
   Future<int> finishLiveRecording() async {
     await _liveIngestTail;
+    await syncPhotosAutomatically(recentOnly: false);
     if (_status?.isRecording != true && _liveSlicesInFlight == 0) {
       _status?.stopRecording();
     }
@@ -229,9 +246,11 @@ class AppStore extends ChangeNotifier {
         debugPrint('[store] v1 迁移失败（不阻塞启动）：$e');
       }
       await refreshFromStore();
+      unawaited(syncPhotosAutomatically(recentOnly: false));
       return;
     }
     await refreshEvents();
+    unawaited(syncPhotosAutomatically(recentOnly: false));
   }
 
   Future<JsonStore> _jsonStore() async {
@@ -345,6 +364,7 @@ class AppStore extends ChangeNotifier {
       syncText = '';
       _status?.ensureRecording();
       await refreshEvents();
+      unawaited(syncPhotosAutomatically(recentOnly: true));
       return '录音进行中，实时切片正自动入库';
     }
     // 没连卡就直接告诉用户"先连设备"，不要跑下去再报成"整理中断"——
@@ -381,6 +401,7 @@ class AppStore extends ChangeNotifier {
         },
       );
       events = report.events;
+      unawaited(syncPhotosAutomatically(recentOnly: false));
       if (report.error != null) {
         syncError = report.error;
         return report.error;
@@ -421,13 +442,12 @@ class AppStore extends ChangeNotifier {
     try {
       final report = await pipeline.sync(onProgress: _onPipelineProgress);
       await refreshFromStore();
-      if (deviceHasCameraMedia?.call() == true) {
-        try {
-          await syncHardwareCameraPhotos(pipeline.gateway);
-        } on Object catch (e) {
-          debugPrint('[store] 硬件照片同步失败：$e');
-        }
-      }
+      unawaited(
+        syncPhotosAutomatically(
+          recentOnly: false,
+          gatewayOverride: pipeline.gateway,
+        ),
+      );
       if (report.failed > 0) {
         syncError = '${report.failed} 条录音处理失败：${report.failures.first}';
       }
@@ -462,6 +482,7 @@ class AppStore extends ChangeNotifier {
         final recovered = await pipeline.reprocessSilentLiveSlices();
         if (recovered > 0) {
           await refreshFromStore();
+          unawaited(syncPhotosAutomatically(recentOnly: false));
         }
       } on Object catch (e) {
         debugPrint('[store] 本地实时切片重检失败：$e');
@@ -477,6 +498,7 @@ class AppStore extends ChangeNotifier {
           .processPending(onProgress: _onPipelineProgress)
           .timeout(const Duration(seconds: 90));
       await refreshFromStore();
+      await syncPhotosAutomatically(recentOnly: false);
     } on TimeoutException {
       debugPrint('[store] 续跑超时，已中止本次整理，稍后可重试');
       syncError = '整理超时，已停止本次处理';
@@ -717,14 +739,185 @@ class AppStore extends ChangeNotifier {
         '${d.second.toString().padLeft(2, '0')}';
   }
 
-  /// 导入录音窗口内的系统相册照片（iOS PhotoKit）。
-  Future<int> importSystemAlbumPhotos({
-    PhotoLibraryService service = const PhotoLibraryService(),
+  /// 跨切片精确归位 + 去重：若某照片此前因 ±5 秒快门容差暂挂在相邻切片，
+  /// 当更匹配的切片入库后自动迁移过来（但尊重用户已手动排除的决定）。
+  bool _attachPhotoDeduplicated(String targetEventId, EventPhoto photo) {
+    if (_disposed) return false;
+    final nextMap = Map<String, List<EventPhoto>>.of(eventPhotos);
+    var removedOther = false;
+    for (final e in events) {
+      if (e.id == targetEventId) continue;
+      if (photosForEvent(e).any((p) => p.id == photo.id && p.excluded)) {
+        return false;
+      }
+    }
+    for (final entry in eventPhotos.entries) {
+      if (entry.key == targetEventId) continue;
+      final hasExcluded = entry.value.any((p) => p.id == photo.id && p.excluded);
+      if (hasExcluded) return false;
+      if (entry.value.any((p) => p.id == photo.id)) {
+        nextMap[entry.key] = entry.value
+            .where((p) => p.id != photo.id)
+            .toList();
+        removedOther = true;
+      }
+    }
+    if (removedOther) {
+      eventPhotos = nextMap;
+    }
+    final created = attachPhotoToEvent(targetEventId, photo);
+    if (removedOther && !created) {
+      _persist();
+      notifyListeners();
+    }
+    return created;
+  }
+
+  /// 按拍摄时间戳选出最匹配的一段录音（优先严格落在起止窗口内，其次 ±5 秒快门容差最小距离）。
+  String? _bestEventIdForCapture(int capturedAtMs, {String? fallbackEventId}) {
+    RecordEvent? strictBest;
+    var strictPrefersInner = false;
+    int? strictCenterDist;
+
+    RecordEvent? tolBest;
+    int? tolDist;
+
+    for (final e in events) {
+      if (e.live) continue;
+      final w = _windowForEvent(e);
+      if (capturedAtMs >= w.startMs && capturedAtMs <= w.endMs) {
+        final prefersInner = capturedAtMs < w.endMs;
+        final center = (w.startMs + w.endMs) ~/ 2;
+        final cDist = (capturedAtMs - center).abs();
+        if (strictBest == null ||
+            (prefersInner && !strictPrefersInner) ||
+            (prefersInner == strictPrefersInner && cDist < strictCenterDist!)) {
+          strictBest = e;
+          strictPrefersInner = prefersInner;
+          strictCenterDist = cDist;
+        }
+        continue;
+      }
+      if (capturedAtMs >= w.startMs - 5000 && capturedAtMs <= w.endMs + 5000) {
+        final dist = capturedAtMs < w.startMs
+            ? w.startMs - capturedAtMs
+            : capturedAtMs - w.endMs;
+        if (tolBest == null || dist < tolDist!) {
+          tolBest = e;
+          tolDist = dist;
+        }
+      }
+    }
+    if (strictBest != null) return strictBest.id;
+    if (tolBest != null) return tolBest.id;
+    if (fallbackEventId != null && events.any((e) => e.id == fallbackEventId)) {
+      return fallbackEventId;
+    }
+    return null;
+  }
+
+  Set<String> _recentPhotoEventIds({RecordingFile? targetFile}) {
+    final ids = <String>{
+      if (targetFile != null)
+        for (final seg in targetFile.segments) seg.id,
+    };
+    final cutoffMs = DateTime.now()
+        .subtract(const Duration(minutes: 10))
+        .millisecondsSinceEpoch;
+    for (final e in events) {
+      if (e.live) continue;
+      final w = _windowForEvent(e);
+      if (w.endMs >= cutoffMs) {
+        ids.add(e.id);
+      }
+    }
+    if (ids.isEmpty) {
+      for (final e in events.where((e) => !e.live).take(2)) {
+        ids.add(e.id);
+      }
+    }
+    return ids;
+  }
+
+  /// 后台自动同步拍照数据（系统相册 PhotoKit + 点一机 V1 硬件抓拍），支持并发请求串行合并。
+  Future<int> syncPhotosAutomatically({
+    bool recentOnly = false,
+    RecordingFile? targetFile,
+    CardGateway? gatewayOverride,
     String? outputDirOverride,
   }) async {
+    if (_disposed || !_isPhotoSyncEnabled || events.isEmpty) return 0;
+    if (_photoSyncRunning) {
+      _photoSyncQueued = true;
+      if (!recentOnly) _photoSyncQueuedFull = true;
+      return 0;
+    }
+
+    _photoSyncRunning = true;
+    var totalAdded = 0;
+    var runRecentOnly = recentOnly;
+    RecordingFile? runTargetFile = targetFile;
+    CardGateway? runGateway = gatewayOverride;
+
+    try {
+      while (!_disposed) {
+        final onlyIds = runRecentOnly
+            ? _recentPhotoEventIds(targetFile: runTargetFile)
+            : null;
+
+        try {
+          totalAdded += await importSystemAlbumPhotos(
+            onlyEventIds: onlyIds,
+            outputDirOverride: outputDirOverride,
+            promptIfNeeded: false,
+          );
+        } on Object catch (e) {
+          debugPrint('[store] 自动同步系统相册照片失败：$e');
+        }
+
+        if (!_disposed &&
+            (deviceConnected?.call() ?? false) &&
+            (deviceHasCameraMedia?.call() ?? false)) {
+          final gw = runGateway ?? deviceGateway?.call() ?? _pipeline?.gateway;
+          if (gw != null) {
+            try {
+              totalAdded += await syncHardwareCameraPhotos(
+                gw,
+                photoService: photoLibrary,
+                outputDirOverride: outputDirOverride,
+              ).timeout(const Duration(seconds: 8));
+            } on Object catch (e) {
+              debugPrint('[store] 自动同步硬件照片失败：$e');
+            }
+          }
+        }
+
+        if (_disposed || !_photoSyncQueued) break;
+        runRecentOnly = !_photoSyncQueuedFull;
+        runTargetFile = null;
+        runGateway = gatewayOverride;
+        _photoSyncQueued = false;
+        _photoSyncQueuedFull = false;
+      }
+    } finally {
+      _photoSyncRunning = false;
+      _photoSyncQueued = false;
+      _photoSyncQueuedFull = false;
+    }
+    return totalAdded;
+  }
+
+  /// 导入录音窗口内的系统相册照片（iOS PhotoKit）。
+  Future<int> importSystemAlbumPhotos({
+    PhotoLibraryService? service,
+    String? outputDirOverride,
+    Set<String>? onlyEventIds,
+    bool promptIfNeeded = false,
+  }) async {
+    if (_disposed) return 0;
     final windows = <PhotoWindow>[
       for (final e in events)
-        if (!e.live)
+        if (!e.live && (onlyEventIds == null || onlyEventIds.contains(e.id)))
           () {
             final w = _windowForEvent(e);
             return PhotoWindow(
@@ -734,14 +927,20 @@ class AppStore extends ChangeNotifier {
             );
           }(),
     ];
-    final report = await service.importInWindows(
+    if (windows.isEmpty) return 0;
+    final report = await (service ?? photoLibrary).importInWindows(
       windows,
       outputDirOverride: outputDirOverride,
+      promptIfNeeded: promptIfNeeded,
     );
+    if (_disposed) return 0;
     var added = 0;
     for (final p in report.photos) {
-      final created = attachPhotoToEvent(
-        p.eventId,
+      final targetEventId =
+          _bestEventIdForCapture(p.capturedAtMs, fallbackEventId: p.eventId) ??
+          p.eventId;
+      final created = _attachPhotoDeduplicated(
+        targetEventId,
         EventPhoto(
           id: p.id,
           time: _formatClockHms(p.capturedAtMs),
@@ -758,40 +957,52 @@ class AppStore extends ChangeNotifier {
   /// 同步点一机 V1 硬件按键抓拍照片并按拍摄时间戳对齐到最近一段录音记录。
   Future<int> syncHardwareCameraPhotos(
     CardGateway gateway, {
-    PhotoLibraryService photoService = const PhotoLibraryService(),
+    PhotoLibraryService? photoService,
     String? outputDirOverride,
     String? serverOrigin,
   }) async {
+    if (_disposed) return 0;
     final outDir =
-        outputDirOverride ?? (await photoService.photosDirectory()).path;
+        outputDirOverride ??
+        (await (photoService ?? photoLibrary).photosDirectory()).path;
     final items = await gateway.syncCameraPhotos(
       outDir,
       serverOrigin: serverOrigin,
     );
-    if (items.isEmpty || events.isEmpty) return 0;
+    if (_disposed || items.isEmpty || events.isEmpty) return 0;
     var added = 0;
     for (final item in items) {
       final capturedMs = item.capturedAtSec != null
           ? item.capturedAtSec! * 1000
           : DateTime.now().millisecondsSinceEpoch;
-      RecordEvent? matched;
-      int? bestDelta;
-      for (final e in events) {
-        final w = _windowForEvent(e);
-        if (capturedMs >= w.startMs - 15000 && capturedMs <= w.endMs + 15000) {
-          matched = e;
-          break;
-        }
-        final delta = capturedMs < w.startMs
-            ? w.startMs - capturedMs
-            : capturedMs - w.endMs;
-        if (delta <= 30 * 60 * 1000 && (bestDelta == null || delta < bestDelta)) {
-          bestDelta = delta;
-          matched = e;
+      final bestId = _bestEventIdForCapture(capturedMs);
+      RecordEvent? matched = bestId != null ? eventByIdOrNull(bestId) : null;
+      if (matched == null) {
+        int? bestDelta;
+        for (final e in events) {
+          final w = _windowForEvent(e);
+          if (capturedMs >= w.startMs - 15000 && capturedMs <= w.endMs + 15000) {
+            final delta = capturedMs < w.startMs
+                ? w.startMs - capturedMs
+                : (capturedMs > w.endMs ? capturedMs - w.endMs : 0);
+            if (bestDelta == null || delta < bestDelta) {
+              bestDelta = delta;
+              matched = e;
+            }
+            continue;
+          }
+          final delta = capturedMs < w.startMs
+              ? w.startMs - capturedMs
+              : capturedMs - w.endMs;
+          if (delta <= 30 * 60 * 1000 &&
+              (bestDelta == null || delta < bestDelta)) {
+            bestDelta = delta;
+            matched = e;
+          }
         }
       }
       matched ??= events.first;
-      final created = attachPhotoToEvent(
+      final created = _attachPhotoDeduplicated(
         matched.id,
         EventPhoto(
           id: 'dyj_${item.name}',
@@ -1116,6 +1327,7 @@ class AppStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _genTicker?.cancel();
     super.dispose();
   }
