@@ -163,7 +163,13 @@ import UIKit
         result(["authorized": false, "photos": []])
         return
       }
-      importPhotosInWindows(windows: windows, outputDir: outputDir, result: result)
+      let promptIfNeeded = (args["promptIfNeeded"] as? Bool) ?? false
+      importPhotosInWindows(
+        windows: windows,
+        outputDir: outputDir,
+        promptIfNeeded: promptIfNeeded,
+        result: result
+      )
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -172,6 +178,7 @@ import UIKit
   private func importPhotosInWindows(
     windows: [[String: Any]],
     outputDir: String,
+    promptIfNeeded: Bool,
     result: @escaping FlutterResult
   ) {
     let proceed: (PHAuthorizationStatus) -> Void = { status in
@@ -251,7 +258,7 @@ import UIKit
     }
 
     let current = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-    if current == .notDetermined {
+    if current == .notDetermined && promptIfNeeded {
       PHPhotoLibrary.requestAuthorization(for: .readWrite, handler: proceed)
     } else {
       proceed(current)

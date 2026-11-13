@@ -222,7 +222,15 @@ class _SettingPageState extends State<SettingPage> {
     }
   }
 
-  Future<void> _importAlbumPhotos(BuildContext context) async {
+  Future<void> _togglePhotoSync(BuildContext context) async {
+    if (_agent.photoLinkEnabled) {
+      if (mounted) {
+        setState(() => _photoImportHint = null);
+      }
+      await _agent.setPhotoLinkEnabled(false);
+      return;
+    }
+
     final photoLib = widget.photoLibrary ?? const PhotoLibraryService();
     var status = await photoLib.checkPermission();
     if (status != PhotoPermissionState.granted) {
@@ -232,7 +240,9 @@ class _SettingPageState extends State<SettingPage> {
         builder: (ctx) => AlertDialog(
           key: const Key('photo-perm-dialog'),
           title: const Text('开启系统相册访问权限'),
-          content: const Text('仅按录音时段在本地匹配对应照片用于内容补充，原始照片不上传云端。'),
+          content: const Text(
+            '开启后将在每分钟录音切片入库及停录时，在本地自动匹配该时段照片，无需手动导入，原始照片不上传云端。',
+          ),
           actions: <Widget>[
             TextButton(
               key: const Key('photo-perm-cancel'),
@@ -256,19 +266,21 @@ class _SettingPageState extends State<SettingPage> {
       }
     }
 
+    if (mounted) {
+      setState(() => _photoImportHint = null);
+    }
     await _agent.setPhotoLinkEnabled(true);
     if (!context.mounted) return;
     final appStore = StoreScope.maybeOf(context);
-    if (appStore == null) {
-      if (!mounted) return;
-      setState(() => _photoImportHint = '已开启');
-      return;
-    }
-    final added = await appStore.importSystemAlbumPhotos();
+    if (appStore == null) return;
+    appStore.photoLibrary = photoLib;
+    final added = await appStore.syncPhotosAutomatically(recentOnly: false);
     if (!mounted) return;
-    setState(() {
-      _photoImportHint = added > 0 ? '已对齐导入 $added 张照片' : '暂无录音时段新照片';
-    });
+    if (added > 0) {
+      setState(() {
+        _photoImportHint = '已开启 · 已自动对齐 $added 张照片';
+      });
+    }
   }
 
   @override
@@ -387,16 +399,7 @@ class _SettingPageState extends State<SettingPage> {
                     ],
                   if (group.title == '录音') ...<Widget>[
                     const _RowDivider(),
-                    _navRow(
-                      context,
-                      keyName: 'set-photo-import',
-                      label: '关联录音期间系统相册照片',
-                      value:
-                          _photoImportHint ??
-                          (_agent.photoLinkEnabled ? '已开启' : '未授权'),
-                      valueKey: const Key('sv-photo-import'),
-                      onTap: () => unawaited(_importAlbumPhotos(context)),
-                    ),
+                    _photoAutoSyncRow(context),
                   ],
                 ],
               ),
@@ -460,6 +463,70 @@ class _SettingPageState extends State<SettingPage> {
                   ),
                   const SizedBox(width: 4),
                   Icon(Icons.chevron_right, size: 18, color: c.ax),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 拍照数据自动对齐开关行（独立锚点 `set-photo-import` / `sw-photo-sync`，不占用 `sw-0..sw-5`）。
+  Widget _photoAutoSyncRow(BuildContext context) {
+    final c = context.rc;
+    final on = _agent.photoLinkEnabled;
+    final subtitle =
+        _photoImportHint ?? (on ? '已开启 · 每分钟随切片自动对齐' : '已关闭');
+    return Semantics(
+      container: true,
+      button: true,
+      toggled: on,
+      enabled: true,
+      label: '关联录音期间相册照片开关',
+      onTap: () => unawaited(_togglePhotoSync(context)),
+      child: ExcludeSemantics(
+        child: GestureDetector(
+          key: const Key('set-photo-import'),
+          behavior: HitTestBehavior.opaque,
+          onTap: () => unawaited(_togglePhotoSync(context)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: RCDims.settingRow),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Text(
+                          '关联录音期间相册照片',
+                          style: TextStyle(
+                            fontSize: 15,
+                            height: 1.3,
+                            color: c.label,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          key: const Key('sv-photo-import'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.3,
+                            color: c.sec,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  KeyedSubtree(
+                    key: const Key('sw-photo-sync'),
+                    child: RCSwitch(on: on),
+                  ),
                 ],
               ),
             ),

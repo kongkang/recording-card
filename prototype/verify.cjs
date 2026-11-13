@@ -429,9 +429,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-testid="tbc-sw-continuous"]', x => x.innerText.trim()), 'TBC');
   assert.equal(await p.$eval('[data-testid="tbc-sw-mark"]', x => x.innerText.trim()), 'TBC');
   assert.equal(await p.$eval('[data-testid="tbc-sw-wifi"]', x => x.innerText.trim()), 'TBC');
-  const sw = await p.$eval('.sw', x => x.getAttribute('aria-checked'));
-  await p.click('.sw');
-  assert.notEqual(await p.$eval('.sw', x => x.getAttribute('aria-checked')), sw);
+  const sw = await p.$eval('#p-setting [aria-label="自动转录开关"]', x => x.getAttribute('aria-checked'));
+  await p.click('#p-setting [aria-label="自动转录开关"]');
+  assert.notEqual(await p.$eval('#p-setting [aria-label="自动转录开关"]', x => x.getAttribute('aria-checked')), sw);
   // 外脑 OAuth2 与微信/Google/GitHub/Facebook 绑定
   assert.equal(await p.$eval('[data-testid="sv-auth"]', x => x.innerText.trim()), 'owner@wainao.chat');
   await p.click('[data-testid="set-auth-entry"]');
@@ -472,12 +472,18 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-testid="tbc-ctx-fullday"]', x => x.innerText.trim()), 'TBC');
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), 'qwen-max');
-  // 交叉反馈：系统相册权限前置说明弹窗 + 灵动岛按机型隐藏
+  // 交叉反馈：每分钟自动关联系统相册照片（默认开启开关 + 关后重开弹权限弹窗）+ 灵动岛按机型隐藏
+  assert.equal(await p.$eval('[data-testid="sw-photo-sync"]', x => x.getAttribute('aria-checked')), 'true');
+  assert(await p.$eval('#sv-photo-imp', x => x.innerText.includes('每分钟随切片自动对齐')));
+  await p.click('[data-testid="set-photo-import"]');
+  assert.equal(await p.$eval('[data-testid="sw-photo-sync"]', x => x.getAttribute('aria-checked')), 'false');
+  assert(await p.$eval('#sv-photo-imp', x => x.innerText.includes('已关闭')));
   await p.click('[data-testid="set-photo-import"]');
   assert(await p.$eval('#photo-perm-wrap', x => x.classList.contains('show')));
   assert(await p.$('[data-testid="photo-perm-dialog"]'));
   await p.click('[data-testid="photo-perm-grant"]');
-  assert(await p.$eval('#sv-photo-imp', x => x.innerText.includes('已对齐 6 张照片')));
+  assert.equal(await p.$eval('[data-testid="sw-photo-sync"]', x => x.getAttribute('aria-checked')), 'true');
+  assert(await p.$eval('#sv-photo-imp', x => x.innerText.includes('每分钟随切片自动对齐')));
   assert(await p.$eval('[data-testid="set-dynamic-island"]', x => !x.hidden));
   await p.click('[data-testid="toggle-island-hw"]');
   assert(await p.$eval('[data-testid="set-dynamic-island"]', x => x.hidden));
