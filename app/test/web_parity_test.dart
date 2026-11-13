@@ -109,6 +109,16 @@ void main() {
       initialSnapshot: _snap(),
       devices: const [_card],
       connectResult: _snap(),
+      mainOta: const CardOtaInfo(
+        version: '2.3.0',
+        versionCode: 23,
+        url: 'https://ota.invalid/main.zip',
+      ),
+      wifiOta: const CardOtaInfo(
+        version: '1.6.0',
+        versionCode: 16,
+        url: 'https://ota.invalid/wifi.bin',
+      ),
       mainProgress: const [
         CardProgress(stage: 'dfu', percent: 50, text: '写入主控'),
       ],

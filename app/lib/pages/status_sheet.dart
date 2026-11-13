@@ -7,11 +7,8 @@ import '../core/store/device_store.dart';
 import '../core/theme/tokens.dart';
 import '../widgets/rc_switch.dart';
 
-/// 弹层是否展示 Wi-Fi 配网行。
-///
-/// 2026-11-10 owner 决定：当前没有可用的 Wi-Fi 能力，先把整行隐藏，
-/// 避免用户点进一个什么都配不了的二级页。能力就绪后改回 true 即恢复。
-const bool showWifiRow = false;
+/// 弹层是否展示 Wi-Fi 配网行（随硬件能力 hasWifiConfig 门控）。
+const bool showWifiRow = true;
 
 /// 电池图标：仅图形不显数字；<20% 红 / <40% 橙 / ≥40% 绿
 class BatteryIcon extends StatelessWidget {
@@ -572,8 +569,6 @@ class _MainView extends StatelessWidget {
               ],
             ),
           ),
-        // Wi-Fi 配网整行暂时隐藏：当前固件侧该链路还没打通，留着只会让用户点进空页。
-        // 需要时把 showWifiRow 打开即可（且按设备能力 hasWifiConfig 门控）。
         if (showWifiRow && store.activeCapabilities.hasWifiConfig)
           _Row(
             keyName: 'wifi-row',
@@ -967,14 +962,40 @@ class _FirmwareView extends StatelessWidget {
         if (store.fwError != null)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              store.fwError!,
-              key: const Key('fw-error'),
-              style: const TextStyle(
-                fontSize: 12,
-                color: RCColors.danger,
-                height: 1.6,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  store.fwError!,
+                  key: const Key('fw-error'),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: RCColors.danger,
+                    height: 1.6,
+                  ),
+                ),
+                if (!store.fwUpdating &&
+                    store.fwError!.contains('Wi-Fi') &&
+                    store.activeCapabilities.hasWifiConfig)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      key: const Key('upg-goto-wifi'),
+                      onPressed: () => store.showView(DeviceView.wifi),
+                      style: TextButton.styleFrom(
+                        foregroundColor: RCColors.ink,
+                        padding: const EdgeInsets.only(top: 4),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        textStyle: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      child: const Text('去设置 Wi-Fi ›'),
+                    ),
+                  ),
+              ],
             ),
           ),
         if (store.fwUpdating)
@@ -1028,7 +1049,11 @@ class _FirmwareView extends StatelessWidget {
           width: double.infinity,
           child: FilledButton(
             key: const Key('upg-btn'),
-            onPressed: store.fwUpdating ? null : store.startFwUpdate,
+            onPressed: (store.fwUpdating ||
+                    store.fwStage == FwStage.checking ||
+                    !store.fwAvailable)
+                ? null
+                : store.startFwUpdate,
             style: FilledButton.styleFrom(
               backgroundColor: RCColors.label,
               disabledBackgroundColor: RCColors.ax,
@@ -1036,7 +1061,13 @@ class _FirmwareView extends StatelessWidget {
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
-            child: const Text('开始更新'),
+            child: Text(
+              store.fwStage == FwStage.checking
+                  ? '正在检查更新…'
+                  : store.fwAvailable
+                  ? '开始更新'
+                  : '已是最新',
+            ),
           ),
         ),
         const SizedBox(height: 8),

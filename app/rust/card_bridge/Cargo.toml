@@ -11,7 +11,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [dependencies]
 # 三款自研硬件 SDK 均基于 btleplug 0.12 + tokio 1，Cargo 自动复用同一平台蓝牙底座。
 btleplug = "0.12"
-reai-card-sdk = { git = "https://github.com/ReAI-com/reai-card-sdk.git", tag = "v0.0.6" }
+reai-card-sdk = { git = "https://github.com/ReAI-com/reai-card-sdk.git", tag = "v0.0.8" }
 reai-dyj-sdk = { git = "https://github.com/ReAI-com/dyj-v1-sdk.git" }
 reai-board-sdk = { git = "https://github.com/ReAI-com/reai-board-sdk.git", default-features = false, features = ["ble"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }

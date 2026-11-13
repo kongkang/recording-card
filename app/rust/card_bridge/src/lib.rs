@@ -1,5 +1,5 @@
 //! card_bridge —— 统一硬件桥（C ABI 单一入口），同时驱动三款自研蓝牙硬件：
-//! - 录音卡 V2（`reai-card-sdk` v0.0.6，广播前缀 `DYJV2_`，IMA-ADPCM 16kHz）
+//! - 录音卡 V2（`reai-card-sdk` v0.0.8，广播前缀 `DYJV2_`，IMA-ADPCM 16kHz）
 //! - 点一机 V1（`reai-dyj-sdk` v0.1.x，广播前缀 `DYJ_`，AMR-WB 16kHz + 相机媒体 + SoftAP）
 //! - 语音 AI 键盘 V2.1（`reai-board-sdk` v0.3.x，广播前缀 `REAI_VB_`，mSBC 16kHz Timeline Lease）
 //!
@@ -160,7 +160,7 @@ static STATE: OnceLock<BridgeState> = OnceLock::new();
 static VERSION: &str = concat!(
     "card_bridge/",
     env!("CARGO_PKG_VERSION"),
-    " card-v2/0.0.6 dyj-v1/0.1 board-v21/0.3"
+    " card-v2/0.0.8 dyj-v1/0.1 board-v21/0.3"
 );
 
 fn state() -> &'static BridgeState {
@@ -344,8 +344,13 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
             out.ok(record_action(&active, action).await?);
         }
         "record.start" => {
+            let duration_secs = payload
+                .get("durationSecs")
+                .or_else(|| payload.get("duration"))
+                .and_then(Value::as_u64)
+                .map(|v| v.min(u32::MAX as u64) as u32);
             let active = active_device().await?;
-            out.ok(record_start(&active).await?);
+            out.ok(record_start(&active, duration_secs).await?);
         }
         "record.stop" => {
             let active = active_device().await?;
@@ -377,6 +382,11 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
             let dir = str_field(&payload, "dir");
             let active = active_device().await?;
             out.ok(download_device_file(&active, &name, &dir).await?);
+        }
+        "file.takeOldest" | "takeOldest" => {
+            let dir = str_field(&payload, "dir");
+            let active = active_device().await?;
+            out.ok(take_oldest_device_file(&active, &dir).await?);
         }
         "deleteFile" => {
             let name = str_field(&payload, "name");
@@ -1137,7 +1147,7 @@ async fn snapshot_device(active: &ActiveDevice) -> Result<Value, BridgeError> {
 
 async fn record_action(active: &ActiveDevice, action: &str) -> Result<Value, BridgeError> {
     match action {
-        "start" => record_start(active).await,
+        "start" => record_start(active, None).await,
         "stop" => record_stop(active).await,
         _ => match active {
             ActiveDevice::CardV2 { device, .. } => {
@@ -1167,7 +1177,7 @@ async fn record_action(active: &ActiveDevice, action: &str) -> Result<Value, Bri
                 if rec {
                     record_stop(active).await
                 } else {
-                    record_start(active).await
+                    record_start(active, None).await
                 }
             }
             ActiveDevice::BoardV21 { recording, .. } => {
@@ -1175,21 +1185,39 @@ async fn record_action(active: &ActiveDevice, action: &str) -> Result<Value, Bri
                 if prev {
                     record_stop(active).await
                 } else {
-                    record_start(active).await
+                    record_start(active, None).await
                 }
             }
         },
     }
 }
 
-async fn record_start(active: &ActiveDevice) -> Result<Value, BridgeError> {
+async fn ensure_sd_on_nrf(device: &CardV2Device) {
+    if device.state().await.map(|s| s.wifi_open).unwrap_or(false) {
+        let _ = tokio::time::timeout(Duration::from_secs(6), device.close_wifi()).await;
+    }
+}
+
+async fn record_start(
+    active: &ActiveDevice,
+    duration_secs: Option<u32>,
+) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => {
-            Ok(device.raw_command("RECORD_START", None).await?)
+            ensure_sd_on_nrf(device).await;
+            let resp = match duration_secs.filter(|&d| d > 0) {
+                Some(secs) => device.start_recording_with_duration(secs).await?,
+                None => device.start_recording().await?,
+            };
+            Ok(to_value(resp)?)
         }
         ActiveDevice::DyjV1 { device, .. } => {
             let _ = device.audio_capture_start().await;
-            Ok(device.record_start(Some(5), None).await?)
+            let mins = duration_secs
+                .filter(|&d| d > 0)
+                .map(|d| u64::from(d.div_ceil(60).max(1)))
+                .or(Some(5));
+            Ok(device.record_start(mins, None).await?)
         }
         ActiveDevice::BoardV21 {
             board, recording, ..
@@ -1501,6 +1529,7 @@ async fn realtime_open_board_v21(
 async fn list_device_files(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => {
+            ensure_sd_on_nrf(device).await;
             Ok(device.list_files(None).await.and_then(to_value)?)
         }
         ActiveDevice::DyjV1 { device, .. } => {
@@ -1533,6 +1562,7 @@ async fn download_device_file(
 ) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, name: dev_name } => {
+            ensure_sd_on_nrf(device).await;
             let saved = device.take_file_to_dir(name, dir).await?;
             Ok(json!({
                 "path": saved.path.to_string_lossy(),
@@ -1589,6 +1619,27 @@ async fn download_device_file(
                     .to_string(),
             ))
         }
+        ActiveDevice::BoardV21 { .. } => Err(BridgeError::from(
+            "语音 AI 键盘无板载录音存储，仅支持实时音频流".to_string(),
+        )),
+    }
+}
+
+async fn take_oldest_device_file(active: &ActiveDevice, dir: &str) -> Result<Value, BridgeError> {
+    match active {
+        ActiveDevice::CardV2 { device, name: dev_name } => {
+            ensure_sd_on_nrf(device).await;
+            let saved = device.take_oldest_file_to_dir(dir).await?;
+            Ok(json!({
+                "path": saved.path.to_string_lossy(),
+                "bytesWritten": saved.bytes_written,
+                "originalName": saved.original_name,
+                "deviceName": saved.device_name.or_else(|| Some(dev_name.clone())),
+            }))
+        }
+        ActiveDevice::DyjV1 { .. } => Err(BridgeError::from(
+            "点一机 V1 不支持按最旧切片指令取回，请使用文件列表同步".to_string(),
+        )),
         ActiveDevice::BoardV21 { .. } => Err(BridgeError::from(
             "语音 AI 键盘无板载录音存储，仅支持实时音频流".to_string(),
         )),
@@ -1711,9 +1762,35 @@ fn extract_origin(url: &str) -> Option<String> {
     Some(format!("{}{}", &url[..idx + 3], &rest[..host_end]))
 }
 
+fn is_wifi_encryption_secured(encryption: Option<&str>) -> bool {
+    let Some(raw) = encryption else {
+        return false;
+    };
+    let trimmed = raw.trim();
+    !trimmed.is_empty()
+        && !trimmed.eq_ignore_ascii_case("open")
+        && !trimmed.eq_ignore_ascii_case("none")
+}
+
 async fn wifi_scan(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
-        ActiveDevice::CardV2 { device, .. } => Ok(device.scan_wifi().await.and_then(to_value)?),
+        ActiveDevice::CardV2 { device, .. } => {
+            let list = device.scan_wifi().await?;
+            let items: Vec<Value> = list
+                .into_iter()
+                .map(|net| {
+                    let secured = is_wifi_encryption_secured(net.encryption.as_deref());
+                    json!({
+                        "index": net.index,
+                        "ssid": net.ssid,
+                        "rssi": net.rssi,
+                        "encryption": net.encryption,
+                        "secured": secured,
+                    })
+                })
+                .collect();
+            Ok(Value::Array(items))
+        }
         ActiveDevice::DyjV1 { device, .. } => {
             let agg = device.wifi_scan().await?;
             let items = agg
@@ -1723,19 +1800,24 @@ async fn wifi_scan(active: &ActiveDevice) -> Result<Value, BridgeError> {
                 .unwrap_or_default();
             let networks: Vec<Value> = items
                 .into_iter()
+                .filter(|it| {
+                    it.get("frequency")
+                        .and_then(Value::as_i64)
+                        .is_none_or(|f| f < 5000)
+                })
                 .map(|it| {
-                    let sec = it.get("security").and_then(Value::as_str).unwrap_or("wpa2");
+                    let sec = it.get("security").and_then(Value::as_str);
                     json!({
                         "ssid": it.get("ssid").and_then(Value::as_str).unwrap_or_default(),
                         "rssi": it.get("rssi").and_then(Value::as_i64).unwrap_or(-70),
-                        "secure": sec != "open",
+                        "secured": is_wifi_encryption_secured(sec),
                         "frequency": it.get("frequency"),
                     })
                 })
                 .collect();
-            Ok(json!({ "networks": networks }))
+            Ok(Value::Array(networks))
         }
-        ActiveDevice::BoardV21 { .. } => Ok(json!({ "networks": [] })),
+        ActiveDevice::BoardV21 { .. } => Ok(Value::Array(Vec::new())),
     }
 }
 
@@ -1788,9 +1870,9 @@ async fn wifi_credentials(active: &ActiveDevice) -> Result<Value, BridgeError> {
             if let Some(ssid) = st.get("ssid").and_then(Value::as_str).filter(|s| !s.is_empty()) {
                 creds.push(json!({"ssid": ssid, "connected": true}));
             }
-            Ok(json!({ "credentials": creds }))
+            Ok(Value::Array(creds))
         }
-        ActiveDevice::BoardV21 { .. } => Ok(json!({ "credentials": [] })),
+        ActiveDevice::BoardV21 { .. } => Ok(Value::Array(Vec::new())),
     }
 }
 
@@ -1973,7 +2055,16 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
     Ok(())
 }
 
+async fn close_wifi_quietly(device: &CardV2Device) {
+    let _ = tokio::time::timeout(Duration::from_secs(6), device.close_wifi()).await;
+}
+
 async fn ota_wifi(payload: Value, out: Emitter) -> Result<(), BridgeError> {
+    let api_base = payload
+        .get("apiBase")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| reai_card_sdk::OTA_DEFAULT_API_BASE_URL.to_owned());
     let wait = Duration::from_secs(
         payload
             .get("waitSecs")
@@ -1990,37 +2081,96 @@ async fn ota_wifi(payload: Value, out: Emitter) -> Result<(), BridgeError> {
     let device = device.clone();
     drop(guard);
 
-    if let Ok(status) = device.wifi_status().await {
-        if !status.connected {
-            let hint = if status.status == "off" {
-                "Wi-Fi 模块未开启，请先在录音卡弹层里打开 Wi-Fi 并连接路由器"
-            } else {
-                "Wi-Fi 模块未连接路由器，请先完成 Wi-Fi 连接后再升级"
-            };
-            out.fail(CardSdkError::InvalidCommand(format!(
-                "{hint}（status={}）",
-                status.status
-            )));
-            return Ok(());
+    ota_wifi_with_device(&device, &api_base, wait, out).await;
+    // 无论成功、已是最新还是中途失败，退出前始终归还 SD 卡总线给主控，避免后续录音/取文件报 SdOwnedByWifiModule。
+    close_wifi_quietly(&device).await;
+    Ok(())
+}
+
+async fn ota_wifi_with_device(
+    device: &CardV2Device,
+    api_base: &str,
+    wait: Duration,
+    out: Emitter,
+) {
+    let server_info = OtaInfo::fetch(api_base, OtaModule::Wifi).await.ok();
+
+    let was_open = device.state().await.map(|s| s.wifi_open).unwrap_or(false);
+    let mut status = device.wifi_status().await.ok();
+    if !was_open || status.as_ref().is_some_and(|s| s.status == "off" || !s.enabled) {
+        out.progress(json!({"stage": "wifi", "percent": 3, "text": "正在开启录音卡 Wi-Fi 模块…"}));
+        if let Err(error) = device.open_wifi().await {
+            out.fail(format!("开启 Wi-Fi 模块失败：{error}"));
+            return;
+        }
+        // 等待 ESP32 完成 WIFI_SYNC，把最新 wifiVersion 同步给主控 BASE_INFO。
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        status = device.wifi_status().await.ok();
+    }
+
+    let live_code = match status.as_ref().and_then(|s| s.version_code) {
+        Some(code) => Some(code),
+        None => device
+            .device_info()
+            .await
+            .ok()
+            .and_then(|info| info.wifi_version_code),
+    };
+    if let (Some(code), Some(info)) = (live_code, server_info.as_ref()) {
+        if !info.is_newer_than(code) {
+            out.progress(json!({"stage": "wifi", "percent": 100, "text": "Wi-Fi 模块固件已是最新"}));
+            out.ok(json!({
+                "module": "wifi",
+                "upToDate": true,
+                "version": status.as_ref().and_then(|s| s.version.clone()),
+                "versionCode": code,
+            }));
+            return;
         }
     }
 
+    let mut connected = status.as_ref().is_some_and(|s| s.connected);
+    if !connected {
+        let creds = device.list_wifi_credentials().await.unwrap_or_default();
+        for cred in creds.iter().filter(|c| !c.ssid.trim().is_empty()) {
+            out.progress(json!({
+                "stage": "wifi",
+                "percent": 8,
+                "text": format!("正在自动连接已保存网络 {}…", cred.ssid),
+            }));
+            if device.connect_wifi(&cred.ssid, "").await.is_ok() {
+                connected = true;
+                break;
+            }
+        }
+        if !connected {
+            let msg = if creds.is_empty() {
+                "录音卡尚未配置 Wi-Fi 网络，请先在录音卡弹层「Wi-Fi」中连接 2.4GHz 路由器后再升级"
+            } else {
+                "未能自动连上已保存的 Wi-Fi 网络，请先在录音卡弹层「Wi-Fi」中确认 2.4GHz 路由器在范围内并连接后再升级"
+            };
+            out.fail(CardSdkError::InvalidCommand(msg.to_owned()));
+            return;
+        }
+    }
+
+    out.progress(json!({"stage": "wifi", "percent": 12, "text": "正在向服务器检查 Wi-Fi 固件…"}));
     let check = match device.check_wifi_ota().await {
         Ok(check) => check,
         Err(error) => {
             out.fail(error);
-            return Ok(());
+            return;
         }
     };
     if !check.update_available {
         out.ok(json!({"module": "wifi", "upToDate": true, "check": check}));
-        return Ok(());
+        return;
     }
 
     let mut events = device.subscribe_events();
     if let Err(error) = device.start_wifi_ota().await {
         out.fail(error);
-        return Ok(());
+        return;
     }
 
     let deadline = tokio::time::Instant::now() + wait;
@@ -2031,16 +2181,38 @@ async fn ota_wifi(payload: Value, out: Emitter) -> Result<(), BridgeError> {
                 command: "OTA_WIFI".into(),
                 seconds: wait.as_secs(),
             });
-            return Ok(());
+            return;
         }
         match tokio::time::timeout(remaining, events.recv()).await {
             Ok(Ok(CardV2Event::WifiOtaProgress(progress))) => {
-                let terminal = progress.status.is_terminal();
-                let percent = progress.percentage.min(100) as u8;
-                if terminal {
+                if progress.status == reai_card_sdk::OtaStatus::Success {
+                    out.progress(json!({
+                        "stage": "wifi",
+                        "percent": 98,
+                        "text": "Wi-Fi 固件写入完成，正在重启同步版本…",
+                    }));
+                    // 等 ESP32 重启并发送 WIFI_AP_START / WIFI_SYNC（最多 8 秒），确保主控更新缓存版本号。
+                    let sync_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+                    loop {
+                        let rem = sync_deadline.saturating_duration_since(tokio::time::Instant::now());
+                        if rem.is_zero() {
+                            break;
+                        }
+                        match tokio::time::timeout(rem, events.recv()).await {
+                            Ok(Ok(CardV2Event::AccessPointReady(_))) => break,
+                            Ok(Ok(_)) => continue,
+                            _ => break,
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(400)).await;
                     out.ok(json!({"module": "wifi", "progress": progress}));
-                    return Ok(());
+                    return;
                 }
+                if progress.status.is_terminal() {
+                    out.fail("Wi-Fi 模组固件下载或校验失败，已保留原版本运行，请检查网络信号后重试");
+                    return;
+                }
+                let percent = (15 + (u16::from(progress.percentage.min(100)) * 80 / 100)) as u8;
                 out.progress(json!({
                     "stage": "wifi",
                     "percent": percent,
@@ -2052,14 +2224,14 @@ async fn ota_wifi(payload: Value, out: Emitter) -> Result<(), BridgeError> {
             Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
             Ok(Err(_)) => {
                 out.fail(CardSdkError::Disconnected);
-                return Ok(());
+                return;
             }
             Err(_) => {
                 out.fail(CardSdkError::Timeout {
                     command: "OTA_WIFI".into(),
                     seconds: wait.as_secs(),
                 });
-                return Ok(());
+                return;
             }
         }
     }
@@ -2127,5 +2299,15 @@ mod tests {
             Some("http://192.168.43.1:8788".to_string())
         );
         assert_eq!(extract_origin("invalid-url"), None);
+    }
+
+    #[test]
+    fn detects_wifi_encryption_security() {
+        assert!(is_wifi_encryption_secured(Some("WPA2")));
+        assert!(is_wifi_encryption_secured(Some("WPA/WPA2")));
+        assert!(!is_wifi_encryption_secured(Some("OPEN")));
+        assert!(!is_wifi_encryption_secured(Some("none")));
+        assert!(!is_wifi_encryption_secured(Some("  ")));
+        assert!(!is_wifi_encryption_secured(None));
     }
 }

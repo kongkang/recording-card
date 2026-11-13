@@ -432,12 +432,20 @@ class CardWifiNetwork {
     required this.rssi,
     required this.secured,
   });
-  factory CardWifiNetwork.fromJson(Map<String, dynamic> json) =>
-      CardWifiNetwork(
-        ssid: (json['ssid'] as String?) ?? (json['name'] as String?) ?? '',
-        rssi: (json['rssi'] as num?)?.toInt() ?? -100,
-        secured: json['secured'] == true || json['lock'] == true,
-      );
+  factory CardWifiNetwork.fromJson(Map<String, dynamic> json) {
+    final rawEnc = (json['encryption'] as String?)?.trim().toLowerCase();
+    final encSecured =
+        rawEnc != null && rawEnc.isNotEmpty && rawEnc != 'open' && rawEnc != 'none';
+    return CardWifiNetwork(
+      ssid: (json['ssid'] as String?) ?? (json['name'] as String?) ?? '',
+      rssi: (json['rssi'] as num?)?.toInt() ?? -100,
+      secured:
+          json['secured'] == true ||
+          json['secure'] == true ||
+          json['lock'] == true ||
+          encSecured,
+    );
+  }
   final String ssid;
   final int rssi;
   final bool secured;
@@ -641,7 +649,7 @@ abstract class CardGateway {
   Future<CardSnapshot> snapshot();
 
   Future<void> record(String action); // start | stop | toggle
-  Future<void> startRecording();
+  Future<void> startRecording({int? durationSecs});
   Future<void> stopRecording();
 
   Stream<RealtimeAudioEvent> realtimeAudio();
@@ -652,6 +660,7 @@ abstract class CardGateway {
 
   Future<List<CardFile>> files();
   Future<CardDownload> download(String name, String dir);
+  Future<CardDownload> takeOldestFile(String dir);
   Future<void> deleteFile(String name);
 
   /// 把设备落地文件（`.apm` / `.amr`）转成 WAV（16kHz/16bit 单声道）。
@@ -1013,7 +1022,12 @@ class RealCardGateway implements CardGateway {
   Future<void> record(String action) => _once('record', {'action': action});
 
   @override
-  Future<void> startRecording() => _once('record.start');
+  Future<void> startRecording({int? durationSecs}) => _once(
+    'record.start',
+    durationSecs != null && durationSecs > 0
+        ? {'durationSecs': durationSecs}
+        : null,
+  );
 
   @override
   Future<void> stopRecording() async {
@@ -1133,6 +1147,16 @@ class RealCardGateway implements CardGateway {
   Future<CardDownload> download(String name, String dir) async {
     final json = await _once('download', {
       'name': name,
+      'dir': dir,
+    }, const Duration(minutes: 10));
+    return CardDownload.fromJson(
+      (json['data'] as Map<String, dynamic>?) ?? const {},
+    );
+  }
+
+  @override
+  Future<CardDownload> takeOldestFile(String dir) async {
+    final json = await _once('file.takeOldest', {
       'dir': dir,
     }, const Duration(minutes: 10));
     return CardDownload.fromJson(
@@ -1279,7 +1303,7 @@ class UnsupportedCardGateway implements CardGateway {
   @override
   Future<void> record(String action) async => _fail();
   @override
-  Future<void> startRecording() async => _fail();
+  Future<void> startRecording({int? durationSecs}) async => _fail();
   @override
   Future<void> stopRecording() async => _fail();
   @override
@@ -1296,6 +1320,8 @@ class UnsupportedCardGateway implements CardGateway {
   Future<List<CardFile>> files() async => _fail();
   @override
   Future<CardDownload> download(String name, String dir) async => _fail();
+  @override
+  Future<CardDownload> takeOldestFile(String dir) async => _fail();
   @override
   Future<void> deleteFile(String name) async => _fail();
   @override
@@ -1389,7 +1415,8 @@ class ActivityGateway implements CardGateway {
   Future<void> record(String action) => _run(() => _inner.record(action));
 
   @override
-  Future<void> startRecording() => _run(_inner.startRecording);
+  Future<void> startRecording({int? durationSecs}) =>
+      _run(() => _inner.startRecording(durationSecs: durationSecs));
 
   @override
   Future<void> stopRecording() => _run(_inner.stopRecording);
@@ -1416,6 +1443,10 @@ class ActivityGateway implements CardGateway {
   @override
   Future<CardDownload> download(String name, String dir) =>
       _run(() => _inner.download(name, dir));
+
+  @override
+  Future<CardDownload> takeOldestFile(String dir) =>
+      _run(() => _inner.takeOldestFile(dir));
 
   @override
   Future<void> deleteFile(String name) => _run(() => _inner.deleteFile(name));

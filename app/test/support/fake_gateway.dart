@@ -67,6 +67,10 @@ class FakeCardGateway implements CardGateway {
     this.failDisconnect,
     this.connectReturnsSnapshot = true,
     this.clearAfterMainOta = false,
+    this.postMainOtaSnapshot,
+    this.postWifiOtaSnapshot,
+    this.failMainOta,
+    this.failWifiOta,
     this.cameraPhotos = const [],
   }) : _initialSnapshot = initialSnapshot,
        current = initialSnapshot,
@@ -161,6 +165,11 @@ class FakeCardGateway implements CardGateway {
   CardException? failWifiScan;
   CardException? failWifiConnect;
   CardException? failSyncStatus;
+  CardException? failMainOta;
+  CardException? failWifiOta;
+  CardSnapshot? postMainOtaSnapshot;
+  CardSnapshot? postWifiOtaSnapshot;
+  int? lastStartDurationSecs;
 
   @override
   Future<CardSnapshot> snapshot() async {
@@ -223,7 +232,8 @@ class FakeCardGateway implements CardGateway {
     lastConnectedName = name;
     lastConnectedKind = deviceKind;
     if (failConnect != null) throw failConnect!;
-    final source = current ?? _initialSnapshot ?? defaultSnapshot;
+    final source =
+        current ?? postMainOtaSnapshot ?? _initialSnapshot ?? defaultSnapshot;
     CardSnapshot adapted = source;
     final matched = devices.where((d) => d.id == deviceId).firstOrNull;
     final resolvedName = name ?? matched?.name;
@@ -282,7 +292,8 @@ class FakeCardGateway implements CardGateway {
   final List<String> recordCalls = [];
 
   @override
-  Future<void> startRecording() async {
+  Future<void> startRecording({int? durationSecs}) async {
+    lastStartDurationSecs = durationSecs;
     recordCalls.add('start');
     callLog.add('record.start');
     final cur = current;
@@ -456,6 +467,19 @@ class FakeCardGateway implements CardGateway {
   }
 
   @override
+  Future<CardDownload> takeOldestFile(String dir) async {
+    callLog.add('file.takeOldest');
+    final pending = deviceFiles.where((f) => f.isAudioRecording).toList();
+    if (pending.isEmpty) {
+      throw const CardException(CardErrorKind.device, '没有可取回的录音文件');
+    }
+    final oldest = pending.first;
+    final res = await download(oldest.name, dir);
+    deviceFiles = deviceFiles.where((f) => f.name != oldest.name).toList();
+    return res;
+  }
+
+  @override
   Future<void> deleteFile(String name) async {}
 
   @override
@@ -562,13 +586,22 @@ class FakeCardGateway implements CardGateway {
   Stream<CardProgress> otaMain() async* {
     callLog.add('ota.main');
     yield* _progress(mainProgress);
-    if (clearAfterMainOta) current = null;
+    if (failMainOta != null) throw failMainOta!;
+    if (clearAfterMainOta) {
+      current = null;
+    } else if (postMainOtaSnapshot != null) {
+      current = postMainOtaSnapshot;
+    }
   }
 
   @override
   Stream<CardProgress> otaWifi() async* {
     callLog.add('ota.wifi');
     yield* _progress(wifiProgress);
+    if (failWifiOta != null) throw failWifiOta!;
+    if (postWifiOtaSnapshot != null) {
+      current = postWifiOtaSnapshot;
+    }
   }
 
   @override

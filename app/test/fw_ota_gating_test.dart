@@ -1,0 +1,361 @@
+// 固件按模块独立门控 OTA + v0.0.8 网关新能力单测/组件测试。
+//
+// 覆盖四类核心升级场景：
+// ① 仅主控有更新 → 只跑 ota.main + 重连 + 刷新快照，不进 ota.wifi；
+// ② 仅 Wi-Fi 有更新 → 跳过 ota.main 和重连，直接跑 ota.wifi + 刷新快照；
+// ③ 双模块均有更新 → 依次跑 ota.main → 重连 → ota.wifi → 刷新快照；
+// ④ Wi-Fi 未连路由器报错 → 给出可操作引导（去设置 Wi-Fi）并在配网后重试成功；
+// ⑤ reai-card-sdk v0.0.8：startRecording(durationSecs) 与 takeOldestFile。
+library;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:recording_card/core/device/card_gateway.dart';
+import 'package:recording_card/core/store/device_store.dart';
+
+import 'support/fake_gateway.dart';
+import 'support/harness.dart';
+
+const _card = CardDevice(id: 'dev-ota', name: 'DYJV2_OTA_TEST', rssi: -45);
+
+CardSnapshot _cardSnap({
+  String fwVersion = '0.3.12',
+  int fwVersionCode = 312,
+  String wifiVersion = '0.1.4',
+  int wifiVersionCode = 104,
+}) => CardSnapshot(
+  batteryLevel: 88,
+  isCharging: false,
+  wifiOpen: false,
+  recording: false,
+  fwVersion: fwVersion,
+  fwVersionCode: fwVersionCode,
+  wifiVersion: wifiVersion,
+  wifiVersionCode: wifiVersionCode,
+  deviceName: _card.name,
+  deviceId: _card.id,
+);
+
+void main() {
+  testWidgets('① 仅主控有更新：只升级主控、重连刷新版本号、跳过 Wi-Fi 阶段并展示已是最新', (tester) async {
+    final gw = FakeCardGateway(
+      initialSnapshot: _cardSnap(
+        fwVersion: '0.3.12',
+        fwVersionCode: 312,
+        wifiVersion: '0.1.4',
+        wifiVersionCode: 104,
+      ),
+      devices: const [_card],
+      postMainOtaSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.4',
+        wifiVersionCode: 104,
+      ),
+      clearAfterMainOta: true,
+      mainOta: const CardOtaInfo(
+        version: '0.3.17',
+        versionCode: 317,
+        url: 'https://ota.invalid/main_317.zip',
+      ),
+      wifiOta: const CardOtaInfo(
+        version: '0.1.4',
+        versionCode: 104,
+        url: 'https://ota.invalid/wifi_104.bin',
+      ),
+      mainProgress: const [
+        CardProgress(stage: 'dfu', percent: 50, text: '正在写入主控固件…'),
+      ],
+      progressDelay: Duration.zero,
+    );
+    final store = DeviceStore(gateway: gw);
+    await pumpShell(tester, device: store);
+    await store.connectTo(_card);
+    await store.checkFirmware();
+    await tester.pump();
+
+    expect(store.mainNeedsUpdate, isTrue);
+    expect(store.wifiNeedsUpdate, isFalse);
+    expect(store.fwAvailable, isTrue);
+    expect(store.mainVersionCompare, '0.3.12 → 0.3.17');
+    expect(store.wifiVersionCompare, '0.1.4 · 已是最新');
+
+    // 打开更新页核对文案
+    await tester.tap(find.byKey(const Key('hw-capsule')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('fw-update')));
+    await tester.pump();
+    expect(
+      tester.widget<Text>(find.byKey(const Key('fw-main-ver'))).data,
+      '0.3.12 → 0.3.17',
+    );
+    expect(
+      tester.widget<Text>(find.byKey(const Key('fw-wifi-ver'))).data,
+      '0.1.4 · 已是最新',
+    );
+
+    final done = store.startFwUpdate();
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await done;
+    await tester.pump();
+
+    expect(gw.callLog, contains('ota.main'));
+    expect(gw.callLog, contains('connect'));
+    expect(gw.callLog, isNot(contains('ota.wifi')));
+    expect(store.fwStage, FwStage.done);
+    expect(store.fwVersion, '0.3.17');
+    expect(store.fwVersionCode, 317);
+    expect(store.fwAvailable, isFalse);
+    expect(store.fwValText, '已是最新');
+
+    store.closeSheet();
+    await tester.pump();
+  });
+
+  testWidgets('② 仅 Wi-Fi 有更新：跳过主控 DFU 与重连，直接升级 Wi-Fi 并刷新版本号', (tester) async {
+    final gw = FakeCardGateway(
+      initialSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.3',
+        wifiVersionCode: 103,
+      ),
+      devices: const [_card],
+      postWifiOtaSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.4',
+        wifiVersionCode: 104,
+      ),
+      mainOta: const CardOtaInfo(
+        version: '0.3.17',
+        versionCode: 317,
+        url: 'https://ota.invalid/main_317.zip',
+      ),
+      wifiOta: const CardOtaInfo(
+        version: '0.1.4',
+        versionCode: 104,
+        url: 'https://ota.invalid/wifi_104.bin',
+      ),
+      wifiProgress: const [
+        CardProgress(stage: 'wifi', percent: 80, text: 'Wi-Fi 模组写入中…'),
+      ],
+      progressDelay: Duration.zero,
+    );
+    final store = DeviceStore(gateway: gw);
+    addTearDown(store.dispose);
+    await store.restoreLink();
+    await store.checkFirmware();
+
+    expect(store.mainNeedsUpdate, isFalse);
+    expect(store.wifiNeedsUpdate, isTrue);
+    expect(store.mainVersionCompare, '0.3.17 · 已是最新');
+    expect(store.wifiVersionCompare, '0.1.3 → 0.1.4');
+
+    gw.callLog.clear();
+    await store.startFwUpdate();
+
+    expect(gw.callLog, isNot(contains('ota.main')));
+    expect(gw.callLog, isNot(contains('connect')));
+    expect(gw.callLog, contains('ota.wifi'));
+    expect(gw.callLog, contains('snapshot'));
+    expect(store.fwStage, FwStage.done);
+    expect(store.wifiVersion, '0.1.4');
+    expect(store.wifiVersionCode, 104);
+    expect(store.fwAvailable, isFalse);
+    expect(store.fwValText, '已是最新');
+  });
+
+  testWidgets('③ 双模块均有更新：主控升级重连后继续 Wi-Fi 升级并刷新双版本', (tester) async {
+    final gw = FakeCardGateway(
+      initialSnapshot: _cardSnap(
+        fwVersion: '0.3.12',
+        fwVersionCode: 312,
+        wifiVersion: '0.1.3',
+        wifiVersionCode: 103,
+      ),
+      devices: const [_card],
+      postMainOtaSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.3',
+        wifiVersionCode: 103,
+      ),
+      postWifiOtaSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.4',
+        wifiVersionCode: 104,
+      ),
+      clearAfterMainOta: true,
+      mainOta: const CardOtaInfo(
+        version: '0.3.17',
+        versionCode: 317,
+        url: 'https://ota.invalid/main_317.zip',
+      ),
+      wifiOta: const CardOtaInfo(
+        version: '0.1.4',
+        versionCode: 104,
+        url: 'https://ota.invalid/wifi_104.bin',
+      ),
+      mainProgress: const [
+        CardProgress(stage: 'dfu', percent: 90, text: '主控写入中…'),
+      ],
+      wifiProgress: const [
+        CardProgress(stage: 'wifi', percent: 100, text: 'Wi-Fi 写入完成'),
+      ],
+      progressDelay: Duration.zero,
+    );
+    final store = DeviceStore(gateway: gw);
+    addTearDown(store.dispose);
+    await store.restoreLink();
+    await store.checkFirmware();
+
+    final done = store.startFwUpdate();
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await done;
+
+    final iMain = gw.callLog.indexOf('ota.main');
+    final iConn = gw.callLog.indexOf('connect');
+    final iWifi = gw.callLog.indexOf('ota.wifi');
+    expect(iMain, isNonNegative);
+    expect(iConn, greaterThan(iMain));
+    expect(iWifi, greaterThan(iConn));
+    expect(store.fwStage, FwStage.done);
+    expect(store.fwVersion, '0.3.17');
+    expect(store.wifiVersion, '0.1.4');
+    expect(store.fwAvailable, isFalse);
+  });
+
+  testWidgets('④ Wi-Fi 未连路由器失败后给出配网入口，配网成功可重试完成升级', (tester) async {
+    final gw = FakeCardGateway(
+      initialSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.3',
+        wifiVersionCode: 103,
+      ),
+      devices: const [_card],
+      wifiNetworks: const [
+        CardWifiNetwork(ssid: 'Studio-2.4G', rssi: -45, secured: true),
+      ],
+      postWifiOtaSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+        wifiVersion: '0.1.4',
+        wifiVersionCode: 104,
+      ),
+      mainOta: const CardOtaInfo(
+        version: '0.3.17',
+        versionCode: 317,
+        url: 'https://ota.invalid/main_317.zip',
+      ),
+      wifiOta: const CardOtaInfo(
+        version: '0.1.4',
+        versionCode: 104,
+        url: 'https://ota.invalid/wifi_104.bin',
+      ),
+      failWifiOta: const CardException(
+        CardErrorKind.device,
+        '录音卡尚未配置 Wi-Fi 网络，请先在录音卡弹层「Wi-Fi」中连接 2.4GHz 路由器后再升级',
+      ),
+      wifiProgress: const [
+        CardProgress(stage: 'wifi', percent: 100, text: 'Wi-Fi 升级完成'),
+      ],
+      progressDelay: Duration.zero,
+    );
+    final store = DeviceStore(gateway: gw);
+    await pumpShell(tester, device: store);
+    await store.connectTo(_card);
+    await tester.pump();
+
+    // 打开弹层进固件升级页
+    await tester.tap(find.byKey(const Key('hw-capsule')));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('fw-update')));
+    await tester.pump();
+    await tester.pump();
+
+    // 点开始更新 → 触发 Wi-Fi 未配网错误
+    await tester.tap(find.byKey(const Key('upg-btn')));
+    await tester.pump();
+    await tester.pump();
+    expect(store.fwStage, FwStage.failed);
+    expect(store.fwError, contains('Wi-Fi'));
+    expect(find.byKey(const Key('fw-error')), findsOneWidget);
+    expect(find.byKey(const Key('upg-goto-wifi')), findsOneWidget);
+
+    // 点「去设置 Wi-Fi ›」跳去配网页面连接路由器
+    await tester.tap(find.byKey(const Key('upg-goto-wifi')));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('dev-wifi')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('witem-Studio-2.4G')));
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('wifi-pwd')), 'secret123');
+    await tester.tap(find.byKey(const Key('wifi-connect')));
+    await tester.pump();
+    await tester.pump();
+    expect(gw.lastWifiSsid, 'Studio-2.4G');
+
+    // 清除失败注入，回到固件升级页重试 → 成功
+    gw.failWifiOta = null;
+    await tester.tap(find.byKey(const Key('wifi-back')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('fw-update')));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('upg-btn')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(store.fwStage, FwStage.done);
+    expect(store.wifiVersion, '0.1.4');
+    expect(store.fwValText, '已是最新');
+
+    store.closeSheet();
+    await tester.pump();
+  });
+
+  test('⑤ v0.0.8 网关新能力：durationSecs 分片时长透传 + takeOldestFile 按最旧文件取回 + encryption 识别', () async {
+    final gw = FakeCardGateway(
+      initialSnapshot: _cardSnap(),
+      deviceFiles: const [
+        CardFile(name: '20261113_0001.APM', size: 1024),
+        CardFile(name: '20261113_0002.APM', size: 2048),
+      ],
+    );
+
+    await gw.startRecording(durationSecs: 300);
+    expect(gw.lastStartDurationSecs, 300);
+    expect(gw.callLog, contains('record.start'));
+
+    final first = await gw.takeOldestFile('/tmp/rec');
+    final second = await gw.takeOldestFile('/tmp/rec');
+    expect(first.originalName, '20261113_0001.APM');
+    expect(second.originalName, '20261113_0002.APM');
+    await expectLater(
+      gw.takeOldestFile('/tmp/rec'),
+      throwsA(isA<CardException>()),
+    );
+
+    final wpa = CardWifiNetwork.fromJson({
+      'ssid': 'Office',
+      'rssi': -50,
+      'encryption': 'WPA2',
+    });
+    final open = CardWifiNetwork.fromJson({
+      'ssid': 'Cafe',
+      'rssi': -65,
+      'encryption': 'OPEN',
+    });
+    expect(wpa.secured, isTrue);
+    expect(open.secured, isFalse);
+  });
+}

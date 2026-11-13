@@ -1085,9 +1085,13 @@ class DeviceStore extends ChangeNotifier {
   CardOtaInfo? _otaMainInfo;
   CardOtaInfo? _otaWifiInfo;
 
-  bool get fwAvailable =>
-      _otaMainInfo?.isNewerThan(_fwVersionCode) == true ||
+  bool get mainNeedsUpdate =>
+      _otaMainInfo?.isNewerThan(_fwVersionCode) == true;
+
+  bool get wifiNeedsUpdate =>
       _otaWifiInfo?.isNewerThan(_wifiVersionCode) == true;
+
+  bool get fwAvailable => mainNeedsUpdate || wifiNeedsUpdate;
 
   /// 固件行右侧文案：有更新才提示，否则"已是最新"。
   String get fwValText {
@@ -1108,23 +1112,29 @@ class DeviceStore extends ChangeNotifier {
 
   String get fwPctText => '${fwProgress.round()}%';
 
-  /// 固件更新页的版本对比行：设备当前版本 → 服务器最新版本（读不到就显示当前版本）。
+  /// 固件更新页的版本对比行：有更新时显示当前版本 → 目标版本，无更新时标「已是最新」。
   String get mainVersionCompare {
     final target = _otaMainInfo;
     final current = _fwVersion.isEmpty ? '—' : _fwVersion;
-    if (target == null || target.version.isEmpty || !target.isNewerThan(_fwVersionCode)) {
-      return current;
+    if (mainNeedsUpdate && target != null && target.version.isNotEmpty) {
+      return '$current → ${target.version}';
     }
-    return '$current → ${target.version}';
+    if (fwStage == FwStage.checking && target == null) return current;
+    if (_fwVersion.isNotEmpty) return '$_fwVersion · 已是最新';
+    if (target != null && target.versionCode > 0) return '已是最新';
+    return current;
   }
 
   String get wifiVersionCompare {
     final target = _otaWifiInfo;
     final current = _wifiVersion.isEmpty ? '—' : _wifiVersion;
-    if (target == null || target.version.isEmpty || !target.isNewerThan(_wifiVersionCode)) {
-      return current;
+    if (wifiNeedsUpdate && target != null && target.version.isNotEmpty) {
+      return '$current → ${target.version}';
     }
-    return '$current → ${target.version}';
+    if (fwStage == FwStage.checking && target == null) return current;
+    if (_wifiVersion.isNotEmpty) return '$_wifiVersion · 已是最新';
+    if (target != null && target.versionCode > 0) return '已是最新';
+    return current;
   }
 
   /// 查服务器最新版本（只读，不写设备）。
@@ -1158,7 +1168,7 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 执行升级：先主控（BLE DFU），再 Wi-Fi 模组（设备侧在线 OTA）。
+  /// 执行升级：按模块独立门控（仅主控 / 仅 Wi-Fi / 两阶段）。
   Future<void> startFwUpdate() async {
     if (fwUpdating) return;
     if (!isConnected) {
@@ -1175,74 +1185,104 @@ class DeviceStore extends ChangeNotifier {
       notifyListeners();
       return;
     }
+
+    if (_otaMainInfo == null && _otaWifiInfo == null) {
+      await checkFirmware();
+      if (fwStage == FwStage.failed) return;
+    }
+
+    final doMain = mainNeedsUpdate;
+    var doWifi = wifiNeedsUpdate;
+    if (!doMain && !doWifi) {
+      fwError = null;
+      fwStage = FwStage.idle;
+      await refreshFromDevice();
+      notifyListeners();
+      return;
+    }
+
     fwUpdating = true;
     fwError = null;
     fwProgress = 0;
-    fwStage = FwStage.main;
-    fwStageText = '阶段 1/2 · 主控芯片';
-    fwStateText = '正在准备…';
-    notifyListeners();
 
-    // 阶段 1：主控
-    try {
-      await for (final p in _gw.otaMain()) {
-        fwProgress = p.percent.clamp(0, 50) * 1.0; // 主控占前 50%
-        fwStageText = '阶段 1/2 · 主控芯片';
-        fwStateText = p.text;
-        notifyListeners();
-      }
-    } on CardException catch (e) {
-      _failFw('主控固件升级失败：${e.message}');
-      return;
-    }
+    // 阶段 1：主控（仅在主控确实有新版本时执行）
+    if (doMain) {
+      final mainStageLabel = doWifi ? '阶段 1/2 · 主控芯片' : '阶段 1/1 · 主控芯片';
+      fwStage = FwStage.main;
+      fwStageText = mainStageLabel;
+      fwStateText = '正在准备…';
+      notifyListeners();
 
-    // DFU 后原连接失效：重新连卡再来第二阶段
-    fwProgress = 50;
-    fwStageText = '阶段 2/2 · Wi-Fi 芯片';
-    fwStateText = '正在重新连接录音卡…';
-    notifyListeners();
-    // DFU 后原连接已失效：扫描到设备后必须重新 connect，不能只 snapshot——
-    // 桥里的设备句柄在 DFU 前已被取走，直接 snapshot 只会一直报「未连接」。
-    var reconnected = false;
-    for (var i = 0; i < 10; i++) {
-      await Future<void>.delayed(const Duration(seconds: 2));
       try {
-        final list = await _gw.scan();
-        final target =
-            list.where((d) => d.name == connectedName).firstOrNull ??
-            list.firstOrNull;
-        if (target != null) {
-          final snap = await _gw.connect(
-            target.id,
-            name: target.name,
-            deviceKind: target.deviceKind.code,
-          );
-          _lastDevice = target;
-          if (snap != null) _applySnapshot(snap);
-          reconnected = true;
-          break;
+        await for (final p in _gw.otaMain()) {
+          fwProgress = p.percent.clamp(0, 100) * (doWifi ? 0.5 : 0.85);
+          fwStageText = mainStageLabel;
+          fwStateText = p.text;
+          notifyListeners();
         }
-      } on CardException {
-        continue;
+      } on CardException catch (e) {
+        _failFw('主控固件升级失败：${e.message}');
+        return;
       }
-    }
-    if (!reconnected) {
-      _failFw('升级后未能重新连接录音卡，请手动重连');
-      return;
+
+      // DFU 后原连接失效：扫描并重连，拉取最新 snapshot 刷新版本号
+      fwProgress = doWifi ? 50 : 90;
+      fwStageText = doWifi ? '阶段 2/2 · Wi-Fi 芯片' : mainStageLabel;
+      fwStateText = '正在重新连接录音卡…';
+      notifyListeners();
+      var reconnected = false;
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        try {
+          final list = await _gw.scan();
+          final target =
+              list.where((d) => d.name == connectedName).firstOrNull ??
+              list.firstOrNull;
+          if (target != null) {
+            final snap = await _gw.connect(
+              target.id,
+              name: target.name,
+              deviceKind: target.deviceKind.code,
+            );
+            _lastDevice = target;
+            if (snap != null) _applySnapshot(snap);
+            reconnected = true;
+            break;
+          }
+        } on CardException {
+          continue;
+        }
+      }
+      if (!reconnected) {
+        _failFw('升级后未能重新连接录音卡，请手动重连');
+        return;
+      }
+      await refreshFromDevice();
+      doWifi = doWifi && wifiNeedsUpdate;
     }
 
-    // 阶段 2：Wi-Fi 模组
-    fwStage = FwStage.wifi;
-    try {
-      await for (final p in _gw.otaWifi()) {
-        fwProgress = 50 + p.percent.clamp(0, 100) * 0.5;
-        fwStageText = '阶段 2/2 · Wi-Fi 芯片';
-        fwStateText = p.text;
-        notifyListeners();
+    // 阶段 2（或独立阶段 1）：Wi-Fi 模组
+    if (doWifi) {
+      final wifiStageLabel = doMain ? '阶段 2/2 · Wi-Fi 芯片' : '阶段 1/1 · Wi-Fi 芯片';
+      fwStage = FwStage.wifi;
+      fwStageText = wifiStageLabel;
+      fwStateText = '正在检查 Wi-Fi 模块…';
+      notifyListeners();
+      try {
+        await for (final p in _gw.otaWifi()) {
+          fwProgress = doMain
+              ? 50 + p.percent.clamp(0, 100) * 0.5
+              : p.percent.clamp(0, 100) * 1.0;
+          fwStageText = wifiStageLabel;
+          fwStateText = p.text;
+          notifyListeners();
+        }
+      } on CardException catch (e) {
+        await refreshFromDevice();
+        _failFw('Wi-Fi 模组升级失败：${e.message}');
+        return;
       }
-    } on CardException catch (e) {
-      _failFw('Wi-Fi 模组升级失败：${e.message}');
-      return;
+      await refreshFromDevice();
     }
 
     fwUpdating = false;
@@ -1251,7 +1291,6 @@ class DeviceStore extends ChangeNotifier {
     view = DeviceView.main;
     _otaMainInfo = null;
     _otaWifiInfo = null;
-    await refreshFromDevice();
     notifyListeners();
   }
 
