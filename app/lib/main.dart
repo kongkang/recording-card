@@ -154,7 +154,15 @@ class _HomeGateState extends State<_HomeGate> {
   /// 启动装载：等鉴权恢复 → 载入历史状态与本地录音 → 登录态就绪时探测模型目录。
   Future<void> _boot() async {
     await _auth.ready;
-    if (_auth.isSignedIn) unawaited(_modelGateway.discoverModels());
+    if (_auth.isSignedIn) {
+      unawaited(_modelGateway.discoverModels());
+      // 已登录用户后台预热微信 SDK（决定设置页未来入口可用性），不阻塞启动。
+      unawaited(_auth.prewarmWechat());
+    } else {
+      // 未登录：等预热完成拿到「是否安装微信」，登录页据此决定微信按钮显隐；
+      // 预热内部吞异常 + 5s 超时，不会卡住 Splash。
+      await _auth.prewarmWechat();
+    }
     await _store.init();
     if (mounted) setState(() => _booted = true);
     // 有本地未完成的录音就继续处理（不访问设备）；模型未装时只下载/转码排队

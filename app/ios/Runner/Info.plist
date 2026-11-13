@@ -37,11 +37,30 @@
 				<string>reai-mobile</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>weixin</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<!-- 微信回调 scheme = AppID；占位串防 ITMS-90158，获批后见 Wechat.xcconfig -->
+				<string>$(WECHAT_APP_ID)</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<!-- 检测微信是否安装 / 拉起微信授权（fluwx registerApi + isWeChatInstalled） -->
+		<string>weixin</string>
+		<string>wechat</string>
+		<string>weixinULAPI</string>
+		<string>weixinURLParamsAPI</string>
+	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>录音卡通过蓝牙与你的录音卡设备保持连接，用于同步录音、查看电量与录音状态、下发录音命令。不开启蓝牙将无法连接设备。</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>

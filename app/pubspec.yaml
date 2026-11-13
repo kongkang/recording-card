@@ -48,12 +48,26 @@ dependencies:
   pdf: ^3.12.0                    # 导出 PDF
   flutter_web_auth_2: ^5.1.0      # OAuth 登录：ASWebAuthenticationSession / Chrome Custom Tabs
   crypto: ^3.0.8                  # PKCE S256 摘要（OAuth 安全要求，plain 仅作降级）
+  fluwx: 5.7.7                    # 微信原生登录 OpenSDK 封装（锁 5.7.x：与 reai_mobile_app 已验证版本一致）
   sherpa_onnx: 1.13.3             # 本地语音转写/声纹聚类（离线 SenseVoice + Silero VAD + pyannote）
   audioplayers: ^6.8.1
 
+# 微信 OpenSDK iOS 侧锁死配置：
+# - no_pay：链接 OpenWeChatSDKNoPay，本 App 无支付业务，不引入微信支付符号（审核与包体）
+# - ignore_security：fluwx 的 podspec 脚本（wechat_setup.rb）默认会在 pod install 时往
+#   Info.plist 注入 NSAllowsArbitraryLoads = true，违反本仓「公网强制 HTTPS、仅开
+#   NSAllowsLocalNetworking」的安全基线，必须关掉。
+# - 严禁开启 fluwx.ios.scene_delegate：fluwx 5.7.7 未实现 addSceneDelegate:，开了会
+#   编译期裁掉 application:continueUserActivity:，导致 Universal Link 回调 100% 失效；
+#   本仓 FlutterSceneDelegate 的 sceneFallback 系列兜底转发可通，保持默认即可。
+fluwx:
+  ios:
+    no_pay: true
+    ignore_security: true
+
 # pdf 3.12.0 把 archive 钉在 <4.1.0，而 image 4.11 的 PNG 解码依赖 archive 4.1 的
 # decodeLazy；4.10.2 的 PNG 解码走 decodeBytes，三者可共存（已实测 PDF 组装通过）。
-# 升 pdf 到 3.13 需 Dart >=3.12，当前 Flutter 3.38.5 / Dart 3.10.4 升不上去。
+# 锁 4.10.2 以满足 pdf 3.12.0 对 archive <4.1.0 的约束。
 dependency_overrides:
   image: 4.10.2
 
