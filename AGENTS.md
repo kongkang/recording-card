@@ -70,3 +70,4 @@ owner 明确要求「做正式发布版，所有问题都要解决」，旧口�
 - SDK 未决项（固件 OTA 接口、Wi-Fi 是否仅 2.4GHz）不编造：按设计稿交互实现 + 代码 `TODO` + `docs/SDK-CAPABILITY.md` 对照表登记，不阻塞主线。
 - 阶段性保存：commit → push → PR → merge。
 - OAuth 借鉴 reai_mobile_app：`lib/core/config/auth_mode.dart`、`lib/core/config/remote/endpoint_resolver.dart`、`lib/core/config/remote/client_config.dart`、`lib/main_mobile.dart`；登录 UI 按真实上线形态做，凭据/端点配置走 `--dart-define`。
+- CI 使用规范：本仓库开源（GNU AGPL-3.0），GitHub Actions CI 主要用于构建打包、自动测试与版本分发，请正常、克制地使用 CI 资源（避免高频空跑、死循环触发或无关大产物缓存滥用）。
