@@ -77,10 +77,24 @@ final class AppleAssetPackBridge: NSObject, FlutterStreamHandler {
     guard #available(iOS 26.0, *) else {
       return false
     }
+    // Xcode / devicectl 本地安装的开发包内含带 ProvisionedDevices 的描述文件，
+    // Apple CDN 仅向 TestFlight / App Store 分发包提供托管 AssetPack；本地开发包直接回落外脑 HTTP CDN。
+    if isLocalDevelopmentProvisioned() {
+      return false
+    }
     let info = Bundle.main.infoDictionary
     let hasManaged = (info?["BAHasManagedAssetPacks"] as? Bool) == true
     let usesAppleHosting = (info?["BAUsesAppleHosting"] as? Bool) == true
     return hasManaged && usesAppleHosting
+  }
+
+  private func isLocalDevelopmentProvisioned() -> Bool {
+    guard let path = Bundle.main.path(forResource: "embedded", ofType: "mobileprovision"),
+          let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+          let content = String(data: data, encoding: .isoLatin1) else {
+      return false
+    }
+    return content.contains("<key>ProvisionedDevices</key>")
   }
 
   private func fetchAvailablePackIds(result: @escaping FlutterResult) {

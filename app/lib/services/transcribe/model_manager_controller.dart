@@ -2,8 +2,9 @@
 ///
 /// 下载源优先级：
 /// 1. 显式传入 `baseUrl` 或 `--dart-define=RC_MODEL_BASE=...` 时走指定 HTTP 源；
-/// 2. iOS 26+ 支持 Apple-Hosted Background Assets 时优先走免费 Apple CDN；
-/// 3. 其余平台（Android / iOS 15~25）默认回落外脑 CDN `https://dl.wainao.chat/reai/models`。
+/// 2. iOS 26+ 支持 Apple-Hosted Background Assets（TestFlight / App Store）时优先尝试免费 Apple CDN，
+///    若远端资源包未上架或拉取失败，运行时自动回落外脑 CDN `https://dl.wainao.chat/reai/models`；
+/// 3. 其余平台（Android / iOS 15~25 / 本地开发签名包）默认走外脑 CDN `https://dl.wainao.chat/reai/models`。
 library;
 
 import 'package:flutter/foundation.dart';
@@ -136,19 +137,8 @@ class ModelManagerController extends ChangeNotifier {
     try {
       if (spec.bundled) {
         await _installer.ensureBundled(spec);
-      } else if (usesAppleAssets) {
-        await _installFromAppleAssets(spec, force: force);
-        _unavailableRemotePacks.remove(spec.id);
       } else {
-        if (force) {
-          await _installer.delete(spec);
-        }
-        final base = Uri.parse(effectiveBaseUrl);
-        await _installer.installFrom(
-          spec,
-          baseUri: base,
-          onProgress: _onProgress,
-        );
+        await _installRemoteSpec(spec, force: force);
       }
       await onInstalled?.call();
     } on Object catch (e) {
@@ -175,38 +165,18 @@ class ModelManagerController extends ChangeNotifier {
     notifyListeners();
     try {
       await _installer.ensureBundled(sileroVadSpec);
-      if (usesAppleAssets) {
-        await _installFromAppleAssets(senseVoiceSpec, force: force);
-        // 声纹模型为可选能力：若远端尚未上架该资源包则静默标记跳过；真实下载/校验故障如实提示
-        try {
-          await _installFromAppleAssets(campplusEmbeddingSpec, force: force);
-          _unavailableRemotePacks.remove(campplusEmbeddingSpec.id);
-        } on AppleAssetPackException catch (e) {
-          if (e.isNotFound) {
-            _unavailableRemotePacks.add(campplusEmbeddingSpec.id);
-          } else {
-            _error = '声纹模型下载失败：$e（转写仍可用）';
-          }
-        } on Object catch (e) {
+      await _installRemoteSpec(senseVoiceSpec, force: force);
+      // 声纹模型为可选能力：若无兜底 HTTP 源且 Apple 远端尚未上架该资源包则静默标记跳过；真实下载/校验故障如实提示
+      try {
+        await _installRemoteSpec(campplusEmbeddingSpec, force: force);
+      } on AppleAssetPackException catch (e) {
+        if (e.isNotFound) {
+          _unavailableRemotePacks.add(campplusEmbeddingSpec.id);
+        } else {
           _error = '声纹模型下载失败：$e（转写仍可用）';
         }
-      } else {
-        final base = Uri.parse(effectiveBaseUrl);
-        await _installer.installFrom(
-          senseVoiceSpec,
-          baseUri: base,
-          onProgress: _onProgress,
-        );
-        // 声纹模型失败不影响转写：只提示，不把整个安装判失败
-        try {
-          await _installer.installFrom(
-            campplusEmbeddingSpec,
-            baseUri: base,
-            onProgress: _onProgress,
-          );
-        } on Object catch (e) {
-          _error = '声纹模型下载失败：$e（转写仍可用）';
-        }
+      } on Object catch (e) {
+        _error = '声纹模型下载失败：$e（转写仍可用）';
       }
       await onInstalled?.call();
     } on Object catch (e) {
@@ -216,6 +186,40 @@ class ModelManagerController extends ChangeNotifier {
       _text = '';
       await refresh();
     }
+  }
+
+  /// 远程模型下载统一入口：
+  /// - `usesAppleAssets` 为 true 时优先走 Apple-Hosted Background Assets；
+  /// - 若 Apple 资源包尚未发布、清单不可用或校验失败，且存在 HTTP 兜底源（`_fallbackBaseUrl`），
+  ///   自动无缝回落外脑 CDN 下载，避免 iOS 26+ 设备卡在「待下载」。
+  Future<void> _installRemoteSpec(
+    ModelSpec spec, {
+    required bool force,
+  }) async {
+    if (usesAppleAssets) {
+      try {
+        await _installFromAppleAssets(spec, force: force);
+        _unavailableRemotePacks.remove(spec.id);
+        return;
+      } on Object catch (appleErr) {
+        if (!hasFallbackBaseUrl) {
+          rethrow;
+        }
+        debugPrint(
+          '[ModelManager] Apple 资源包 ${spec.id} 不可用 ($appleErr)，自动回落外脑 CDN ($_fallbackBaseUrl)',
+        );
+      }
+    }
+    if (force) {
+      await _installer.delete(spec);
+    }
+    final base = Uri.parse(effectiveBaseUrl);
+    await _installer.installFrom(
+      spec,
+      baseUri: base,
+      onProgress: _onProgress,
+    );
+    _unavailableRemotePacks.remove(spec.id);
   }
 
   Future<void> _installFromAppleAssets(

@@ -267,6 +267,68 @@ void main() {
       final st = await installer.status(customSpec);
       expect(st.installed, isTrue);
     });
+
+    test('iOS 26+ Apple 资源包未上架或失败时，运行时自动回落外脑 CDN 下载声纹与转写模型', () async {
+      final root = await Directory.systemTemp.createTemp('rc-apple-fallback-');
+      addTearDown(() => root.deleteSync(recursive: true));
+
+      final vpPayload = List<int>.generate(1024, (i) => (i * 7) % 251);
+      final customVoiceprint = ModelSpec(
+        id: 'campplus-embedding',
+        displayName: '声纹嵌入模型',
+        version: 'fallback-test',
+        kind: LocalModelKind.speakerEmbedding,
+        files: [
+          ModelFileSpec(
+            relPath: 'campplus.onnx',
+            sizeBytes: vpPayload.length,
+            sha256: sha256.convert(vpPayload).toString(),
+          ),
+        ],
+      );
+
+      var httpHits = 0;
+      final installer = ModelInstaller(
+        root: root,
+        clientFactory: () => MockClient.streaming((request, _) async {
+          if (request.url.toString() ==
+              'https://dl.wainao.chat/reai/models/campplus-embedding/campplus.onnx') {
+            httpHits++;
+            return http.StreamedResponse(
+              Stream<List<int>>.value(vpPayload),
+              200,
+              contentLength: vpPayload.length,
+            );
+          }
+          return http.StreamedResponse(const Stream.empty(), 404);
+        }),
+      );
+
+      final fakeApple = _FakeAppleAssetPackClient(
+        available: true,
+        onInstall: (packId, files, onProgress) async {
+          throw const AppleAssetPackException(
+            'Asset pack not found on Apple CDN',
+            code: 'ASSET_PACK_NOT_FOUND',
+          );
+        },
+      );
+
+      final controller = ModelManagerController(
+        installer: installer,
+        appleAssets: fakeApple,
+        clientConfig: const ClientConfig.forTesting(),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.installSpec(customVoiceprint);
+
+      expect(fakeApple.installedPacks, ['campplus-embedding']);
+      expect(httpHits, 1);
+      expect(controller.error, isNull);
+      final st = await installer.status(customVoiceprint);
+      expect(st.installed, isTrue);
+    });
   });
 
   testWidgets('声纹识别子页：未安装展示下载按钮，失败变重试，成功后显示已就绪并隐藏按钮', (tester) async {
