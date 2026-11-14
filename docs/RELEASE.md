@@ -223,6 +223,8 @@ flutter analyze && flutter test
 
 ## 登录与模型配置（2026-11-08 起）
 
+> 四通道登录架构、未过审/未开通渠道 `disabled` 状态矩阵、微信过审后启用步骤与真机安装说明详见 [AUTH-LOGIN.md](./AUTH-LOGIN.md)。
+
 - **OAuth 客户端**：默认复用 reai_mobile_app 的 public client
   （`RC_OAUTH_CLIENT_ID` 编译默认 `58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo`，
   回调 `reai-mobile://callback`，iOS Info.plist 与 Android intent-filter 均已注册该 scheme）。
