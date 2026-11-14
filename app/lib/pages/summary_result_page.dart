@@ -325,7 +325,12 @@ class _ResultView extends StatelessWidget {
                     ),
                   ),
                   SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(22, 6, 22, 96),
+                    padding: const EdgeInsets.fromLTRB(
+                      22,
+                      6,
+                      22,
+                      RCDims.pageBottomPad,
+                    ),
                     sliver: SliverList(
                       delegate: SliverChildBuilderDelegate(
                         (context, _) => Column(

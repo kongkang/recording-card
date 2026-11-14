@@ -104,7 +104,13 @@ class SettingSubPage extends StatelessWidget {
             Expanded(
               child: ListView(
                 key: Key('setsub-scroll-$subId'),
-                padding: const EdgeInsets.fromLTRB(22, 14, 22, 40),
+                padding: EdgeInsets.fromLTRB(
+                  22,
+                  14,
+                  22,
+                  RCDims.pageBottomPad +
+                      (standalone ? MediaQuery.paddingOf(context).bottom : 0),
+                ),
                 children: [
                   Text(
                     _title,

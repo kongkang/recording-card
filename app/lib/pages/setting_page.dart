@@ -315,7 +315,7 @@ class _SettingPageState extends State<SettingPage> {
       color: c.bg,
       child: SingleChildScrollView(
         key: const Key('setting-list'),
-        padding: const EdgeInsets.fromLTRB(22, 8, 22, 40),
+        padding: const EdgeInsets.fromLTRB(22, 8, 22, RCDims.pageBottomPad),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[

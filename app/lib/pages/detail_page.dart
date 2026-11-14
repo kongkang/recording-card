@@ -253,7 +253,12 @@ class _DetailPageState extends State<DetailPage> {
           ),
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(22, 14, 22, 32),
+            padding: const EdgeInsets.fromLTRB(
+              22,
+              14,
+              22,
+              RCDims.pageBottomPad,
+            ),
             children: [
               if (view != null &&
                   ((e.note != null && e.note!.isNotEmpty) ||

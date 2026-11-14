@@ -136,7 +136,7 @@ class UnclassifiedPhotosPage extends StatelessWidget {
                               hPad,
                               4,
                               hPad,
-                              32,
+                              RCDims.pageBottomPad,
                             ),
                             gridDelegate:
                                 SliverGridDelegateWithFixedCrossAxisCount(
