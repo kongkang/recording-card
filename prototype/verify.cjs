@@ -805,7 +805,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   pCur.on('request', r => { if (!r.url().startsWith('file:') && !r.url().startsWith('data:')) net.push(r.url()) });
   await pCur.goto(pathToFileURL(path.join(__dirname, 'current.html')).href);
   assert.equal(await pCur.title(), '当前版本 · 录音卡（App 已有功能）');
-  assert.equal(await pCur.$eval('[data-testid="parity-btn"]', x => x.innerText.trim()), '当前版本 · App已有');
+  assert.equal(await pCur.$eval('[data-testid="parity-btn"]', x => x.innerText.trim()), '当前版');
+  assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.getAttribute('href')), 'index.html');
+  assert.equal(await p.$eval('[data-testid="ver-switch-current"]', x => x.getAttribute('href')), 'current.html');
   assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0, 'current.html 不应出现 TBC 标记');
   assert.equal(await pCur.$$eval('.card[data-kind="daily"], .card[data-kind="dream"]', x => x.length), 0);
   assert(!(await pCur.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
