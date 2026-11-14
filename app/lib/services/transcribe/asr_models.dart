@@ -61,7 +61,7 @@ class ModelSpec {
   int get totalBytes => files.fold<int>(0, (a, f) => a + f.sizeBytes);
 }
 
-/// SenseVoice int8（已对齐 Apple-Hosted Background Assets `sensevoice-small-int8` v1）。
+/// SenseVoice int8（与外脑 CDN `model-manifest.json` 及 Apple-Hosted v2 同源对齐）。
 const ModelSpec senseVoiceSpec = ModelSpec(
   id: 'sensevoice-small-int8',
   displayName: '本地转写模型',
@@ -70,8 +70,8 @@ const ModelSpec senseVoiceSpec = ModelSpec(
   files: [
     ModelFileSpec(
       relPath: 'model.int8.onnx',
-      sizeBytes: 237115547,
-      sha256: '12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d',
+      sizeBytes: 239233841,
+      sha256: 'c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51',
     ),
     ModelFileSpec(
       relPath: 'tokens.txt',

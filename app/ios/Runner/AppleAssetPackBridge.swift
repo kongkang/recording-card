@@ -190,7 +190,14 @@ final class AppleAssetPackBridge: NSObject, FlutterStreamHandler {
         pack = try await AssetPackManager.shared.assetPack(withID: packId)
       }
 
-      try await AssetPackManager.shared.ensureLocalAvailability(of: pack)
+      if #available(iOS 26.4, *) {
+        try await AssetPackManager.shared.ensureLocalAvailability(
+          of: pack,
+          requireLatestVersion: true
+        )
+      } else {
+        try await AssetPackManager.shared.ensureLocalAvailability(of: pack)
+      }
 
       emitProgress(packId: packId, stage: "copying", progress: 0.98)
       try materializeFiles(files)
