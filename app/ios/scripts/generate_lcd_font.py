@@ -100,8 +100,8 @@ def _colon_dot(cx: int, cy: int, half: int = 38, cut: int = 8) -> list[tuple[int
 GLYPH_SPECS: list[tuple[str, int | None, int, list[list[tuple[int, int]]]]] = [
     (".notdef", None, DIGIT_ADVANCE, [SEG_A, SEG_B, SEG_C, SEG_D, SEG_E, SEG_F]),
     ("space", 0x0020, DIGIT_ADVANCE, []),
-    ("nbspace", 0x00A0, COLON_ADVANCE, []),
     ("hyphen", 0x002D, DIGIT_ADVANCE, [SEG_G]),
+    ("period", 0x002E, COLON_ADVANCE, [_colon_dot(125, 80)]),
     ("zero", 0x0030, DIGIT_ADVANCE, [SEGMENTS[s] for s in "ABCDEF"]),
     ("one", 0x0031, DIGIT_ADVANCE, [SEGMENTS[s] for s in "BC"]),
     ("two", 0x0032, DIGIT_ADVANCE, [SEGMENTS[s] for s in "ABGED"]),
@@ -115,6 +115,13 @@ GLYPH_SPECS: list[tuple[str, int | None, int, list[list[tuple[int, int]]]]] = [
     ("colon", 0x003A, COLON_ADVANCE, [_colon_dot(125, 525), _colon_dot(125, 235)]),
     ("F", 0x0046, DIGIT_ADVANCE, [SEGMENTS[s] for s in "AFGE"]),
     ("O", 0x004F, DIGIT_ADVANCE, [SEGMENTS[s] for s in "ABCDEF"]),
+    ("nbspace", 0x00A0, COLON_ADVANCE, []),
+    ("uni2010", 0x2010, DIGIT_ADVANCE, [SEG_G]),
+    ("uni2011", 0x2011, DIGIT_ADVANCE, [SEG_G]),
+    ("figuredash", 0x2012, DIGIT_ADVANCE, [SEG_G]),
+    ("endash", 0x2013, DIGIT_ADVANCE, [SEG_G]),
+    ("emdash", 0x2014, DIGIT_ADVANCE, [SEG_G]),
+    ("minus", 0x2212, DIGIT_ADVANCE, [SEG_G]),
 ]
 
 
