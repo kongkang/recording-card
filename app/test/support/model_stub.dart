@@ -35,6 +35,7 @@ const OAuthConfig kStubOAuthConfig = OAuthConfig(
   tokenUrl: '$kStubApiBase/oauth/token',
   profileUrl: '$kStubApiBase/profile',
   revokeUrl: '$kStubApiBase/oauth/revoke',
+  socialProvidersUrl: '$kStubApiBase/auth/social/providers',
   clientId: 'test-client',
   redirectUri: 'recording-card://callback',
   scope: '',

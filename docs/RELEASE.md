@@ -228,6 +228,10 @@ flutter analyze && flutter test
   回调 `reai-mobile://callback`，iOS Info.plist 与 Android intent-filter 均已注册该 scheme）。
   换自家客户端时用 `--dart-define=RC_OAUTH_CLIENT_ID=... --dart-define=RC_OAUTH_REDIRECT=...`，
   并同步改两端回调注册，否则授权回不来。
+- **首页四通道登录**：
+  - **外脑账号登录**：系统安全浏览器打开 `/oauth/authorize`（PKCE S256）；
+  - **微信登录**：`fluwx` 原生 OpenSDK（微信开放平台审核未通过、未配置 `RC_WECHAT_APP_ID` 时按钮可见但保持 `disabled`；配置合法 `wx...` AppID 后，本机装有微信则可点击，明确未安装微信则按 App Store 4.2.3 隐藏）；
+  - **Apple / Google 登录**：直接渲染原生品牌按钮，借用外脑 `/oauth/authorize?login_type=apple` 或 `login_type=google` 在系统安全浏览器中聚焦对应单点入口；启动预热请求 `GET /auth/social/providers`，线上已启用的渠道点亮可点击，未启用的渠道按钮保持 `disabled`；联调可通过 `--dart-define=RC_SOCIAL_PROVIDERS=apple,google` 显式覆盖可用渠道集合。
 - **模型名**：不再硬编码。登录后 App 调 `GET /api/model-gateway/v1/models`，
   按 `capabilities` 选 ASR（`asr`）与文本（`text`/`chat`）。也可用
   `--dart-define=RC_MODEL_ASR=... --dart-define=RC_MODEL_REFINE=...` 显式覆盖。
@@ -241,7 +245,7 @@ flutter analyze && flutter test
 
 - **AppID 两处同值**（不变式，不一致则授权回不来）：
   1. `app/ios/Flutter/Wechat.xcconfig` 的 `WECHAT_APP_ID`（展开为 Info.plist 的 `$(WECHAT_APP_ID)` 回调 scheme；未获批前用占位串 `rc-wechat-disabled`，防空 scheme 触发 App Store ITMS-90158）；
-  2. 构建参数 `--dart-define=RC_WECHAT_APP_ID=wx...`（兼容回退 `WECHAT_APP_ID`；Dart 侧 `OAuthConfig.isWechatConfigured` 严格校验 `wx` 前缀，占位串/空串均判未配置 → 登录页隐藏微信按钮，fail-closed）。
+  2. 构建参数 `--dart-define=RC_WECHAT_APP_ID=wx...`（兼容回退 `WECHAT_APP_ID`；Dart 侧 `OAuthConfig.isWechatConfigured` 严格校验 `wx` 前缀，占位串/空串均判未配置 → 登录页微信按钮保持 `disabled` 禁用态，fail-closed）。
 - **iOS 前置（一次性）**：
   1. Apple Developer 后台为 App ID（开发 `dev.kongkang.recordingCard` 与正式 `com.reai.recordingcard`）开启 **Associated Domains** capability（`Runner.entitlements` 已声明 `applinks:app.cn.reai.com`，三个 build configuration 均已挂载）；
   2. `https://app.cn.reai.com/.well-known/apple-app-site-association` 的 `details` 同时包含两个 appID、paths `/link/*`（改 AASA 后 Apple CDN 缓存 24~48h）；

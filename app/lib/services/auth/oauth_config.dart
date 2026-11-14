@@ -27,6 +27,8 @@ class OAuthConfig {
     required this.tokenUrl,
     required this.profileUrl,
     required this.revokeUrl,
+    this.socialProvidersUrl,
+    this.socialProvidersOverride,
     required this.clientId,
     required this.redirectUri,
     required this.scope,
@@ -38,6 +40,17 @@ class OAuthConfig {
     this.pendingAuthorizationTtl = const Duration(minutes: 10),
     this.requestTimeout = const Duration(seconds: 20),
   });
+
+  /// 外脑 `/oauth/authorize` `login_type` 白名单词表。
+  static const Set<String> supportedLoginTypes = {
+    'email',
+    'phone',
+    'wechat',
+    'alipay',
+    'google',
+    'apple',
+    'github',
+  };
 
   /// 微信 Universal Link（与 app.cn.reai.com 的 AASA `/link/*` 路径绑定）。
   static const String defaultWechatUniversalLink = 'https://app.cn.reai.com/link/';
@@ -85,11 +98,32 @@ class OAuthConfig {
       tokenUrl: tokenUrl,
       profileUrl: sibling('/profile'),
       revokeUrl: sibling('/oauth/revoke'),
+      socialProvidersUrl: sibling('/auth/social/providers'),
+      socialProvidersOverride: _resolveSocialProvidersOverride(),
       clientId: cfg.normalizedOAuthClientId,
       redirectUri: redirect,
       scope: scope,
       wechatAppId: _resolveWechatAppId(),
     );
+  }
+
+  /// 编译期社会化登录渠道覆盖（`RC_SOCIAL_PROVIDERS=apple,google`）；
+  /// 未定义或空串返回 null（走线上 `/auth/social/providers` 自动探测）。
+  static Set<String>? _resolveSocialProvidersOverride() {
+    if (!const bool.hasEnvironment('RC_SOCIAL_PROVIDERS')) {
+      return null;
+    }
+    final raw = const String.fromEnvironment('RC_SOCIAL_PROVIDERS').trim();
+    if (raw.isEmpty) return null;
+    final parsed = <String>{};
+    for (final item in raw.split(',')) {
+      final token = item.trim().toLowerCase();
+      if (supportedLoginTypes.contains(token)) {
+        parsed.add(token);
+      }
+    }
+    if (parsed.isEmpty) return const <String>{};
+    return Set<String>.unmodifiable(parsed);
   }
 
   /// 微信 AppID：`RC_WECHAT_APP_ID` 优先（本仓命名规范），回退兼容 reai 的
@@ -124,6 +158,12 @@ class OAuthConfig {
 
   /// 撤销端点（登出时尽力而为）；null = 未配置。
   final String? revokeUrl;
+
+  /// 社会化登录渠道公开查询端点（`/auth/social/providers`）；null = 未配置。
+  final String? socialProvidersUrl;
+
+  /// 编译期覆盖社会化登录渠道白名单（null = 以服务端查询为准）。
+  final Set<String>? socialProvidersOverride;
 
   /// public client id（空 = 未配置登录服务）。
   final String clientId;
@@ -182,6 +222,8 @@ class OAuthConfig {
     String? tokenUrl,
     String? profileUrl,
     String? revokeUrl,
+    String? socialProvidersUrl,
+    Set<String>? socialProvidersOverride,
     String? clientId,
     String? redirectUri,
     String? scope,
@@ -199,6 +241,9 @@ class OAuthConfig {
       tokenUrl: tokenUrl ?? this.tokenUrl,
       profileUrl: profileUrl ?? this.profileUrl,
       revokeUrl: revokeUrl ?? this.revokeUrl,
+      socialProvidersUrl: socialProvidersUrl ?? this.socialProvidersUrl,
+      socialProvidersOverride:
+          socialProvidersOverride ?? this.socialProvidersOverride,
       clientId: clientId ?? this.clientId,
       redirectUri: redirectUri ?? this.redirectUri,
       scope: scope ?? this.scope,

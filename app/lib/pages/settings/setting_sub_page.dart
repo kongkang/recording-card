@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import '../../core/store/agent_config_store.dart';
 import '../../core/store/device_store.dart';
 import '../../core/theme/tokens.dart';
+import '../../services/auth/oauth_config.dart';
 import '../../services/auth_service.dart';
 import '../../services/transcribe/asr_models.dart';
 import '../../services/transcribe/model_manager_controller.dart';
@@ -1397,9 +1398,13 @@ class _LoginAuthBodyState extends State<_LoginAuthBody> {
       setState(() => _statusMsg = '当前页面未连接鉴权服务');
       return;
     }
+    final validLoginType =
+        (provider != null && OAuthConfig.supportedLoginTypes.contains(provider))
+            ? provider
+            : null;
     final err = (provider == 'wechat' && auth.shouldShowWechatSignIn)
         ? await auth.signInWithWechat()
-        : await auth.signInWithOAuth(loginHint: provider);
+        : await auth.signInWithOAuth(loginType: validLoginType);
     if (!mounted) return;
     setState(() {
       _statusMsg = err ?? (auth.isSignedIn ? '外脑账号已授权' : '已取消授权');

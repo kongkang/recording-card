@@ -124,11 +124,33 @@ class OAuthClient {
   OAuthAuthorizationRequest createAuthorizationRequest({
     String? loginHint,
     String? prompt,
+    String? loginType,
     PkceMethod pkceMethod = PkceMethod.s256,
   }) {
     if (!_config.isConfigured) {
       throw const OAuthNotConfiguredException();
     }
+    String? normalizedLoginType;
+    if (loginType != null && loginType.trim().isNotEmpty) {
+      final tokens = loginType
+          .split(',')
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false);
+      for (final token in tokens) {
+        if (!OAuthConfig.supportedLoginTypes.contains(token)) {
+          throw ArgumentError.value(
+            loginType,
+            'loginType',
+            'Unsupported login_type token: $token',
+          );
+        }
+      }
+      if (tokens.isNotEmpty) {
+        normalizedLoginType = tokens.join(',');
+      }
+    }
+
     final pkce = generatePkcePair(random: _random, method: pkceMethod);
     final state = generateState(random: _random);
 
@@ -143,6 +165,7 @@ class OAuthClient {
       if (loginHint != null && loginHint.trim().isNotEmpty)
         'login_hint': loginHint.trim(),
       if (prompt != null && prompt.trim().isNotEmpty) 'prompt': prompt.trim(),
+      'login_type': ?normalizedLoginType,
     };
 
     final base = Uri.parse(_config.authUrl!);
@@ -150,6 +173,53 @@ class OAuthClient {
       queryParameters: {...base.queryParameters, ...query},
     );
     return OAuthAuthorizationRequest(url: url, state: state, pkce: pkce);
+  }
+
+  /// 查询服务端当前启用的社会化登录渠道（`/auth/social/providers`）。
+  Future<Set<String>> fetchSocialProviders({Duration? timeout}) async {
+    final url = _config.socialProvidersUrl;
+    if (url == null) return const <String>{};
+    final response = await _send(
+      () => _httpClient.get(
+        Uri.parse(url),
+        headers: const {'Accept': 'application/json'},
+      ),
+      timeout: timeout ?? const Duration(seconds: 4),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw OAuthServerException(
+        code: 'social_providers_fetch_failed',
+        message: '登录渠道查询失败（HTTP ${response.statusCode}）',
+        statusCode: response.statusCode,
+      );
+    }
+    final Map<String, dynamic> decodedMap;
+    try {
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('响应不是 JSON 对象');
+      }
+      decodedMap = decoded;
+    } catch (e) {
+      throw OAuthServerException(
+        code: 'social_providers_parse_failed',
+        message: '登录渠道解析失败，请稍后重试',
+        statusCode: response.statusCode,
+        cause: e,
+      );
+    }
+    final rawList = decodedMap['providers'];
+    if (rawList is! List) return const <String>{};
+    final providers = <String>{};
+    for (final item in rawList) {
+      if (item is String) {
+        final token = item.trim().toLowerCase();
+        if (OAuthConfig.supportedLoginTypes.contains(token)) {
+          providers.add(token);
+        }
+      }
+    }
+    return Set<String>.unmodifiable(providers);
   }
 
   /// 用授权码换 token（`grant_type=authorization_code`）。
@@ -384,9 +454,12 @@ class OAuthClient {
   }
 
   /// 统一超时与网络错误归一。
-  Future<http.Response> _send(Future<http.Response> Function() send) async {
+  Future<http.Response> _send(
+    Future<http.Response> Function() send, {
+    Duration? timeout,
+  }) async {
     try {
-      return await send().timeout(_config.requestTimeout);
+      return await send().timeout(timeout ?? _config.requestTimeout);
     } on TimeoutException catch (e) {
       throw OAuthNetworkException('请求超时，请检查网络后重试', e);
     } on OAuthException {

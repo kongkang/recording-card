@@ -33,7 +33,7 @@ import 'net/authorized_http_client.dart';
 import 'wechat_login/wechat_login_service.dart';
 
 /// 当前登录流程的通道（UI 据此决定哪个按钮转圈）。
-enum AuthChannel { none, oauth, wechat }
+enum AuthChannel { none, oauth, wechat, apple, google }
 
 /// 登录会话（进程内快照；真正的 token 在 [OAuthTokenStore] / 系统密钥库里）。
 class AuthSession {
@@ -84,12 +84,17 @@ class AuthService extends ChangeNotifier {
     OAuthClient? oauthClient,
     OAuthTokenStore? tokenStore,
     SecureStore? secureStore,
+    Set<String>? initialSocialProviders,
     DateTime Function()? clock,
   })  : _config = config ?? ClientConfig.instance,
         _oauthConfig = oauthConfig ??
             OAuthConfig.fromEnvironment(clientConfig: config),
         _clock = clock ?? DateTime.now {
     _launcher = launcher ?? const FlutterWebAuthLauncher();
+    final preset = initialSocialProviders ?? _oauthConfig.socialProvidersOverride;
+    if (preset != null) {
+      _cachedSocialProviders = Set<String>.unmodifiable(preset);
+    }
     _wechat = wechatGateway ??
         WechatLoginService(
           wechatAppId: _oauthConfig.wechatAppId,
@@ -128,6 +133,9 @@ class AuthService extends ChangeNotifier {
 
   /// 当前在途流程的通道（none = 空闲）；UI 据此决定哪个按钮转圈。
   AuthChannel _activeChannel = AuthChannel.none;
+
+  /// 已探测的线上可用社会化登录渠道（null = 未探测，避免显示失效按钮）。
+  Set<String>? _cachedSocialProviders;
 
   /// 授权流程代次：登出会 +1，让在途流程的回调自我作废（防「登出后又被登录」）。
   int _authFlowEpoch = 0;
@@ -185,14 +193,33 @@ class AuthService extends ChangeNotifier {
     return null;
   }
 
-  /// 登录页是否展示微信按钮：平台支持 + 已配置 AppID + 未探测到「明确未安装微信」。
-  ///
-  /// `cachedIsInstalled` 为 null（预热未完成 / 超时 / 未跑 _boot 的测试）时
-  /// 照常展示，点击后 [WechatLoginService.authorize] 会实时复查并兜底提示。
+  /// 登录页是否展示微信按钮：
+  /// - 平台支持微信 SDK；
+  /// - 微信开放平台审核通过配置 AppID 前（`!_wechat.isConfigured`）仍展示按钮，
+  ///   由 [wechatSignInBlockedReason] 使其保持 disabled 状态；
+  /// - 已配置 AppID 后，若明确探测到本机未安装微信（`cachedIsInstalled == false`）则隐藏（App Store 4.2.3）。
   bool get shouldShowWechatSignIn =>
       _wechat.isSupported &&
-      _wechat.isConfigured &&
-      _wechat.cachedIsInstalled != false;
+      (!_wechat.isConfigured || _wechat.cachedIsInstalled != false);
+
+  /// 已探测的线上可用社会化登录渠道（null = 尚未完成探测）。
+  Set<String>? get cachedSocialProviders => _cachedSocialProviders;
+
+  /// 登录页是否展示「通过 Apple 登录」按钮（具备系统浏览器授权能力时常驻展示，未开通时置为 disabled）。
+  bool get shouldShowAppleSignIn => _launcher.isSupported;
+
+  /// 「通过 Apple 登录」当前是否可点击（登录服务已就绪且服务端已开启 `apple`）。
+  bool get isAppleSignInEnabled =>
+      signInBlockedReason == null &&
+      (_cachedSocialProviders?.contains('apple') ?? false);
+
+  /// 登录页是否展示「通过 Google 登录」按钮（具备系统浏览器授权能力时常驻展示，未开通时置为 disabled）。
+  bool get shouldShowGoogleSignIn => _launcher.isSupported;
+
+  /// 「通过 Google 登录」当前是否可点击（登录服务已就绪且服务端已开启 `google`）。
+  bool get isGoogleSignInEnabled =>
+      signInBlockedReason == null &&
+      (_cachedSocialProviders?.contains('google') ?? false);
 
   /// 首次本地会话恢复完成（测试里 `await auth.ready` 可拿到确定的初始状态）。
   Future<void> get ready => _bootstrapFuture;
@@ -220,21 +247,30 @@ class AuthService extends ChangeNotifier {
   /// 走完真实 OAuth 登录：拉起浏览器授权 → 校验 state → 换 token → 拉 profile →
   /// 落密钥库 → 建立会话。
   ///
+  /// [loginType] 透传外脑 `/oauth/authorize` 白名单（如 `'apple'` / `'google'`），
+  /// 用于在授权页直接聚焦单一登录入口；[channel] 决定 UI 哪个按钮显示转圈。
   /// 返回 null 表示登录成功；非 null 是可直接展示的错误文案。
   /// 不论成功失败都会 `notifyListeners()`。
-  Future<String?> signInWithOAuth({String? loginHint}) async {
+  Future<String?> signInWithOAuth({
+    String? loginHint,
+    String? loginType,
+    AuthChannel channel = AuthChannel.oauth,
+  }) async {
     if (_busy) return '登录正在进行中，请稍候';
     final blocked = signInBlockedReason;
     if (blocked != null) return _fail(blocked);
 
     final epoch = ++_authFlowEpoch;
     _busy = true;
-    _activeChannel = AuthChannel.oauth;
+    _activeChannel = channel == AuthChannel.none ? AuthChannel.oauth : channel;
     _lastError = null;
     _notify();
 
     try {
-      final request = _client.createAuthorizationRequest(loginHint: loginHint);
+      final request = _client.createAuthorizationRequest(
+        loginHint: loginHint,
+        loginType: loginType,
+      );
       _pending = _PendingAuthorization(
         state: request.state,
         codeVerifier: request.pkce.codeVerifier,
@@ -290,6 +326,39 @@ class AuthService extends ChangeNotifier {
       }
       _notify();
     }
+  }
+
+  /// 借用外脑 OAuth 流程（`login_type=apple`）通过 Apple 登录。
+  Future<String?> signInWithApple() =>
+      signInWithOAuth(loginType: 'apple', channel: AuthChannel.apple);
+
+  /// 借用外脑 OAuth 流程（`login_type=google`）通过 Google 登录。
+  Future<String?> signInWithGoogle() =>
+      signInWithOAuth(loginType: 'google', channel: AuthChannel.google);
+
+  /// 启动预热：探测服务端已启用的社会化登录渠道（`/auth/social/providers`）。
+  ///
+  /// 异常一律吞掉（弱网/离线/未配置时不阻塞启动），编译期覆盖（`RC_SOCIAL_PROVIDERS`）优先。
+  Future<void> prewarmSocialProviders() async {
+    if (_disposed) return;
+    final override = _oauthConfig.socialProvidersOverride;
+    if (override != null) {
+      _cachedSocialProviders = override;
+      _notify();
+      return;
+    }
+    if (_oauthConfig.socialProvidersUrl == null) return;
+    try {
+      final providers = await _client.fetchSocialProviders(
+        timeout: const Duration(seconds: 4),
+      );
+      if (!_disposed) {
+        _cachedSocialProviders = providers;
+      }
+    } catch (e) {
+      debugPrint('[AuthService] 社会化登录渠道探测跳过: $e');
+    }
+    _notify();
   }
 
   /// 微信原生登录：拉起微信授权 → 换 token → 拉 profile → 落密钥库 → 建立会话。

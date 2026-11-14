@@ -66,19 +66,38 @@ class _EchoLauncher implements WebAuthLauncher {
   }
 }
 
-/// 假服务端：token 端点 + profile 端点。返回的请求都留在 [requests] 里供断言。
+/// 假服务端：token 端点 + profile 端点 + social providers 端点。返回的请求都留在 [requests] 里供断言。
 class _FakeAuthServer {
-  _FakeAuthServer({this.profileStatus = 200, this.wechatTokenError});
+  _FakeAuthServer({
+    this.profileStatus = 200,
+    this.wechatTokenError,
+    this.socialProviders,
+    this.socialProvidersStatus = 200,
+  });
 
   final int profileStatus;
 
   /// 非空时，微信扩展 grant 的 /oauth/token 请求回 400 {error: <该值>}。
   final String? wechatTokenError;
 
+  /// 非空时，`/auth/social/providers` 返回该列表。
+  final List<String>? socialProviders;
+
+  /// `/auth/social/providers` 响应状态码。
+  final int socialProvidersStatus;
+
   final List<http.Request> requests = [];
 
   MockClient get client => MockClient((request) async {
     requests.add(request);
+    if (request.url.path.endsWith('/auth/social/providers')) {
+      if (socialProvidersStatus != 200) {
+        return http.Response('{}', socialProvidersStatus);
+      }
+      if (socialProviders != null) {
+        return _json({'providers': socialProviders});
+      }
+    }
     if (request.url.path.endsWith('/oauth/token')) {
       final body = Uri.splitQueryString(request.body);
       final isWechatGrant = body['grant_type'] == OAuthConfig.wechatGrantType;
@@ -127,8 +146,15 @@ _buildAuth({
   bool launcherSupported = true,
   Duration launchDelay = Duration.zero,
   int profileStatus = 200,
+  List<String>? socialProviders,
+  int socialProvidersStatus = 200,
+  Set<String>? initialSocialProviders,
 }) {
-  final server = _FakeAuthServer(profileStatus: profileStatus);
+  final server = _FakeAuthServer(
+    profileStatus: profileStatus,
+    socialProviders: socialProviders,
+    socialProvidersStatus: socialProvidersStatus,
+  );
   final launcher = _EchoLauncher(
     stateOverride: stateOverride,
     cancelled: cancelled,
@@ -145,6 +171,7 @@ _buildAuth({
     oauthClient: client,
     launcher: launcher,
     secureStore: secure,
+    initialSocialProviders: initialSocialProviders,
   );
   return (auth: auth, server: server, launcher: launcher, secure: secure);
 }
@@ -206,9 +233,15 @@ _buildWechatAuth({
   String? wechatTokenError,
   _FakeWechatGateway? wechatGateway,
   String oauthClientId = 'test-client',
+  Duration launchDelay = Duration.zero,
+  List<String>? socialProviders,
+  Set<String>? initialSocialProviders,
 }) {
-  final server = _FakeAuthServer(wechatTokenError: wechatTokenError);
-  final launcher = _EchoLauncher();
+  final server = _FakeAuthServer(
+    wechatTokenError: wechatTokenError,
+    socialProviders: socialProviders,
+  );
+  final launcher = _EchoLauncher(launchDelay: launchDelay);
   final secure = InMemorySecureStore();
   final config = oauthClientId == 'test-client'
       ? kStubOAuthConfig.copyWith(wechatAppId: 'wxtest1234567890abcd')
@@ -222,6 +255,7 @@ _buildWechatAuth({
     launcher: launcher,
     wechatGateway: wechat,
     secureStore: secure,
+    initialSocialProviders: initialSocialProviders,
   );
   return (
     auth: auth,
@@ -441,7 +475,11 @@ void main() {
       await pumpLogin(tester, auth);
 
       expect(find.byKey(const Key('login-title')), findsOneWidget);
-      expect(find.byKey(const Key('login-account')), findsOneWidget);
+      expect(
+        find.byKey(const Key('login-account')),
+        findsNothing,
+        reason: '已移除无用的可选账号输入框',
+      );
       expect(
         find.byKey(const Key('login-password')),
         findsNothing,
@@ -464,10 +502,7 @@ void main() {
       await pumpLogin(tester, env.auth, onSignedIn: () => signedIn++);
 
       expect(find.byKey(const Key('login-blocked')), findsNothing);
-      await tester.enterText(
-        find.byKey(const Key('login-account')),
-        'k@example.com',
-      );
+      expect(find.byKey(const Key('login-account')), findsNothing);
       await tester.tap(find.byKey(const Key('login-submit')));
       await tester.pump();
       await tester.pump();
@@ -775,24 +810,39 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('默认构建（未配置微信 AppID）→ 微信按钮隐藏，底部文案不提微信', (tester) async {
-      final env = _buildAuth(); // 未注入微信网关，编译默认 AppID 为空
+    testWidgets('默认构建（审核未通过未配微信 AppID / 社会化渠道未启用）→ 按钮可见但保持 disabled，底部文案不提微信', (tester) async {
+      final env = _buildAuth(); // 未注入微信网关（AppID 为空），且未预热开启 Apple/Google
       addTearDown(env.auth.dispose);
       await pumpLogin(tester, env.auth);
 
-      expect(find.byKey(const Key('login-wechat')), findsNothing);
+      final wechatBtn = find.byKey(const Key('login-wechat'));
+      final appleBtn = find.byKey(const Key('login-apple'));
+      final googleBtn = find.byKey(const Key('login-google'));
+      expect(wechatBtn, findsOneWidget, reason: '审核通过前微信按钮仍展示，但保持 disabled');
+      expect(appleBtn, findsOneWidget, reason: '未开启时 Apple 按钮仍展示，但保持 disabled');
+      expect(googleBtn, findsOneWidget, reason: '未开启时 Google 按钮仍展示，但保持 disabled');
+      expect(tester.widget<OutlinedButton>(wechatBtn).onPressed, isNull);
+      expect(tester.widget<OutlinedButton>(appleBtn).onPressed, isNull);
+      expect(tester.widget<OutlinedButton>(googleBtn).onPressed, isNull);
+      expect(
+        tester.widget<FilledButton>(find.byKey(const Key('login-submit'))).onPressed,
+        isNotNull,
+        reason: '外脑主登录按钮正常可用',
+      );
       expect(
         find.text('登录将在系统浏览器中完成，App 不会获取你的密码。'),
         findsOneWidget,
       );
     });
 
-    testWidgets('微信已配置（缓存未探测）→ 按钮可见，底部文案含微信', (tester) async {
+    testWidgets('微信已配置（缓存未探测）→ 按钮可见且可点击，底部文案含微信', (tester) async {
       final env = _buildWechatAuth();
       addTearDown(env.auth.dispose);
       await pumpLogin(tester, env.auth);
 
-      expect(find.byKey(const Key('login-wechat')), findsOneWidget);
+      final wechatBtn = find.byKey(const Key('login-wechat'));
+      expect(wechatBtn, findsOneWidget);
+      expect(tester.widget<OutlinedButton>(wechatBtn).onPressed, isNotNull);
       expect(
         find.text('授权将在系统浏览器或微信中完成，App 不会获取你的密码。'),
         findsOneWidget,
@@ -832,10 +882,11 @@ void main() {
       expect(find.byKey(const Key('login-blocked')), findsOneWidget);
     });
 
-    testWidgets('微信授权在途 → 微信按钮转圈、浏览器按钮禁用、回车不并发拉浏览器', (tester) async {
+    testWidgets('微信授权在途 → 微信按钮转圈、浏览器/Apple/Google 按钮禁用且不拉浏览器', (tester) async {
       final pending = Completer<WechatAuthorizationCode>();
       final env = _buildWechatAuth(
         wechatGateway: _FakeWechatGateway(onAuthorize: (_) => pending.future),
+        initialSocialProviders: const {'apple', 'google'},
       );
       addTearDown(env.auth.dispose);
       await pumpLogin(tester, env.auth);
@@ -849,12 +900,16 @@ void main() {
         isNull,
         reason: '微信授权期间浏览器登录必须禁用',
       );
-
-      // 账号框回车（旧路径的并发入口）也不得拉起浏览器
-      await tester.enterText(find.byKey(const Key('login-account')), 'k@example.com');
-      tester.widget<TextField>(find.byKey(const Key('login-account')))
-          .onSubmitted!('k@example.com');
-      await tester.pump();
+      expect(
+        tester.widget<OutlinedButton>(find.byKey(const Key('login-apple'))).onPressed,
+        isNull,
+        reason: '微信授权期间 Apple 按钮必须禁用',
+      );
+      expect(
+        tester.widget<OutlinedButton>(find.byKey(const Key('login-google'))).onPressed,
+        isNull,
+        reason: '微信授权期间 Google 按钮必须禁用',
+      );
       expect(env.launcher.lastAuthorizeUrl, isNull);
 
       pending.complete(
@@ -912,6 +967,270 @@ void main() {
         isNotNull,
       );
       expect(env.auth.isSignedIn, isFalse);
+    });
+  });
+
+  group('OAuthClient（login_type 与 /auth/social/providers）', () {
+    test('createAuthorizationRequest：支持透传合法 login_type 并拒绝未知值', () {
+      final client = OAuthClient(
+        config: kStubOAuthConfig,
+        httpClient: MockClient((_) async => http.Response('{}', 500)),
+      );
+      addTearDown(client.close);
+
+      final appleReq = client.createAuthorizationRequest(loginType: 'apple');
+      expect(appleReq.url.queryParameters['login_type'], 'apple');
+
+      final multiReq = client.createAuthorizationRequest(loginType: ' wechat , google ');
+      expect(multiReq.url.queryParameters['login_type'], 'wechat,google');
+
+      expect(
+        () => client.createAuthorizationRequest(loginType: 'unknown_provider'),
+        throwsArgumentError,
+      );
+    });
+
+    test('fetchSocialProviders：过滤合法白名单并规范化错误响应', () async {
+      final okClient = OAuthClient(
+        config: kStubOAuthConfig,
+        httpClient: MockClient(
+          (_) async => http.Response(
+            '{"providers":["Apple","google","unknown_x","alipay"]}',
+            200,
+          ),
+        ),
+      );
+      addTearDown(okClient.close);
+      expect(
+        await okClient.fetchSocialProviders(),
+        equals({'apple', 'google', 'alipay'}),
+      );
+
+      final errClient = OAuthClient(
+        config: kStubOAuthConfig,
+        httpClient: MockClient((_) async => http.Response('fail', 503)),
+      );
+      addTearDown(errClient.close);
+      await expectLater(
+        errClient.fetchSocialProviders(),
+        throwsA(isA<OAuthServerException>()),
+      );
+
+      final badJsonClient = OAuthClient(
+        config: kStubOAuthConfig,
+        httpClient: MockClient((_) async => http.Response('not-json', 200)),
+      );
+      addTearDown(badJsonClient.close);
+      await expectLater(
+        badJsonClient.fetchSocialProviders(),
+        throwsA(isA<OAuthServerException>()),
+      );
+    });
+  });
+
+  group('AuthService（Apple / Google 原生入口与渠道预热）', () {
+    test('prewarmSocialProviders：未开通前按钮可见但 disabled，按服务端返回点亮 enabled，异常不外泄', () async {
+      final env = _buildAuth(socialProviders: ['apple', 'github']);
+      addTearDown(env.auth.dispose);
+
+      expect(env.auth.shouldShowAppleSignIn, isTrue);
+      expect(env.auth.shouldShowGoogleSignIn, isTrue);
+      expect(env.auth.isAppleSignInEnabled, isFalse);
+      expect(env.auth.isGoogleSignInEnabled, isFalse);
+
+      await env.auth.prewarmSocialProviders();
+      expect(env.auth.cachedSocialProviders, equals({'apple', 'github'}));
+      expect(env.auth.isAppleSignInEnabled, isTrue);
+      expect(env.auth.isGoogleSignInEnabled, isFalse);
+
+      // 异常场景：服务端 500 静默吞错、不污染 lastError，按钮保持 disabled
+      final failEnv = _buildAuth(socialProviders: const ['apple'], socialProvidersStatus: 500);
+      addTearDown(failEnv.auth.dispose);
+      await failEnv.auth.prewarmSocialProviders();
+      expect(failEnv.auth.cachedSocialProviders, isNull);
+      expect(failEnv.auth.lastError, isNull);
+      expect(failEnv.auth.shouldShowAppleSignIn, isTrue);
+      expect(failEnv.auth.isAppleSignInEnabled, isFalse);
+    });
+
+    test('socialProvidersOverride 优先于网络探测，不发请求', () async {
+      final server = _FakeAuthServer(socialProviders: const ['github']);
+      final client = OAuthClient(
+        config: kStubOAuthConfig.copyWith(
+          socialProvidersOverride: const {'apple', 'google'},
+        ),
+        httpClient: server.client,
+      );
+      final auth = AuthService(
+        oauthConfig: kStubOAuthConfig.copyWith(
+          socialProvidersOverride: const {'apple', 'google'},
+        ),
+        oauthClient: client,
+        launcher: _EchoLauncher(),
+        secureStore: InMemorySecureStore(),
+      );
+      addTearDown(auth.dispose);
+
+      expect(auth.shouldShowAppleSignIn, isTrue);
+      expect(auth.shouldShowGoogleSignIn, isTrue);
+      expect(auth.isAppleSignInEnabled, isTrue);
+      expect(auth.isGoogleSignInEnabled, isTrue);
+      await auth.prewarmSocialProviders();
+      expect(
+        server.requests.where((r) => r.url.path.endsWith('/auth/social/providers')),
+        isEmpty,
+      );
+    });
+
+    test('signInWithApple / signInWithGoogle：透传 login_type、通道追踪与互斥代次拦截', () async {
+      final env = _buildAuth(
+        launchDelay: const Duration(milliseconds: 20),
+        initialSocialProviders: const {'apple', 'google'},
+      );
+      addTearDown(env.auth.dispose);
+
+      final appleFuture = env.auth.signInWithApple();
+      await Future<void>.delayed(Duration.zero);
+      expect(env.auth.isBusy, isTrue);
+      expect(env.auth.activeChannel, AuthChannel.apple);
+      expect(await env.auth.signInWithGoogle(), '登录正在进行中，请稍候');
+      expect(await env.auth.signInWithOAuth(), '登录正在进行中，请稍候');
+
+      expect(await appleFuture, isNull);
+      expect(env.auth.isSignedIn, isTrue);
+      expect(env.launcher.lastAuthorizeUrl?.queryParameters['login_type'], 'apple');
+
+      // 登出后测 Google，并在途调用 signOut 验证代次作废
+      env.auth.signOut();
+      expect(env.auth.isSignedIn, isFalse);
+
+      final googleFuture = env.auth.signInWithGoogle();
+      await Future<void>.delayed(Duration.zero);
+      expect(env.auth.activeChannel, AuthChannel.google);
+      env.auth.signOut();
+      expect(await googleFuture, isNull);
+      expect(env.auth.isSignedIn, isFalse);
+
+      // 正常完成一次 Google 登录
+      expect(await env.auth.signInWithGoogle(), isNull);
+      expect(env.auth.isSignedIn, isTrue);
+      expect(env.launcher.lastAuthorizeUrl?.queryParameters['login_type'], 'google');
+    });
+  });
+
+  group('登录页（四通道重构与端到端交互流）', () {
+    Future<void> pumpLogin(
+      WidgetTester tester,
+      AuthService auth, {
+      VoidCallback? onSignedIn,
+    }) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(home: _GateHarness(auth: auth, onSignedIn: onSignedIn)),
+      );
+      await tester.pump();
+    }
+
+    testWidgets('四通道全配齐：无账号输入框，主入口与三个原生入口同时展示', (tester) async {
+      final env = _buildWechatAuth(
+        initialSocialProviders: const {'apple', 'google'},
+      );
+      addTearDown(env.auth.dispose);
+      await pumpLogin(tester, env.auth);
+
+      expect(find.byKey(const Key('login-account')), findsNothing);
+      expect(find.text('使用外脑账号登录'), findsOneWidget);
+      expect(find.text('其他登录方式'), findsOneWidget);
+      expect(find.byKey(const Key('login-submit')), findsOneWidget);
+      expect(find.byKey(const Key('login-wechat')), findsOneWidget);
+      expect(find.byKey(const Key('login-apple')), findsOneWidget);
+      expect(find.byKey(const Key('login-google')), findsOneWidget);
+    });
+
+    testWidgets('Apple / Google 点击忙碌态独立转圈，并在途禁用其余三按钮', (tester) async {
+      final env = _buildWechatAuth(
+        launchDelay: const Duration(milliseconds: 300),
+        initialSocialProviders: const {'apple', 'google'},
+      );
+      addTearDown(env.auth.dispose);
+      await pumpLogin(tester, env.auth);
+
+      // 1) 点 Apple
+      await tester.tap(find.byKey(const Key('login-apple')));
+      await tester.pump();
+      expect(find.byKey(const Key('login-apple-busy')), findsOneWidget);
+      expect(find.byKey(const Key('login-google-busy')), findsNothing);
+      expect(tester.widget<FilledButton>(find.byKey(const Key('login-submit'))).onPressed, isNull);
+      expect(tester.widget<OutlinedButton>(find.byKey(const Key('login-wechat'))).onPressed, isNull);
+      expect(tester.widget<OutlinedButton>(find.byKey(const Key('login-google'))).onPressed, isNull);
+
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump();
+      expect(env.auth.isSignedIn, isTrue);
+      expect(env.launcher.lastAuthorizeUrl?.queryParameters['login_type'], 'apple');
+
+      // 2) 登出回到登录页，再点 Google
+      env.auth.signOut();
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('login-google')));
+      await tester.pump();
+      expect(find.byKey(const Key('login-google-busy')), findsOneWidget);
+      expect(tester.widget<OutlinedButton>(find.byKey(const Key('login-apple'))).onPressed, isNull);
+
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump();
+      expect(env.auth.isSignedIn, isTrue);
+      expect(env.launcher.lastAuthorizeUrl?.queryParameters['login_type'], 'google');
+    });
+
+    testWidgets('端到端闭环：未登录 → Apple 登录进 AppShell → 登出回登录页 → 微信登录进 AppShell', (tester) async {
+      final env = _buildWechatAuth(
+        socialProviders: const ['apple', 'google'],
+      );
+      addTearDown(env.auth.dispose);
+      await env.auth.prewarmSocialProviders();
+      var signedInCount = 0;
+      await pumpLogin(tester, env.auth, onSignedIn: () => signedInCount++);
+
+      // Step 1: Apple 登录 → AppShell
+      await tester.tap(find.byKey(const Key('login-apple')));
+      await tester.pump();
+      await tester.pump();
+      expect(env.auth.isSignedIn, isTrue);
+      expect(signedInCount, 1);
+      expect(find.byType(AppShell), findsOneWidget);
+      expect(env.launcher.lastAuthorizeUrl?.queryParameters['login_type'], 'apple');
+
+      // Step 2: 登出回到登录页
+      env.auth.signOut();
+      await tester.pump();
+      expect(find.byType(AppShell), findsNothing);
+      expect(find.byKey(const Key('login-submit')), findsOneWidget);
+      expect(find.byKey(const Key('login-wechat')), findsOneWidget);
+
+      // Step 3: 微信登录 → 再次进入 AppShell
+      await tester.tap(find.byKey(const Key('login-wechat')));
+      await tester.pump();
+      await tester.pump();
+      expect(env.auth.isSignedIn, isTrue);
+      expect(signedInCount, 2);
+      expect(find.byType(AppShell), findsOneWidget);
+    });
+
+    testWidgets('OAuth 服务关闭（clientId 空）→ 四通道按钮全部禁用', (tester) async {
+      final env = _buildWechatAuth(
+        oauthClientId: '',
+        initialSocialProviders: const {'apple', 'google'},
+      );
+      addTearDown(env.auth.dispose);
+      await pumpLogin(tester, env.auth);
+
+      expect(tester.widget<FilledButton>(find.byKey(const Key('login-submit'))).onPressed, isNull);
+      expect(tester.widget<OutlinedButton>(find.byKey(const Key('login-wechat'))).onPressed, isNull);
+      expect(tester.widget<OutlinedButton>(find.byKey(const Key('login-apple'))).onPressed, isNull);
+      expect(tester.widget<OutlinedButton>(find.byKey(const Key('login-google'))).onPressed, isNull);
     });
   });
 }
