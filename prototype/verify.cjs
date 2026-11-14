@@ -440,9 +440,18 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$('[data-testid="auth-wainao-card"]'));
   assert(await p.$('[data-testid="auth-signout-btn"]'));
   assert(await p.$('[data-testid="auth-bind-wechat"]'));
+  assert(await p.$('[data-testid="auth-bind-apple"]'));
   assert(await p.$('[data-testid="auth-bind-google"]'));
   assert(await p.$('[data-testid="auth-bind-github"]'));
   assert(await p.$('[data-testid="auth-bind-facebook"]'));
+  await p.click('[data-testid="auth-open-login-page"]');
+  assert(await p.$eval('#login-gate', x => x.classList.contains('show')));
+  assert(await p.$('[data-testid="login-submit"]'));
+  assert(await p.$('[data-testid="login-wechat"]'));
+  assert(await p.$('[data-testid="login-apple"]'));
+  assert(await p.$('[data-testid="login-google"]'));
+  await p.click('[data-testid="login-gate-close"]');
+  assert.equal(await p.$eval('#login-gate', x => x.classList.contains('show')), false);
   await p.evaluate(() => {
     window.__prevPhotoState = { p: agCfg.photoPerm, a: agCfg.askedPhotoOnRec };
     startPhoneRec(false);
@@ -788,6 +797,33 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   // sessionStorage 同标签页跨刷新保留：窄屏段 1 张 + 宽屏段 1 张
   // demo 卡每次初始化都会补回；这里验证 sessionStorage 里的两张生成卡
   assert.equal(await p.$$eval('.card[data-kind="summary"]:not([data-id="sum-demo"])', x => x.length), 2);
+
+  // 当前版本基线（current.html · App 已有功能）：零 TBC 标记、无睡前日记/做梦卡、含四通道登录页与声纹下载入口
+  const pCur = await b.newPage();
+  await pCur.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 });
+  pCur.on('pageerror', e => errors.push('current.html: ' + e.message));
+  pCur.on('request', r => { if (!r.url().startsWith('file:') && !r.url().startsWith('data:')) net.push(r.url()) });
+  await pCur.goto(pathToFileURL(path.join(__dirname, 'current.html')).href);
+  assert.equal(await pCur.title(), '当前版本 · 录音卡（App 已有功能）');
+  assert.equal(await pCur.$eval('[data-testid="parity-btn"]', x => x.innerText.trim()), '当前版本 · App已有');
+  assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0, 'current.html 不应出现 TBC 标记');
+  assert.equal(await pCur.$$eval('.card[data-kind="daily"], .card[data-kind="dream"]', x => x.length), 0);
+  assert(!(await pCur.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
+  await pCur.click('[data-testid="nav-setting"]');
+  await pCur.evaluate(() => { agCfg.local.spk = 'none'; syncSetSummary(); });
+  await pCur.click('[data-testid="set-voiceprint"]');
+  assert(await pCur.$('[data-testid="voiceprint-install-btn"]'));
+  await pCur.click('[data-testid="voiceprint-install-btn"]');
+  await pCur.waitForFunction(() => agCfg.local.spk === 'ready', { timeout: 3000 });
+  assert.equal(await pCur.$('[data-testid="voiceprint-install-btn"]'), null);
+  await pCur.click('[data-testid="crumb-back"]');
+  await pCur.click('[data-testid="set-auth-entry"]');
+  await pCur.click('[data-testid="auth-open-login-page"]');
+  assert(await pCur.$eval('#login-gate', x => x.classList.contains('show')));
+  await pCur.click('[data-testid="login-apple"]');
+  assert.equal(await pCur.$eval('#login-gate', x => x.classList.contains('show')), false);
+  assert.equal(await pCur.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await pCur.close();
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));

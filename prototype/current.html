@@ -1,0 +1,1046 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>当前版本 · 录音卡（App 已有功能）</title><style>:root{--bg:#FAFAF8;--card:#fff;--label:#1D1D1F;--ink:#3C3C43;--sec:#8A8A8E;--sep:#E4E4E0;--ax:#C9C9C4;--ok:#34C759;--ok-ink:#1F7A34}*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}html{height:100%}body{font-family:-apple-system,"SF Pro Text","PingFang SC",sans-serif;background:var(--bg);color:var(--label);min-height:100vh;display:flex;flex-direction:column;overflow-x:hidden}.col{display:contents}header.app{position:sticky;top:0;z-index:30;flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;height:calc(env(safe-area-inset-top) + 52px);padding:0 16px 0 22px;background:rgba(250,250,248,.92);backdrop-filter:blur(10px)}[hidden]{display:none!important}body.sub main.panel{display:none}header.app h1{font-size:20px;font-weight:700;letter-spacing:-.2px}.crumb{background:none;border:none;color:var(--label);font-size:17px;font-weight:600;font-family:inherit;cursor:pointer;min-height:36px;min-width:44px;padding:0 6px 0 0;display:flex;align-items:center;letter-spacing:-.2px}.crumb .chev{font-size:22px;font-weight:400;margin-right:2px;line-height:1;transform:translateY(-1px)}.capsule{display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--sep);border-radius:999px;padding:5px 12px;font-size:12px;color:var(--ink);min-height:30px;cursor:pointer;font-family:inherit;flex:none}.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none;animation:pulse 2.4s ease-in-out infinite}.dot.big{width:10px;height:10px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}main,section.sub{flex:1;padding:0 22px calc(env(safe-area-inset-bottom) + 96px)}.panel{display:none}.panel.show{display:block}#empty-pane{display:none}.tl-head{display:flex;justify-content:space-between;align-items:center;margin:16px 0 18px}.tl-head h2{font-size:24px;font-weight:700;letter-spacing:-.3px}.btn-sum{background:transparent;color:var(--label);border:1px solid var(--label);border-radius:999px;padding:6px 16px;font-size:13px;min-height:32px;font-family:inherit;cursor:pointer}.tabs{display:flex;gap:18px;margin:0 0 16px;border-bottom:1px solid var(--sep)}.tabs button{background:none;border:none;font-size:13px;color:var(--sec);padding:6px 0 10px;border-bottom:2px solid transparent;font-family:inherit;cursor:pointer}.tabs button.on{color:var(--label);border-bottom-color:var(--label);font-weight:600}.tl-date{font-size:15px;font-weight:700;margin:0 0 14px}.tl-item{position:relative;padding-left:26px;display:flow-root}.tl-item::before{content:"";position:absolute;left:4.5px;top:0;bottom:0;width:1px;background:var(--sep)}.tl-item.first::before{top:9px}.tl-item.last::before{bottom:auto;height:9px}.tl-item.only::before{display:none}.tl-node{position:absolute;left:0;top:8px;width:10px;height:10px;border-radius:50%;background:var(--bg);border:1.5px solid var(--ax)}.card{margin-bottom:36px;cursor:pointer;position:relative}.card h3{font-size:17px;font-weight:600;margin-bottom:4px;letter-spacing:-.1px}.when{font-size:12px;color:var(--sec);letter-spacing:.1px}.exp{display:none;margin-top:10px;font-size:14px;line-height:1.7;color:var(--ink)}.card.open .exp{display:block}.exp .note{font-size:11px;color:var(--sec);margin-top:6px}.meta{display:none;flex-wrap:wrap;gap:6px 12px;font-size:11px;color:var(--sec);margin-top:8px}.card.open .meta{display:flex}.tag{background:rgba(0,0,0,.05);border-radius:5px;padding:1px 7px}.btn-line{display:flex;align-items:center;gap:14px;margin-top:12px}.btn{background:var(--label);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-size:13px;min-height:36px;font-family:inherit;cursor:pointer}.btn.ghost{background:transparent;color:var(--label);border:1px solid var(--sep)}.rangebar{display:none;align-items:center;gap:8px;margin:14px 0 16px;flex-wrap:wrap}.rangebar.show{display:flex}.rangebar .rl{font-size:12px;color:var(--sec)}.rangebar .chip{background:transparent;border:1px solid var(--sep);border-radius:999px;padding:5px 12px;font-size:12px;color:var(--label);min-height:28px;font-family:inherit;cursor:pointer}.card.pick{display:flex;gap:10px;align-items:flex-start}.card.pick input[type=checkbox]{width:20px;height:20px;accent-color:var(--label);margin-top:2px;flex:none;pointer-events:none}.card.pick .pc{flex:1}.sumcard{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:12px 14px}.sumcard h3{font-size:15px}.sumcard .exp .note{font-size:12px;color:var(--sec);margin-top:6px}.sumbar{position:fixed;left:0;right:0;margin:0 auto;width:calc(100% - 24px);max-width:560px;bottom:calc(env(safe-area-inset-bottom) + 64px);display:none;background:var(--card);border:1px solid var(--sep);border-radius:14px;padding:12px 14px;z-index:40;box-shadow:0 4px 18px rgba(0,0,0,.08)}.sumbar.show{display:block}.sumbar .row1{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;font-weight:600;margin-bottom:10px}.sumbar .row1 .b{font-size:12px;color:var(--sec);font-weight:400}.sumbar .row2{display:flex;gap:10px}.sumbar .row2 .btn{flex:1}.ph{padding:14px 0 0}.ph h2{font-size:22px;font-weight:700;letter-spacing:-.3px;margin-bottom:6px}.pmeta{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--sec);margin-bottom:12px;align-items:center}.pnote{font-size:12px;color:var(--sec);line-height:1.6;padding:12px 0}.turn{display:flex;gap:10px;margin-bottom:16px}.ava{width:28px;height:28px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#fff;background:var(--label)}.ava.b{background:var(--sec)}.bubble{flex:1;min-width:0}.who{font-size:12px;color:var(--sec);margin-bottom:4px}.who b{color:var(--label);font-weight:600}.txt{font-size:15px;line-height:1.75;color:var(--label);background:var(--card);border:1px solid var(--sep);border-radius:4px 14px 14px 14px;padding:10px 14px;display:inline-block;max-width:100%}.rawaudio{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:8px 12px;margin-bottom:18px;min-height:44px}
+.rawaudio.cleared{color:var(--sec);font-size:12.5px;gap:8px}
+.raico{font-size:14px;color:var(--ax)}
+.raplay{width:44px;height:44px;flex:none;border:none;background:transparent;font-size:15px;color:var(--label);cursor:pointer;font-family:inherit}
+.rameta{flex:1;min-width:0}
+.ratime{font-size:12px;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:.2px}
+.rastate{font-size:11.5px;color:var(--sec);margin-top:2px}
+.rastate.warn{color:#FF9500}
+.radel{border:none;background:transparent;color:var(--sec);font-size:12px;font-family:inherit;min-width:44px;min-height:44px;cursor:pointer}
+.pnote-short{padding:8px 0 10px}
+.rawline{margin-bottom:18px;padding-left:12px;border-left:2px solid var(--sep)}.rawline .txt{white-space:pre-wrap;font-size:14px;line-height:1.8;margin-top:2px}.warn{font-size:12px;color:var(--sec);padding:0 0 12px;line-height:1.6}.set-group{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:4px 16px;margin-bottom:14px}.switchrow{display:flex;justify-content:space-between;align-items:center;padding:13px 0;border-bottom:1px solid var(--sep);font-size:14px}.switchrow:last-child{border:none}.set-title{font-size:12px;color:var(--sec);margin:20px 0 8px}.sw{width:50px;height:30px;border-radius:999px;background:rgba(120,120,128,.32);position:relative;transition:.2s;flex:none}.sw.on{background:var(--label)}.sw::after{content:"";position:absolute;top:2px;left:2px;width:26px;height:26px;border-radius:50%;background:#fff;transition:.2s}.sw.on::after{left:22px}.about{font-size:13px;color:var(--sec);line-height:1.7;padding:12px 2px}.about strong{color:var(--label)}.mdbox{background:var(--card);border:1px solid var(--sep);border-radius:12px;margin:12px 0;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:pre-wrap;line-height:1.6}.act{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--sep);border-radius:12px;margin:8px 0;padding:12px 14px;font-size:14px}.act input{width:20px;height:20px;accent-color:var(--label)}.counter{padding:4px 0;font-size:12px;color:var(--sec)}button:disabled{opacity:.35}.tabs2{display:flex;gap:18px;padding:0;margin:4px 0 0;border-bottom:1px solid var(--sep)}.tabs2 button{background:none;border:none;font-size:13px;color:var(--sec);padding:4px 0 10px;border-bottom:2px solid transparent;font-family:inherit;cursor:pointer}.tabs2 button.on{color:var(--label);border-bottom-color:var(--label);font-weight:600}#sum-ix{padding-top:12px}details.dec{background:var(--card);border:1px solid var(--sep);border-radius:12px;margin:8px 0;padding:10px 14px;font-size:14px}details.dec summary{cursor:pointer;font-weight:600;min-height:28px;display:flex;align-items:center}details.dec .dec-body{margin-top:8px;font-size:13px;color:var(--ink);display:flex;gap:10px;align-items:flex-start}details.dec .dec-body input{width:20px;height:20px;accent-color:var(--label);margin-top:2px;flex:none}nav.bottom{position:fixed;bottom:0;left:0;width:100%;background:rgba(250,250,248,.92);backdrop-filter:blur(10px);border-top:1px solid var(--sep);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:30}nav.bottom button{flex:1;background:none;border:none;font-size:11px;color:var(--sec);padding:8px 0 6px;min-height:52px;display:flex;flex-direction:column;align-items:center;gap:2px;font-family:inherit;cursor:pointer}nav.bottom button.on{color:var(--label)}body.sub nav.bottom{display:none}.sheet-wrap{position:fixed;inset:0;z-index:50;display:none}.sheet-wrap.show{display:block}.backdrop{position:absolute;inset:0;background:rgba(0,0,0,.4)}.sheet{position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:560px;background:var(--card);border-radius:16px 16px 0 0;padding:18px 20px calc(env(safe-area-inset-bottom) + 20px)}.sheet h2{font-size:16px;margin-bottom:12px}.sheet .row{display:flex;justify-content:space-between;font-size:13px;padding:14px 0;border-bottom:1px solid var(--sep)}
+.row.act-row{cursor:pointer}
+.row.act-row:active{opacity:.55}
+.rowchev{color:var(--ax);margin-left:8px;font-size:15px;font-weight:400;flex:none}
+.capsule .dot{transform:translateY(1px)}.sheet .row>span:first-child{color:var(--sec);flex:none}
+.sheet .row>span:last-child{flex:1;min-width:0;display:inline-flex;align-items:center;justify-content:flex-end;gap:8px;text-align:right;white-space:nowrap;overflow:hidden;padding-left:12px}
+.fwupd{background:none;border:none;padding:0;color:var(--label);font-weight:600;font-size:inherit;font-family:inherit;cursor:pointer}
+.gencard{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:16px 14px;margin-top:6px}
+.genline{display:flex;justify-content:space-between;font-size:12px;color:var(--sec);margin-top:10px}
+.genstep{font-size:13px;color:var(--ink);margin-top:8px;min-height:18px}
+/* v9：状态页细节 + 电池胶囊 */
+.batt{display:inline-flex;color:var(--ok);vertical-align:-2px}
+.batt svg{display:block}
+.batt-fill{fill:currentColor}
+.batt .batt-bolt{display:none}
+.batt.charging .batt-bolt{display:block}
+@keyframes battBreathe{0%,100%{opacity:.32}50%{opacity:.95}}
+.batt.charging .batt-fill{animation:battBreathe 1.6s ease-in-out infinite}
+.batt.lv-mid{color:#FF9500}
+.batt.lv-low{color:#FF3B30}
+.recdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#FF3B30;animation:pulse 1.2s ease-in-out infinite}
+.recval{display:inline-flex;align-items:center;gap:7px}
+.clock{display:inline-block;min-width:62px;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums}
+.syncico{display:inline-block;margin-right:5px;vertical-align:-1px;color:var(--ok);font-style:normal;animation:spin 2.4s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.upg-warn{font-size:12px;color:#B25000;background:rgba(255,149,0,.12);border-radius:8px;padding:8px 10px;margin-top:10px;line-height:1.6}
+/* v11：Wi-Fi 二级页 */
+.viewhead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.vback{background:none;border:none;color:var(--label);font-size:20px;line-height:1;min-height:32px;min-width:32px;padding:0;font-family:inherit;cursor:pointer}
+.wstate{font-size:12px;color:var(--sec);padding:10px 0;border-bottom:1px solid var(--sep)}
+.witem{display:flex;justify-content:space-between;align-items:center;padding:13px 0;border-bottom:1px solid var(--sep);cursor:pointer;font-size:14px}
+.witem:active{opacity:.6}
+.wname{font-weight:500}
+.wchip{margin-left:8px;font-size:10px;color:var(--ok-ink);background:rgba(52,199,89,.15);border-radius:999px;padding:2px 8px;vertical-align:2px}
+.wmeta{display:flex;align-items:center;gap:8px;color:var(--sec);font-size:12px}
+.sig{display:inline-flex;align-items:flex-end;gap:2px}
+.sbar{width:3px;border-radius:1px;background:var(--ax);display:block}
+.sbar.on{background:var(--label)}
+.wnote{font-size:11px;color:var(--sec);padding:10px 0;line-height:1.6}
+.wform{border:1px solid var(--sep);border-radius:12px;padding:12px 14px;margin:10px 0}
+.winput{width:100%;border:1px solid var(--sep);border-radius:9px;padding:10px 12px;font-size:14px;font-family:inherit;margin:10px 0}
+.wbtns{display:flex;gap:10px}
+.wbtns .btn{flex:1}
+/* v12：已保存置顶 + 范围外置灰 */
+.wsec{font-size:12px;font-weight:600;color:var(--sec);margin:14px 0 2px}
+.wsplit{height:1px;background:var(--sep);margin:16px 0 2px}
+.wmore{display:block;width:100%;background:none;border:none;color:var(--ink);font-size:13px;min-height:40px;padding:0;font-family:inherit;cursor:pointer;text-align:left}
+.witem.off{opacity:.4;cursor:default}
+.witem.off:active{opacity:.4}
+.wchip2{margin-left:8px;font-size:10px;color:var(--sec);background:rgba(0,0,0,.06);border-radius:999px;padding:2px 8px;vertical-align:2px}
+/* v13：吸顶 tab 栏 + 目录浮钮 + 同步状态动画 */
+.stickbar{position:sticky;top:calc(env(safe-area-inset-top) + 52px);z-index:6;display:flex;align-items:center;gap:8px;background:var(--bg);padding-top:2px}
+#p-sumres .tabs.stabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0}
+.stabs::-webkit-scrollbar{display:none}
+.stabs button{white-space:nowrap;flex:none}
+.toc-pill{background:transparent;border:1px solid var(--sep);border-radius:999px;padding:5px 12px;font-size:12px;min-height:28px;font-family:inherit;cursor:pointer;color:var(--label);flex:none}
+/* v14：目录归属内容区右上角（不占 tab 行） */
+.tochold{position:sticky;z-index:5;height:0;display:flex;justify-content:flex-end;pointer-events:none;padding-right:8px;margin-top:10px;top:calc(env(safe-area-inset-top) + 98px)}
+.tocwrap{position:relative;pointer-events:auto}
+.tocwrap .toc-pop{top:calc(100% + 6px);right:0}
+.spin{display:inline-flex;animation:spin 1s linear infinite;color:var(--ink);flex:none}
+.spin svg{display:block}
+.syncidle{display:inline-flex;color:var(--sec);flex:none}
+.syncidle svg{display:block}
+.okcheck{display:inline-block;color:var(--ok);font-weight:700;animation:pop .3s ease}
+@keyframes pop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
+/* v7：路由栈扁平化 + 面板内返回（宽屏） */
+.phrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.paneback{display:none;background:none;border:none;color:var(--label);font-size:14px;font-weight:600;min-height:32px;padding:0 2px;font-family:inherit;cursor:pointer;flex:none}
+body.sub header.app h1{display:none}.sheet .lbl{font-size:11px;color:var(--sec);margin:12px 0}.sheet .sub{font-size:12px;color:var(--sec);line-height:1.6;padding:8px 0;border-bottom:1px solid var(--sep)}.sheet .btn{width:100%;margin-top:10px}.sheet .actions{display:flex;gap:10px;margin-top:12px}.sheet .actions .btn{margin:0}.state{font-size:12px;color:var(--ink);margin-top:8px;min-height:16px}.devhead{display:flex;align-items:center;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--sep)}.devhead h2{margin:0;font-size:17px}.devhead .devsub{font-size:12px;color:var(--sec);margin-top:2px}.chip-ok{margin-left:auto;font-size:11px;color:var(--ok-ink);background:rgba(52,199,89,.15);border-radius:999px;padding:3px 10px;flex:none}.upg-notes{font-size:13px;color:var(--ink);line-height:1.8;padding:10px 0;border-bottom:1px solid var(--sep)}.prog{margin-top:12px}.bar{height:6px;border-radius:999px;background:rgba(120,120,128,.2);overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--label);border-radius:999px;transition:width .45s ease}/* v4：生成进度卡 + 渲染式总结视图 + 目录导航 */
+.cardprog{margin-top:10px;height:4px;border-radius:999px;background:rgba(120,120,128,.2);overflow:hidden}
+.cardprog i{display:block;height:100%;width:0;background:var(--label);border-radius:999px;transition:width .25s ease}
+.toc-btn{position:absolute;right:0;top:16px;background:transparent;border:1px solid var(--sep);border-radius:999px;padding:5px 12px;font-size:12px;min-height:28px;font-family:inherit;cursor:pointer;color:var(--label)}
+.toc-pop{position:absolute;right:0;top:44px;background:var(--card);border:1px solid var(--sep);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px;min-width:150px;z-index:20;transform-origin:top right;animation:tocin .18s ease}
+.toc-pop button{display:block;width:100%;text-align:left;background:none;border:none;font-size:13px;padding:9px 12px;border-radius:8px;color:var(--label);font-family:inherit;cursor:pointer}
+.toc-pop button:active{background:rgba(0,0,0,.05)}
+@keyframes tocin{from{transform:scale(.55) translate(24%,-24%);opacity:0}to{transform:scale(1) translate(0,0);opacity:1}}
+.rsec{margin:20px 0 6px;scroll-margin-top:96px}
+.rsec h3{font-size:15px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:10px}
+.rsec p.ov{font-size:14px;line-height:1.8;color:var(--ink);background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:12px 14px}
+.map{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:14px}
+.mroot{display:inline-block;background:var(--label);color:#fff;border-radius:9px;padding:6px 14px;font-size:13px;font-weight:600}
+.mtree{margin-top:12px;margin-left:10px;padding-left:14px;border-left:2px solid var(--sep);display:flex;flex-direction:column;gap:12px}
+.mbranch{position:relative;padding-left:14px}
+.mbranch::before{content:"";position:absolute;left:-14px;top:14px;width:14px;height:2px;background:var(--sep)}
+.mnode{display:inline-block;background:rgba(0,0,0,.06);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600}
+.mleaves{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.mleaf{font-size:11px;color:var(--ink);background:var(--bg);border:1px solid var(--sep);border-radius:999px;padding:3px 10px}
+.pt-item{display:flex;gap:10px;font-size:14px;line-height:1.7;color:var(--ink);padding:5px 0}
+.ptdot{width:6px;height:6px;border-radius:50%;background:var(--ax);flex:none;margin-top:9px}
+.todo-cnt{font-size:12px;color:var(--sec);font-weight:400}
+.todo{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:2px 14px}
+.todo .act{margin:8px 0;border:none;border-bottom:1px solid var(--sep);border-radius:0;background:none}
+.todo .act:last-child{border:none}
+.src-foot{font-size:11px;color:var(--sec);margin-top:18px;line-height:1.7}
+/* v5：结果页 Tab 结构 + 信息点溯源 + 导出 */
+.stabs{margin-top:2px}
+.ssec{display:none}
+.ssec.on{display:block}
+.pt{background:var(--card);border:1px solid var(--sep);border-radius:12px;margin-bottom:10px;overflow:hidden}
+.pt-h{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;cursor:pointer;font-size:14px;font-weight:600;line-height:1.6}
+.pt-h .chev{color:var(--sec);flex:none;transition:transform .2s;font-weight:400}
+.pt.open .pt-h .chev{transform:rotate(180deg)}
+.pt-b{display:none;padding:2px 14px 12px;border-top:1px solid var(--sep)}
+.pt.open .pt-b{display:block}
+.pt-d{font-size:13px;line-height:1.8;color:var(--ink);padding-top:10px}
+.pt-srcs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.srcchip{background:var(--bg);border:1px solid var(--sep);border-radius:999px;padding:4px 10px;font-size:11px;color:var(--ink);font-family:inherit;cursor:pointer}
+.srclist .srcitem,.refbox .srcitem{display:flex;flex-direction:column;gap:3px;align-items:flex-start;width:100%;text-align:left;background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:12px 14px;margin-bottom:10px;cursor:pointer;font-family:inherit}
+.srcitem b{font-size:14px;font-weight:600}
+.srcitem span{font-size:12px;color:var(--sec)}
+.refbox{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:10px 14px;margin:14px 0}
+.refhead{background:none;border:none;font-size:13px;font-weight:600;color:var(--label);min-height:32px;font-family:inherit;cursor:pointer}
+.toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 84px);transform:translateX(-50%) translateY(8px);background:var(--label);color:#fff;border-radius:999px;padding:8px 16px;font-size:12px;z-index:60;opacity:0;pointer-events:none;transition:.25s}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media (min-width:720px){body{display:grid;grid-template-rows:56px minmax(0,1fr) 56px;grid-template-columns:minmax(340px,44%) 1fr;grid-template-areas:"header header" "root side" "nav nav";max-width:1280px;margin:0 auto;height:100vh;overflow:hidden}.col{display:block;min-height:0}header.app{position:static;grid-area:header;height:56px;padding:0 24px;border-bottom:1px solid var(--sep);backdrop-filter:none;background:var(--bg)}body.sub main.panel.show{display:block}#rootcol{grid-area:root;overflow-y:auto}#sidecol{grid-area:side;overflow-y:auto;border-left:1px solid var(--sep)}main{height:100%;padding:8px 24px 28px}section.sub{height:100%;padding:8px 28px 40px}#empty-pane{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;height:100%;color:var(--sec);text-align:center;padding:24px}body.sub #empty-pane{display:none}.e-ico{font-size:34px;color:var(--ax)}.e-t{font-size:16px;font-weight:600;color:var(--ink)}.e-s{font-size:13px;line-height:1.6}nav.bottom{position:static;grid-area:nav;transform:none;backdrop-filter:none;height:56px;padding-bottom:0;border-top:1px solid var(--sep)}body.sub nav.bottom{display:flex}.sumbar{max-width:calc(44% - 12px)}header.app .crumb{display:none!important}body.sub header.app h1{display:block!important}.paneback{display:inline-flex}.stickbar{top:0}.rsec{scroll-margin-top:40px}.tochold{top:48px}}.capsule.off .dot{background:var(--ax)}
+.capsule.idle .dot{background:#FF9500}
+.capsule.off .batt{display:none}
+.capsule-none{font-size:12px;color:var(--sec);white-space:nowrap}
+.capsule.off .capsule-none{display:inline}
+.capsule:not(.off) .capsule-none{display:none}
+/* 掉线后自动重连：蓝点 + 「连接中…」，重连一次失败即回灰「无设备」 */
+.capsule.retry .dot{background:#007AFF;animation:none}
+.capsule-retry{font-size:12px;color:var(--sec);white-space:nowrap;display:none}
+.capsule.retry .capsule-retry{display:inline}
+.capsule.retry .batt,.capsule.retry .capsule-none{display:none}
+.capsule-phonerec{font-size:12px;color:var(--label);font-weight:600;white-space:nowrap;display:none}
+.capsule.phonerec .dot{background:var(--ok)}
+.capsule.phonerec .capsule-phonerec{display:inline}
+.capsule.phonerec .batt,.capsule.phonerec .capsule-none,.capsule.phonerec .capsule-retry{display:none}
+.chip-off{margin-left:auto;font-size:11px;color:var(--sec);background:rgba(0,0,0,.05);border-radius:999px;padding:3px 10px;flex:none}
+.recvalwrap{display:flex;align-items:center;gap:10px}
+.recval .recon{display:inline-flex;align-items:center;gap:7px;transition:opacity .2s ease}
+.recval:not(.on) .recon{display:none}
+.recval.on #rec-off{display:none}
+.conn-hint{font-size:15px;font-weight:600;margin:14px 0 4px}
+.conn-sub{font-size:12px;color:var(--sec);margin-bottom:10px;line-height:1.6}
+.conn-item{display:flex;align-items:center;gap:10px;border:1px solid var(--sep);border-radius:10px;padding:10px 12px;margin:8px 0;cursor:pointer}
+.conn-item .cn{font-size:14px;font-weight:600;flex:1}
+.conn-item .cm{font-size:12px;color:var(--ok-ink);display:flex;align-items:center;gap:8px}
+.live{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--sep);border-radius:12px;padding:10px 14px;margin:6px 0 14px}
+.live b{font-size:13px;font-weight:600}
+.live .lsub{font-size:12px;color:var(--sec);margin-left:auto;white-space:nowrap}
+.sumchev{color:var(--ax);font-size:16px;line-height:1.1}
+.sum-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.sum-head h3{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:0}
+.sum-side{display:flex;flex-direction:column;align-items:flex-end;gap:1px;flex:none}
+.sumphotos{font-size:11px;color:var(--sec);white-space:nowrap}
+.dreamcard{background:linear-gradient(135deg,#F3F0FF 0%,#FBF8FF 60%,#fff 100%);border:1px solid #E4DCF7;border-radius:12px;padding:12px 14px}
+.dream-head{display:flex;align-items:center;gap:8px}
+.dream-ico{color:#6B5AA6;font-size:16px}
+.dream-badge{margin-left:auto;font-size:11px;color:#5B4B8A;background:#EDE7FF;border-radius:999px;padding:2px 8px;flex:none}
+.unccard{border:1px dashed var(--ax);background:var(--card);border-radius:12px;padding:12px 14px}
+.unccount{font-size:11px;color:var(--sec);flex:none}
+.unccard .pstack{display:block;margin-top:10px}
+.dailycard{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:12px 14px}
+.dphoto{display:flex;gap:10px;margin:0 0 16px 38px;align-items:flex-start}
+.dphoto img{width:120px;height:90px;object-fit:cover;border-radius:10px;border:1px solid var(--sep);display:block}
+.dphoto-side{display:flex;flex-direction:column;gap:6px;padding-top:2px}
+.dphoto-x{border:1px solid var(--sep);background:transparent;border-radius:999px;font-size:11px;color:var(--sec);padding:3px 9px;font-family:inherit;cursor:pointer}
+.dphoto-x:hover{color:#FF3B30;border-color:#FFB3AE}
+.live .ldot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+.live.rec .ldot{background:#FF3B30;animation:pulse 1s ease-in-out infinite alternate}
+.pc-head{display:flex;align-items:flex-start;gap:10px}
+.pc-text{flex:1;min-width:0}
+.pc-text h3{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pc-text .when{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pstack{position:relative;flex:none;height:45px}
+.pthumb{position:absolute;top:0;width:45px;height:45px;border-radius:8px;overflow:hidden;border:2px solid var(--bg);box-shadow:0 1px 2px rgba(0,0,0,.12);background:var(--sep)}
+.pthumb img{width:100%;height:100%;object-fit:cover;display:block}
+.pthumb.count::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.45)}
+.pcount{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700;z-index:2}
+/* v15：App 反向同步（Setting V2 / 三硬件能力裁剪 / 断连与重连 / Sticky 拖拽播放器）+ 未实现项 TBC 标记 */
+.hdr-right{display:flex;align-items:center;gap:8px;flex:none}
+.parity-pill{display:inline-flex;align-items:center;gap:5px;background:#EDF7F0;border:1px solid #B7DFC2;color:#1F7A34;border-radius:999px;padding:4px 10px;font-size:11.5px;font-weight:600;min-height:28px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.parity-pill:active{opacity:.7}
+.tbc-badge{display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;letter-spacing:.4px;color:#9A4B00;background:#FFF1D6;border:1px solid #F2C97D;border-radius:999px;padding:1px 7px;line-height:1.45;vertical-align:middle;flex:none}
+.tbc-banner{display:flex;align-items:flex-start;gap:8px;background:#FFF8EB;border:1px solid #F3D59B;border-radius:10px;padding:9px 12px;margin:8px 0 12px;font-size:12px;line-height:1.55;color:#7A3E00}
+.tl-syncbar{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:9px 12px;margin:0 0 16px;font-size:12px;color:var(--ink)}
+.tl-sync-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.tl-sync-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px dashed var(--sep)}
+.mini-chip{background:var(--bg);border:1px solid var(--sep);border-radius:999px;padding:3px 9px;font-size:11px;color:var(--ink);cursor:pointer;font-family:inherit}
+.mini-chip.on{background:var(--label);color:#fff;border-color:var(--label)}
+.navrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 0;border-bottom:1px solid var(--sep);font-size:14px;cursor:pointer}
+.navrow:last-child{border-bottom:none}
+.navrow:active{opacity:.6}
+.navlbl{display:flex;align-items:center;gap:6px;min-width:0;flex:1}
+.navval{display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--sec);flex:none;max-width:52%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rowlbl{display:inline-flex;align-items:center;gap:6px}
+.subcard{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:12px 16px;margin:10px 0 14px}
+.subcard h4{font-size:14px;font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.subcard p{font-size:12.5px;color:var(--sec);line-height:1.6}
+.optrow{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--sep);cursor:pointer}
+.optrow:last-child{border-bottom:none}
+.optmain b{font-size:14px;font-weight:600;display:flex;align-items:center;gap:6px}
+.optmain span{display:block;font-size:12px;color:var(--sec);margin-top:2px;line-height:1.5}
+.optradio{width:18px;height:18px;border-radius:50%;border:1.6px solid var(--ax);flex:none;margin-top:2px;position:relative}
+.optrow.on .optradio{border-color:var(--label);background:var(--label)}
+.optrow.on .optradio::after{content:"";position:absolute;inset:4px;border-radius:50%;background:#fff}
+.pchips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 12px}
+.pchip{background:var(--card);border:1px solid var(--sep);border-radius:999px;padding:6px 13px;font-size:12.5px;cursor:pointer;font-family:inherit;color:var(--label)}
+.pchip.on{background:var(--label);color:#fff;border-color:var(--label)}
+.prompt-ta{width:100%;min-height:92px;border:1px solid var(--sep);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.6;font-family:inherit;background:var(--bg);color:var(--label);resize:vertical;margin-top:6px}
+.ext-tag{font-size:10px;font-weight:600;padding:1px 6px;border-radius:5px;background:rgba(0,0,0,.06);color:var(--ink)}
+.cbadge{font-size:11px;color:var(--ink);background:rgba(0,0,0,.06);border:1px solid transparent;border-radius:999px;padding:2px 8px;font-weight:600;margin-left:0;margin-right:6px;white-space:nowrap;flex:none}
+.cbadge.k-v1{background:#FFFFFF;color:#1D1D1F;border-color:#D2D2CE}
+.cbadge.k-v2{background:#1D1D1F;color:#FFFFFF;border-color:#1D1D1F}
+.cbadge.k-kb{background:#E8F2FF;color:#1456B8;border-color:#BBD8FF}
+.bt-ico{display:inline-flex;align-items:center;color:var(--sec);vertical-align:-2px;margin-right:4px}
+.disc-btn{background:none;border:none;border-radius:8px;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:var(--sec);flex:none;margin-left:auto;padding:0}
+.disc-btn:active{background:rgba(255,59,48,.08);color:#FF3B30}
+.mdl-del{margin-left:auto;background:none;border:none;width:26px;height:26px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:var(--sec);cursor:pointer;padding:0;flex:none}
+.mdl-del:hover,.mdl-del:active{color:#FF3B30;background:rgba(255,59,48,.08)}
+.bind-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;border-bottom:1px solid var(--sep);cursor:pointer}
+.bind-row:last-child{border-bottom:none}
+.bind-l{display:flex;align-items:center;gap:10px;min-width:0}
+.bind-ico{width:28px;height:28px;border-radius:8px;background:var(--bg);border:1px solid var(--sep);display:inline-flex;align-items:center;justify-content:center;color:var(--label);flex:none}
+.disc-box{background:#FFF5F4;border:1px solid #FFD2CE;border-radius:10px;padding:10px 12px;margin:10px 0;font-size:12.5px;color:var(--label)}
+.disc-box .wbtns{margin-top:8px}
+.btn.danger{background:#FF3B30;color:#fff}
+.hw-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--sep)}
+#dt-raw .rawaudio{position:sticky;top:calc(env(safe-area-inset-top) + 52px);z-index:5;flex-wrap:wrap;box-shadow:0 4px 12px rgba(250,250,248,.95)}
+@media (min-width:720px){#dt-raw .rawaudio{top:0}}
+.raslider-wrap{width:100%;display:flex;align-items:center;gap:8px;padding:2px 4px 0}
+.raslider{width:100%;accent-color:var(--label);height:4px;cursor:pointer}
+.rawline{cursor:pointer;border-radius:8px;padding:6px 8px 6px 12px;transition:background .15s}
+.rawline:hover{background:rgba(0,0,0,.03)}
+.rawline.active{border-left-color:var(--ok);background:rgba(52,199,89,.08)}
+.rawjump{font-size:11px;color:var(--ok-ink);margin-left:6px;font-weight:500}
+.ev-badge{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:5px;background:rgba(0,0,0,.05);color:var(--sec);margin-left:6px;vertical-align:1px}
+.parity-list{max-height:62vh;overflow-y:auto;margin:6px 0 10px;padding-right:2px}
+.p-item{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:11px 0;border-bottom:1px solid var(--sep);cursor:pointer}
+.p-item:last-child{border-bottom:none}
+.p-item b{font-size:13.5px;display:flex;align-items:center;gap:6px}
+.p-item p{font-size:12px;color:var(--sec);line-height:1.5;margin-top:3px}
+.p-go{font-size:12px;color:var(--label);font-weight:600;white-space:nowrap;padding-top:2px}
+@keyframes focusFlash{0%,100%{box-shadow:0 0 0 0 rgba(255,149,0,0)}35%{box-shadow:0 0 0 4px rgba(255,149,0,.45)}}
+.focus-flash{animation:focusFlash 1.4s ease 2;border-radius:10px}
+/* v16：总结结果页图文融入（概览关键画面带 + 信息点按时间窗内联配图 + 来源记录带图片 icon 信息卡片） */
+.ov-card{background:var(--card);border:1px solid var(--sep);border-radius:12px;overflow:hidden}
+.ov-card p.ov{border:none;border-radius:0;background:transparent}
+.ov-figs{border-top:1px dashed var(--sep);padding:10px 14px 13px;background:rgba(250,250,248,.65)}
+.ov-figs-hd{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--sec);margin-bottom:9px;flex-wrap:wrap}
+.ov-figs-hd svg{color:var(--ink);flex:none}
+.ov-figs-row{display:flex;gap:10px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+.ov-figs-row::-webkit-scrollbar{display:none}
+.ov-fig{flex:0 0 148px;background:var(--card);border:1px solid var(--sep);border-radius:10px;overflow:hidden;cursor:pointer;text-align:left;padding:0;font-family:inherit;transition:transform .15s,border-color .15s}
+.ov-fig:active{transform:scale(.98)}
+.ov-fig-img{position:relative;height:88px;background:var(--sep)}
+.ov-fig-img img{width:100%;height:100%;object-fit:cover;display:block}
+.ov-fig-tm{position:absolute;left:6px;bottom:6px;background:rgba(29,29,31,.72);backdrop-filter:blur(4px);color:#fff;font-size:10px;font-weight:600;padding:1px 6px;border-radius:999px;font-variant-numeric:tabular-nums}
+.ov-fig-cap{padding:7px 9px;font-size:11.5px;line-height:1.4;color:var(--label);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pt-h-right{display:inline-flex;align-items:center;gap:7px;flex:none;margin-top:1px}
+.pt-picpill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--ink);background:var(--bg);border:1px solid var(--sep);border-radius:999px;padding:1px 8px;line-height:1.45}
+.pt-figs{margin-top:10px}
+.pt-fig{background:var(--bg);border:1px solid var(--sep);border-radius:10px;overflow:hidden;cursor:pointer;transition:border-color .15s}
+.pt-fig:hover{border-color:var(--ax)}
+.pt-fig.single{display:flex;gap:12px;padding:9px;align-items:stretch}
+.pt-fig.single .pt-fig-thumb{width:124px;min-height:78px;border-radius:8px;overflow:hidden;position:relative;flex:none;border:1px solid var(--sep)}
+.pt-fig.single .pt-fig-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.pt-fig-body{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:space-between;gap:4px}
+.pt-fig-title{font-size:12.5px;font-weight:600;color:var(--label);line-height:1.45}
+.pt-fig-quote{font-size:11.5px;color:var(--sec);line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pt-fig-act{font-size:11px;color:var(--ink);font-weight:600}
+.pt-fig-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.pt-fig-grid .pt-fig-thumb{height:94px;position:relative;background:var(--sep)}
+.pt-fig-grid .pt-fig-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.pt-fig-grid .pt-fig-body{padding:7px 9px}
+.srclist .srcitem.src-infocard{gap:5px;padding:13px 15px;border-radius:12px;transition:border-color .15s,background .15s}
+.srclist .srcitem.src-infocard:hover{border-color:var(--ax)}
+.src-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%}
+.src-head b{font-size:14.5px;font-weight:600;color:var(--label);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.src-badges{display:inline-flex;align-items:center;gap:7px;flex:none}
+.src-picbadge{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;color:var(--ink);background:var(--bg);border:1px solid var(--sep);border-radius:999px;padding:2px 9px;white-space:nowrap}
+.src-picbadge svg{color:var(--label);flex:none}
+.src-chev{color:var(--ax);font-size:16px;line-height:1}
+.src-meta{font-size:12px;color:var(--sec);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.src-brief{font-size:12.5px;color:var(--ink);line-height:1.5;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.88}
+.pmodal-img{width:100%;aspect-ratio:5/3;border-radius:12px;overflow:hidden;border:1px solid var(--sep);margin:10px 0;background:var(--sep)}
+.pmodal-img img{width:100%;height:100%;object-fit:cover;display:block}
+.pmodal-cap{font-size:14px;font-weight:600;color:var(--label);margin-bottom:4px}
+.pmodal-quote{font-size:12.5px;color:var(--sec);line-height:1.6;background:var(--bg);border-left:2.5px solid var(--ax);padding:7px 10px;border-radius:0 8px 8px 0;margin:8px 0 4px}
+/* v17：逻辑结构图片权重分级（微缩略图=核心实证 vs 线性 icon=辅助附图）+ 行动项按需属性芯片 */
+.mleaf{display:inline-flex;align-items:center;gap:5px;line-height:1.4}
+.mleaf.has-keypic{background:var(--card);border:1px solid rgba(29,29,31,.28);padding:2px 8px 2px 3px;font-weight:600;color:var(--label);cursor:pointer;font-family:inherit;box-shadow:0 1px 2px rgba(0,0,0,.04);transition:transform .14s,border-color .14s}
+.mleaf.has-keypic:hover{border-color:var(--label)}
+.mleaf.has-keypic:active{transform:scale(.98)}
+.mleaf-thumb{width:20px;height:20px;border-radius:6px;object-fit:cover;flex:none;border:1px solid rgba(0,0,0,.08);display:block}
+.mleaf-role{font-size:10px;font-weight:600;color:#7A3E00;background:#FFF3DC;border-radius:999px;padding:1px 6px;line-height:1.35}
+.mleaf.has-auxpic{cursor:pointer;font-family:inherit;padding:3px 9px;color:var(--ink);transition:border-color .14s}
+.mleaf.has-auxpic:hover{border-color:var(--ax)}
+.mleaf.has-auxpic svg{width:12px;height:12px;color:var(--sec);flex:none}
+.map-legend{margin-top:12px;padding-top:9px;border-top:1px dashed var(--sep);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--sec)}
+.todo-head{justify-content:space-between;flex-wrap:wrap}
+.todo-mode{display:inline-flex;align-items:center;gap:5px;margin-left:auto;font-weight:400}
+.todo-row{padding:10px 0;border-bottom:1px solid var(--sep)}
+.todo-row:last-child{border-bottom:none}
+.todo .todo-row .act{margin:0;padding:2px 0;border:none;min-height:26px}
+.todo .todo-row .act input{flex:none}
+.td-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:5px 0 1px 32px}
+.td-chip{display:inline-flex;align-items:center;gap:3.5px;font-size:11px;line-height:1.35;border-radius:999px;padding:2px 8px;border:1px solid var(--sep);background:var(--bg);color:var(--ink);font-family:inherit}
+.td-chip.who{color:var(--label);font-weight:500;background:rgba(0,0,0,.045);border-color:transparent}
+.td-chip.due{color:#7A3E00;background:#FFF8EB;border-color:#F3D59B}
+.td-chip.pic,.td-chip.src{cursor:pointer;color:var(--ink);font-weight:500}
+.td-chip.pic:hover,.td-chip.src:hover{border-color:var(--ax)}
+.td-chip svg{width:11.5px;height:11.5px;flex:none}
+/* v18：Timeline 三类系统衍生卡（未归类图片分拣抽屉 / 夜间做梦整理抽屉 / 日报全天脉络） */
+.unc-body,.drm-body{max-height:62vh;overflow-y:auto;margin:8px 0 12px;padding-right:2px}
+.unc-item{border:1px solid var(--sep);border-radius:12px;padding:11px 12px;margin-bottom:10px;background:var(--bg)}
+.unc-item:last-child{margin-bottom:0}
+.unc-top{display:flex;gap:11px;align-items:center}
+.unc-thumb{position:relative;width:92px;height:60px;border-radius:8px;overflow:hidden;border:1px solid var(--sep);flex:none;background:var(--card)}
+.unc-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.unc-info{flex:1;min-width:0}
+.unc-info b{display:block;font-size:13.5px;color:var(--label);line-height:1.4}
+.unc-info span{display:block;font-size:11.5px;color:var(--sec);margin-top:2px}
+.unc-lbl{font-size:11px;color:var(--sec);margin:9px 0 6px}
+.unc-acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.unc-tbtn{background:var(--card);border:1px solid var(--sep);border-radius:999px;padding:4px 10px;font-size:11.5px;color:var(--label);cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:4px}
+.unc-tbtn.best{border-color:rgba(29,29,31,.35);font-weight:600;background:#FFFDF8}
+.unc-tbtn em{font-style:normal;font-size:10px;color:#7A3E00;background:#FFF3DC;border-radius:999px;padding:0 5px}
+.unc-rm{margin-left:auto;background:none;border:none;font-size:11.5px;color:var(--sec);cursor:pointer;padding:4px 6px;font-family:inherit}
+.unc-rm:hover{color:#FF3B30}
+.drm-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:4px 0 12px}
+.drm-stat{background:#F8F5FF;border:1px solid #E6DDF8;border-radius:10px;padding:8px 10px;text-align:center}
+.drm-stat b{display:block;font-size:15px;color:#47367B}
+.drm-stat span{font-size:11px;color:#6E6196}
+.drm-sec{font-size:12px;font-weight:600;color:var(--sec);margin:12px 0 6px;display:flex;justify-content:space-between;align-items:center}
+.drm-mem{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:9px 11px;background:var(--bg);border:1px solid var(--sep);border-radius:10px;margin-bottom:7px;font-size:12.5px;line-height:1.5;color:var(--label)}
+.drm-mem small{display:block;font-size:11px;color:var(--sec);margin-top:2px}
+.drm-rm{flex:none;background:var(--card);border:1px solid var(--sep);border-radius:999px;padding:2px 8px;font-size:11px;color:var(--sec);cursor:pointer;font-family:inherit}
+.drm-rm:hover{color:#FF3B30;border-color:#FFB3AE}
+.drm-skill{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;background:linear-gradient(135deg,#F6F3FF 0%,#fff 100%);border:1px solid #E4DCF7;border-radius:12px;padding:11px 13px}
+.drm-skill b{font-size:13.5px;color:#3B2C68;display:flex;align-items:center;gap:6px}
+.drm-skill p{font-size:12px;color:var(--ink);line-height:1.5;margin-top:3px}
+/* v19：声纹标记与上下文称呼推断 + 三元记忆图谱 + 睡前日记（点赞与1~5项轻标注）+ 4格梦境漫画与重复习惯Skill + 物理按键×灵动岛×先后双推送 */
+.dailycard{background:linear-gradient(135deg,#FFFBF2 0%,#FFFDF9 60%,#fff 100%);border:1px solid #EFE0C2;border-radius:12px;padding:12px 14px}
+.diary-pill{font-size:11px;font-weight:600;color:#8A4B08;background:#FFF1D6;border-radius:999px;padding:1px 8px;white-space:nowrap}
+.dy-switch{display:flex;gap:6px;margin:2px 0 12px;flex-wrap:wrap}
+.dy-hero{background:linear-gradient(135deg,#FFF9EC 0%,#FFFDF9 100%);border:1px solid #EFE0C2;border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:12.5px;line-height:1.6;color:#5C3D14}
+.dy-hero b{display:block;font-size:14px;color:#3E2709;margin-bottom:2px}
+.dy-sec-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:16px 0 8px;font-size:13px;font-weight:600;color:var(--label)}
+.dy-sec-sub{font-size:11.5px;color:var(--sec);line-height:1.5;margin:-4px 0 10px}
+.dy-story{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+.dy-tm{font-size:11.5px;font-weight:600;color:#8A4B08;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.dy-txt{font-size:13.5px;line-height:1.65;color:var(--label)}
+.dy-infer{margin-top:7px;padding:7px 10px;background:#FAF7F0;border-left:2.5px solid #D9A441;border-radius:0 8px 8px 0;font-size:12px;line-height:1.55;color:#5E4B2B}
+.dy-foot{display:flex;align-items:center;justify-content:space-between;margin-top:9px;gap:8px}
+.dy-like{display:inline-flex;align-items:center;gap:5px;background:var(--bg);border:1px solid var(--sep);border-radius:999px;padding:4px 11px;font-size:11.5px;color:var(--ink);cursor:pointer;font-family:inherit;transition:.15s}
+.dy-like.on{background:#FFF0F2;border-color:#F6B8C0;color:#D63649;font-weight:600}
+.dy-annot{background:#FFFCF5;border:1px solid #EFE0C2;border-radius:12px;padding:12px 14px;margin-bottom:10px;transition:border-color .18s,background .18s}
+.dy-annot.done{background:var(--card);border-color:rgba(52,199,89,.4)}
+.dy-q{font-size:13.5px;font-weight:600;line-height:1.5;color:var(--label);display:flex;align-items:flex-start;gap:6px}
+.dy-why{font-size:12px;line-height:1.5;color:var(--sec);margin:5px 0 9px}
+.dy-opts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.dy-opt{background:var(--card);border:1px solid var(--sep);border-radius:999px;padding:5px 11px;font-size:11.5px;color:var(--label);cursor:pointer;font-family:inherit}
+.dy-opt.primary{border-color:#D9A441;background:#FFF6E3;color:#6E3F00;font-weight:600}
+.dy-opt.chosen{background:var(--label);border-color:var(--label);color:#fff;font-weight:600}
+.dy-feed{background:#F6F3FF;border:1px solid #E4DCF7;border-radius:10px;padding:9px 12px;font-size:12px;line-height:1.55;color:#47367B;margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.vp-banner{background:linear-gradient(135deg,#F3F8FF 0%,#fff 100%);border:1px solid #CBE0FA;border-radius:12px;padding:11px 13px;margin:2px 0 14px}
+.vp-hd{font-size:13px;font-weight:600;color:#143A66;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.vp-why{font-size:11.5px;color:#466285;line-height:1.5;margin:4px 0 9px}
+.vp-acts{display:flex;flex-wrap:wrap;gap:6px}
+.vp-btn{background:#fff;border:1px solid #B9D4F8;border-radius:999px;padding:4px 11px;font-size:11.5px;color:#143A66;cursor:pointer;font-family:inherit;font-weight:500}
+.vp-btn.pri{background:#143A66;border-color:#143A66;color:#fff;font-weight:600}
+.ava.tagged{background:#143A66;color:#fff;cursor:pointer}
+.ava.clickable{cursor:pointer}
+.who-btn{background:none;border:none;padding:0;font:inherit;font-weight:600;color:var(--label);cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+.who-btn:hover{text-decoration:underline}
+.vp-pill{font-size:10px;font-weight:600;color:#145A32;background:rgba(52,199,89,.15);border-radius:999px;padding:0 6px}
+.mark-pill{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:#9A4B00;background:#FFF1D6;border:1px solid #F2C97D;border-radius:999px;padding:0 7px;margin-left:4px}
+.mem-extract{background:var(--card);border:1px dashed var(--sep);border-radius:12px;padding:10px 13px;margin-top:14px;font-size:12px;line-height:1.55}
+.mem-extract h4{font-size:12px;font-weight:600;color:var(--ink);margin-bottom:6px;display:flex;align-items:center;justify-content:space-between}
+.mex-row{display:flex;align-items:baseline;gap:6px;padding:3px 0;color:var(--label)}
+.mex-tag{font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.055);color:var(--ink);flex:none}
+.drm-modebar{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;margin:2px 0 10px;padding-bottom:8px;border-bottom:1px dashed var(--sep)}
+.drm-comic{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:6px 0 12px}
+.drm-panel{border:1.5px solid #2F264D;border-radius:10px;overflow:hidden;background:#fff;box-shadow:0 2px 6px rgba(47,38,77,.08);display:flex;flex-direction:column}
+.drm-panel svg{width:100%;height:102px;display:block}
+.drm-pcap{padding:6px 8px;font-size:11px;line-height:1.42;color:var(--label);background:#FCFAFF;border-top:1px solid #EAE3F8;flex:1}
+.drm-pcap b{color:#3B2C68;margin-right:3px}
+.drm-repeat{background:linear-gradient(135deg,#FFF8EB 0%,#FFFDF9 100%);border:1px solid #F1D293;border-radius:12px;padding:10px 12px;margin-bottom:8px;font-size:12px;line-height:1.55;color:#5C3D14}
+.drm-repeat-hd{font-weight:700;font-size:12.5px;color:#7A3E00;display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.mg-card{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:11px 14px;margin-bottom:9px}
+.mg-card.rel-node{background:linear-gradient(135deg,#F7F9FF 0%,#fff 100%);border-color:#CBD9F5}
+.mg-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13.5px;font-weight:600}
+.mg-props{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.mg-prop{font-size:11px;background:var(--bg);border:1px solid var(--sep);border-radius:6px;padding:2px 7px;color:var(--ink);font-family:inherit}
+.mg-prop.arch{text-decoration:line-through;color:var(--sec);background:rgba(0,0,0,.025)}
+.mg-prop.link{cursor:pointer;color:var(--accent);background:var(--accent-bg);border-color:rgba(0,122,255,.22)}
+.spk-inp{width:100%;border:1px solid var(--sep);border-radius:10px;padding:9px 12px;font-size:14px;font-family:inherit;margin:8px 0;background:var(--bg);color:var(--label)}
+#dyn-island{position:fixed;top:8px;left:50%;transform:translateX(-50%) scale(.88);opacity:0;pointer-events:none;z-index:95;background:#0B0B0E;color:#fff;border-radius:999px;padding:9px 16px;min-width:250px;max-width:min(92vw,372px);box-shadow:0 10px 28px rgba(0,0,0,.28);display:flex;align-items:center;gap:10px;transition:.26s cubic-bezier(.2,.9,.3,1)}
+#dyn-island.show{opacity:1;transform:translateX(-50%) scale(1);pointer-events:auto}
+.di-logo{width:22px;height:22px;border-radius:6px;background:#fff;color:#1D1D1F;display:inline-flex;align-items:center;justify-content:center;flex:none}
+.di-wave{display:inline-flex;align-items:center;gap:2.5px;height:16px;flex:none}
+.di-wave i{display:block;width:3px;border-radius:2px;background:#FF9F0A;height:6px;animation:diBar .7s ease-in-out infinite alternate}
+.di-wave i:nth-child(2){height:13px;animation-delay:.15s;background:#32D74B}
+.di-wave i:nth-child(3){height:9px;animation-delay:.3s;background:#64D2FF}
+.di-wave i:nth-child(4){height:15px;animation-delay:.45s;background:#FF9F0A}
+@keyframes diBar{from{transform:scaleY(.45)}to{transform:scaleY(1.15)}}
+.di-txt{flex:1;min-width:0}
+.di-txt b{display:block;font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.di-txt span{display:block;font-size:11px;color:rgba(255,255,255,.74);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#push-stack{position:fixed;top:58px;left:50%;transform:translateX(-50%);width:min(92vw,372px);z-index:94;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.ios-push{pointer-events:auto;background:rgba(255,255,255,.97);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid rgba(0,0,0,.1);border-radius:16px;padding:11px 13px;box-shadow:0 12px 30px rgba(0,0,0,.15);animation:pushIn .26s ease}
+@keyframes pushIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+.push-hd{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--sec);margin-bottom:4px}
+.push-appico{width:18px;height:18px;border-radius:5px;background:#1d1d1f;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex:none}
+.push-tag{font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;background:#EEF4FF;color:#143A66}
+.push-tag.res{background:rgba(52,199,89,.15);color:#145A32}
+.push-bd{font-size:13px;line-height:1.5;color:var(--label);font-weight:500}
+.push-ft{display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px dashed var(--sep);font-size:11px;color:var(--sec)}
+.push-link{background:none;border:none;padding:0;font:inherit;color:#143A66;font-weight:600;cursor:pointer}
+.card,.card .btn,.navrow,.srcitem,.vp-btn{scroll-margin-top:68px;scroll-margin-bottom:78px}
+.lg-wrap{position:fixed;inset:0;z-index:260;background:var(--bg);display:none;align-items:center;justify-content:center;padding:24px 32px;overflow-y:auto}.lg-wrap.show{display:flex}.lg-box{width:100%;max-width:380px;display:flex;flex-direction:column;align-items:stretch}.lg-close{position:fixed;top:14px;right:16px;border:1px solid var(--sep);background:var(--card);color:var(--sec);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}.lg-logo{width:64px;height:64px;margin:0 auto;border-radius:18px;background:var(--card);border:1px solid var(--sep);display:flex;align-items:center;justify-content:center;color:var(--ink)}.lg-title{margin:18px 0 0;text-align:center;font-size:28px;font-weight:800;color:var(--ink);letter-spacing:-.02em}.lg-sub{margin:8px 0 32px;text-align:center;font-size:14px;color:var(--sec)}.lg-pri{min-height:50px;border-radius:14px;border:0;background:var(--ink);color:var(--bg);font-size:16px;font-weight:600;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}.lg-div{display:flex;align-items:center;gap:12px;margin:22px 0 16px;color:var(--sec);font-size:12px}.lg-div::before,.lg-div::after{content:'';flex:1;height:1px;background:var(--sep)}.lg-soc{min-height:50px;border-radius:14px;border:1px solid var(--sep);background:var(--card);color:var(--ink);font-size:16px;font-weight:600;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer}.lg-soc+.lg-soc{margin-top:12px}.lg-foot{margin-top:20px;text-align:center;font-size:12px;line-height:1.5;color:var(--sec)}</style></head><body>
+<!--
+  设计说明（2026-11-09 · owner 确认）
+
+  1. 默认未连接：录音卡是电池设备，不会一直保持蓝牙连接。默认胶囊只显示灰点，
+     点开先进入「连接录音卡」扫描流程，而不是假装已连接。
+  2. 扫描排序：SDK 已按 DYJ 前缀 + NUS 广播过滤；前端再按 RSSI 从强到弱排序
+     （越近越靠上），多设备环境下一眼选对。非 DYJ 设备不展示。
+  3. 连上后默认未录音：录音状态行右侧是开关（状态本身就是开关），默认关闭；
+     打开后红点 + 正计时，关闭用 220ms 过渡回到「未录音」。
+  4. 切片节奏：设备约 5 分钟一个录音切片；每片传完并转写完成后，从顶部落到
+     「今天」时间轴第一条。顶部「正在录音」状态块表示“当前录音中、尚未转录的
+     部分”，不是一条可点记录；积压最多约 30 分钟，日常约 5 分钟一段。
+  5. 停止录音自动同步：不需要手动点同步行；顶部块切「正在同步」，整理完成后收起。
+     同步行默认显示「自动同步 · N 分钟前」；用户点这一行才算手动同步（成功后显示
+     「同步成功 · 刚刚」，10 秒冷却防连点）。手动同步行保留，用于重试/补传。
+  6. 总结的源列表只包含已完成记录：勾选总结和「总结」Tab 时隐藏顶部实时状态块，
+     它不可勾选、不参与计数，避免把“未转录的一段”算进总结。
+  7. 顶部状态块只读，不可点击。
+  8. 胶囊圆点：绿=正在录音（运行中，心跳）；橙=已连接但未录音（待机，电量真实）；
+     灰空心=未连接（不显示电量）。弹层头部圆点同一语义。
+  9. 总结卡：没有单独的详情页，点整张卡直接进总结结果。它是当天最后产出的
+     卡片，倒序 feed 里放在它覆盖的**最新一天**分组顶部，记录排在它后面。
+ 10. 原型内置一张 mock 总结卡（sum-demo，覆盖今天 13:05 的客户回访），
+     放在今天分组最上方，直接目检「总结卡在当天顶部」的效果。
+ 11. 记录行右侧相册缩略图：与标题+时间同高的 45px 正方形；1 张单图，2~3 张
+     层叠；超过 3 张时第 4 层是带总数的遮罩图（数字=本次记录未排除的总张数）。
+     标题与时间单行省略号，避免和缩略图重叠或换行。每天最多两张带图记录。
+ 12. 对话详情按照片时间把图片插进对话流；每张图有「不属于本段」，点击后从
+     外侧缩略图移除，归到当天分组顶部的「未归类图片」条目（预置 e3 一张演示）。
+ 13. 总结卡/日报卡右侧箭头下方「含 X 张图片」= 来源记录里未排除的图片总数；
+     删除照片后实时变化。
+ 14. 日终自动日报：当天没有手动总结时，放在该日分组顶部（倒序 UI 的最上面）；
+     当天已有手动总结则不出。今天还没结束，不生成日报。
+ 15. 做梦卡：时间是次日第一张卡片（当天最早的事件），所以倒序 UI 里在当天
+     分组最底部；条件是前一日最后一条到当日第一条之间的夜间空白 >5 小时。
+     内容表示已完成昨日记忆清洗、知识库归档、技能提炼。mock 今天空白 17.5h。
+ 16. 日分组内顺序（倒序）：日终产物（日报/总结/未归类图片）在顶部 → 普通记录
+     按时间从晚到早 → 做梦卡（当天最早事件）在最底部。
+ 17. 设计与 App 对齐基线（2026-11-13 清理）：已与 App 对齐的能力（三款硬件分色徽章置前与去前缀短码、极简状态头与充电闪电呼吸图标、独立本机录音与 OTA 无缝切换、退出登录自动停录保护、硬件 2.4GHz Wi-Fi 配网、仅使用 Wi-Fi 同步策略、外脑 OAuth2 与第三方账号绑定、本地语音三引擎克制文案与防误删确认、云端模型极简页与连击版本号 7 次开发者模式、每分钟自动对齐系统相册照片、灵动岛按机型展示与 Action Button、1 分钟实时流 5 态状态块、原始录音吸顶拖拽与点句秒跳）均已归入正式设计基线，不再标记差异；顶栏「TBC 待实现」仅保留尚未在当前版本落地的 12 项 V2 超前设计。
+ 18. 总结结果页视觉与待办演进（2026-11-13）：概览嵌入关键现场画面条；逻辑结构采用「20×20 微缩图
+     + 角色签 = 核心实证 / 线性图标 = 辅助附图」双层权重；信息点按时间窗内联配图并点击查看原话；
+     行动项以单行清单打底，有据可查时按需挂载 @说话人（推测）、截止时间、原话定位与现场图芯片
+     （提供含属性 TBC / 极简版切换对照）；来源记录升级为带图片 icon 徽标的结构化信息卡。
+ 19. Timeline 三类衍生卡交互闭环（2026-11-13）：未归类图片点击打开半屏分拣抽屉（按拍摄时刻推荐
+     时间最接近记录一键归位或忽略移除）；做梦完成升级为「4~6 格天马行空梦境漫画（非每天必有）+
+     每日记忆整理总结 + 重复 2~3 次事项主动提炼 Skill 提醒」；原日报正式改名为「睡前日记」。
+ 20. 声纹标记与三元记忆图谱（2026-11-13）：端侧声纹分簇 + 大模型上下文呼语推断（如点单呼语“老陈，
+     你点什么喝的？”推断受话应答者称呼），确认后全局联动说话人卡片与待办 @称呼，并在日间清洗与
+     夜间做梦中沉淀「事件（Event/Story）— 可升格为点的关系（Relation）— 实体（人/物/私有概念）」。
+ 21. 睡前日记与物理按键灵动岛 Agent（2026-11-13）：睡前日记用有趣叙事展示今日记录与推理（可点赞），
+     每次附带 1~5 个待确认轻标注（新声纹命名、跨日声纹归并、按键意图确认）反哺当晚做梦；物理按键
+     单击=打重点（Mark）、长按=唤起灵动岛收听语音指令并先后下发 A（立即回执）/ B（记忆检索结果）
+     两条系统推送、双击=预留未绑定。
+-->
+<header class="app"><h1 id="app-title">录音卡</h1><button class="crumb" id="crumb-back" data-testid="crumb-back" onclick="goBack()" hidden><span class="chev">‹</span><span id="crumb-dest">Timeline</span></button><div class="hdr-right"><button class="parity-pill" data-testid="parity-btn" onclick="openParity()">当前版本 · App已有</button><button class="capsule off" data-testid="hw-capsule" aria-label="录音卡状态：无设备" onclick="openSheet()"><span class="dot"></span><span class="capsule-none" data-testid="capsule-nodata">无设备</span><span class="capsule-phonerec" data-testid="capsule-phone-rec">本机录音</span><span class="batt lv-hi" aria-hidden="true"><svg width="23" height="11" viewBox="0 0 23 11"><rect x="0.75" y="0.75" width="18.5" height="9.5" rx="2.75" fill="none" stroke="currentColor" stroke-width="1.5"/><rect id="cap-fill" class="batt-fill" x="3" y="3" width="12.3" height="5" rx="1.25" fill="currentColor"/><rect x="20.75" y="3.25" width="1.5" height="4.5" rx="0.75" fill="currentColor"/><path class="batt-bolt" data-testid="batt-bolt" d="M11.2 1.2L7.8 5.7h2.5l-.7 4.1 3.8-4.6h-2.5z" fill="#fff" stroke="currentColor" stroke-width="0.7" stroke-linejoin="round"/></svg></span></button></div></header><div class="col" id="rootcol"><main id="p-timeline" class="panel show"><div style="display:flex;align-items:center;border-bottom:1px solid var(--sep);margin:6px 0 8px"><div class="tabs" role="tablist" style="flex:1;border-bottom:0;margin:0"><button class="on" data-f="all" onclick="setFilter(this)">全部</button><button data-f="event" onclick="setFilter(this)">记录</button><button data-f="summary" onclick="setFilter(this)">总结</button></div><button class="btn-sum" style="margin-bottom:4px;flex:none;white-space:nowrap" data-testid="summary-start" onclick="startSummary()">总结</button></div><div class="rangebar" id="rangebar"><span class="rl">全选</span><button class="chip" data-r="today" onclick="selRange('today')">今日</button><button class="chip" data-r="week" onclick="selRange('week')">本周</button><button class="chip" data-r="month" onclick="selRange('month')">本月</button><button class="chip" data-r="none" onclick="selNone()">清除</button></div><div id="feed"></div><div class="tl-syncbar" id="tl-syncbar" style="margin-top:8px"><div class="tl-sync-top"><span style="font-weight:600">实时流状态块（5 态）</span><span style="font-size:11px;color:var(--sec)">点击切换顶部状态块</span></div><div class="tl-sync-chips"><button class="mini-chip on" data-lp="idle" onclick="setLivePreview('idle')">空闲</button><button class="mini-chip" data-lp="recording" onclick="setLivePreview('recording');window.scrollTo({top:0,behavior:'smooth'})">正在录音</button><button class="mini-chip" data-lp="transcribing" onclick="setLivePreview('transcribing');window.scrollTo({top:0,behavior:'smooth'})">正在转写</button><button class="mini-chip" data-lp="syncing" onclick="setLivePreview('syncing');window.scrollTo({top:0,behavior:'smooth'})">正在同步</button><button class="mini-chip" data-lp="error" onclick="setLivePreview('error');window.scrollTo({top:0,behavior:'smooth'})">整理中断</button></div></div></main><main id="p-setting" class="panel"><div class="set-title">账号与云端鉴权</div><div class="set-group"><div class="navrow" data-testid="set-auth-entry" onclick="openSetSub('login')"><span class="navlbl"><span>云端账号授权</span></span><span class="navval"><span id="sv-auth" data-testid="sv-auth">owner@wainao.chat</span><span class="rowchev">›</span></span></div></div><div class="set-title">模型与智能体</div><div class="set-group"><div class="navrow" data-testid="set-local-model" onclick="openSetSub('local')"><span class="navlbl"><span>本地语音引擎</span></span><span class="navval"><span id="sv-local">已就绪 3/3</span><span class="rowchev">›</span></span></div><div class="navrow" data-testid="set-cloud-model" onclick="openSetSub('cloud')"><span class="navlbl"><span>云端模型设置</span></span><span class="navval"><span id="sv-cloud">已开启</span><span class="rowchev">›</span></span></div><div class="navrow" data-testid="set-prompts" onclick="openSetSub('prompts')"><span class="navlbl"><span>预设风格与提示词</span></span><span class="navval"><span id="sv-preset">通用纪要</span><span class="rowchev">›</span></span></div><div class="navrow" data-testid="set-voiceprint" onclick="openSetSub('voiceprint')"><span class="navlbl"><span>声纹识别</span></span><span class="navval"><span id="sv-voiceprint">已就绪</span><span class="rowchev">›</span></span></div><div class="navrow" data-testid="set-extensions" onclick="openSetSub('ext')"><span class="navlbl"><span>扩展能力</span></span><span class="navval"><span id="sv-ext">已启用 5 项</span><span class="rowchev">›</span></span></div><div class="navrow" id="row-set-island" data-testid="set-dynamic-island" onclick="openSetSub('island')"><span class="navlbl"><span>灵动岛与操作按钮</span></span><span class="navval"><span id="sv-island">已开启</span><span class="rowchev">›</span></span></div></div><div class="set-title">录音</div><div class="set-group"><div class="switchrow" id="row-sw-cont"><span>持续录音</span><div class="sw on" role="switch" aria-checked="true" tabindex="0" onclick="tsw(this)" onkeydown="tswKey(event,this)" aria-label="持续录音开关"></div></div><div class="switchrow" id="row-sw-mark"><span>标记重要对话</span><div class="sw on" role="switch" aria-checked="true" tabindex="0" onclick="tsw(this)" onkeydown="tswKey(event,this)" aria-label="标记重要对话开关"></div></div><div class="switchrow" data-testid="set-photo-import" onclick="togglePhotoAutoSync()" style="cursor:pointer"><span style="flex:1;min-width:0;padding-right:10px"><span style="display:block">关联录音期间系统相册照片</span><span id="sv-photo-imp" style="display:block;font-size:12px;color:var(--sec);margin-top:2px">已开启 · 每分钟随切片自动对齐</span></span><div class="sw on" id="sw-photo-sync" data-testid="sw-photo-sync" role="switch" aria-checked="true" tabindex="0" onclick="event.stopPropagation();togglePhotoAutoSync()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePhotoAutoSync()}" aria-label="自动关联录音期间照片开关"></div></div></div><div class="set-title">转录与清洗</div><div class="set-group"><div class="switchrow"><span>自动转录</span><div class="sw on" role="switch" aria-checked="true" tabindex="0" onclick="tsw(this)" onkeydown="tswKey(event,this)" aria-label="自动转录开关"></div></div><div class="switchrow"><span>自动清洗口语</span><div class="sw on" role="switch" aria-checked="true" tabindex="0" onclick="tsw(this)" onkeydown="tswKey(event,this)" aria-label="自动清洗口语开关"></div></div><div class="switchrow"><span>说话人推测归类</span><div class="sw on" role="switch" aria-checked="true" tabindex="0" onclick="tsw(this)" onkeydown="tswKey(event,this)" aria-label="说话人推测归类开关"></div></div></div><div class="set-title">同步</div><div class="set-group"><div class="switchrow" id="row-sw-wifi"><span>仅使用 Wi-Fi 同步</span><div class="sw" role="switch" aria-checked="false" tabindex="0" onclick="tsw(this)" onkeydown="tswKey(event,this)" aria-label="仅 Wi-Fi 同步开关"></div></div></div><div class="set-title">关于录音卡</div><div class="set-group" data-testid="setting-about"><div class="about" style="padding:12px 0;border-bottom:1px solid var(--sep)">录音卡与设备保持蓝牙连接，录音内容边录边实时同步到手机，自动转录并整理为对话记录。内容仅保存在本机，未经确认不会上传。</div><div class="navrow" data-testid="setting-version" onclick="tapAppVersion()" style="user-select:none"><span id="lbl-version">版本</span><span class="navval"><span id="sv-version">1.0.0 (130016)</span></span></div><div class="navrow" data-testid="privacy-entry" onclick="openSetSub('privacy')"><span>隐私政策</span><span class="navval"><span class="rowchev">›</span></span></div></div><div class="hw-tools" style="border-top:none;padding-top:0;margin-top:4px"><span style="font-size:11px;color:var(--sec);align-self:center">机型能力预览：</span><button type="button" class="mini-chip on" data-testid="toggle-island-hw" onclick="toggleIslandHardware()">当前：灵动岛机型（切换至无灵动岛机型）</button></div></main></div><div class="col" id="sidecol"><div id="empty-pane"><div class="e-ico">◍</div><div class="e-t">选择一条记录</div><div class="e-s">对话详情与总结结果会在这里展开</div></div><section id="p-detail" class="panel sub"><div class="ph"><div class="phrow"><button class="paneback" id="pb-detail" onclick="goBack()" hidden></button><h2 id="dt-h3"></h2></div><div class="pmeta" id="dt-meta"></div></div><div class="tabs" id="dt-tabs"><button class="on" data-testid="det-tab-dlg" id="dtab-dlg" onclick="detTab('dlg')">对话详情</button><button data-testid="det-tab-raw" id="dtab-raw" onclick="detTab('raw')">原始数据</button><button data-testid="det-tab-refs" id="dtab-refs" onclick="detTab('refs')" hidden>被引用总结</button></div><div class="pnote pnote-short">说话人为推测归类，非已验证身份；长静音已在清洗版中省略。</div><div id="dt-dlg"></div><div id="dt-raw" style="display:none"></div><div id="dt-refs" style="display:none"></div></section><section id="p-sumres" class="panel sub"><div class="ph" style="position:relative"><div class="phrow"><button class="paneback" id="pb-sum" onclick="goBack()" hidden></button><h2 id="sum-title"></h2></div><div class="pmeta" id="sum-sub"></div><button class="toc-btn" data-testid="export-btn" id="export-btn" onclick="exportToggle()">导出</button><div class="toc-pop" id="export-pop" hidden><button onclick="doExport('完整文档')">完整文档</button><button onclick="doExport('Markdown')">Markdown</button><button onclick="doExport('PDF')">PDF</button><button onclick="doExport('图片')">图片</button><button onclick="doExport('Word 文档')">Word 文档</button></div></div><div class="stickbar" id="stickbar"><div class="tabs stabs" id="stabs" role="tablist"><button class="on" data-st="all" onclick="sresTab('all')">全部</button><button data-st="ov" onclick="sresTab('ov')">概览</button><button data-st="map" onclick="sresTab('map')">逻辑结构</button><button data-st="pt" onclick="sresTab('pt')">信息点</button><button data-st="todo" onclick="sresTab('todo')">行动项</button><button data-st="src" onclick="sresTab('src')">来源记录</button></div></div><div class="tochold" id="tochold"><span class="tocwrap"><button class="toc-pill" data-testid="toc-btn" id="toc-btn" onclick="tocToggle()">目录</button><div class="toc-pop" id="toc-pop" hidden><button onclick="tocGo('sec-ov')">概览</button><button onclick="tocGo('sec-map')">逻辑结构</button><button onclick="tocGo('sec-pt')">信息点</button><button onclick="tocGo('sec-todo')">行动项</button><button onclick="tocGo('sec-src')">来源记录</button></div></span></div><div id="sum-gen" hidden><div class="gencard"><div class="bar"><i id="gen-bar"></i></div><div class="genline"><span id="gen-elapsed">已生成 0 秒</span><span id="gen-eta">预计还需 6 秒</span></div><div class="genstep" id="gen-step">解析来源内容…</div></div></div><div id="sum-render"></div></section><section id="p-diary" class="panel sub"><div class="ph"><div class="phrow"><button class="paneback" id="pb-diary" onclick="goBack()" hidden></button><h2 id="diary-title" style="display:flex;align-items:center;gap:6px"><span>今日睡前日记</span></h2></div><div class="pmeta" id="diary-sub"></div></div><div id="diary-body"></div></section><section id="p-setsub" class="panel sub"><div class="ph"><div class="phrow"><button class="paneback" id="pb-setsub" onclick="goBack()" hidden></button><h2 id="setsub-title"></h2></div><div class="pmeta" id="setsub-sub"></div></div><div id="setsub-body"></div></section></div><div class="sumbar" id="sumbar"><div class="row1"><span id="sel-count2">已选 0 项</span><span class="b">勾选要总结的记录</span></div><div class="row2"><button class="btn ghost" onclick="exitSummary()">取消</button><button class="btn" data-testid="generate-summary" id="gen-btn2" disabled onclick="genSummary()">生成总结</button></div></div><div class="sheet-wrap" id="sheet"><div class="backdrop" onclick="closeSheet()"></div><div class="sheet" role="dialog" aria-label="录音卡状态"><div id="dev-main" data-testid="dev-main" hidden><div class="devhead"><span class="dot big" id="dev-dot"></span><div style="flex:1;min-width:0"><h2 style="display:flex;align-items:center;gap:2px;overflow:hidden"><span class="cbadge k-v2" id="dev-kind-badge" data-testid="dev-header-kind">录音卡 V2</span><span id="dev-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">T4W25T</span></h2><div class="devsub" id="dev-sub"><span class="bt-ico" id="dev-bt-icon" data-testid="dev-bt-icon"></span><span id="dev-sub-txt">固件 2.1.0</span></div></div><button class="disc-btn" id="dev-disc-btn" data-testid="dev-disconnect" title="断开蓝牙连接" aria-label="断开连接" onclick="askDisconnect()"></button></div><div class="disc-box" id="disc-box" hidden><div><b>断开与当前硬件的连接？</b><div style="color:var(--sec);margin-top:2px">断开后将先停止录音、关闭实时流与同步，再安全释放蓝牙广播。</div></div><div class="wbtns"><button class="btn ghost" data-testid="disconnect-cancel" onclick="cancelDisconnect()">取消</button><button class="btn danger" data-testid="disconnect-confirm" onclick="confirmDisconnect()">断开连接</button></div></div><!-- 录音状态即开关：默认未录音；打开后红点 + 正计时；关闭动画回未录音 -->
+<div class="row" id="row-rec"><span>录音状态</span><span class="recvalwrap"><span class="recval" id="recval"><span id="rec-off">未录音</span><span class="recon"><i class="recdot"></i><span>录音中</span><span class="clock" id="rec-clock">00:00:00</span></span></span><span class="sw" id="rec-sw" data-testid="rec-toggle" role="switch" aria-checked="false" aria-label="录音开关" tabindex="0" onclick="toggleRec()" onkeydown="recKey(event)"></span></span></div><div class="row" id="row-phone-rec" data-testid="phone-rec-main-row"><span>本机录音</span><span class="recvalwrap"><span class="recval" id="prec-val-main"><span id="prec-off-main">未开启</span><span class="recon"><i class="recdot"></i><span>本机录音中</span><span class="clock" id="prec-clock-main">0:00:00</span></span></span><span class="sw" id="prec-sw-main" data-testid="phone-rec-main-toggle" role="switch" aria-checked="false" aria-label="本机录音开关" tabindex="0" onclick="togglePhoneRec()" onkeydown="precKey(event)"></span></span></div><div class="row" id="row-batt"><span>电量</span><span><span class="batt lv-hi" aria-hidden="true"><svg width="23" height="11" viewBox="0 0 23 11"><rect x="0.75" y="0.75" width="18.5" height="9.5" rx="2.75" fill="none" stroke="currentColor" stroke-width="1.5"/><rect id="row-fill" class="batt-fill" x="3" y="3" width="12.3" height="5" rx="1.25" fill="currentColor"/><rect x="20.75" y="3.25" width="1.5" height="4.5" rx="0.75" fill="currentColor"/><path class="batt-bolt" data-testid="batt-bolt" d="M11.2 1.2L7.8 5.7h2.5l-.7 4.1 3.8-4.6h-2.5z" fill="#fff" stroke="currentColor" stroke-width="0.7" stroke-linejoin="round"/></svg></span><span id="batt-label">电量高</span><span id="batt-eta-wrap"> · 可录至 <span id="batt-eta">明天 02:00</span></span></span></div><div class="row act-row" id="row-sync" data-testid="sync-now" title="点击立即蓝牙补拉离线切片" onclick="syncNow()"><span>同步</span><span><span id="sync-txt">自动同步 · <span id="sync-rel">4 分钟前</span></span><span id="sync-ico" class="syncidle"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M12 7a5 5 0 1 1-1.7-3.75" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M11.8 1.6v3.2h-3.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div><div class="row act-row" id="row-wifi" data-testid="wifi-row" title="查看 Wi-Fi 设置" onclick="showDev('wifi')"><span>Wi-Fi</span><span>已配置 · <span id="wifi-n">2</span> 个网络<span class="rowchev">›</span></span></div><div class="row act-row" id="row-fw" data-testid="fw-update" title="查看固件更新" onclick="showDev('upg')"><span>固件</span><span id="fw-val">有可用更新<span class="rowchev">›</span></span></div><div class="state" id="dev-state" role="status"></div><div class="hw-tools"><span style="font-size:11px;color:var(--sec);align-self:center">硬件态切换：</span><button class="mini-chip" data-testid="toggle-charge-btn" onclick="toggleChargePreview()">切换充电中</button><button class="mini-chip" onclick="triggerRetryPreview()">掉线蓝点重连</button><button class="mini-chip" onclick="switchHwDevice()">切换其他型号硬件</button></div><button class="btn" onclick="closeSheet()">关闭</button></div><!-- 默认未连接：连接引导 + 独立本机录音开关 + 按 RSSI 排序的自研硬件列表（录音卡 V2 / 点一机 V1 / 语音AI键盘 V2.1） -->
+<div id="dev-connect" hidden><div class="devhead"><span class="dot big"></span><div><h2>连接硬件设备</h2><div class="devsub">未绑定硬件 · 可先使用本机录音</div></div><span class="chip-off">未连接</span></div><div class="row" data-testid="phone-rec-row"><span>本机录音</span><span class="recvalwrap"><span class="recval" id="prec-val-conn"><span id="prec-off-conn">未开启 · 手机麦克风</span><span class="recon"><i class="recdot"></i><span>本机录音中</span><span class="clock" id="prec-clock-conn">0:00:00</span></span></span><span class="sw" id="prec-sw-conn" data-testid="phone-rec-toggle" role="switch" aria-checked="false" aria-label="本机录音开关" tabindex="0" onclick="togglePhoneRec()" onkeydown="precKey(event)"></span></span></div><div class="disc-box" id="mic-perm-box" data-testid="mic-perm-dialog" hidden><div><b>需要开启麦克风权限</b><div style="color:var(--sec);margin-top:2px">本机录音使用手机麦克风采集音频并在本地切片转写，请先授权麦克风访问。</div></div><div class="wbtns"><button class="btn ghost" data-testid="mic-perm-cancel" onclick="closeMicPermPrompt()">取消</button><button class="btn" data-testid="mic-perm-grant" onclick="grantMicPermAndStart()">开启权限并录音</button></div></div><div class="conn-hint">扫描自有录音硬件</div><div class="conn-sub" id="conn-sub">正在通过蓝牙扫描附近的设备…</div><div id="conn-list"></div><button class="btn" data-testid="conn-rescan" onclick="scanDevices()">重新扫描</button><button class="btn ghost" onclick="closeSheet()">关闭</button></div><div id="dev-upg" data-testid="dev-upg" hidden><h2>固件更新</h2><div class="row"><span>主控芯片</span><span>2.1.0 → 2.2.0</span></div><div class="row"><span>Wi-Fi 芯片</span><span>1.4.2 → 1.5.0</span></div><div class="upg-notes">· 优化蓝牙切片传输稳定性<br>· 修复长时间录制偶发断连<br>· Wi-Fi 芯片自动开启直传并在完成后恢复</div><div class="disc-box" id="ota-rec-confirm" data-testid="ota-rec-confirm-dialog" hidden><div><b>当前正在录音，开始更新会导致录音停止</b><div style="color:var(--sec);margin-top:2px">确认更新后将自动关闭硬件录音并无缝开启本机录音，硬件重连完成后自动关闭本机录音。</div></div><div class="wbtns"><button class="btn ghost" data-testid="ota-rec-cancel" onclick="cancelOtaRecConfirm()">取消</button><button class="btn" data-testid="ota-rec-confirm" onclick="confirmOtaRecHandover()">确认切换并更新</button></div></div><div class="disc-box" id="upg-mic-perm-box" data-testid="upg-mic-perm-dialog" hidden><div><b>未开启麦克风权限</b><div style="color:var(--sec);margin-top:2px">为了在升级硬件期间无缝衔接本机录音保持数据不断，请先授权麦克风权限。</div></div><div class="wbtns"><button class="btn ghost" onclick="closeMicPermPrompt()">取消</button><button class="btn" onclick="grantMicPermAndStartOta()">开启权限并继续更新</button></div></div><div class="upg-warn" id="upg-warn" hidden>更新期间请保持设备连接，切勿退出本页或关闭手机屏幕。</div><div class="prog" id="upg-prog" hidden><div class="bar"><i id="upg-bar"></i></div><div class="genline"><span id="upg-stage">阶段 1/2 · 主控芯片</span><span id="upg-pct">0%</span></div><div class="state" id="upg-state" role="status"></div></div><button class="btn" id="upg-btn" data-testid="upg-btn" onclick="startUpg()">开始更新</button><button class="btn ghost" id="upg-back" onclick="showDev('main')">返回</button></div><div id="dev-wifi" hidden><div class="viewhead"><button class="vback" data-testid="wifi-back" onclick="showDev('main')">‹</button><h2>Wi-Fi 设置</h2></div><div class="wsec">已保存</div><div id="wsaved"></div><button class="wmore" id="wmore" hidden onclick="wifiMoreToggle()">查看更多已保存</button><div class="wsplit"></div><div class="wsec">可用网络</div><div class="wstate" id="wstate">硬件 Wi-Fi 已开启，正在扫描附近网络…</div><div id="wlist"></div><div class="wnote">录音卡仅支持 2.4GHz 网络，此处只显示 2.4GHz 接入点</div><button class="btn ghost" onclick="wifiScan()">重新扫描</button></div></div></div><div class="sheet-wrap" id="parity-wrap"><div class="backdrop" onclick="closeParity()"></div><div class="sheet" role="dialog" aria-label="当前版本已实现功能基线"><div class="devhead"><div><h2>当前版本基线（App 已实现功能）</h2><div class="devsub">本页仅展示当前 Flutter App 已落地的真实界面与交互 · 点击可定位查看</div></div></div><div class="parity-list" id="parity-list"></div><button class="btn" onclick="closeParity()">关闭</button></div></div><div class="sheet-wrap" id="photo-wrap"><div class="backdrop" onclick="closePhotoModal()"></div><div class="sheet" role="dialog" aria-label="现场照片与原话对照"><div class="devhead"><div style="flex:1;min-width:0"><h2 id="pm-title" style="margin:0">现场画面</h2><div class="devsub" id="pm-sub"></div></div></div><div class="pmodal-img"><img id="pm-img" src="" alt=""></div><div class="pmodal-cap" id="pm-cap"></div><div class="pmodal-quote" id="pm-quote"></div><div class="wbtns" style="margin-top:12px"><button class="btn ghost" onclick="closePhotoModal()">关闭</button><button class="btn" data-testid="pm-jump-dlg" id="pm-jump">定位到原始对话流 ›</button></div></div></div><div class="sheet-wrap" id="unc-wrap"><div class="backdrop" onclick="closeUncSheet()"></div><div class="sheet" role="dialog" aria-label="未归类图片分拣"><div class="devhead"><div style="flex:1;min-width:0"><h2 style="margin:0;display:flex;align-items:center;gap:6px"><span id="unc-title">今日未归类图片</span></h2><div class="devsub" id="unc-sub">点击下方记录胶囊即可将照片重新归入对应对话流</div></div></div><div class="unc-body" id="unc-body"></div><button class="btn" onclick="closeUncSheet()">关闭</button></div></div><div class="sheet-wrap" id="dream-wrap"><div class="backdrop" onclick="closeDreamSheet()"></div><div class="sheet" role="dialog" aria-label="夜间做梦整理报告"><div class="devhead"><span class="dream-ico" style="font-size:20px">☾</span><div style="flex:1;min-width:0"><h2 style="margin:0;display:flex;align-items:center;gap:6px"><span>夜间做梦完成</span></h2><div class="devsub" id="drm-sub">4 格天马行空梦境漫画 + 记忆图谱整理与重复事项 Skill 提炼</div></div></div><div class="drm-body" id="drm-body"></div><button class="btn" onclick="closeDreamSheet()">关闭</button></div></div><div class="sheet-wrap" id="spk-wrap"><div class="backdrop" onclick="closeSpeakerSheet()"></div><div class="sheet" role="dialog" aria-label="声纹人物与记忆卡片"><div class="devhead"><div style="flex:1;min-width:0"><h2 style="margin:0;display:flex;align-items:center;gap:6px"><span id="spk-title">说话人声纹卡片</span></h2><div class="devsub" id="spk-sub">端侧 CAM++ 声纹特征簇 · 大模型上下文称呼消解</div></div></div><div id="spk-body" style="max-height:60vh;overflow-y:auto;margin:8px 0 12px"></div><button class="btn ghost" onclick="closeSpeakerSheet()">关闭</button></div></div><div class="sheet-wrap" id="photo-perm-wrap"><div class="backdrop" onclick="closePhotoPerm()"></div><div class="sheet" role="dialog" data-testid="photo-perm-dialog" aria-label="开启系统相册访问权限"><div class="devhead"><div style="flex:1;min-width:0"><h2 style="margin:0">开启系统相册访问权限</h2><div class="devsub">PhotoKit 本地时间窗照片匹配</div></div></div><p style="font-size:13px;line-height:1.6;color:var(--ink);margin:12px 0">开启后将在录音开始时请求一次权限，并在每 1 分钟切片落地时自动于本地匹配对应照片，原始照片不上传云端。</p><div class="wbtns"><button class="btn ghost" data-testid="photo-perm-cancel" onclick="closePhotoPerm()">取消</button><button class="btn" data-testid="photo-perm-grant" onclick="grantPhotoPerm()">前往授权</button></div></div></div><div class="sheet-wrap" id="mdl-del-wrap"><div class="backdrop" onclick="closeDeleteLocalModel()"></div><div class="sheet" role="dialog" data-testid="model-delete-confirm-dialog" aria-label="确认删除本地语音模型"><div class="devhead"><div style="flex:1;min-width:0"><h2 style="margin:0">确认删除本地语音模型？</h2><div class="devsub" id="mdl-del-name">SenseVoice</div></div></div><p id="mdl-del-warn" style="font-size:13px;line-height:1.65;color:var(--ink);margin:12px 0">没有本地模型后将无法自动语音转文本，只能切换为付费云端模式，不再享受终身免费服务，且音频上传云端存在隐私风险。</p><div class="wbtns"><button class="btn ghost" data-testid="model-delete-cancel-btn" onclick="closeDeleteLocalModel()">取消</button><button class="btn danger" data-testid="model-delete-confirm-btn" onclick="confirmDeleteLocalModel()">确认删除</button></div></div></div><div class="sheet-wrap" id="signout-rec-wrap"><div class="backdrop" onclick="closeSignOutConfirm()"></div><div class="sheet" role="dialog" data-testid="signout-recording-confirm-dialog" aria-label="退出登录并关闭录音"><div class="devhead"><div style="flex:1;min-width:0"><h2 style="margin:0">退出登录并关闭录音？</h2><div class="devsub">防止跨账号录音数据归属混淆</div></div></div><p id="signout-rec-desc" style="font-size:13px;line-height:1.65;color:var(--ink);margin:12px 0">当前正在进行本机录音，退出登录将自动关闭录音并保存当前片段，避免不同账号间的数据归属混淆。</p><div class="wbtns"><button class="btn ghost" data-testid="signout-recording-cancel" onclick="closeSignOutConfirm()">取消</button><button class="btn danger" data-testid="signout-recording-confirm" onclick="confirmSignOut()">关闭录音并退出</button></div></div></div><div class="lg-wrap" id="login-gate" data-testid="login-gate" role="dialog" aria-label="账号登录"><button type="button" class="lg-close" data-testid="login-gate-close" onclick="closeLoginGate()">返回应用</button><div class="lg-box"><div class="lg-logo"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg></div><h2 class="lg-title" data-testid="login-title">录音卡</h2><div class="lg-sub" data-testid="login-subtitle">登录后同步你的录音记录</div><button type="button" class="lg-pri" data-testid="login-submit" onclick="submitLoginChannel('oauth')"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L20 3M16 7l3 3"/></svg><span>使用外脑账号登录</span></button><div class="lg-div"><span>其他登录方式</span></div><button type="button" class="lg-soc" data-testid="login-wechat" onclick="submitLoginChannel('wechat')"><svg width="20" height="20" viewBox="0 0 24 24" fill="#07C160"><path d="M9.2 4C4.7 4 1 7.1 1 10.9c0 2.1 1.1 4 2.9 5.3l-.7 2.4 2.6-1.3c1.1.3 2.2.5 3.4.5.3 0 .6 0 .9-.1-.2-.7-.3-1.4-.3-2.1 0-3.7 3.6-6.7 8-6.7.5 0 1 0 1.4.1C18.4 6.1 14.2 4 9.2 4zm-2.7 4.5a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2zm5.4 0a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2zM17.8 10.2c-3.7 0-6.7 2.5-6.7 5.6s3 5.6 6.7 5.6c.9 0 1.8-.2 2.6-.4l2.1 1.1-.6-1.9c1.5-1.1 2.6-2.6 2.6-4.4 0-3.1-3-5.6-6.7-5.6zm-2.2 3.6a.95.95 0 1 1 0 1.9.95.95 0 0 1 0-1.9zm4.4 0a.95.95 0 1 1 0 1.9.95.95 0 0 1 0-1.9z"/></svg><span>微信登录</span></button><button type="button" class="lg-soc" data-testid="login-apple" onclick="submitLoginChannel('apple')"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M16.7 12.7c0-2.2 1.8-3.3 1.9-3.4-1-1.5-2.6-1.7-3.2-1.8-1.4-.1-2.6.8-3.3.8-.7 0-1.8-.8-2.9-.8-1.5 0-2.9.9-3.7 2.2-1.6 2.7-.4 6.8 1.1 9 .7 1.1 1.6 2.3 2.8 2.2 1.1 0 1.6-.7 2.9-.7 1.3 0 1.7.7 2.9.7 1.2 0 2-1.1 2.7-2.2.9-1.3 1.2-2.5 1.2-2.6-.1 0-2.4-.9-2.4-3.4zM14.5 6.1c.6-.8 1.1-1.8 1-2.9-.9 0-2 .6-2.6 1.4-.6.7-1.1 1.8-.9 2.8 1 .1 2-.5 2.5-1.3z"/></svg><span>通过 Apple 登录</span></button><button type="button" class="lg-soc" data-testid="login-google" onclick="submitLoginChannel('google')"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.4c-.2 1.2-.9 2.3-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.4z"/><path fill="#34A853" d="M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 .9-3.4.9-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6C4.7 19.8 8.1 22 12 22z"/><path fill="#FBBC05" d="M6.4 13.9c-.2-.6-.3-1.2-.3-1.9s.1-1.3.3-1.9V7.5H3.1C2.4 8.9 2 10.4 2 12s.4 3.1 1.1 4.5l3.3-2.6z"/><path fill="#EA4335" d="M12 5.9c1.5 0 2.8.5 3.8 1.5l2.9-2.9C17 2.9 14.7 2 12 2 8.1 2 4.7 4.2 3.1 7.5l3.3 2.6c.8-2.3 3-4.2 5.6-4.2z"/></svg><span>通过 Google 登录</span></button><div class="lg-foot">授权将在系统浏览器或微信中完成，App 不会获取你的密码。</div></div></div><div id="dyn-island" data-testid="dyn-island" role="status" aria-live="polite"><span class="di-logo" id="di-logo" data-testid="di-app-logo" hidden></span><span class="di-wave" id="di-wave"><i></i><i></i><i></i><i></i></span><div class="di-txt"><b id="di-title">灵动岛收听中</b><span id="di-sub">正在接收录音卡语音指令…</span></div></div><div id="push-stack" data-testid="push-stack"></div><div class="toast" id="toast" role="status"></div><nav class="bottom"><button data-testid="nav-timeline" class="on" id="nt" onclick="go('timeline')" aria-label="Timeline"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="8"/><path d="M10 5v5l3 2"/></svg>Timeline</button><button data-testid="nav-setting" id="ns" onclick="go('setting')" aria-label="Setting"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="2.5"/><path d="M10 2v3M10 15v3M2 10h3M15 10h3M4.3 4.3l2.1 2.1M13.6 13.6l2.1 2.1M15.7 4.3l-2.1 2.1M6.4 13.6l-2.1 2.1"/></svg>Setting</button></nav><script>"use strict";
+var ICO_UNLINK='<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.4 9.6l-1.5 1.5a2.1 2.1 0 0 1-3-3l1.5-1.5"/><path d="M9.6 6.4l1.5-1.5a2.1 2.1 0 0 1 3 3l-1.5 1.5"/><path d="M4.2 4.2l1.2 1.2M10.6 10.6l1.2 1.2"/></svg>';
+var ICO_BT='<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 5l7 6-3.5 3V2l3.5 3-7 6"/></svg>';
+var ICO_TRASH='<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.2h11"/><path d="M6 4.2V2.7h4v1.5"/><path d="M4.2 4.2l.6 9.1h6.4l.6-9.1"/></svg>';
+var ICO_APPLOGO='<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="1.8" width="11" height="12.4" rx="2.6"/><path d="M5.6 6.4v3.2M8 5v6M10.4 6.8v2.4"/></svg>';
+(function(){var db=document.getElementById("dev-disc-btn");if(db)db.innerHTML=ICO_UNLINK;var bt=document.getElementById("dev-bt-icon");if(bt)bt.innerHTML=ICO_BT;var dl=document.getElementById("di-logo");if(dl)dl.innerHTML=ICO_APPLOGO})();
+var conn={connected:false,connecting:false,retrying:false,charging:false,curDev:null,scanDone:false,timer:null,devices:[]};
+var SCAN_DEVICES=[{id:"DYJV2_T4W25T",name:"DYJV2_T4W25T",badge:"录音卡 V2",kind:"v2",fw:"2.1.0",free:"28.4 GB",rssi:-48},{id:"DYJ_B7K9Q2",name:"DYJ_B7K9Q2",badge:"点一机 V1",kind:"v1",fw:"1.3.4",free:"14.2 GB",rssi:-67},{id:"REAI_VB_L3M8N1",name:"REAI_VB_L3M8N1",badge:"语音AI键盘 V2.1",kind:"kb",fw:"2.1.0",free:"",rssi:-83},{id:"JBL Flip 6",name:"JBL Flip 6",badge:"",kind:"",rssi:-40}];
+var rec={on:false,sec:0,busy:false},phoneRec={on:false,sec:0,handover:false,micPerm:true},liveState="idle",transPending=2,liveErr="蓝牙链路波动，待重新整理";
+function bleShortId(n){return String(n||"").replace(/^(DYJV2_|REAI_VB_|DYJ_)/,"")}
+function sigOf(rssi){return rssi>=-55?3:rssi>=-70?2:1}
+function recClockText(s){return Math.floor(s/3600)+":"+String(Math.floor(s%3600/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")}
+function syncCapsule(){var cap=document.querySelector('[data-testid="hw-capsule"]');if(!cap)return;
+  var showPhoneOnly=!conn.connected&&!conn.retrying&&phoneRec.on;
+  cap.classList.toggle("off",!conn.connected&&!conn.retrying&&!phoneRec.on);
+  cap.classList.toggle("retry",!!conn.retrying);
+  cap.classList.toggle("phonerec",showPhoneOnly);
+  cap.classList.toggle("idle",conn.connected&&!rec.on&&!conn.retrying);
+  var retry=cap.querySelector(".capsule-retry");
+  if(!retry){retry=document.createElement("span");retry.className="capsule-retry";retry.textContent="连接中…";cap.appendChild(retry)}
+  cap.setAttribute("aria-label",conn.retrying?"录音卡状态：连接中":showPhoneOnly?"录音卡状态：本机录音":!conn.connected?"录音卡状态：无设备":rec.on?"录音卡状态：已连接，录音中":"录音卡状态：已连接，未录音")}
+function isSupportedHw(d){return d.name.indexOf("DYJ")===0||d.name.indexOf("REAI_VB_")===0}
+function scanDevices(){if(conn.connecting)return;conn.scanDone=false;var sub=document.getElementById("conn-sub");if(sub)sub.textContent="正在通过蓝牙扫描附近的设备…";var list=document.getElementById("conn-list");if(list)list.innerHTML="";clearTimeout(conn.timer);conn.timer=setTimeout(function(){conn.devices=SCAN_DEVICES.filter(isSupportedHw).sort(function(a,b){return b.rssi-a.rssi});conn.scanDone=true;if(sub)sub.textContent="选择要连接的硬件（按信号强弱排序）";renderConnList()},1200)}
+function renderConnList(){var list=document.getElementById("conn-list");if(!list)return;if(conn.connecting){list.innerHTML='<div class="wstate">正在建立蓝牙连接…</div>';return}list.innerHTML=(conn.devices||[]).map(function(d){return '<div class="conn-item" data-id="'+d.id+'" data-testid="dev-item-'+d.id+'" onclick="connectDevice(\''+d.id+'\')"><span style="flex:1;min-width:0;display:flex;align-items:center"><span class="cbadge k-'+d.kind+'" data-testid="dev-kind-'+d.id+'">'+esc(d.badge)+'</span><span class="cn" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(bleShortId(d.name))+'</span></span><span class="cm">'+sig(sigOf(d.rssi))+'连接 ›</span></div>'}).join("")}
+function applyDeviceCapabilities(){var d=conn.curDev||SCAN_DEVICES[0];var isKb=d.kind==="kb",isV2=d.kind==="v2";var nm=document.getElementById("dev-name"),bd=document.getElementById("dev-kind-badge"),sb=document.getElementById("dev-sub-txt");if(nm)nm.textContent=bleShortId(d.name);if(bd){bd.textContent=d.badge;bd.className="cbadge k-"+d.kind}if(sb){sb.textContent=isKb?("固件 "+d.fw+" · 实时流"):"固件 "+d.fw}var etaWrap=document.getElementById("batt-eta-wrap"),rSync=document.getElementById("row-sync"),rWifi=document.getElementById("row-wifi"),rFw=document.getElementById("row-fw");if(etaWrap)etaWrap.hidden=isKb;if(rSync)rSync.hidden=isKb;if(rWifi)rWifi.hidden=isKb;if(rFw)rFw.hidden=!isV2;var bx=document.getElementById("disc-box");if(bx)bx.hidden=true}
+function connectDevice(id){var d=SCAN_DEVICES.find(function(x){return x.id===id});if(!d||conn.connecting)return;conn.connecting=true;renderConnList();setTimeout(function(){conn.connected=true;conn.connecting=false;conn.curDev=d;applyDeviceCapabilities();syncCapsule();battEstimate();showDev("main");updateRecUI();syncPhoneRecUI()},900)}
+function askDisconnect(){var bx=document.getElementById("disc-box");if(bx)bx.hidden=!bx.hidden}
+function cancelDisconnect(){var bx=document.getElementById("disc-box");if(bx)bx.hidden=true}
+function confirmDisconnect(){rec.on=false;if(!phoneRec.on)liveState="idle";conn.connected=false;conn.curDev=null;conn.charging=false;var bx=document.getElementById("disc-box");if(bx)bx.hidden=true;syncCapsule();updateRecUI();syncPhoneRecUI();render();showDev("connect");scanDevices();toast("已安全断开蓝牙连接")}
+function switchHwDevice(){conn.connected=false;rec.on=false;if(!phoneRec.on)liveState="idle";syncCapsule();updateRecUI();syncPhoneRecUI();render();showDev("connect");scanDevices()}
+function toggleChargePreview(){conn.charging=!conn.charging;var lb=document.getElementById("batt-label");if(lb)lb.textContent=conn.charging?"充电中":"电量高";setCapsuleBatt();toast(conn.charging?"电源事件：充电中（闪电呼吸图标）":"电源事件：电池供电 · 电量高")}
+function triggerRetryPreview(){closeSheet();var prevConn=conn.connected;conn.connected=false;conn.retrying=true;syncCapsule();toast("看门狗检测到掉线：胶囊切蓝点自动重连中…");setTimeout(function(){conn.retrying=false;conn.connected=prevConn;syncCapsule();toast(prevConn?"自动重连成功":"重连未响应，回退无设备")},2000)}
+function setLivePreview(st){liveState=st;if(st==="recording"&&rec.sec===0)rec.sec=42;document.querySelectorAll("#tl-syncbar [data-lp]").forEach(function(b){b.classList.toggle("on",b.dataset.lp===st)});render()}
+function maybeAskPhotoOnRec(){if(agCfg.photoAutoSync&&!agCfg.photoPerm&&!agCfg.askedPhotoOnRec){agCfg.askedPhotoOnRec=true;agCfg.photoPerm=true;toast("已请求系统相册权限，后续每分钟随切片自动对齐照片")}}
+function toggleRec(){if(!conn.connected||conn.connecting)return;rec.on=!rec.on;var oc=document.getElementById("ota-rec-confirm");if(oc)oc.hidden=true;if(rec.on){rec.sec=0;liveState="recording";maybeAskPhotoOnRec()}else{if(!phoneRec.on){liveState="syncing";render();setTimeout(function(){if(liveState==="syncing"&&!rec.on&&!phoneRec.on){liveState="idle";setLivePreview("idle")}},2400);syncNow(false)}}document.querySelectorAll("#tl-syncbar [data-lp]").forEach(function(b){b.classList.toggle("on",b.dataset.lp===liveState)});updateRecUI();syncCapsule();render()}
+function recKey(ev){if(ev.key===" "||ev.key==="Enter"){ev.preventDefault();toggleRec()}}
+function precKey(ev){if(ev.key===" "||ev.key==="Enter"){ev.preventDefault();togglePhoneRec()}}
+function closeMicPermPrompt(){var b1=document.getElementById("mic-perm-box");if(b1)b1.hidden=true;var b2=document.getElementById("upg-mic-perm-box");if(b2)b2.hidden=true}
+function grantMicPermAndStart(){phoneRec.micPerm=true;closeMicPermPrompt();startPhoneRec(false)}
+function grantMicPermAndStartOta(){phoneRec.micPerm=true;closeMicPermPrompt();confirmOtaRecHandover()}
+function startPhoneRec(handover){if(!phoneRec.micPerm){var bx=document.getElementById(handover?"upg-mic-perm-box":"mic-perm-box");if(bx)bx.hidden=false;return false}phoneRec.on=true;phoneRec.handover=!!handover;phoneRec.sec=0;liveState="recording";maybeAskPhotoOnRec();syncPhoneRecUI();syncCapsule();render();return true}
+function stopPhoneRec(){phoneRec.on=false;phoneRec.handover=false;if(!rec.on)liveState="idle";syncPhoneRecUI();syncCapsule();render()}
+function togglePhoneRec(){if(phoneRec.on){stopPhoneRec();toast("已停止本机录音")}else{if(startPhoneRec(false))toast("已开启本机录音")}}
+function syncPhoneRecUI(){
+  [["prec-val-conn","prec-sw-conn","prec-clock-conn"],["prec-val-main","prec-sw-main","prec-clock-main"]].forEach(function(ids){
+    var rv=document.getElementById(ids[0]),sw=document.getElementById(ids[1]),cl=document.getElementById(ids[2]);
+    if(rv)rv.classList.toggle("on",phoneRec.on);
+    if(sw){sw.classList.toggle("on",phoneRec.on);sw.setAttribute("aria-checked",phoneRec.on?"true":"false")}
+    if(cl)cl.textContent=recClockText(phoneRec.sec);
+  });
+  var di=document.getElementById("dyn-island"),dl=document.getElementById("di-logo"),dw=document.getElementById("di-wave"),dt=document.getElementById("di-title"),ds=document.getElementById("di-sub");
+  if(phoneRec.on&&typeof agCfg!=="undefined"&&agCfg.hasDynamicIsland&&agCfg.islandEnabled){
+    if(dl)dl.hidden=false;if(dw)dw.hidden=true;
+    if(dt)dt.textContent="录音卡运行中";
+    if(ds)ds.textContent="本机录音 · "+recClockText(phoneRec.sec)+" · 每满 1 分钟本地转写";
+    if(di)di.classList.add("show");
+  }else if(!phoneRec.on&&di&&dl&&!dl.hidden){
+    di.classList.remove("show");dl.hidden=true;if(dw)dw.hidden=false;
+  }
+}
+function updateRecUI(){var rv=document.getElementById("recval"),sw=document.getElementById("rec-sw"),cl=document.getElementById("rec-clock"),lc=document.getElementById("live-clock"),dd=document.getElementById("dev-dot");if(dd)dd.style.background=rec.on?"var(--ok)":"#FF9500";if(rv)rv.classList.toggle("on",rec.on);if(sw){sw.classList.toggle("on",rec.on);sw.setAttribute("aria-checked",rec.on?"true":"false")}var t=recClockText(rec.on?rec.sec:phoneRec.sec);if(cl)cl.textContent=recClockText(rec.sec);if(lc)lc.textContent=t}
+setInterval(function(){if(rec.on||liveState==="recording")rec.sec++;if(phoneRec.on){phoneRec.sec++;syncPhoneRecUI()}if(rec.on||liveState==="recording"||phoneRec.on)updateRecUI()},1000);
+function liveCardHTML(){if(selMode||curFilter==="summary")return "";if(liveState==="recording"){var secShown=phoneRec.on&&!rec.on?phoneRec.sec:rec.sec;var label=phoneRec.on&&!rec.on?"正在本机录音":"正在录音";return '<div class="live rec" id="live-status"><span class="ldot" data-testid="recording-status-dot"></span><b>'+label+'</b><span class="lsub">已录 <span id="live-clock">'+recClockText(secShown)+'</span> · 每满 1 分钟本地转写</span></div>'}if(liveState==="transcribing")return '<div class="live" id="live-status"><span class="ldot" data-testid="recording-status-dot" style="background:var(--ok)"></span><b>正在转写</b><span class="lsub">本地语音引擎处理中 · 剩余 '+transPending+' 段</span></div>';if(liveState==="syncing")return '<div class="live" id="live-status"><span class="ldot" data-testid="recording-status-dot" style="background:#1d1d1f"></span><b>正在同步</b><span class="lsub">正在转写最后一段实时录音…</span></div>';if(liveState==="error")return '<div class="live" id="live-status" style="border-color:#FFD2CE;background:#FFF8F7"><span class="ldot" data-testid="recording-status-dot" style="background:#FF3B30"></span><b style="color:#B00020">录音整理中断</b><span class="lsub" style="color:#B00020">'+esc(liveErr)+'</span></div>';return ""}
+var currentEventId=null,selMode=false,selIds=new Set(),pend=null,selOpen={},summaries=[],curSum=null,curFilter="all",curDiaryOff=0;var DOW=["周日","周一","周二","周三","周四","周五","周六"];function nowHM(){var d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")}function dayLabel(o){if(o===0)return"今天";if(o===1)return"昨天";var d=new Date();d.setDate(d.getDate()-o);return(d.getMonth()+1)+"月"+d.getDate()+"日 "+DOW[d.getDay()]}function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;")}var MONOFF=(new Date().getDay()+6)%7,MONPAST=Math.min(MONOFF+7,new Date().getDate()-1);var EVENTS=[{id:"e1",kind:"event",off:0,title:"午后项目方向讨论",brief:"点单闲聊后与同事讨论下一阶段方向，明确交付节奏与分工。出现排期优先级分歧后拍板导出延后两周、先做小方案，周五前输出书面结论。",long:"拼单点完饮品后与同事讨论下一阶段项目方向，明确交付节奏与分工。讨论中出现排期优先级分歧，你在 14:26 单击物理按键打点拍板：先缩小范围做一版可验证的小方案，导出功能延后两周，约定本周五前给出书面结论。",time:"14:20",dur:"18分40秒",spk:"1 / 2（推测）",mark:"",map:"来源 14:19—14:38",dlg:[["2","老陈，顺手拼个单，你点什么喝的？","来源 14:19—14:20"],["1","冰美式少冰就行。对了，这版排期偏紧，特别是测试阶段。","来源 14:20—14:22"],["2","同意。建议先移除两个低优先级功能。","来源 14:22—14:25"],["1","可以，导出功能延后两周。","来源 14:25—14:27","14:26"],["2","我整理分工，周五前给出书面结论。","来源 14:29—14:31"],["1","先做一版可验证的小方案，不铺大范围。","来源 14:34—14:36"],["2","下午整理后发出，有问题随时沟通。","来源 14:36—14:38"]],raw:[["说话人 2（推测）","老陈，顺手拼个单，你点什么喝的？","来源 14:19—14:20 ｜ 清洗版 14:19—14:20",0],["说话人 1（推测）","冰美式少冰就行……呃我觉得这版排期有点太紧了，就是那个……测试那一段。","来源 14:20—14:22 ｜ 清洗版 14:20—14:22",180],["说话人 1（推测）","可以，那个导出功能可以先放一放，啊不对，是放两周。","来源 14:25—14:27 ｜ 清洗版 14:25—14:27",360],["说话人 2（推测）","那我把分工写一下，那个……周五前给你一份书面的结论。","来源 14:27—14:31（含停顿）｜ 清洗版 14:29—14:31",540],["说话人 1（推测）","好，就先做一版能验证的小方案，别一下子铺太大。","来源 14:34—14:36 ｜ 清洗版 14:34—14:36",840],["说话人 2（推测）","行，那我下午整理完发给你，有问题随时说。","来源 14:36—14:38 ｜ 清洗版 14:36—14:38",960]]},{id:"e2",kind:"event",off:0,title:"客户回访要点",brief:"电话回访客户，记录对新版本界面的反馈与两条改进建议。客户整体态度积极，但对加载速度提出明确不满，希望下次沟通前有改进数据。",long:"电话回访客户，记录对新版本界面的反馈与两条改进建议：筛选记住上次选择；列表页加载提速。客户整体态度积极，但对加载速度明确表示不满，希望下次沟通前看到改进数据。",time:"13:05",dur:"9分12秒",spk:"1 / 2（推测）",mark:"",map:"来源 13:05—13:14",dlg:[["2","新界面反馈整体清爽，列表页打开偏慢。","来源 13:06—13:08"],["1","速度问题已记录，下版本专项优化。","来源 13:08—13:10"],["2","筛选希望能记住上次选择条件。","来源 13:10—13:12"],["1","建议有效，已记录。","来源 13:12—13:14"]],raw:[["说话人 2（推测）","那个新界面我们同事都说挺清爽的，就是列表打开有点慢……嗯对，就是列表。","来源 13:05—13:08 ｜ 清洗版 13:06—13:08",0],["说话人 1（推测）","嗯，速度问题我们记下来，下版会专门优化这一块。","来源 13:08—13:10 ｜ 清洗版 13:08—13:10",180],["说话人 2（推测）","还有啊，筛选能不能记住我上次选的条件？每次都要重选，有点麻烦。（静音约10秒）","来源 13:10—13:12 ｜ 清洗版 13:10—13:12",300],["说话人 1（推测）","可以，这个建议很好，我记一下……好的，已经记下来了。","来源 13:12—13:14 ｜ 清洗版 13:12—13:14",420]]},{id:"e3",kind:"event",off:0,title:"晨间工作计划",brief:"对今日工作的口头规划，列出三件待办并标记一件需重点跟进事项。提到明天上午先确认测试环境是否就绪。",long:"对今日工作的口头规划：发出分工文档、跟进客户加载速度问题、准备周五书面结论三件待办，其中书面结论需重点跟进。提到明天上午先确认测试环境是否就绪。",time:"10:12",dur:"3分05秒",spk:"1（推测）",mark:"",map:"来源 10:12—10:15",dlg:[["1","今日计划：推进排期讨论与客户回访安排。","来源 10:12—10:13"],["1","三件待办：发出分工文档；跟进加载速度问题；准备周五书面结论（重点跟进）。","来源 10:13—10:14"],["1","明日早间先确认测试环境就绪。","来源 10:14—10:15"]],raw:[["说话人 1（推测）","今天打算把排期讨论和客户回访这两块推进一下……嗯，先记三件事。","来源 10:12—10:13 ｜ 清洗版 10:12—10:13",0],["说话人 1（推测）","第一，把分工文档发出去；第二，跟进客户说的加载速度；第三就是准备周五的书面结论，这个要重点盯一下。","来源 10:13—10:14 ｜ 清洗版 10:13—10:14",60],["说话人 1（推测）","对了，明早记得先看看测试环境准备好了没有，别到时候又出岔子。","来源 10:14—10:15 ｜ 清洗版 10:14—10:15",120]]},{id:"e4",kind:"event",off:1,title:"与运维确认发布窗口",brief:"与运维确认今晚灰度发布窗口与回滚预案，明确灰度比例、监控盯守与发布后状态同步安排。",long:"与运维确认今晚八点开始灰度发布，先放百分之十流量；回滚预案已发群内，监控由运维盯守前半小时，发布完成后在群里同步状态。",time:"09:30",dur:"5分12秒",spk:"1 / 2（推测）",mark:"",map:"来源 09:30—09:35",dlg:[["1","今晚八点灰度发布，先放百分之十。","来源 09:30—09:32"],["2","回滚预案我放在群里了，监控我盯前半小时。","来源 09:32—09:34"],["1","好，发布完我在群里同步状态。","来源 09:34—09:35"]],raw:[["说话人 1（推测）","那个……今晚八点开始灰度，先放百分之十吧，稳一点。","来源 09:29—09:32 ｜ 清洗版 09:30—09:32",0],["说话人 2（推测）","嗯，回滚预案我发群里了，前半小时我盯着监控。","来源 09:32—09:34 ｜ 清洗版 09:32—09:34",180]]},{id:"e5",kind:"event",off:MONOFF,title:"周一例会要点",brief:"周例会对齐本周里程碑：接口联调周三前完成，文案周四评审，周五打包提测；风险集中在第三方回调稳定性。",long:"周例会对齐本周里程碑：接口联调周三前完成，文案周四评审，周五打包提测。风险集中在第三方回调稳定性，要求对接方提前提供测试账号。",time:"16:40",dur:"6分30秒",spk:"1 / 2（推测）",mark:"",map:"来源 16:40—16:47",dlg:[["1","本周里程碑：接口联调周三前完成。","来源 16:40—16:42"],["2","文案周四评审，周五打包提测。","来源 16:42—16:44"],["1","风险还是第三方回调，让对接方提前给测试账号。","来源 16:44—16:47"]],raw:[["说话人 1（推测）","呃，本周的话……接口联调争取周三前搞定。","来源 16:39—16:42 ｜ 清洗版 16:40—16:42",0],["说话人 2（推测）","文案评审放在周四，周五就能打包提测了。","来源 16:42—16:44 ｜ 清洗版 16:42—16:44",180]]},{id:"e6",kind:"event",off:MONPAST,title:"预约与备忘",brief:"口头备忘两件事：下周一下午预约牙医复诊；把体检报告发给保险顾问。",long:"口头备忘两件事：下周一下午预约牙医复诊；把体检报告发给保险顾问。",time:"10:05",dur:"2分18秒",spk:"未区分",mark:"",map:"来源 10:05—10:08",dlg:[["1","备忘：下周一下午预约牙医复诊。","来源 10:05—10:06"],["1","体检报告记得发给保险顾问。","来源 10:07—10:08"]],raw:[["未区分","对了，下周一……嗯，下午约一下牙医复诊。","来源 10:04—10:06 ｜ 清洗版 10:05—10:06",0],["未区分","还有体检报告，发给那个保险顾问。","来源 10:07—10:08 ｜ 清洗版 10:07—10:08",90]]}];/* 相册数据：每天最多两张带图记录；e3 最后一张预置为「不属于本段」，
+   用来展示日终的「未归类图片」条目。图片用内联 SVG，不引外部资源。 */
+var PHOTO_DATA={
+  e2:[{t:"13:06",cap:"列表页首屏加载耗时实测画面",quote:"新界面反馈整体清爽，列表页打开偏慢。"},{t:"13:09",cap:"筛选器重进页面后条件重置现状",quote:"筛选希望能记住上次选择条件。"}],
+  e3:[{t:"10:13",cap:"晨间白板：今日三项待办草稿",quote:"三件待办：发出分工文档；跟进加载速度问题；准备周五书面结论。"},{t:"10:14",cap:"测试环境服务健康检查面板",quote:"明日早间先确认测试环境就绪。"},{t:"10:15",cap:"提测前环境依赖核对清单",quote:"明日早间先确认测试环境就绪。"},{t:"10:16",cap:"周五书面结论提纲便签",quote:"准备周五书面结论（重点跟进）。"},{t:"10:17",excluded:true,cap:"桌面随手拍"}],
+  e5:[{t:"16:41",cap:"周例会里程碑排期白板（联调 / 评审 / 提测）",quote:"本周里程碑：接口联调周三前完成。"}],
+  e6:[{t:"10:06",cap:"下周一下午牙科复诊预约单",quote:"备忘：下周一下午预约牙医复诊。"},{t:"10:07",cap:"年度体检报告指标摘要页",quote:"体检报告记得发给保险顾问。"},{t:"10:08",cap:"保险顾问补充材料清单",quote:"体检报告记得发给保险顾问。"}]
+};
+var PIC_ICO='<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2.2"/><circle cx="5.5" cy="6.2" r="1.2"/><path d="M2.2 12.2l3.6-3.4 2.6 2.3 2.4-2.1 3 3.2"/></svg>';
+function photoURI(seed){var hues=[18,200,140,280,40,320];var h=hues[seed%hues.length];var cx=18+seed*7%44,cy=18+seed*5%34;var svg='<svg xmlns="http://www.w3.org/2000/svg" width="84" height="84"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl('+h+',55%,74%)"/><stop offset="1" stop-color="hsl('+((h+36)%360)+',45%,44%)"/></linearGradient></defs><rect width="84" height="84" fill="url(#g)"/><circle cx="'+cx+'" cy="'+cy+'" r="9" fill="rgba(255,255,255,.55)"/><path d="M0 68 L22 46 L42 62 L62 38 L84 62 V84 H0Z" fill="rgba(0,0,0,.16)"/></svg>';return 'data:image/svg+xml,'+encodeURIComponent(svg)}
+function sceneURI(eid,i){var seed=photoSeed(eid,i),hues=[18,200,140,280,40,320],h=hues[seed%hues.length],h2=(h+34)%360,bar1=64+seed*9%90,bar2=80+seed*13%110;var svg='<svg xmlns="http://www.w3.org/2000/svg" width="280" height="168"><defs><linearGradient id="sg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl('+h+',52%,78%)"/><stop offset="1" stop-color="hsl('+h2+',44%,46%)"/></linearGradient></defs><rect width="280" height="168" fill="url(#sg)"/><rect x="22" y="20" width="236" height="128" rx="10" fill="rgba(255,255,255,.86)"/><rect x="36" y="34" width="76" height="9" rx="4.5" fill="hsl('+h+',42%,42%)"/><rect x="36" y="52" width="'+bar1+'" height="7" rx="3.5" fill="rgba(60,60,67,.22)"/><rect x="36" y="66" width="'+bar2+'" height="7" rx="3.5" fill="rgba(60,60,67,.16)"/><rect x="36" y="88" width="96" height="44" rx="6" fill="hsl('+h+',55%,92%)"/><rect x="142" y="88" width="102" height="44" rx="6" fill="rgba(60,60,67,.07)"/><circle cx="228" cy="40" r="8" fill="hsl('+h2+',55%,62%)"/></svg>';return 'data:image/svg+xml,'+encodeURIComponent(svg)}
+function photosOf(e){return (e&&PHOTO_DATA[e.id])||[]}
+function photoSeed(eid,i){return (eid.charCodeAt(1)+i*3)*7}
+function activePhotos(e){return photosOf(e).filter(function(p){return !p.excluded})}
+function photoCountFor(ids){var n=0;(ids||[]).forEach(function(id){var e=EVENTS.find(function(x){return x.id===id});if(e)n+=activePhotos(e).length});return n}
+function photoStackList(list,testId,label){var n=list.length;if(!n)return "";var show=n>3?4:n;var w=45+(show-1)*6;var tiles=[];for(var i=0;i<show;i++){var isCount=n>3&&i===3;var p=list[i]||{};var uri=photoURI(p.seed!==undefined?p.seed:i*7+3);tiles.push('<span class="pthumb'+(isCount?" count":"")+'" style="left:'+(i*6)+'px;z-index:'+(i+1)+'"><img src="'+uri+'" alt="">'+(isCount?'<span class="pcount">'+n+'</span>':'')+'</span>')}return '<span class="pstack" data-testid="'+testId+'" aria-label="'+label+'" style="width:'+w+'px">'+tiles.join("")+'</span>'}
+function photoStack(e){var list=[];photosOf(e).forEach(function(p,i){if(!p.excluded)list.push({seed:photoSeed(e.id,i),t:p.t})});return photoStackList(list,'pics-'+e.id,'相册照片 '+list.length+' 张')}
+/* 声纹档案库 + 上下文称呼消解（CAM++ 本地声纹聚类 × 大模型呼语推断） */
+var SPEAKER_DB={
+  s1:{id:"s1",slot:"1",hintedName:"老陈",name:"",confirmed:false,sim:94,
+    ctxQuote:"14:19 说话人 2 喊：“老陈，顺手拼个单，你点什么喝的？” → 紧接说话人 1 应答：“冰美式少冰就行。”",
+    reason:"端侧 3D-Speaker CAM++ 聚类同对话及今日 10:12、13:05 声纹簇（余弦相似度 94%）；大模型由点单呼语上下文推断“老陈”指向说话人 1。",
+    traits:["饮品偏好：冰美式少冰（14:20 点单提取）","排期主张：测试偏紧时优先做可验证小方案、导出延后两周","协作习惯：明早优先核查测试环境就绪状态"],
+    events:["e1","e2","e3","e4","e5"]},
+  s2_e1:{id:"s2_e1",slot:"2",hintedName:"小周",name:"",confirmed:false,sim:89,
+    ctxQuote:"14:19 发起拼单点饮品，并在 14:29 主动认领整理分工、周五前输出书面结论。",
+    reason:"同对话声纹稳定聚类（89%）；结合分工认领上下文推测为项目搭档「小周」。",
+    traits:["协作分工：整理排期分工并于周五前输出书面结论","沟通风格：遇排期挤压倾向先剥离低优模块"],
+    events:["e1","e5"]},
+  s2_e2:{id:"s2_e2",slot:"2",hintedName:"张总",name:"",confirmed:false,sim:76,
+    ctxQuote:"13:06 电话回访：“新界面反馈整体清爽，列表页打开偏慢……筛选希望能记住上次选择条件。”",
+    reason:"电话窄带信道声纹与上周三受访客户「张总」相似度 76%（处于临界区间，无法仅凭历史自动证伪，已推入今日睡前日记待你确认）。",
+    traits:["核心关切：列表首屏加载耗时需有量化对比数据","操作习惯：高频复用状态筛选条件，反感重进重置"],
+    events:["e2"]},
+  s2_e4:{id:"s2_e4",slot:"2",hintedName:"阿杰",name:"阿杰",confirmed:true,sim:96,
+    ctxQuote:"昨日 09:32：“回滚预案我放在群里了，监控我盯前半小时。”",
+    reason:"昨晚睡前日记已由你确认标记为运维同事「阿杰」（本机声纹簇已绑定，后续对话自动指认并累加记忆）。",
+    traits:["角色职责：运维发布搭档，负责晚八点灰度前半小时盯守","工程规范：灰度前提前在项目群留档回滚预案"],
+    events:["e4"]}
+};
+var SPEAKER_DETACHED={};
+function spkKeyOf(eid,slot){if(slot==="1")return"s1";if(eid==="e2")return"s2_e2";if(eid==="e4")return"s2_e4";return"s2_e1"}
+function spkObj(eid,slot){return SPEAKER_DB[spkKeyOf(eid,slot)]}
+function isSpkActiveOn(eid,slot){var k=spkKeyOf(eid,slot),o=SPEAKER_DB[k];return !!(o&&o.confirmed&&o.name&&!SPEAKER_DETACHED[k+":"+eid])}
+function spkDisplay(eid,slot){var k=spkKeyOf(eid,slot),o=SPEAKER_DB[k];if(!o)return"说话人 "+slot+"（推测）";if(SPEAKER_DETACHED[k+":"+eid])return"说话人 "+slot+"（本段已解绑）";if(o.confirmed&&o.name)return o.name;return"说话人 "+slot+"（推测"+(o.hintedName?"·"+o.hintedName+"?":"")+"）"}
+function eventSpkMeta(e){if(e.spk==="未区分")return"说话人 未区分";var slots=e.spk.indexOf("2")>=0?["1","2"]:["1"];return slots.map(function(sl){var o=spkObj(e.id,sl);return isSpkActiveOn(e.id,sl)?o.name+"（声纹）":"说话人 "+sl+"（推测）"}).join(" / ")}
+var DREAM_STATE={skillOn:true,hasComic:true,mems:[
+  {cat:"实体·人",t:"阿杰（运维，声纹已绑定）：负责晚 20:00 灰度前半小时监控盯守与群内回滚预案备案",src:"昨晚睡前标注 + 昨日 09:30 对话"},
+  {cat:"私有概念",t:"「10% 晚八点窗口」：团队默认灰度发布档位，首轮放量 10% 并在平稳后群内同步",src:"昨日 09:30 · 与运维确认发布窗口"},
+  {cat:"升格关系",t:"我 ⇄ 阿杰 · 灰度上线协同（边升格为点：累计 3 次配合、含回滚预案与盯守分工属性）",src:"10/29、11/05、昨日 09:32 跨日聚合"},
+  {cat:"实体·物",t:"《007黄金眼》（电影）：9 月 5 日周三下午观看，观影期间买了爆米花",src:"9月5日周三 14:40 · 影院散场记录"},
+  {cat:"私有概念",t:"「可验证小方案」：排期受挤时优先剥离低优导出模块、两周内闭环核心验证的内部代称",src:"历史长期沉淀"},
+  {cat:"事件脉络",t:"客户体验敏感点：列表首屏加载性能优先级高于纯视觉微调，需用量化耗时闭环",src:"历史长期沉淀"}
+]};
+var DIARY_STATE={
+  likes:{"0-0":false,"0-1":true,"0-2":false,"1-0":true,"1-1":false},
+  annots:[
+    {id:"a0",q:"14:19 对方喊“老陈，顺手拼个单，你点什么喝的？”，紧接回答“冰美式少冰”的「说话人 1」，要标记为「老陈」吗？",
+     why:"CAM++ 判定今日 10:12、13:05、14:20 三段录音为同一声纹簇（94%），但历史人物库尚无「老陈」实名绑定，需你一锤定音。",
+     yes:"是老陈 · 绑定声纹",alt:"改个称呼…",no:"暂不标记",choice:null},
+    {id:"a1",q:"13:05 客户回访电话里的「说话人 2」，和上周三反馈试用体验的「张总」是同一个人吗？",
+     why:"电话窄带音频声纹余弦相似度 76%（临界区间），且两次都提到筛选器效率问题，单凭历史记录无法自动证伪。",
+     yes:"是同一位张总",no:"不是，新建客户档案",choice:null},
+    {id:"a2",q:"14:26 你单击了一下录音卡物理按键，是在重点标记「导出延后两周、先做小方案」这项拍板吗？",
+     why:"单击时间戳落在“啊不对，是放两周”句尾 0.8 秒处，推测为关键排期决策打点而非随手误触。",
+     yes:"对，记为关键决策",no:"只是随手误触",choice:null}
+  ],
+  yestAnnots:[
+    {q:"昨日 09:32 承诺“回滚预案放群里、盯前半小时监控”的「说话人 2」，确认标记为运维「阿杰」吗？",ans:"已确认：阿杰（昨晚已反哺做梦图谱）"}
+  ]
+};
+function pendingAnnotCount(off){if(off!==0)return 0;return DIARY_STATE.annots.filter(function(a){return !a.choice}).length}
+function diaryEntryFor(off){var srcs=EVENTS.filter(function(e){return e.off===off});if(!srcs.length)return null;var pics=photoCountFor(srcs.map(function(e){return e.id}));var pend=pendingAnnotCount(off);return {id:"daily-"+off,off:off,srcIds:srcs.map(function(e){return e.id}),pics:pics,title:off===0?"今日睡前日记":off===1?"昨日睡前日记":dayLabel(off)+" 睡前日记",sub:off===0?("记录 "+srcs.length+" 段今日故事 · "+(pend?"待你标注 "+pend+" 项":"今日标注已完成")):("已整理 "+srcs.length+" 段故事 · 睡前标注已反哺做梦")}}
+function excludedPhotosForDay(off){var out=[];EVENTS.filter(function(e){return e.off===off}).forEach(function(e){photosOf(e).forEach(function(p,i){if(p.excluded&&!p.dismissed)out.push({seed:photoSeed(e.id,i),t:p.t,cap:p.cap||"现场记录画面",eid:e.id,etitle:e.title,i:i})})});return out}
+function photoHTML(eid,i,p){return '<div class="dphoto" data-testid="dphoto-'+eid+'-'+i+'"><img src="'+sceneURI(eid,i)+'" alt=""><div class="dphoto-side"><div class="who">照片 · '+p.t+(p.cap?' · '+esc(p.cap):'')+'</div><button class="dphoto-x" onclick="excludePhoto(\''+eid+'\','+i+')">不属于本段</button></div></div>'}
+function excludePhoto(eid,i){var arr=PHOTO_DATA[eid];if(!arr||!arr[i]||arr[i].excluded)return;arr[i].excluded=true;arr[i].dismissed=false;toast("已移入未归类图片");render();if(currentEventId===eid)fillDetail(eid)}
+function cardHTML(e){
+if(e.kind==="dream"){var pn=EVENTS.filter(function(x){return x.off===e.off+1}).length;return '<div class="card dreamcard" data-testid="card-dream-'+e.off+'" data-kind="dream" role="button" onclick="openDreamSheet('+e.off+')"><div class="dream-head"><span class="dream-ico">☾</span><h3>做梦完成</h3><span class="tbc-badge" data-testid="tbc-dream" title="App 尚未接通夜间 >5h 空白检测、梦境漫画与记忆图谱管线">TBC</span><span class="dream-badge">'+(DREAM_STATE.hasComic?"4格梦境漫画":"已整理")+'</span><span class="sumchev">›</span></div><div class="when">已清洗昨日 '+pn+' 段对话 · 加入知识库 '+DREAM_STATE.mems.length+' 条 · 提炼技能 '+(DREAM_STATE.skillOn?1:0)+' 个</div></div>'}
+if(e.kind==="unclassified"){var un=e.photos.length;var ut=e.off===0?"今日未归类图片":dayLabel(e.off)+"未归类图片";return '<div class="card unccard" style="cursor:default" data-testid="card-unc-'+e.off+'" data-kind="unclassified"><div class="sum-head"><h3>'+ut+'</h3><div class="sum-side"><span class="unccount">'+un+' 张</span></div></div><div class="when">已从记录对话流中排除的照片</div>'+photoStackList(e.photos,'unc-pics-'+e.off,'未归类图片 '+un+' 张')+'</div>'}
+if(e.kind==="daily"){var dy=e.diary;var dpc=photoCountFor(dy.srcIds);var pa=pendingAnnotCount(e.off);return '<div class="card dailycard" data-testid="card-daily-'+e.off+'" data-kind="daily" role="button" onclick="openDiary('+e.off+',true)"><div class="sum-head"><h3 style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span>'+esc(dy.title)+'</span>'+(pa?'<span class="diary-pill">待标注 '+pa+'</span>':'<span class="diary-pill">已标注</span>')+'</h3><div class="sum-side"><span class="sumchev">›</span><span class="sumphotos">含 '+dpc+' 张图片</span></div></div><div class="when">'+esc(dy.sub)+'</div></div>'}
+var open=!!selOpen[e.id];if(e.kind==="summary"){var inner,locked=e.state!=="done";if(e.state==="pending"){inner='<h3>手动总结</h3><div class="when">'+e.time+' · 选择来源切片中</div>'}else if(e.state==="generating"){inner='<h3>正在生成总结</h3><div class="when">'+e.time+' · 分析检查中</div><div class="cardprog"><i style="width:'+(e.prog||0)+'%"></i></div>'}else{var pc=photoCountFor(e.srcIds);inner='<div class="sum-head"><h3>'+esc(e.title)+'</h3><div class="sum-side"><span class="sumchev">›</span><span class="sumphotos">含 '+pc+' 张图片</span></div></div><div class="when">'+e.time+' · 已选 '+e.srcIds.length+' 片段</div>'}return '<div class="card sumcard" data-testid="card-'+e.id+'" data-kind="summary" data-id="'+e.id+'" onclick="tapCard(this)" role="button"'+(locked?' aria-disabled="true"':'')+'>'+inner+'</div>'}var spkTxt=eventSpkMeta(e);var exp='<div class="exp">'+esc(e.long)+'<div class="meta"><span>'+esc(spkTxt)+'</span><span class="tag">本机 SenseVoice</span>'+(e.mark?'<span class="tag">'+esc(e.mark)+'</span>':'')+'<span>'+e.map+'</span></div><div class="btn-line"><button class="btn" data-testid="detail-'+e.id+'" onclick="event.stopPropagation();openDetail(\''+e.id+'\',true)">详情</button></div></div>';var ck=selMode?'<input type="checkbox" data-sel="'+e.id+'" tabindex="-1" aria-label="选择 '+e.title+'"'+(selIds.has(e.id)?" checked":"")+'>':'';return '<div class="card'+(selMode?" pick":"")+(open?" open":"")+'" data-testid="card-'+e.id+'" data-kind="event" data-id="'+e.id+'" onclick="tapCard(this)" role="button" aria-expanded="'+open+'"'+(selMode?' aria-checked="'+selIds.has(e.id)+'"':'')+'>'+ck+'<div class="pc"><div class="pc-head"><div class="pc-text"><h3>'+esc(e.title)+'</h3><div class="when">'+e.time+' · '+e.dur+'</div></div>'+photoStack(e)+'</div>'+(open?exp:'')+'</div></div>'}function tlItemHTML(e,cls){return '<div class="tl-item '+cls+'" data-testid="timeline-item-'+e.id+'"><span class="tl-node" aria-hidden="true"></span><div class="tl-main">'+cardHTML(e)+'</div></div>'}function groupHTML(list){var h="";list.forEach((e,i)=>{var cls=list.length===1?"only":(i===0?"first":(i===list.length-1?"last":""));h+=tlItemHTML(e,cls)});return h}function toMin(t){var p=(t||"0:0").split(":");return (parseInt(p[0])||0)*60+(parseInt(p[1])||0)}
+function dreamGapHours(off){var prev=EVENTS.filter(function(e){return e.off===off+1});var cur=EVENTS.filter(function(e){return e.off===off});if(!prev.length||!cur.length)return 0;var last=Math.max.apply(null,prev.map(function(e){return toMin(e.time)}));var first=Math.min.apply(null,cur.map(function(e){return toMin(e.time)}));return ((1440-last)+first)/60}
+function latestSourceDay(s){var ids=(s.srcIds&&s.srcIds.length)?s.srcIds:(s.state==="pending"?[...selIds]:[]);var day=null;ids.forEach(function(id){var e=EVENTS.find(function(x){return x.id===id&&x.kind==="event"});if(!e)return;if(day===null||e.off<day)day=e.off});return day===null?0:day}
+function render(){var f=curFilter,html="";var sb=document.getElementById("tl-syncbar");if(sb)sb.hidden=selMode||f==="summary";var sums=summaries.filter(function(s){return !s.daily&&(f==="all"||f==="summary")});var evs=EVENTS.filter(function(e){return f==="all"||f==="event"});var byDay={};evs.forEach(function(e){(byDay[e.off]=byDay[e.off]||[]).push(e)});Object.keys(byDay).forEach(function(d){byDay[d].sort(function(a,b){return toMin(b.time)-toMin(a.time)})});var topByDay={};sums.forEach(function(s){var d=latestSourceDay(s);(topByDay[d]=topByDay[d]||[]).push(s)});Object.keys(topByDay).forEach(function(d){byDay[d]=byDay[d]||[];byDay[d].unshift.apply(byDay[d],topByDay[d])});var days=Object.keys(byDay).map(Number).filter(function(d){return byDay[d].length}).sort(function(a,b){return a-b});days.forEach(function(d){var list=byDay[d];if(f==="all"){var sumCnt=topByDay[d]?topByDay[d].length:0;var up=excludedPhotosForDay(d);if(up.length){list.splice(sumCnt,0,{id:"unc-"+d,kind:"unclassified",off:d,photos:up})}}html+='<div class="tl-date">'+dayLabel(d)+'</div>'+groupHTML(list)});if(!html)html='<div class="warn" style="padding:16px 0">'+(f==="summary"?'还没有总结 · 点击右上角「总结」选择记录生成':'该筛选下暂无内容。')+'</div>';document.getElementById("feed").innerHTML=liveCardHTML()+html;syncSelUI()}function tapCard(el){var id=el.dataset.id,kind=el.dataset.kind;if(selMode){if(kind==="event")toggleSel(id);return}if(kind==="summary"){var s=summaries.find(x=>x.id===id);if(!s||s.state!=="done")return;openSum(id,true);return}var was=!!selOpen[id];selOpen={};if(!was)selOpen[id]=1;render()}function setFilter(btn){curFilter=btn.dataset.f;btn.parentElement.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b===btn));render()}var subStack=[],PAGE_LABEL={sum:"总结",detail:"记录",diary:"日记",setsub:"Setting"};function saveState(){try{sessionStorage.setItem("rc-route-v1",JSON.stringify({stack:subStack.filter(e=>e.t!=="setsub"),sums:summaries.filter(s=>s.state==="done"&&!s.daily)}))}catch(e){}}function restoreState(){try{var d=JSON.parse(sessionStorage.getItem("rc-route-v1")||"null");if(!d)return;summaries=(d.sums||[]).filter(s=>s&&s.state==="done"&&!s.daily);subStack=(d.stack||[]).filter(e=>e&&(e.t==="detail"||e.t==="diary"||(e.t==="sum"&&summaries.some(s=>s.id===e.id))))}catch(e){}}function go(p){["timeline","setting"].forEach(x=>document.getElementById("p-"+x).classList.toggle("show",x===p));document.getElementById("nt").classList.toggle("on",p==="timeline");document.getElementById("ns").classList.toggle("on",p==="setting");["p-sumres","p-detail","p-diary","p-setsub"].forEach(x=>document.getElementById(x).classList.remove("show"));subStack=[];saveState();renderSub();syncChrome()}function navSub(e,fresh){if(fresh){subStack=[e]}else{var i=subStack.findIndex(x=>x.t===e.t&&x.id===e.id);subStack=i>=0?subStack.slice(0,i+1):subStack.concat([e])}saveState();renderSub();syncChrome()}function renderSub(){["p-sumres","p-detail","p-diary","p-setsub"].forEach(x=>document.getElementById(x).classList.remove("show"));var top=subStack[subStack.length-1];if(!top){document.body.classList.remove("sub");return}document.body.classList.add("sub");if(top.t==="sum"){document.getElementById("p-sumres").classList.add("show");var s=summaries.find(x=>x.id===top.id);if(s){curSum=s;if(s.state==="done"){showSumRes()}else{showGenView(s)}}}else if(top.t==="diary"){curDiaryOff=parseInt(top.id)||0;renderDiary(curDiaryOff);document.getElementById("p-diary").classList.add("show")}else if(top.t==="setsub"){renderSetSub(top.id);document.getElementById("p-setsub").classList.add("show")}else{fillDetail(top.id);document.getElementById("p-detail").classList.add("show")}}function syncChrome(){var n=subStack.length,top=subStack[n-1],prev=n>1?subStack[n-2]:null;document.body.classList.toggle("sub",n>0);document.getElementById("crumb-back").hidden=!(n>0);document.getElementById("crumb-dest").textContent=prev?PAGE_LABEL[prev.t]:(top&&top.t==="setsub"?"Setting":"Timeline");var pd=document.getElementById("pb-detail"),ps=document.getElementById("pb-sum"),pdy=document.getElementById("pb-diary"),pss=document.getElementById("pb-setsub");pd.hidden=!(n>1&&top.t==="detail");if(!pd.hidden)pd.textContent="‹ 返回"+PAGE_LABEL[prev.t];ps.hidden=!(n>1&&top.t==="sum");if(!ps.hidden)ps.textContent="‹ 返回"+PAGE_LABEL[prev.t];if(pdy){pdy.hidden=!(n>1&&top.t==="diary");if(!pdy.hidden)pdy.textContent="‹ 返回"+PAGE_LABEL[prev.t]}if(pss){pss.hidden=!(n>1&&top.t==="setsub");if(!pss.hidden)pss.textContent="‹ 返回"+PAGE_LABEL[prev.t]}window.scrollTo(0,0);var sc=document.getElementById("sidecol");if(sc)sc.scrollTop=0}function goBack(){if(subStack.length>1){subStack.pop();saveState();renderSub();syncChrome()}else if(subStack.length===1&&subStack[0].t==="setsub"){go("setting")}else{go("timeline")}}function detTab(t){["dlg","raw","refs"].forEach(x=>{var b=document.getElementById("dtab-"+x);if(b)b.classList.toggle("on",x===t)});document.getElementById("dt-dlg").style.display=t==="dlg"?"block":"none";document.getElementById("dt-raw").style.display=t==="raw"?"block":"none";document.getElementById("dt-refs").style.display=t==="refs"?"block":"none"}
+var RAW_AUDIO={};
+function parseDurSec(s){var m=(s||"").match(/(\d+)\s*分\s*(\d+)\s*秒/);if(m)return parseInt(m[1])*60+parseInt(m[2]);return 180}
+function rawAudioState(e){
+  if(RAW_AUDIO[e.id])return RAW_AUDIO[e.id];
+  var gaps=e.id==="e3"?1:0;
+  var dur=parseDurSec(e.dur);
+  RAW_AUDIO[e.id]={dur:Math.max(6,dur),gaps:gaps,cleared:false,playing:false,pos:0};
+  return RAW_AUDIO[e.id];
+}
+function mmss(sec){var m=Math.floor(sec/60),s2=Math.floor(sec%60);return String(m).padStart(2,"0")+":"+String(s2).padStart(2,"0")}
+function rawPlayerHTML(e){
+  var a=rawAudioState(e);
+  if(a.cleared)return '<div class="rawaudio cleared" data-testid="raw-audio-cleared"><span class="raico">◌</span><span>原始录音已清理</span></div>';
+  return '<div class="rawaudio" data-testid="raw-audio-player">'
+    +'<button class="raplay" data-testid="raw-audio-toggle" aria-label="'+(a.playing?"暂停原始录音":"播放原始录音")+'" onclick="rawAudioToggle(\''+e.id+'\')">'+(a.playing?"❚❚":"▶")+'</button>'
+    +'<div class="rameta"><div class="ratime" data-testid="raw-audio-time">'+mmss(a.pos)+' / '+mmss(a.dur)+'</div>'
+    +'<div class="rastate'+(a.gaps?" warn":"")+'" data-testid="raw-audio-state">本机原始录音 · '+(a.gaps?"中间有 "+a.gaps+" 处中断":"完整 · 吸顶可拖进度 / 点句秒跳")+'</div></div>'
+    +'<button class="radel" data-testid="raw-audio-delete" onclick="rawAudioClear(\''+e.id+'\')">清理</button>'
+    +'<div class="raslider-wrap"><input type="range" class="raslider" data-testid="raw-audio-slider" min="0" max="'+a.dur+'" value="'+a.pos+'" aria-label="原始录音进度" oninput="rawAudioSeek(\''+e.id+'\',Number(this.value))"></div></div>';
+}
+function rawLinesHTML(e){
+  var a=rawAudioState(e);
+  return e.raw.map(function(l,idx){
+    var s0=l[3]||0,s1=(e.raw[idx+1]&&e.raw[idx+1][3])||a.dur;
+    var act=!a.cleared&&a.pos>=s0&&a.pos<s1&&(a.playing||a.pos>0);
+    return '<div class="rawline'+(act?" active":"")+'" data-testid="rawline-'+e.id+'-'+idx+'" onclick="rawAudioSeek(\''+e.id+'\','+s0+')"><div class="who"><b>'+esc(l[0])+'</b> · '+l[2]+(a.cleared?"":'<span class="rawjump">▶ '+mmss(s0)+'</span>')+'</div><div class="txt">'+esc(l[1])+'</div></div>';
+  }).join("");
+}
+function rawAudioSeek(id,sec){
+  var e=EVENTS.find(function(x){return x.id===id});if(!e)return;
+  var a=rawAudioState(e);if(a.cleared)return;
+  a.pos=Math.max(0,Math.min(a.dur,Math.floor(sec)));
+  redrawRaw(id);
+}
+function rawAudioToggle(id){
+  var a=rawAudioState(EVENTS.find(function(x){return x.id===id}));
+  if(a.playing){a.playing=false;clearInterval(a.timer)}else{
+    a.playing=true;
+    a.timer=setInterval(function(){a.pos++;if(a.pos>=a.dur){a.pos=0;a.playing=false;clearInterval(a.timer)}redrawRaw(id)},1000);
+  }
+  redrawRaw(id);
+}
+function rawAudioClear(id){
+  var e=EVENTS.find(function(x){return x.id===id});
+  var a=rawAudioState(e);
+  if(a.timer)clearInterval(a.timer);
+  a.cleared=true;a.playing=false;a.pos=0;
+  redrawRaw(id);
+  toast("原始录音已清理");
+}
+function redrawRaw(id){
+  if(currentEventId!==id)return;
+  var e=EVENTS.find(function(x){return x.id===id});
+  document.getElementById("dt-raw").innerHTML=rawPlayerHTML(e)+rawLinesHTML(e);
+}
+var curSpkKey="s1";
+function vpBannerHTML(e){
+  if(e.id==="e1"){
+    var s1=SPEAKER_DB.s1;
+    if(!s1.confirmed)return '<div class="vp-banner" data-testid="vp-infer-banner"><div class="vp-hd"><span>声纹聚类 + 上下文称呼推断</span></div><div class="vp-why">14:19 对方喊「老陈，顺手拼个单，你点什么喝的？」，紧接说话人 1 应答「冰美式少冰就行」——结合 CAM++ 同声纹簇（94%），推断 <b>说话人 1 = 老陈</b>。</div><div class="vp-acts"><button type="button" class="vp-btn pri" data-testid="vp-confirm-s1" onclick="confirmSpeaker(\'s1\',\'老陈\')">✓ 标记说话人 1 为「老陈」</button><button type="button" class="vp-btn" data-testid="vp-card-s1" onclick="openSpeakerSheet(\'s1\')">声纹卡片 / 改名 ›</button></div></div>';
+    return '<div class="vp-banner" data-testid="vp-infer-banner"><div class="vp-hd"><span>✓ 说话人 1 已标记为「'+esc(s1.name)+'」</span><span class="vp-pill">声纹簇已绑定 · 跨对话同步</span></div><div class="vp-why">后续对话命中该声纹将自动指认，并持续累加个人偏好与协作记忆（饮品偏好：冰美式少冰；排期主张：先做小方案）。</div><div class="vp-acts"><button type="button" class="vp-btn" data-testid="vp-card-s1" onclick="openSpeakerSheet(\'s1\')">查看人物记忆卡 ›</button></div></div>';
+  }
+  if(e.id==="e2"){
+    var s2=SPEAKER_DB.s2_e2;
+    if(!s2.confirmed)return '<div class="vp-banner" data-testid="vp-infer-banner"><div class="vp-hd"><span>跨日声纹临界匹配（76%）</span></div><div class="vp-why">说话人 2 电话声纹与上周三受访客户「张总」相似度 76%，已推入今日睡前日记待你标注确认。</div><div class="vp-acts"><button type="button" class="vp-btn pri" onclick="confirmSpeaker(\'s2_e2\',\'张总\')">✓ 确认是「张总」</button><button type="button" class="vp-btn" onclick="openSpeakerSheet(\'s2_e2\')">查看声纹比对 ›</button></div></div>';
+  }
+  return "";
+}
+function memExtractHTML(e){
+  var s1n=SPEAKER_DB.s1.confirmed?SPEAKER_DB.s1.name:"老陈（待确认声纹）";
+  var rows=e.id==="e1"?[
+    ["实体·人",s1n+" — 新增资料「饮品：冰美式少冰」；说话人 2（推测·小周?）— 认领书面分工"],
+    ["私有概念","「可验证小方案」— 团队内部代称：剥离低优导出模块、两周内闭环核心验证的版本"],
+    ["关系升格","老陈 ⇄ 小周 · 排期裁决与分工（图的“边”升格为“点”，含分歧折中属性与 14:26 按键事件）"]
+  ]:e.id==="e2"?[
+    ["实体·人",(SPEAKER_DB.s2_e2.confirmed?SPEAKER_DB.s2_e2.name:"说话人 2（疑似张总 76%）")+" — 对首屏加载耗时敏感、高频使用状态筛选"],
+    ["关系升格","我 ⇄ 客户方 · 体验反馈闭环（挂载 13:06 耗时实测图与下版本提速承诺）"]
+  ]:[
+    ["事件脉络",e.title+"（"+dayLabel(e.off)+" "+e.time+"）— 日间清洗提取候选节点，夜间做梦归并入图"]
+  ];
+  return '<div class="mem-extract" data-testid="dlg-mem-extract"><div class="vp-hd"><span>日间清洗 · 记忆图谱候选提取</span></div>'+rows.map(function(r){return '<div class="mex-row"><span class="mex-tag">'+esc(r[0])+'</span><span>'+esc(r[1])+'</span></div>'}).join("")+'<div style="margin-top:7px"><button type="button" class="vp-btn" onclick="openSetSub(\'memory\')">查看三元记忆图谱（事件 / 升格关系 / 实体）›</button></div></div>';
+}
+function openSpeakerSheet(k){
+  var o=SPEAKER_DB[k];if(!o)return;curSpkKey=k;
+  document.getElementById("spk-title").textContent=o.confirmed&&o.name?("人物记忆卡 · "+o.name):("声纹卡片 · 说话人 "+o.slot+"（推测）");
+  document.getElementById("spk-sub").textContent="端侧 CAM++ 余弦相似度 "+o.sim+"% · 声纹向量仅存本机 · 关联 "+o.events.length+" 段对话";
+  var evHtml=o.events.map(function(eid){var ev=EVENTS.find(function(x){return x.id===eid});return ev?'<button type="button" class="mg-prop link" data-testid="spk-prov-'+eid+'" onclick="closeSpeakerSheet();openDetail(\''+eid+'\',true)">↗ '+dayLabel(ev.off)+' '+ev.time+' '+esc(ev.title)+'</button>':''}).join("");
+  var mergePeers=Object.keys(SPEAKER_DB).filter(function(pk){return pk!==k&&SPEAKER_DB[pk].confirmed&&SPEAKER_DB[pk].name}).map(function(pk){var nm=SPEAKER_DB[pk].name;return '<button type="button" class="mg-prop link" data-testid="spk-merge-'+pk+'" onclick="confirmSpeaker(\''+k+'\',\''+esc(nm)+'\');closeSpeakerSheet()">⇄ 合并至「'+esc(nm)+'」</button>'}).join("");
+  var curEid=(currentEventId&&o.events.indexOf(currentEventId)>=0)?currentEventId:o.events[0];
+  var detKey=k+":"+curEid,isDet=!!SPEAKER_DETACHED[detKey];
+  var detachHtml=o.confirmed?'<button type="button" class="btn ghost" data-testid="spk-detach-cur" onclick="toggleDetachSpeaker(\''+k+'\',\''+curEid+'\')">'+(isDet?"恢复本段声纹关联":"本段不是他（防串音解绑）")+'</button>':'';
+  document.getElementById("spk-body").innerHTML='<div class="mg-card"><div class="mg-hd"><b>上下文称呼线索</b><span class="vp-pill">'+(o.confirmed?"已确认声纹":"待确认推测")+'</span></div><p>'+esc(o.ctxQuote)+'</p><p style="margin-top:4px;color:var(--ink)">'+esc(o.reason)+'</p></div>'
+    +'<div class="mg-card"><div class="mg-hd"><b>标记称呼 / 合并联系人（跨对话自动指认）</b></div><input id="spk-name-inp" class="spk-inp" value="'+esc(o.confirmed?o.name:o.hintedName)+'" placeholder="输入称呼，如：老陈">'+(mergePeers?'<div class="mg-props" style="margin:2px 0 8px"><span style="font-size:11px;color:var(--sec)">或合并至已有声纹档案：</span>'+mergePeers+'</div>':'')+'<div class="wbtns" style="margin-top:8px;flex-wrap:wrap"><button type="button" class="btn" data-testid="spk-save-btn" onclick="saveSpeakerFromInput(\''+k+'\')">确认绑定声纹</button>'+detachHtml+(o.confirmed?'<button type="button" class="btn ghost" onclick="resetSpeaker(\''+k+'\')">重置为未标记</button>':'')+'</div></div>'
+    +'<div class="mg-card"><div class="mg-hd"><b>随对话持续完善的人物资料（点事件溯源原话）</b><span class="ext-tag">实体·人</span></div>'+o.traits.map(function(tr){return '<div class="mex-row">• '+esc(tr)+'</div>'}).join("")+'<div class="mg-props" style="margin-top:8px">'+evHtml+'</div></div>';
+  document.getElementById("spk-wrap").classList.add("show");
+}
+function toggleDetachSpeaker(k,eid){
+  var dk=k+":"+eid;SPEAKER_DETACHED[dk]=!SPEAKER_DETACHED[dk];
+  syncAfterSpeakerChange();
+  openSpeakerSheet(k);
+  toast(SPEAKER_DETACHED[dk]?"已解绑本段对话，避免环境串音污染声纹簇":"已恢复本段声纹关联");
+}
+function closeSpeakerSheet(){var w=document.getElementById("spk-wrap");if(w)w.classList.remove("show")}
+function saveSpeakerFromInput(k){var inp=document.getElementById("spk-name-inp");var v=(inp&&inp.value||"").trim();if(!v)return;confirmSpeaker(k,v);closeSpeakerSheet()}
+function confirmSpeaker(k,nm,silent){
+  var o=SPEAKER_DB[k];if(!o)return;
+  o.name=nm||o.hintedName||("说话人 "+o.slot);o.confirmed=true;
+  if(k==="s1")DIARY_STATE.annots[0].choice="yes";
+  if(k==="s2_e2")DIARY_STATE.annots[1].choice="yes";
+  syncAfterSpeakerChange();
+  if(!silent)toast("已标记为「"+o.name+"」，声纹与记忆图谱已同步");
+}
+function resetSpeaker(k){
+  var o=SPEAKER_DB[k];if(!o)return;
+  o.name="";o.confirmed=false;
+  if(k==="s1")DIARY_STATE.annots[0].choice=null;
+  if(k==="s2_e2")DIARY_STATE.annots[1].choice=null;
+  closeSpeakerSheet();syncAfterSpeakerChange();toast("已恢复为推测状态");
+}
+function syncAfterSpeakerChange(){
+  render();
+  if(currentEventId&&document.getElementById("p-detail").classList.contains("show"))fillDetail(currentEventId);
+  if(curSum&&document.getElementById("p-sumres").classList.contains("show"))showSumRes();
+  if(document.getElementById("p-diary").classList.contains("show"))renderDiary(curDiaryOff);
+  syncSetSummary();
+}
+function fillDetail(id){var e=EVENTS.find(x=>x.id===id);currentEventId=id;document.getElementById("dt-h3").textContent=e.title;var spkLbl=e.spk==="未区分"?"说话人 未区分":("说话人 "+e.spk);document.getElementById("dt-meta").innerHTML='<span>'+dayLabel(e.off)+' '+e.time+' · '+e.dur+'</span><span>'+esc(spkLbl)+'</span>';var _items=e.dlg.map(function(l){var tm=(l[2].match(/\d{1,2}:\d{2}/)||["0:00"])[0];if(e.spk==="未区分")return {t:toMin(tm),html:'<div class="turn"><span class="ava">'+l[0]+'</span><div class="bubble"><div class="who"><b>未区分</b> · '+l[2].replace("来源 ","")+'</div><div class="txt">'+esc(l[1])+'</div></div></div>'};return {t:toMin(tm),html:'<div class="turn"><span class="ava'+(l[0]==="2"?" b":"")+'">'+l[0]+'</span><div class="bubble"><div class="who"><b>说话人 '+l[0]+'（推测）</b> · '+l[2].replace("来源 ","")+'</div><div class="txt">'+esc(l[1])+'</div></div></div>'}});photosOf(e).forEach(function(p,i){if(!p.excluded)_items.push({t:toMin(p.t),html:photoHTML(e.id,i,p)})});_items.sort(function(a,b){return a.t-b.t});document.getElementById("dt-dlg").innerHTML=_items.map(function(x){return x.html}).join("");document.getElementById("dt-raw").innerHTML=rawPlayerHTML(e)+rawLinesHTML(e);var refs=summaries.filter(s=>s.state==="done"&&!s.daily&&s.srcIds.includes(id));var rt=document.getElementById("dtab-refs");if(refs.length){rt.hidden=false;rt.textContent="被引用总结 "+refs.length;document.getElementById("dt-refs").innerHTML='<div class="refbox">'+refs.map(r=>'<button class="srcitem" data-testid="ref-'+r.id+'" onclick="openSum(\''+r.id+'\')"><b>'+esc(r.title)+'</b><span>'+r.time+' · 已选 '+r.srcIds.length+' 片段</span></button>').join("")+'</div>'}else{rt.hidden=true;rt.textContent="被引用总结";document.getElementById("dt-refs").innerHTML=""}detTab("dlg")}function openDetail(id,fresh){navSub({t:"detail",id:id},fresh)}function openSum(id,fresh){var s=summaries.find(x=>x.id===id);if(!s||s.state!=="done")return;curSum=s;navSub({t:"sum",id:id},fresh)}function openDiary(off,fresh){curDiaryOff=off||0;navSub({t:"diary",id:String(curDiaryOff)},fresh)}function startSummary(){selMode=true;selIds=new Set();selOpen={};pend={id:"act"+Date.now(),kind:"summary",state:"pending",time:nowHM()};summaries.unshift(pend);lockTabs(true);document.getElementById("rangebar").classList.add("show");document.getElementById("sumbar").classList.add("show")}function exitSummary(){selMode=false;pend=null;summaries=summaries.filter(s=>s.state!=="pending");selOpen={};lockTabs(false);document.getElementById("rangebar").classList.remove("show");document.getElementById("sumbar").classList.remove("show")}function lockTabs(lock){curFilter=lock?"event":"all";document.querySelectorAll("#p-timeline .tabs button").forEach(b=>{if(b.dataset.f!=="event")b.disabled=lock;b.classList.toggle("on",b.dataset.f===curFilter)});render()}function inRange(off,r){if(r==="today")return off===0;if(r==="week")return off<=(new Date().getDay()+6)%7;var d=new Date();d.setDate(d.getDate()-off);var n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear()}function setSel(id,on){on?selIds.add(id):selIds.delete(id);var inp=document.querySelector('[data-sel="'+id+'"]');if(inp)inp.checked=on}function toggleSel(id){setSel(id,!selIds.has(id));syncSelUI()}function selRange(r){EVENTS.forEach(e=>setSel(e.id,inRange(e.off,r)));syncSelUI()}function selNone(){selIds.clear();document.querySelectorAll("[data-sel]").forEach(c=>c.checked=false);syncSelUI()}function syncSelUI(){var n=selIds.size;document.getElementById("sel-count2").textContent="已选 "+n+" 项";document.getElementById("gen-btn2").disabled=n===0}function genSummary(){var ids=EVENTS.filter(e=>selIds.has(e.id));if(!ids.length)return;selMode=false;pend.state="generating";pend.prog=0;pend.srcIds=ids.map(e=>e.id);selOpen={};selOpen[pend.id]=1;lockTabs(false);document.getElementById("rangebar").classList.remove("show");document.getElementById("sumbar").classList.remove("show");render();navSub({t:"sum",id:pend.id});runProgress(pend)}function showGenView(card){document.getElementById("sum-title").textContent="正在生成总结";document.getElementById("sum-sub").textContent="已选 "+card.srcIds.length+" 条记录";document.getElementById("stickbar").hidden=true;document.getElementById("tochold").hidden=true;var g=document.getElementById("sum-gen");g.hidden=false;document.getElementById("gen-bar").style.width="0";document.getElementById("gen-elapsed").textContent="已生成 0 秒";document.getElementById("gen-eta").textContent="预计还需 6 秒";document.getElementById("gen-step").textContent="解析来源内容…"}function runProgress(card){var total=6000,t0=Date.now(),t=setInterval(function(){var ms=Date.now()-t0,pc=Math.min(100,ms/total*100);card.prog=pc;var cel=document.querySelector('[data-testid="card-'+card.id+'"] .cardprog i');if(cel)cel.style.width=pc+"%";var gb=document.getElementById("gen-bar");if(gb){gb.style.width=pc+"%";document.getElementById("gen-elapsed").textContent="已生成 "+Math.floor(ms/1000)+" 秒";document.getElementById("gen-eta").textContent="预计还需 "+Math.max(0,Math.ceil((total-ms)/1000))+" 秒";document.getElementById("gen-step").textContent=ms<2000?"解析来源内容…":ms<4000?"提炼要点与逻辑…":"整理结构与行动项…"}if(pc>=100){clearInterval(t);finishSummary(card)}},150)}function finishSummary(card){var ids=card.srcIds.map(id=>EVENTS.find(e=>e.id===id));var offs=[...new Set(ids.map(e=>e.off))].sort((a,b)=>a-b);var sub;if(offs.length===1){var ts=ids.map(e=>e.time).sort();sub=dayLabel(offs[0])+" "+ts[0]+"–"+ts[ts.length-1]+" · "+ids.length+" 条记录"}else{sub="跨 "+dayLabel(offs[offs.length-1])+" 至 "+dayLabel(offs[0])+" · "+ids.length+" 条记录"}var title=ids.some(e=>e.id==="e1"||e.id==="e2")?"项目排期与客户反馈":"要点小结";var overview="本次总结覆盖 "+sub+"。围绕项目排期、客户反馈与待办备忘，梳理出核心信息点、逻辑关系与可直接执行的行动建议。";card.state="done";card.title=title;card.subDesc=sub;card.overview=overview;card.map=[["排期与分工",["移除低优先级功能","先做可验证小方案","周五前书面结论"]],["客户反馈",["界面清爽获认可",{t:"列表加载偏慢",eid:"e2",pi:0,imp:"key",role:"耗时实证"},{t:"筛选记住上次选择",eid:"e2",pi:1,imp:"key",role:"重置现状"}]],["待定决策",["小方案是否包含导出功能",{t:"测试环境明早就绪",eid:"e3",pi:1,imp:"aux"}]]];card.points=[{t:"排期偏紧，先移除低优先级功能",d:"A 与 B 在午后讨论中对比了测试阶段排期与资源投入，认为一次铺大范围风险高；结论是缩小首版范围，先做可验证的小方案，导出功能延后两周。",src:[["e1","午后项目方向讨论","14:20—14:27"]]},{t:"客户对界面整体满意，加载速度是明确不满点",d:"电话回访中客户反馈新界面清爽，但列表页打开偏慢，希望下次沟通前看到改进数据；已当场承诺下版本专项优化。",src:[["e2","客户回访要点","13:06—13:10"]]},{t:"分工与书面结论在周五前落地",d:"B 认领整理分工并在周五前给出书面结论，A 确认排期调整后随时沟通。",src:[["e1","午后项目方向讨论","14:29—14:38"]]},{t:"测试环境需在明早确认就绪",d:"晨间口头计划中标记为重点跟进事项，避免后续提测阶段受阻。",src:[["e3","晨间工作计划","10:14—10:15"]]}];card.todos=["发出分工文档",{t:"跟进客户加载速度问题",who:"说话人 1（推测）",pic:["e2",1,"筛选重置图"],src:["e2","13:09"]},{t:"准备周五书面结论",who:"说话人 2（推测）",due:"周五前",src:["e1","14:31"]}];card.srcDesc=ids.map(e=>dayLabel(e.off)+" "+e.time+" "+e.title).join("；");card.md="# "+title+"\n\n覆盖："+sub+"\n\n## 概览\n"+overview+"\n\n## 信息点\n"+card.points.map(p=>"- "+p.t).join("\n")+"\n\n## 行动项\n"+card.todos.map(t=>"- [ ] "+(typeof t==="string"?t:t.t)).join("\n")+"\n\n## 来源\n"+card.srcDesc;curSum=card;render();saveState();if(document.getElementById("p-sumres").classList.contains("show")){showSumRes()}}function parseRangeMin(rng){var m=String(rng||"").match(/(\d{1,2}:\d{2})[^\d]+(\d{1,2}:\d{2})/);if(m)return[toMin(m[1]),toMin(m[2])];var s=String(rng||"").match(/\d{1,2}:\d{2}/);return s?[toMin(s[0]),toMin(s[0])]:[0,1440]}
+function photosForPoint(pt,srcIds){var out=[],seen={};(pt.src||[]).forEach(function(r){var eid=r[0];if(srcIds&&srcIds.indexOf(eid)<0)return;var b=parseRangeMin(r[2]);(PHOTO_DATA[eid]||[]).forEach(function(ph,idx){if(ph.excluded)return;var tm=toMin(ph.t);if(tm>=b[0]&&tm<=b[1]&&!seen[eid+"-"+idx]){seen[eid+"-"+idx]=1;out.push({eid:eid,i:idx,t:ph.t,cap:ph.cap||"现场记录画面",quote:ph.quote||"",etitle:r[1]})}})});return out}
+function pointIdxForPhoto(s,eid,idx){var found=-1;(s.points||[]).forEach(function(pt,pi){if(found>=0)return;photosForPoint(pt,s.srcIds).forEach(function(x){if(x.eid===eid&&x.i===idx)found=pi})});return found}
+function photosForSummary(s){var out=[];var ptMap={};(s.points||[]).forEach(function(pt,pi){photosForPoint(pt,s.srcIds).forEach(function(x){ptMap[x.eid+"-"+x.i]=pi})});(s.srcIds||[]).forEach(function(eid){var ev=EVENTS.find(function(x){return x.id===eid});if(!ev)return;(PHOTO_DATA[eid]||[]).forEach(function(ph,idx){if(ph.excluded)return;out.push({eid:eid,i:idx,t:ph.t,cap:ph.cap||"现场记录画面",quote:ph.quote||"",etitle:ev.title,off:ev.off,ptIdx:ptMap[eid+"-"+idx]!==undefined?ptMap[eid+"-"+idx]:-1})})});return out}
+function mapSectionInner(s){var branches=(s.map||[]).map(function(b){var leaves=(b[1]||[]).map(function(l){return '<span class="mleaf">'+esc(typeof l==="string"?l:l.t)+'</span>'}).join("");return '<div class="mbranch"><span class="mnode">'+esc(b[0])+'</span><div class="mleaves">'+leaves+'</div></div>'}).join("");return '<h3>逻辑结构</h3><div class="map"><span class="mroot">'+esc(s.mapRoot||"会议要点")+'</span><div class="mtree">'+branches+'</div></div>'}
+var todoMode="rich",todoDoneMap={};
+function onTodoCheck(sid,i,ck){todoDoneMap[sid+":"+i]=!!ck;ixCount()}
+function setTodoMode(m){todoMode=m;var sec=document.getElementById("sec-todo");if(sec&&curSum)sec.innerHTML=todoSectionInner(curSum)}
+function resolveTodoWho(w){if(w==="说话人 1（推测）"&&SPEAKER_DB.s1.confirmed&&SPEAKER_DB.s1.name)return SPEAKER_DB.s1.name+"（声纹）";return w}
+function todoSectionInner(s){var list=s.todos||[],doneCnt=0;list.forEach(function(_,i){if(todoDoneMap[s.id+":"+i])doneCnt++});var rows=list.map(function(a,i){var txt=typeof a==="string"?a:a.t,ck=!!todoDoneMap[s.id+":"+i];return '<div class="todo-row"><label class="act"><input type="checkbox" onchange="onTodoCheck(\''+s.id+'\','+i+',this.checked)" data-ix="'+i+'"'+(ck?" checked":"")+' aria-label="标记行动项 '+esc(txt)+'"><span>'+esc(txt)+'</span></label></div>'}).join("");return '<h3>行动项 <span class="todo-cnt">已完成 <span id="ix-done">'+doneCnt+'</span> / '+list.length+'</span></h3><div class="todo">'+rows+'</div>'}
+function ptFigsHTML(list,pi){if(!list.length)return "";if(list.length===1){var f=list[0];return '<div class="pt-figs" data-testid="pt-figs-'+pi+'"><div class="pt-fig single" data-testid="sum-pt-photo-'+f.eid+'-'+f.i+'" onclick="openPhotoModal(\''+f.eid+'\','+f.i+')"><div class="pt-fig-thumb"><img src="'+sceneURI(f.eid,f.i)+'" alt=""><span class="ov-fig-tm">'+f.t+'</span></div><div class="pt-fig-body"><div><div class="pt-fig-title">'+esc(f.cap)+'</div>'+(f.quote?'<div class="pt-fig-quote">“'+esc(f.quote)+'”</div>':'')+'</div><div class="pt-fig-act">查看原图与对话上下文 ›</div></div></div></div>'}return '<div class="pt-figs" data-testid="pt-figs-'+pi+'"><div class="pt-fig-grid">'+list.map(function(f){return '<div class="pt-fig" data-testid="sum-pt-photo-'+f.eid+'-'+f.i+'" onclick="openPhotoModal(\''+f.eid+'\','+f.i+')"><div class="pt-fig-thumb"><img src="'+sceneURI(f.eid,f.i)+'" alt=""><span class="ov-fig-tm">'+f.t+'</span></div><div class="pt-fig-body"><div class="pt-fig-title">'+esc(f.cap)+'</div><div class="pt-fig-act">查看原图 ›</div></div></div>'}).join("")+'</div></div>'}
+function focusPointPhoto(pi,eid,idx){if(sresCur==="all"&&pi>=0){var el=document.getElementById("pt-"+pi);if(el){el.classList.add("open");el.scrollIntoView({behavior:"smooth",block:"center"});el.classList.remove("focus-flash");void el.offsetWidth;el.classList.add("focus-flash");return}}openPhotoModal(eid,idx)}
+function openPhotoModal(eid,idx){var ev=EVENTS.find(function(x){return x.id===eid}),ph=(PHOTO_DATA[eid]||[])[idx];if(!ev||!ph)return;document.getElementById("pm-title").textContent="照片 · "+ph.t;document.getElementById("pm-sub").textContent=dayLabel(ev.off)+" · 关联记录「"+ev.title+"」";document.getElementById("pm-img").src=sceneURI(eid,idx);document.getElementById("pm-cap").textContent=ph.cap||"现场拍摄照片";var q=document.getElementById("pm-quote");q.hidden=!ph.quote;q.textContent=ph.quote?"当时对话：“"+ph.quote+"”":"";document.getElementById("pm-jump").onclick=function(){jumpToDetailPhoto(eid,idx)};document.getElementById("photo-wrap").classList.add("show")}
+function closePhotoModal(){document.getElementById("photo-wrap").classList.remove("show")}
+function jumpToDetailPhoto(eid,idx){closePhotoModal();openDetail(eid);flashEl('[data-testid="dphoto-'+eid+'-'+idx+'"]')}
+function renderDiary(off){
+  var dy=diaryEntryFor(off)||diaryEntryFor(0);
+  var tEl=document.getElementById("diary-title"),sEl=document.getElementById("diary-sub"),bEl=document.getElementById("diary-body");
+  if(!tEl||!bEl)return;
+  tEl.innerHTML='<span>'+esc(dy.title)+'</span>';
+  sEl.textContent=dayLabel(off)+" · 非机械总结，记录你今天做过的事与 App 观察推理 · 睡前轻标注反哺当晚做梦";
+  var stories=off===0?[
+    {tm:"10:12 · 晨间白板与三件心事",eid:"e3",txt:"上午你站在白板前理出今天的三件待办，还连拍了 4 张测试环境健康检查与提纲便签，特意叮嘱自己“明早先看测试环境准备好了没有，别出岔子”。",inf:"自动将 4 张白板/检查单照片对齐时间轴，识别出「准备周五书面结论」为你口头强调的重点盯办项。"},
+    {tm:"13:05 · 一通被加载速度卡住的客户回访",eid:"e2",txt:"午后电话里，对方先夸了新版界面清爽，但很快话锋一转吐槽列表打开偏慢、筛选条件重进就丢。你边听边拍下两张实测画面，当场应下专项提速。",inf:"把 13:06、13:09 两张实测画面锚定到原话段落，声纹比对发现对方与上周三「张总」相似度 76%（已在下方请你确认）。"},
+    {tm:"14:19 · 一杯少冰美式与延后两周的导出功能",eid:"e1",txt:"搭档顺手喊了一声“老陈，你点什么喝的？”，点完冰美式少冰，你们把紧绷的测试排期拆开揉碎——你在 14:26 盲按了一下录音卡物理键，拍板先做「可验证小方案」，把导出延后两周。",inf:"由点单呼语推断说话人 1 称呼为「老陈」，并将口头改口（“先放一放…啊不对，是放两周”）与物理键单击打点合并为排期决议。"}
+  ]:[
+    {tm:"09:30 · 晚八点灰度前的三道保险",eid:"e4",txt:"昨天一早你和运维阿杰用五分钟敲定了晚八点的 10% 灰度窗口：回滚预案先进群，前半小时专人盯盘，平稳后群内报平安。",inf:"昨晚你睡前确认了「阿杰」声纹后，做梦管线已将该协作关系升格为记忆节点，并发现这是你们第 3 次核对同一套灰度三要素。"}
+  ];
+  var swHtml='<div class="dy-switch"><button type="button" class="mini-chip'+(off===0?" on":"")+'" data-testid="diary-sw-0" onclick="openDiary(0,true)">今日睡前日记</button><button type="button" class="mini-chip'+(off===1?" on":"")+'" data-testid="diary-sw-1" onclick="openDiary(1,true)">昨日睡前日记</button></div>';
+  var stHtml=stories.map(function(st,idx){
+    var lk=!!DIARY_STATE.likes[off+"-"+idx];
+    return '<div class="dy-story" data-testid="diary-story-'+idx+'"><div class="dy-tm"><span>'+esc(st.tm)+'</span><button type="button" class="push-link" onclick="openDetail(\''+st.eid+'\')">查看原对话 ›</button></div><div class="dy-txt">'+esc(st.txt)+'</div><div class="dy-infer"><b>✦ App 记录与上下文推理：</b>'+esc(st.inf)+'</div><div class="dy-foot"><span style="font-size:11.5px;color:var(--sec)">推理准确可点赞鼓励记忆权重</span><button type="button" class="dy-like'+(lk?" on":"")+'" data-testid="diary-like-'+idx+'" onclick="toggleDiaryLike('+off+','+idx+')">'+(lk?"♥ 已赞 · 记准了":"♡ 记准了")+'</button></div></div>';
+  }).join("");
+  var annotHtml="";
+  if(off===0){
+    var doneN=DIARY_STATE.annots.filter(function(a){return !!a.choice}).length;
+    annotHtml='<div class="dy-sec-hd"><span>睡前轻标注（每次 1～5 项）</span><span data-testid="diary-annot-prog" style="font-size:12px;color:var(--diary);font-weight:600">已标注 '+doneN+' / '+DIARY_STATE.annots.length+'</span></div><div class="dy-sec-sub">以下为大模型推测但无法仅凭历史证明或证伪的细节，睡前点选确认后，今夜「做梦」整理声纹与记忆图谱会更精准：</div>'
+      +DIARY_STATE.annots.map(function(a,i){
+        return '<div class="dy-annot'+(a.choice?" done":"")+'" data-testid="annot-card-'+i+'"><div class="dy-q">'+(i+1)+'. '+esc(a.q)+'</div><div class="dy-why">推测依据：'+esc(a.why)+'</div><div class="dy-opts">'
+          +'<button type="button" class="dy-opt primary'+(a.choice==="yes"?" chosen":"")+'" data-testid="annot-yes-'+i+'" onclick="answerDiaryAnnot('+i+',\'yes\')">✓ '+esc(a.yes)+'</button>'
+          +(a.alt?'<button type="button" class="dy-opt" onclick="openSpeakerSheet(\'s1\')">'+esc(a.alt)+'</button>':'')
+          +'<button type="button" class="dy-opt'+(a.choice==="no"?" chosen":"")+'" data-testid="annot-no-'+i+'" onclick="answerDiaryAnnot('+i+',\'no\')">'+esc(a.no)+'</button>'
+          +'</div>'+(a.choice?'<div class="dy-feed">✓ '+(a.choice==="yes"?"已确认并写入待做梦整理队列":"已标记跳过，不做强行归并")+'</div>':'')+'</div>';
+      }).join("");
+  }else{
+    annotHtml='<div class="dy-sec-hd"><span>昨晚睡前标注回执（1 项 · 已反哺今晨做梦）</span></div>'+DIARY_STATE.yestAnnots.map(function(a){return '<div class="dy-annot done"><div class="dy-q">'+esc(a.q)+'</div><div class="dy-feed">✓ '+esc(a.ans)+'</div></div>'}).join("");
+  }
+  bEl.innerHTML=swHtml+'<div class="dy-hero"><b>今晚睡前翻一翻：看看今天留下了哪些声音与推理</b><p>不同于严肃的工作总结，日记把零散切片串成一天的故事；你顺手点下的赞与 3 个小标注，会让明早的「做梦」整理更懂你。</p></div><div class="dy-sec-hd"><span>今日记录与推理叙事</span></div>'+stHtml+annotHtml;
+}
+function toggleDiaryLike(off,idx){
+  var k=off+"-"+idx;DIARY_STATE.likes[k]=!DIARY_STATE.likes[k];
+  renderDiary(off);
+  toast(DIARY_STATE.likes[k]?"已点赞：该类推理权重已在记忆中上调":"已取消点赞");
+}
+function answerDiaryAnnot(idx,choice){
+  var a=DIARY_STATE.annots[idx];if(!a)return;
+  a.choice=choice;
+  if(idx===0){if(choice==="yes")confirmSpeaker("s1","老陈",true);else resetSpeaker("s1")}
+  if(idx===1){if(choice==="yes")confirmSpeaker("s2_e2","张总",true);else{SPEAKER_DB.s2_e2.confirmed=false;SPEAKER_DB.s2_e2.name=""}}
+  render();renderDiary(curDiaryOff);
+  toast(choice==="yes"?"标注已记录，今晚做梦将按此更新记忆图谱":"已记录你的判断，避免错误归并");
+}
+var curUncOff=0,curDreamOff=0;
+function distToEvent(ev,ptMin){var s=toMin(ev.time),e=s+Math.max(1,Math.round(parseDurSec(ev.dur)/60));return ptMin<s?s-ptMin:ptMin>e?ptMin-e:0}
+function openUncSheet(off){if(selMode)return;curUncOff=off||0;document.getElementById("unc-title").textContent=(curUncOff===0?"今日":dayLabel(curUncOff))+"未归类图片";renderUncBody(curUncOff);document.getElementById("unc-wrap").classList.add("show")}
+function closeUncSheet(){document.getElementById("unc-wrap").classList.remove("show")}
+function renderUncBody(off){var items=excludedPhotosForDay(off),sub=document.getElementById("unc-sub"),box=document.getElementById("unc-body");if(sub)sub.textContent="共 "+items.length+" 张待分拣 · 按拍摄时刻推荐当日最接近的对话记录";if(!box)return;if(!items.length){box.innerHTML='<div class="wstate">当日未归类图片已全部分拣完毕</div>';return}var dayEvs=EVENTS.filter(function(ev){return ev.off===off});box.innerHTML=items.map(function(p){var pm=toMin(p.t),cands=dayEvs.slice().sort(function(a,b){return distToEvent(a,pm)-distToEvent(b,pm)});return '<div class="unc-item" data-testid="unc-item-'+p.eid+'-'+p.i+'"><div class="unc-top"><div class="unc-thumb"><img src="'+sceneURI(p.eid,p.i)+'" alt=""><span class="ov-fig-tm">'+p.t+'</span></div><div class="unc-info"><b>'+esc(p.cap)+'</b><span>拍摄于 '+dayLabel(off)+' '+p.t+' · 原从「'+esc(p.etitle)+'」移出</span></div></div><div class="unc-lbl">归入当日记录对话流：</div><div class="unc-acts">'+cands.map(function(ev,ci){return '<button type="button" class="unc-tbtn'+(ci===0?" best":"")+'" data-testid="unc-reassign-'+p.eid+'-'+p.i+'-'+ev.id+'" onclick="reassignUncPhoto(\''+p.eid+'\','+p.i+',\''+ev.id+'\')"><span>'+ev.time+' '+esc(ev.title)+'</span>'+(ci===0?'<em>时间最接近</em>':'')+'</button>'}).join("")+'<button type="button" class="unc-rm" data-testid="unc-dismiss-'+p.eid+'-'+p.i+'" onclick="dismissUncPhoto(\''+p.eid+'\','+p.i+')">忽略移除</button></div></div>'}).join("")}
+function reassignUncPhoto(eid,idx,targetEid){var arr=PHOTO_DATA[eid],tev=EVENTS.find(function(x){return x.id===targetEid});if(!arr||!arr[idx]||!tev)return;if(eid===targetEid){arr[idx].excluded=false;arr[idx].dismissed=false}else{var moved=arr.splice(idx,1)[0];moved.excluded=false;moved.dismissed=false;PHOTO_DATA[targetEid]=PHOTO_DATA[targetEid].slice();PHOTO_DATA[targetEid].push(moved);PHOTO_DATA[targetEid].sort(function(a,b){return toMin(a.t)-toMin(b.t)})}render();if(currentEventId===eid||currentEventId===targetEid)fillDetail(currentEventId);if(curSum&&document.getElementById("p-sumres").classList.contains("show"))showSumRes();var rem=excludedPhotosForDay(curUncOff);if(!rem.length){closeUncSheet();toast("已归入「"+tev.title+"」，未归类卡片已收起")}else{renderUncBody(curUncOff);toast("已归入「"+tev.title+"」对话流")}}
+function dismissUncPhoto(eid,idx){var arr=PHOTO_DATA[eid];if(!arr||!arr[idx])return;arr[idx].dismissed=true;render();var rem=excludedPhotosForDay(curUncOff);if(!rem.length){closeUncSheet();toast("已忽略移除，未归类卡片已收起")}else{renderUncBody(curUncOff);toast("已从待分拣列表移除")}}
+function dreamComicHTML(){
+  var panels=[
+    {cap:"01 · 晚八点的 10% 月光闸：阿杰守着发光仪表盘放出十分之一星河，群聊纸飞机驮着回滚锦囊护航",svg:'<svg viewBox="0 0 180 112" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="dc1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1E1B4B"/><stop offset="1" stop-color="#4C1D95"/></linearGradient></defs><rect width="180" height="112" fill="url(#dc1)"/><circle cx="144" cy="24" r="13" fill="#FDE68A"/><path d="M0 86 Q55 64 110 82 T180 76 V112 H0Z" fill="#312E81"/><rect x="30" y="42" width="46" height="44" rx="6" fill="#DDD6FE" opacity=".92"/><circle cx="53" cy="61" r="13" fill="none" stroke="#5B21B6" stroke-width="3"/><path d="M53 61 L61 54" stroke="#EC4899" stroke-width="2.5" stroke-linecap="round"/><path d="M76 62 Q116 62 146 96" stroke="#67E8F9" stroke-width="6" fill="none" stroke-linecap="round" opacity=".8"/><polygon points="116,28 138,34 121,42 123,35" fill="#F9A8D4"/></svg>'},
+    {cap:"02 · 少冰美式浮起排期积木：冰块托住「可验证小方案」小岛，导出模块坐热气球飘向两周后的云端",svg:'<svg viewBox="0 0 180 112" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="dc2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FEF3C7"/><stop offset="1" stop-color="#FDE68A"/></linearGradient></defs><rect width="180" height="112" fill="url(#dc2)"/><rect x="34" y="54" width="66" height="46" rx="8" fill="#78350F" opacity=".85"/><rect x="42" y="44" width="50" height="20" rx="5" fill="#34D399"/><rect x="46" y="64" width="16" height="14" rx="3" fill="#E0F2FE" opacity=".85"/><rect x="68" y="68" width="16" height="14" rx="3" fill="#E0F2FE" opacity=".85"/><circle cx="138" cy="34" r="16" fill="#FB7185"/><rect x="131" y="54" width="14" height="11" rx="2" fill="#92400E"/><line x1="133" y1="49" x2="133" y2="54" stroke="#78350F"/><line x1="143" y1="49" x2="143" y2="54" stroke="#78350F"/></svg>'},
+    {cap:"03 · 拒绝失忆的筛选沙漏：电话那头的列表瀑布飞流直下，黄铜沙漏替客户锁住上次选好的星标条件",svg:'<svg viewBox="0 0 180 112" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="dc3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E0F2FE"/><stop offset="1" stop-color="#BAE6FD"/></linearGradient></defs><rect width="180" height="112" fill="url(#dc3)"/><rect x="20" y="16" width="56" height="82" rx="7" fill="#0284C7" opacity=".2"/><rect x="28" y="28" width="40" height="7" rx="3.5" fill="#0369A1"/><rect x="28" y="42" width="34" height="7" rx="3.5" fill="#0284C7"/><rect x="28" y="56" width="40" height="7" rx="3.5" fill="#38BDF8"/><polygon points="108,24 148,24 128,54" fill="#F59E0B"/><polygon points="128,58 108,88 148,88" fill="#D97706"/><circle cx="128" cy="42" r="4" fill="#FFFBEB"/><circle cx="128" cy="76" r="5" fill="#FEF3C7"/></svg>'},
+    {cap:"04 · 14:26 盲按火花织星图：指尖单击的一点红光飞入夜空，把声纹、升格关系与事件连成记忆星座",svg:'<svg viewBox="0 0 180 112" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="dc4" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0F172A"/><stop offset="1" stop-color="#312E81"/></linearGradient></defs><rect width="180" height="112" fill="url(#dc4)"/><line x1="42" y1="34" x2="96" y2="26" stroke="#A5B4FC" stroke-width="1.6"/><line x1="96" y1="26" x2="142" y2="52" stroke="#A5B4FC" stroke-width="1.6"/><line x1="96" y1="26" x2="86" y2="78" stroke="#F472B6" stroke-width="2"/><line x1="42" y1="34" x2="86" y2="78" stroke="#A5B4FC" stroke-width="1.4"/><circle cx="42" cy="34" r="6" fill="#38BDF8"/><circle cx="96" cy="26" r="7" fill="#C084FC"/><circle cx="142" cy="52" r="6" fill="#34D399"/><circle cx="86" cy="78" r="8" fill="#FB7185"/></svg>'}
+  ];
+  return '<div class="drm-comic" data-testid="dream-comic">'+panels.map(function(p,i){return '<div class="drm-panel" data-testid="dream-panel-'+i+'">'+p.svg+'<div class="drm-pcap">'+esc(p.cap)+'</div></div>'}).join("")+'</div>';
+}
+function setDreamComic(on){DREAM_STATE.hasComic=!!on;render();renderDreamBody(curDreamOff)}
+function openDreamSheet(off){if(selMode)return;curDreamOff=off||0;var gap=Math.round(dreamGapHours(curDreamOff)*10)/10;document.getElementById("drm-sub").textContent="夜间静默 "+gap+" 小时（>5h 触发）· 结合昨晚睡前标注编织三元记忆图谱";renderDreamBody(curDreamOff);document.getElementById("dream-wrap").classList.add("show")}
+function closeDreamSheet(){document.getElementById("dream-wrap").classList.remove("show")}
+function renderDreamBody(off){var box=document.getElementById("drm-body");if(!box)return;var pn=EVENTS.filter(function(x){return x.off===off+1}).length;var memHtml=DREAM_STATE.mems.length?DREAM_STATE.mems.map(function(m,i){return '<div class="drm-mem" data-testid="dream-mem-'+i+'"><div><div>'+(m.cat?'<span class="mex-tag">'+esc(m.cat)+'</span>':'')+esc(m.t)+'</div><small>来源：'+esc(m.src)+'</small></div><button type="button" class="drm-rm" data-testid="dream-rm-'+i+'" onclick="removeDreamMem('+i+')">移除</button></div>'}).join(""):'<div class="wstate">暂无保留的归档记忆</div>';
+  var modeBar='<div class="drm-modebar"><span style="font-size:11.5px;color:var(--sec)">不一定每天都有梦境漫画，但每天都有整理总结：</span><span style="display:flex;gap:5px"><button type="button" class="mini-chip'+(DREAM_STATE.hasComic?" on":"")+'" data-testid="dream-mode-comic" onclick="setDreamComic(true)">今夜：4 格梦境漫画</button><button type="button" class="mini-chip'+(!DREAM_STATE.hasComic?" on":"")+'" data-testid="dream-mode-plain" onclick="setDreamComic(false)">常规夜：仅整理总结</button></span></div>';
+  var repeatHtml='<div class="drm-repeat" data-testid="dream-repeat-card"><div class="drm-repeat-hd"><span>↻ 每日做梦总结 · 发现重复事项（累计 3 次）</span></div><p>你在 <b>10/29、11/05 与昨日 09:30</b> 已连续 3 次人工核对「灰度放量比例、群内回滚预案、前半小时盯守人」。下次再遇到发布确认，可直接让 Agent 通过下方 Skill 自动核查并提醒缺漏项。</p></div>';
+  box.innerHTML=modeBar+(DREAM_STATE.hasComic?'<div class="drm-sec"><span>天马行空梦境漫画（4 格 · 由昨日记忆碎片生成）</span><span>4 格</span></div>'+dreamComicHTML():'')+'<div class="drm-stats"><div class="drm-stat"><b>'+pn+' 段</b><span>昨日对话清洗</span></div><div class="drm-stat"><b data-testid="dream-mem-cnt">'+DREAM_STATE.mems.length+' 条</b><span>归档记忆图谱</span></div><div class="drm-stat"><b>'+(DREAM_STATE.skillOn?1:0)+' 个</b><span>养成复用 Skill</span></div></div>'+repeatHtml+'<div class="drm-sec"><span>提炼可复用技能（随做梦逐步完善）</span></div><div class="drm-skill" data-testid="dream-skill-card"><div style="flex:1;min-width:0"><b><span class="ext-tag">Skill</span><span>灰度发布三要素核查 v1.3</span></b><p>从连续 3 次发布窗口对话中归纳升级：后续遇到上线讨论或长按按键询问时，Agent 自动按「放量比例、回滚预案、盯守人」清单核查。</p></div><div class="sw'+(DREAM_STATE.skillOn?" on":"")+'" data-testid="dream-skill-sw" role="switch" aria-checked="'+DREAM_STATE.skillOn+'" tabindex="0" onclick="toggleDreamSkill()"></div></div><div class="drm-sec"><span>三元记忆图谱新增节点（事件 / 升格关系 / 实体）</span><button type="button" class="push-link" onclick="closeDreamSheet();openSetSub(\'memory\')">打开完整图谱 ›</button></div>'+memHtml}
+function removeDreamMem(idx){if(idx<0||idx>=DREAM_STATE.mems.length)return;DREAM_STATE.mems.splice(idx,1);render();renderDreamBody(curDreamOff);toast("已从本机记忆图谱移除该节点")}
+function toggleDreamSkill(){DREAM_STATE.skillOn=!DREAM_STATE.skillOn;render();renderDreamBody(curDreamOff);toast(DREAM_STATE.skillOn?"已启用提炼技能":"已停用提炼技能")}
+function showSumRes(){var s=curSum;if(!s||s.state!=="done")return;document.getElementById("sum-title").textContent=s.title;document.getElementById("sum-sub").textContent=s.subDesc;document.getElementById("stickbar").hidden=false;document.getElementById("tochold").hidden=false;document.getElementById("sum-gen").hidden=true;document.getElementById("sum-render").innerHTML='<section class="rsec ssec on" id="sec-ov"><h3>概览</h3><p class="ov">'+esc(s.overview)+'</p></section><section class="rsec ssec" id="sec-map">'+mapSectionInner(s)+'</section><section class="rsec ssec" id="sec-pt"><h3>信息点</h3>'+s.points.map(function(p,i){return '<div class="pt" id="pt-'+i+'"><div class="pt-h" onclick="ptToggle('+i+')"><span>'+esc(p.t)+'</span><span class="chev">▾</span></div><div class="pt-b"><div class="pt-d">'+esc(p.d)+'</div><div class="pt-srcs">'+p.src.map(r=>'<button class="srcchip" onclick="openDetail(\''+r[0]+'\')">↗ '+esc(r[1])+' · '+r[2]+'</button>').join("")+'</div></div></div>'}).join("")+'</section><section class="rsec ssec" id="sec-todo">'+todoSectionInner(s)+'</section><section class="rsec ssec" id="sec-src"><h3>来源记录</h3><div class="srclist">'+s.srcIds.map(id=>{var e=EVENTS.find(x=>x.id===id);return '<button class="srcitem" data-testid="src-'+id+'" onclick="openDetail(\''+id+'\')"><b>'+esc(e.title)+'</b><span>'+dayLabel(e.off)+' '+e.time+' · '+e.dur+'</span></button>'}).join("")+'</div></section>';sresTab("all")}function ixCount(){document.getElementById("ix-done").textContent=document.querySelectorAll("[data-ix]:checked").length}var sresCur="all";function sresTab(k){sresCur=k;document.querySelectorAll("#stabs button").forEach(b=>b.classList.toggle("on",b.dataset.st===k));var ids=["sec-ov","sec-map","sec-pt","sec-todo","sec-src"];var on=k==="all"?ids:[k==="ov"?"sec-ov":k==="map"?"sec-map":k==="pt"?"sec-pt":k==="todo"?"sec-todo":"sec-src"];ids.forEach(id=>document.getElementById(id).classList.toggle("on",on.includes(id)));document.querySelectorAll("#sum-render .pt").forEach(p=>p.classList.toggle("open",k==="pt"))}function ptToggle(i){document.getElementById("pt-"+i).classList.toggle("open")}function tocToggle(){document.getElementById("toc-pop").hidden=!document.getElementById("toc-pop").hidden}function tocGo(id){document.getElementById("toc-pop").hidden=true;if(sresCur!=="all")sresTab("all");requestAnimationFrame(function(){var el=document.getElementById(id);if(el)el.scrollIntoView({behavior:"smooth",block:"start"})})}function exportToggle(){document.getElementById("export-pop").hidden=!document.getElementById("export-pop").hidden}var toastT=null;function toast(m){var el=document.getElementById("toast");el.textContent=m;el.classList.add("show");clearTimeout(toastT);toastT=setTimeout(function(){el.classList.remove("show")},1600)}function doExport(f){document.getElementById("export-pop").hidden=true;toast("已调用系统分享 · "+f)}function showDev(v){if(v==="main"&&!conn.connected)v="connect";["main","connect","upg","wifi"].forEach(x=>{var el=document.getElementById("dev-"+x);if(el)el.hidden=x!==v});if(v==="upg"){var oc=document.getElementById("ota-rec-confirm");if(oc)oc.hidden=true;var um=document.getElementById("upg-mic-perm-box");if(um)um.hidden=true}if(v==="wifi")wifiScan()}function battEstimate(){var hours=Math.max(1,Math.floor(82*0.24*0.7));var end=new Date(Date.now()+hours*3600e3);var pad=n=>String(n).padStart(2,"0");var hm=pad(end.getHours())+":"+pad(end.getMinutes());var day=end.getDate()===new Date().getDate()?"今天":"明天";document.getElementById("batt-eta").textContent=day+" "+hm;setCapsuleBatt()}function setCapsuleBatt(){var p=82;var f1=document.getElementById("cap-fill"),f2=document.getElementById("row-fill");var w=Math.max(1.5,15*p/100).toFixed(2);if(f1)f1.setAttribute("width",w);if(f2)f2.setAttribute("width",w);document.querySelectorAll(".batt").forEach(b=>{b.classList.remove("lv-low","lv-mid","lv-hi");b.classList.add(p<20?"lv-low":p<40?"lv-mid":"lv-hi");b.classList.toggle("charging",!!conn.charging)})}var lastSyncTs=Date.now()-240000,syncState="idle",syncSource="auto";function relSync(){var s=Math.floor((Date.now()-lastSyncTs)/1000);return s<30?"刚刚":s<60?"30 秒前":Math.floor(s/60)+" 分钟前"}setInterval(function(){if(syncState!=="idle")return;var el=document.getElementById("sync-rel");if(el)el.textContent=relSync()},15000);var SYNC_SVG='<svg width="14" height="14" viewBox="0 0 14 14"><path d="M12 7a5 5 0 1 1-1.7-3.75" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M11.8 1.6v3.2h-3.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';function renderSync(){var i=document.getElementById("sync-ico"),t=document.getElementById("sync-txt");if(!i)return;if(syncState==="busy"){i.className="spin";i.innerHTML=SYNC_SVG;t.textContent="正在同步…"}else if(syncState==="done"){i.className="okcheck";i.textContent="✓";t.textContent="同步成功 · 刚刚"}else{i.className="syncidle";i.innerHTML=SYNC_SVG;t.innerHTML=(syncSource==="manual"?"手动同步":"自动同步")+' · <span id="sync-rel">'+relSync()+"</span>"}}function syncNow(manual){if(manual===undefined)manual=true;if(syncState!=="idle")return;syncState="busy";renderSync();setTimeout(function(){lastSyncTs=Date.now();syncSource=manual?"manual":"auto";syncState="done";renderSync();setTimeout(function(){syncState="idle";renderSync()},10000)},900)}var wifiSaved=[],wifiLast="",wifiMore=false,wifiJoining=false,wifiJoinName="",wifiSelName=null,wifiScanDone=false,wifiInRange={},wifiScanRes=[],wifiT=null;function wifiLoad(){try{var d=JSON.parse(localStorage.getItem("rc-wifi-v1")||"null");if(d&&d.saved&&d.saved.length){wifiSaved=d.saved;wifiLast=d.last||"";return}}catch(e){}wifiSaved=[{n:"HomeWiFi",p:"saved-pwd"},{n:"Studio-2.4G",p:"saved-pwd"},{n:"Bedroom-2.4G",p:"saved-pwd"},{n:"Old-2.4G",p:"saved-pwd"}];wifiLast="HomeWiFi";wifiStore()}function wifiStore(){try{localStorage.setItem("rc-wifi-v1",JSON.stringify({saved:wifiSaved,last:wifiLast}))}catch(e){}}function sig(n){var b="",i;for(i=1;i<=3;i++)b+='<i class="sbar'+(i<=n?" on":"")+'" style="height:'+(3+i*3)+'px"></i>';return '<span class="sig">'+b+"</span>"}function rowHtml(r){var saved=wifiSaved.some(s=>s.n===r.n);if(wifiJoining&&wifiJoinName===r.n)return '<div class="witem"><span class="wname">'+esc(r.n)+'</span><span class="wmeta">正在连接…</span></div>';if(saved)return '<div class="witem" onclick="wifiConnectSaved(\''+r.n+'\')"><span class="wname">'+esc(r.n)+'<span class="wchip2">已保存</span></span><span class="wmeta">'+(wifiLast===r.n?'<span class="wchip">已连接</span>':"")+sig(r.s)+"</span></div>";return '<div class="witem" data-n="'+r.n+'" onclick="wifiPick(\''+r.n+'\','+(r.lock?1:0)+')"><span class="wname">'+esc(r.n)+'</span><span class="wmeta">'+(r.lock?'<span class="wlock">🔒</span>':"")+sig(r.s)+"</span></div>"}function wifiRender(){var sv=document.getElementById("wsaved"),mb=document.getElementById("wmore"),n0=document.getElementById("wifi-n");var shown=wifiMore?wifiSaved:wifiSaved.slice(0,3);sv.innerHTML=shown.map(w=>'<div class="witem'+(wifiInRange[w.n]?"":" off")+'" '+(wifiInRange[w.n]?'onclick="wifiConnectSaved(\''+w.n+'\')"':'')+'><span class="wname">'+esc(w.n)+(wifiLast===w.n?'<span class="wchip">已连接</span>':"")+'</span><span class="wmeta">'+(wifiJoining&&wifiJoinName===w.n?"正在连接…":wifiScanDone?(wifiInRange[w.n]?sig(2):"不在范围内"):"—")+"</span></div>").join("");mb.hidden=wifiSaved.length<=3;mb.textContent=wifiMore?"收起已保存":"查看更多已保存（"+(wifiSaved.length-3)+"）";if(n0)n0.textContent=wifiSaved.length;var list=document.getElementById("wlist");if(!wifiScanDone){list.innerHTML='<div class="wstate">正在扫描附近网络…</div>';return}list.innerHTML=wifiScanRes.map(r=>rowHtml(r)+(r.n===wifiSelName?'<div class="wform"><div class="wname">'+esc(r.n)+'</div>'+(wifiJoining?'<div class="wmeta">正在验证连接可行性…</div>':'<input type="password" id="wifi-pwd" class="winput" placeholder="输入网络密码"><div class="wbtns"><button class="btn ghost" onclick="wifiSelName=null;wifiRender()">取消</button><button class="btn" data-testid="wifi-connect" onclick="wifiJoinNew()">连接</button></div>')+"</div>":"")).join("")}function wifiMoreToggle(){wifiMore=!wifiMore;wifiRender()}function wifiScan(){wifiSelName=null;wifiJoining=false;wifiJoinName="";var st=document.getElementById("wstate");st.textContent="硬件 Wi-Fi 已开启，正在扫描附近网络…";wifiScanDone=false;wifiRender();clearTimeout(wifiT);wifiT=setTimeout(function(){wifiScanRes=[{n:"HomeWiFi",s:3},{n:"Office-2.4G",s:2,lock:1},{n:"Cafe_Guest",s:1,lock:1}];wifiInRange={};wifiScanRes.forEach(r=>wifiInRange[r.n]=1);wifiScanDone=true;st.textContent="扫描完成 · 附近可见 "+wifiScanRes.length+" 个 2.4GHz 网络";wifiRender()},1200)}function wifiConnectSaved(n){if(wifiJoining||!wifiInRange[n])return;wifiJoining=true;wifiJoinName=n;wifiRender();setTimeout(function(){wifiLast=n;wifiStore();wifiJoining=false;wifiJoinName="";document.getElementById("wstate").textContent=n+" 连接成功";wifiRender()},1200)}function wifiPick(n,lock){if(wifiJoining)return;wifiSelName=n;wifiRender();var inp=document.getElementById("wifi-pwd");if(inp)inp.focus()}function wifiJoinNew(){var r=wifiScanRes.find(x=>x.n===wifiSelName);if(!r)return;var pwd=(document.getElementById("wifi-pwd")||{}).value||"";wifiJoining=true;wifiJoinName=wifiSelName;wifiRender();setTimeout(function(){wifiSaved.push({n:wifiSelName,p:pwd});wifiLast=wifiSelName;wifiStore();wifiJoining=false;wifiJoinName="";wifiSelName=null;document.getElementById("wstate").textContent=wifiLast+" 连接成功";wifiRender()},1400)}function cancelOtaRecConfirm(){var oc=document.getElementById("ota-rec-confirm");if(oc)oc.hidden=true}
+function confirmOtaRecHandover(){var oc=document.getElementById("ota-rec-confirm");if(oc)oc.hidden=true;if(!phoneRec.micPerm){var um=document.getElementById("upg-mic-perm-box");if(um)um.hidden=false;return}rec.on=false;updateRecUI();startPhoneRec(true);runUpgProgress()}
+function startUpg(){if(rec.on){var oc=document.getElementById("ota-rec-confirm");if(oc)oc.hidden=false;return}runUpgProgress()}
+function runUpgProgress(){var bar=document.getElementById("upg-bar"),st=document.getElementById("upg-state"),btn=document.getElementById("upg-btn"),back=document.getElementById("upg-back"),pct=document.getElementById("upg-pct"),stage=document.getElementById("upg-stage");document.getElementById("upg-warn").hidden=false;document.getElementById("upg-prog").hidden=false;btn.disabled=true;back.disabled=true;upgActive=true;var total=6000,t0=Date.now(),iv=setInterval(function(){var pc=Math.min(100,(Date.now()-t0)/total*100);bar.style.width=pc+"%";pct.textContent=Math.round(pc)+"%";stage.textContent=pc<50?"阶段 1/2 · 主控芯片":"阶段 2/2 · Wi-Fi 芯片";st.textContent=pc<25?"正在下载固件…":pc<50?"通过蓝牙传输到设备…":pc<75?"主控写入中，请保持连接…":"Wi-Fi 模组写入中，请保持连接…";if(pc>=100){clearInterval(iv);upgActive=false;if(conn.curDev)conn.curDev.fw="2.2.0";applyDeviceCapabilities();if(phoneRec.handover)stopPhoneRec();showDev("main");document.getElementById("fw-val").textContent="已是最新";document.getElementById("dev-state").textContent="已更新到 主控 2.2.0 / Wi-Fi 1.5.0";bar.style.width="0";pct.textContent="0%";st.textContent="";btn.disabled=false;back.disabled=false;document.getElementById("upg-prog").hidden=true;document.getElementById("upg-warn").hidden=true}},150)}function openSheet(){document.getElementById("sheet").classList.add("show");if(conn.connected){applyDeviceCapabilities();showDev("main");battEstimate()}else{showDev("connect");scanDevices()}}var upgActive=false;function closeSheet(){if(upgActive)return;document.getElementById("sheet").classList.remove("show")}function tsw(el){var on=el.classList.toggle("on");el.setAttribute("aria-checked",on)}function tswKey(ev,el){if(ev.key===" "||ev.key==="Enter"){ev.preventDefault();tsw(el)}}
+/* 录音卡物理按键触发（单击 Mark / 长按灵动岛语音命令 + A/B 先后推送 / 双击预留） */
+var diTimer=null,pushTimers=[];
+function dismissPushes(){pushTimers.forEach(clearTimeout);pushTimers=[];clearTimeout(diTimer);var di=document.getElementById("dyn-island");if(di&&!phoneRec.on)di.classList.remove("show");var ps=document.getElementById("push-stack");if(ps)ps.innerHTML=""}
+function showIsland(title,sub,ms){clearTimeout(diTimer);var di=document.getElementById("dyn-island"),dl=document.getElementById("di-logo"),dw=document.getElementById("di-wave");if(!di)return;if(dl)dl.hidden=true;if(dw)dw.hidden=false;document.getElementById("di-title").textContent=title;document.getElementById("di-sub").textContent=sub;di.classList.add("show");if(ms)diTimer=setTimeout(function(){di.classList.remove("show");syncPhoneRecUI()},ms)}
+function triggerHwButton(kind){
+  dismissPushes();
+  if(kind==="click"){
+    showIsland("⦿ 物理键单击 · 已打重点（Mark）","已记下此刻时间锚点 · 总结与睡前日记会重点关注此处操作意图",2600);
+    return;
+  }
+  if(kind==="double"){
+    showIsland("◎ 物理键双击 · 暂空未绑定","双击槽位预留中，后续可绑定自定义事件或快捷 Skill",2600);
+    return;
+  }
+  showIsland("灵动岛收听语音命令 · 长按说话中","“前几天看的电影是什么名字？”",0);
+  pushTimers.push(setTimeout(function(){
+    var ps=document.getElementById("push-stack");if(!ps)return;
+    var pA=document.createElement("div");pA.className="ios-push";pA.setAttribute("data-testid","agent-push-a");
+    pA.innerHTML='<div class="push-hd"><span class="push-appico">◉</span><b>录音卡 Agent</b><span class="push-tag">A · 立即回执</span><span style="margin-left:auto">现在</span></div><div class="push-bd"><b>【立即】</b>我现在就去查一下，找到和你说。</div>';
+    ps.appendChild(pA);
+  },550));
+  pushTimers.push(setTimeout(function(){
+    var di=document.getElementById("dyn-island");if(di)di.classList.remove("show");
+    var ps=document.getElementById("push-stack");if(!ps)return;
+    var pB=document.createElement("div");pB.className="ios-push";pB.setAttribute("data-testid","agent-push-b");
+    pB.innerHTML='<div class="push-hd"><span class="push-appico">◉</span><b>录音卡 Agent</b><span class="push-tag res">B · 检索结果</span><span style="margin-left:auto">刚刚</span></div><div class="push-bd"><b>【结果】</b>找到了，是《007黄金眼》，在前天，9 月 5 日周三下午看的，你还吃了爆米花。</div><div class="push-ft"><span>记忆图谱溯源：9月5日周三 影院观影记录</span><span><button type="button" class="push-link" data-testid="push-jump-mem" onclick="dismissPushes();openSetSub(\'memory\')">查看记忆 ›</button> · <button type="button" class="push-link" data-testid="push-dismiss" onclick="dismissPushes()">收起</button></span></div>';
+    ps.appendChild(pB);
+  },1450));
+}
+var agCfg={auth:true,accountEmail:"owner@wainao.chat",binds:{wechat:true,apple:false,google:false,github:false,facebook:false},local:{vad:"ready",asr:"ready",spk:"ready"},localHasUpdate:false,devMode:false,cloudEnabled:true,customApi:"",cloud:"deepseek-v3",ctx:"selected",temp:"0.2",photoPerm:false,photoAutoSync:true,askedPhotoOnRec:false,hasDynamicIsland:true,islandEnabled:true,actionBtnBound:true,preset:"general",presetLabel:"通用纪要",pSum:"围绕核心议题提炼概览、逻辑树、带时间戳溯源的信息点与可执行待办。",pPol:"去除口头禅、重复词与长静音，保留原意与关键数字，不编造事实。",pDream:"睡前生成叙事日记并挑出 1~5 个待确认轻标注；夜间做梦整理事件/关系/实体记忆图谱，按需绘制 4~6 格梦境漫画并从重复事项提炼 Skill。",exts:{term:true,brief:true,risk:false,photo:true,hist:true,todo:true,mcp:false}};
+var PRESETS={general:{label:"通用纪要",sum:"围绕核心议题提炼概览、逻辑树、带时间戳溯源的信息点与可执行待办。"},meeting:{label:"深度会议",sum:"优先提炼共识结论、分歧争议、负责人与明确截止时间，弱化寒暄。"},interview:{label:"访谈提炼",sum:"按受访者核心观点分主题归纳，保留代表性原话与时间锚点。"},todo:{label:"极简待办",sum:"聚焦待办事项、依赖条件、风险阻塞与下一步跟进节点。"}};
+var verTapCnt=0,verTapTs=0,pendingDelMdl=null;
+function tapAppVersion(){var now=Date.now();if(now-verTapTs>1600)verTapCnt=0;verTapTs=now;verTapCnt++;if(verTapCnt>=7){verTapCnt=0;agCfg.devMode=!agCfg.devMode;syncSetSummary();if(subStack.some(function(x){return x.t==="setsub"&&x.id==="cloud"}))renderSetSub("cloud");toast(agCfg.devMode?"已开启开发者模式":"已退出开发者模式")}}
+function toggleIslandHardware(){agCfg.hasDynamicIsland=!agCfg.hasDynamicIsland;syncSetSummary();syncPhoneRecUI();var btn=document.querySelector('[data-testid="toggle-island-hw"]');if(btn){btn.classList.toggle("on",agCfg.hasDynamicIsland);btn.textContent=agCfg.hasDynamicIsland?"当前：灵动岛机型（切换至无灵动岛机型）":"当前：无灵动岛机型（切换至灵动岛机型）"}toast(agCfg.hasDynamicIsland?"已切换为支持灵动岛机型":"已切换为无灵动岛机型（设置项已隐藏）")}
+function syncSetSummary(){var c=agCfg;var sa=document.getElementById("sv-auth");if(sa)sa.textContent=c.auth?c.accountEmail:"未登录 · 点击授权";var rdy=["vad","asr","spk"].filter(k=>c.local[k]==="ready").length;var sl=document.getElementById("sv-local");if(sl)sl.textContent="已就绪 "+rdy+"/3";var svp=document.getElementById("sv-voiceprint");if(svp)svp.textContent=c.local.spk==="ready"?"已就绪":"待下载";var sc=document.getElementById("sv-cloud");if(sc)sc.textContent=!c.cloudEnabled?"已关闭":!c.devMode?(c.customApi?"自定义接口":"已开启"):c.cloud;var sp=document.getElementById("sv-preset");if(sp)sp.textContent=c.presetLabel;var en=Object.keys(c.exts).filter(k=>c.exts[k]).length;var se=document.getElementById("sv-ext");if(se)se.textContent="已启用 "+en+" 项";var ri=document.getElementById("row-set-island"),si=document.getElementById("sv-island");if(ri)ri.hidden=!c.hasDynamicIsland;if(si)si.textContent=c.islandEnabled?"已开启":"已关闭";var lv=document.getElementById("lbl-version");if(lv)lv.textContent=c.devMode?"版本（开发者）":"版本";var sm=document.getElementById("sv-mem");if(sm){var tagged=Object.keys(SPEAKER_DB).filter(function(k){return SPEAKER_DB[k].confirmed}).length;sm.textContent="声纹 "+tagged+" 人 · 升格关系 2"}}
+function openSetSub(id){if(!document.getElementById("p-setting").classList.contains("show")){["timeline","setting"].forEach(x=>document.getElementById("p-"+x).classList.toggle("show",x==="setting"));document.getElementById("nt").classList.remove("on");document.getElementById("ns").classList.add("on")}navSub({t:"setsub",id:id},true)}
+function toggleThirdBind(k){agCfg.binds[k]=!agCfg.binds[k];renderSetSub("login");toast(agCfg.binds[k]?"已关联账号并接入外脑鉴权":"已解除第三方账号关联")}
+function renderSetSub(id){var t=document.getElementById("setsub-title"),s=document.getElementById("setsub-sub"),b=document.getElementById("setsub-body");if(!t||!b)return;
+  if(id==="login"){
+    t.textContent="云端账号授权";s.textContent="外脑 OAuth2 PKCE S256 · 第三方账号统一基于外脑鉴权";
+    var providers=[
+      {k:"wechat",n:"微信绑定",tag:"常用",d:"中国地区常用快捷登录 · 原生微信绑定",ico:"微"},
+      {k:"apple",n:"Apple 绑定",d:"通过外脑鉴权关联 Apple 账号",ico:""},
+      {k:"google",n:"Google 绑定",d:"通过外脑鉴权关联 Google 账号",ico:"G"},
+      {k:"github",n:"GitHub 绑定",d:"通过外脑鉴权关联 GitHub 账号",ico:"GH"},
+      {k:"facebook",n:"Facebook 登录",d:"通过外脑鉴权关联 Facebook 账号",ico:"f"}
+    ];
+    b.innerHTML='<div class="subcard" data-testid="auth-wainao-card"><h4><span>外脑账号授权：'+(agCfg.auth?esc(agCfg.accountEmail):"未登录")+'</span><span class="ext-tag">'+(agCfg.auth?"已登录":"未登录")+'</span></h4><p>本地录音与端侧转写无需登录即可运行；云端润色、总结与跨设备同步经外脑 OAuth2 网关鉴权，令牌写入系统 Keychain。</p><div class="wbtns" style="margin-top:12px"><button class="btn" data-testid="auth-signin-btn" onclick="agCfg.auth=true;syncSetSummary();renderSetSub(\'login\');toast(\'已完成外脑 OAuth2 授权\')">通过外脑浏览器登录</button><button class="btn ghost" data-testid="auth-open-login-page" onclick="openLoginGate()">查看首页登录页</button><button class="btn ghost" data-testid="auth-signout-btn" onclick="requestSignOut()">退出当前授权</button></div></div>'
+      +'<div class="set-title">第三方账号登录与绑定（统一基于外脑鉴权）</div>'
+      +'<div class="set-group">'+providers.map(function(p){var on=!!agCfg.binds[p.k];return '<div class="bind-row" data-testid="auth-bind-'+p.k+'" onclick="toggleThirdBind(\''+p.k+'\')"><div class="bind-l"><span class="bind-ico">'+p.ico+'</span><div style="min-width:0"><div style="display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600"><span>'+p.n+'</span>'+(p.tag?'<span class="ext-tag">'+p.tag+'</span>':'')+'</div><div style="font-size:12px;color:var(--sec)">'+p.d+'</div></div></div><span class="navval"><span>'+(on?"已绑定":"去绑定")+'</span><span class="rowchev">›</span></span></div>'}).join("")+'</div>';
+    return;
+  }
+  if(id==="local"){
+    t.textContent="本地语音引擎";s.textContent="音频切片、转写文本与声纹向量只在本机离线处理";
+    var allReady=["vad","asr","spk"].every(function(k){return agCfg.local[k]==="ready"});
+    var items=[
+      {id:"sensevoice-small-int8",k:"asr",n:"SenseVoice",sz:"语音转文字 · ~226 MB",fix:false,d:"离线把录音转成文字"},
+      {id:"silero-vad",k:"vad",n:"Silero VAD",sz:"语音活动检测 · ~1.8 MB（内置）",fix:true,d:"识别人声起止，跳过空白静音"},
+      {id:"campplus-embedding",k:"spk",n:"CAM++",sz:"声纹特征采集 · ~27 MB",fix:false,d:"提取并区分不同说话人声纹"}
+    ];
+    var topCard='<div class="subcard"><h4><span>'+(allReady?"本地转写已就绪":"存在待下载的本地语音模型")+'</span>'+(allReady?'<span class="ext-tag">3 / 3 就绪</span>':'')+'</h4><p>语音转文字、静音过滤与声纹采集均在手机本地离线完成。</p>'+(!allReady||agCfg.localHasUpdate?'<div class="wbtns" style="margin-top:10px"><button class="btn" data-testid="model-install-all" onclick="installAllLocalModels()">'+(agCfg.localHasUpdate?"更新至新版模型":"下载缺失模型")+'</button></div>':'')+'</div>';
+    b.innerHTML=topCard+items.map(function(m){
+      var st=agCfg.local[m.k];
+      var delBtn=!m.fix&&st==="ready"?'<button type="button" class="mdl-del" data-testid="model-delete-'+m.id+'" title="删除模型" aria-label="删除 '+m.n+'" onclick="askDeleteLocalModel(\''+m.k+'\',\''+m.n+'\')">'+ICO_TRASH+'</button>':'';
+      var dlRow=!m.fix&&st!=="ready"?'<div class="wbtns" style="margin-top:10px"><button class="btn ghost" onclick="dlLocalModel(\''+m.k+'\')">'+(st==="dl"?"下载中…":"下载模型")+'</button></div>':'';
+      return '<div class="subcard"><h4><span>'+m.n+'</span><span class="ext-tag">'+(st==="ready"?"已就绪":st==="dl"?"下载中…":"未下载")+'</span>'+delBtn+'</h4><p>'+m.sz+'<br>'+m.d+'</p>'+dlRow+'</div>';
+    }).join("");
+    return;
+  }
+  if(id==="cloud"){
+    t.textContent="云端模型设置";
+    s.textContent=agCfg.devMode?"开发者模式 · 可选择候选模型、采样温度与上下文策略":"简洁模式 · 控制云端润色与总结开关及自定义网关地址";
+    var baseHtml='<div class="set-group"><div class="switchrow" style="padding:12px 0"><div><div style="font-size:14px;font-weight:600">开启云端模型</div><div style="font-size:12px;color:var(--sec);margin-top:2px">用于口语清洗、润色与多记录总结</div></div><div class="sw'+(agCfg.cloudEnabled?" on":"")+'" data-testid="cloud-enable-switch" role="switch" aria-checked="'+agCfg.cloudEnabled+'" tabindex="0" onclick="agCfg.cloudEnabled=!agCfg.cloudEnabled;syncSetSummary();renderSetSub(\'cloud\');toast(agCfg.cloudEnabled?\'已开启云端模型\':\'已关闭云端模型\')"></div></div></div>'
+      +(!agCfg.cloudEnabled?'<div class="tbc-banner" data-testid="cloud-disabled-hint"><span>已关闭云端模型：口语润色与多记录总结将暂停请求云端网关。</span></div>':'')
+      +'<div class="subcard"><h4><span>自定义 API 地址</span></h4><p>留空则使用默认模型网关 https://block2-api.wainao.chat。</p><input type="text" class="winput" id="cloud-api-inp" data-testid="cloud-custom-api-input" placeholder="https://block2-api.wainao.chat" value="'+esc(agCfg.customApi)+'"><div class="wbtns"><button class="btn" data-testid="cloud-custom-api-save" onclick="agCfg.customApi=(document.getElementById(\'cloud-api-inp\').value||\'\').trim();syncSetSummary();toast(\'已保存 API 地址\')">保存地址</button><button class="btn ghost" data-testid="cloud-custom-api-reset" onclick="agCfg.customApi=\'\';syncSetSummary();renderSetSub(\'cloud\');toast(\'已恢复默认网关\')">恢复默认</button></div></div>';
+    if(!agCfg.devMode){b.innerHTML=baseHtml;return}
+    var mods=[["deepseek-v3","DeepSeek V3","均衡主力 · 中文会议与日常对话性价比首选"],["qwen-max","通义千问 Max","中文政企术语、长对话归纳准确"],["doubao-pro","豆包 Pro","口语化表达清洗自然，响应速度快"],["glm-4-plus","GLM-4 Plus","结构化逻辑树与待办提取稳定"],["gpt-4o","GPT-4o","中英混杂与跨语种会议理解更佳"]];
+    var temps=[["0.2","0.2 · 严谨纪要"],["0.5","0.5 · 均衡提炼"],["0.8","0.8 · 发散洞察"]];
+    b.innerHTML=baseHtml
+      +'<div class="set-title">主力语言模型（开发者模式 · 5 款）</div><div class="set-group">'+mods.map(function(m){var on=agCfg.cloud===m[0];return '<div class="optrow'+(on?" on":"")+'" data-testid="model-opt-'+m[0]+'" onclick="agCfg.cloud=\''+m[0]+'\';syncSetSummary();renderSetSub(\'cloud\');toast(\'已切换为 '+m[0]+'\')"><div class="optmain"><b>'+m[1]+' <span class="ext-tag">'+m[0]+'</span></b><span>'+m[2]+'</span></div><span class="optradio"></span></div>'}).join("")+'</div>'
+      +'<div class="set-title">采样温度</div><div class="pchips">'+temps.map(function(tp){return '<button type="button" class="pchip'+(agCfg.temp===tp[0]?" on":"")+'" data-testid="temp-'+tp[0]+'" onclick="agCfg.temp=\''+tp[0]+'\';renderSetSub(\'cloud\')">'+tp[1]+'</button>'}).join("")+'</div>'
+      +'<div class="set-title">上下文策略</div><div class="set-group"><div class="optrow'+(agCfg.ctx==="selected"?" on":"")+'" onclick="agCfg.ctx=\'selected\';renderSetSub(\'cloud\')"><div class="optmain"><b>仅所选记录独立上下文</b><span>只上行本次勾选片段的清洗后文本，边界清晰。</span></div><span class="optradio"></span></div><div class="optrow'+(agCfg.ctx==="fullday"?" on":"")+'" id="row-ctx-fullday" onclick="agCfg.ctx=\'fullday\';renderSetSub(\'cloud\')"><div class="optmain"><b><span>全天连续单上下文</span></b><span>串联当日全量对话流做跨段指代消解。</span></div><span class="optradio"></span></div></div>';
+    return;
+  }
+  if(id==="island"){
+    t.textContent="灵动岛与操作按钮";s.textContent="仅在支持灵动岛的 iPhone 机型显示，使用 App Logo 展示录音运行态";
+    b.innerHTML='<div class="set-group"><div class="switchrow" style="padding:12px 0"><div><div style="font-size:14px;font-weight:600">本机录音灵动岛实时活动</div><div style="font-size:12px;color:var(--sec);margin-top:2px">开启本机录音或在固件升级期间自动切换本机录音时，灵动岛常驻显示 App Logo 与已录时长</div></div><div class="sw'+(agCfg.islandEnabled?" on":"")+'" data-testid="sw-island-live" role="switch" aria-checked="'+agCfg.islandEnabled+'" tabindex="0" onclick="agCfg.islandEnabled=!agCfg.islandEnabled;syncSetSummary();syncPhoneRecUI();renderSetSub(\'island\')"></div></div></div>'
+      +'<div class="subcard"><h4><span>iPhone 侧边操作按钮（Action Button）</span></h4><p>已在系统快捷指令与锁屏小组件注册 <b>ToggleLocalRecordingIntent</b>。将侧边操作按钮绑定为「开始 / 停止本机录音」后，无需解锁进入应用即可一键启停。</p><div class="wbtns" style="margin-top:10px"><button class="btn" data-testid="trig-action-button" onclick="togglePhoneRec();renderSetSub(\'island\')">'+(phoneRec.on?"触发操作按钮：停止本机录音":"触发操作按钮：开始本机录音")+'</button></div></div>';
+    return;
+  }
+  if(id==="prompts"){t.textContent="预设风格与提示词";s.textContent="切换一键预设或自定义三类系统提示词";b.innerHTML='<div class="pchips">'+Object.keys(PRESETS).map(function(k){return '<button class="pchip'+(agCfg.preset===k?" on":"")+'" data-testid="preset-'+k+'" onclick="pickPreset(\''+k+'\')">'+PRESETS[k].label+'</button>'}).join("")+'</div><div class="subcard"><h4>总结生成提示词</h4><textarea class="prompt-ta" id="ta-sum">'+esc(agCfg.pSum)+'</textarea></div><div class="subcard"><h4>口语窗口润色提示词</h4><textarea class="prompt-ta" id="ta-pol">'+esc(agCfg.pPol)+'</textarea></div><div class="subcard"><h4><span>日报与做梦提示词</span></h4><textarea class="prompt-ta" id="ta-dream">'+esc(agCfg.pDream)+'</textarea></div><div class="wbtns"><button class="btn ghost" onclick="pickPreset(agCfg.preset);toast(\'已恢复当前预设默认\')">恢复预设默认</button><button class="btn" data-testid="prompt-save" onclick="savePrompts()">保存提示词配置</button></div>';return}
+  if(id==="ext"){t.textContent="扩展能力";s.textContent="管理总结与整理管线可调用的 Skills、Tools 与 MCP 服务";var rows=[{k:"term",tp:"Skill",n:"领域术语纠错",d:"结合上下文统一专有名词、人名缩写与产品代号",id:"sw-sk-term"},{k:"brief",tp:"Skill",n:"高密度摘要压缩",d:"剔除重复拉锯，只保留决策结论与关键依据",id:"sw-sk-brief"},{k:"risk",tp:"Skill",n:"分歧与风险高亮",d:"显式标注讨论中未达成一致的争议点与排期风险",id:"sw-sk-risk"},{k:"photo",tp:"Tool",n:"系统相册时间轴对齐",d:"按录音起止时间戳匹配系统相册照片并插入对话流",id:"sw-tl-photo"},{k:"todo",tp:"Tool",n:"行动项结构化提取",d:"抽取负责人、动作与截止时间生成可勾选清单",id:"sw-tl-todo"},{k:"hist",tp:"Tool",n:"跨日历史记录检索",d:"生成总结时检索过往关联记录补充背景",id:"sw-tl-hist"},{k:"mcp",tp:"MCP",n:"外部知识库 MCP Server",d:"通过标准 MCP 协议读写团队知识库与日程服务",id:"sw-mcp-kb"}];b.innerHTML='<div class="set-group">'+rows.map(function(r){var on=!!agCfg.exts[r.k];return '<div class="switchrow" style="align-items:flex-start;padding:12px 0"><div style="flex:1;padding-right:10px"><div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13.5px"><span class="ext-tag">'+r.tp+'</span><span>'+r.n+'</span>'+(r.tbc?'':'')+'</div><div style="font-size:12px;color:var(--sec);margin-top:2px">'+r.d+'</div></div><div class="sw'+(on?" on":"")+'" data-testid="'+r.id+'" role="switch" aria-checked="'+on+'" tabindex="0" onclick="toggleExt(\''+r.k+'\')"></div></div>'}).join("")+'</div>';return}
+  if(id==="memory"){
+    t.innerHTML='<span>声纹与记忆图谱</span>';
+    s.textContent="日间清洗提取 + 夜间做梦编织：事件（Event/Story）· 可升格为点的关系（Relation）· 实体/对象（人·物·私有概念）";
+    var spkCards=Object.keys(SPEAKER_DB).map(function(k){var o=SPEAKER_DB[k];return '<div class="mg-card" style="cursor:pointer" data-testid="mg-spk-'+k+'" onclick="openSpeakerSheet(\''+k+'\')"><div class="mg-hd"><b><span class="mex-tag">实体·人</span>'+(o.confirmed&&o.name?esc(o.name):("说话人 "+o.slot+"（推断："+esc(o.hintedName)+"?）"))+'</b><span class="vp-pill">'+(o.confirmed?"声纹已绑定 "+o.sim+"%":"待确认 "+o.sim+"%")+'</span></div><p>'+esc(o.traits.join("；"))+'</p><div class="mg-props"><span class="mg-prop">关联 '+o.events.length+' 段对话</span><span class="mg-prop">点击编辑声纹卡片 ›</span></div></div>'}).join("");
+    b.innerHTML='<div class="set-title" style="padding-top:4px">1. 实体 / 对象（Entity · 人、物、私有概念等可被持续指认）</div>'+spkCards
+      +'<div class="mg-card" data-testid="mg-mentioned-only"><div class="mg-hd"><b><span class="mex-tag">被提及人</span>第三方对接方（例会提及 · 未在场无声纹）</b><span class="ext-tag">防误绑保护</span></div><p>周一例会 16:44 提及“让对接方提前给测试账号”：区分「不在场被提及人」与「现场说话人」，仅建立语义实体卡跟进事项，绝不误绑现场声纹簇。</p><div class="mg-props"><button type="button" class="mg-prop link" onclick="openDetail(\'e5\',true)">↗ 溯源：周一例会要点 16:44</button></div></div>'
+      +'<div class="mg-card" data-testid="mg-entity-movie"><div class="mg-hd"><b><span class="mex-tag">实体·物</span>《007黄金眼》（电影）</b><span class="ext-tag">长按按键可查</span></div><p>9 月 5 日周三下午观影记录提取；伴随记忆细节：入场前买了爆米花。</p></div>'
+      +'<div class="mg-card"><div class="mg-hd"><b><span class="mex-tag">私有概念</span>「可验证小方案」 / 「10% 晚八点窗口」</b><span class="ext-tag">已反哺润色词表</span></div><p>前者指排期吃紧时先剥离导出模块、两周闭环核心验证；后者指团队默认晚 20:00 放量 10% 并盯盘半小时的发布黑话。已同步至日间清洗热词表做同音纠偏。</p></div>'
+      +'<div class="set-title">2. 关系（Relation · 图的“边”已升格为含属性、状态新陈代谢与事件的“点”）</div>'
+      +'<div class="mg-card rel-node" data-testid="mg-rel-upgraded"><div class="mg-hd"><b><span class="mex-tag">升格关系点</span>'+(SPEAKER_DB.s1.confirmed?esc(SPEAKER_DB.s1.name):"老陈")+' ⇄ 小周 · 排期裁决与分工搭档</b></div><p>高频协作使简单连接边升级为独立关系节点，记录状态新陈代谢（旧结论归档、新决议生效）并支持原话溯源：</p><div class="mg-props"><span class="mg-prop">协作频次：4 次</span><span class="mg-prop">当前生效：导出延后两周（11/13 14:26 更新）</span><span class="mg-prop arch" data-testid="mg-rel-archived">历史归档：首版原含导出模块</span><button type="button" class="mg-prop link" onclick="openDetail(\'e1\',true)">↗ 溯源：11/13 午后讨论</button><button type="button" class="mg-prop link" onclick="openDetail(\'e5\',true)">↗ 溯源：周一例会对齐</button></div></div>'
+      +'<div class="mg-card rel-node"><div class="mg-hd"><b><span class="mex-tag">升格关系点</span>我 ⇄ 阿杰（运维） · 灰度发布上线协同</b></div><p>连续 3 次围绕发布窗口核对同一组保障项，已在做梦中派生出复用 Skill：</p><div class="mg-props"><span class="mg-prop">重复协作：3 次（10/29、11/05、昨日）</span><span class="mg-prop">关联 Skill：灰度发布三要素核查 v1.3</span><button type="button" class="mg-prop link" onclick="openDetail(\'e4\',true)">↗ 溯源：昨日发布窗口</button></div></div>'
+      +'<div class="set-title">3. 事件脉络（Event / Story · 串联实体与关系的时空事实锚点）</div>'
+      +'<div class="mg-card"><div class="mg-hd"><b>今日 14:20 · 拼单冰美式与排期拍板（含 14:26 单击重点）</b><button type="button" class="push-link" onclick="openDetail(\'e1\',true)">原话 ›</button></div><p>串联实体「老陈」「可验证小方案」与升格关系「排期裁决」，产出周五书面结论待办。</p></div>'
+      +'<div class="mg-card"><div class="mg-hd"><b>9 月 5 日周三下午 · 影院观看《007黄金眼》</b></div><p>闲聊切片归档：周三下午场观看《007黄金眼》，期间吃了爆米花。</p></div>';
+    return;
+  }
+  if(id==="hwbtn"){
+    t.innerHTML='<span>物理按键与灵动岛 Agent</span>';
+    s.textContent="不用掏出手机解锁屏幕：盲按录音卡物理按钮触发灵动岛收听，结果通过系统消息先后推送";
+    b.innerHTML='<div class="subcard"><h4><span>⦿ 单击（Single Press）· 打重点（Mark）</span><span class="ext-tag">已规划</span></h4><p>日常对话中随手盲按一下，不打断现场交流、不播报提示音；大模型在生成总结和「睡前日记」时会重点留意按键前后的语义，推测并向你求证此处意图。</p><div class="wbtns" style="margin-top:10px"><button class="btn ghost" data-testid="sub-trig-mark" onclick="triggerHwButton(\'click\')">触发单击重点效果</button></div></div>'
+      +'<div class="subcard"><h4><span>🎙 长按（Long Press）· 语音命令（Command / Action）</span><span class="ext-tag">核心交互</span></h4><p>按住物理键直接说话，手机顶部<b>灵动岛</b>即时唤醒收听任务（如突然想问：“前几天看的电影是什么名字？”）。松手后 App 先后推送两条系统消息：<br>· <b>消息 A【立即】</b>：我现在就去查一下，找到和你说。<br>· <b>消息 B【结果】</b>：找到了，是《007黄金眼》，在前天，9 月 5 日周三下午看的，你还吃了爆米花。</p><div class="wbtns" style="margin-top:10px"><button class="btn" data-testid="sub-trig-agent" onclick="triggerHwButton(\'hold\')">触发长按提问 + A/B 两条推送</button></div></div>'
+      +'<div class="subcard"><h4><span>◎ 双击（Double Press）· 暂空预留</span><span class="ext-tag">待绑定</span></h4><p>双击手势暂留空白，后续开放绑定自定义快捷 Skill 或外部动作。</p><div class="wbtns" style="margin-top:10px"><button class="btn ghost" data-testid="sub-trig-double" onclick="triggerHwButton(\'double\')">查看双击预留提示</button></div></div>';
+    return;
+  }
+  if(id==="voiceprint"){
+    t.textContent="声纹识别";s.textContent="本机 CAM++ 声纹特征提取 · 不断言真实身份";
+    var st=agCfg.local.spk;
+    var inst=st==="ready";
+    var dlBtn=!inst?'<button type="button" class="btn ghost" style="width:auto;min-height:30px;padding:4px 12px;font-size:12px" data-testid="voiceprint-install-btn" '+(st==="dl"?'disabled':'')+' onclick="dlVoiceprintModel()">'+(st==="dl"?"下载中…":"下载")+'</button>':'';
+    var prog=st==="dl"?'<div class="bar" style="margin-top:10px"><i style="width:65%"></i></div><div data-testid="voiceprint-progress-text" style="margin-top:6px;font-size:12px;color:var(--sec)">正在下载 CAM++ 声纹模型…</div>':'';
+    b.innerHTML='<div class="subcard"><div style="display:flex;align-items:center;gap:10px"><div style="flex:1;font-size:14px;font-weight:700">说话人聚类（推测）</div><span class="ext-tag">'+(inst?"已就绪":"待下载")+'</span>'+dlBtn+'</div><p style="margin-top:8px">基于本机声纹特征将对话归类为「说话人 1 / 2（推测）」，原始声纹特征仅留存在本机，不断言真实身份。</p>'+prog+'</div>';
+    return;
+  }
+  if(id==="privacy"){t.textContent="隐私政策";s.textContent="生效日期：2026-11-08 · 联系邮箱：privacy@reai.chat";var secs=[["一、我们处理哪些信息","录音与转写内容：从录音卡同步到手机的音频、时间标记及设备侧转写文本。设备信息仅用于蓝牙连接与状态展示；配网口令只保存在本机与硬件；登录令牌存于系统 Keychain。"],["二、录音内容存在哪里","默认只存本机沙盒目录，不自动上传，卸载即清除。仅在你主动发起云端润色或总结时，对应文本才会经网关处理。"],["三、蓝牙与本地网络权限","蓝牙仅用于发现并连接自有录音硬件、同步录音与状态；本地网络仅用于硬件 2.4GHz 配网，不做定位画像或局域网嗅探。"],["四、云端模型网关承诺","经模型网关转发的内容仅用于当次润色与总结，不用于模型训练或广告投放；你在 App 内删除记录后服务端副本在 15 天内清除。"],["五、你的控制权","可随时删除单条记录、清空全部本机数据、关闭自动转录或撤回系统蓝牙授权。"]];b.innerHTML='<div class="subcard"><p>「录音卡」把「录音只属于你」当作默认设置：录音文件与转写文本默认只保存在你的手机上，云端处理只在你主动操作时发生。</p></div>'+secs.map(function(x){return '<div class="subcard"><h4>'+x[0]+'</h4><p>'+x[1]+'</p></div>'}).join("");return}
+}
+function dlVoiceprintModel(){agCfg.local.spk="dl";renderSetSub("voiceprint");setTimeout(function(){agCfg.local.spk="ready";syncSetSummary();renderSetSub("voiceprint");toast("CAM++ 声纹模型已就绪")},350)}
+function dlLocalModel(k){agCfg.local[k]="dl";renderSetSub("local");setTimeout(function(){agCfg.local[k]="ready";agCfg.localHasUpdate=false;syncSetSummary();renderSetSub("local");toast("本地模型已就绪")},350)}
+function installAllLocalModels(){["vad","asr","spk"].forEach(function(k){if(agCfg.local[k]!=="ready")agCfg.local[k]="dl"});renderSetSub("local");setTimeout(function(){agCfg.local.vad="ready";agCfg.local.asr="ready";agCfg.local.spk="ready";agCfg.localHasUpdate=false;syncSetSummary();renderSetSub("local");toast("本地语音模型已全部就绪")},350)}
+function askDeleteLocalModel(k,name){pendingDelMdl=k;var n=document.getElementById("mdl-del-name");if(n)n.textContent=name;var w=document.getElementById("mdl-del-wrap");if(w)w.classList.add("show")}
+function closeDeleteLocalModel(){pendingDelMdl=null;var w=document.getElementById("mdl-del-wrap");if(w)w.classList.remove("show")}
+function confirmDeleteLocalModel(){if(!pendingDelMdl){closeDeleteLocalModel();return}agCfg.local[pendingDelMdl]="none";closeDeleteLocalModel();syncSetSummary();renderSetSub("local");toast("已删除本地语音模型")}
+function openLoginGate(){var g=document.getElementById("login-gate");if(g)g.classList.add("show")}
+function closeLoginGate(){var g=document.getElementById("login-gate");if(g)g.classList.remove("show")}
+function submitLoginChannel(ch){agCfg.auth=true;if(ch!=="oauth")agCfg.binds[ch]=true;closeLoginGate();syncSetSummary();if(subStack.some(function(x){return x.t==="setsub"&&x.id==="login"}))renderSetSub("login");var nm={oauth:"外脑账号",wechat:"微信",apple:"Apple",google:"Google"}[ch]||"外脑账号";toast("已通过"+nm+"登录")}
+function requestSignOut(){if(phoneRec.on||rec.on){var d=document.getElementById("signout-rec-desc");if(d)d.textContent=phoneRec.on&&rec.on?"当前正在进行本机与硬件录音，退出登录将自动关闭录音并保存当前片段，避免不同账号间的数据归属混淆。":phoneRec.on?"当前正在进行本机录音，退出登录将自动关闭录音并保存当前片段，避免不同账号间的数据归属混淆。":"当前录音卡正在录音，退出登录将自动关闭录音并保存当前片段，避免不同账号间的数据归属混淆。";var w=document.getElementById("signout-rec-wrap");if(w)w.classList.add("show");return}agCfg.auth=false;syncSetSummary();renderSetSub("login");toast("已清除本机令牌")}
+function closeSignOutConfirm(){var w=document.getElementById("signout-rec-wrap");if(w)w.classList.remove("show")}
+function confirmSignOut(){if(phoneRec.on)stopPhoneRec();if(rec.on){rec.on=false;if(!phoneRec.on)liveState="idle";updateRecUI();syncCapsule();render()}closeSignOutConfirm();agCfg.auth=false;syncSetSummary();renderSetSub("login");toast("已自动关闭录音并退出当前授权")}
+function pickPreset(k){agCfg.preset=k;agCfg.presetLabel=PRESETS[k].label;agCfg.pSum=PRESETS[k].sum;syncSetSummary();renderSetSub("prompts")}
+function savePrompts(){var s1=document.getElementById("ta-sum"),s2=document.getElementById("ta-pol"),s3=document.getElementById("ta-dream");if(s1)agCfg.pSum=s1.value;if(s2)agCfg.pPol=s2.value;if(s3)agCfg.pDream=s3.value;syncSetSummary();toast("提示词配置已保存")}
+function syncPhotoSwitchUI(){var el=document.getElementById("sv-photo-imp"),sw=document.getElementById("sw-photo-sync");if(el)el.textContent=agCfg.photoAutoSync?"已开启 · 每分钟随切片自动对齐":"已关闭";if(sw){sw.classList.toggle("on",!!agCfg.photoAutoSync);sw.setAttribute("aria-checked",agCfg.photoAutoSync?"true":"false")}}
+function toggleExt(k){agCfg.exts[k]=!agCfg.exts[k];if(k==="photo"){agCfg.photoAutoSync=agCfg.exts.photo;syncPhotoSwitchUI()}syncSetSummary();renderSetSub("ext")}
+function closePhotoPerm(){var w=document.getElementById("photo-perm-wrap");if(w)w.classList.remove("show")}
+function grantPhotoPerm(){agCfg.photoPerm=true;agCfg.photoAutoSync=true;agCfg.exts.photo=true;syncPhotoSwitchUI();syncSetSummary();closePhotoPerm();toast("已授权系统相册，后续每分钟随切片自动对齐照片")}
+function togglePhotoAutoSync(){if(agCfg.photoAutoSync){agCfg.photoAutoSync=false;agCfg.exts.photo=false;syncPhotoSwitchUI();syncSetSummary();toast("已关闭每分钟切片自动照片对齐");return}if(!agCfg.photoPerm){var w=document.getElementById("photo-perm-wrap");if(w)w.classList.add("show");return}agCfg.photoAutoSync=true;agCfg.exts.photo=true;syncPhotoSwitchUI();syncSetSummary();toast("已开启每分钟随切片自动对齐照片")}
+var PARITY_ITEMS=[
+  {t:"右上角硬件 · 三款自研硬件识别与状态管理",d:"分色徽章置前 + 去前缀短码；独立本机录音（灵动岛 App Logo）；充电闪电呼吸电池；Wi-Fi 2.4GHz 配网；两阶段固件升级无缝切本机录音。",act:"cur-hw"},
+  {t:"Timeline · 按日倒序时间轴与 5 态实时状态块",d:"按天倒序排列总结卡、未归类图片卡与普通记录（右侧 45px 层叠缩略图）；顶部 1 分钟切片实时状态块（录音/转写/同步/中断）。",act:"cur-tl"},
+  {t:"记录详情 · 对话流图文混排与吸顶拖拽播放器",d:"对话详情按时间戳穿插系统相册照片（支持标记不属于本段）；原始数据吸顶播放器支持拖拽进度、点句秒跳与清理。",act:"cur-detail"},
+  {t:"多选总结 · 进度追踪、6 栏结果页与 5 格式导出",d:"勾选锁定记录 Tab + 今日/本周/本月全选；吸顶 Tab 栏 + 目录浮钮（概览/逻辑结构/信息点/行动项/来源记录）+ 系统分享导出。",act:"cur-sum"},
+  {t:"Setting · 四通道首页登录页、第三方绑定与退登停录保护",d:"外脑 OAuth2 主入口 + 微信/Apple/Google 登录页；账号关联管理；录音期间退出登录弹窗确认并自动停录防串号。",act:"cur-auth"},
+  {t:"Setting · 本地语音三引擎（外脑 CDN 兜底）与云端模型极简模式",d:"SenseVoice v2 / Silero VAD / CAM++（含声纹子页下载入口）与防误删风险弹窗；云端默认仅保留开关与自定义网关，连击版本号 7 次解锁开发者模式。",act:"cur-models"},
+  {t:"Setting · 提示词预设、声纹聚类、扩展能力与照片自动对齐",d:"4 套预设风格与分环节提示词；本机声纹聚类说明；Skills/Tools/MCP 开关；每分钟切片自动对齐系统相册照片；灵动岛与操作按钮。",act:"cur-set"}
+];
+function openParity(){renderParityList();document.getElementById("parity-wrap").classList.add("show")}
+function closeParity(){document.getElementById("parity-wrap").classList.remove("show")}
+function renderParityList(){document.getElementById("parity-list").innerHTML=PARITY_ITEMS.map(function(it){return '<div class="p-item" onclick="jumpParity(\''+it.act+'\')"><div><b><span class="ext-tag" style="background:#EDF7F0;color:#1F7A34">已实现</span><span>'+esc(it.t)+'</span></b><p>'+esc(it.d)+'</p></div><span class="p-go">查看 ›</span></div>'}).join("")}
+function flashEl(sel){setTimeout(function(){var el=document.querySelector(sel);if(!el)return;el.scrollIntoView({behavior:"smooth",block:"center"});el.classList.remove("focus-flash");void el.offsetWidth;el.classList.add("focus-flash")},180)}
+function jumpParity(act){closeParity();closeSheet();closeUncSheet();closeDreamSheet();closeSpeakerSheet();dismissPushes();
+  if(act==="cur-hw"){openSheet();return}
+  if(act==="cur-tl"){go("timeline");setLivePreview("recording");flashEl("#live-status");return}
+  if(act==="cur-detail"){go("timeline");openDetail("e2",true);return}
+  if(act==="cur-sum"){go("timeline");openSum("sum-demo",true);return}
+  if(act==="cur-auth"){openSetSub("login");return}
+  if(act==="cur-models"){openSetSub("local");return}
+  if(act==="cur-set"){go("setting");return}
+}
+restoreState();wifiLoad();syncCapsule();syncSetSummary();
+(function(){
+  var demoSum={id:"sum-demo",kind:"summary",state:"done",time:"13:20",srcIds:["e2"],
+    title:"客户回访要点",
+    subDesc:"今天 13:05–13:14 · 1 条记录",
+    overview:"本次总结覆盖客户回访：客户认可新版界面整体清爽，但明确反馈列表页加载偏慢，同时希望筛选器记住上次选择条件；已当场承诺下版本专项优化并同步改进数据。",
+    map:[
+      ["客户反馈",["界面清爽获认可",{t:"列表加载偏慢",eid:"e2",pi:0,imp:"key",role:"耗时实证"},{t:"筛选记住上次选择",eid:"e2",pi:1,imp:"aux"}]],
+      ["跟进承诺",["下版本专项提速","下次沟通前给出数据"]]
+    ],
+    points:[
+      {t:"客户认可新版界面清爽，但列表页加载偏慢",
+        d:"回访开场客户对新版视觉给出正面评价，随后重点指出列表页首屏打开偏慢（对应 13:06 现场记录画面），希望下次沟通前看到量化改进数据。",
+        src:[["e2","客户回访要点","13:06—13:08"]]},
+      {t:"筛选器需记住上次选择条件，减少重复操作",
+        d:"客户日常高频筛选同一批状态，每次重进页面条件都会重置（对应 13:09 现场记录画面），建议持久化最近一次筛选条件。",
+        src:[["e2","客户回访要点","13:09—13:12"]]},
+      {t:"已承诺下版本专项优化并提前同步对比数据",
+        d:"当场记录两条改进项并纳入下版本排期，无额外现场配图，仅做口头确认与行动跟进。",
+        src:[["e2","客户回访要点","13:12—13:14"]]}
+    ],
+    todos:[
+      {t:"跟进客户加载速度问题",who:"说话人 1（推测）",due:"下版本排期内",pic:["e2",0,"耗时实测图"],src:["e2","13:08"]},
+      {t:"筛选器持久化上次条件",who:"说话人 1（推测）",src:["e2","13:12"]},
+      {t:"下次沟通前同步提速对比数据",due:"下次沟通前",src:["e2","13:08"]},
+      "归档本次客户回访纪要"
+    ],
+    srcDesc:"今天 13:05 客户回访要点",
+    md:"# 客户回访要点\n\n覆盖：今天 13:05–13:14 · 1 条记录\n\n## 概览\n本次总结覆盖客户回访：客户认可新版界面整体清爽，但明确反馈列表页加载偏慢。\n\n## 信息点\n- 客户认可新版界面清爽，但列表页加载偏慢\n- 筛选器需记住上次选择条件，减少重复操作\n- 已承诺下版本专项优化并提前同步对比数据\n\n## 行动项\n- [ ] 跟进客户加载速度问题\n- [ ] 筛选器持久化上次条件\n\n## 来源\n今天 13:05 客户回访要点"};
+  var di=summaries.findIndex(function(s){return s.id==="sum-demo"});
+  if(di>=0)summaries[di]=demoSum;else summaries.splice(Math.min(1,summaries.length),0,demoSum);
+})();
+render();renderSub();syncChrome();</script></body></html>
