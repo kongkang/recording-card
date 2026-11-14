@@ -9,6 +9,7 @@ import '../core/models/record.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
 import '../data/seed.dart';
+import '../widgets/photo_preview_sheet.dart';
 import '../widgets/store_scope.dart';
 
 class UnclassifiedPhotosPage extends StatelessWidget {
@@ -363,6 +364,7 @@ class _AlbumTile extends StatelessWidget {
   void _showCandidatePicker(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       backgroundColor: RCColors.card,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
@@ -380,34 +382,70 @@ class _AlbumTile extends StatelessWidget {
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 8),
-                for (final c in candidates)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    title: Text(
-                      c.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      '${c.time} · ${c.dur}',
-                      style: const TextStyle(fontSize: 12, color: RCColors.sec),
-                    ),
-                    trailing: const Icon(
-                      Icons.chevron_right,
-                      size: 18,
-                      color: RCColors.ax,
-                    ),
-                    onTap: () {
-                      Navigator.of(ctx).pop();
-                      store.reassignExcludedPhoto(
-                        fromEventId: event.id,
-                        photoId: photo.id,
-                        toEventId: c.id,
+                for (var ci = 0; ci < candidates.length; ci++)
+                  Builder(
+                    builder: (context) {
+                      final c = candidates[ci];
+                      return ListTile(
+                        key: Key('unc-cand-${c.id}'),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                c.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            if (ci == 0) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 1.5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFEAF3EA),
+                                  borderRadius: BorderRadius.circular(5),
+                                ),
+                                child: const Text(
+                                  '时间最接近',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: RCColors.okInk,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        subtitle: Text(
+                          '${c.time} · ${c.dur}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: RCColors.sec,
+                          ),
+                        ),
+                        trailing: const Icon(
+                          Icons.chevron_right,
+                          size: 18,
+                          color: RCColors.ax,
+                        ),
+                        onTap: () {
+                          Navigator.of(ctx).pop();
+                          store.reassignExcludedPhoto(
+                            fromEventId: event.id,
+                            photoId: photo.id,
+                            toEventId: c.id,
+                          );
+                        },
                       );
                     },
                   ),
@@ -424,84 +462,21 @@ class _AlbumTile extends StatelessWidget {
     String srcLabel,
     RecordEvent? best,
   ) {
-    final hasFile = photo.path.isNotEmpty && File(photo.path).existsSync();
-    showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return Dialog(
-          backgroundColor: RCColors.card,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              AspectRatio(
-                aspectRatio: 1,
-                child: hasFile
-                    ? Image.file(File(photo.path), fit: BoxFit.cover)
-                    : const ColoredBox(
-                        color: Color(0xFFEAEAE4),
-                        child: Center(
-                          child: Icon(
-                            Icons.photo_outlined,
-                            size: 44,
-                            color: RCColors.sec,
-                          ),
-                        ),
-                      ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$srcLabel · ${photo.time}',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '原属记录：${event.title}',
-                      style: const TextStyle(fontSize: 12, color: RCColors.sec),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: () {
-                            Navigator.of(ctx).pop();
-                            store.dismissPhoto(event.id, photo.id);
-                          },
-                          child: const Text('不归类'),
-                        ),
-                        if (best != null)
-                          FilledButton.tonal(
-                            onPressed: () {
-                              Navigator.of(ctx).pop();
-                              store.reassignExcludedPhoto(
-                                fromEventId: event.id,
-                                photoId: photo.id,
-                                toEventId: best.id,
-                              );
-                            },
-                            child: Text('归入「${best.title}」'),
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+    showPhotoPreviewSheet(
+      context,
+      photo: photo,
+      title: '$srcLabel · ${photo.time}',
+      subtitle: '原属记录：${event.title}',
+      onSecondaryAction: () => store.dismissPhoto(event.id, photo.id),
+      secondaryActionLabel: '不归类',
+      onPrimaryAction: best != null
+          ? () => store.reassignExcludedPhoto(
+                fromEventId: event.id,
+                photoId: photo.id,
+                toEventId: best.id,
+              )
+          : null,
+      primaryActionLabel: best != null ? '归入「${best.title}」' : null,
     );
   }
 }

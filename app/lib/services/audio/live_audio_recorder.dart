@@ -219,6 +219,12 @@ class LiveAudioRecorder extends ChangeNotifier {
   final CardGateway _gateway;
   final Directory? _baseDirOverride;
 
+  /// 16kHz 16-bit 单声道 PCM 参数与手动下拉刷新的最小切分阈值（0.5 秒 = 16000 字节）。
+  static const int defaultSampleRate = 16000;
+  static const int bytesPerSample = 2;
+  static const int minManualFlushBytes =
+      defaultSampleRate * bytesPerSample ~/ 2;
+
   /// 滚动切片时长（验证期默认 1 分钟；传 null 则只在停录时整体封口）。
   final Duration? sliceDuration;
 
@@ -474,6 +480,21 @@ class LiveAudioRecorder extends ChangeNotifier {
       spans.add(ReceivedSpan(startMs: startMs, endMs: endMs));
     }
     _session = session.copyWith(spans: spans);
+  }
+
+  /// Timeline 下拉刷新触发：在**不中断**蓝牙实时推流、不关停会话的前提下，
+  /// 将当前内存缓冲中未满 1 分钟窗口的 PCM 立即封口为一片正式 `.WAV` 并送入本地转写。
+  ///
+  /// 若当前未在录音或已累积不足 0.5 秒（防连拉产生极碎空片），等待在途写入落盘后返回 `false`。
+  Future<bool> flushActiveSlice() async {
+    if (!isRunning || _stopping) return false;
+    if (_slicePcm.length < minManualFlushBytes) {
+      await _sliceWriteChain;
+      return false;
+    }
+    _sealCurrentSlice(isFinal: false);
+    await _sliceWriteChain;
+    return true;
   }
 
   /// 停止接收并封口 WAV（把占位头回填成真实长度，并冲刷尾部未满一片的切片）。

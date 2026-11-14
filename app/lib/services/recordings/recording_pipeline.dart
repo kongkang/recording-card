@@ -480,18 +480,18 @@ class RecordingPipeline {
     final seqNo = slice.sliceIndex + 1;
 
     if (utterances.isEmpty) {
-      final secs = (slice.durationMs / 1000).round().clamp(1, 36000);
       return SegmentRecord(
         id: 'seg-${file.id}-0',
         sessionId: file.session,
         index: slice.sliceIndex,
         startAtMs: startAtMs,
         endAtMs: endAtMs,
-        title: '实时切片 #$seqNo（未识别到人声）',
-        brief: '已保存 $secs 秒本地流式音频，本段未检测到清晰语音。',
-        longText: '已保存 $secs 秒本地流式音频，可在「原始数据」回听。',
+        title: '未识别到语音',
+        brief: '本段未检测到有效人声，原始录音已保存在本机。',
+        longText: '本段未检测到有效人声，原始录音已保存在本机，可在详情「原始数据」回听。',
         status: SegmentStatus.closed,
         sliceIds: sliceIds,
+        mark: slice.gapCount > 0 ? '流中断 ${slice.gapCount} 次' : null,
       );
     }
 
@@ -835,6 +835,120 @@ class RecordingPipeline {
     } finally {
       _exitBusy();
     }
+  }
+
+  /// 仅处理本机已有音频文件但尚未完成转写的待办条目（不访问蓝牙 `gateway.files()`）。
+  ///
+  /// 供未连接录音卡时的 Timeline 下拉刷新使用：离线/未连卡时也能把本机排队中的
+  /// `LIVE_*` 或已下载 `.APM`/`.WAV` 送进本地 VAD + SenseVoice 完成转写。
+  Future<PipelineSyncResult> transcribeLocalPendingOnly({
+    void Function(PipelineProgress progress)? onProgress,
+  }) {
+    final completer = Completer<PipelineSyncResult>();
+    _liveSerial = _liveSerial.then((_) async {
+      await _waitUntilIdle();
+      _enterBusy();
+      try {
+        final all = await store.loadAll(refresh: true);
+        final pending = <RecordingFile>[];
+        for (final f in all) {
+          if (f.stage == RecordingStage.ready) continue;
+          final hasApm =
+              f.apmPath.isNotEmpty && await File(f.apmPath).exists();
+          final hasWav =
+              f.wavPath != null &&
+              f.wavPath!.isNotEmpty &&
+              await File(f.wavPath!).exists();
+          if (hasApm || hasWav) {
+            pending.add(f);
+          }
+        }
+        pending.sort((a, b) => a.startAtMs.compareTo(b.startAtMs));
+
+        var ready = 0;
+        var failed = 0;
+        final failures = <String>[];
+        for (var i = 0; i < pending.length; i++) {
+          final file = pending[i];
+          final hasWav =
+              file.wavPath != null &&
+              file.wavPath!.isNotEmpty &&
+              await File(file.wavPath!).exists();
+          if (file.deviceName.startsWith('LIVE_') && hasWav) {
+            try {
+              final updated = await _ingestLiveSliceUnlocked(
+                LiveAudioSlice(
+                  sessionId: file.session,
+                  deviceSessionId: file.session,
+                  sliceIndex: (file.seq - 1).clamp(0, 999999),
+                  startAtMs: file.startAtMs,
+                  durationMs: file.durationMs,
+                  wavPath: file.wavPath!,
+                  sliceKeyOverride: file.deviceName,
+                ),
+                onProgress: onProgress,
+              );
+              if (updated.stage == RecordingStage.ready) {
+                ready++;
+              } else {
+                failed++;
+                final err = updated.error?.trim();
+                failures.add(
+                  '${file.deviceName}: ${err != null && err.isNotEmpty ? err : '本地转写未完成'}',
+                );
+              }
+            } on Object catch (e) {
+              failed++;
+              failures.add('${file.deviceName}: $e');
+              file
+                ..stage = RecordingStage.failed
+                ..error = '$e';
+              await store.save(file);
+            }
+            continue;
+          }
+          try {
+            await _processFile(
+              file,
+              source: null,
+              fileIndex: i,
+              fileTotal: pending.length,
+              onProgress: onProgress,
+            );
+            if (file.stage == RecordingStage.ready) {
+              ready++;
+            } else {
+              failed++;
+              final err = file.error?.trim();
+              failures.add(
+                '${file.deviceName}: ${err != null && err.isNotEmpty ? err : '本地转写未完成'}',
+              );
+            }
+          } on Object catch (e) {
+            failed++;
+            failures.add('${file.deviceName}: $e');
+            file
+              ..stage = RecordingStage.failed
+              ..error = '$e';
+            await store.save(file);
+          }
+        }
+        completer.complete(
+          PipelineSyncResult(
+            downloaded: 0,
+            ready: ready,
+            skipped: 0,
+            failed: failed,
+            failures: failures,
+          ),
+        );
+      } on Object catch (e, st) {
+        completer.completeError(e, st);
+      } finally {
+        _exitBusy();
+      }
+    });
+    return completer.future;
   }
 
   /// 处理一条文件；返回是否真的执行了下载（用于统计）。

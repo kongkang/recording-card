@@ -85,7 +85,17 @@ class _AppShellState extends State<AppShell> {
     // 让 store 知道设备在不在：没连卡时下拉不要去取回录音，更不该报"整理中断"。
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
     widget.store.deviceConnected ??= () => _device.isConnected;
-    widget.store.deviceRecording ??= () => _device.isRecording;
+    widget.store.deviceRecording ??=
+        () => _device.isRecording || _device.isPhoneRecording;
+    widget.store.flushActiveRecordingSlice ??= () async {
+      if (_liveAudio.isRunning) {
+        return _liveAudio.flushActiveSlice();
+      }
+      if (_device.isPhoneRecording) {
+        return _device.flushPhoneRecordingSlice();
+      }
+      return false;
+    };
     widget.store.deviceHasCameraMedia ??=
         () => _device.activeCapabilities.hasCameraMedia;
     widget.store.photoLibrary = _photoLib;

@@ -95,6 +95,9 @@ class AppStore extends ChangeNotifier {
   /// 分段详情视图：Timeline 与详情页共用同一份 turns/utterances。
   Map<String, SegmentView> segmentViews = const {};
 
+  /// 连续无语音切片合并后，被折叠子分段 ID → 锚点分段 ID 映射。
+  Map<String, String> _mergedIdRedirects = const {};
+
   /// 按记录 ID 存储的关联照片（含点一机 V1 硬件抓拍与系统相册对齐导入，及排除状态）。
   Map<String, List<EventPhoto>> eventPhotos = {};
 
@@ -224,6 +227,8 @@ class AppStore extends ChangeNotifier {
 
   /// 停止录音后等待本轮尾部实时切片完成本地转写（不触发蓝牙拉卡文件）。
   Future<int> finishLiveRecording() async {
+    await Future<void>.value();
+    await Future<void>.value();
     await _liveIngestTail;
     await syncPhotosAutomatically(recentOnly: false);
     if (_status?.isRecording != true && _liveSlicesInFlight == 0) {
@@ -275,6 +280,7 @@ class AppStore extends ChangeNotifier {
       recordingFiles = files;
       events = projection.events;
       segmentViews = projection.views;
+      _mergedIdRedirects = projection.mergedIdRedirects;
     } on Object catch (e) {
       loadError = '读取本地录音失败：$e';
     }
@@ -316,8 +322,11 @@ class AppStore extends ChangeNotifier {
   /// 是否已连着录音卡（由外壳把 DeviceStore 接进来；未接则视为可同步，由流水线自己报错）。
   bool Function()? deviceConnected;
 
-  /// 设备是否正在录音（录音期间走实时流切片自动落盘，下拉刷新不抢蓝牙总线、不冲掉顶部录音块）。
+  /// 设备是否正在录音（硬件实时流或本机麦克风）。
   bool Function()? deviceRecording;
+
+  /// 下拉刷新时不停录冲刷当前正在累积的实时切片（满 0.5 秒则封口投递本地转写）。
+  Future<bool> Function()? flushActiveRecordingSlice;
 
   /// 当前已连接设备是否具备硬件拍照媒体能力（如点一机 V1）。
   bool Function()? deviceHasCameraMedia;
@@ -356,29 +365,96 @@ class AppStore extends ChangeNotifier {
       (deviceRecording?.call() ?? false) || (_status?.sessionActive ?? false);
 
   Future<String?> syncRecordings() async {
-    // 录音进行中下拉刷新：只刷新本机已落盘列表并守护顶部「正在录音」状态块，
-    // 不发起蓝牙文件列表/下载，更不能把 RecordingStatusController 切回 idle。
+    // 场景 A · 录音进行中（硬件实时流 / 本机麦克风）：
+    // 不停录、不请求蓝牙 FILE_LIST；若当前缓冲已满 0.5 秒则立即切分封口并等待本地转写落库。
     if (_isActivelyRecording) {
       syncError = null;
       syncStage = null;
       syncProgress = 0;
       syncText = '';
       _status?.ensureRecording();
+      final hadInFlightBefore = _liveSlicesInFlight > 0;
+      final savedBefore = _liveSlicesSavedThisRun;
+      if (flushActiveRecordingSlice != null) {
+        _status?.setRecordingDetail('正在切分并本地转写当前语音…');
+      }
+      final flushed = await (flushActiveRecordingSlice?.call() ??
+          Future<bool>.value(false));
+      if (flushed) {
+        // 让 broadcast Stream 微任务订阅回调先执行并把新切片挂上 _liveIngestTail（不建 Timer 兼容 FakeAsync）。
+        await Future<void>.value();
+        await Future<void>.value();
+      }
+      await _liveIngestTail;
       await refreshEvents();
       unawaited(syncPhotosAutomatically(recentOnly: true));
-      return '录音进行中，实时切片正自动入库';
+      if (_status?.isRecording == true) {
+        _status?.setRecordingDetail(
+          _liveSlicesInFlight > 0
+              ? '剩余 $_liveSlicesInFlight 片待转写'
+              : (_liveSlicesSavedThisRun > 0
+                    ? '已存 $_liveSlicesSavedThisRun 片'
+                    : null),
+        );
+      }
+      if (flushed ||
+          hadInFlightBefore ||
+          _liveSlicesSavedThisRun > savedBefore) {
+        return null;
+      }
+      return '当前语音刚同步，继续说话后可随时下拉转写';
     }
-    // 没连卡就直接告诉用户"先连设备"，不要跑下去再报成"整理中断"——
-    // 那不是故障，是条件没满足，报错反而让人以为出了问题。
+
+    await _liveIngestTail;
+
+    // 场景 C · 未在录音且未连接录音卡：
+    // 先把本机磁盘上待转写的本地音频（LIVE_* / 已下载文件）完成本地转写；
+    // 无新增待办时如实提示本机语音已是最新，不把「未连接」打成错误态。
     if (!_deviceReady) {
       syncError = null;
       syncStage = null;
       syncProgress = 0;
       syncText = '';
       _status?.stopRecording();
+      final pipeline = _pipeline;
+      if (pipeline != null && !pipeline.isBusy) {
+        try {
+          final recovered = await pipeline.reprocessSilentLiveSlices(
+            onProgress: _onPipelineProgress,
+          );
+          final localReport = await pipeline.transcribeLocalPendingOnly(
+            onProgress: _onPipelineProgress,
+          );
+          await refreshFromStore();
+          unawaited(syncPhotosAutomatically(recentOnly: false));
+          if (localReport.failed > 0) {
+            syncError =
+                '${localReport.failed} 条本机语音转写失败：${localReport.failures.first}';
+            notifyListeners();
+            return syncError;
+          }
+          if (localReport.ready > 0 || recovered > 0) {
+            notifyListeners();
+            return null;
+          }
+        } on Object catch (e) {
+          syncError = '本机语音处理失败：$e';
+          notifyListeners();
+          return syncError;
+        } finally {
+          syncStage = null;
+          syncProgress = 0;
+          syncText = '';
+          notifyListeners();
+        }
+      } else if (pipeline != null) {
+        await refreshFromStore();
+      }
       notifyListeners();
-      return '未连接录音卡，连上后可下拉取回';
+      return '本地语音已是最新；当前未连接录音卡，连接后可同步卡内录音';
     }
+
+    // 场景 B · 未在录音且已连接录音卡：先补跑本机待转写切片，再执行卡文件同步。
     final pipeline = _pipeline;
     if (pipeline != null) return _syncWithPipeline(pipeline);
     final service = _recordings;
@@ -441,6 +517,9 @@ class AppStore extends ChangeNotifier {
     _status?.startSync(detail: syncText);
     notifyListeners();
     try {
+      final localReport = await pipeline.transcribeLocalPendingOnly(
+        onProgress: _onPipelineProgress,
+      );
       final report = await pipeline.sync(onProgress: _onPipelineProgress);
       await refreshFromStore();
       unawaited(
@@ -449,8 +528,12 @@ class AppStore extends ChangeNotifier {
           gatewayOverride: pipeline.gateway,
         ),
       );
-      if (report.failed > 0) {
-        syncError = '${report.failed} 条录音处理失败：${report.failures.first}';
+      final totalFailed = localReport.failed + report.failed;
+      if (totalFailed > 0) {
+        final firstFailure = localReport.failures.isNotEmpty
+            ? localReport.failures.first
+            : report.failures.first;
+        syncError = '$totalFailed 条录音处理失败：$firstFailure';
       }
       return syncError;
     } on Object catch (e) {
@@ -617,10 +700,11 @@ class AppStore extends ChangeNotifier {
   SummaryCard? summaryById(String id) =>
       summaries.where((s) => s.id == id).firstOrNull;
 
-  /// 按 id 找记录；找不到返回 null（历史栈里残留的失效 id 不该让页面红屏）。
+  /// 按 id 找记录；若为被折叠进连续无语音合并块的子切片 id，自动重定向至锚点记录。
   RecordEvent? eventByIdOrNull(String id) {
+    final targetId = _mergedIdRedirects[id] ?? id;
     for (final e in events) {
-      if (e.id == id) return e;
+      if (e.id == targetId) return e;
     }
     return null;
   }
@@ -628,22 +712,56 @@ class AppStore extends ChangeNotifier {
   RecordEvent? eventByIdOrNullOrFallback(String id) =>
       eventByIdOrNull(id) ?? (events.isEmpty ? null : events.first);
 
-  List<SummaryCard> doneSummariesReferencing(String eventId) => summaries
-      .where((s) => s.state == SummaryState.done && s.srcIds.contains(eventId))
-      .toList();
+  List<SummaryCard> doneSummariesReferencing(String eventId) {
+    final view = segmentViews[eventId];
+    final ids = view != null && view.isMergedSilent
+        ? view.constituentSegmentIds.toSet()
+        : <String>{eventId};
+    return summaries
+        .where(
+          (s) => s.state == SummaryState.done && s.srcIds.any(ids.contains),
+        )
+        .toList();
+  }
 
   // ── 照片关联（点一机 V1 硬件抓拍 + 系统相册录音时段对齐）────
 
-  /// 合并事件自带照片与持久化关联照片（同 ID 以持久化状态为准，保证排除标记生效）。
+  /// 合并事件自带照片与持久化关联照片（若为合并无语音块，聚合全部子切片下的照片并去重）。
   List<EventPhoto> photosForEvent(RecordEvent e) {
-    final persisted = eventPhotos[e.id] ?? const <EventPhoto>[];
-    if (e.photos.isEmpty) return persisted;
-    if (persisted.isEmpty) return e.photos;
+    final view = segmentViews[e.id];
+    final ids = view != null && view.isMergedSilent
+        ? view.constituentSegmentIds
+        : <String>[e.id];
     final byId = <String, EventPhoto>{
       for (final p in e.photos) p.id: p,
-      for (final p in persisted) p.id: p,
     };
+    for (final id in ids) {
+      final list = eventPhotos[id];
+      if (list == null) continue;
+      for (final p in list) {
+        byId[p.id] = p;
+      }
+    }
     return byId.values.toList();
+  }
+
+  Map<String, List<EventPhoto>> _writePhotosForEventId(
+    String eventId,
+    List<EventPhoto> merged, {
+    Map<String, List<EventPhoto>>? base,
+  }) {
+    final nextMap = Map<String, List<EventPhoto>>.of(base ?? eventPhotos);
+    final canonicalId = _mergedIdRedirects[eventId] ?? eventId;
+    nextMap[canonicalId] = merged;
+    final view = segmentViews[canonicalId];
+    if (view != null && view.isMergedSilent) {
+      for (final childId in view.constituentSegmentIds) {
+        if (childId != canonicalId) {
+          nextMap.remove(childId);
+        }
+      }
+    }
+    return nextMap;
   }
 
   /// 未被标记「不属于本段」的有效照片（按时间升序）。
@@ -676,7 +794,7 @@ class AppStore extends ChangeNotifier {
       }
     }
     if (!updated) return;
-    eventPhotos = {...eventPhotos, eventId: merged};
+    eventPhotos = _writePhotosForEventId(eventId, merged);
     _persist();
     notifyListeners();
   }
@@ -737,7 +855,7 @@ class AppStore extends ChangeNotifier {
       }
     }
     if (!updated) return;
-    eventPhotos = {...eventPhotos, eventId: merged};
+    eventPhotos = _writePhotosForEventId(eventId, merged);
     final dayOffset = event?.dayOffset;
     if (dayOffset != null &&
         stackTop?.type == 'unc' &&
@@ -752,7 +870,7 @@ class AppStore extends ChangeNotifier {
 
   /// 将某一天全部未归类图片一键标记为「不归类」。
   void dismissUnclassifiedDay(int dayOffset) {
-    final nextMap = Map<String, List<EventPhoto>>.of(eventPhotos);
+    var nextMap = Map<String, List<EventPhoto>>.of(eventPhotos);
     var updated = false;
     for (final e in events) {
       if (e.dayOffset != dayOffset) continue;
@@ -765,7 +883,7 @@ class AppStore extends ChangeNotifier {
         }
       }
       if (changed) {
-        nextMap[e.id] = merged;
+        nextMap = _writePhotosForEventId(e.id, merged, base: nextMap);
         updated = true;
       }
     }
@@ -794,13 +912,15 @@ class AppStore extends ChangeNotifier {
     final idx = fromMerged.indexWhere((p) => p.id == photoId);
     if (idx < 0) return;
     final restored = fromMerged[idx].copyWith(excluded: false, dismissed: false);
-    final nextMap = Map<String, List<EventPhoto>>.of(eventPhotos);
-    if (fromEventId == toEventId) {
+    final fromCanonical = fromEvent?.id ?? fromEventId;
+    final toCanonical = toEvent.id;
+    var nextMap = Map<String, List<EventPhoto>>.of(eventPhotos);
+    if (fromCanonical == toCanonical) {
       fromMerged[idx] = restored;
-      nextMap[fromEventId] = fromMerged;
+      nextMap = _writePhotosForEventId(fromCanonical, fromMerged, base: nextMap);
     } else {
       fromMerged.removeAt(idx);
-      nextMap[fromEventId] = fromMerged;
+      nextMap = _writePhotosForEventId(fromCanonical, fromMerged, base: nextMap);
       final toMerged = List<EventPhoto>.of(photosForEvent(toEvent));
       final existIdx = toMerged.indexWhere((p) => p.id == photoId);
       if (existIdx >= 0) {
@@ -808,7 +928,7 @@ class AppStore extends ChangeNotifier {
       } else {
         toMerged.add(restored);
       }
-      nextMap[toEventId] = toMerged;
+      nextMap = _writePhotosForEventId(toCanonical, toMerged, base: nextMap);
     }
     eventPhotos = nextMap;
     final dayOffset = fromEvent?.dayOffset ?? toEvent.dayOffset;
@@ -844,7 +964,7 @@ class AppStore extends ChangeNotifier {
     } else {
       merged.add(photo);
     }
-    eventPhotos = {...eventPhotos, eventId: merged};
+    eventPhotos = _writePhotosForEventId(eventId, merged);
     _persist();
     notifyListeners();
     return idx < 0;
@@ -853,6 +973,17 @@ class AppStore extends ChangeNotifier {
   ({int startMs, int endMs}) _windowForEvent(RecordEvent e) {
     final view = segmentViews[e.id];
     if (view != null) {
+      if (view.isMergedSilent) {
+        final firstChild = view.mergedChildren.first;
+        final lastChild = view.mergedChildren.last;
+        final start = firstChild.segment.startAtMs;
+        final end =
+            lastChild.segment.endAtMs ??
+            (lastChild.file.startAtMs + lastChild.file.durationMs);
+        if (end >= start && start > 0) {
+          return (startMs: start, endMs: end);
+        }
+      }
       final start = view.segment.startAtMs;
       final end =
           view.segment.endAtMs ?? (view.file.startAtMs + view.file.durationMs);
@@ -1193,7 +1324,11 @@ class AppStore extends ChangeNotifier {
       list.sort((a, b) {
         final ea = a as RecordEvent;
         final eb = b as RecordEvent;
-        return _minutesOfDay(eb.time).compareTo(_minutesOfDay(ea.time));
+        final cmpMin = _minutesOfDay(eb.time).compareTo(_minutesOfDay(ea.time));
+        if (cmpMin != 0) return cmpMin;
+        final aMs = segmentViews[ea.id]?.segment.startAtMs ?? 0;
+        final bMs = segmentViews[eb.id]?.segment.startAtMs ?? 0;
+        return bMs.compareTo(aMs);
       });
     }
     for (final entry in topByDay.entries) {

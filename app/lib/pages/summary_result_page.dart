@@ -11,6 +11,7 @@ import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
 import '../services/export/export.dart';
 import '../core/theme/tokens.dart';
+import '../widgets/photo_preview_sheet.dart';
 import '../widgets/store_scope.dart';
 
 /// 吸顶 Tab 栏高度（原型 .stabs 行高 46）。
@@ -254,9 +255,19 @@ class _ResultView extends StatelessWidget {
     ('src', '来源记录'),
   ];
 
+  String _resolvedSubDesc(AppStore store) {
+    final base = (card.subDesc ?? '')
+        .replaceAll(RegExp(r'\s*·\s*含\s*\d+\s*张图片'), '')
+        .trim();
+    final photoCount = _allActivePhotos(store).length;
+    if (photoCount <= 0) return base;
+    return base.isEmpty ? '含 $photoCount 张图片' : '$base · 含 $photoCount 张图片';
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
+    final subDescText = _resolvedSubDesc(store);
     // 图片导出的截图锚点：每次构建复用同一个 GlobalKey（同屏只有一个结果页）
     _exportCaptureKey ??= GlobalKey(debugLabel: 'sum-export-capture');
     WidgetsBinding.instance.addPostFrameCallback((_) => page._measureTitle());
@@ -299,7 +310,7 @@ class _ResultView extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  card.subDesc ?? '',
+                                  subDescText,
                                   key: const Key('sum-sub'),
                                   style: const TextStyle(
                                     fontSize: 12,
@@ -886,76 +897,19 @@ void _showInlinePhotoPreview(
   VoidCallback onOpenDetail,
 ) {
   final p = item.photo;
-  final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
   final srcLabel = p.source == 'dyj_camera' ? '点一机抓拍' : '系统相册';
-  showDialog<void>(
-    context: context,
-    builder: (ctx) {
-      return Dialog(
-        backgroundColor: RCColors.card,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            AspectRatio(
-              aspectRatio: 1,
-              child: hasFile
-                  ? Image.file(File(p.path), fit: BoxFit.cover)
-                  : const ColoredBox(
-                      color: Color(0xFFEAEAE4),
-                      child: Center(
-                        child: Icon(
-                          Icons.photo_outlined,
-                          size: 44,
-                          color: RCColors.sec,
-                        ),
-                      ),
-                    ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(14),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${item.event.title} · ${p.time}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          srcLabel,
-                          style: const TextStyle(
-                            fontSize: 11.5,
-                            color: RCColors.sec,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.of(ctx).pop();
-                      onOpenDetail();
-                    },
-                    child: const Text('查看原话 ›'),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-    },
+  String? quote;
+  if (item.event.dialog.isNotEmpty) {
+    final first = item.event.dialog.first;
+    quote = '说话人 ${first.spk}：${first.text}';
+  }
+  showPhotoPreviewSheet(
+    context,
+    photo: p,
+    title: '${item.event.title} · ${p.time}',
+    subtitle: srcLabel,
+    quoteText: quote,
+    onJumpToDialog: onOpenDetail,
   );
 }
 
@@ -1269,6 +1223,9 @@ class _PointTile extends StatelessWidget {
                               bottom: pi < photos.length - 1 ? 8 : 0,
                             ),
                             child: _InlineSummaryFigure(
+                              key: Key(
+                                'sum-pt-photo-${photos[pi].event.id}-${photos[pi].photo.id}',
+                              ),
                               item: photos[pi],
                               onOpenDetail: () =>
                                   store.openDetail(photos[pi].event.id),
