@@ -11,6 +11,7 @@ final class LiveActivityBridge {
 
   private var channel: FlutterMethodChannel?
   private var pendingActionToggle = false
+  private var hourBlinkTask: Task<Void, Never>?
 
   private init() {}
 
@@ -116,15 +117,22 @@ final class LiveActivityBridge {
     #if canImport(ActivityKit)
     if #available(iOS 16.1, *) {
       Task { @MainActor in
+        self.hourBlinkTask?.cancel()
+        self.hourBlinkTask = nil
+
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
           result(nil)
           return
         }
+        let elapsedSec = Date().timeIntervalSince1970 - (Double(startedAtMs) / 1000.0)
+        let overHour = elapsedSec >= 3600.0
         let state = RecordingCardActivityAttributes.ContentState(
           title: title,
           subtitle: subtitle,
           startedAtMs: startedAtMs,
-          isRecording: true
+          isRecording: true,
+          isOverOneHour: overHour,
+          colonVisible: true
         )
         if let existing = Activity<RecordingCardActivityAttributes>.activities.first {
           if #available(iOS 16.2, *) {
@@ -132,26 +140,38 @@ final class LiveActivityBridge {
           } else {
             await existing.update(using: state)
           }
+          self.scheduleHourTransitionAndBlink(
+            startedAtMs: startedAtMs,
+            title: title,
+            subtitle: subtitle
+          )
           result(existing.id)
           return
         }
         do {
           let attrs = RecordingCardActivityAttributes(appTitle: title)
+          let createdId: String
           if #available(iOS 16.2, *) {
             let created = try Activity.request(
               attributes: attrs,
               content: ActivityContent(state: state, staleDate: nil),
               pushType: nil
             )
-            result(created.id)
+            createdId = created.id
           } else {
             let created = try Activity.request(
               attributes: attrs,
               contentState: state,
               pushType: nil
             )
-            result(created.id)
+            createdId = created.id
           }
+          self.scheduleHourTransitionAndBlink(
+            startedAtMs: startedAtMs,
+            title: title,
+            subtitle: subtitle
+          )
+          result(createdId)
         } catch {
           result(nil)
         }
@@ -162,15 +182,64 @@ final class LiveActivityBridge {
     result(nil)
   }
 
+  #if canImport(ActivityKit)
+  @available(iOS 16.1, *)
+  @MainActor
+  private func scheduleHourTransitionAndBlink(
+    startedAtMs: Int64,
+    title: String,
+    subtitle: String
+  ) {
+    hourBlinkTask?.cancel()
+    hourBlinkTask = Task { @MainActor in
+      let startSec = Double(startedAtMs) / 1000.0
+      let nowSec = Date().timeIntervalSince1970
+      let waitBeforeHour = 3600.0 - (nowSec - startSec)
+      if waitBeforeHour > 0 {
+        let nanos = UInt64(waitBeforeHour * 1_000_000_000)
+        try? await Task.sleep(nanoseconds: nanos)
+      }
+      guard !Task.isCancelled else { return }
+
+      var colonOn = true
+      while !Task.isCancelled {
+        guard let activity = Activity<RecordingCardActivityAttributes>.activities.first else {
+          break
+        }
+        let next = RecordingCardActivityAttributes.ContentState(
+          title: title,
+          subtitle: subtitle,
+          startedAtMs: startedAtMs,
+          isRecording: true,
+          isOverOneHour: true,
+          colonVisible: colonOn
+        )
+        if #available(iOS 16.2, *) {
+          await activity.update(ActivityContent(state: next, staleDate: nil))
+        } else {
+          await activity.update(using: next)
+        }
+        colonOn.toggle()
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+      }
+    }
+  }
+  #endif
+
   private func stopActivity(result: @escaping FlutterResult) {
     #if canImport(ActivityKit)
     if #available(iOS 16.1, *) {
       Task { @MainActor in
+        self.hourBlinkTask?.cancel()
+        self.hourBlinkTask = nil
+
         let ended = RecordingCardActivityAttributes.ContentState(
           title: "录音卡",
           subtitle: "已停止",
           startedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
-          isRecording: false
+          isRecording: false,
+          isOverOneHour: false,
+          colonVisible: true
         )
         for activity in Activity<RecordingCardActivityAttributes>.activities {
           if #available(iOS 16.2, *) {
