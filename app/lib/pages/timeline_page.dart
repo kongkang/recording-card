@@ -87,7 +87,10 @@ class TimelinePage extends StatelessWidget {
                     ? ListView(
                         key: const Key('timeline-empty'),
                         physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        padding: const EdgeInsets.only(
+                          top: 16,
+                          bottom: RCDims.pageBottomPad,
+                        ),
                         children: [
                           if (showStatus)
                             Padding(
@@ -141,7 +144,12 @@ class TimelinePage extends StatelessWidget {
                       )
                     : ListView(
                         physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.fromLTRB(22, 4, 22, 32),
+                        padding: const EdgeInsets.fromLTRB(
+                          22,
+                          4,
+                          22,
+                          RCDims.pageBottomPad,
+                        ),
                         children: [
                           if (showStatus)
                             RecordingStatusBlock(

@@ -401,6 +401,16 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   const genSumId = await p.evaluate(() => summaries.find(s => s.state === 'done' && s.id !== 'sum-demo').id);
   await p.click(`[data-testid="card-${genSumId}"]`);
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
+  // 窄屏滚动到底部留白校验：结尾必须保留 >= 44px 呼吸空间
+  const narrowSumBottomGap = await p.evaluate(() => {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    const items = [...document.querySelectorAll('#p-sumres .srclist .srcitem')];
+    const last = items[items.length - 1];
+    const gap = window.innerHeight - last.getBoundingClientRect().bottom;
+    window.scrollTo(0, 0);
+    return gap;
+  });
+  assert(narrowSumBottomGap >= 44, '窄屏总结结果页滚到底部必须保留留白 padding（>=44px），实际 ' + narrowSumBottomGap);
   await p.click('#stabs button[data-st="src"]');
   assert(await secVis('sec-src') && !(await secVis('sec-ov')));
   // 来源记录：单层卡片展示标题、时间时长，有图记录在左下元信息紧跟「含 N 张图片」
@@ -778,6 +788,27 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
   assert(await p.$eval('#pb-sum', x => x.hidden));
   await p.click('#stabs button[data-st="src"]');
+  // 宽屏滚动到底部留白校验：修复前 height:100% 会导致溢出后底部 padding 丢失（间距=0）
+  await p.click('#stabs button[data-st="all"]');
+  const wideSumBottomGap = await p.evaluate(() => {
+    const sc = document.getElementById('sidecol');
+    sc.scrollTop = sc.scrollHeight;
+    const scRect = sc.getBoundingClientRect();
+    const items = [...document.querySelectorAll('#p-sumres .srclist .srcitem')];
+    const last = items[items.length - 1];
+    return scRect.bottom - last.getBoundingClientRect().bottom;
+  });
+  assert(wideSumBottomGap >= 44, '宽屏总结结果页滚到底部必须保留留白 padding（>=44px），实际 ' + wideSumBottomGap);
+  const wideTlBottomGap = await p.evaluate(() => {
+    const rc = document.getElementById('rootcol');
+    rc.scrollTop = rc.scrollHeight;
+    const rcRect = rc.getBoundingClientRect();
+    const cards = [...document.querySelectorAll('#p-timeline #feed .card')];
+    const last = cards[cards.length - 1];
+    return rcRect.bottom - last.getBoundingClientRect().bottom;
+  });
+  assert(wideTlBottomGap >= 44, '宽屏 Timeline 滚到底部必须保留留白 padding（>=44px），实际 ' + wideTlBottomGap);
+  await p.click('#stabs button[data-st="src"]');
   await p.click('[data-testid="src-e1"]');
   assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
   assert(await p.$eval('#pb-detail', x => !x.hidden && x.innerText.includes('返回总结')));
@@ -848,6 +879,31 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="login-apple"]');
   assert.equal(await pCur.$eval('#login-gate', x => x.classList.contains('show')), false);
   assert.equal(await pCur.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  // 当前版宽屏全页面滚动到底部留白验证（Timeline / Setting / 总结详情 / 记录详情）
+  await pCur.setViewport({ width: 900, height: 680, deviceScaleFactor: 2 });
+  await pCur.click('[data-testid="nav-timeline"]');
+  await pCur.click('[data-testid="card-sum-demo"]');
+  const curWideGaps = await pCur.evaluate(() => {
+    const sc = document.getElementById('sidecol');
+    sc.scrollTop = sc.scrollHeight;
+    const sumLast = [...document.querySelectorAll('#p-sumres .srclist .srcitem')].pop();
+    const sumGap = sc.getBoundingClientRect().bottom - sumLast.getBoundingClientRect().bottom;
+    const rc = document.getElementById('rootcol');
+    rc.scrollTop = rc.scrollHeight;
+    const tlLast = [...document.querySelectorAll('#p-timeline #feed .card')].pop();
+    const tlGap = rc.getBoundingClientRect().bottom - tlLast.getBoundingClientRect().bottom;
+    return { sumGap, tlGap };
+  });
+  assert(curWideGaps.sumGap >= 44 && curWideGaps.tlGap >= 44, 'current.html 宽屏底部留白不足: ' + JSON.stringify(curWideGaps));
+  await pCur.click('[data-testid="nav-setting"]');
+  const curSetGap = await pCur.evaluate(() => {
+    const rc = document.getElementById('rootcol');
+    rc.scrollTop = rc.scrollHeight;
+    const kids = [...document.querySelectorAll('#p-setting > *')].filter(el => el.offsetParent !== null);
+    const last = kids[kids.length - 1];
+    return rc.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom;
+  });
+  assert(curSetGap >= 44, 'current.html Setting 宽屏底部留白不足: ' + curSetGap);
   await pCur.close();
 
   assert.equal(errors.length, 0, errors.join(','));

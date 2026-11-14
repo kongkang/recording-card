@@ -45,7 +45,12 @@ class PrivacyPage extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 720),
             child: ListView(
               key: const Key('privacy-page'),
-              padding: const EdgeInsets.fromLTRB(22, 8, 22, 40),
+              padding: const EdgeInsets.fromLTRB(
+                22,
+                8,
+                22,
+                RCDims.pageBottomPad,
+              ),
               children: [
                 Text(
                   '生效日期：$privacyUpdatedAt',

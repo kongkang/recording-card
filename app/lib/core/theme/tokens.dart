@@ -39,6 +39,9 @@ abstract final class RCDims {
 
   /// 设置页开关行最小高度（iOS 44pt / Android 48dp 触控下限之上留余量）。
   static const settingRow = 52.0;
+
+  /// 全页面底部统一呼吸留白（无论内容是否铺满一屏，滚动到底部均保留空间）。
+  static const pageBottomPad = 48.0;
 }
 
 /// 主题感知的语义色表。
