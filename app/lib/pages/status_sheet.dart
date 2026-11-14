@@ -525,12 +525,14 @@ class _PhoneRecRow extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 5),
-                          const Flexible(
+                          Flexible(
                             child: Text(
-                              '本机录音中',
+                              store.isFailoverPhoneRecording
+                                  ? '本机保底录音中'
+                                  : '本机录音中',
                               overflow: TextOverflow.ellipsis,
                               maxLines: 1,
-                              style: TextStyle(fontSize: 13),
+                              style: const TextStyle(fontSize: 13),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -806,7 +808,7 @@ class _MainView extends StatelessWidget {
             ],
           ),
         ),
-        _PhoneRecRow(store: store, islandEnabled: islandEnabled),
+        // 已连蓝牙硬件时不展示独立「本机录音」行（硬件录音期间本机自动进入零功耗待命保底，意外断连自动接力）
         // 同步行：仅具备本地存储/文件补传能力的设备展示（如录音卡 V2、点一机 V1；键盘 V2.1 隐藏）
         if (store.activeCapabilities.hasFileSync)
           _Row(

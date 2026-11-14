@@ -72,15 +72,17 @@ class LiveActivityService {
     }
   }
 
-  /// 启动/更新本机录音灵动岛实况卡片（图标固定为 App Logo，而非录音图标）。
-  Future<void> startLocalRecordingActivity({
+  /// 启动/更新录音灵动岛与锁屏实况卡片（图标固定为 App Logo，而非麦克风图标）。
+  Future<void> startRecordingActivity({
     required DateTime startedAt,
+    String title = '录音卡',
+    String subtitle = '本机录音运行中',
   }) async {
     try {
       await _channel.invokeMethod<void>('start', {
         'startedAtMs': startedAt.millisecondsSinceEpoch,
-        'title': '录音卡',
-        'subtitle': '本机录音运行中',
+        'title': title,
+        'subtitle': subtitle,
       });
     } on MissingPluginException {
       // unit test / non-iOS environment
@@ -88,6 +90,34 @@ class LiveActivityService {
       debugPrint('[LiveActivityService] start failed: ${e.message}');
     }
   }
+
+  /// 启动/更新本机录音灵动岛与锁屏实况卡片。
+  Future<void> startLocalRecordingActivity({
+    required DateTime startedAt,
+  }) => startRecordingActivity(
+    startedAt: startedAt,
+    title: '录音卡',
+    subtitle: '本机录音运行中',
+  );
+
+  /// 启动/更新蓝牙硬件录音灵动岛与锁屏实况卡片。
+  Future<void> startHardwareRecordingActivity({
+    required DateTime startedAt,
+    required String deviceLabel,
+  }) => startRecordingActivity(
+    startedAt: startedAt,
+    title: '录音卡',
+    subtitle: '$deviceLabel · 蓝牙录音中',
+  );
+
+  /// 启动/更新蓝牙意外断连后的本机自动保底录音实况卡片。
+  Future<void> startFailoverRecordingActivity({
+    required DateTime startedAt,
+  }) => startRecordingActivity(
+    startedAt: startedAt,
+    title: '录音卡',
+    subtitle: '蓝牙断连 · 本机保底录音中',
+  );
 
   /// 关闭灵动岛实况卡片。
   Future<void> stopLocalRecordingActivity() async {

@@ -626,6 +626,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="rec-toggle"]');
   assert(await p.$eval('#recval', x => x.classList.contains('on')));
   assert.equal(await p.$eval('#rec-sw', x => x.getAttribute('aria-checked')), 'true');
+  // 已连硬件不展示本机录音行，且硬件蓝牙录音同样亮起灵动岛与锁屏实况提示
+  assert.equal(await p.$('#dev-main [data-testid="phone-rec-main-row"]'), null, '已连硬件时不应显示本机录音开关行');
+  assert(await p.$eval('#dyn-island', x => x.classList.contains('show') && !x.querySelector('[data-testid="di-app-logo"]').hidden && x.innerText.includes('蓝牙录音中') && x.innerText.includes('锁屏实况')));
   assert(!(await p.$eval('[data-testid="hw-capsule"]', x => x.classList.contains('idle'))));
   assert.equal(await p.$eval('.capsule .dot', x => getComputedStyle(x).backgroundColor), 'rgb(52, 199, 89)');
   assert.equal(await p.$('#dev-main .chip-ok'), null);
@@ -635,7 +638,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="toggle-charge-btn"]');
   assert.equal(await p.$$eval('.batt.charging [data-testid="batt-bolt"]', x => x.filter(el => getComputedStyle(el).display !== 'none').length), 2);
   await p.click('[data-testid="toggle-charge-btn"]');
-  assert.equal(await p.$$eval('#dev-main .row', x => x.length), 6);
+  assert.equal(await p.$$eval('#dev-main .row', x => x.length), 5);
   assert.equal(await p.$$eval('.batt', x => x.length), 2);
   assert.equal(await p.$$eval('.batt svg', x => x.length), 2);
   assert(['inline-flex', 'flex'].includes(await p.$eval('.recval', x => getComputedStyle(x).display)));
@@ -878,6 +881,23 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$eval('#login-gate', x => x.classList.contains('show')));
   await pCur.click('[data-testid="login-apple"]');
   assert.equal(await pCur.$eval('#login-gate', x => x.classList.contains('show')), false);
+  // 当前版验证：连接硬件后不显示本机录音行；硬件蓝牙录音同步点亮灵动岛/锁屏实况并挂起待命；蓝牙意外断开自动开启本机保底录音
+  await pCur.click('[data-testid="hw-capsule"]');
+  await pCur.waitForFunction(() => document.querySelectorAll('#conn-list .conn-item').length === 3, { timeout: 5000 });
+  assert(await pCur.$('[data-testid="phone-rec-row"]'), '未连硬件时应显示独立本机录音行');
+  await pCur.click('#conn-list .conn-item');
+  await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
+  assert.equal(await pCur.$('#dev-main [data-testid="phone-rec-main-row"]'), null, 'current.html 已连硬件不应显示本机录音行');
+  await pCur.click('[data-testid="rec-toggle"]');
+  assert.deepEqual(await pCur.evaluate(() => ({ hw: rec.on, phone: phoneRec.on, standby: phoneRec.standby })), { hw: true, phone: false, standby: true });
+  assert(await pCur.$eval('#dyn-island', x => x.classList.contains('show') && x.innerText.includes('蓝牙录音中') && x.innerText.includes('锁屏实况')));
+  await pCur.click('[data-testid="hw-unexpected-drop-btn"]');
+  await pCur.waitForFunction(() => !conn.retrying && !conn.connected, { timeout: 4000 });
+  assert.deepEqual(await pCur.evaluate(() => ({ hw: rec.on, phone: phoneRec.on, failover: phoneRec.failover })), { hw: false, phone: true, failover: true });
+  assert(await pCur.$eval('[data-testid="capsule-phone-rec"]', x => getComputedStyle(x).display !== 'none' && x.innerText.trim() === '本机录音'));
+  assert(await pCur.$eval('#dyn-island', x => x.classList.contains('show') && x.innerText.includes('本机保底录音中')));
+  await pCur.evaluate(() => stopPhoneRec());
+  assert(!(await pCur.$eval('#dyn-island', x => x.classList.contains('show'))));
   assert.equal(await pCur.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   // 当前版宽屏全页面滚动到底部留白验证（Timeline / Setting / 总结详情 / 记录详情）
   await pCur.setViewport({ width: 900, height: 680, deviceScaleFactor: 2 });
