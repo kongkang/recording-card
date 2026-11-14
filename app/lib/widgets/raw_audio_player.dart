@@ -65,7 +65,7 @@ class RawAudioPlayer extends StatefulWidget {
 }
 
 class RawAudioPlayerState extends State<RawAudioPlayer> {
-  final _player = AudioPlayer();
+  AudioPlayer? _player;
   StreamSubscription<Duration>? _posSub;
   StreamSubscription<Duration>? _durSub;
   StreamSubscription<void>? _completeSub;
@@ -110,10 +110,12 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
 
   int get _clipDurationMs => math.max(0, _clipEnd - _clipStart);
 
-  @override
-  void initState() {
-    super.initState();
-    _posSub = _player.onPositionChanged.listen((p) {
+  AudioPlayer _ensurePlayer() {
+    final existing = _player;
+    if (existing != null) return existing;
+    final created = AudioPlayer();
+    _player = created;
+    _posSub = created.onPositionChanged.listen((p) {
       if (!mounted) return;
       final ms = p.inMilliseconds;
       final end = _clipEnd;
@@ -124,13 +126,13 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
       setState(() => _filePositionMs = ms);
       widget.onFilePositionChanged?.call(ms);
     });
-    _durSub = _player.onDurationChanged.listen((d) {
+    _durSub = created.onDurationChanged.listen((d) {
       if (!mounted) return;
       if (d.inMilliseconds > 0) {
         setState(() => _playerDurationMs = d.inMilliseconds);
       }
     });
-    _completeSub = _player.onPlayerComplete.listen((_) {
+    _completeSub = created.onPlayerComplete.listen((_) {
       if (mounted) {
         setState(() {
           _playing = false;
@@ -139,8 +141,14 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
         });
       }
       widget.onFilePositionChanged?.call(null);
-      unawaited(_player.seek(Duration(milliseconds: _clipStart)));
+      unawaited(created.seek(Duration(milliseconds: _clipStart)));
     });
+    return created;
+  }
+
+  @override
+  void initState() {
+    super.initState();
     unawaited(_load());
   }
 
@@ -156,10 +164,13 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
   }
 
   Future<void> _resetAndReload() async {
-    try {
-      await _player.stop();
-    } on Object {
-      // 忽略旧实例停止异常
+    final player = _player;
+    if (player != null) {
+      try {
+        await player.stop();
+      } on Object {
+        // 忽略旧实例停止异常
+      }
     }
     if (!mounted) return;
     setState(() {
@@ -176,8 +187,11 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
   }
 
   Future<void> _stopAtClipEnd() async {
-    await _player.pause();
-    await _player.seek(Duration(milliseconds: _clipStart));
+    final player = _player;
+    if (player != null) {
+      await player.pause();
+      await player.seek(Duration(milliseconds: _clipStart));
+    }
     if (!mounted) return;
     setState(() {
       _playing = false;
@@ -257,20 +271,24 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
     try {
       final pos = Duration(milliseconds: targetMs);
       if (autoPlay) {
+        final player = _ensurePlayer();
         if (_playing) {
-          await _player.seek(pos);
+          await player.seek(pos);
         } else {
-          await _player.play(DeviceFileSource(path), position: pos);
+          await player.play(DeviceFileSource(path), position: pos);
           if (mounted) setState(() => _playing = true);
         }
       } else if (_playing) {
-        await _player.seek(pos);
+        await _ensurePlayer().seek(pos);
       } else {
         // 暂停态拖拽进度条：同步底层位置（未加载源时忽略异常，下次点播放会按 _filePositionMs 起播）
-        try {
-          await _player.seek(pos);
-        } on Object {
-          // 首次尚未 setSource 时由下次 _toggle 携带 position 起播
+        final player = _player;
+        if (player != null) {
+          try {
+            await player.seek(pos);
+          } on Object {
+            // 首次尚未 setSource 时由下次 _toggle 携带 position 起播
+          }
         }
       }
     } on MissingPluginException {
@@ -284,8 +302,9 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
     final path = _audioPath;
     if (path == null) return;
     try {
+      final player = _ensurePlayer();
       if (_playing) {
-        await _player.pause();
+        await player.pause();
         if (mounted) setState(() => _playing = false);
         return;
       }
@@ -295,7 +314,7 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
       if (end > start && resumeMs >= end - 200) {
         resumeMs = start;
       }
-      await _player.play(
+      await player.play(
         DeviceFileSource(path),
         position: Duration(milliseconds: resumeMs),
       );
@@ -314,7 +333,14 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
 
   Future<void> _deleteLocal() async {
     final path = _audioPath;
-    await _player.stop();
+    final player = _player;
+    if (player != null) {
+      try {
+        await player.stop();
+      } on Object {
+        // 忽略无原生通道或已释放异常
+      }
+    }
     if (_usingDirectFile && path != null) {
       final f = File(path);
       if (await f.exists()) {
@@ -351,7 +377,7 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
     _posSub?.cancel();
     _durSub?.cancel();
     _completeSub?.cancel();
-    _player.dispose();
+    _player?.dispose();
     super.dispose();
   }
 

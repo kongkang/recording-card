@@ -64,23 +64,18 @@ class TimelinePage extends StatelessWidget {
                     await store.refreshSummariesOnly();
                     return;
                   }
-                  final error = await store.syncRecordings();
-                  if (error != null && context.mounted) {
-                    if (error.contains('未连接录音卡')) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          duration: Duration(seconds: 2),
-                          content: Text('已连接录音卡后再下拉取回'),
+                  final message = await store.syncRecordings();
+                  if (message != null &&
+                      message.isNotEmpty &&
+                      context.mounted) {
+                    ScaffoldMessenger.of(context)
+                      ..hideCurrentSnackBar()
+                      ..showSnackBar(
+                        SnackBar(
+                          duration: const Duration(seconds: 2),
+                          content: Text(message),
                         ),
                       );
-                    } else if (error.contains('录音进行中')) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          duration: Duration(seconds: 2),
-                          content: Text('正在录音中，每满 1 分钟自动转写保存'),
-                        ),
-                      );
-                    }
                   }
                 },
                 child: groups.isEmpty
@@ -1054,7 +1049,10 @@ class _UnclassifiedPhotosCardView extends StatelessWidget {
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    _PhotoStackThumb(photos: card.photos),
+                    _PhotoStackThumb(
+                      key: Key('unc-pics-${card.dayOffset}'),
+                      photos: card.photos,
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(

@@ -15,6 +15,7 @@ import '../core/models/record.dart';
 import '../core/models/segment_view.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
+import '../widgets/photo_preview_sheet.dart';
 import '../widgets/raw_audio_player.dart';
 import '../widgets/store_scope.dart';
 
@@ -41,12 +42,14 @@ class _DetailPageState extends State<DetailPage> {
   final GlobalKey<RawAudioPlayerState> _playerKey =
       GlobalKey<RawAudioPlayerState>();
   int? _activeFilePosMs;
+  int _selectedMergedSliceIdx = 0;
 
   @override
   void didUpdateWidget(covariant DetailPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.eventId != widget.eventId) {
       _activeFilePosMs = null;
+      _selectedMergedSliceIdx = 0;
     }
   }
 
@@ -135,11 +138,11 @@ class _DetailPageState extends State<DetailPage> {
         ),
       );
     }
-    final refs = store.doneSummariesReferencing(widget.eventId);
-    final view = store.segmentViewFor(widget.eventId);
+    final refs = store.doneSummariesReferencing(e.id);
+    final view = store.segmentViewFor(e.id);
     final speakerText = view != null && view.segment.speakerCount > 0
         ? '${view.segment.speakerLabels.join(' / ')}（推测）'
-        : '说话人 ${e.speakers}';
+        : (e.speakers == '无语音' ? '无语音' : '说话人 ${e.speakers}');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -225,7 +228,13 @@ class _DetailPageState extends State<DetailPage> {
         if (_tab == 'raw')
           Builder(
             builder: (context) {
-              final clip = _audioClipFor(view);
+              final activeAudioView = (view != null && view.isMergedSilent)
+                  ? view.mergedChildren[_selectedMergedSliceIdx.clamp(
+                      0,
+                      view.mergedChildren.length - 1,
+                    )]
+                  : view;
+              final clip = _audioClipFor(activeAudioView);
               return Container(
                 key: const Key('raw-sticky-player'),
                 padding: const EdgeInsets.fromLTRB(22, 10, 22, 8),
@@ -235,9 +244,9 @@ class _DetailPageState extends State<DetailPage> {
                 ),
                 child: RawAudioPlayer(
                   key: _playerKey,
-                  fileKey: view?.file.deviceName ?? e.id,
-                  wavPath: view?.file.wavPath,
-                  durationHintMs: view?.file.durationMs,
+                  fileKey: activeAudioView?.file.deviceName ?? e.id,
+                  wavPath: activeAudioView?.file.wavPath,
+                  durationHintMs: activeAudioView?.file.durationMs,
                   clipStartMs: clip.clipStartMs,
                   clipEndMs: clip.clipEndMs,
                   gapCountOverride: clip.gapCountOverride,
@@ -530,10 +539,19 @@ class _DetailPageState extends State<DetailPage> {
       final sortSec = p.capturedAtMs != null
           ? _secOfDayFromEpoch(p.capturedAtMs!)
           : (_secOfDayFromClock(p.time) ?? _secOfDayFromClock(e.time) ?? 0);
+      String? nearestQuote;
+      int? bestDelta;
+      for (final l in lines) {
+        final d = (l.sortSec - sortSec).abs();
+        if (bestDelta == null || d < bestDelta) {
+          bestDelta = d;
+          nearestQuote = '${_speakerText(l.spk)}：${l.text}';
+        }
+      }
       entries.add((
         sortSec: sortSec,
         order: order++,
-        widget: _inlinePhotoCard(store, e, p, i),
+        widget: _inlinePhotoCard(store, e, p, i, quoteText: nearestQuote),
       ));
     }
 
@@ -542,15 +560,41 @@ class _DetailPageState extends State<DetailPage> {
       return cmp != 0 ? cmp : a.order.compareTo(b.order);
     });
 
-    return [for (final item in entries) item.widget];
+    return [
+      if (lines.isEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Container(
+            key: const Key('detail-silent-empty'),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: RCColors.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: RCColors.sep),
+            ),
+            child: Text(
+              view != null && view.isMergedSilent
+                  ? '本时段连续 ${view.mergedChildren.length} 个切片未检测到有效人声，原始音频均已保留，可在「原始数据」逐片回听。'
+                  : '本段未检测到有效人声，可在「原始数据」回听原始录音。',
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.55,
+                color: RCColors.sec,
+              ),
+            ),
+          ),
+        ),
+      for (final item in entries) item.widget,
+    ];
   }
 
   Widget _inlinePhotoCard(
     AppStore store,
     RecordEvent e,
     EventPhoto p,
-    int index,
-  ) {
+    int index, {
+    String? quoteText,
+  }) {
     final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
     final srcLabel = p.source == 'dyj_camera' ? '点一机抓拍' : '系统相册';
     return Padding(
@@ -578,6 +622,7 @@ class _DetailPageState extends State<DetailPage> {
                     e,
                     p,
                     srcLabel,
+                    quoteText: quoteText,
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
@@ -656,64 +701,19 @@ class _DetailPageState extends State<DetailPage> {
     AppStore store,
     RecordEvent e,
     EventPhoto p,
-    String srcLabel,
-  ) {
-    final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
-    showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return Dialog(
-          backgroundColor: RCColors.card,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              AspectRatio(
-                aspectRatio: 1,
-                child: hasFile
-                    ? Image.file(File(p.path), fit: BoxFit.cover)
-                    : const ColoredBox(
-                        color: Color(0xFFEAEAE4),
-                        child: Center(
-                          child: Icon(
-                            Icons.photo_outlined,
-                            size: 44,
-                            color: RCColors.sec,
-                          ),
-                        ),
-                      ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '$srcLabel · ${p.time}',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        Navigator.of(ctx).pop();
-                        store.excludePhoto(e.id, p.id);
-                      },
-                      child: const Text('不属于本段'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+    String srcLabel, {
+    String? quoteText,
+  }) {
+    unawaited(
+      showPhotoPreviewSheet(
+        context,
+        photo: p,
+        title: '$srcLabel · ${p.time}',
+        subtitle: e.title,
+        quoteText: quoteText,
+        onSecondaryAction: () => store.excludePhoto(e.id, p.id),
+        secondaryActionLabel: '不属于本段',
+      ),
     );
   }
 
@@ -755,6 +755,46 @@ class _DetailPageState extends State<DetailPage> {
             l.text,
             bubbleKey: Key('raw-utt-$i'),
             onTap: parsedMs != null ? () => _seekRawAudio(parsedMs) : null,
+          ),
+        );
+      }
+      return widgets;
+    }
+
+    if (view.isMergedSilent) {
+      final selectedIdx = _selectedMergedSliceIdx.clamp(
+        0,
+        view.mergedChildren.length - 1,
+      );
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Text(
+            '连续 ${view.mergedChildren.length} 个无语音切片已合并展示，点选任一切片可在上方播放器回听对应原始音频：',
+            style: const TextStyle(fontSize: 12, color: RCColors.sec, height: 1.5),
+          ),
+        ),
+      );
+      for (var i = 0; i < view.mergedChildren.length; i++) {
+        final child = view.mergedChildren[i];
+        final cStart = child.segment.startAtMs;
+        final cEnd =
+            child.segment.endAtMs ??
+            (cStart + (child.file.durationMs > 0 ? child.file.durationMs : 1000));
+        final durSec = ((cEnd - cStart) / 1000).round().clamp(1, 86400);
+        final active = i == selectedIdx;
+        widgets.add(
+          _rawBubble(
+            '切片 ${i + 1} · ${_hms(cStart)}—${_hms(cEnd)} · $durSec 秒',
+            child.file.deviceName,
+            bubbleKey: Key('raw-merged-slice-$i'),
+            active: active,
+            onTap: () {
+              setState(() {
+                _selectedMergedSliceIdx = i;
+                _activeFilePosMs = null;
+              });
+            },
           ),
         );
       }

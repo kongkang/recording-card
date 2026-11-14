@@ -120,6 +120,9 @@ class PhoneMicRecorder {
   static const int bytesPerSample = 2;
   static const int bytesPerSecond = sampleRate * bytesPerSample;
 
+  /// 手动下拉刷新最小切分阈值：至少累积 0.5 秒（16000 字节）才封口一片。
+  static const int minManualFlushBytes = bytesPerSecond ~/ 2;
+
   final Duration sliceDuration;
   final Future<Directory> Function()? _sliceRootDir;
 
@@ -133,7 +136,7 @@ class PhoneMicRecorder {
   String? _sessionId;
   int _sessionStartedAtMs = 0;
   int _sliceIndex = 0;
-  int _sliceStartedAtMs = 0;
+  int _sliceStartSamples = 0;
   final BytesBuilder _buffer = BytesBuilder(copy: false);
   bool _disposed = false;
   Future<void> _writeChain = Future<void>.value();
@@ -162,7 +165,7 @@ class PhoneMicRecorder {
     _sessionStartedAtMs = now.millisecondsSinceEpoch;
     _sessionId = 'phone-$_sessionStartedAtMs';
     _sliceIndex = 0;
-    _sliceStartedAtMs = _sessionStartedAtMs;
+    _sliceStartSamples = 0;
     _buffer.clear();
     _running = true;
   }
@@ -184,12 +187,44 @@ class PhoneMicRecorder {
     }
   }
 
+  /// Timeline 下拉刷新触发：在**不停止**麦克风与灵动岛录音的前提下，
+  /// 将当前已缓冲的尾部 PCM（`>= 0.5s`）立即封口为一片正式 `.WAV` 并投递转写。
+  Future<bool> flushActiveSlice() async {
+    if (!_running || _disposed) return false;
+    if (_buffer.length < minManualFlushBytes) {
+      await _writeChain;
+      return false;
+    }
+    final raw = _buffer.takeBytes();
+    final evenLen = raw.length & ~1;
+    if (evenLen < minManualFlushBytes) {
+      if (raw.isNotEmpty) {
+        _buffer.add(raw);
+      }
+      await _writeChain;
+      return false;
+    }
+    final chunk = evenLen == raw.length
+        ? raw
+        : Uint8List.sublistView(raw, 0, evenLen);
+    if (evenLen < raw.length) {
+      _buffer.add(Uint8List.sublistView(raw, evenLen));
+    }
+    _scheduleFlush(chunk, isFinal: false);
+    await _writeChain;
+    return true;
+  }
+
   Future<void> stop() async {
     if (!_running) return;
     _running = false;
     final tail = _buffer.takeBytes();
-    if (tail.isNotEmpty) {
-      _scheduleFlush(tail, isFinal: true);
+    final evenLen = tail.length & ~1;
+    if (evenLen > 0) {
+      final aligned = evenLen == tail.length
+          ? tail
+          : Uint8List.sublistView(tail, 0, evenLen);
+      _scheduleFlush(aligned, isFinal: true);
     }
     await _writeChain;
   }
@@ -197,12 +232,16 @@ class PhoneMicRecorder {
   void _scheduleFlush(Uint8List pcm, {required bool isFinal}) {
     final sid = _sessionId ?? 'phone-${DateTime.now().millisecondsSinceEpoch}';
     final index = _sliceIndex++;
-    final startAtMs = _sliceStartedAtMs;
-    final durationMs = (pcm.length * 1000 / bytesPerSecond).round().clamp(
+    final samples = pcm.length ~/ bytesPerSample;
+    final startAtMs =
+        _sessionStartedAtMs + (_sliceStartSamples * 1000 ~/ sampleRate);
+    _sliceStartSamples += samples;
+    final nextStartAtMs =
+        _sessionStartedAtMs + (_sliceStartSamples * 1000 ~/ sampleRate);
+    final durationMs = (nextStartAtMs - startAtMs).clamp(
       1,
       sliceDuration.inMilliseconds * 2,
     );
-    _sliceStartedAtMs = startAtMs + durationMs;
 
     _writeChain = _writeChain.then((_) async {
       if (_disposed || pcm.isEmpty) return;

@@ -1234,6 +1234,12 @@ class DeviceStore extends ChangeNotifier {
     return startPhoneRecording(islandEnabled: islandEnabled);
   }
 
+  /// 下拉刷新时不停录冲刷当前已缓冲的本机麦克风切片（至少 0.5 秒才切分）。
+  Future<bool> flushPhoneRecordingSlice() async {
+    if (!_phoneRecording) return false;
+    return _phoneMicRecorder.flushActiveSlice();
+  }
+
   /// 当前是否存在本机或硬件录音。
   bool get hasActiveRecording =>
       _phoneRecording || (isConnected && isRecording);

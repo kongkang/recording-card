@@ -11,6 +11,7 @@ class SegmentView {
     required this.turns,
     required this.utterances,
     required this.slices,
+    this.mergedChildren = const [],
   });
 
   final SegmentRecord segment;
@@ -24,4 +25,16 @@ class SegmentView {
 
   /// 归属本段的切片（原始数据页按片分组）。
   final List<AudioSlice> slices;
+
+  /// 若当前视图由连续多段无语音切片在投影层折叠合并而成，保存按时间正序排列的全部子视图；
+  /// 普通单段视图此列表为空。
+  final List<SegmentView> mergedChildren;
+
+  /// 是否为连续无语音切片合并后的聚合视图（`N >= 2`）。
+  bool get isMergedSilent => mergedChildren.length > 1;
+
+  /// 本视图包含的全部底层分段 ID（单段为 `[segment.id]`，合并段为全部子分段 ID）。
+  List<String> get constituentSegmentIds => isMergedSilent
+      ? [for (final c in mergedChildren) c.segment.id]
+      : [segment.id];
 }
