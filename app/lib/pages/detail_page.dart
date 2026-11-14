@@ -326,44 +326,88 @@ class _DetailPageState extends State<DetailPage> {
       case 'refs':
         return [
           for (final r in refs)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: OutlinedButton(
-                key: Key('ref-${r.id}'),
-                onPressed: () => store.openSum(r.id),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: RCColors.label,
-                  side: const BorderSide(color: RCColors.sep),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  padding: const EdgeInsets.all(14),
-                  alignment: Alignment.centerLeft,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        r.title ?? '',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
+            Builder(
+              builder: (context) {
+                final picCount = store.activePhotoCountForSummary(r);
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Material(
+                    color: RCColors.card,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: const BorderSide(color: RCColors.sep),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      key: Key('ref-${r.id}'),
+                      onTap: () => store.openSum(r.id),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    r.title ?? '',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                const Icon(
+                                  Icons.chevron_right,
+                                  size: 16,
+                                  color: RCColors.ax,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    '${r.time} · 已选 ${r.srcIds.length} 片段',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: RCColors.sec,
+                                    ),
+                                  ),
+                                ),
+                                if (picCount > 0) ...[
+                                  const Text(
+                                    ' · ',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: RCColors.sec,
+                                    ),
+                                  ),
+                                  Text(
+                                    '含 $picCount 张图片',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: RCColors.sec,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${r.time} · 已选 ${r.srcIds.length} 片段',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: RCColors.sec,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              },
             ),
         ];
       default:
@@ -507,74 +551,164 @@ class _DetailPageState extends State<DetailPage> {
     return Padding(
       key: Key('dphoto-${e.id}-$index'),
       padding: const EdgeInsets.only(left: 38, bottom: 14),
-      child: Container(
-        decoration: BoxDecoration(
-          color: RCColors.card,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: RCColors.sep),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              height: 156,
-              child: hasFile
-                  ? Image.file(File(p.path), fit: BoxFit.cover)
-                  : Container(
-                      color: const Color(0xFFEAEAE4),
-                      alignment: Alignment.center,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.photo_camera_outlined,
-                            size: 28,
-                            color: RCColors.sec,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 296),
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: RCColors.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: RCColors.sep),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  key: Key('dphoto-thumb-${e.id}-$index'),
+                  onTap: () => _showDetailPhotoPreview(
+                    context,
+                    store,
+                    e,
+                    p,
+                    srcLabel,
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: SizedBox(
+                      width: 72,
+                      height: 72,
+                      child: hasFile
+                          ? Image.file(File(p.path), fit: BoxFit.cover)
+                          : ColoredBox(
+                              color: const Color(0xFFEAEAE4),
+                              child: Center(
+                                child: Icon(
+                                  p.source == 'dyj_camera'
+                                      ? Icons.photo_camera_outlined
+                                      : Icons.photo_outlined,
+                                  size: 24,
+                                  color: RCColors.sec,
+                                ),
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '$srcLabel · ${p.time}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: RCColors.sec,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      InkWell(
+                        key: Key('dphoto-exclude-${e.id}-$index'),
+                        onTap: () => store.excludePhoto(e.id, p.id),
+                        borderRadius: BorderRadius.circular(6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
                           ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '$srcLabel · ${p.time}',
-                            style: const TextStyle(
-                              fontSize: 12,
+                          decoration: BoxDecoration(
+                            color: RCColors.bg,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: RCColors.sep),
+                          ),
+                          child: const Text(
+                            '不属于本段',
+                            style: TextStyle(
+                              fontSize: 11.5,
                               color: RCColors.sec,
                             ),
                           ),
-                        ],
+                        ),
                       ),
-                    ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '照片 · ${p.time} · $srcLabel',
-                      style: const TextStyle(fontSize: 12, color: RCColors.sec),
-                    ),
+                    ],
                   ),
-                  TextButton(
-                    key: Key('dphoto-exclude-${e.id}-$index'),
-                    onPressed: () => store.excludePhoto(e.id, p.id),
-                    style: TextButton.styleFrom(
-                      foregroundColor: RCColors.sec,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      textStyle: const TextStyle(fontSize: 12),
-                    ),
-                    child: const Text('不属于本段'),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
+    );
+  }
+
+  void _showDetailPhotoPreview(
+    BuildContext context,
+    AppStore store,
+    RecordEvent e,
+    EventPhoto p,
+    String srcLabel,
+  ) {
+    final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return Dialog(
+          backgroundColor: RCColors.card,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              AspectRatio(
+                aspectRatio: 1,
+                child: hasFile
+                    ? Image.file(File(p.path), fit: BoxFit.cover)
+                    : const ColoredBox(
+                        color: Color(0xFFEAEAE4),
+                        child: Center(
+                          child: Icon(
+                            Icons.photo_outlined,
+                            size: 44,
+                            color: RCColors.sec,
+                          ),
+                        ),
+                      ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '$srcLabel · ${p.time}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.of(ctx).pop();
+                        store.excludePhoto(e.id, p.id);
+                      },
+                      child: const Text('不属于本段'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
