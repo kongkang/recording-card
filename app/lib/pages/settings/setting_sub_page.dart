@@ -1615,15 +1615,29 @@ class _LoginAuthBodyState extends State<_LoginAuthBody> {
 
 // ── 5) 声纹识别说明 ───────────────────────────────────────────
 
-class _VoiceprintBody extends StatelessWidget {
+class _VoiceprintBody extends StatefulWidget {
   const _VoiceprintBody({required this.controller});
 
   final ModelManagerController? controller;
 
   @override
+  State<_VoiceprintBody> createState() => _VoiceprintBodyState();
+}
+
+class _VoiceprintBodyState extends State<_VoiceprintBody> {
+  @override
+  void initState() {
+    super.initState();
+    final ctrl = widget.controller;
+    if (ctrl != null && !ctrl.hasStatuses) {
+      unawaited(ctrl.refresh());
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final c = context.rc;
-    final ctrl = controller;
+    final ctrl = widget.controller;
     Widget content() {
       final installed =
           ctrl?.statusFor(campplusEmbeddingSpec)?.installed ?? false;
@@ -1659,6 +1673,18 @@ class _VoiceprintBody extends StatelessWidget {
                         color: installed ? RCColors.okInk : c.sec,
                       ),
                     ),
+                    if (ctrl != null && !installed) ...[
+                      const SizedBox(width: 10),
+                      OutlinedButton(
+                        key: const Key('voiceprint-install-btn'),
+                        onPressed: ctrl.busy || !ctrl.configured
+                            ? null
+                            : () => unawaited(
+                                  ctrl.installSpec(campplusEmbeddingSpec),
+                                ),
+                        child: Text(ctrl.error != null ? '重试' : '下载'),
+                      ),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -1666,6 +1692,34 @@ class _VoiceprintBody extends StatelessWidget {
                   '基于本机声纹特征将对话归类为「说话人 1 / 2（推测）」，原始声纹特征仅留存在本机，不断言真实身份。',
                   style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
                 ),
+                if (ctrl != null && ctrl.busy) ...[
+                  const SizedBox(height: 10),
+                  LinearProgressIndicator(
+                    value: ctrl.progress > 0 ? ctrl.progress : null,
+                    minHeight: 4,
+                    backgroundColor: c.sep,
+                  ),
+                  if (ctrl.text.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      ctrl.text,
+                      key: const Key('voiceprint-progress-text'),
+                      style: TextStyle(fontSize: 12, color: c.sec),
+                    ),
+                  ],
+                ],
+                if (ctrl != null && !installed && ctrl.error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    ctrl.error!,
+                    key: const Key('voiceprint-error'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.4,
+                      color: c.danger,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

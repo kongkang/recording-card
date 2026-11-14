@@ -10,7 +10,7 @@
 | App Apple ID (iOS) | `6834316655` |
 | Android applicationId / namespace | `com.reai.recordingcard` |
 | 显示名 | 录音卡 |
-| 版本 | pubspec `version: 1.0.0+2026111306` → iOS `1.0.0 (2026111306)`、Android versionName `1.0.0` / versionCode `2026111306` |
+| 版本 | pubspec `version: 1.0.0+2026111401` → iOS `1.0.0 (2026111401)`、Android versionName `1.0.0` / versionCode `2026111401` |
 | 最低系统 | iOS 15.0、Android 7.0（minSdk 24） |
 | 目标系统 | Android targetSdk 36（Play 新应用要求 ≥ 35） |
 
@@ -232,6 +232,7 @@ flutter analyze && flutter test
   按 `capabilities` 选 ASR（`asr`）与文本（`text`/`chat`）。也可用
   `--dart-define=RC_MODEL_ASR=... --dart-define=RC_MODEL_REFINE=...` 显式覆盖。
 - **后端地址**：`RC_API_BASE` 编译默认 `https://block2-api.wainao.chat`。
+- **端侧语音/声纹模型下载源**：优先级为 `--dart-define=RC_MODEL_BASE=...` 显式覆盖 ＞ iOS 26+ 免费 **Apple-Hosted Background Assets**（`sensevoice-small-int8` v2、`campplus-embedding` v1、`silero-vad` v1）＞ 编译默认外脑 CDN `https://dl.wainao.chat/reai/models`（Android 默认源及低版本 iOS 兜底，两套 CDN 共享同一组 SHA-256 指纹）。
 
 ## 微信登录配置（2026-11-13 起）
 

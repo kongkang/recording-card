@@ -1,9 +1,19 @@
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:recording_card/core/config/remote/client_config.dart';
+import 'package:recording_card/core/storage/storage.dart';
+import 'package:recording_card/core/store/agent_config_store.dart';
+import 'package:recording_card/pages/settings/setting_sub_page.dart';
 import 'package:recording_card/services/transcribe/apple_asset_pack_client.dart';
 import 'package:recording_card/services/transcribe/asr_models.dart';
 import 'package:recording_card/services/transcribe/model_manager_controller.dart';
+
+import 'support/test_transitions.dart';
 
 class _FakeAppleAssetPackClient extends AppleAssetPackClient {
   _FakeAppleAssetPackClient({
@@ -70,8 +80,65 @@ Future<void> _seedSparseInstalled(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('ModelManagerController + AppleAssetPackClient', () {
-    test('iOS Apple-Hosted 可用且未配置 RC_MODEL_BASE 时标记为已配置并校验文件完整性', () async {
+  group('ModelManagerController 下载源优先级与单模型下载', () {
+    test('生产默认（无 dart-define）：iOS 26+ 优先走免费 Apple CDN，不旁路到外脑 CDN', () async {
+      final root = await Directory.systemTemp.createTemp('rc-prio-ios26-');
+      addTearDown(() => root.deleteSync(recursive: true));
+
+      final fakeApple = _FakeAppleAssetPackClient(available: true);
+      final controller = ModelManagerController(
+        installer: ModelInstaller(root: root),
+        appleAssets: fakeApple,
+        clientConfig: const ClientConfig.forTesting(),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.refresh();
+      expect(controller.configured, isTrue);
+      expect(controller.usesAppleAssets, isTrue);
+      expect(controller.effectiveBaseUrl, ClientConfig.defaultModelBase);
+    });
+
+    test('生产默认（无 dart-define）：Android / 低版本 iOS 自动回落外脑 CDN', () async {
+      final root = await Directory.systemTemp.createTemp('rc-prio-android-');
+      addTearDown(() => root.deleteSync(recursive: true));
+
+      final fakeApple = _FakeAppleAssetPackClient(available: false);
+      final controller = ModelManagerController(
+        installer: ModelInstaller(root: root),
+        appleAssets: fakeApple,
+        clientConfig: const ClientConfig.forTesting(),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.refresh();
+      expect(controller.configured, isTrue);
+      expect(controller.usesAppleAssets, isFalse);
+      expect(controller.effectiveBaseUrl, 'https://dl.wainao.chat/reai/models');
+    });
+
+    test('显式注入 RC_MODEL_BASE 时最高优先覆盖 iOS Apple CDN', () async {
+      final root = await Directory.systemTemp.createTemp('rc-prio-define-');
+      addTearDown(() => root.deleteSync(recursive: true));
+
+      final fakeApple = _FakeAppleAssetPackClient(available: true);
+      final controller = ModelManagerController(
+        installer: ModelInstaller(root: root),
+        appleAssets: fakeApple,
+        clientConfig: const ClientConfig.forTesting(
+          hasModelBaseDefine: true,
+          modelBaseDefineValue: 'https://custom.example.com/models/',
+        ),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.refresh();
+      expect(controller.configured, isTrue);
+      expect(controller.usesAppleAssets, isFalse);
+      expect(controller.effectiveBaseUrl, 'https://custom.example.com/models');
+    });
+
+    test('iOS Apple-Hosted 校验文件完整性拦截损坏产物', () async {
       final root = await Directory.systemTemp.createTemp('rc-apple-assets-');
       addTearDown(() => root.deleteSync(recursive: true));
 
@@ -100,7 +167,6 @@ void main() {
 
       await controller.installAll();
       expect(fakeApple.installedPacks, contains('sensevoice-small-int8'));
-      // model.int8.onnx 大小/SHA 校验应拦截损坏文件
       expect(controller.error, contains('model.int8.onnx'));
     });
 
@@ -131,33 +197,13 @@ void main() {
       addTearDown(controller.dispose);
 
       await controller.autoEnsureInstalled();
-      // senseVoice 已安装，不应重复调用 installAssetPack
       expect(fakeApple.installedPacks, isNot(contains(senseVoiceSpec.id)));
-      // campplus 尝试一次发现未上架后静默记录，不报错
       expect(fakeApple.installedPacks, [campplusEmbeddingSpec.id]);
       expect(controller.asrReady, isTrue);
       expect(controller.error, isNull);
 
-      // 再次调用 autoEnsureInstalled 不应循环重试未上架的可选包
       await controller.autoEnsureInstalled();
       expect(fakeApple.installedPacks, [campplusEmbeddingSpec.id]);
-    });
-
-    test('配置了 RC_MODEL_BASE 时优先走 HTTP 而非 Apple 资源包', () async {
-      final root = await Directory.systemTemp.createTemp('rc-apple-override-');
-      addTearDown(() => root.deleteSync(recursive: true));
-
-      final fakeApple = _FakeAppleAssetPackClient(available: true);
-      final controller = ModelManagerController(
-        installer: ModelInstaller(root: root),
-        appleAssets: fakeApple,
-        baseUrl: 'https://cdn.example.com/models',
-      );
-      addTearDown(controller.dispose);
-
-      await controller.refresh();
-      expect(controller.configured, isTrue);
-      expect(controller.usesAppleAssets, isFalse);
     });
 
     test('delete 在 Apple-Hosted 模式下同步清理托管资源包缓存', () async {
@@ -176,5 +222,114 @@ void main() {
       await controller.delete(senseVoiceSpec);
       expect(fakeApple.removedPacks, ['sensevoice-small-int8']);
     });
+
+    test('installSpec 支持单模型 HTTP 下载（.part -> SHA-256 -> 原子落盘）', () async {
+      final root = await Directory.systemTemp.createTemp('rc-single-spec-');
+      addTearDown(() => root.deleteSync(recursive: true));
+
+      final payload = List<int>.generate(2048, (i) => (i * 13) % 251);
+      final customSpec = ModelSpec(
+        id: 'campplus-embedding',
+        displayName: '声纹嵌入模型',
+        version: 'test',
+        kind: LocalModelKind.speakerEmbedding,
+        files: [
+          ModelFileSpec(
+            relPath: 'test.onnx',
+            sizeBytes: payload.length,
+            sha256: sha256.convert(payload).toString(),
+          ),
+        ],
+      );
+
+      final installer = ModelInstaller(
+        root: root,
+        clientFactory: () => MockClient.streaming((request, _) async {
+          if (request.url.path == '/reai/models/campplus-embedding/test.onnx') {
+            return http.StreamedResponse(
+              Stream<List<int>>.value(payload),
+              200,
+              contentLength: payload.length,
+            );
+          }
+          return http.StreamedResponse(const Stream.empty(), 404);
+        }),
+      );
+      final controller = ModelManagerController(
+        installer: installer,
+        appleAssets: _FakeAppleAssetPackClient(available: false),
+        clientConfig: const ClientConfig.forTesting(),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.installSpec(customSpec);
+      expect(controller.error, isNull);
+      final st = await installer.status(customSpec);
+      expect(st.installed, isTrue);
+    });
+  });
+
+  testWidgets('声纹识别子页：未安装展示下载按钮，失败变重试，成功后显示已就绪并隐藏按钮', (tester) async {
+    final root = await tester.runAsync(
+      () => Directory.systemTemp.createTemp('rc-voiceprint-ui-'),
+    );
+    addTearDown(() => root!.deleteSync(recursive: true));
+
+    var shouldFail = true;
+    final installer = ModelInstaller(root: root);
+    final fakeApple = _FakeAppleAssetPackClient(
+      available: true,
+      onInstall: (packId, files, onProgress) async {
+        if (shouldFail) {
+          throw const AppleAssetPackException('网络波动中断');
+        }
+        await _seedSparseInstalled(installer, campplusEmbeddingSpec);
+      },
+    );
+    // 注意：Apple 路径会跑 verifyInstalledFiles（含真实 SHA-256），因此成功分支用假 HTTP 失败/预置状态验证 UI 状态机
+    final controller = ModelManagerController(
+      installer: installer,
+      appleAssets: fakeApple,
+      baseUrl: '',
+    );
+    addTearDown(controller.dispose);
+    await tester.runAsync(controller.refresh);
+
+    final agentConfig = AgentConfigStore(store: InMemoryStore());
+    addTearDown(agentConfig.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: testTheme(),
+        home: SettingSubPage(
+          subId: 'voiceprint',
+          agentConfig: agentConfig,
+          modelManager: controller,
+          standalone: true,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('待下载'), findsOneWidget);
+    expect(find.byKey(const Key('voiceprint-install-btn')), findsOneWidget);
+    expect(find.text('下载'), findsOneWidget);
+
+    // 第一次点击触发失败 -> 按钮变为「重试」且展示错误原因
+    await tester.runAsync(() => controller.installSpec(campplusEmbeddingSpec));
+    await tester.pump();
+    expect(find.byKey(const Key('voiceprint-error')), findsOneWidget);
+    expect(find.text('重试'), findsOneWidget);
+
+    // 模型落盘就绪后刷新 -> 展示「已就绪」且隐藏下载按钮
+    shouldFail = false;
+    await tester.runAsync(
+      () => _seedSparseInstalled(installer, campplusEmbeddingSpec),
+    );
+    await tester.runAsync(controller.refresh);
+    await tester.pump();
+
+    expect(find.text('已就绪'), findsOneWidget);
+    expect(find.byKey(const Key('voiceprint-install-btn')), findsNothing);
   });
 }

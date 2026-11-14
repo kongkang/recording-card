@@ -1,12 +1,14 @@
-/// 本地模型管理 —— Setting 页展示安装状态、下载/删除。
+/// 本地模型管理 —— Setting 页及声纹子页展示安装状态、单模型/全量下载与删除。
 ///
 /// 下载源优先级：
-/// 1. 显式配置 `--dart-define=RC_MODEL_BASE` 时走 HTTP（Android 及自定义源）；
-/// 2. iOS 26+ 未配置 `RC_MODEL_BASE` 时走 Apple-Hosted Background Assets。
+/// 1. 显式传入 `baseUrl` 或 `--dart-define=RC_MODEL_BASE=...` 时走指定 HTTP 源；
+/// 2. iOS 26+ 支持 Apple-Hosted Background Assets 时优先走免费 Apple CDN；
+/// 3. 其余平台（Android / iOS 15~25）默认回落外脑 CDN `https://dl.wainao.chat/reai/models`。
 library;
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/config/remote/client_config.dart';
 import 'apple_asset_pack_client.dart';
 import 'asr_models.dart';
 
@@ -15,14 +17,21 @@ class ModelManagerController extends ChangeNotifier {
     ModelInstaller? installer,
     AppleAssetPackClient? appleAssets,
     String? baseUrl,
+    ClientConfig? clientConfig,
     this.onInstalled,
   }) : _installer = installer ?? ModelInstaller(),
        _appleAssets = appleAssets ?? AppleAssetPackClient(),
-       _baseUrl = baseUrl ?? const String.fromEnvironment('RC_MODEL_BASE');
+       _explicitBaseUrl = baseUrl != null
+           ? baseUrl.trim()
+           : ((clientConfig ?? ClientConfig.instance).explicitModelBase ?? ''),
+       _fallbackBaseUrl = baseUrl != null
+           ? ''
+           : (clientConfig ?? ClientConfig.instance).fallbackModelBase;
 
   final ModelInstaller _installer;
   final AppleAssetPackClient _appleAssets;
-  final String _baseUrl;
+  final String _explicitBaseUrl;
+  final String _fallbackBaseUrl;
 
   /// 安装完成后的回调（通常是 `AppStore.processPendingRecordings`）。
   final Future<void> Function()? onInstalled;
@@ -40,11 +49,22 @@ class ModelManagerController extends ChangeNotifier {
   double get progress => _progress;
   String get text => _text;
   String? get error => _error;
-  bool get hasBaseUrl => _baseUrl.trim().isNotEmpty;
+
+  bool get hasExplicitBaseUrl => _explicitBaseUrl.isNotEmpty;
+  bool get hasFallbackBaseUrl => _fallbackBaseUrl.isNotEmpty;
   bool get appleAssetsAvailable => _appleAssetsAvailable;
-  bool get usesAppleAssets => !hasBaseUrl && _appleAssetsAvailable;
-  bool get configured => hasBaseUrl || _appleAssetsAvailable;
-  String get baseUrl => _baseUrl;
+
+  /// 未显式覆盖 `RC_MODEL_BASE` 且 iOS 26+ Apple-Hosted 可用时走 Apple CDN。
+  bool get usesAppleAssets => !hasExplicitBaseUrl && _appleAssetsAvailable;
+
+  /// 当前生效的 HTTP 下载根地址（走 Apple CDN 时仍返回兜底地址供排查，无则空串）。
+  String get effectiveBaseUrl =>
+      hasExplicitBaseUrl ? _explicitBaseUrl : _fallbackBaseUrl;
+
+  bool get hasBaseUrl => effectiveBaseUrl.isNotEmpty;
+  bool get configured =>
+      hasExplicitBaseUrl || _appleAssetsAvailable || hasFallbackBaseUrl;
+  String get baseUrl => effectiveBaseUrl;
 
   List<ModelSpec> get specs => const [
     senseVoiceSpec,
@@ -99,6 +119,47 @@ class ModelManagerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 单独下载/重试指定模型（如「声纹识别」子页下载 `campplusEmbeddingSpec`）。
+  Future<void> installSpec(ModelSpec spec, {bool force = false}) async {
+    if (_busy) return;
+    await _ensureAppleAssetsChecked();
+    if (!configured) {
+      _error = '未配置模型下载地址（RC_MODEL_BASE）';
+      notifyListeners();
+      return;
+    }
+    _busy = true;
+    _error = null;
+    _progress = 0;
+    _text = '准备下载 ${spec.displayName}…';
+    notifyListeners();
+    try {
+      if (spec.bundled) {
+        await _installer.ensureBundled(spec);
+      } else if (usesAppleAssets) {
+        await _installFromAppleAssets(spec, force: force);
+        _unavailableRemotePacks.remove(spec.id);
+      } else {
+        if (force) {
+          await _installer.delete(spec);
+        }
+        final base = Uri.parse(effectiveBaseUrl);
+        await _installer.installFrom(
+          spec,
+          baseUri: base,
+          onProgress: _onProgress,
+        );
+      }
+      await onInstalled?.call();
+    } on Object catch (e) {
+      _error = '$e';
+    } finally {
+      _busy = false;
+      _text = '';
+      await refresh();
+    }
+  }
+
   Future<void> installAll({bool force = false}) async {
     if (_busy) return;
     await _ensureAppleAssetsChecked();
@@ -114,8 +175,23 @@ class ModelManagerController extends ChangeNotifier {
     notifyListeners();
     try {
       await _installer.ensureBundled(sileroVadSpec);
-      if (hasBaseUrl) {
-        final base = Uri.parse(_baseUrl);
+      if (usesAppleAssets) {
+        await _installFromAppleAssets(senseVoiceSpec, force: force);
+        // 声纹模型为可选能力：若远端尚未上架该资源包则静默标记跳过；真实下载/校验故障如实提示
+        try {
+          await _installFromAppleAssets(campplusEmbeddingSpec, force: force);
+          _unavailableRemotePacks.remove(campplusEmbeddingSpec.id);
+        } on AppleAssetPackException catch (e) {
+          if (e.isNotFound) {
+            _unavailableRemotePacks.add(campplusEmbeddingSpec.id);
+          } else {
+            _error = '声纹模型下载失败：$e（转写仍可用）';
+          }
+        } on Object catch (e) {
+          _error = '声纹模型下载失败：$e（转写仍可用）';
+        }
+      } else {
+        final base = Uri.parse(effectiveBaseUrl);
         await _installer.installFrom(
           senseVoiceSpec,
           baseUri: base,
@@ -128,21 +204,6 @@ class ModelManagerController extends ChangeNotifier {
             baseUri: base,
             onProgress: _onProgress,
           );
-        } on Object catch (e) {
-          _error = '声纹模型下载失败：$e（转写仍可用）';
-        }
-      } else {
-        await _installFromAppleAssets(senseVoiceSpec, force: force);
-        // 声纹模型为可选能力：若远端尚未上架该资源包则静默标记跳过；真实下载/校验故障如实提示
-        try {
-          await _installFromAppleAssets(campplusEmbeddingSpec, force: force);
-          _unavailableRemotePacks.remove(campplusEmbeddingSpec.id);
-        } on AppleAssetPackException catch (e) {
-          if (e.isNotFound) {
-            _unavailableRemotePacks.add(campplusEmbeddingSpec.id);
-          } else {
-            _error = '声纹模型下载失败：$e（转写仍可用）';
-          }
         } on Object catch (e) {
           _error = '声纹模型下载失败：$e（转写仍可用）';
         }
