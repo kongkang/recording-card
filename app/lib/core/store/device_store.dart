@@ -149,9 +149,11 @@ class DeviceStore extends ChangeNotifier {
     try {
       final snapshot = await _gw.snapshot();
       if (epoch != _epoch) return;
-      _applySnapshot(snapshot);
       linkState = LinkState.connected;
       linkError = null;
+      _applySnapshot(snapshot);
+      await _reconcileRecordingOnConnect();
+      if (epoch != _epoch) return;
       if (sheetOpen) {
         _startSheetWatch();
         unawaited(prefetchSummaryInfo());
@@ -250,11 +252,13 @@ class DeviceStore extends ChangeNotifier {
       activeCapabilities = device.resolvedCapabilities;
       activeModelLabel = device.modelLabel;
       connectedName = device.name;
-      _applySnapshot(snapshot);
       // 记住这台设备：掉线重连直接拿 id 直连，不靠扫描（已连接设备不广播）
       _lastDevice = device;
       linkState = LinkState.connected;
       linkError = null;
+      _applySnapshot(snapshot);
+      await _reconcileRecordingOnConnect();
+      if (epoch != _epoch) return;
       _eventSeq = 0;
       _startHeartbeat();
       if (sheetOpen) {
@@ -288,6 +292,8 @@ class DeviceStore extends ChangeNotifier {
   /// 顺序：停录音 → 关实时流 → 停同步 → 断开。跳过任一步都可能留下半截会话，
   /// 下次连接时设备状态与 App 对不上（这次 code -2 就吃过这个亏）。
   Future<void> disconnectSafely() async {
+    _phoneStandbyArmed = false;
+    _hwRecordingStartedAt = null;
     if (isRecording) {
       try {
         await _gw.stopRecording().timeout(const Duration(seconds: 5));
@@ -306,6 +312,8 @@ class DeviceStore extends ChangeNotifier {
 
   Future<void> disconnectDevice() async {
     final epoch = ++_epoch;
+    _phoneStandbyArmed = false;
+    _hwRecordingStartedAt = null;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _eventWatch?.cancel();
@@ -328,6 +336,9 @@ class DeviceStore extends ChangeNotifier {
     _resetLiveState();
     linkState = LinkState.disconnected;
     connectedName = null;
+    if (!_phoneRecording) {
+      unawaited(_liveActivityService.stopLocalRecordingActivity());
+    }
     linkError = failure ??
         (report != null && !report.released
             ? '蓝牙链路未确认释放，请重试连接后再断开'
@@ -338,6 +349,7 @@ class DeviceStore extends ChangeNotifier {
 
   void _resetLiveState() {
     _stopClock();
+    _hwRecordingStartedAt = null;
     _liveBattery = null;
     _liveCharging = null;
     _liveRecording = null;
@@ -449,16 +461,40 @@ class DeviceStore extends ChangeNotifier {
     // 固件自停时会带 error 码（如存储异常）：必须让用户看见原因，
     // 不能只是把开关悄悄关掉。参考实现会把整条 RECORD_STATUS 原样展示。
     final error = status['error'];
-    if (error is num) {
+    final hasDeviceFault = error is num;
+    if (hasDeviceFault) {
       recordingError = '录音中断（设备错误码 ${error.toInt()}）';
     } else if (recording) {
       recordingError = null; // 新一轮录音开始，清掉上次的失败
     }
     if (recording == (_liveRecording ?? false)) return;
     _liveRecording = recording;
+    final carrySec = _clockTicks;
     _clockTicks = 0;
-    if (!recording) _stopClock();
-    if (recording && _clockUsers > 0) _startClock();
+    if (!recording) {
+      _stopClock();
+      _hwRecordingStartedAt = null;
+      if (hasDeviceFault && _phoneStandbyArmed) {
+        // 硬件因故障/存储满意外停止录音（非用户主动停录）：自动启动手机麦克风保底接力
+        unawaited(_triggerPhoneFailover(carrySecOverride: carrySec));
+      } else {
+        // 用户在硬件机身拨杆/按键主动停止录音：解除待命并关闭灵动岛实况
+        _phoneStandbyArmed = false;
+        if (!_phoneRecording) {
+          unawaited(_liveActivityService.stopLocalRecordingActivity());
+        }
+      }
+      return;
+    }
+    _hwRecordingStartedAt = DateTime.now();
+    _phoneStandbyArmed = true;
+    if (_clockUsers > 0) _startClock();
+    if (_phoneRecording && !_otaHandoverPhoneRecording) {
+      unawaited(
+        stopPhoneRecording(keepStandbyArmed: true, stopLiveActivity: false),
+      );
+    }
+    _syncLiveActivity();
   }
 
 
@@ -574,10 +610,21 @@ class DeviceStore extends ChangeNotifier {
   }
 
   /// 掉线自动重连：蓝点 → 直连上次设备，只试一次。
+  ///
+  /// 若掉线前硬件正处于录音且已武装待命保底（[_phoneStandbyArmed]），立即启动手机「本机录音」
+  /// 接力，不等待最长达 25s 的重连扫描超时，确保对话一秒不漏；若随后重连成功且硬件仍在录音，
+  /// 自动停掉手机麦克风退回零功耗待命。
   Future<void> _retryReconnect() async {
     if (linkState == LinkState.reconnecting) return; // 已在重试中，不重复
     if (!isConnected) return;
-    // 探测失败已经说明链路不通：先立刻转蓝点，别让用户看到「已连接」再闪断
+    final carrySec = _clockTicks;
+    // 探测失败或收到断连事件说明链路已中断：若录音保底已待命，立即开启手机麦克风无缝接力
+    if (_phoneStandbyArmed && !_phoneRecording && !_phoneRecordingBusy) {
+      _liveRecording = false;
+      _stopClock();
+      unawaited(_triggerPhoneFailover(carrySecOverride: carrySec));
+    }
+    // 先立刻转蓝点，别让用户看到「已连接」再闪断
     linkState = LinkState.reconnecting;
     linkError = null;
     notifyListeners();
@@ -606,9 +653,11 @@ class DeviceStore extends ChangeNotifier {
       snapshot ??= await _gw.snapshot().timeout(_snapshotTimeout);
       if (epoch != _epoch) return;
       _markLinkActivity();
-      _applySnapshot(snapshot);
       linkState = LinkState.connected;
       linkError = null;
+      _applySnapshot(snapshot);
+      await _reconcileRecordingOnConnect();
+      if (epoch != _epoch) return;
       // 重连成功后必须把看门狗重新挂上：只在首次 connect 启表的话，
       // 一次掉线重连之后就再也没人探测了。
       _startHeartbeat();
@@ -632,13 +681,20 @@ class DeviceStore extends ChangeNotifier {
   }
 
   void _dropToDisconnected(String message) {
+    final carrySec = _clockTicks;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _eventWatch?.cancel();
     _eventWatch = null;
     _stopClock();
+    _liveRecording = false;
+    _recordSession = null;
+    _hwRecordingStartedAt = null;
     linkState = LinkState.disconnected;
     linkError = message;
+    if (_phoneStandbyArmed && !_phoneRecording && !_phoneRecordingBusy) {
+      unawaited(_triggerPhoneFailover(carrySecOverride: carrySec));
+    }
     notifyListeners();
   }
 
@@ -704,14 +760,36 @@ class DeviceStore extends ChangeNotifier {
       _recordSession = null;
     }
     deviceWifiOpen = s.wifiOpen;
-    if (s.recording != (_liveRecording ?? false)) {
+    final prevRecording = _liveRecording ?? false;
+    if (s.recording != prevRecording) {
       _liveRecording = s.recording;
       _clockTicks = 0;
       // 录音计时跨页面持续走：Timeline 顶部状态块与弹层用的是同一个时钟。
       // 只有 UI 持有（retainClock）时才真正起表；停止录音/断开立即停表。
-      if (!s.recording) _stopClock();
+      if (s.recording) {
+        _hwRecordingStartedAt = _phoneRecordingStartedAt ?? DateTime.now();
+        _phoneStandbyArmed = true;
+      } else {
+        _hwRecordingStartedAt = null;
+        _stopClock();
+      }
+    } else if (s.recording) {
+      _phoneStandbyArmed = true;
+      _hwRecordingStartedAt ??= DateTime.now();
     }
     if (s.recording && _clockUsers > 0) _startClock();
+    if (isConnected) {
+      if (s.recording) {
+        if (_phoneRecording && !_otaHandoverPhoneRecording) {
+          unawaited(
+            stopPhoneRecording(keepStandbyArmed: true, stopLiveActivity: false),
+          );
+        }
+        _syncLiveActivity();
+      } else if (prevRecording && !_phoneRecording) {
+        unawaited(_liveActivityService.stopLocalRecordingActivity());
+      }
+    }
   }
 
   /// 单次设备快照的超时上限。
@@ -809,7 +887,7 @@ class DeviceStore extends ChangeNotifier {
   /// 开始/停止录音（真实命令）。
   ///
   /// 设备回包后立刻刷新快照，界面据 [isRecording] 切到「录音中 + 正计时」或
-  /// 「未录音」；计时从本次连接后的第一次开始录音算起（设备不回传起点）。
+  /// 「未录音」；开启硬件录音后同步点亮灵动岛/锁屏实况，并将手机本机录音挂入零功耗待命保底。
   Future<String?> toggleRecording() async {
     if (!isConnected) return '录音卡未连接';
     if (recordingBusy) {
@@ -820,21 +898,45 @@ class DeviceStore extends ChangeNotifier {
     }
     recordingBusy = true;
     recordingError = null;
+    final wantStart = !isRecording;
+    if (!wantStart) {
+      // 用户主动关闭硬件录音：先解除本机待命保底，防止误判为异常停录触发保底
+      _phoneStandbyArmed = false;
+    }
     notifyListeners();
     try {
+      if (wantStart && _phoneRecording) {
+        await stopPhoneRecording(
+          keepStandbyArmed: true,
+          stopLiveActivity: false,
+        );
+      }
       // 用**明确的开始/停止**而不是 toggle：
       // toggle 依赖"App 认为的状态"与设备实际一致，一旦不一致（比如设备侧拨杆
       // 已开录、或状态推送丢失），再切就变成"停一条没在录的音" → 设备回 code -1/-2。
       // 硬超时也要有：设备无响应时必须给出明确结果，不能让开关永远停在"忙"。
-      final wantStart = !isRecording;
       final action = wantStart ? _gw.startRecording() : _gw.stopRecording();
       await action.timeout(const Duration(seconds: 15));
       await refreshFromDevice();
+      if (wantStart && isRecording) {
+        _phoneStandbyArmed = true;
+        _hwRecordingStartedAt ??= DateTime.now();
+        _syncLiveActivity();
+        unawaited(_prewarmStandbyMicPermission());
+      } else if (!wantStart) {
+        _phoneStandbyArmed = false;
+        _hwRecordingStartedAt = null;
+        if (!_phoneRecording) {
+          unawaited(_liveActivityService.stopLocalRecordingActivity());
+        }
+      }
       return null;
     } on TimeoutException {
+      if (wantStart && !isRecording) _phoneStandbyArmed = false;
       recordingError = '录音命令超时，请重试';
       return recordingError;
     } on CardException catch (e) {
+      if (wantStart && !isRecording) _phoneStandbyArmed = false;
       recordingError = e.message;
       return e.message;
     } finally {
@@ -859,7 +961,11 @@ class DeviceStore extends ChangeNotifier {
   bool get batteryKnown => _liveBattery != null;
   bool get isCharging => _liveCharging == true;
 
-  // ── 本机录音（手机麦克风 + 灵动岛 + OTA 接力）────────────
+  // ── 本机录音（独立录音 / 硬件零功耗待命保底 / OTA 接力 + 统一灵动岛实况）──
+  bool _islandEnabled = true;
+  DateTime? _hwRecordingStartedAt;
+  bool _phoneStandbyArmed = false;
+  bool _failoverPhoneRecording = false;
   bool _phoneRecording = false;
   bool _phoneRecordingBusy = false;
   int _phoneRecSec = 0;
@@ -868,6 +974,9 @@ class DeviceStore extends ChangeNotifier {
   DateTime? _phoneRecordingStartedAt;
   bool _otaHandoverPhoneRecording = false;
 
+  bool get islandEnabled => _islandEnabled;
+  bool get isPhoneStandbyArmed => _phoneStandbyArmed;
+  bool get isFailoverPhoneRecording => _failoverPhoneRecording;
   bool get isPhoneRecording => _phoneRecording;
   bool get phoneRecordingBusy => _phoneRecordingBusy;
   int get phoneRecSeconds => _phoneRecSec;
@@ -875,6 +984,130 @@ class DeviceStore extends ChangeNotifier {
   DateTime? get phoneRecordingStartedAt => _phoneRecordingStartedAt;
   Stream<LiveAudioSlice> get phoneAudioSlices => _phoneMicRecorder.slices;
   LiveActivityService get liveActivityService => _liveActivityService;
+
+  void setIslandEnabled(bool enabled) {
+    if (_islandEnabled == enabled) return;
+    _islandEnabled = enabled;
+    if (!enabled) {
+      unawaited(_liveActivityService.stopLocalRecordingActivity());
+    } else {
+      _syncLiveActivity();
+    }
+  }
+
+  String get _hardwareActivityLabel {
+    final model = activeModelLabel.trim();
+    final shortId = connectedDisplayName.trim();
+    if (model.isNotEmpty && shortId.isNotEmpty && shortId != '录音卡') {
+      return '$model $shortId';
+    }
+    if (model.isNotEmpty) return model;
+    if (shortId.isNotEmpty) return shortId;
+    return '录音卡';
+  }
+
+  void _syncLiveActivity() {
+    if (!_islandEnabled) return;
+    if (isConnected && isRecording) {
+      final startedAt =
+          _hwRecordingStartedAt ??
+          DateTime.now().subtract(Duration(seconds: _clockTicks));
+      _hwRecordingStartedAt = startedAt;
+      unawaited(
+        _liveActivityService.startHardwareRecordingActivity(
+          startedAt: startedAt,
+          deviceLabel: _hardwareActivityLabel,
+        ),
+      );
+      return;
+    }
+    if (_phoneRecording) {
+      final activityStartedAt = DateTime.now().subtract(
+        Duration(seconds: _phoneRecSec),
+      );
+      if (_failoverPhoneRecording) {
+        unawaited(
+          _liveActivityService.startFailoverRecordingActivity(
+            startedAt: activityStartedAt,
+          ),
+        );
+      } else {
+        unawaited(
+          _liveActivityService.startLocalRecordingActivity(
+            startedAt: _phoneRecordingStartedAt ?? activityStartedAt,
+          ),
+        );
+      }
+    }
+  }
+
+  /// 硬件录音在前台开启时预检手机麦克风权限：
+  /// 若尚未询问过（`notDetermined`），提前完成一次性授权，确保后续即使手机锁屏放在口袋里
+  /// 发生蓝牙意外断连，也能直接在后台拉起 `AVAudioEngine` 自动保底接力。
+  Future<void> _prewarmStandbyMicPermission() async {
+    try {
+      final perm = await _phoneMicBackend.checkPermission();
+      if (perm == PhoneMicPermission.notDetermined) {
+        await _phoneMicBackend.requestPermission();
+      }
+    } on Object {
+      // 测试环境或非移动平台无通道时静默跳过，不阻塞硬件录音主流程
+    }
+  }
+
+  /// 蓝牙设备意外断连或硬件故障停录时自动拉起手机「本机录音」作为保底。
+  Future<void> _triggerPhoneFailover({int carrySecOverride = 0}) async {
+    if (!_phoneStandbyArmed || _phoneRecording || _phoneRecordingBusy) return;
+    await startPhoneRecording(
+      forFailover: true,
+      islandEnabled: _islandEnabled,
+      initialElapsedSec: carrySecOverride,
+    );
+  }
+
+  /// 硬件连接/重连完成后的录音状态收口：
+  /// 1. 若硬件本身已在录音：关闭可能正在运行的断连保底本机麦克风，退回零功耗待命并同步硬件实况；
+  /// 2. 若此前手机正在本机录音（如断连保底或连卡前独立本机录音）且非固件升级中：自动将录音交接给硬件，
+  ///    关闭高功耗手机麦克风并挂起待命保底，确保已连硬件状态下绝不双端并行耗电。
+  Future<void> _reconcileRecordingOnConnect() async {
+    if (!isConnected) return;
+    if (isRecording) {
+      _phoneStandbyArmed = true;
+      _hwRecordingStartedAt ??= DateTime.now();
+      if (_phoneRecording && !_otaHandoverPhoneRecording) {
+        await stopPhoneRecording(
+          keepStandbyArmed: true,
+          stopLiveActivity: false,
+        );
+      }
+      _syncLiveActivity();
+      return;
+    }
+    if (_phoneRecording && !_otaHandoverPhoneRecording && !fwUpdating) {
+      final carrySec = _phoneRecSec;
+      try {
+        await _gw.startRecording().timeout(const Duration(seconds: 10));
+        final refreshed = await _gw.snapshot().timeout(_snapshotTimeout);
+        _applySnapshot(refreshed);
+      } on Object catch (e) {
+        debugPrint('[device] handover phone->hardware failed: $e');
+      }
+      if (isRecording) {
+        _clockTicks = carrySec;
+        _hwRecordingStartedAt = DateTime.now().subtract(
+          Duration(seconds: carrySec),
+        );
+        _phoneStandbyArmed = true;
+        await stopPhoneRecording(
+          keepStandbyArmed: true,
+          stopLiveActivity: false,
+        );
+        _syncLiveActivity();
+      } else {
+        await stopPhoneRecording();
+      }
+    }
+  }
 
   String get phoneRecClockText {
     final s = _phoneRecSec;
@@ -893,7 +1126,9 @@ class DeviceStore extends ChangeNotifier {
 
   Future<bool> startPhoneRecording({
     bool forOtaHandover = false,
+    bool forFailover = false,
     bool islandEnabled = true,
+    int initialElapsedSec = 0,
   }) async {
     if (_phoneRecording) return true;
     if (_phoneRecordingBusy) return false;
@@ -920,22 +1155,38 @@ class DeviceStore extends ChangeNotifier {
       );
       _phoneRecording = true;
       _phoneRecordingStartedAt = startedAt;
-      _phoneRecSec = 0;
+      _phoneRecSec = initialElapsedSec < 0 ? 0 : initialElapsedSec;
       _otaHandoverPhoneRecording = forOtaHandover;
+      _failoverPhoneRecording = forFailover;
+      _islandEnabled = islandEnabled;
       _phoneClockTimer?.cancel();
       _phoneClockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
         _phoneRecSec++;
         notifyListeners();
       });
       if (islandEnabled) {
-        unawaited(
-          _liveActivityService.startLocalRecordingActivity(startedAt: startedAt),
-        );
+        final activityStartedAt = initialElapsedSec > 0
+            ? startedAt.subtract(Duration(seconds: initialElapsedSec))
+            : startedAt;
+        if (forFailover) {
+          unawaited(
+            _liveActivityService.startFailoverRecordingActivity(
+              startedAt: activityStartedAt,
+            ),
+          );
+        } else {
+          unawaited(
+            _liveActivityService.startLocalRecordingActivity(
+              startedAt: activityStartedAt,
+            ),
+          );
+        }
       }
       return true;
     } on Object catch (e) {
       await _phoneMicRecorder.stop();
       _phoneRecording = false;
+      _failoverPhoneRecording = false;
       _phoneRecordingError = '本机录音启动失败：$e';
       return false;
     } finally {
@@ -944,8 +1195,14 @@ class DeviceStore extends ChangeNotifier {
     }
   }
 
-  Future<void> stopPhoneRecording() async {
-    if (!_phoneRecording && !_phoneRecordingBusy) return;
+  Future<void> stopPhoneRecording({
+    bool keepStandbyArmed = false,
+    bool stopLiveActivity = true,
+  }) async {
+    if (!_phoneRecording && !_phoneRecordingBusy) {
+      if (!keepStandbyArmed) _phoneStandbyArmed = false;
+      return;
+    }
     _phoneRecordingBusy = true;
     notifyListeners();
     try {
@@ -956,9 +1213,15 @@ class DeviceStore extends ChangeNotifier {
       _phoneClockTimer = null;
       _phoneRecording = false;
       _otaHandoverPhoneRecording = false;
+      _failoverPhoneRecording = false;
+      if (!keepStandbyArmed) {
+        _phoneStandbyArmed = false;
+      }
       _phoneRecordingStartedAt = null;
       _phoneRecordingBusy = false;
-      unawaited(_liveActivityService.stopLocalRecordingActivity());
+      if (stopLiveActivity && !(isConnected && isRecording)) {
+        unawaited(_liveActivityService.stopLocalRecordingActivity());
+      }
       notifyListeners();
     }
   }
@@ -977,6 +1240,8 @@ class DeviceStore extends ChangeNotifier {
 
   /// 退出登录前安全关闭硬件录音（异常不阻塞退出登录流程）。
   Future<void> stopHardwareRecordingIfActive() async {
+    _phoneStandbyArmed = false;
+    _hwRecordingStartedAt = null;
     if (!isConnected || !isRecording) return;
     if (recordingBusy) return;
     recordingBusy = true;
@@ -1002,6 +1267,8 @@ class DeviceStore extends ChangeNotifier {
 
   /// 退出登录或会话失效时统一关闭本机/硬件录音与灵动岛，防止数据归属跨账号泄漏。
   Future<void> stopAllRecordingsForSignOut() async {
+    _phoneStandbyArmed = false;
+    _hwRecordingStartedAt = null;
     if (_phoneRecording || _phoneRecordingBusy) {
       await stopPhoneRecording();
     } else {
@@ -1407,6 +1674,7 @@ class DeviceStore extends ChangeNotifier {
       final startedHandover = await startPhoneRecording(
         forOtaHandover: true,
         islandEnabled: islandEnabled,
+        initialElapsedSec: _clockTicks,
       );
       if (!startedHandover) {
         fwError = _phoneRecordingError ?? '请先开启麦克风权限，确保升级期间录音数据不断';
@@ -1414,10 +1682,12 @@ class DeviceStore extends ChangeNotifier {
         notifyListeners();
         return;
       }
+      _phoneStandbyArmed = false;
       try {
         await _gw.stopRecording().timeout(const Duration(seconds: 15));
         _liveRecording = false;
         _recordSession = null;
+        _hwRecordingStartedAt = null;
         _stopClock();
         notifyListeners();
       } on Object catch (e) {

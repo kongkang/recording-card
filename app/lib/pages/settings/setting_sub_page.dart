@@ -1805,7 +1805,7 @@ class _DynamicIslandBody extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '开启本机录音灵动岛',
+                            '开启录音灵动岛与锁屏实况',
                             style: TextStyle(
                               fontSize: 14.5,
                               fontWeight: FontWeight.w600,
@@ -1814,7 +1814,7 @@ class _DynamicIslandBody extends StatelessWidget {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '本机录音开启时，在灵动岛展示 App Logo 运行状态。',
+                            '蓝牙硬件录音、断连自动保底录音及本机录音开启期间，在灵动岛和锁屏实时展示运行状态与计时。',
                             style: TextStyle(fontSize: 12, color: c.sec),
                           ),
                         ],
@@ -1838,7 +1838,7 @@ class _DynamicIslandBody extends StatelessWidget {
               border: Border.all(color: c.sep),
             ),
             child: Text(
-              '前往系统「设置 → 操作按钮 → 快捷指令」，选择「录音卡 · 切换本机录音」即可一键开启或关闭本机录音。',
+              '前往系统「设置 → 操作按钮 → 快捷指令」，选择「录音卡 · 切换录音」即可一键开启或关闭录音（已连硬件时控制硬件录音并开启本机待命保底，未连硬件时控制本机录音）。',
               style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
             ),
           ),

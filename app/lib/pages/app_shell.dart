@@ -104,12 +104,18 @@ class _AppShellState extends State<AppShell> {
     _phoneSliceSub = _device.phoneAudioSlices.listen((slice) {
       unawaited(widget.store.ingestLiveSlice(slice));
     });
+    _device.setIslandEnabled(_agentConfig.islandEnabled);
+    _agentConfig.addListener(_syncAgentIslandConfig);
     _device.liveActivityService.onActionButtonToggle = () {
-      unawaited(
-        _device.togglePhoneRecording(
-          islandEnabled: _agentConfig.islandEnabled,
-        ),
-      );
+      if (_device.isConnected) {
+        unawaited(_device.toggleRecording());
+      } else {
+        unawaited(
+          _device.togglePhoneRecording(
+            islandEnabled: _agentConfig.islandEnabled,
+          ),
+        );
+      }
     };
     if (widget.supportsDynamicIslandOverride == null) {
       unawaited(_loadLiveActivityCaps());
@@ -144,6 +150,10 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  void _syncAgentIslandConfig() {
+    _device.setIslandEnabled(_agentConfig.islandEnabled);
+  }
+
   /// 设备录音态 / 本机录音态 → 实时音频流切片 + Timeline 顶部状态块。
   ///
   /// 录音开启期间按固定窗口（默认 1 分钟）边录边存并本地转写落 Timeline；
@@ -156,19 +166,17 @@ class _AppShellState extends State<AppShell> {
     if (recording) {
       if (hwRecording) {
         _liveAudio.updateDeviceSessionId(_device.recordSession);
+        if (!_liveAudio.isRunning) {
+          unawaited(_liveAudio.start());
+        }
       } else if (_liveAudio.isRunning) {
-        // 硬件切换至本机录音（如 OTA 交接）：停掉蓝牙实时流，保持状态块不中断
+        // 硬件切换至本机录音（如断连自动保底 / OTA 交接）：停掉蓝牙实时流，保持状态块不中断
         unawaited(_liveAudio.stop());
       }
       if (!_wasRecording) {
         widget.store.onLiveRecordingStarted();
         _recording.startRecording();
         unawaited(_ensurePhotoPermissionOnRecordStart());
-        // 录音状态一变 true 就开实时流（App 开关和设备拨杆/按键都走这里）；
-        // isRunning 挡住重复订阅。
-        if (hwRecording && !_liveAudio.isRunning) {
-          unawaited(_liveAudio.start());
-        }
       } else {
         _recording.ensureRecording();
       }
@@ -206,6 +214,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    _agentConfig.removeListener(_syncAgentIslandConfig);
     _device.liveActivityService.onActionButtonToggle = null;
     _liveSliceSub?.cancel();
     _phoneSliceSub?.cancel();
