@@ -10,7 +10,7 @@ PR #7 已把正式版基线（真实 BLE 桥 + OAuth + 模型网关 + 真实总�
 
 - `app/` 是 Flutter 工程（主交付物）。分层参考 reai_mobile_app：`lib/core`（config/models/theme/store）、`lib/services`、`lib/pages`、`lib/widgets`；测试在 `app/test/`。
 - **验收基准 = `prototype/verify.cjs` 的 86 项检查**（2026-11-09 新增连接/录音/自动同步 7 项、2026-11-10 新增 feed 倒序、相册缩略图、详情照片、日报、做梦 5 项、2026-11-13 双向对齐 App 超前项 + TBC 标注、总结图片融入/逻辑树双层图权重/行动项按需元信息、声纹标记与上下文呼语称呼推断 + 合并与单段防串音解绑、三元记忆图谱 + 不在场提及人保护与关系状态新陈代谢、睡前日记与轻标注、4~6 格梦境漫画与重复事项 Skill 提炼、物理按键 × 灵动岛 × A/B 双阶段消息推送后共 86 项；以脚本 checks 为准）：Flutter 侧在 `app/test/` 建等价 widget/集成测试逐项对齐，命名与检查项一一对应。
-- `prototype/` 降级为**设计参考真源（只读）**：还原有疑义以它和「设计基线」节为准，不再直接改它；如确需改设计，先与 owner 确认，并同步 `prototype/verify.cjs` 与 Flutter 测试。
+- `prototype/` 采用**双版本单服务设计真源 + 发版快照**机制（`current.html` 当前版本 + `index.html` 目标版本 + `releases/vX.Y.Z.html` 发版快照）：具体更新、同步与晋升开发流程严格遵循下方「设计稿双版本与发版快照开发规范」节，未经 owner 确认不擅自更改设计或假设版本归属。
 - 本阶段硬约束：
   - **本地转写优先**（SenseVoice + Silero VAD）；云端只做润色与分段总结。模型缺失时音频入库排队，**不上传音频、不编造文本**。
   - 说话人由声纹聚类推测，展示「说话人 1 / 2（推测）」；低置信度「未区分」，**不断言真实身份**。
@@ -22,11 +22,34 @@ PR #7 已把正式版基线（真实 BLE 桥 + OAuth + 模型网关 + 真实总�
 ## 目录职责
 
 - `app/`——Flutter 工程（主交付物）。分层参考 reai_mobile_app：`lib/core`（config / models / theme / store）、`lib/services`（transcribe / polish / segment / recordings / net）、`lib/pages`、`lib/widgets`；测试在 `app/test/`。
-- `prototype/`——设计参考真源（**只读**）。单文件内联 CSS/JS，无构建、无外部资源、`file://` 可直接打开；其 `verify.cjs` 55 项是开发期验收需求清单。
+- `prototype/`——设计真源目录（单文件内联 CSS/JS，无构建、无外部资源、`file://` 与同一本地 HTTP 服务均可直接打开）：
+  - `prototype/current.html`：**当前版本**（与 `app/` 主分支已落地真实功能 1:1 对齐，零 `TBC` 标记）。
+  - `prototype/index.html`：**目标版本**（完整未来演进设计，常に包含当前版本全部能力 + 待落地的 `TBC` 特性）。
+  - `prototype/releases/vX.Y.Z.html`：**发版快照**（每次对外发版归档当时的 `current.html`，只读留存真实进度）。
+  - `prototype/verify.cjs`：双版本自动化验收脚本（覆盖 `index.html` 86 项检查与 `current.html` 基线检查）。
 - `docs/handoff/`——阶段交接文档（含开发期启动指令与 owner 硬约束）。
 - `docs/SDK-CAPABILITY.md`——上游 SDK 能力对照（reai-card-sdk v0.0.6 @ 32a1b86，异步 Rust + btleplug，非 Flutter 插件）。
 - `docs/gen-evidence/`——原型生成证据链（Flash prompt/output 留存、核验结果、旧版验收脚本）。**只读**。
 - `archive/`——旧版原型与截图。**只读**，不作为当前结构的依据。
+
+## 设计稿双版本与发版快照开发规范（2026-11-14 定稿）
+
+1. **同一服务、两个页面、隔离存储**：
+   - 本地预览统一在单个 HTTP 服务运行 `prototype/` 目录，通过顶栏分段胶囊 `[ 当前版 | 目标版 ]` 在 `current.html` 与 `index.html` 之间一键互跳（历史发版快照存在时右侧自动展示 `▾` 快照下拉菜单）。
+   - 同源存储键严格隔离（`current.html` 使用 `rc-route-cur-v1` / `rc-wifi-cur-v1`，`index.html` 使用 `rc-route-v1` / `rc-wifi-v1`，发版快照使用各自版本号后缀），避免同端口切页串状态。
+2. **版本归属未指明时必须先确认（严禁假设）**：
+   - 当 owner 提出界面或功能修改但未明确说明针对「当前版本」还是「目标版本」时，**必须先向 owner 确认本次归属（「当前版本 · 立即开发」或「目标版本 · 仅改设计」），绝不擅自假设**。
+3. **修改「当前版本」（`prototype/current.html`）= 立即开发 + 同步目标版本**：
+   - 含义：属于本版本立即落地的真实需求。
+   - 执行闭环：① 更新 `prototype/current.html` → ② **同步合入 `prototype/index.html`**（确保 `目标版本 ⊇ 当前版本` 永远成立）→ ③ **立即在 Flutter `app/` 中完成代码开发与 `app/test/` 测试对齐** → ④ 跑通 `node prototype/verify.cjs` 与 `flutter analyze && flutter test` → ⑤ 提交 PR 合并。
+   - **同步冲突原则**：无冲突时直接同步更新公共底座并保留目标版本上的 `TBC` 增量层；若当前版本的修改与目标版本同一位置的未来 `TBC` 设计直接冲突，**必须先向 owner 确认融合方案，确认后再动手修改**。
+4. **修改「目标版本」（`prototype/index.html`）= 仅演进设计，不触发开发**：
+   - 含义：调整未来期望形态与演进方案，暂不进入当前开发周期。
+   - 执行边界：仅更新 `prototype/index.html`（未落地能力标注 `TBC` 并维护顶栏 `TBC` 清单）及对应的原型校验；**不修改 `prototype/current.html`，不触发 `app/` 代码开发**。
+   - **功能晋升（目标版本 → 当前版本）**：仅当 owner 明确确认将目标版本的某项功能迁移至当前版本时，才将该功能合入 `prototype/current.html`、在 `prototype/index.html` 移除其 `TBC` 标记与待实现条目，并启动 `app/` 开发落地。
+5. **发版快照归档（`prototype/releases/vX.Y.Z.html`）**：
+   - 触发时机：每次对外发版（推送 TestFlight 或发布正式版打 Git Tag `vX.Y.Z`）时执行（日常普通 PR 合并或内部调试递增 build 号不生成快照）。
+   - 归档方式：运行 `node prototype/snapshot-release.mjs vX.Y.Z` 将当时的 `prototype/current.html` 归档为只读快照 `prototype/releases/vX.Y.Z.html`，自动写入顶栏 `RELEASE_SNAPSHOTS` 菜单，在同一服务内即可随时切换回看任一历史版本的真实开发进度；快照文件一旦归档即为**只读**。
 
 ## 设计基线（2026-11-07 v3 打磨）
 
