@@ -377,6 +377,23 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                   ),
                 ),
               ),
+              if (ctrl != null && !installed && !spec.bundled) ...[
+                const SizedBox(width: 4),
+                IconButton(
+                  key: Key('model-install-${spec.id}'),
+                  tooltip: '下载模型',
+                  onPressed: ctrl.busy || !ctrl.configured
+                      ? null
+                      : () => unawaited(ctrl.installSpec(spec)),
+                  icon: Icon(Icons.download_outlined, size: 17, color: c.sec),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 26,
+                    minHeight: 26,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
               if (ctrl != null && installed && !spec.bundled) ...[
                 const SizedBox(width: 4),
                 IconButton(
@@ -1687,7 +1704,11 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                             : () => unawaited(
                                   ctrl.installSpec(campplusEmbeddingSpec),
                                 ),
-                        child: Text(ctrl.error != null ? '重试' : '下载'),
+                        child: Text(
+                          ctrl.busy
+                              ? '下载中…'
+                              : (ctrl.error != null ? '重试' : '下载'),
+                        ),
                       ),
                     ],
                   ],
