@@ -86,8 +86,10 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   const textH = await p.$eval('[data-testid="card-e3"] .pc-text', x => x.getBoundingClientRect().height);
   assert(Math.abs(stackH - textH) <= 1, `缩略图应与标题时间同高：${stackH}/${textH}`);
   assert(await p.$eval('[data-testid="card-e3"] .pc-text h3', x => getComputedStyle(x).textOverflow === 'ellipsis' && getComputedStyle(x).whiteSpace === 'nowrap'));
-  // 总结卡的图片计数（含 2 张 = e2 的两张）
+  // 总结卡的图片计数：放在左下角时间与「已选 N 片段」之后（含 2 张 = e2 的两张），右侧仅保留箭头
   assert.equal(await p.$eval('[data-testid="card-sum-demo"] .sumphotos', x => x.textContent.trim()), '含 2 张图片');
+  assert(await p.$eval('[data-testid="card-sum-demo"] .when', x => x.textContent.includes('已选 1 片段 · 含 2 张图片')));
+  assert.equal(await p.$('[data-testid="card-sum-demo"] .sum-side .sumphotos'), null);
   // 分组内倒序：日终产物（总结/睡前日记/未归类）在顶部，记录中间，做梦卡在底部
   const dayKinds = await p.evaluate(() => {
     const out = []; let cur = null;
@@ -159,6 +161,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   const flowKinds = await p.$$eval('#dt-dlg > *', els => els.map(el => el.classList.contains('dphoto') ? 'photo' : 'turn'));
   assert(flowKinds.includes('photo') && flowKinds[0] === 'turn', '照片应插在对话中间');
   await shot('detail-photo');
+  const exclBtnW = await p.$eval('#dt-dlg .dphoto-x', x => x.getBoundingClientRect().width);
+  assert(exclBtnW > 40 && exclBtnW < 100, '「不属于本段」按钮应紧凑不拉伸，实际宽度 ' + exclBtnW);
   await p.evaluate(() => document.querySelector('#dt-dlg .dphoto-x').click());
   assert.equal(await p.$$eval('#dt-dlg .dphoto', x => x.length), 1);
   assert.equal(await p.$$eval('[data-testid="pics-e2"] .pthumb', x => x.length), 1);
@@ -166,18 +170,21 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-testid="card-unc-0"] .unccount', x => x.textContent.trim()), '2 张');
   await p.evaluate(() => goBack());
   await new Promise(r => setTimeout(r, 300));
-  // 未归类图片卡：点开分拣抽屉 → 按时间最近推荐一键归位 → 外侧缩略图与总结张数同步更新
+  // 未归类图片卡：右下角提供「不归类」按钮；点击卡片进入双列正方形相册详情页查看或归类
+  assert(await p.$('[data-testid="unc-dismiss-day-0"]'), '未归类图片卡片右下角应提供「不归类」按钮');
   await p.click('[data-testid="card-unc-0"]');
-  assert(await p.$eval('#unc-wrap', x => x.classList.contains('show')));
-  assert(await p.$eval('#unc-wrap h2 .tbc-badge', x => x.innerText.trim() === 'TBC'));
-  assert.equal(await p.$$eval('#unc-body .unc-item', x => x.length), 2);
-  assert(await p.$eval('[data-testid="unc-reassign-e2-0-e2"]', x => x.classList.contains('best') && x.innerText.includes('时间最接近')));
+  assert(await p.$eval('#p-unc', x => x.classList.contains('show')));
+  assert.equal(await p.$$eval('#uncp-body .unc-tile', x => x.length), 2);
+  const uncSq = await p.$eval('#uncp-body .unc-sq', x => { const r = x.getBoundingClientRect(); return { w: r.width, h: r.height }; });
+  assert(Math.abs(uncSq.w - uncSq.h) < 1.5, '未归类详情相册图片应为 1:1 正方形，实际 ' + uncSq.w + 'x' + uncSq.h);
+  const uncCols = await p.$$eval('#uncp-body .unc-tile', els => new Set(els.map(e => Math.round(e.getBoundingClientRect().left))).size);
+  assert.equal(uncCols, 2, '未归类详情页应为双列网格');
   await p.click('[data-testid="unc-reassign-e2-0-e2"]');
-  assert.equal(await p.$$eval('#unc-body .unc-item', x => x.length), 1);
+  assert.equal(await p.$$eval('#uncp-body .unc-tile', x => x.length), 1);
   assert.equal(await p.$eval('[data-testid="card-unc-0"] .unccount', x => x.textContent.trim()), '1 张');
   assert.equal(await p.$$eval('[data-testid="pics-e2"] .pthumb', x => x.length), 2);
   assert.equal(await p.$eval('[data-testid="card-sum-demo"] .sumphotos', x => x.textContent.trim()), '含 2 张图片');
-  await p.evaluate(() => { closeUncSheet(); excludePhoto('e2', 0); });
+  await p.evaluate(() => { goBack(); excludePhoto('e2', 0); });
   assert.equal(await p.$eval('[data-testid="card-unc-0"] .unccount', x => x.textContent.trim()), '2 张');
 
   // 卡片展开/收起 → 详情按钮进详情页（单屏压栈）
@@ -187,6 +194,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="card-e1"]');
   assert(!(await p.$eval('[data-testid="card-e1"]', x => x.classList.contains('open'))));
   await p.click('[data-testid="card-e1"]');
+  await p.$eval('[data-testid="detail-e1"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="detail-e1"]');
   assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
   assert(!(await navVisible()));
@@ -291,15 +299,16 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#sum-sub', x => x.innerText.includes('条记录') && !x.innerText.includes('来源')));
   assert.deepEqual(await p.$$eval('#stabs button', e => e.map(x => x.innerText.trim())), ['全部', '概览', '逻辑结构', '信息点', '行动项', '来源记录']);
   assert(await secVis('sec-ov') && await secVis('sec-map') && await secVis('sec-pt') && await secVis('sec-todo') && await secVis('sec-src'));
-  // 总结结果页图文融入：概览内嵌关键画面带；逻辑结构双层图片权重（微缩图=核心实证 vs 图标=辅助附图）；信息点按时间窗挂图
-  assert(await p.$('[data-testid="sum-ov-photos"]'));
-  assert.equal(await p.$('[data-testid="mleaf-key-e2-0"]'), null, '已排除照片节点应自动降级为纯文字胶囊');
-  assert(await p.$eval('[data-testid="mleaf-key-e2-1"]', x => !!x.querySelector('img.mleaf-thumb') && x.innerText.includes('重置现状')));
-  assert(await p.$eval('[data-testid="mleaf-aux-e3-1"]', x => !!x.querySelector('svg') && !x.querySelector('img')));
-  assert(await p.$('[data-testid="map-photo-legend"]'));
-  assert.equal(await p.$('[data-testid="pt-picpill-0"]'), null, 'e1 无照片，对应信息点不应出现图片胶囊');
-  assert(await p.$('[data-testid="pt-picpill-1"]'), 'e2 有照片，对应信息点标题应显示图片胶囊');
-  assert(await p.$('[data-testid="pt-picpill-3"]'), 'e3 10:14-10:15 对应信息点标题应显示图片胶囊');
+  // 总结结果页图文穿插（不设独立多媒体模块）：概览自然穿插单张代表图；逻辑结构关联节点配线性 icon；信息点正文内联配图
+  assert.equal(await p.$('[data-testid="sum-ov-photos"]'), null, '不应渲染独立多媒体模块框');
+  assert(await p.$('[data-testid="sum-ov-inline-photo"]'), '概览下方应自然穿插有价值的代表图');
+  assert.equal(await p.$('[data-testid="mleaf-pic-e2-0"]'), null, '已排除照片节点应自动降级为纯文字胶囊');
+  assert(await p.$eval('[data-testid="mleaf-pic-e2-1"]', x => !!x.querySelector('svg') && !x.querySelector('img')));
+  assert(await p.$eval('[data-testid="mleaf-pic-e3-1"]', x => !!x.querySelector('svg') && !x.querySelector('img')));
+  assert.equal(await p.$('[data-testid="map-photo-legend"]'), null);
+  assert.equal(await p.$('[data-testid="pt-picico-0"]'), null, 'e1 无照片，对应信息点不应出现图片图标');
+  assert(await p.$('[data-testid="pt-picico-1"]'), 'e2 有照片，对应信息点标题应显示线性图片图标');
+  assert(await p.$('[data-testid="pt-picico-3"]'), 'e3 10:14-10:15 对应信息点标题应显示线性图片图标');
   assert.equal(await p.$('[data-testid="pt-figs-0"]'), null);
   assert(await p.$('[data-testid="pt-figs-1"]'));
   assert(await p.$('[data-testid="pt-figs-3"]'));
@@ -358,6 +367,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#dtab-refs', x => !x.hidden && x.innerText.includes('被引用总结 1')));
   await p.click('[data-testid="det-tab-refs"]');
   assert(await p.$eval('#dt-refs', x => x.style.display === 'block' && x.innerText.includes('项目排期与客户反馈')));
+  assert.equal(await p.$eval('#dt-refs .refbox', x => getComputedStyle(x).borderTopWidth), '0px', '被引用总结列表外层不应再套边框');
   await shot('detail-backlink');
   await p.click('[data-testid^="ref-"]');
   // 历史扁平化：该总结已在路由栈中 → 直接回到先前的总结（不纵深），面包屑即显示 Timeline
@@ -393,11 +403,10 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
   await p.click('#stabs button[data-st="src"]');
   assert(await secVis('sec-src') && !(await secVis('sec-ov')));
-  // 来源记录：带图片 icon 的结构化信息卡片（有图记录显示 SVG 图片 icon + 张数，无图记录不显示）
-  assert.equal(await p.$('[data-testid="src-picbadge-e1"]'), null, '无图记录不应展示图片 icon 徽标');
-  assert(await p.$eval('[data-testid="src-picbadge-e2"]', x => x.innerText.includes('1 张图片') && !!x.querySelector('svg')));
-  assert(await p.$eval('[data-testid="src-picbadge-e3"]', x => x.innerText.includes('4 张图片') && !!x.querySelector('svg')));
-  assert(await p.$eval('[data-testid="src-e2"] .src-brief', x => x.innerText.includes('回访')));
+  // 来源记录：单层卡片展示标题、时间时长，有图记录在左下元信息紧跟「含 N 张图片」
+  assert.equal(await p.$('[data-testid="src-piccount-e1"]'), null, '无图记录不应展示图片计数');
+  assert(await p.$eval('[data-testid="src-piccount-e2"]', x => x.innerText.includes('含 1 张图片')));
+  assert(await p.$eval('[data-testid="src-piccount-e3"]', x => x.innerText.includes('含 4 张图片')));
   await p.click('[data-testid="src-e1"]');
   assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
   await p.click('[data-testid="crumb-back"]');
@@ -563,7 +572,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="parity-btn"]');
   assert(await p.$eval('#parity-wrap', x => x.classList.contains('show')));
   assert.equal(await p.$('#parity-tabs'), null, '清理后不再保留 App 超前对比分页');
-  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 12);
+  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 10);
   await p.evaluate(() => closeParity());
   await p.click('[data-testid="hw-capsule"]');
   assert(await p.$eval('#sheet', x => x.classList.contains('show')));
@@ -747,6 +756,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(nh >= 54 && nh <= 58, '宽屏 nav 高度应固定 ≈56，实际 ' + nh);
   await shot('wide-empty');
   await p.click('[data-testid="card-e1"]');
+  await p.$eval('[data-testid="detail-e1"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="detail-e1"]');
   assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
   assert(await p.$eval('#p-timeline', x => x.classList.contains('show') && x.offsetParent !== null));
@@ -811,6 +821,19 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0, 'current.html 不应出现 TBC 标记');
   assert.equal(await pCur.$$eval('.card[data-kind="daily"], .card[data-kind="dream"]', x => x.length), 0);
   assert(!(await pCur.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
+  // 验证当前版同样具备：总结卡左下图片数、未归类双列正方形详情页与「不归类」按钮、总结正文自然穿插配图
+  assert(await pCur.$eval('[data-testid="card-sum-demo"] .when', x => x.textContent.includes('已选 1 片段 · 含 2 张图片')));
+  await pCur.click('[data-testid="card-unc-0"]');
+  assert(await pCur.$eval('#p-unc', x => x.classList.contains('show')));
+  assert.equal(await pCur.$$eval('#uncp-body .unc-tile', x => x.length), 1);
+  await pCur.click('[data-testid="crumb-back"]');
+  await pCur.click('[data-testid="unc-dismiss-day-0"]');
+  assert.equal(await pCur.$('[data-testid="card-unc-0"]'), null, '点击卡片右下角「不归类」后未归类卡片应收起');
+  await pCur.click('[data-testid="card-sum-demo"]');
+  assert(await pCur.$('[data-testid="sum-ov-inline-photo"]'));
+  assert(await pCur.$('[data-testid="mleaf-pic-e2-0"]'));
+  assert(await pCur.$('[data-testid="pt-figs-0"]'));
+  await pCur.click('[data-testid="crumb-back"]');
   await pCur.click('[data-testid="nav-setting"]');
   await pCur.evaluate(() => { agCfg.local.spk = 'none'; syncSetSummary(); });
   await pCur.click('[data-testid="set-voiceprint"]');

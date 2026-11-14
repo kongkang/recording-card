@@ -1,10 +1,12 @@
 /// 总结结果页 —— 生成态（进度/已生成/预计还需/步骤）与结果态（吸顶 Tab + 目录浮钮 + 信息点溯源 + 导出）。
 library;
 
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../core/models/record.dart';
 import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
 import '../services/export/export.dart';
@@ -349,8 +351,148 @@ class _ResultView extends StatelessWidget {
     );
   }
 
+  List<_ContextualPhoto> _allActivePhotos(AppStore store) {
+    final out = <_ContextualPhoto>[];
+    final seen = <String>{};
+    for (final id in card.srcIds) {
+      if (!seen.add(id)) continue;
+      final e = store.eventByIdOrNull(id);
+      if (e == null) continue;
+      for (final p in store.activePhotosForEvent(e)) {
+        out.add((event: e, photo: p));
+      }
+    }
+    return out;
+  }
+
+  static List<_ContextualPhoto> _photosForPoint(
+    AppStore store,
+    InfoPoint point,
+  ) {
+    final out = <_ContextualPhoto>[];
+    final seen = <String>{};
+    for (final s in point.sources) {
+      final e = store.eventByIdOrNull(s.eventId);
+      if (e == null) continue;
+      final active = store.activePhotosForEvent(e);
+      if (active.isEmpty) continue;
+      final window = _parseClockWindow(s.range);
+      final matched = window == null
+          ? active
+          : active
+                .where((p) {
+                  final sec = _clockSeconds(p.time);
+                  return sec != null && sec >= window.$1 && sec <= window.$2;
+                })
+                .toList();
+      final chosen = matched.isNotEmpty ? matched : [active.first];
+      for (final p in chosen) {
+        final key = '${e.id}:${p.id}';
+        if (seen.add(key)) {
+          out.add((event: e, photo: p));
+        }
+      }
+    }
+    return out;
+  }
+
+  Map<String, _ContextualPhoto> _leafPhotoMatches(
+    AppStore store,
+    List<_ContextualPhoto> allPhotos,
+  ) {
+    final map = <String, _ContextualPhoto>{};
+    if (allPhotos.isEmpty || card.structure.isEmpty) return map;
+
+    // 收集每张活跃照片对应的语义锚文本（所属记录标题/摘要 + 关联信息点标题/细节）
+    final anchors = <({
+      _ContextualPhoto item,
+      String corpus,
+    })>[];
+    for (final item in allPhotos) {
+      final buf = StringBuffer()
+        ..write(item.event.title)
+        ..write(' ')
+        ..write(item.event.brief)
+        ..write(' ')
+        ..write(item.event.longText);
+      for (final pt in card.points) {
+        if (pt.sources.any((s) => s.eventId == item.event.id)) {
+          buf
+            ..write(' ')
+            ..write(pt.title)
+            ..write(' ')
+            ..write(pt.detail);
+        }
+      }
+      anchors.add((item: item, corpus: buf.toString()));
+    }
+
+    for (var bi = 0; bi < card.structure.length; bi++) {
+      final b = card.structure[bi];
+      for (var li = 0; li < b.leaves.length; li++) {
+        final leaf = b.leaves[li];
+        final probe = '${b.name} $leaf';
+        _ContextualPhoto? best;
+        var bestScore = 0;
+        for (final a in anchors) {
+          final score = _cjkBigramOverlap(probe, a.corpus);
+          if (score > bestScore) {
+            bestScore = score;
+            best = a.item;
+          }
+        }
+        if (best != null && bestScore >= 1) {
+          map['$bi:$li'] = best;
+        }
+      }
+    }
+    if (map.isEmpty && card.structure.first.leaves.isNotEmpty) {
+      map['0:0'] = allPhotos.first;
+    }
+    return map;
+  }
+
+  static int _cjkBigramOverlap(String a, String b) {
+    final cleanA = a.replaceAll(RegExp(r'[\s·，。、：；！？（）()\-—/]'), '');
+    if (cleanA.length < 2) return 0;
+    var hits = 0;
+    for (var i = 0; i <= cleanA.length - 2; i++) {
+      final gram = cleanA.substring(i, i + 2);
+      if (b.contains(gram)) hits++;
+    }
+    return hits;
+  }
+
+  static (int, int)? _parseClockWindow(String raw) {
+    final matches = RegExp(
+      r'(\d{1,2}):(\d{2})(?::(\d{2}))?',
+    ).allMatches(raw).toList();
+    if (matches.length < 2) return null;
+    int toSec(RegExpMatch m, {required bool end}) {
+      final h = int.tryParse(m.group(1)!) ?? 0;
+      final min = int.tryParse(m.group(2)!) ?? 0;
+      final sec = m.group(3) != null
+          ? (int.tryParse(m.group(3)!) ?? 0)
+          : (end ? 59 : 0);
+      return h * 3600 + min * 60 + sec;
+    }
+
+    return (toSec(matches[0], end: false), toSec(matches[1], end: true));
+  }
+
+  static int? _clockSeconds(String raw) {
+    final m = RegExp(r'(\d{1,2}):(\d{2})(?::(\d{2}))?').firstMatch(raw);
+    if (m == null) return null;
+    final h = int.tryParse(m.group(1)!) ?? 0;
+    final min = int.tryParse(m.group(2)!) ?? 0;
+    final sec = int.tryParse(m.group(3) ?? '0') ?? 0;
+    return h * 3600 + min * 60 + sec;
+  }
+
   List<Widget> _sections(BuildContext context, AppStore store) {
     bool show(String k) => page._tab == 'all' || page._tab == k;
+    final allPhotos = _allActivePhotos(store);
+    final leafMatches = _leafPhotoMatches(store, allPhotos);
     return [
       if (show('ov'))
         _section('sec-ov', '概览', [
@@ -358,13 +500,32 @@ class _ResultView extends StatelessWidget {
             card.overview ?? '',
             style: const TextStyle(fontSize: 14, height: 1.6),
           ),
+          if (allPhotos.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _InlineSummaryFigure(
+              key: const Key('sum-ov-inline-photo'),
+              item: allPhotos.first,
+              onOpenDetail: () => store.openDetail(allPhotos.first.event.id),
+            ),
+          ],
         ]),
       if (show('map'))
-        _section('sec-map', '逻辑结构', [_MapTree(branches: card.structure)]),
+        _section('sec-map', '逻辑结构', [
+          _MapTree(
+            branches: card.structure,
+            leafPhotos: leafMatches,
+            onOpenDetail: store.openDetail,
+          ),
+        ]),
       if (show('pt'))
         _section('sec-pt', '信息点', [
           for (var i = 0; i < card.points.length; i++)
-            _PointTile(page: page, index: i, point: card.points[i]),
+            _PointTile(
+              page: page,
+              index: i,
+              point: card.points[i],
+              photos: _photosForPoint(store, card.points[i]),
+            ),
         ]),
       if (show('todo'))
         _section('sec-todo', '行动项', [
@@ -412,40 +573,82 @@ class _ResultView extends StatelessWidget {
               builder: (context) {
                 final e = store.eventByIdOrNull(id);
                 if (e == null) return const SizedBox.shrink();
+                final picCount = store.activePhotosForEvent(e).length;
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: OutlinedButton(
-                    key: Key('src-$id'),
-                    onPressed: () => store.openDetail(id),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: RCColors.label,
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Material(
+                    color: RCColors.card,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                       side: const BorderSide(color: RCColors.sep),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.all(14),
                     ),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            e.title,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      key: Key('src-$id'),
+                      onTap: () => store.openDetail(id),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    e.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                const Icon(
+                                  Icons.chevron_right,
+                                  size: 16,
+                                  color: RCColors.ax,
+                                ),
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${_dayLabel(e.dayOffset)} ${e.time} · ${e.dur}',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: RCColors.sec,
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    '${_dayLabel(e.dayOffset)} ${e.time} · ${e.dur}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: RCColors.sec,
+                                    ),
+                                  ),
+                                ),
+                                if (picCount > 0) ...[
+                                  const Text(
+                                    ' · ',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: RCColors.sec,
+                                    ),
+                                  ),
+                                  Text(
+                                    '含 $picCount 张图片',
+                                    key: Key('src-piccount-$id'),
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: RCColors.sec,
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -670,10 +873,199 @@ class _StickyTabs extends SliverPersistentHeaderDelegate {
       old.current != current || old.tabs != tabs;
 }
 
-/// 逻辑结构：根节点 + 分支 + 叶子
+typedef _ContextualPhoto = ({RecordEvent event, EventPhoto photo});
+
+void _showInlinePhotoPreview(
+  BuildContext context,
+  _ContextualPhoto item,
+  VoidCallback onOpenDetail,
+) {
+  final p = item.photo;
+  final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
+  final srcLabel = p.source == 'dyj_camera' ? '点一机抓拍' : '系统相册';
+  showDialog<void>(
+    context: context,
+    builder: (ctx) {
+      return Dialog(
+        backgroundColor: RCColors.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AspectRatio(
+              aspectRatio: 1,
+              child: hasFile
+                  ? Image.file(File(p.path), fit: BoxFit.cover)
+                  : const ColoredBox(
+                      color: Color(0xFFEAEAE4),
+                      child: Center(
+                        child: Icon(
+                          Icons.photo_outlined,
+                          size: 44,
+                          color: RCColors.sec,
+                        ),
+                      ),
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${item.event.title} · ${p.time}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          srcLabel,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: RCColors.sec,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      onOpenDetail();
+                    },
+                    child: const Text('查看原话 ›'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// 穿插在概览或信息点正文中的自然插图：像段落补充一样融入阅读流，点击看大图或溯源原话。
+class _InlineSummaryFigure extends StatelessWidget {
+  const _InlineSummaryFigure({
+    super.key,
+    required this.item,
+    required this.onOpenDetail,
+  });
+
+  final _ContextualPhoto item;
+  final VoidCallback onOpenDetail;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = item.photo;
+    final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
+    final srcLabel = p.source == 'dyj_camera' ? '点一机抓拍' : '系统相册';
+    return Material(
+      color: RCColors.card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: const BorderSide(color: RCColors.sep),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _showInlinePhotoPreview(context, item, onOpenDetail),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(7),
+                child: SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: hasFile
+                      ? Image.file(File(p.path), fit: BoxFit.cover)
+                      : ColoredBox(
+                          color: const Color(0xFFEAEAE4),
+                          child: Center(
+                            child: Icon(
+                              p.source == 'dyj_camera'
+                                  ? Icons.photo_camera_outlined
+                                  : Icons.photo_outlined,
+                              size: 20,
+                              color: RCColors.sec,
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      item.event.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '$srcLabel · ${p.time}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        color: RCColors.sec,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              GestureDetector(
+                onTap: onOpenDetail,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  child: Text(
+                    '原话 ›',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: RCColors.okInk,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 逻辑结构：根节点 + 分支 + 叶子（有关联现场图时在叶子旁自然附带图片图标）
 class _MapTree extends StatelessWidget {
-  const _MapTree({required this.branches});
+  const _MapTree({
+    required this.branches,
+    this.leafPhotos = const {},
+    required this.onOpenDetail,
+  });
+
   final List<MapBranch> branches;
+  final Map<String, _ContextualPhoto> leafPhotos;
+  final void Function(String eventId) onOpenDetail;
 
   @override
   Widget build(BuildContext context) {
@@ -692,7 +1084,7 @@ class _MapTree extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 10),
-        for (final b in branches)
+        for (var bi = 0; bi < branches.length; bi++)
           Padding(
             padding: const EdgeInsets.only(left: 10, bottom: 12),
             child: Column(
@@ -703,7 +1095,7 @@ class _MapTree extends StatelessWidget {
                     Container(width: 2, height: 14, color: RCColors.ax),
                     const SizedBox(width: 8),
                     Text(
-                      b.name,
+                      branches[bi].name,
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -718,24 +1110,11 @@ class _MapTree extends StatelessWidget {
                     spacing: 8,
                     runSpacing: 6,
                     children: [
-                      for (final leaf in b.leaves)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: RCColors.card,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: RCColors.sep),
-                          ),
-                          child: Text(
-                            leaf,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: RCColors.ink,
-                            ),
-                          ),
+                      for (var li = 0; li < branches[bi].leaves.length; li++)
+                        _buildLeafChip(
+                          context,
+                          branches[bi].leaves[li],
+                          leafPhotos['$bi:$li'],
                         ),
                     ],
                   ),
@@ -746,18 +1125,73 @@ class _MapTree extends StatelessWidget {
       ],
     );
   }
+
+  Widget _buildLeafChip(
+    BuildContext context,
+    String leaf,
+    _ContextualPhoto? match,
+  ) {
+    if (match == null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: RCColors.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: RCColors.sep),
+        ),
+        child: Text(
+          leaf,
+          style: const TextStyle(fontSize: 12, color: RCColors.ink),
+        ),
+      );
+    }
+    return Material(
+      color: RCColors.card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: RCColors.sep),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: Key('mleaf-pic-${match.event.id}-${match.photo.id}'),
+        onTap: () => _showInlinePhotoPreview(
+          context,
+          match,
+          () => onOpenDetail(match.event.id),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  leaf,
+                  style: const TextStyle(fontSize: 12, color: RCColors.ink),
+                ),
+              ),
+              const SizedBox(width: 5),
+              const Icon(Icons.image_outlined, size: 13.5, color: RCColors.sec),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-/// 信息点：标题 + 细节 + 溯源链接（可展开收起）
+/// 信息点：标题（含关联图小标）+ 细节 + 正文内穿插配图 + 溯源链接（可展开收起）
 class _PointTile extends StatelessWidget {
   const _PointTile({
     required this.page,
     required this.index,
     required this.point,
+    this.photos = const [],
   });
   final _SummaryResultPageState page;
   final int index;
   final InfoPoint point;
+  final List<_ContextualPhoto> photos;
 
   @override
   Widget build(BuildContext context) {
@@ -789,6 +1223,16 @@ class _PointTile extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (photos.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.image_outlined,
+                      key: Key('pt-picico-$index'),
+                      size: 15,
+                      color: RCColors.sec,
+                    ),
+                    const SizedBox(width: 4),
+                  ],
                   Icon(
                     open ? Icons.expand_less : Icons.expand_more,
                     size: 18,
@@ -809,6 +1253,25 @@ class _PointTile extends StatelessWidget {
                     key: Key('pt-d-$index'),
                     style: const TextStyle(fontSize: 13, height: 1.6),
                   ),
+                  if (photos.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Column(
+                      key: Key('pt-figs-$index'),
+                      children: [
+                        for (var pi = 0; pi < photos.length; pi++)
+                          Padding(
+                            padding: EdgeInsets.only(
+                              bottom: pi < photos.length - 1 ? 8 : 0,
+                            ),
+                            child: _InlineSummaryFigure(
+                              item: photos[pi],
+                              onOpenDetail: () =>
+                                  store.openDetail(photos[pi].event.id),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,

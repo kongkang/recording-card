@@ -141,6 +141,7 @@ class AppStore extends ChangeNotifier {
   static const pageLabels = {
     'sum': '总结',
     'detail': '记录',
+    'unc': '未归类图片',
     'setsub': 'Setting',
   };
 
@@ -562,6 +563,11 @@ class AppStore extends ChangeNotifier {
   void openSettingSub(String id, {bool fresh = true}) =>
       navSub(RouteEntry('setsub', id), fresh: fresh);
 
+  void openUnclassified(int dayOffset, {bool fresh = true}) {
+    if (selMode) return;
+    navSub(RouteEntry('unc', '$dayOffset'), fresh: fresh);
+  }
+
   void goBack() {
     if (subStack.length > 1) {
       subStack = subStack.sublist(0, subStack.length - 1);
@@ -604,6 +610,7 @@ class AppStore extends ChangeNotifier {
   bool get showPaneBackDetail =>
       subStack.length > 1 && stackTop!.type == 'detail';
   bool get showPaneBackSum => subStack.length > 1 && stackTop!.type == 'sum';
+  bool get showPaneBackUnc => subStack.length > 1 && stackTop!.type == 'unc';
   bool get showPaneBackSetSub =>
       subStack.length > 1 && stackTop!.type == 'setsub';
 
@@ -664,12 +671,153 @@ class AppStore extends ChangeNotifier {
     var updated = false;
     for (var i = 0; i < merged.length; i++) {
       if (merged[i].id == photoId && !merged[i].excluded) {
-        merged[i] = merged[i].copyWith(excluded: true);
+        merged[i] = merged[i].copyWith(excluded: true, dismissed: false);
         updated = true;
       }
     }
     if (!updated) return;
     eventPhotos = {...eventPhotos, eventId: merged};
+    _persist();
+    notifyListeners();
+  }
+
+  /// 获取某一天待分拣的「未归类图片」（已从对话流排除且尚未标记「不归类」）。
+  List<({RecordEvent event, EventPhoto photo})> unclassifiedPhotosForDay(
+    int dayOffset,
+  ) {
+    final out = <({RecordEvent event, EventPhoto photo})>[];
+    for (final e in events) {
+      if (e.dayOffset != dayOffset) continue;
+      for (final p in photosForEvent(e)) {
+        if (p.excluded && !p.dismissed) {
+          out.add((event: e, photo: p));
+        }
+      }
+    }
+    return out;
+  }
+
+  /// 按拍照时刻与当日记录时间距离从近到远排序候选记录。
+  List<RecordEvent> candidateEventsForPhoto(int dayOffset, EventPhoto photo) {
+    final cands = events
+        .where((e) => e.dayOffset == dayOffset && !e.live)
+        .toList();
+    final photoMin = _minutesOfClock(photo.time);
+    int dist(RecordEvent e) {
+      final start = _minutesOfDay(e.time);
+      final end =
+          start + math.max<int>(1, (_parseDurationSeconds(e.dur) / 60).round());
+      if (photoMin < start) return start - photoMin;
+      if (photoMin > end) return photoMin - end;
+      return 0;
+    }
+
+    cands.sort((a, b) => dist(a).compareTo(dist(b)));
+    return cands;
+  }
+
+  static int _minutesOfClock(String raw) {
+    final m = RegExp(r'(\d{1,2}):(\d{2})').firstMatch(raw);
+    if (m == null) return 0;
+    return (int.tryParse(m.group(1)!) ?? 0) * 60 +
+        (int.tryParse(m.group(2)!) ?? 0);
+  }
+
+  /// 将单张未归类图片标记为「不归类」：保留排除态但不再在未归类卡片中展示。
+  void dismissPhoto(String eventId, String photoId) {
+    final event = eventByIdOrNull(eventId);
+    final merged = event != null
+        ? List<EventPhoto>.of(photosForEvent(event))
+        : List<EventPhoto>.of(eventPhotos[eventId] ?? const []);
+    var updated = false;
+    for (var i = 0; i < merged.length; i++) {
+      if (merged[i].id == photoId && !merged[i].dismissed) {
+        merged[i] = merged[i].copyWith(excluded: true, dismissed: true);
+        updated = true;
+      }
+    }
+    if (!updated) return;
+    eventPhotos = {...eventPhotos, eventId: merged};
+    final dayOffset = event?.dayOffset;
+    if (dayOffset != null &&
+        stackTop?.type == 'unc' &&
+        stackTop?.id == '$dayOffset' &&
+        unclassifiedPhotosForDay(dayOffset).isEmpty) {
+      goBack();
+      return;
+    }
+    _persist();
+    notifyListeners();
+  }
+
+  /// 将某一天全部未归类图片一键标记为「不归类」。
+  void dismissUnclassifiedDay(int dayOffset) {
+    final nextMap = Map<String, List<EventPhoto>>.of(eventPhotos);
+    var updated = false;
+    for (final e in events) {
+      if (e.dayOffset != dayOffset) continue;
+      final merged = List<EventPhoto>.of(photosForEvent(e));
+      var changed = false;
+      for (var i = 0; i < merged.length; i++) {
+        if (merged[i].excluded && !merged[i].dismissed) {
+          merged[i] = merged[i].copyWith(excluded: true, dismissed: true);
+          changed = true;
+        }
+      }
+      if (changed) {
+        nextMap[e.id] = merged;
+        updated = true;
+      }
+    }
+    if (!updated) return;
+    eventPhotos = nextMap;
+    if (stackTop?.type == 'unc' && stackTop?.id == '$dayOffset') {
+      goBack();
+      return;
+    }
+    _persist();
+    notifyListeners();
+  }
+
+  /// 将未归类图片重新归入指定记录（支持归回原记录或归入同日其他记录）。
+  void reassignExcludedPhoto({
+    required String fromEventId,
+    required String photoId,
+    required String toEventId,
+  }) {
+    final fromEvent = eventByIdOrNull(fromEventId);
+    final toEvent = eventByIdOrNull(toEventId);
+    if (toEvent == null) return;
+    final fromMerged = fromEvent != null
+        ? List<EventPhoto>.of(photosForEvent(fromEvent))
+        : List<EventPhoto>.of(eventPhotos[fromEventId] ?? const []);
+    final idx = fromMerged.indexWhere((p) => p.id == photoId);
+    if (idx < 0) return;
+    final restored = fromMerged[idx].copyWith(excluded: false, dismissed: false);
+    final nextMap = Map<String, List<EventPhoto>>.of(eventPhotos);
+    if (fromEventId == toEventId) {
+      fromMerged[idx] = restored;
+      nextMap[fromEventId] = fromMerged;
+    } else {
+      fromMerged.removeAt(idx);
+      nextMap[fromEventId] = fromMerged;
+      final toMerged = List<EventPhoto>.of(photosForEvent(toEvent));
+      final existIdx = toMerged.indexWhere((p) => p.id == photoId);
+      if (existIdx >= 0) {
+        toMerged[existIdx] = restored;
+      } else {
+        toMerged.add(restored);
+      }
+      nextMap[toEventId] = toMerged;
+    }
+    eventPhotos = nextMap;
+    final dayOffset = fromEvent?.dayOffset ?? toEvent.dayOffset;
+    if (stackTop?.type == 'unc' &&
+        stackTop?.id == '$dayOffset' &&
+        unclassifiedPhotosForDay(dayOffset).isEmpty) {
+      goBack();
+      return;
+    }
     _persist();
     notifyListeners();
   }
@@ -691,6 +839,7 @@ class AppStore extends ChangeNotifier {
         capturedAtMs: photo.capturedAtMs ?? prev.capturedAtMs,
         source: photo.source,
         excluded: prev.excluded,
+        dismissed: prev.dismissed,
       );
     } else {
       merged.add(photo);
@@ -1055,7 +1204,9 @@ class AppStore extends ChangeNotifier {
     if (f == FeedFilter.all) {
       final excludedByDay = <int, List<EventPhoto>>{};
       for (final e in events) {
-        final ex = photosForEvent(e).where((p) => p.excluded).toList();
+        final ex = photosForEvent(
+          e,
+        ).where((p) => p.excluded && !p.dismissed).toList();
         if (ex.isNotEmpty) {
           (excludedByDay[e.dayOffset] ??= []).addAll(ex);
         }
@@ -1374,6 +1525,7 @@ class AppStore extends ChangeNotifier {
       for (final e in (data['stack'] as List? ?? []))
         if (e is Map<String, dynamic> &&
             ((e['t'] == 'detail') ||
+                (e['t'] == 'unc') ||
                 (e['t'] == 'setsub') ||
                 (e['t'] == 'sum' && summaries.any((s) => s.id == e['id']))))
           RouteEntry(e['t'] as String, e['id'] as String),

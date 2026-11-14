@@ -732,18 +732,25 @@ class _SummaryCardView extends StatelessWidget {
             const SizedBox(height: 4),
             Row(
               children: [
-                Expanded(
+                Flexible(
                   child: Text(
                     '${card.time} · 已选 ${card.srcIds.length} 片段',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 12, color: RCColors.sec),
                   ),
                 ),
-                if (picCount > 0)
+                if (picCount > 0) ...[
+                  const Text(
+                    ' · ',
+                    style: TextStyle(fontSize: 12, color: RCColors.sec),
+                  ),
                   Text(
                     '含 $picCount 张图片',
                     key: Key('sumpics-${card.id}'),
-                    style: const TextStyle(fontSize: 11, color: RCColors.sec),
+                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
                   ),
+                ],
               ],
             ),
           ],
@@ -995,37 +1002,89 @@ class _UnclassifiedPhotosCardView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final store = StoreScope.of(context);
+    final title = card.dayOffset == 0 ? '今日未归类图片' : '${card.dayLabelText}未归类图片';
     return Padding(
       key: Key('card-unc-${card.dayOffset}'),
       padding: const EdgeInsets.only(bottom: 28),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-        decoration: BoxDecoration(
-          color: RCColors.card,
+      child: Material(
+        color: RCColors.card,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: RCColors.sep),
+          side: const BorderSide(color: RCColors.sep),
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '未归类图片',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '已从录音对话排除 · 共 ${card.photos.length} 张',
-                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
-                  ),
-                ],
-              ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: store.selMode
+              ? null
+              : () => store.openUnclassified(card.dayOffset, fresh: true),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const Icon(
+                      Icons.chevron_right,
+                      size: 16,
+                      color: RCColors.ax,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    _PhotoStackThumb(photos: card.photos),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        '已移出对话流 · 共 ${card.photos.length} 张',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: RCColors.sec,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    InkWell(
+                      key: Key('unc-dismiss-day-${card.dayOffset}'),
+                      onTap: () => store.dismissUnclassifiedDay(card.dayOffset),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: RCColors.bg,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: RCColors.sep),
+                        ),
+                        child: const Text(
+                          '不归类',
+                          style: TextStyle(fontSize: 11.5, color: RCColors.sec),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            const SizedBox(width: 10),
-            _PhotoStackThumb(photos: card.photos),
-          ],
+          ),
         ),
       ),
     );

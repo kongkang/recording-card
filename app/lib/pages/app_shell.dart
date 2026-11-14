@@ -24,6 +24,7 @@ import 'settings/setting_sub_page.dart';
 import 'status_sheet.dart';
 import 'summary_result_page.dart';
 import 'timeline_page.dart';
+import 'unclassified_photos_page.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -421,6 +422,12 @@ Widget _stackTopPage(
       showPaneBack: wide && store.showPaneBackSum,
     );
   }
+  if (top.type == 'unc') {
+    return UnclassifiedPhotosPage(
+      dayOffset: int.tryParse(top.id) ?? 0,
+      showPaneBack: wide && store.showPaneBackUnc,
+    );
+  }
   if (top.type == 'setsub') {
     return SettingSubPage(
       subId: top.id,
@@ -544,6 +551,12 @@ class _NarrowLayout extends StatelessWidget {
   ) {
     if (e.type == 'sum') {
       return SummaryResultPage(summaryId: e.id, showPaneBack: false);
+    }
+    if (e.type == 'unc') {
+      return UnclassifiedPhotosPage(
+        dayOffset: int.tryParse(e.id) ?? 0,
+        showPaneBack: false,
+      );
     }
     if (e.type == 'setsub') {
       return SettingSubPage(

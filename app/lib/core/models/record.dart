@@ -17,6 +17,7 @@ class EventPhoto {
   final int? capturedAtMs;
   final String source; // 'dyj_camera' | 'system_album'
   final bool excluded; // 标记「不属于本段」后移入当天顶部「未归类图片」
+  final bool dismissed; // 在「未归类图片」中标记为「不归类」后不再提醒
 
   const EventPhoto({
     required this.id,
@@ -25,15 +26,17 @@ class EventPhoto {
     this.capturedAtMs,
     this.source = 'system_album',
     this.excluded = false,
+    this.dismissed = false,
   });
 
-  EventPhoto copyWith({bool? excluded}) => EventPhoto(
+  EventPhoto copyWith({bool? excluded, bool? dismissed}) => EventPhoto(
     id: id,
     time: time,
     path: path,
     capturedAtMs: capturedAtMs,
     source: source,
     excluded: excluded ?? this.excluded,
+    dismissed: dismissed ?? this.dismissed,
   );
 
   Map<String, dynamic> toJson() => {
@@ -43,6 +46,7 @@ class EventPhoto {
     if (capturedAtMs != null) 'ms': capturedAtMs,
     'src': source,
     if (excluded) 'ex': true,
+    if (dismissed) 'dm': true,
   };
 
   factory EventPhoto.fromJson(Map<String, dynamic> j) => EventPhoto(
@@ -52,6 +56,7 @@ class EventPhoto {
     capturedAtMs: (j['ms'] as num?)?.toInt(),
     source: '${j['src'] ?? 'system_album'}',
     excluded: j['ex'] == true,
+    dismissed: j['dm'] == true,
   );
 }
 
