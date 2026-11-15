@@ -1,0 +1,1612 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Card · 录音卡 — 随身语音记忆硬件与端侧优先伴侣 App</title>
+  <meta name="description" content="一张随身录音卡，一套端侧优先的伴侣 App。早鸟登记承诺赠送至少 1 个月会员，并自动参与抽取实体录音卡（价值 ¥1,000）。">
+  <link rel="icon" type="image/svg+xml" href="./assets/icon.svg">
+  <meta property="og:title" content="AI Card · 录音卡">
+  <meta property="og:description" content="把每天说过的每句话，整理成可检索的记忆。早鸟登记赠至少 1 个月会员 + 抽实体录音卡（价值 ¥1,000）。">
+  <meta property="og:url" content="https://ai-card.app.reai.com">
+  <meta property="og:type" content="website">
+  <style>
+    :root {
+      --bg: #FAFAF8;
+      --bg: oklch(0.985 0.004 95);
+      --surface: #FFFFFF;
+      --surface: oklch(1 0 0);
+      --well: #F2F2ED;
+      --well: oklch(0.955 0.006 95);
+      --ink: #1D1D1F;
+      --ink: oklch(0.21 0.005 260);
+      --ink-2: #48484D;
+      --ink-2: oklch(0.38 0.008 260);
+      --muted: #7A7A80;
+      --muted: oklch(0.56 0.008 260);
+      --rule: #E4E4E0;
+      --rule: oklch(0.905 0.006 95);
+      --rule-strong: #C9C9C4;
+      --rule-strong: oklch(0.82 0.008 95);
+      --rec: #FF3B30;
+      --rec: oklch(0.63 0.24 27);
+      --ok: #34C759;
+      --ok: oklch(0.70 0.19 145);
+      --ok-ink: #1F7A34;
+      --ok-ink: oklch(0.49 0.14 145);
+      --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      --max-w: 1180px;
+      --radius-md: 12px;
+      --radius-lg: 18px;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.6;
+      font-size: 15px;
+      overflow-x: hidden;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    button {
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .container {
+      width: 100%;
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ── Top Navigation ── */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      height: 56px;
+      background: rgba(250, 250, 248, 0.9);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .topbar-inner {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -0.01em;
+      flex: none;
+    }
+
+    .brand img {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      border: 1px solid var(--rule);
+      display: block;
+    }
+
+    .brand-tag {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted);
+      padding: 2px 7px;
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      font-size: 13px;
+      color: var(--ink-2);
+    }
+
+    .nav-links a:hover {
+      color: var(--ink);
+    }
+
+    .nav-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      flex: none;
+    }
+
+    .lang-switch {
+      display: inline-flex;
+      border: 1px solid var(--rule-strong);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 2px;
+    }
+
+    .lang-switch button {
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      padding: 4px 9px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .lang-switch button.on {
+      background: var(--ink);
+      color: var(--surface);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      height: 36px;
+      padding: 0 15px;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: var(--surface);
+      transition: opacity 0.16s ease, transform 0.16s ease;
+    }
+
+    .btn:hover {
+      opacity: 0.88;
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid var(--rule-strong);
+    }
+
+    .btn-ghost:hover {
+      background: var(--well);
+      opacity: 1;
+    }
+
+    .btn-lg {
+      height: 44px;
+      padding: 0 20px;
+      font-size: 14px;
+      border-radius: 10px;
+    }
+
+    /* ── Hero: Asymmetric 12-Col Editorial Grid ── */
+    .hero {
+      padding: 56px 0 64px;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+      gap: 48px;
+      align-items: center;
+    }
+
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      letter-spacing: 0.04em;
+      color: var(--ink-2);
+      padding: 5px 11px;
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+      background: var(--surface);
+      margin-bottom: 20px;
+    }
+
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--rec);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .hero h1 {
+      font-size: clamp(32px, 4.4vw, 50px);
+      font-weight: 750;
+      line-height: 1.14;
+      letter-spacing: -0.03em;
+      color: var(--ink);
+      margin-bottom: 18px;
+    }
+
+    .hero-lead {
+      font-size: 16.5px;
+      line-height: 1.7;
+      color: var(--ink-2);
+      max-width: 540px;
+      margin-bottom: 22px;
+    }
+
+    .perk-banner {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--rule-strong);
+      border-radius: 9px;
+      padding: 8px 13px;
+      margin-bottom: 22px;
+    }
+
+    .perk-banner .ok-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ok);
+      flex: none;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 20px;
+      padding-top: 20px;
+      border-top: 1px solid var(--rule);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .hero-meta span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .hero-meta i {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--ok);
+      display: inline-block;
+    }
+
+    /* ── Interactive Hardware Stage ── */
+    .stage {
+      background: var(--well);
+      border: 1px solid var(--rule);
+      border-radius: var(--radius-lg);
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .stage-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .capsule-demo {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-family: var(--font-sans);
+      font-size: 11.5px;
+      color: var(--ink-2);
+    }
+
+    .capsule-demo .dot-ok {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ok);
+    }
+
+    .island-wrap {
+      display: flex;
+      justify-content: center;
+      min-height: 48px;
+      align-items: center;
+    }
+
+    .island {
+      background: #111113;
+      color: #FAFAF8;
+      border-radius: 999px;
+      padding: 8px 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      max-width: 100%;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      transition: all 0.25s ease;
+    }
+
+    .island-bars {
+      display: inline-flex;
+      align-items: center;
+      gap: 2.5px;
+      height: 14px;
+    }
+
+    .island-bars span {
+      width: 2.5px;
+      border-radius: 2px;
+      background: var(--rec);
+      height: 6px;
+      transition: height 0.2s ease;
+    }
+
+    .island.listening .island-bars span {
+      animation: eq 0.7s ease-in-out infinite alternate;
+    }
+
+    .island.listening .island-bars span:nth-child(2) { animation-delay: 0.15s; }
+    .island.listening .island-bars span:nth-child(3) { animation-delay: 0.3s; }
+    .island.listening .island-bars span:nth-child(4) { animation-delay: 0.1s; }
+
+    @keyframes eq {
+      from { height: 4px; }
+      to { height: 14px; }
+    }
+
+    .island-clock {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: #A1A1A6;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .hw-card {
+      position: relative;
+      background: #1D1D1F;
+      color: #FAFAF8;
+      border-radius: 16px;
+      padding: 24px 24px 22px;
+      aspect-ratio: 1.586 / 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      border: 1px solid #323236;
+      box-shadow: 0 18px 36px -18px rgba(0, 0, 0, 0.35);
+      user-select: none;
+    }
+
+    .hw-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .hw-name {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: #A1A1A6;
+    }
+
+    .hw-led {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--rec);
+      box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.2);
+    }
+
+    .hw-wave {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      height: 58px;
+    }
+
+    .hw-wave span {
+      width: 9px;
+      border-radius: 99px;
+      background: #FAFAF8;
+      display: block;
+    }
+
+    .hw-wave span:nth-child(1),
+    .hw-wave span:nth-child(5) { height: 22px; }
+    .hw-wave span:nth-child(2),
+    .hw-wave span:nth-child(4) { height: 40px; }
+    .hw-wave span:nth-child(3) { height: 54px; }
+
+    .hw-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .hw-spec {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: #8E8E93;
+    }
+
+    .hw-btn-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .hw-trigger {
+      background: #2C2C30;
+      color: #FAFAF8;
+      border: 1px solid #45454A;
+      border-radius: 8px;
+      padding: 6px 11px;
+      font-size: 11.5px;
+      font-weight: 500;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .hw-trigger:hover {
+      background: #3A3A40;
+      border-color: #636369;
+    }
+
+    .hw-trigger:active {
+      transform: scale(0.97);
+    }
+
+    .push-feed {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 11px;
+      padding: 12px 14px;
+      font-size: 12.5px;
+      line-height: 1.55;
+      min-height: 76px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .push-line {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .push-badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: var(--well);
+      border: 1px solid var(--rule);
+      color: var(--ink-2);
+      flex: none;
+      margin-top: 2px;
+    }
+
+    .push-badge.ok {
+      color: var(--ok-ink);
+      border-color: rgba(52, 199, 89, 0.35);
+      background: rgba(52, 199, 89, 0.1);
+    }
+
+    .push-badge.mark {
+      color: var(--rec);
+      border-color: rgba(255, 59, 48, 0.3);
+      background: rgba(255, 59, 48, 0.08);
+    }
+
+    /* ── Section Common ── */
+    section.block {
+      padding: 68px 0;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .sec-head {
+      display: grid;
+      grid-template-columns: 200px minmax(0, 1fr);
+      gap: 28px;
+      margin-bottom: 36px;
+      align-items: baseline;
+    }
+
+    .sec-num {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+
+    .sec-title h2 {
+      font-size: clamp(24px, 3vw, 32px);
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      line-height: 1.2;
+      margin-bottom: 10px;
+    }
+
+    .sec-title p {
+      font-size: 15px;
+      color: var(--ink-2);
+      max-width: 620px;
+    }
+
+    /* ── 01 Pipeline Ledger ── */
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border: 1px solid var(--rule);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .pipe-step {
+      padding: 22px 20px;
+      border-right: 1px solid var(--rule);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .pipe-step:last-child {
+      border-right: none;
+    }
+
+    .pipe-idx {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .pipe-pill {
+      font-size: 10.5px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: var(--well);
+      color: var(--ink-2);
+    }
+
+    .pipe-step h3 {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .pipe-step p {
+      font-size: 13.5px;
+      color: var(--ink-2);
+      line-height: 1.6;
+    }
+
+    .pipe-foot {
+      margin-top: auto;
+      padding-top: 12px;
+      border-top: 1px dashed var(--rule);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* ── 02 App Showcase ── */
+    .showcase {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 36px;
+      align-items: start;
+    }
+
+    .feature-list {
+      display: flex;
+      flex-direction: column;
+      border-top: 1px solid var(--rule);
+    }
+
+    .feat-tab {
+      text-align: left;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--rule);
+      padding: 20px 18px;
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr) 20px;
+      gap: 14px;
+      align-items: start;
+      transition: background 0.16s ease;
+    }
+
+    .feat-tab:hover {
+      background: rgba(0, 0, 0, 0.02);
+    }
+
+    .feat-tab.active {
+      background: var(--surface);
+      box-shadow: inset 3px 0 0 var(--ink);
+    }
+
+    .feat-num {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted);
+      padding-top: 3px;
+    }
+
+    .feat-tab.active .feat-num {
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .feat-body h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: var(--ink);
+    }
+
+    .feat-body p {
+      font-size: 13.5px;
+      color: var(--ink-2);
+      line-height: 1.65;
+    }
+
+    .feat-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .feat-tags span {
+      font-size: 11px;
+      color: var(--ink-2);
+      background: var(--well);
+      border: 1px solid var(--rule);
+      border-radius: 5px;
+      padding: 2px 8px;
+    }
+
+    .feat-arrow {
+      color: var(--muted);
+      font-size: 16px;
+      padding-top: 2px;
+    }
+
+    .feat-tab.active .feat-arrow {
+      color: var(--ink);
+    }
+
+    .phone-frame {
+      position: sticky;
+      top: 76px;
+      background: var(--surface);
+      border: 1px solid var(--rule-strong);
+      border-radius: 28px;
+      padding: 12px;
+      box-shadow: 0 20px 44px -24px rgba(0, 0, 0, 0.18);
+    }
+
+    .phone-screen {
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid var(--rule);
+      background: var(--bg);
+      aspect-ratio: 390 / 844;
+    }
+
+    .phone-screen img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: top;
+      display: block;
+    }
+
+    .phone-caption {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 6px 2px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* ── 03 Hardware & Standby Grid ── */
+    .split-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+
+    .panel-box {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: var(--radius-md);
+      padding: 24px;
+    }
+
+    .panel-box h3 {
+      font-size: 17px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      letter-spacing: -0.01em;
+    }
+
+    .panel-box p {
+      font-size: 14px;
+      color: var(--ink-2);
+      line-height: 1.65;
+      margin-bottom: 16px;
+    }
+
+    .key-rows {
+      border-top: 1px solid var(--rule);
+    }
+
+    .key-row {
+      display: grid;
+      grid-template-columns: 116px minmax(0, 1fr);
+      gap: 14px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--rule);
+      font-size: 13.5px;
+    }
+
+    .key-row:last-child {
+      border-bottom: none;
+    }
+
+    .key-row strong {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--ink);
+    }
+
+    .key-row span {
+      color: var(--ink-2);
+    }
+
+    /* ── 04 Privacy & Honesty Matrix ── */
+    .matrix {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border: 1px solid var(--rule);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .matrix-cell {
+      padding: 26px 24px;
+      border-right: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .matrix-cell:nth-child(2n) {
+      border-right: none;
+    }
+
+    .matrix-cell:nth-last-child(-n+2) {
+      border-bottom: none;
+    }
+
+    .matrix-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .matrix-cell h3 {
+      font-size: 16.5px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .matrix-cell p {
+      font-size: 13.5px;
+      color: var(--ink-2);
+      line-height: 1.65;
+    }
+
+    /* ── 05 Specs ── */
+    .spec-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      font-size: 13.5px;
+    }
+
+    .spec-table tr {
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .spec-table tr:last-child {
+      border-bottom: none;
+    }
+
+    .spec-table th {
+      width: 220px;
+      text-align: left;
+      padding: 14px 20px;
+      font-weight: 600;
+      color: var(--muted);
+      background: var(--bg);
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+
+    .spec-table td {
+      padding: 14px 20px;
+      color: var(--ink);
+    }
+
+    /* ── Waitlist Section ── */
+    .waitlist-section {
+      padding: 68px 0;
+    }
+
+    .wl-card {
+      background: var(--surface);
+      border: 1px solid var(--rule-strong);
+      border-radius: var(--radius-lg);
+      padding: 36px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 36px;
+      align-items: center;
+    }
+
+    .wl-copy h2 {
+      font-size: clamp(24px, 3vw, 32px);
+      font-weight: 750;
+      letter-spacing: -0.025em;
+      margin-bottom: 12px;
+    }
+
+    .wl-copy p {
+      color: var(--ink-2);
+      font-size: 15px;
+      line-height: 1.65;
+      margin-bottom: 18px;
+    }
+
+    .wl-perks {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 13.5px;
+      font-weight: 600;
+    }
+
+    .wl-perks div {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .wl-perks span.check {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: rgba(52, 199, 89, 0.14);
+      color: var(--ok-ink);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      flex: none;
+    }
+
+    .wl-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .wl-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 150px;
+      gap: 10px;
+    }
+
+    .wl-input, .wl-select {
+      width: 100%;
+      height: 44px;
+      border: 1px solid var(--rule-strong);
+      border-radius: 10px;
+      padding: 0 14px;
+      font-size: 14px;
+      font-family: inherit;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    .wl-input:focus, .wl-select:focus {
+      outline: none;
+      border-color: var(--ink);
+      background: var(--surface);
+    }
+
+    .wl-err {
+      font-size: 12.5px;
+      color: var(--rec);
+      min-height: 18px;
+    }
+
+    .wl-done {
+      background: var(--well);
+      border: 1px solid var(--rule-strong);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .wl-done-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: var(--ok-ink);
+    }
+
+    .wl-done-desc {
+      font-size: 13.5px;
+      color: var(--ink-2);
+      line-height: 1.65;
+      margin-bottom: 14px;
+    }
+
+    footer {
+      border-top: 1px solid var(--rule);
+      padding: 28px 0 40px;
+      font-size: 12.5px;
+      color: var(--muted);
+    }
+
+    .foot-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .foot-links {
+      display: flex;
+      gap: 18px;
+    }
+
+    .foot-links a:hover {
+      color: var(--ink);
+    }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      background: rgba(29, 29, 31, 0.42);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal {
+      width: 100%;
+      max-width: 460px;
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 24px 48px -18px rgba(0, 0, 0, 0.25);
+    }
+
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .modal-head h3 {
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .modal-close {
+      background: transparent;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      width: 30px;
+      height: 30px;
+      font-size: 16px;
+      color: var(--ink-2);
+    }
+
+    .modal p.modal-lead {
+      font-size: 13.5px;
+      color: var(--ink-2);
+      line-height: 1.65;
+      margin-bottom: 16px;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 960px) {
+      .hero-grid,
+      .showcase,
+      .sec-head,
+      .split-2,
+      .wl-card {
+        grid-template-columns: 1fr;
+      }
+
+      .pipeline {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .pipe-step:nth-child(2n) {
+        border-right: none;
+      }
+
+      .pipe-step:nth-child(-n+2) {
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .phone-frame {
+        position: static;
+        max-width: 340px;
+        margin: 0 auto;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .nav-links, .brand-tag {
+        display: none;
+      }
+
+      .pipeline,
+      .matrix,
+      .wl-row {
+        grid-template-columns: 1fr;
+      }
+
+      .pipe-step,
+      .matrix-cell {
+        border-right: none;
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .pipe-step:last-child,
+      .matrix-cell:last-child {
+        border-bottom: none;
+      }
+
+      .spec-table th {
+        width: 120px;
+        padding: 12px 14px;
+      }
+
+      .spec-table td {
+        padding: 12px 14px;
+      }
+
+      .wl-card {
+        padding: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="#">
+        <img src="./assets/icon.svg" alt="AI Card 录音卡图标">
+        <span data-i18n="brandName">AI Card · 录音卡</span>
+        <span class="brand-tag">ai-card.app.reai.com</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#pipeline" data-i18n="navPipeline">处理链路</a>
+        <a href="#app" data-i18n="navApp">伴侣 App</a>
+        <a href="#hardware" data-i18n="navHardware">物理按键</a>
+        <a href="#privacy" data-i18n="navPrivacy">隐私架构</a>
+        <a href="#specs" data-i18n="navSpecs">技术规格</a>
+      </nav>
+      <div class="nav-cta">
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button type="button" id="lang-zh" class="on">中文</button>
+          <button type="button" id="lang-en">EN</button>
+        </div>
+        <button class="btn" type="button" data-open-modal data-i18n="navCta">早鸟登记</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <div class="kicker">
+            <span class="live-dot" aria-hidden="true"></span>
+            <span data-i18n="heroKicker">ALWAYS-ON VOICE MEMORY · 物理按键 × 本地转写</span>
+          </div>
+          <h1 data-i18n="heroTitle">把每天说过的每句话，整理成可检索的记忆。</h1>
+          <p class="hero-lead" data-i18n="heroLead">
+            一张随身录音卡，一套端侧优先的伴侣 App。无感连续录音、SenseVoice 本地转写、声纹与上下文推理，晚上帮你写好睡前日记与三元记忆图谱。
+          </p>
+          <div class="perk-banner">
+            <span class="ok-dot" aria-hidden="true"></span>
+            <span data-i18n="heroPerk">早鸟礼遇：登记即赠至少 1 个月会员 · 抽实体录音卡（价值 ¥1,000）</span>
+          </div>
+          <div class="hero-actions">
+            <a class="btn btn-lg" href="#waitlist" data-i18n="heroCtaPrimary">加入早鸟 Waitlist</a>
+            <a class="btn btn-ghost btn-lg" href="#app" data-i18n="heroCtaSecondary">查看 App 真实界面</a>
+          </div>
+          <div class="hero-meta">
+            <span><i></i><em style="font-style:normal" data-i18n="meta1">SenseVoice + Silero VAD 端侧转写</em></span>
+            <span><i></i><em style="font-style:normal" data-i18n="meta2">BLE 5.3 + 2.4GHz Wi-Fi</em></span>
+            <span><i></i><em style="font-style:normal" data-i18n="meta3">GNU AGPL-3.0 开源</em></span>
+          </div>
+        </div>
+
+        <!-- Interactive Hardware & Dynamic Island Demo -->
+        <div class="stage" aria-label="Interactive hardware preview">
+          <div class="stage-bar">
+            <span data-i18n="stageLabel">INTERACTIVE HARDWARE PREVIEW</span>
+            <span class="capsule-demo"><span class="dot-ok"></span><span data-i18n="capsuleStatus">DYJ-Card · 录音中</span></span>
+          </div>
+
+          <div class="island-wrap">
+            <div class="island" id="island">
+              <div class="island-bars" aria-hidden="true">
+                <span></span><span></span><span></span><span></span>
+              </div>
+              <span id="island-text">灵动岛实况 · 硬件录音中</span>
+              <span class="island-clock" id="island-clock">01:24:08</span>
+            </div>
+          </div>
+
+          <div class="hw-card">
+            <div class="hw-top">
+              <span class="hw-name">REAI · AI CARD // DYJ</span>
+              <span class="hw-led" title="Recording LED"></span>
+            </div>
+
+            <div class="hw-wave" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+
+            <div class="hw-bottom">
+              <span class="hw-spec" data-i18n="pressHint">PRESS TO TEST →</span>
+              <div class="hw-btn-row">
+                <button class="hw-trigger" type="button" id="btn-mark" data-i18n="btnMark">单击 · 打重点</button>
+                <button class="hw-trigger" type="button" id="btn-cmd" data-i18n="btnCmd">长按 · 语音提问</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="push-feed" id="push-feed" aria-live="polite"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 01 Pipeline -->
+    <section class="block" id="pipeline">
+      <div class="container">
+        <div class="sec-head">
+          <div class="sec-num" data-i18n="s1Num">01 / SIGNAL PIPELINE</div>
+          <div class="sec-title">
+            <h2 data-i18n="s1Title">从设备切片到记忆图谱，每一步都有诚实边界。</h2>
+            <p data-i18n="s1Desc">连续录音默认不分段，5 分钟自动切片传回手机；音频与转写默认留在本机，云端只处理用于润色与总结的文本。</p>
+          </div>
+        </div>
+
+        <div class="pipeline">
+          <article class="pipe-step">
+            <div class="pipe-idx"><span>STEP 01</span><span class="pipe-pill" data-i18n="p1Pill">硬件</span></div>
+            <h3 data-i18n="p1Title">随身采集与盲按打点</h3>
+            <p data-i18n="p1Desc">支持 DYJ 系列录音卡 BLE 连接与 2.4GHz Wi-Fi 自动同步；手机连接硬件期间不并行开麦，断连时本机零功耗待命自动接力。</p>
+            <div class="pipe-foot" data-i18n="p1Foot">5 min / 切片 · BLE + STA</div>
+          </article>
+
+          <article class="pipe-step">
+            <div class="pipe-idx"><span>STEP 02</span><span class="pipe-pill" data-i18n="p2Pill">端侧</span></div>
+            <h3 data-i18n="p2Title">本地 VAD 与离线转写</h3>
+            <p data-i18n="p2Desc">Silero VAD 切分静音，SenseVoice 直接在手机端侧完成转写；模型缺失时音频入库排队，绝不偷传音频或编造文本。</p>
+            <div class="pipe-foot" data-i18n="p2Foot">Audio stays on-device</div>
+          </article>
+
+          <article class="pipe-step">
+            <div class="pipe-idx"><span>STEP 03</span><span class="pipe-pill" data-i18n="p3Pill">清洗</span></div>
+            <h3 data-i18n="p3Title">增量润色与逻辑分段</h3>
+            <p data-i18n="p3Desc">连续录音遇到 ≥1 分钟空白触发话题切片，&lt;30 秒紧邻分片自动合并；去除口癖改口，同时完整保留低权重原始对话。</p>
+            <div class="pipe-foot" data-i18n="p3Foot">相对起点毫秒时间戳</div>
+          </article>
+
+          <article class="pipe-step">
+            <div class="pipe-idx"><span>STEP 04</span><span class="pipe-pill" data-i18n="p4Pill">记忆</span></div>
+            <h3 data-i18n="p4Title">睡前日记与三元图谱</h3>
+            <p data-i18n="p4Desc">每晚生成 1～5 项轻标注确认说话人与打点意图，夜间做梦整理「事件 — 关系 — 实体」图谱并提炼可复用 Skill。</p>
+            <div class="pipe-foot" data-i18n="p4Foot">Event · Relation · Entity</div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 App Showcase -->
+    <section class="block" id="app">
+      <div class="container">
+        <div class="sec-head">
+          <div class="sec-num" data-i18n="s2Num">02 / COMPANION APP</div>
+          <div class="sec-title">
+            <h2 data-i18n="s2Title">没有多余花哨的面板，只有时间轴和可验证的结论。</h2>
+            <p data-i18n="s2Desc">点击左侧模块，在右侧真实 App 界面中切换查看核心交互。</p>
+          </div>
+        </div>
+
+        <div class="showcase">
+          <div class="feature-list" role="tablist" aria-label="App Screens">
+            <button class="feat-tab active" type="button" role="tab" aria-selected="true"
+              data-tab-idx="1"
+              data-shot="./assets/shots/timeline-expanded.png">
+              <span class="feat-num">01</span>
+              <span class="feat-body">
+                <h3 data-i18n="t1Title">Timeline 时间轴与相册融合</h3>
+                <p data-i18n="t1Desc">按今天、昨天倒序排列；点击卡片展开摘要、说话人与打点标记，再点「详情」进入对话流。拍照按时刻自动嵌入对话，支持一键移入或分拣「未归类图片」。</p>
+                <span class="feat-tags"></span>
+              </span>
+              <span class="feat-arrow" aria-hidden="true">→</span>
+            </button>
+
+            <button class="feat-tab" type="button" role="tab" aria-selected="false"
+              data-tab-idx="2"
+              data-shot="./assets/shots/summary-result.png">
+              <span class="feat-num">02</span>
+              <span class="feat-body">
+                <h3 data-i18n="t2Title">多维度总结与双向溯源</h3>
+                <p data-i18n="t2Desc">勾选今日、本周或任意片段生成结构化总结：概览、逻辑结构、信息点、行动项与合并后全文。每条行动项都可定位原话与现场图，支持导出 Markdown / PDF / 图片 / Word。</p>
+                <span class="feat-tags"></span>
+              </span>
+              <span class="feat-arrow" aria-hidden="true">→</span>
+            </button>
+
+            <button class="feat-tab" type="button" role="tab" aria-selected="false"
+              data-tab-idx="3"
+              data-shot="./assets/shots/bedtime-diary.png">
+              <span class="feat-num">03</span>
+              <span class="feat-body">
+                <h3 data-i18n="t3Title">睡前日记与轻标注确认</h3>
+                <p data-i18n="t3Desc">告别枯燥的自动会议纪要。每晚用叙事回顾当天经历，高亮上下文推理（支持点赞调高权重），只问你 1～5 个模型无法自行证伪的细节，一锤定音后反哺当晚记忆整理。</p>
+                <span class="feat-tags"></span>
+              </span>
+              <span class="feat-arrow" aria-hidden="true">→</span>
+            </button>
+
+            <button class="feat-tab" type="button" role="tab" aria-selected="false"
+              data-tab-idx="4"
+              data-shot="./assets/shots/memory-graph.png">
+              <span class="feat-num">04</span>
+              <span class="feat-body">
+                <h3 data-i18n="t4Title">端侧声纹与三元记忆图谱</h3>
+                <p data-i18n="t4Desc">通过 3D-Speaker CAM++ 在端侧聚类说话人（未确认前始终标注「推测」），确认后沉淀跨对话人物偏好、关系边与私有概念，越用越懂你的团队语境。</p>
+                <span class="feat-tags"></span>
+              </span>
+              <span class="feat-arrow" aria-hidden="true">→</span>
+            </button>
+
+            <button class="feat-tab" type="button" role="tab" aria-selected="false"
+              data-tab-idx="5"
+              data-shot="./assets/shots/dream-comic.png">
+              <span class="feat-num">05</span>
+              <span class="feat-body">
+                <h3 data-i18n="t5Title">夜间做梦漫画与重复 Skill 养成</h3>
+                <p data-i18n="t5Desc">夜间空白超过 5 小时自动进入「做梦」整理，按需生成 4～6 格梦境漫画；当发现同一类琐事重复出现 2～3 次，主动提醒沉淀为可复用 Agent Skill。</p>
+                <span class="feat-tags"></span>
+              </span>
+              <span class="feat-arrow" aria-hidden="true">→</span>
+            </button>
+          </div>
+
+          <div class="phone-frame">
+            <div class="phone-screen">
+              <img id="app-shot" src="./assets/shots/timeline-expanded.png" alt="AI Card App Preview">
+            </div>
+            <div class="phone-caption">
+              <span id="shot-caption">Timeline · 按日倒序与事件展开态</span>
+              <span>390×844</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 Hardware & Standby -->
+    <section class="block" id="hardware">
+      <div class="container">
+        <div class="sec-head">
+          <div class="sec-num" data-i18n="s3Num">03 / HARDWARE &amp; LIVE ACTIVITY</div>
+          <div class="sec-title">
+            <h2 data-i18n="s3Title">不掏手机就能用，断连了也不丢话。</h2>
+            <p data-i18n="s3Desc">物理按键直接触发记忆检索，硬件优先与零功耗待命机制兼顾续航与可靠性。</p>
+          </div>
+        </div>
+
+        <div class="split-2">
+          <div class="panel-box">
+            <h3 data-i18n="hwBox1Title">物理按键交互定义</h3>
+            <p data-i18n="hwBox1Desc">无需解锁手机或打开 App，盲按录音卡物理按钮即可完成标记与提问。</p>
+            <div class="key-rows">
+              <div class="key-row">
+                <strong data-i18n="hwKey1Label">单击 · MARK</strong>
+                <span data-i18n="hwKey1Val">无感打重点。时间戳随音频写入，模型在总结与睡前日记中优先聚焦此处并推测打点意图。</span>
+              </div>
+              <div class="key-row">
+                <strong data-i18n="hwKey2Label">长按 · COMMAND</strong>
+                <span data-i18n="hwKey2Val">唤起手机顶部灵动岛收听语音提问；松手后先推送 A【立即回执】，查完再推 B【记忆结果】。</span>
+              </div>
+              <div class="key-row">
+                <strong data-i18n="hwKey3Label">双击 · RESERVED</strong>
+                <span data-i18n="hwKey3Val">暂空预留，后续支持绑定自定义快捷指令或特定 Skill。</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel-box">
+            <h3 data-i18n="hwBox2Title">硬件优先与零功耗保底</h3>
+            <p data-i18n="hwBox2Desc">蓝牙正常录音期间手机麦克风绝不并行采集，避免手机发热耗电；只有意外发生时才接力。</p>
+            <div class="key-rows">
+              <div class="key-row">
+                <strong data-i18n="hwSb1Label">正常连接</strong>
+                <span data-i18n="hwSb1Val">隐藏「本机录音」入口，由硬件低功耗采集并驱动 iOS 灵动岛与锁屏实况卡片。</span>
+              </div>
+              <div class="key-row">
+                <strong data-i18n="hwSb2Label">意外断连</strong>
+                <span data-i18n="hwSb2Val">蓝牙失联、硬件没电或 OTA 重启时，手机本机录音立即自动启动接力，实况卡片无缝切换。</span>
+              </div>
+              <div class="key-row">
+                <strong data-i18n="hwSb3Label">重连退回</strong>
+                <span data-i18n="hwSb3Val">硬件恢复连接后自动停掉手机麦克风，退回零功耗待命状态；手动停录则解除待命。</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 Privacy & Honesty -->
+    <section class="block" id="privacy">
+      <div class="container">
+        <div class="sec-head">
+          <div class="sec-num" data-i18n="s4Num">04 / ARCHITECTURE</div>
+          <div class="sec-title">
+            <h2 data-i18n="s4Title">对隐私和数据边界保持克制与诚实。</h2>
+            <p data-i18n="s4Desc">我们不在产品里包装黑魔法，每一条设计红线都在代码与文档中公开可查。</p>
+          </div>
+        </div>
+
+        <div class="matrix">
+          <div class="matrix-cell">
+            <div class="matrix-label">ON-DEVICE FIRST</div>
+            <h3 data-i18n="m1Title">音频默认不出本机</h3>
+            <p data-i18n="m1Desc">切片、VAD 检测、SenseVoice 语音转写与 CAM++ 声纹 embedding 提取均在手机本地执行；云端仅接收用于润色与总结的文本。</p>
+          </div>
+
+          <div class="matrix-cell">
+            <div class="matrix-label">NO HALLUCINATED IDENTITY</div>
+            <h3 data-i18n="m2Title">说话人只做推测，不断言</h3>
+            <p data-i18n="m2Desc">未经过你手动确认的说话人永远展示「说话人 1 / 2（推测）」，低置信度片段如实显示「未区分」，保留原始映射可随时纠偏。</p>
+          </div>
+
+          <div class="matrix-cell">
+            <div class="matrix-label">RAW DATA PRESERVED</div>
+            <h3 data-i18n="m3Title">清洗内容优先，原始记录永不销毁</h3>
+            <p data-i18n="m3Desc">对话详情与总结默认展示润色后的整洁文本，但原始转写与原始音频切片以低权重完整保留，随时可播放核对或删除。</p>
+          </div>
+
+          <div class="matrix-cell">
+            <div class="matrix-label">OPEN SOURCE · AGPL-3.0</div>
+            <h3 data-i18n="m4Title">Rust BLE 桥接与全栈透明</h3>
+            <p data-i18n="m4Desc">App 基于 Flutter 构建，通过 Rust C-ABI 桥接 reai-card-sdk 直连真实硬件；OAuth2 PKCE 鉴权与自托管模型网关均可审计。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 05 Specs -->
+    <section class="block" id="specs">
+      <div class="container">
+        <div class="sec-head">
+          <div class="sec-num" data-i18n="s5Num">05 / SPECIFICATIONS</div>
+          <div class="sec-title">
+            <h2 data-i18n="s5Title">技术规格与支持环境</h2>
+          </div>
+        </div>
+
+        <table class="spec-table">
+          <tbody>
+            <tr>
+              <th data-i18n="sp1K">支持硬件</th>
+              <td data-i18n="sp1V">DYJ 系列随身录音卡（BLE 扫描按 RSSI 信号强度就近排序）</td>
+            </tr>
+            <tr>
+              <th data-i18n="sp2K">传输与固件</th>
+              <td data-i18n="sp2V">BLE 5.3 控制与切片传输 · 2.4GHz Wi-Fi STA 高速同步 · 主控 / Wi-Fi 两阶段 OTA</td>
+            </tr>
+            <tr>
+              <th data-i18n="sp3K">端侧语音引擎</th>
+              <td data-i18n="sp3V">sherpa_onnx · SenseVoice (int8) · Silero VAD · 3D-Speaker CAM++ 声纹聚类</td>
+            </tr>
+            <tr>
+              <th data-i18n="sp4K">客户端支持</th>
+              <td data-i18n="sp4V">iOS（含灵动岛 Live Activity）· Android · Apple Watch 伴侣端</td>
+            </tr>
+            <tr>
+              <th data-i18n="sp5K">开源协议</th>
+              <td data-i18n="sp5V">GNU Affero General Public License v3.0 (AGPL-3.0)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Waitlist Early-Bird Registration -->
+    <section class="waitlist-section" id="waitlist">
+      <div class="container">
+        <div class="wl-card">
+          <div class="wl-copy">
+            <h2 data-i18n="wlTitle">早鸟 Waitlist 登记已开启</h2>
+            <p data-i18n="wlDesc">留下你的邮箱与常用设备。所有早鸟登记用户承诺赠送至少 1 个月会员，并自动参与实体录音卡抽奖（价值 ¥1,000）。</p>
+            <div class="wl-perks">
+              <div><span class="check">✓</span><span data-i18n="wlPerk1">承诺赠送至少 1 个月正式版会员</span></div>
+              <div><span class="check">✓</span><span data-i18n="wlPerk2">自动获得实体录音卡抽奖资格（价值 ¥1,000）</span></div>
+            </div>
+          </div>
+
+          <div data-wl-widget>
+            <form class="wl-form" novalidate>
+              <div class="wl-row">
+                <input class="wl-input" type="email" required data-i18n-placeholder="wlEmailPlaceholder" placeholder="输入你的常用邮箱，例如 you@example.com">
+                <select class="wl-select" aria-label="Platform">
+                  <option value="iOS + Watch">iOS + Watch</option>
+                  <option value="iOS">iOS</option>
+                  <option value="Android">Android</option>
+                </select>
+              </div>
+              <button class="btn btn-lg" type="submit" data-i18n="wlSubmit">提交早鸟登记</button>
+              <div class="wl-err" aria-live="polite"></div>
+            </form>
+            <div class="wl-done" hidden>
+              <div class="wl-done-title"></div>
+              <div class="wl-done-desc"></div>
+              <button class="btn btn-ghost wl-reset" type="button" data-i18n="wlReset">更换邮箱重新登记</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container foot-inner">
+      <span data-i18n="footCopy">© 2026 ReAI · AI Card 录音卡 · ai-card.app.reai.com</span>
+      <div class="foot-links">
+        <a href="#pipeline" data-i18n="navPipeline">处理链路</a>
+        <a href="#app" data-i18n="navApp">伴侣 App</a>
+        <a href="#privacy" data-i18n="navPrivacy">隐私架构</a>
+        <a href="#specs" data-i18n="navSpecs">技术规格</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Waitlist Modal -->
+  <div class="modal-backdrop" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="modal-title" data-i18n="modalTitle">早鸟 Waitlist 登记</h3>
+        <button class="modal-close" type="button" id="modal-close" aria-label="Close">×</button>
+      </div>
+      <p class="modal-lead" data-i18n="modalLead">输入邮箱加入 AI Card 早鸟名单：承诺赠送至少 1 个月会员，并参与实体录音卡抽奖（价值 ¥1,000）。</p>
+      <div data-wl-widget>
+        <form class="wl-form" novalidate>
+          <input class="wl-input" type="email" required data-i18n-placeholder="wlEmailPlaceholder" placeholder="输入你的常用邮箱，例如 you@example.com">
+          <select class="wl-select" aria-label="Platform">
+            <option value="iOS + Watch">iOS + Watch</option>
+            <option value="iOS">iOS</option>
+            <option value="Android">Android</option>
+          </select>
+          <button class="btn btn-lg" type="submit" data-i18n="wlSubmit">提交早鸟登记</button>
+          <div class="wl-err" aria-live="polite"></div>
+        </form>
+        <div class="wl-done" hidden>
+          <div class="wl-done-title"></div>
+          <div class="wl-done-desc"></div>
+          <button class="btn btn-ghost wl-reset" type="button" data-i18n="wlReset">更换邮箱重新登记</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./assets/app.js"></script>
+</body>
+</html>
