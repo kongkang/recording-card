@@ -69,6 +69,10 @@
 	<string>为录音卡设备配置 Wi-Fi 时，App 需要访问局域网，以发现设备热点并完成配网；聊天记录与个人资料不会因此上传。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>开启本机录音，或在蓝牙硬件意外断连、固件升级期间自动接力保底录音时，录音卡需要使用手机麦克风采集音频；音频仅在本地处理，不上传原始录音。</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>录音卡仅通过运动会话请求在手机上远程唤醒已配对的 Apple Watch 启动腕上录音，不会读取任何健康隐私数据。</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>录音卡仅通过运动会话请求在手机上远程唤醒已配对的 Apple Watch 启动腕上录音，不会写入任何健康隐私数据。</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

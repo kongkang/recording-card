@@ -1,12 +1,17 @@
+#if canImport(AVFoundation)
 import AVFoundation
 import Foundation
-import WatchRecorderCore
 
-/// 将手表推回来的 `.m4a`（16kHz AAC）本地解码为标准 `16kHz / 16-bit / Mono PCM WAV`，
-/// 对齐 `app/` 主工程本地转写管线契约，不走任何云端接口。
-enum AudioSliceTranscoder {
-    static func transcodeTo16kMonoWav(sourceM4AURL: URL, destinationWavURL: URL) throws -> Int64 {
-        let inputFile = try AVAudioFile(forReading: sourceM4AURL)
+/// 将手表传回的压缩切片（`.m4a`）或兼容音频文件本地转码为标准 `16kHz / 16-bit / Mono PCM WAV`，
+/// 直接对接 `app/` 端侧 SenseVoice + Silero VAD + CAM++ 管线，全程离线本机完成。
+public enum WatchAudioSliceTranscoder {
+    /// 转码音频至 16kHz / 16-bit / Mono PCM WAV，并返回实际音频时长（毫秒）。
+    @discardableResult
+    public static func transcodeTo16kMonoWav(
+        sourceURL: URL,
+        destinationURL: URL
+    ) throws -> Int64 {
+        let inputFile = try AVAudioFile(forReading: sourceURL)
         let inputFormat = inputFile.processingFormat
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
@@ -93,39 +98,14 @@ enum AudioSliceTranscoder {
 
         let wavData = WavFileCodec.wrapPCM16Mono(pcmData)
         try FileManager.default.createDirectory(
-            at: destinationWavURL.deletingLastPathComponent(),
+            at: destinationURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try wavData.write(to: destinationWavURL, options: [.atomic])
-        return Int64(wavData.count)
-    }
+        try wavData.write(to: destinationURL, options: [.atomic])
 
-    /// 若共享 App Group 容器（`group.com.reai.recordingcard`）可用，
-    /// 同步投递一份标准 16kHz WAV 与描述 JSON 到 `watch_inbox/`，供主端 App 直接拾取转写。
-    static func copyToSharedWatchInboxIfAvailable(
-        wavURL: URL,
-        descriptor: WatchSliceDescriptor
-    ) -> Bool {
-        guard let groupRoot = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: WatchConstants.appGroupId
-        ) else {
-            return false
-        }
-        let inboxDir = groupRoot.appendingPathComponent("watch_inbox", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: inboxDir, withIntermediateDirectories: true)
-            let targetWav = inboxDir.appendingPathComponent(descriptor.canonicalWavFileName, isDirectory: false)
-            if FileManager.default.fileExists(atPath: targetWav.path) {
-                try FileManager.default.removeItem(at: targetWav)
-            }
-            try FileManager.default.copyItem(at: wavURL, to: targetWav)
-
-            let metaURL = inboxDir.appendingPathComponent("\(descriptor.sliceId).json", isDirectory: false)
-            let metaData = try JSONEncoder().encode(descriptor)
-            try metaData.write(to: metaURL, options: [.atomic])
-            return true
-        } catch {
-            return false
-        }
+        let frameCount = Double(pcmData.count / MemoryLayout<Int16>.size)
+        let durationMs = Int64((frameCount / Double(WavFileCodec.defaultSampleRate) * 1000.0).rounded())
+        return max(0, durationMs)
     }
 }
+#endif

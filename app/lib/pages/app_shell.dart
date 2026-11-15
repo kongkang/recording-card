@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/device/card_gateway.dart';
 import '../core/storage/storage.dart';
 import '../core/store/agent_config_store.dart';
 import '../core/store/app_store.dart';
@@ -72,6 +73,7 @@ class _AppShellState extends State<AppShell> {
       widget.photoLibrary ?? const PhotoLibraryService();
   StreamSubscription<LiveAudioSlice>? _liveSliceSub;
   StreamSubscription<LiveAudioSlice>? _phoneSliceSub;
+  StreamSubscription<LiveAudioSlice>? _watchSliceSub;
   bool _supportsDynamicIsland = false;
   bool _askedPhotoPermThisSession = false;
 
@@ -90,6 +92,9 @@ class _AppShellState extends State<AppShell> {
     widget.store.flushActiveRecordingSlice ??= () async {
       if (_liveAudio.isRunning) {
         return _liveAudio.flushActiveSlice();
+      }
+      if (_device.isConnected && _device.activeKind == DeviceKind.appleWatch) {
+        return _device.flushWatchRecordingSlice();
       }
       if (_device.isPhoneRecording) {
         return _device.flushPhoneRecordingSlice();
@@ -114,7 +119,13 @@ class _AppShellState extends State<AppShell> {
     _phoneSliceSub = _device.phoneAudioSlices.listen((slice) {
       unawaited(widget.store.ingestLiveSlice(slice));
     });
+    _watchSliceSub = _device.watchAudioSlices.listen((slice) {
+      unawaited(widget.store.ingestLiveSlice(slice));
+    });
     _device.setIslandEnabled(_agentConfig.islandEnabled);
+    if (_agentConfig.watchLinkEnabled != _device.watchHardware.linkEnabled) {
+      unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
+    }
     _agentConfig.addListener(_syncAgentIslandConfig);
     _device.liveActivityService.onActionButtonToggle = () {
       if (_device.isConnected) {
@@ -162,6 +173,9 @@ class _AppShellState extends State<AppShell> {
 
   void _syncAgentIslandConfig() {
     _device.setIslandEnabled(_agentConfig.islandEnabled);
+    if (_agentConfig.watchLinkEnabled != _device.watchHardware.linkEnabled) {
+      unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
+    }
   }
 
   /// 设备录音态 / 本机录音态 → 实时音频流切片 + Timeline 顶部状态块。
@@ -174,13 +188,13 @@ class _AppShellState extends State<AppShell> {
     final phoneRecording = _device.isPhoneRecording;
     final recording = hwRecording || phoneRecording;
     if (recording) {
-      if (hwRecording) {
+      if (hwRecording && _device.activeCapabilities.realtimeAudio) {
         _liveAudio.updateDeviceSessionId(_device.recordSession);
         if (!_liveAudio.isRunning) {
           unawaited(_liveAudio.start());
         }
       } else if (_liveAudio.isRunning) {
-        // 硬件切换至本机录音（如断连自动保底 / OTA 交接）：停掉蓝牙实时流，保持状态块不中断
+        // 硬件切换至本机录音或 Apple Watch 离线切片模式：停掉蓝牙实时流，保持状态块不中断
         unawaited(_liveAudio.stop());
       }
       if (!_wasRecording) {
@@ -228,6 +242,7 @@ class _AppShellState extends State<AppShell> {
     _device.liveActivityService.onActionButtonToggle = null;
     _liveSliceSub?.cancel();
     _phoneSliceSub?.cancel();
+    _watchSliceSub?.cancel();
     _device.removeListener(_syncRecordingStatus);
     if (widget.liveAudio == null) _liveAudio.dispose();
     _device.releaseClock();

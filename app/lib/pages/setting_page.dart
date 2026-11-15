@@ -17,6 +17,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/device/card_gateway.dart';
 import '../core/platform/app_info.dart';
 import '../core/storage/storage.dart';
 import '../core/store/agent_config_store.dart';
@@ -118,6 +119,16 @@ class _SettingPageState extends State<SettingPage> {
       }
     }
     widget.authService?.addListener(_onStoreChanged);
+    widget.device?.addListener(_onStoreChanged);
+  }
+
+  @override
+  void didUpdateWidget(SettingPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.device != widget.device) {
+      oldWidget.device?.removeListener(_onStoreChanged);
+      widget.device?.addListener(_onStoreChanged);
+    }
   }
 
   /// 自建路径：打开 shared_preferences 并读回已保存的值。
@@ -176,6 +187,7 @@ class _SettingPageState extends State<SettingPage> {
 
   @override
   void dispose() {
+    widget.device?.removeListener(_onStoreChanged);
     widget.authService?.removeListener(_onStoreChanged);
     widget.modelManager?.removeListener(_onStoreChanged);
     _store.removeListener(_onStoreChanged);
@@ -183,6 +195,20 @@ class _SettingPageState extends State<SettingPage> {
     _agent.removeListener(_onStoreChanged);
     if (_ownsAgent) _agent.dispose();
     super.dispose();
+  }
+
+  String _watchSummaryText() {
+    if (!_agent.watchLinkEnabled) return '未开启';
+    final dev = widget.device;
+    if (dev != null) {
+      if (dev.isConnected && dev.activeKind == DeviceKind.appleWatch) {
+        return '已连接';
+      }
+      if (dev.watchHardware.currentStatus.paired) {
+        return '已配对';
+      }
+    }
+    return '已开启';
   }
 
   void _toggle(String key) => unawaited(_store.toggle(key));
@@ -390,6 +416,19 @@ class _SettingPageState extends State<SettingPage> {
                     onTap: () => _openSub(context, 'island'),
                   ),
                 ],
+              ],
+            ),
+            const _GroupTitle(text: '硬件设备联动'),
+            _GroupCard(
+              children: <Widget>[
+                _navRow(
+                  context,
+                  keyName: 'set-apple-watch',
+                  label: 'Apple Watch 联动',
+                  value: _watchSummaryText(),
+                  valueKey: const Key('sv-watch'),
+                  onTap: () => _openSub(context, 'watch'),
+                ),
               ],
             ),
             for (final group in SettingsStore.groups) ...<Widget>[

@@ -1,3 +1,6 @@
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 import Foundation
 import WatchRecorderCore
 
@@ -9,6 +12,12 @@ private func verify(_ condition: Bool, _ message: String) {
 }
 
 private func runAllChecks() throws {
+    // 0. 统一套件 Bundle ID 校验（严禁退回独立手机端）
+    verify(WatchConstants.appGroupId == "group.com.reai.recordingcard", "Unexpected appGroupId")
+    verify(WatchConstants.companionBundleId == "com.reai.recordingcard", "companionBundleId must match com.reai.recordingcard")
+    verify(WatchConstants.watchAppBundleId == "com.reai.recordingcard.watchkitapp", "watchAppBundleId mismatch")
+    verify(WatchConstants.widgetsBundleId == "com.reai.recordingcard.watchkitapp.widgets", "widgetsBundleId mismatch")
+
     // 1. 协议编解码往返校验
     let cmd = WatchControlCommand(
         commandId: "cmd-001",
@@ -141,7 +150,50 @@ private func runAllChecks() throws {
     compStore.save(compState)
     verify(compStore.load() == compState, "ComplicationStateStore round-trip mismatch")
 
+    // 6. 音频重采样转码为 16kHz Mono PCM WAV 往返校验
+#if canImport(AVFoundation)
+    let transRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("watch-transcode-verify-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: transRoot) }
+    try FileManager.default.createDirectory(at: transRoot, withIntermediateDirectories: true)
+
+    let synthSrc = transRoot.appendingPathComponent("source_48k_stereo.wav")
+    let synthDst = transRoot.appendingPathComponent("LIVE_WATCH_verify_0001.WAV")
+    if let inFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: 48_000,
+        channels: 2,
+        interleaved: true
+    ),
+       let pcmBuf = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: 24_000) {
+        pcmBuf.frameLength = 24_000 // 0.5s
+        do {
+            let outFile = try AVAudioFile(
+                forWriting: synthSrc,
+                settings: inFormat.settings,
+                commonFormat: .pcmFormatFloat32,
+                interleaved: true
+            )
+            try outFile.write(from: pcmBuf)
+        }
+        let durMs = try WatchAudioSliceTranscoder.transcodeTo16kMonoWav(
+            sourceURL: synthSrc,
+            destinationURL: synthDst
+        )
+        verify(durMs >= 450 && durMs <= 550, "Expected ~500ms transcoded duration, got \(durMs)ms")
+        let outData = try Data(contentsOf: synthDst)
+        let outHdr = WavFileCodec.parseHeader(outData)
+        verify(
+            outHdr != nil && outHdr!.audioFormat == 1 && outHdr!.channels == 1 && outHdr!.sampleRate == 16_000 && outHdr!.bitsPerSample == 16 && outHdr!.dataByteCount > 0,
+            "Transcoded WAV header must be 16kHz 16-bit mono PCM with non-zero frames"
+        )
+    } else {
+        verify(false, "Failed to allocate AVAudioPCMBuffer for transcoder check")
+    }
+    print("WatchRecorderCoreVerify: ALL 6 SUITES PASSED")
+#else
     print("WatchRecorderCoreVerify: ALL 5 SUITES PASSED")
+#endif
 }
 
 do {

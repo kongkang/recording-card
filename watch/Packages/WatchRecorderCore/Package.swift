@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "WatchRecorderCore",
     platforms: [
-        .iOS(.v16),
+        .iOS(.v15),
         .watchOS(.v10),
         .macOS(.v13),
     ],

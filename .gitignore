@@ -12,3 +12,7 @@ target/
 
 # Android Rust 桥的编译中间产物（.so 本身随 jniLibs 一起进仓库，保证干净检出可打包）
 app/rust/card_bridge/target/android-cc/
+
+# watchOS Swift 包与构建产物
+watch/Packages/WatchRecorderCore/.build/
+watch/build/

@@ -61,6 +61,9 @@ import UIKit
     if let islandRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCLiveActivity") {
       LiveActivityBridge.shared.register(with: islandRegistrar.messenger())
     }
+    if let watchRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCWatchHardware") {
+      WatchHardwareBridge.shared.register(with: watchRegistrar.messenger())
+    }
   }
 
   private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {

@@ -313,6 +313,12 @@ extension WatchSessionSyncEngine: WCSessionDelegate {
         }
     }
 
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        Task { @MainActor in
+            self.handleIncomingDictionary(userInfo)
+        }
+    }
+
     nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: (any Error)?) {
         let sliceId = fileTransfer.file.metadata?["sliceId"] as? String
         let errorText = error?.localizedDescription
