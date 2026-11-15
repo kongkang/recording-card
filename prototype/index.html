@@ -50,7 +50,7 @@
 .wform{border:1px solid var(--sep);border-radius:12px;padding:12px 14px;margin:10px 0}
 .winput{width:100%;border:1px solid var(--sep);border-radius:9px;padding:10px 12px;font-size:14px;font-family:inherit;margin:10px 0}
 .wbtns{display:flex;gap:10px}
-.wbtns .btn{flex:1}
+.wbtns .btn{flex:1 1 0%;min-width:0;padding:9px 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* v12：已保存置顶 + 范围外置灰 */
 .wsec{font-size:12px;font-weight:600;color:var(--sec);margin:14px 0 2px}
 .wsplit{height:1px;background:var(--sep);margin:16px 0 2px}
@@ -1036,7 +1036,7 @@ function toggleIslandHardware(){agCfg.hasDynamicIsland=!agCfg.hasDynamicIsland;s
 function syncSetSummary(){var c=agCfg;var sa=document.getElementById("sv-auth");if(sa)sa.textContent=c.auth?c.accountEmail:"未登录 · 点击授权";var rdy=["vad","asr","spk"].filter(k=>c.local[k]==="ready").length;var sl=document.getElementById("sv-local");if(sl)sl.textContent=rdy===3?"已就绪 · 3 项":("已就绪 "+rdy+" / 3 项");var svp=document.getElementById("sv-voiceprint");if(svp)svp.textContent=c.local.spk==="ready"?"已就绪":"待下载";var sc=document.getElementById("sv-cloud");if(sc)sc.textContent=!c.cloudEnabled?"已关闭":!c.devMode?(c.customApi?"自定义接口":"已开启"):c.cloud;var sp=document.getElementById("sv-preset");if(sp)sp.textContent=c.presetLabel;var en=Object.keys(c.exts).filter(k=>c.exts[k]).length;var se=document.getElementById("sv-ext");if(se)se.textContent="已启用 "+en+" 项";var ri=document.getElementById("row-set-island"),si=document.getElementById("sv-island");if(ri)ri.hidden=!c.hasDynamicIsland;if(si)si.textContent=c.islandEnabled?"已开启":"已关闭";var sw=document.getElementById("sv-watch");if(sw){var wConn=conn.connected&&conn.curDev&&conn.curDev.kind==="watch";sw.textContent=!c.watchLinkEnabled?"未开启":wConn?"已连接":c.watchPaired?"已配对":"未配对"}var lv=document.getElementById("lbl-version");if(lv)lv.textContent=c.devMode?"版本（开发者）":"版本";var sm=document.getElementById("sv-mem");if(sm){var tagged=Object.keys(SPEAKER_DB).filter(function(k){return SPEAKER_DB[k].confirmed}).length;sm.textContent="声纹 "+tagged+" 人 · 升格关系 2"}}
 function openSetSub(id){if(!document.getElementById("p-setting").classList.contains("show")){["timeline","setting"].forEach(x=>document.getElementById("p-"+x).classList.toggle("show",x==="setting"));document.getElementById("nt").classList.remove("on");document.getElementById("ns").classList.add("on")}navSub({t:"setsub",id:id},true)}
 function toggleThirdBind(k){agCfg.binds[k]=!agCfg.binds[k];renderSetSub("login");toast(agCfg.binds[k]?"已关联账号并接入外脑鉴权":"已解除第三方账号关联")}
-function renderSetSub(id){var t=document.getElementById("setsub-title"),s=document.getElementById("setsub-sub"),b=document.getElementById("setsub-body");if(!t||!b)return;
+function renderSetSub(id){var t=document.getElementById("setsub-title"),s=document.getElementById("setsub-sub"),b=document.getElementById("setsub-body");if(!t||!b)return;if(s){s.textContent="";s.hidden=false}
   if(id==="login"){
     t.textContent="云端账号授权";s.textContent="外脑 OAuth2 PKCE S256 · 第三方账号统一基于外脑鉴权";
     var providers=[
@@ -1085,9 +1085,9 @@ function renderSetSub(id){var t=document.getElementById("setsub-title"),s=docume
   }
   if(id==="island"){
     var anyRec=(conn.connected&&rec.on)||phoneRec.on;
-    t.textContent="灵动岛与操作按钮";s.textContent="蓝牙硬件录音与本机录音统一驱动灵动岛与锁屏实况";
-    b.innerHTML='<div class="set-group"><div class="switchrow" style="padding:12px 0"><div><div style="font-size:14px;font-weight:600">录音灵动岛与锁屏实况</div><div style="font-size:12px;color:var(--sec);margin-top:2px">蓝牙硬件录音、断连自动保底录音及本机录音开启期间，在灵动岛与锁屏实时显示 App Logo 与已录时长</div></div><div class="sw'+(agCfg.islandEnabled?" on":"")+'" data-testid="sw-island-live" role="switch" aria-checked="'+agCfg.islandEnabled+'" tabindex="0" onclick="agCfg.islandEnabled=!agCfg.islandEnabled;syncSetSummary();syncPhoneRecUI();renderSetSub(\'island\')"></div></div></div>'
-      +'<div class="subcard"><h4><span>iPhone 侧边操作按钮（Action Button）</span></h4><p>已在系统快捷指令注册 <b>ToggleLocalRecordingIntent</b>。已连硬件时一键启停硬件录音（同步挂起本机待命保底），未连硬件时一键启停本机录音。</p><div class="wbtns" style="margin-top:10px"><button class="btn" data-testid="trig-action-button" onclick="triggerActionButton();renderSetSub(\'island\')">'+(anyRec?"触发操作按钮：停止录音":"触发操作按钮：开始录音")+'</button></div></div>';
+    t.textContent="灵动岛与操作按钮";if(s)s.hidden=true;
+    b.innerHTML='<div class="set-group"><div class="switchrow" style="padding:12px 0"><div><div style="font-size:14px;font-weight:600">开启录音灵动岛与锁屏实况</div><div style="font-size:12px;color:var(--sec);margin-top:2px">录音期间在灵动岛和锁屏显示录音状态与时长。</div></div><div class="sw'+(agCfg.islandEnabled?" on":"")+'" data-testid="sw-island-live" role="switch" aria-checked="'+agCfg.islandEnabled+'" tabindex="0" onclick="agCfg.islandEnabled=!agCfg.islandEnabled;syncSetSummary();syncPhoneRecUI();renderSetSub(\'island\')"></div></div></div>'
+      +'<div class="subcard"><h4><span>iPhone 操作按钮</span></h4><p>前往系统「设置 → 操作按钮 → 快捷指令」，选择「录音卡 · 切换录音」即可一键开启或关闭录音。</p><div class="wbtns" style="margin-top:10px"><button class="btn" data-testid="trig-action-button" onclick="triggerActionButton();renderSetSub(\'island\')">'+(anyRec?"触发操作按钮：停止录音":"触发操作按钮：开始录音")+'</button></div></div>';
     return;
   }
   if(id==="prompts"){t.textContent="预设风格与提示词";s.textContent="切换一键预设或自定义三类系统提示词";b.innerHTML='<div class="pchips">'+Object.keys(PRESETS).map(function(k){return '<button class="pchip'+(agCfg.preset===k?" on":"")+'" data-testid="preset-'+k+'" onclick="pickPreset(\''+k+'\')">'+PRESETS[k].label+'</button>'}).join("")+'</div><div class="subcard"><h4>总结生成提示词</h4><textarea class="prompt-ta" id="ta-sum">'+esc(agCfg.pSum)+'</textarea></div><div class="subcard"><h4>口语窗口润色提示词</h4><textarea class="prompt-ta" id="ta-pol">'+esc(agCfg.pPol)+'</textarea></div><div class="subcard"><h4><span>睡前日记与夜间做梦提示词</span><span class="tbc-badge">TBC</span></h4><textarea class="prompt-ta" id="ta-dream">'+esc(agCfg.pDream)+'</textarea></div><div class="wbtns"><button class="btn ghost" onclick="pickPreset(agCfg.preset);toast(\'已恢复当前预设默认\')">恢复预设默认</button><button class="btn" data-testid="prompt-save" onclick="savePrompts()">保存提示词配置</button></div>';return}
@@ -1117,19 +1117,19 @@ function renderSetSub(id){var t=document.getElementById("setsub-title"),s=docume
     return;
   }
   if(id==="voiceprint"){
-    t.textContent="声纹识别";s.textContent="同一人物归集多设备/多场景声纹 · 常用 5 席自动识别 + 不限人数手动库";
+    t.textContent="声纹识别";if(s)s.hidden=true;
     var st=agCfg.local.spk;
     var inst=st==="ready";
     var dlBtn=!inst?'<button type="button" class="btn ghost" style="width:auto;min-height:30px;padding:4px 12px;font-size:12px" data-testid="voiceprint-install-btn" '+(st==="dl"?'disabled':'')+' onclick="dlVoiceprintModel()">'+(st==="dl"?"下载中…":"下载")+'</button>':'';
-    var prog=st==="dl"?'<div class="bar" style="margin-top:10px"><i style="width:65%"></i></div><div data-testid="voiceprint-progress-text" style="margin-top:6px;font-size:12px;color:var(--sec)">正在下载 CAM++ 声纹模型…</div>':'';
-    var camCard='<div class="subcard"><div style="display:flex;align-items:center;gap:10px"><div style="flex:1;font-size:14px;font-weight:700">说话人聚类（CAM++ 本机）</div><span class="ext-tag">'+(inst?"已就绪":"待下载")+'</span>'+dlBtn+'</div><p style="margin-top:8px">声纹提取与自动比对仅在本机离线运行。确信命中时自动标记，临界相似度时于命名框提示「可能为他」。</p>'+prog+'</div>';
+    var prog=st==="dl"?'<div class="bar" style="margin-top:10px"><i style="width:65%"></i></div><div data-testid="voiceprint-progress-text" style="margin-top:6px;font-size:12px;color:var(--sec)">正在下载声纹模型…</div>':'';
+    var camCard='<div class="subcard"><div style="display:flex;align-items:center;gap:10px"><div style="flex:1;font-size:14px;font-weight:700">说话人聚类（推测）</div><span class="ext-tag">'+(inst?"已就绪":"待下载")+'</span>'+dlBtn+'</div><p style="margin-top:8px">本机离线区分不同说话人，声纹仅保存在本机。</p>'+prog+'</div>';
     var slotCards=VOICEPRINT_STORE.slots.map(function(sl,idx){
       var snum=idx+1;
       if(!sl){return '<div class="vp-slot" data-testid="vp-slot-'+snum+'"><div class="vp-slot-hd"><span class="vp-slot-idx">槽位 '+snum+'</span><span class="vp-slot-name" style="color:var(--sec);font-weight:500">空槽位（可从下方人物库设入）</span><span class="vp-mode-tag manual">未占用</span></div></div>'}
       var p=VOICEPRINT_STORE.persons[sl.name]||{name:sl.name,samples:[]};
       var isSelf=snum===1||sl.isSelf;
       var smps=(p.samples||[]).map(function(x){return '<span class="vp-smp">'+esc(x.dev)+' · '+esc(x.scene)+'</span>'}).join("");
-      var recBtn='<button type="button" class="mini-chip" '+(isSelf?'data-testid="vp-record-self-btn" ':'data-testid="vp-record-slot-'+snum+'" ')+(vpSelfRecording?'disabled ':'')+'onclick="recordVoiceprintSample(\''+esc(sl.name)+'\')">'+(vpSelfRecording?'采集声纹中…':(isSelf?'单独录音增加':'+ 补充录音样本'))+'</button>';
+      var recBtn='<button type="button" class="mini-chip" '+(isSelf?'data-testid="vp-record-self-btn" ':'data-testid="vp-record-slot-'+snum+'" ')+(vpSelfRecording?'disabled ':'')+'onclick="recordVoiceprintSample(\''+esc(sl.name)+'\')">'+(vpSelfRecording?'录音中…':(isSelf?'单独录音增加':'+ 补充录音样本'))+'</button>';
       var rmBtn=!isSelf?'<button type="button" class="mini-chip" data-testid="vp-remove-slot-'+snum+'" onclick="toggleFrequentSlot(\''+esc(sl.name)+'\')">移出常用</button>':'';
       return '<div class="vp-slot'+(isSelf?' self':'')+'" data-testid="vp-slot-'+snum+'"><div class="vp-slot-hd"><span class="vp-slot-idx">槽位 '+snum+(isSelf?' · 本人':'')+'</span><span class="vp-slot-name">'+esc(sl.name)+'</span><span class="vp-mode-tag">'+(isSelf?'本人声纹（'+p.samples.length+' 组样本）':'自动识别 · 含 '+p.samples.length+' 组样本')+'</span></div><div class="vp-samples">'+smps+'</div><div class="vp-slot-acts">'+recBtn+rmBtn+'</div></div>';
     }).join("");
@@ -1139,53 +1139,51 @@ function renderSetSub(id){var t=document.getElementById("setsub-title"),s=docume
       var snum=vpSlotOf(nm);
       var smps=(p.samples||[]).map(function(x){return '<span class="vp-smp">'+esc(x.dev)+' · '+esc(x.scene)+'</span>'}).join("");
       var actBtn=snum>0?'<button type="button" class="mini-chip on" data-testid="vp-lib-toggle-'+i+'" onclick="toggleFrequentSlot(\''+esc(nm)+'\')">常用槽位 '+snum+'（点击移出）</button>':'<button type="button" class="mini-chip" data-testid="vp-promote-'+i+'" onclick="toggleFrequentSlot(\''+esc(nm)+'\')">设为常用</button>';
-      return '<div class="vp-slot" data-testid="vp-lib-person-'+i+'"><div class="vp-slot-hd"><span class="vp-slot-name">'+esc(nm)+'</span><span class="vp-mode-tag'+(snum>0?'':' manual')+'">'+(snum>0?'常用自动识别':'仅手动标记 · 省算力')+'</span></div><div class="vp-samples">'+(smps||'<span class="vp-smp">暂无音频样本，仅名称记录</span>')+'</div><div class="vp-slot-acts"><button type="button" class="mini-chip" onclick="recordVoiceprintSample(\''+esc(nm)+'\')">+ 补充设备/场景样本</button>'+actBtn+'</div></div>';
+      return '<div class="vp-slot" data-testid="vp-lib-person-'+i+'"><div class="vp-slot-hd"><span class="vp-slot-name">'+esc(nm)+'</span><span class="vp-mode-tag'+(snum>0?'':' manual')+'">'+(snum>0?'常用自动识别':'手动选用')+'</span></div><div class="vp-samples">'+(smps||'<span class="vp-smp">暂无音频样本</span>')+'</div><div class="vp-slot-acts"><button type="button" class="mini-chip" onclick="recordVoiceprintSample(\''+esc(nm)+'\')">+ 补充录音样本</button>'+actBtn+'</div></div>';
     }).join("");
     b.innerHTML=camCard
-      +'<div data-testid="vp-frequent-section"><div class="vp-sec-hd"><b><span>常用声纹（自动识别 · 上限 5 个）</span></b><span style="font-size:11.5px;color:var(--sec)">槽位 1 固定为本人</span></div><div class="vp-sec-sub">为平衡本机算力消耗，仅这 5 个常用档案参与自动识别与模糊匹配（「几乎准确」直接标为他，「无法确定」提示可能为他）。</div>'+slotCards+'</div>'
-      +'<div data-testid="vp-library-section"><div class="vp-sec-hd"><b><span>已记录声纹与最近使用人物库（不限数量）</span></b><span style="font-size:11.5px;color:var(--sec)">共 '+allPersons.length+' 人</span></div><div class="vp-sec-sub">标记过即入库，人数无上限；同一个人名下归并不同设备与场景声纹，默认仅手动选用，不消耗自动比对算力。</div>'+libCards+'</div>';
+      +'<div data-testid="vp-frequent-section"><div class="vp-sec-hd"><b><span>常用声纹（上限 5 个）</span></b><span style="font-size:11.5px;color:var(--sec)">槽位 1 固定为本人</span></div><div class="vp-sec-sub">最多设置 5 个常用声纹参与自动识别。</div>'+slotCards+'</div>'
+      +'<div data-testid="vp-library-section"><div class="vp-sec-hd"><b><span>全部人物库</span></b><span style="font-size:11.5px;color:var(--sec)">共 '+allPersons.length+' 人</span></div><div class="vp-sec-sub">命名过的说话人保存在此，方便手动选用。</div>'+libCards+'</div>';
     return;
   }
   if(id==="watch"){
-    t.textContent="Apple Watch 联动";s.textContent="作为第 4 款录音硬件接入 · 切片本机离线转码入库";
+    t.textContent="Apple Watch 联动";if(s)s.hidden=true;
     var wConn=conn.connected&&conn.curDev&&conn.curDev.kind==="watch";
     var pairedTxt=agCfg.watchPaired?"已配对":"未配对";
     var instTxt=agCfg.watchInstalled?"已安装":"未安装";
-    var linkTxt=wConn?"已作为当前硬件接入":(agCfg.watchPaired?"表端在线可达":"离线待命（支持表端先存后传）");
+    var linkTxt=wConn?"已连接":(agCfg.watchPaired?"在线":"离线");
     var battTxt=agCfg.watchCharging?"充电中":"电量高";
     var pendTxt=(agCfg.watchPending||0)+" 段";
     var installBanner=(agCfg.watchPaired&&!agCfg.watchInstalled)
-      ?'<div data-testid="watch-install-guide-banner" style="margin-top:10px;padding:10px;border-radius:8px;background:var(--bg);border:1px solid var(--sep);font-size:12px;line-height:1.5;color:var(--sec)">'
-        +'检测到已配对 Apple Watch，但表端尚未完成安装：<br>'
-        +'① 开发测试版请先在手表端开启「设置 → 隐私与安全性 → 开发者模式」并按提示重启确认；<br>'
-        +'② 打开 iPhone 系统「Watch」App →「我的手表」滑到底部「可用 App」→ 找到「录音卡手表」点击「安装」。'
+      ?'<div data-testid="watch-install-guide-banner" style="margin-top:8px;padding:10px;border-radius:8px;background:var(--bg);border:1px solid var(--sep);font-size:12px;line-height:1.5;color:var(--sec)">'
+        +'未安装手表应用：请在 iPhone「Watch」App 底部「可用 App」中点击安装（测试版需先在手表「设置 → 隐私与安全性」开启开发者模式）。'
         +'</div>'
       :'';
     var hintHtml=watchSubHint?'<div data-testid="watch-link-hint" style="margin-top:8px;font-size:12px;color:var(--ok)">'+esc(watchSubHint)+'</div>':'';
-    b.innerHTML='<div class="set-group"><div class="switchrow" data-testid="watch-link-toggle-row" style="padding:13px 0;cursor:pointer" onclick="toggleWatchLink()"><div><div style="font-size:14.5px;font-weight:600">将 Apple Watch 作为录音硬件接入</div><div style="font-size:12px;color:var(--sec);margin-top:2px;line-height:1.45">开启后手表与录音卡 V2 / 点一机 V1 / 语音 AI 键盘并列出现在右上角设备选单，表端仅负责轻量采集与本地缓存，切片全部在本机离线转码入库。</div></div><div class="sw'+(agCfg.watchLinkEnabled?" on":"")+'" data-testid="watch-link-switch" role="switch" aria-checked="'+agCfg.watchLinkEnabled+'" tabindex="0" onclick="event.stopPropagation();toggleWatchLink()"></div></div></div>'
+    b.innerHTML='<div class="set-group" style="margin-top:6px"><div class="switchrow" data-testid="watch-link-toggle-row" style="padding:13px 0;cursor:pointer" onclick="toggleWatchLink()"><div><div style="font-size:14.5px;font-weight:600">启用 Apple Watch 录音</div><div style="font-size:12px;color:var(--sec);margin-top:2px;line-height:1.45">开启后可在右上角设备列表中选择手表录音</div></div><div class="sw'+(agCfg.watchLinkEnabled?" on":"")+'" data-testid="watch-link-switch" role="switch" aria-checked="'+agCfg.watchLinkEnabled+'" tabindex="0" onclick="event.stopPropagation();toggleWatchLink()"></div></div></div>'
       +'<div class="set-title">配对与协同状态</div>'
-      +'<div class="subcard" data-testid="watch-link-status-card" style="margin-top:0">'
-      +'<div class="navrow" style="cursor:default"><span>配对状态</span><span class="navval"><b style="color:var(--label)">'+pairedTxt+'</b></span></div>'
-      +'<div class="navrow" style="cursor:default"><span>手表端应用</span><span class="navval"><b style="color:var(--label)">'+instTxt+'</b></span></div>'
-      +'<div class="navrow" style="cursor:default"><span>协同链路</span><span class="navval"><b style="color:var(--label)">'+linkTxt+'</b></span></div>'
-      +'<div class="navrow" style="cursor:default"><span>手表电量</span><span class="navval"><b style="color:var(--label)">'+battTxt+'</b></span></div>'
-      +'<div class="navrow" style="cursor:default"><span>本地待传队列</span><span class="navval"><b style="color:var(--label)">'+pendTxt+'</b></span></div>'
+      +'<div class="subcard" data-testid="watch-link-status-card" style="margin-top:0;padding:2px 16px 14px">'
+      +'<div class="navrow" style="cursor:default;padding:11px 0"><span>配对状态</span><span class="navval"><b style="color:var(--label)">'+pairedTxt+'</b></span></div>'
+      +'<div class="navrow" style="cursor:default;padding:11px 0"><span>手表应用</span><span class="navval"><b style="color:var(--label)">'+instTxt+'</b></span></div>'
+      +'<div class="navrow" style="cursor:default;padding:11px 0"><span>连接状态</span><span class="navval"><b style="color:var(--label)">'+linkTxt+'</b></span></div>'
+      +'<div class="navrow" style="cursor:default;padding:11px 0"><span>手表电量</span><span class="navval"><b style="color:var(--label)">'+battTxt+'</b></span></div>'
+      +'<div class="navrow" style="cursor:default;padding:11px 0;border-bottom:none"><span>待传录音</span><span class="navval"><b style="color:var(--label)">'+pendTxt+'</b></span></div>'
       +installBanner
       +hintHtml
-      +'<div class="wbtns" style="margin-top:12px"><button type="button" class="btn" data-testid="watch-connect-btn" onclick="connectWatchFromSetting()">'+(wConn?"断开手表连接":"设为当前录音硬件")+'</button><button type="button" class="btn ghost" data-testid="watch-flush-btn" '+(agCfg.watchLinkEnabled?'':'disabled ')+'onclick="flushWatchFromSetting()">立即拉取待传录音</button></div></div>'
-      +'<div class="set-title">表盘常驻采集配置（三步）</div>'
+      +'<div class="wbtns" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px"><button type="button" class="btn" data-testid="watch-connect-btn" onclick="connectWatchFromSetting()">'+(wConn?"断开连接":"连接手表")+'</button><button type="button" class="btn ghost" data-testid="watch-flush-btn" '+(agCfg.watchLinkEnabled?'':'disabled ')+'onclick="flushWatchFromSetting()">同步待传录音</button></div></div>'
+      +'<div class="set-title">表盘快捷录音</div>'
       +'<div class="subcard" data-testid="watch-complication-guide" style="margin-top:0">'
-      +'<p style="color:var(--label);margin-bottom:6px">1. 长按 Apple Watch 表盘 →「编辑」→ 选定角落、圆形、矩形或内嵌槽位，添加「录音卡」表盘组件；</p>'
-      +'<p style="color:var(--label);margin-bottom:6px">2. 抬腕轻点组件即可直接拉起手表端持续录音（HKWorkoutSession + 扩展后台保活，支持抬腕打重点 Mark）；</p>'
-      +'<p>3. 表端先存 .m4a 切片（无网络/断连也不断录），靠近手机自动回传，并在 iPhone 本机转为 16kHz 单声道 WAV 送入 SenseVoice 转写，原始音频不直传云端。</p></div>';
+      +'<p style="color:var(--label);margin-bottom:6px">1. 长按表盘点击「编辑」，添加「录音卡」组件；</p>'
+      +'<p style="color:var(--label);margin-bottom:6px">2. 抬腕轻点组件即可开始录音；</p>'
+      +'<p>3. 脱离手机也可独立录音，靠近手机自动同步。</p></div>';
     return;
   }
   if(id==="privacy"){t.textContent="隐私政策";s.textContent="生效日期：2026-11-08 · 联系邮箱：privacy@reai.chat";var secs=[["一、我们处理哪些信息","录音与转写内容：从录音卡同步到手机的音频、时间标记及设备侧转写文本。设备信息仅用于蓝牙连接与状态展示；配网口令只保存在本机与硬件；登录令牌存于系统 Keychain。"],["二、录音内容存在哪里","默认只存本机沙盒目录，不自动上传，卸载即清除。仅在你主动发起云端润色或总结时，对应文本才会经网关处理。"],["三、蓝牙与本地网络权限","蓝牙仅用于发现并连接自有录音硬件、同步录音与状态；本地网络仅用于硬件 2.4GHz 配网，不做定位画像或局域网嗅探。"],["四、云端模型网关承诺","经模型网关转发的内容仅用于当次润色与总结，不用于模型训练或广告投放；你在 App 内删除记录后服务端副本在 15 天内清除。"],["五、你的控制权","可随时删除单条记录、清空全部本机数据、关闭自动转录或撤回系统蓝牙授权。"]];b.innerHTML='<div class="subcard"><p>「录音卡」把「录音只属于你」当作默认设置：录音文件与转写文本默认只保存在你的手机上，云端处理只在你主动操作时发生。</p></div>'+secs.map(function(x){return '<div class="subcard"><h4>'+x[0]+'</h4><p>'+x[1]+'</p></div>'}).join("");return}
 }
 var watchSubHint="";
-function toggleWatchLink(){agCfg.watchLinkEnabled=!agCfg.watchLinkEnabled;if(!agCfg.watchLinkEnabled&&conn.connected&&conn.curDev&&conn.curDev.kind==="watch"){confirmDisconnect()}watchSubHint=agCfg.watchLinkEnabled?"已开启 Apple Watch 联动，可在右上角胶囊扫描连接":"已关闭 Apple Watch 联动";syncSetSummary();renderSetSub("watch")}
-function connectWatchFromSetting(){var isW=conn.connected&&conn.curDev&&conn.curDev.kind==="watch";if(isW){confirmDisconnect();watchSubHint="已断开 Apple Watch 连接";syncSetSummary();renderSetSub("watch");return}if(!agCfg.watchInstalled){watchSubHint="Apple Watch 连接未完成，请确认手表端已安装「录音卡」";renderSetSub("watch");return}if(!agCfg.watchLinkEnabled){agCfg.watchLinkEnabled=true}var d=SCAN_DEVICES.find(function(x){return x.kind==="watch"});if(!d){watchSubHint="未检测到已配对的 Apple Watch";renderSetSub("watch");return}conn.connected=true;conn.connecting=false;conn.curDev=d;applyDeviceCapabilities();syncCapsule();battEstimate();updateRecUI();syncPhoneRecUI();watchSubHint="已将 Apple Watch 设为当前采集硬件";syncSetSummary();renderSetSub("watch")}
-function flushWatchFromSetting(){if(!agCfg.watchLinkEnabled)return;var c=agCfg.watchPending||0;agCfg.watchPending=0;if(conn.connected&&conn.curDev&&conn.curDev.kind==="watch"){applyDeviceCapabilities()}watchSubHint=c>0?("已拉取 "+c+" 段手表本地切片进入转写队列"):"手表暂无待传切片";syncSetSummary();renderSetSub("watch")}
+function toggleWatchLink(){agCfg.watchLinkEnabled=!agCfg.watchLinkEnabled;if(!agCfg.watchLinkEnabled&&conn.connected&&conn.curDev&&conn.curDev.kind==="watch"){confirmDisconnect()}watchSubHint=agCfg.watchLinkEnabled?"已开启手表联动":"已关闭手表联动";syncSetSummary();renderSetSub("watch")}
+function connectWatchFromSetting(){var isW=conn.connected&&conn.curDev&&conn.curDev.kind==="watch";if(isW){confirmDisconnect();watchSubHint="已断开手表连接";syncSetSummary();renderSetSub("watch");return}if(!agCfg.watchInstalled){watchSubHint="请先确认手表已安装「录音卡」";renderSetSub("watch");return}if(!agCfg.watchLinkEnabled){agCfg.watchLinkEnabled=true}var d=SCAN_DEVICES.find(function(x){return x.kind==="watch"});if(!d){watchSubHint="未检测到已配对的 Apple Watch";renderSetSub("watch");return}conn.connected=true;conn.connecting=false;conn.curDev=d;applyDeviceCapabilities();syncCapsule();battEstimate();updateRecUI();syncPhoneRecUI();watchSubHint="已连接 Apple Watch";syncSetSummary();renderSetSub("watch")}
+function flushWatchFromSetting(){if(!agCfg.watchLinkEnabled)return;var c=agCfg.watchPending||0;agCfg.watchPending=0;if(conn.connected&&conn.curDev&&conn.curDev.kind==="watch"){applyDeviceCapabilities()}watchSubHint=c>0?("已同步 "+c+" 段手表录音"):"暂无待传录音";syncSetSummary();renderSetSub("watch")}
 function dlVoiceprintModel(){agCfg.local.spk="dl";renderSetSub("voiceprint");setTimeout(function(){agCfg.local.spk="ready";syncSetSummary();renderSetSub("voiceprint");toast("CAM++ 声纹模型已就绪")},350)}
 function dlLocalModel(k){agCfg.local[k]="dl";renderSetSub("local");setTimeout(function(){agCfg.local[k]="ready";agCfg.localHasUpdate=false;syncSetSummary();renderSetSub("local");toast("本地模型已就绪")},350)}
 function installAllLocalModels(){["vad","asr","spk"].forEach(function(k){if(agCfg.local[k]!=="ready")agCfg.local[k]="dl"});renderSetSub("local");setTimeout(function(){agCfg.local.vad="ready";agCfg.local.asr="ready";agCfg.local.spk="ready";agCfg.localHasUpdate=false;syncSetSummary();renderSetSub("local");toast("本地语音模型已全部就绪")},350)}

@@ -1936,6 +1936,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                 key: Key(
                   isSelfSlot ? 'vp-record-self-btn' : 'vp-record-slot-$slot',
                 ),
+                style: _rcMiniChipBtnStyle(c),
                 onPressed: _recordingTargetKey != null
                     ? null
                     : () => unawaited(
@@ -1949,18 +1950,19 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                       ),
                 child: Text(
                   capturingThis
-                      ? '采集声纹中…'
+                      ? '录音中…'
                       : (isSelfSlot ? '单独录音增加' : '+ 补充录音样本'),
                 ),
               ),
               if (!isSelfSlot)
                 OutlinedButton(
                   key: Key('vp-remove-slot-$slot'),
+                  style: _rcMiniChipBtnStyle(c),
                   onPressed: () {
                     vpStore.demoteFromFrequentSlot(p.id);
                     setState(() {
                       _vpError = false;
-                      _vpHint = '已将「${p.name}」移出常用自动识别槽位';
+                      _vpHint = '已将「${p.name}」移出常用';
                     });
                   },
                   child: const Text('移出常用'),
@@ -2017,7 +2019,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   ),
                 ),
                 child: Text(
-                  inFrequent ? '常用自动识别' : '仅手动标记 · 省算力',
+                  inFrequent ? '常用自动识别' : '手动选用',
                   style: TextStyle(
                     fontSize: 11,
                     color: inFrequent ? RCColors.okInk : c.sec,
@@ -2035,6 +2037,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
             children: [
               OutlinedButton(
                 key: Key('vp-lib-sample-$index'),
+                style: _rcMiniChipBtnStyle(c),
                 onPressed: _recordingTargetKey != null
                     ? null
                     : () => unawaited(
@@ -2046,24 +2049,25 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                           slot: p.frequentSlot,
                         ),
                       ),
-                child: Text(capturingThis ? '采集声纹中…' : '+ 补充设备/场景样本'),
+                child: Text(capturingThis ? '录音中…' : '+ 补充录音样本'),
               ),
               OutlinedButton(
                 key: Key('vp-lib-toggle-$index'),
+                style: _rcMiniChipBtnStyle(c),
                 onPressed: () {
                   if (inFrequent) {
                     vpStore.demoteFromFrequentSlot(p.id);
                     setState(() {
                       _vpError = false;
-                      _vpHint = '已将「${p.name}」移出常用自动识别槽位';
+                      _vpHint = '已将「${p.name}」移出常用';
                     });
                   } else {
                     final ok = vpStore.promoteToFrequentSlot(p.id);
                     setState(() {
                       _vpError = !ok;
                       _vpHint = ok
-                          ? '已将「${p.name}」设为常用自动识别（槽位 ${vpStore.findByName(p.name)?.frequentSlot ?? ''}）'
-                          : '常用槽位已满（上限 5 个），请先移出其他常用人物';
+                          ? '已将「${p.name}」设为常用（槽位 ${vpStore.findByName(p.name)?.frequentSlot ?? ''}）'
+                          : '常用槽位已满（上限 5 个），请先移出其他人物';
                     });
                   }
                 },
@@ -2073,12 +2077,12 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
               ),
               OutlinedButton(
                 key: Key('vp-lib-del-$index'),
-                style: OutlinedButton.styleFrom(foregroundColor: c.danger),
+                style: _rcMiniChipBtnStyle(c, foreground: c.danger),
                 onPressed: () {
                   vpStore.deletePerson(p.id);
                   setState(() {
                     _vpError = false;
-                    _vpHint = '已从人物库移除「${p.name}」';
+                    _vpHint = '已移除「${p.name}」';
                   });
                 },
                 child: const Text('删除'),
@@ -2141,6 +2145,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                         const SizedBox(width: 10),
                         OutlinedButton(
                           key: const Key('voiceprint-install-btn'),
+                          style: _rcMiniChipBtnStyle(c),
                           onPressed: ctrl.busy || !ctrl.configured
                               ? null
                               : () => unawaited(
@@ -2157,7 +2162,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '基于本机声纹特征将对话归类为「说话人 1 / 2（推测）」，原始声纹特征仅留存在本机，不断言真实身份。',
+                    '本机离线区分不同说话人，声纹仅保存在本机。',
                     style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
                   ),
                   if (ctrl != null && ctrl.busy) ...[
@@ -2218,7 +2223,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                     children: [
                       Expanded(
                         child: Text(
-                          '常用声纹（自动识别 · 上限 5 个）',
+                          '常用声纹（上限 5 个）',
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w700,
@@ -2234,7 +2239,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '为平衡本机算力消耗，仅这 5 个常用档案参与自动识别与模糊匹配（「几乎准确」直接标为他，「无法确定」提示可能为他）。',
+                    '最多设置 5 个常用声纹参与自动识别。',
                     style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
                   ),
                   for (
@@ -2262,7 +2267,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                     children: [
                       Expanded(
                         child: Text(
-                          '已记录声纹与最近使用人物库（不限数量）',
+                          '全部人物库',
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w700,
@@ -2277,6 +2282,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                       const SizedBox(width: 8),
                       OutlinedButton(
                         key: const Key('vp-add-person-btn'),
+                        style: _rcMiniChipBtnStyle(c),
                         onPressed: () =>
                             unawaited(_showAddPersonDialog(context, vpStore)),
                         child: const Text('+ 新增人物'),
@@ -2285,14 +2291,14 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '标记过即入库，人数无上限；同一个人名下归并不同设备与场景声纹，默认仅手动选用，不消耗自动比对算力。',
+                    '命名过的说话人保存在此，方便手动选用。',
                     style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
                   ),
                   if (libPersons.isEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 10),
                       child: Text(
-                        '尚无他人声纹档案：可在对话详情或总结全文中点击说话人命名，或点击「+ 新增人物」预先录入。',
+                        '暂无其他人物，可在对话详情点击说话人命名，或点击「+ 新增人物」。',
                         style: TextStyle(fontSize: 12, color: c.sec),
                       ),
                     )
@@ -2356,7 +2362,7 @@ class _DynamicIslandBody extends StatelessWidget {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '蓝牙硬件录音、断连自动保底录音及本机录音开启期间，在灵动岛和锁屏实时展示运行状态与计时。',
+                            '录音期间在灵动岛和锁屏显示录音状态与时长。',
                             style: TextStyle(fontSize: 12, color: c.sec),
                           ),
                         ],
@@ -2370,7 +2376,7 @@ class _DynamicIslandBody extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          const _SubSectionLabel('iPhone 操作按钮快捷方式'),
+          const _SubSectionLabel('iPhone 操作按钮'),
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(14),
@@ -2380,7 +2386,7 @@ class _DynamicIslandBody extends StatelessWidget {
               border: Border.all(color: c.sep),
             ),
             child: Text(
-              '前往系统「设置 → 操作按钮 → 快捷指令」，选择「录音卡 · 切换录音」即可一键开启或关闭录音（已连硬件时控制硬件录音并开启本机待命保底，未连硬件时控制本机录音）。',
+              '前往系统「设置 → 操作按钮 → 快捷指令」，选择「录音卡 · 切换录音」即可一键开启或关闭录音。',
               style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
             ),
           ),
@@ -2390,7 +2396,75 @@ class _DynamicIslandBody extends StatelessWidget {
   }
 }
 
-// ── 7) Apple Watch 联动（独立采集硬件接入）──────────────────
+// ── 设计规范统一按钮样式（对齐原型 .btn / .btn.ghost / .mini-chip）──
+
+ButtonStyle _rcPrimaryBtnStyle(RCColorScheme c) => FilledButton.styleFrom(
+  backgroundColor: c.label,
+  foregroundColor: Colors.white,
+  disabledBackgroundColor: c.label.withValues(alpha: 0.35),
+  disabledForegroundColor: Colors.white,
+  elevation: 0,
+  minimumSize: const Size(0, 38),
+  maximumSize: const Size(double.infinity, 38),
+  padding: const EdgeInsets.symmetric(horizontal: 12),
+  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+);
+
+ButtonStyle _rcGhostBtnStyle(RCColorScheme c) => ButtonStyle(
+  backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
+  foregroundColor: WidgetStateProperty.resolveWith(
+    (s) => s.contains(WidgetState.disabled)
+        ? c.label.withValues(alpha: 0.35)
+        : c.label,
+  ),
+  overlayColor: WidgetStatePropertyAll(c.label.withValues(alpha: 0.05)),
+  elevation: const WidgetStatePropertyAll(0),
+  minimumSize: const WidgetStatePropertyAll(Size(0, 38)),
+  maximumSize: const WidgetStatePropertyAll(Size(double.infinity, 38)),
+  padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12)),
+  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  shape: WidgetStatePropertyAll(
+    RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+  ),
+  side: WidgetStateBorderSide.resolveWith(
+    (s) => BorderSide(
+      color: s.contains(WidgetState.disabled)
+          ? c.sep.withValues(alpha: 0.5)
+          : c.sep,
+    ),
+  ),
+  textStyle: const WidgetStatePropertyAll(
+    TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+  ),
+);
+
+ButtonStyle _rcMiniChipBtnStyle(RCColorScheme c, {Color? foreground}) {
+  final fg = foreground ?? c.ink;
+  return ButtonStyle(
+    backgroundColor: WidgetStatePropertyAll(c.card),
+    foregroundColor: WidgetStateProperty.resolveWith(
+      (s) => s.contains(WidgetState.disabled) ? fg.withValues(alpha: 0.35) : fg,
+    ),
+    overlayColor: WidgetStatePropertyAll(fg.withValues(alpha: 0.06)),
+    elevation: const WidgetStatePropertyAll(0),
+    minimumSize: const WidgetStatePropertyAll(Size(0, 30)),
+    padding: const WidgetStatePropertyAll(
+      EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+    ),
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    shape: WidgetStatePropertyAll(
+      RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+    ),
+    side: WidgetStatePropertyAll(BorderSide(color: c.sep)),
+    textStyle: const WidgetStatePropertyAll(
+      TextStyle(fontSize: 11.5, fontWeight: FontWeight.w500),
+    ),
+  );
+}
+
+// ── 7) Apple Watch 联动 ──────────────────────────────────────
 
 class _AppleWatchLinkBody extends StatefulWidget {
   const _AppleWatchLinkBody({required this.config, required this.device});
@@ -2431,7 +2505,7 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
     }
     if (!mounted) return;
     setState(() {
-      _hint = next ? '已开启 Apple Watch 联动，可在右上角胶囊扫描连接' : '已关闭 Apple Watch 联动';
+      _hint = next ? '已开启手表联动' : '已关闭手表联动';
     });
   }
 
@@ -2448,7 +2522,7 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
       if (isWatchConnected) {
         await dev.disconnectSafely();
         if (mounted) {
-          setState(() => _hint = '已断开 Apple Watch 连接');
+          setState(() => _hint = '已断开手表连接');
         }
         return;
       }
@@ -2469,8 +2543,8 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
       if (mounted) {
         setState(() {
           _hint = dev.isConnected && dev.activeKind == DeviceKind.appleWatch
-              ? '已将 Apple Watch 设为当前采集硬件'
-              : (dev.linkError ?? 'Apple Watch 连接未完成，请确认手表端已安装「录音卡」');
+              ? '已连接 Apple Watch'
+              : (dev.linkError ?? '请先确认手表已安装「录音卡」');
         });
       }
     } finally {
@@ -2489,9 +2563,7 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
       final count = await dev.watchHardware.flushAndDrain();
       if (mounted) {
         setState(
-          () => _hint = count > 0
-              ? '已拉取 $count 段手表本地切片进入转写队列'
-              : '手表暂无待传切片',
+          () => _hint = count > 0 ? '已同步 $count 段手表录音' : '暂无待传录音',
         );
       }
     } finally {
@@ -2516,15 +2588,13 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
             dev?.activeKind == DeviceKind.appleWatch;
         final pairedText = status == null
             ? '待检测'
-            : (!status.supported
-                  ? '当前平台不支持'
-                  : (status.paired ? '已配对' : '未配对'));
+            : (!status.supported ? '不支持' : (status.paired ? '已配对' : '未配对'));
         final installedText = status == null
             ? '—'
             : (status.watchAppInstalled ? '已安装' : '未安装');
         final linkText = isWatchConnected
-            ? '已作为当前硬件接入'
-            : (status?.reachable == true ? '表端在线可达' : '离线待命（支持表端先存后传）');
+            ? '已连接'
+            : (status?.reachable == true ? '在线' : '离线');
         final battText = status == null ? '未知' : _batteryTierText(status);
         final pendingText = '${status?.pendingCount ?? 0} 段';
 
@@ -2543,7 +2613,7 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                 onTap: () => unawaited(_toggleLink(!on)),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
+                    horizontal: 16,
                     vertical: 13,
                   ),
                   child: Row(
@@ -2553,7 +2623,7 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              '将 Apple Watch 作为录音硬件接入',
+                              '启用 Apple Watch 录音',
                               style: TextStyle(
                                 fontSize: 14.5,
                                 fontWeight: FontWeight.w600,
@@ -2562,7 +2632,7 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '开启后手表与录音卡 V2 / 点一机 V1 / 语音 AI 键盘并列出现在右上角设备选单，表端仅负责轻量采集与本地缓存，切片全部在本机离线转码入库。',
+                              '开启后可在右上角设备列表中选择手表录音',
                               style: TextStyle(fontSize: 12, color: c.sec),
                             ),
                           ],
@@ -2583,7 +2653,7 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
             const SizedBox(height: 8),
             Container(
               key: const Key('watch-link-status-card'),
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.fromLTRB(16, 2, 16, 14),
               decoration: BoxDecoration(
                 color: c.card,
                 borderRadius: BorderRadius.circular(12),
@@ -2593,14 +2663,14 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _WatchKvRow(label: '配对状态', value: pairedText),
-                  _WatchKvRow(label: '手表端应用', value: installedText),
-                  _WatchKvRow(label: '协同链路', value: linkText),
+                  _WatchKvRow(label: '手表应用', value: installedText),
+                  _WatchKvRow(label: '连接状态', value: linkText),
                   _WatchKvRow(label: '手表电量', value: battText),
-                  _WatchKvRow(label: '本地待传队列', value: pendingText, last: true),
+                  _WatchKvRow(label: '待传录音', value: pendingText, last: true),
                   if (status != null &&
                       status.paired &&
                       !status.watchAppInstalled) ...[
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 8),
                     Container(
                       key: const Key('watch-install-guide-banner'),
                       padding: const EdgeInsets.all(10),
@@ -2610,9 +2680,7 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                         border: Border.all(color: c.sep),
                       ),
                       child: Text(
-                        '检测到已配对 Apple Watch，但表端尚未完成安装：\n'
-                        '① 开发测试版请先在手表端开启「设置 → 隐私与安全性 → 开发者模式」并按提示重启确认；\n'
-                        '② 打开 iPhone 系统「Watch」App →「我的手表」滑到底部「可用 App」→ 找到「录音卡手表」点击「安装」。',
+                        '未安装手表应用：请在 iPhone「Watch」App 底部「可用 App」中点击安装（测试版需先在手表「设置 → 隐私与安全性」开启开发者模式）。',
                         style: TextStyle(
                           fontSize: 12,
                           height: 1.5,
@@ -2630,25 +2698,36 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                     ),
                   ],
                   const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                  Row(
                     children: [
-                      FilledButton(
-                        key: const Key('watch-connect-btn'),
-                        onPressed: (_busy || dev == null)
-                            ? null
-                            : _connectOrDisconnect,
-                        child: Text(
-                          isWatchConnected ? '断开手表连接' : '设为当前录音硬件',
+                      Expanded(
+                        child: FilledButton(
+                          key: const Key('watch-connect-btn'),
+                          style: _rcPrimaryBtnStyle(c),
+                          onPressed: (_busy || dev == null)
+                              ? null
+                              : _connectOrDisconnect,
+                          child: Text(
+                            isWatchConnected ? '断开连接' : '连接手表',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ),
-                      OutlinedButton(
-                        key: const Key('watch-flush-btn'),
-                        onPressed: (_busy || dev == null || !on)
-                            ? null
-                            : _flushPending,
-                        child: const Text('立即拉取待传录音'),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton(
+                          key: const Key('watch-flush-btn'),
+                          style: _rcGhostBtnStyle(c),
+                          onPressed: (_busy || dev == null || !on)
+                              ? null
+                              : _flushPending,
+                          child: const Text(
+                            '同步待传录音',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -2656,7 +2735,7 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
               ),
             ),
             const SizedBox(height: 16),
-            const _SubSectionLabel('表盘常驻采集配置（三步）'),
+            const _SubSectionLabel('表盘快捷录音'),
             const SizedBox(height: 8),
             Container(
               key: const Key('watch-complication-guide'),
@@ -2670,18 +2749,18 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '1. 长按 Apple Watch 表盘 →「编辑」→ 选定角落、圆形、矩形或内嵌槽位，添加「录音卡」表盘组件；',
-                    style: TextStyle(fontSize: 12.5, height: 1.55, color: c.label),
+                    '1. 长按表盘点击「编辑」，添加「录音卡」组件；',
+                    style: TextStyle(fontSize: 13, height: 1.5, color: c.label),
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '2. 抬腕轻点组件即可直接拉起手表端持续录音（HKWorkoutSession + 扩展后台保活，支持抬腕打重点 Mark）；',
-                    style: TextStyle(fontSize: 12.5, height: 1.55, color: c.label),
+                    '2. 抬腕轻点组件即可开始录音；',
+                    style: TextStyle(fontSize: 13, height: 1.5, color: c.label),
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '3. 表端先存 .m4a 切片（无网络/断连也不断录），靠近手机自动 via WCSession 回传，并在 iPhone 本机转为 16kHz Mono PCM WAV 送入 SenseVoice 转写，原始音频不直传云端。',
-                    style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
+                    '3. 脱离手机也可独立录音，靠近手机自动同步。',
+                    style: TextStyle(fontSize: 13, height: 1.5, color: c.sec),
                   ),
                 ],
               ),
@@ -2707,11 +2786,14 @@ class _WatchKvRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
-    return Padding(
-      padding: EdgeInsets.only(bottom: last ? 0 : 8),
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      decoration: BoxDecoration(
+        border: last ? null : Border(bottom: BorderSide(color: c.sep)),
+      ),
       child: Row(
         children: [
-          Text(label, style: TextStyle(fontSize: 13, color: c.sec)),
+          Text(label, style: TextStyle(fontSize: 13.5, color: c.label)),
           const Spacer(),
           Flexible(
             child: Text(

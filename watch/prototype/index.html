@@ -603,8 +603,8 @@ body.sub .phone-scroll{
   background:var(--fill);
   color:var(--ink);
 }
-.wbtns{display:flex;gap:8px;margin-top:10px}
-.wbtns .btn{flex:1}
+.wbtns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+.wbtns .btn{min-width:0}
 
 /* 底栏 */
 nav.bottom{
@@ -1206,9 +1206,8 @@ nav.bottom button.on{color:var(--label);font-weight:600}
 
           <!-- Setting → Apple Watch 联动二级页 -->
           <section id="p-setsub" class="panel">
-            <div class="ph">
+            <div class="ph" style="margin-bottom:10px">
               <h2 id="setsub-title">Apple Watch 联动</h2>
-              <div class="pmeta" id="setsub-sub">作为第 4 款独立录音硬件接入 · 本地直传并转 16kHz WAV</div>
             </div>
             <div id="setsub-body"></div>
           </section>
@@ -2030,29 +2029,29 @@ function renderSetSubWatch() {
   if (!body) return;
   var wConn = isWatchConnected();
   var qCount = S.watchQueue.length;
-  var linkTxt = wConn ? "已作为当前硬件接入" : (S.wcsReachable ? "表端在线可达" : "离线待命（支持表端先存后传）");
+  var linkTxt = wConn ? "已连接" : (S.wcsReachable ? "在线" : "离线");
   body.innerHTML =
     '<div class="set-group"><div class="switchrow" data-testid="watch-link-toggle-row" style="cursor:pointer" onclick="toggleWatchLink()">'
-    + '<div><div style="font-size:14px;font-weight:600">将 Apple Watch 作为录音硬件接入</div>'
-    + '<div style="font-size:11.5px;color:var(--sec);margin-top:2px;line-height:1.45">开启后手表与录音卡 V2 / 点一机 V1 / 语音 AI 键盘并列出现在右上角设备选单，表端仅负责轻量采集与本地缓存，切片全部在本机离线转码入库。</div></div>'
+    + '<div><div style="font-size:14px;font-weight:600">启用 Apple Watch 录音</div>'
+    + '<div style="font-size:12px;color:var(--sec);margin-top:2px;line-height:1.45">开启后可在右上角设备列表中选择手表录音</div></div>'
     + '<div class="sw' + (S.watchLinkEnabled ? " on" : "") + '" data-testid="watch-link-switch" role="switch" aria-checked="' + S.watchLinkEnabled + '" tabindex="0" onclick="event.stopPropagation();toggleWatchLink()"></div>'
     + '</div></div>'
     + '<div class="set-title">配对与协同状态</div>'
-    + '<div class="subcard" data-testid="watch-link-status-card" style="margin-top:0">'
+    + '<div class="subcard" data-testid="watch-link-status-card" style="margin-top:0;padding:2px 14px 14px">'
     + '<div class="navrow" style="cursor:default"><span>配对状态</span><span class="navval"><b style="color:var(--label)">' + (S.watchPaired ? "已配对" : "未配对") + '</b></span></div>'
-    + '<div class="navrow" style="cursor:default"><span>手表端应用</span><span class="navval"><b style="color:var(--label)">' + (S.watchInstalled ? "已安装" : "未安装") + '</b></span></div>'
-    + '<div class="navrow" style="cursor:default"><span>协同链路</span><span class="navval"><b style="color:var(--label)">' + linkTxt + '</b></span></div>'
+    + '<div class="navrow" style="cursor:default"><span>手表应用</span><span class="navval"><b style="color:var(--label)">' + (S.watchInstalled ? "已安装" : "未安装") + '</b></span></div>'
+    + '<div class="navrow" style="cursor:default"><span>连接状态</span><span class="navval"><b style="color:var(--label)">' + linkTxt + '</b></span></div>'
     + '<div class="navrow" style="cursor:default"><span>手表电量</span><span class="navval"><b style="color:var(--label)">电量' + esc(S.watchBattTier) + '</b></span></div>'
-    + '<div class="navrow" style="cursor:default"><span>本地待传队列</span><span class="navval"><b style="color:var(--label)">' + qCount + ' 段</b></span></div>'
+    + '<div class="navrow" style="cursor:default;border-bottom:none"><span>待传录音</span><span class="navval"><b style="color:var(--label)">' + qCount + ' 段</b></span></div>'
     + '<div class="wbtns">'
-    + '<button type="button" class="btn" data-testid="watch-connect-btn" onclick="connectWatchFromSetting()">' + (wConn ? "断开手表连接" : "设为当前录音硬件") + '</button>'
-    + '<button type="button" class="btn ghost" data-testid="phone-flush-btn" ' + (S.watchLinkEnabled ? "" : "disabled ") + 'onclick="flushWatchQueue()">立即拉取待传录音</button>'
+    + '<button type="button" class="btn" data-testid="watch-connect-btn" onclick="connectWatchFromSetting()">' + (wConn ? "断开连接" : "连接手表") + '</button>'
+    + '<button type="button" class="btn ghost" data-testid="phone-flush-btn" ' + (S.watchLinkEnabled ? "" : "disabled ") + 'onclick="flushWatchQueue()">同步待传录音</button>'
     + '</div></div>'
-    + '<div class="set-title">表盘常驻采集配置（三步）</div>'
+    + '<div class="set-title">表盘快捷录音</div>'
     + '<div class="subcard" data-testid="watch-complication-guide" style="margin-top:0">'
-    + '<p style="color:var(--label);margin-bottom:6px">1. 长按 Apple Watch 表盘 →「编辑」→ 选定角落、圆形、矩形或内嵌槽位，添加「录音卡」表盘组件；</p>'
-    + '<p style="color:var(--label);margin-bottom:6px">2. 抬腕轻点组件即可直接拉起手表端持续录音（HKWorkoutSession + 扩展后台保活，支持抬腕打重点 Mark）；</p>'
-    + '<p>3. 表端先存 .m4a 切片（无网络/断连也不断录），靠近手机自动回传，并在 iPhone 本机转为 16kHz 单声道 WAV 送入 SenseVoice 转写，原始音频不直传云端。</p></div>';
+    + '<p style="color:var(--label);margin-bottom:6px">1. 长按表盘点击「编辑」，添加「录音卡」组件；</p>'
+    + '<p style="color:var(--label);margin-bottom:6px">2. 抬腕轻点组件即可开始录音；</p>'
+    + '<p>3. 脱离手机也可独立录音，靠近手机自动同步。</p></div>';
 }
 
 function renderDetail(id) {

@@ -344,7 +344,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('Setting → Apple Watch 联动页保持三卡片极简结构，支持连接切换与拉取待传录音', (
+  testWidgets('Setting → Apple Watch 联动页保持三卡片极简结构，双按钮同行 50% 等宽', (
     tester,
   ) async {
     final env = await _pumpWatchShell(
@@ -370,25 +370,38 @@ void main() {
     expect(find.byKey(const Key('watch-complication-guide')), findsOneWidget);
     expect(find.byKey(const Key('watch-remote-card')), findsNothing);
     expect(find.byKey(const Key('watch-slices-card')), findsNothing);
+    expect(find.textContaining('HKWorkoutSession'), findsNothing);
+    expect(find.textContaining('WCSession'), findsNothing);
 
-    await tester.tap(find.byKey(const Key('watch-connect-btn')));
+    // 验证窄屏 390px 下两个按钮严格左右同行且 50%/50% 等宽、高度 38、圆角 9
+    final connectFinder = find.byKey(const Key('watch-connect-btn'));
+    final flushFinder = find.byKey(const Key('watch-flush-btn'));
+    final connectRect = tester.getRect(connectFinder);
+    final flushRect = tester.getRect(flushFinder);
+    expect((connectRect.top - flushRect.top).abs(), lessThanOrEqualTo(0.5));
+    expect((connectRect.width - flushRect.width).abs(), lessThanOrEqualTo(0.5));
+    expect(connectRect.height, 38.0);
+    expect(flushRect.height, 38.0);
+    expect(connectRect.right, lessThan(flushRect.left));
+
+    await tester.tap(connectFinder);
     await tester.pump();
     await tester.pump();
 
     expect(env.device.isConnected, isTrue);
     expect(env.device.activeKind, DeviceKind.appleWatch);
-    expect(find.text('断开手表连接'), findsOneWidget);
+    expect(find.text('断开连接'), findsOneWidget);
     expect(find.byKey(const Key('watch-link-hint')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('watch-flush-btn')));
+    await tester.tap(flushFinder);
     await tester.pump();
     await tester.pump();
     expect(find.byKey(const Key('watch-link-hint')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('watch-connect-btn')));
+    await tester.tap(connectFinder);
     await tester.pump();
     await tester.pump();
     expect(env.device.isConnected, isFalse);
-    expect(find.text('设为当前录音硬件'), findsOneWidget);
+    expect(find.text('连接手表'), findsOneWidget);
   });
 }
