@@ -19,6 +19,9 @@ enum DocBlockKind {
   /// 统计行（时间范围 · N 条记录），弱化小字。
   meta,
 
+  /// 一级分部标题（第一部分 / 第二部分）。
+  partHeader,
+
   /// 章节标题。
   heading,
 
@@ -34,6 +37,9 @@ enum DocBlockKind {
   /// 有序条目（渲染时按序号编号）。
   numbered,
 
+  /// 现场图片（[DocBlock.imagePath] 可为空或不存在时降级为图注）。
+  image,
+
   /// 引用/说明性小字。
   note,
 
@@ -41,20 +47,24 @@ enum DocBlockKind {
   divider,
 }
 
-/// 一个可排版的文本块。
+/// 一个可排版的文本块或图片块。
 class DocBlock {
-  const DocBlock(this.kind, this.text, {this.index});
+  const DocBlock(this.kind, this.text, {this.index, this.imagePath});
 
   final DocBlockKind kind;
 
-  /// 已剥掉 Markdown 行内标记的纯文本；[DocBlockKind.divider] 时为空字符串。
+  /// 已剥掉 Markdown 行内标记的纯文本；[DocBlockKind.divider] 时为空字符串，[DocBlockKind.image] 时为图注。
   final String text;
 
   /// 有序条目的序号（从 1 开始），其它类型为 null。
   final int? index;
 
+  /// 图片本地文件路径（仅 [DocBlockKind.image] 使用）。
+  final String? imagePath;
+
   @override
-  String toString() => 'DocBlock($kind, index=$index, ${text.isEmpty ? '' : '"$text"'})';
+  String toString() =>
+      'DocBlock($kind, index=$index, imagePath=$imagePath, ${text.isEmpty ? '' : '"$text"'})';
 }
 
 /// 把文档转成块序列。
@@ -66,7 +76,10 @@ class DocBlock {
 /// 3. 什么都没有时给一行占位说明，防止产出空白文件。
 List<DocBlock> buildDocBlocks(ExportDocument doc, {bool preferMarkdown = false}) {
   final sections = doc.visibleSections;
-  final hasStructure = sections.isNotEmpty || doc.overview.trim().isNotEmpty;
+  final hasStructure =
+      sections.isNotEmpty ||
+      doc.overview.trim().isNotEmpty ||
+      doc.overviewImages.isNotEmpty;
 
   if (preferMarkdown && doc.markdown.trim().isNotEmpty) {
     return buildDocBlocksFromMarkdown(doc.markdown, title: doc.safeTitle, meta: doc.meta);
@@ -88,13 +101,26 @@ List<DocBlock> buildDocBlocks(ExportDocument doc, {bool preferMarkdown = false})
     if (doc.meta.trim().isNotEmpty) DocBlock(DocBlockKind.meta, doc.meta.trim()),
   ];
 
-  if (doc.overview.trim().isNotEmpty) {
-    blocks
-      ..add(const DocBlock(DocBlockKind.heading, '概览'))
-      ..add(DocBlock(DocBlockKind.paragraph, doc.overview.trim()));
+  if (!doc.hasTwoPartStructure &&
+      (doc.overview.trim().isNotEmpty || doc.overviewImages.isNotEmpty)) {
+    blocks.add(const DocBlock(DocBlockKind.heading, '概览'));
+    if (doc.overview.trim().isNotEmpty) {
+      blocks.add(DocBlock(DocBlockKind.paragraph, doc.overview.trim()));
+    }
+    for (final img in doc.overviewImages) {
+      blocks.add(DocBlock(DocBlockKind.image, img.caption, imagePath: img.path));
+    }
   }
 
-  for (final section in sections) {
+  for (var i = 0; i < sections.length; i++) {
+    final section = sections[i];
+    if (section.isPartHeader) {
+      if (i > 0) {
+        blocks.add(const DocBlock(DocBlockKind.divider, ''));
+      }
+      blocks.add(DocBlock(DocBlockKind.partHeader, oneline(section.heading)));
+      continue;
+    }
     blocks.add(DocBlock(DocBlockKind.heading, oneline(section.heading)));
     final body = section.body?.trim() ?? '';
     if (body.isNotEmpty) {
@@ -110,6 +136,9 @@ List<DocBlock> buildDocBlocks(ExportDocument doc, {bool preferMarkdown = false})
       } else {
         blocks.add(DocBlock(DocBlockKind.bullet, text));
       }
+    }
+    for (final img in section.images) {
+      blocks.add(DocBlock(DocBlockKind.image, img.caption, imagePath: img.path));
     }
   }
   return blocks;

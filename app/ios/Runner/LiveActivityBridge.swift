@@ -134,9 +134,12 @@ final class LiveActivityBridge {
           isOverOneHour: overHour,
           colonVisible: true
         )
+        let hourSwitchDate: Date? = overHour
+          ? nil
+          : Date(timeIntervalSince1970: (Double(startedAtMs) / 1000.0) + 3600.0)
         if let existing = Activity<RecordingCardActivityAttributes>.activities.first {
           if #available(iOS 16.2, *) {
-            await existing.update(ActivityContent(state: state, staleDate: nil))
+            await existing.update(ActivityContent(state: state, staleDate: hourSwitchDate))
           } else {
             await existing.update(using: state)
           }
@@ -154,7 +157,7 @@ final class LiveActivityBridge {
           if #available(iOS 16.2, *) {
             let created = try Activity.request(
               attributes: attrs,
-              content: ActivityContent(state: state, staleDate: nil),
+              content: ActivityContent(state: state, staleDate: hourSwitchDate),
               pushType: nil
             )
             createdId = created.id
@@ -191,36 +194,33 @@ final class LiveActivityBridge {
     subtitle: String
   ) {
     hourBlinkTask?.cancel()
-    hourBlinkTask = Task { @MainActor in
-      let startSec = Double(startedAtMs) / 1000.0
-      let nowSec = Date().timeIntervalSince1970
-      let waitBeforeHour = 3600.0 - (nowSec - startSec)
-      if waitBeforeHour > 0 {
-        let nanos = UInt64(waitBeforeHour * 1_000_000_000)
-        try? await Task.sleep(nanoseconds: nanos)
-      }
-      guard !Task.isCancelled else { return }
+    hourBlinkTask = nil
+    let startSec = Double(startedAtMs) / 1000.0
+    let nowSec = Date().timeIntervalSince1970
+    let waitBeforeHour = 3600.0 - (nowSec - startSec)
+    guard waitBeforeHour > 0 else { return }
 
-      var colonOn = true
-      while !Task.isCancelled {
-        guard let activity = Activity<RecordingCardActivityAttributes>.activities.first else {
-          break
-        }
-        let next = RecordingCardActivityAttributes.ContentState(
-          title: title,
-          subtitle: subtitle,
-          startedAtMs: startedAtMs,
-          isRecording: true,
-          isOverOneHour: true,
-          colonVisible: colonOn
-        )
-        if #available(iOS 16.2, *) {
-          await activity.update(ActivityContent(state: next, staleDate: nil))
-        } else {
-          await activity.update(using: next)
-        }
-        colonOn.toggle()
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
+    // 仅在满 1 小时（3600s）时刻单次唤醒切换 MM:SS → HH:MM；1Hz 冒号闪烁交由 Widget 端
+    // RCLcdBlink-Regular + TimeDataSource(.hourMinuteSecond) 系统级驱动，不再每秒轮询。
+    hourBlinkTask = Task { @MainActor in
+      let nanos = UInt64(waitBeforeHour * 1_000_000_000)
+      try? await Task.sleep(nanoseconds: nanos)
+      guard !Task.isCancelled,
+            let activity = Activity<RecordingCardActivityAttributes>.activities.first else {
+        return
+      }
+      let next = RecordingCardActivityAttributes.ContentState(
+        title: title,
+        subtitle: subtitle,
+        startedAtMs: startedAtMs,
+        isRecording: true,
+        isOverOneHour: true,
+        colonVisible: true
+      )
+      if #available(iOS 16.2, *) {
+        await activity.update(ActivityContent(state: next, staleDate: nil))
+      } else {
+        await activity.update(using: next)
       }
     }
   }

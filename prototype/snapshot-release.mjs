@@ -25,6 +25,7 @@ snap = snap
   .replace(/>当前版<\/button>/, `>快照 ${ver}</button><a class="ver-opt" href="../current.html" title="返回最新当前版">最新当前版</a>`)
   .replaceAll('"rc-route-cur-v1"', `"rc-route-snap-${slug}"`)
   .replaceAll('"rc-wifi-cur-v1"', `"rc-wifi-snap-${slug}"`)
+  .replaceAll('"rc-vp-cur-v1"', `"rc-vp-snap-${slug}"`)
   .replaceAll('href="releases/', 'href="');
 
 fs.writeFileSync(snapPath, snap, 'utf8');

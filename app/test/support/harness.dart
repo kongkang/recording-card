@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/core/store/device_store.dart';
+import 'package:recording_card/core/theme/tokens.dart';
 import 'package:recording_card/data/seed.dart';
 import 'package:recording_card/pages/app_shell.dart';
 import 'package:recording_card/services/audio/live_audio_recorder.dart';
@@ -64,6 +65,7 @@ Future<ShellHarness> pumpShell(
   await tester.pumpWidget(
     MaterialApp(
       theme: testTheme(),
+      scrollBehavior: const RCScrollBehavior(),
       home: AppShell(
         store: s,
         device: d,

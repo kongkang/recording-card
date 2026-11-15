@@ -33,6 +33,12 @@ class MarkdownExporter {
 
   /// 纯函数：拼出最终 Markdown 文本（导出器与单测共用同一入口）。
   static String buildMarkdownContent(ExportDocument doc) {
+    // 若已生成「图文纪要 + 文字记录」两部分结构化文档，始终以结构化版本合成最新 Markdown
+    // （确保切换 AI 智能优化版 / 原文、或标记说话人后即时反映在 .md 中）。
+    if (doc.hasTwoPartStructure) {
+      return buildMarkdownFromDocument(doc);
+    }
+
     final raw = doc.markdown.trim();
 
     if (raw.isEmpty) {
@@ -53,7 +59,7 @@ class MarkdownExporter {
     return '# $title\n\n$raw${raw.endsWith('\n') ? '' : '\n'}';
   }
 
-  /// 没有 Markdown 原文时，用结构化字段合成 Markdown。
+  /// 没有 Markdown 原文（或采用两部分导出结构）时，用结构化字段合成 Markdown。
   static String buildMarkdownFromDocument(ExportDocument doc) {
     final buffer = StringBuffer()
       ..writeln('# ${doc.safeTitle}')
@@ -63,7 +69,7 @@ class MarkdownExporter {
         ..writeln('> ${doc.meta.trim()}')
         ..writeln();
     }
-    if (doc.overview.trim().isNotEmpty) {
+    if (!doc.hasTwoPartStructure && doc.overview.trim().isNotEmpty) {
       buffer
         ..writeln('## 概览')
         ..writeln()
@@ -71,8 +77,17 @@ class MarkdownExporter {
         ..writeln();
     }
     for (final section in doc.visibleSections) {
+      if (section.isPartHeader) {
+        buffer
+          ..writeln('---')
+          ..writeln()
+          ..writeln('## ${section.heading.trim()}')
+          ..writeln();
+        continue;
+      }
+      final headingPrefix = doc.hasTwoPartStructure ? '###' : '##';
       buffer
-        ..writeln('## ${section.heading.trim()}')
+        ..writeln('$headingPrefix ${section.heading.trim()}')
         ..writeln();
       final body = section.body?.trim() ?? '';
       if (body.isNotEmpty) {
@@ -89,6 +104,14 @@ class MarkdownExporter {
           buffer.writeln('$no. $text');
         } else {
           buffer.writeln('- $text');
+        }
+      }
+      for (final img in section.images) {
+        final caption = img.caption.trim().isEmpty ? '现场照片' : img.caption.trim();
+        if (img.path.trim().isNotEmpty) {
+          buffer.writeln('![$caption](${img.path.trim()})');
+        } else {
+          buffer.writeln('- [现场图片] $caption');
         }
       }
       buffer.writeln();

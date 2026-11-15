@@ -37,6 +37,7 @@ class SummaryDraft {
     required this.points,
     required this.todos,
     required this.markdown,
+    this.fullText = '',
   });
 
   final String title;
@@ -45,6 +46,7 @@ class SummaryDraft {
   final List<InfoPoint> points;
   final List<String> todos;
   final String markdown;
+  final String fullText;
 }
 
 class SummaryGenerator {
@@ -103,6 +105,7 @@ class SummaryGenerator {
   Future<SummaryDraft> generate(
     List<RecordEvent> events, {
     void Function(double progress, String step)? onProgress,
+    String Function(RecordEvent event, String rawSpeaker)? speakerResolver,
   }) async {
     if (events.isEmpty) {
       throw const SummaryGenerationException('没有可总结的记录');
@@ -118,7 +121,11 @@ class SummaryGenerator {
     }
 
     onProgress?.call(0.05, '解析来源内容…');
-    final transcript = _buildTranscript(events);
+    final ordered = sortEventsChronological(events);
+    final transcript = _buildTranscript(
+      ordered,
+      speakerResolver: speakerResolver,
+    );
     if (transcript.trim().isEmpty) {
       throw const SummaryGenerationException('所选记录还没有转写内容');
     }
@@ -134,20 +141,24 @@ class SummaryGenerator {
       ],
       model: _resolveModelOverride(),
       temperature: temp,
-      // 输出随来源条数增长，给足余量但不无上限
-      maxTokens: (1200 + events.length * 400).clamp(1200, 8000),
+      // 输出含结构化字段与润色全文，随来源条数给足余量但不无上限
+      maxTokens: (2400 + ordered.length * 600).clamp(2400, 8192),
       timeout: const Duration(seconds: 120),
     );
 
-    onProgress?.call(0.9, '整理结构与行动项…');
-    final draft = _parse(raw, events);
+    onProgress?.call(0.9, '整理结构、全文与行动项…');
+    final draft = _parse(
+      raw,
+      ordered,
+      speakerResolver: speakerResolver,
+    );
     onProgress?.call(1, '完成');
     return draft;
   }
 
   static const String _defaultRolePrompt =
-      '你是录音整理助手。用户会给你若干条录音转写文本，每条以「[记录id] 标题（时间）」开头。'
-      '请把它们整理成结构化总结，只依据原文内容，不要编造原文没有的事实。';
+      '你是录音整理助手。用户会给你按时间顺序排列的若干条录音转写文本，每条以「[记录id] 标题（时间）」开头。'
+      '请把它们整理成结构化总结与完整润色全文，只依据原文内容，不要编造原文没有的事实。';
 
   static const String _jsonSchemaContract = '''
 只输出一个 JSON 对象，不要任何解释文字、不要 Markdown 代码块，字段如下：
@@ -156,25 +167,30 @@ class SummaryGenerator {
   "overview": "一段话概览，2-3 句",
   "structure": [{"name": "主题分组名", "leaves": ["要点1", "要点2"]}],
   "points": [{"title": "信息点标题", "detail": "细节说明", "sources": ["对应的记录id"]}],
-  "todos": ["可执行的行动项"]
+  "todos": ["可执行的行动项"],
+  "fullText": "按时间顺序把各段来源记录拼接整理为一篇连续通顺的润色全文：尽量完整保留原意、细节与说话人归属，仅去除口水词并修正同音错别字，不要缩写成摘要"
 }
 要求：structure 与 points 至少各一条；points 的 sources 只能使用我给你出现过的记录 id；
-行动项来自原文的待办或承诺，没有就返回空数组。''';
+行动项来自原文的待办或承诺，没有就返回空数组；fullText 为完整润色拼接文本，保留说话人名称。''';
 
   static const String _instruction = '$_defaultRolePrompt\n\n$_jsonSchemaContract';
 
-  String _buildTranscript(List<RecordEvent> events) {
+  String _buildTranscript(
+    List<RecordEvent> events, {
+    String Function(RecordEvent event, String rawSpeaker)? speakerResolver,
+  }) {
     final buffer = StringBuffer();
     for (final e in events) {
       buffer.writeln('[${e.id}] ${e.title}（${e.time}）');
       final body = e.longText.trim().isEmpty ? e.brief : e.longText;
       buffer.writeln(body.isEmpty ? '（无转写内容）' : body);
-      // 润色后的对话是总结的最可靠依据；原文过长时只带摘要，避免超上下文
+      // 润色后的对话是总结与全文的最可靠依据；原文过长时只带摘要，避免超上下文
       if (e.dialog.isNotEmpty) {
         final dialog = [
-          for (final t in e.dialog) '${t.spk}：${t.text}',
+          for (final t in e.dialog)
+            '${speakerResolver?.call(e, t.spk) ?? t.spk}：${t.text}',
         ].join('\n');
-        if (dialog.length <= 4000) {
+        if (dialog.length <= 6000) {
           buffer.writeln('对话：');
           buffer.writeln(dialog);
         }
@@ -184,7 +200,11 @@ class SummaryGenerator {
     return buffer.toString();
   }
 
-  SummaryDraft _parse(String raw, List<RecordEvent> events) {
+  SummaryDraft _parse(
+    String raw,
+    List<RecordEvent> events, {
+    String Function(RecordEvent event, String rawSpeaker)? speakerResolver,
+  }) {
     final jsonText = _extractJson(raw);
     if (jsonText == null) {
       throw const SummaryGenerationException('总结结果格式异常，请重试');
@@ -238,13 +258,27 @@ class SummaryGenerator {
         if ('$t'.trim().isNotEmpty) '$t'.trim(),
     ];
 
+    final parsedFullText = _str(json['fullText']).trim();
+    final fullText = parsedFullText.isNotEmpty
+        ? parsedFullText
+        : stitchPolishedFullText(events, speakerResolver: speakerResolver);
+
     return SummaryDraft(
       title: title,
       overview: overview,
       structure: structure,
       points: points,
       todos: todos,
-      markdown: _markdown(title, overview, structure, points, todos, events),
+      fullText: fullText,
+      markdown: _markdown(
+        title,
+        overview,
+        structure,
+        points,
+        todos,
+        fullText,
+        events,
+      ),
     );
   }
 
@@ -300,6 +334,7 @@ class SummaryGenerator {
     List<MapBranch> structure,
     List<InfoPoint> points,
     List<String> todos,
+    String fullText,
     List<RecordEvent> events,
   ) {
     final b = StringBuffer()
@@ -333,6 +368,12 @@ class SummaryGenerator {
       for (final t in todos) {
         b.writeln('- [ ] $t');
       }
+    }
+    if (fullText.trim().isNotEmpty) {
+      b
+        ..writeln()
+        ..writeln('## 全文（AI 智能优化版）')
+        ..writeln(fullText.trim());
     }
     b
       ..writeln()

@@ -8,6 +8,7 @@
 ///   （否则深色模式下会拿到浅色值，出现白底黑字的问题）。
 library;
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 /// 语义色（浅色常量，等同 `RCColorScheme.light`）。
@@ -253,4 +254,39 @@ ThemeData _buildTheme(RCColorScheme scheme) {
       contentTextStyle: TextStyle(color: dark ? scheme.label : Colors.white),
     ),
   );
+}
+
+/// 应用级滚动行为：纵向列表在滚动时显示系统滚动条、静止后自动隐藏；横向滚动区不显示滚动条。
+class RCScrollBehavior extends MaterialScrollBehavior {
+  const RCScrollBehavior();
+
+  @override
+  Widget buildScrollbar(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
+    if (axisDirectionToAxis(details.direction) != Axis.vertical) {
+      return child;
+    }
+    switch (getPlatform(context)) {
+      case TargetPlatform.iOS:
+      case TargetPlatform.macOS:
+        return CupertinoScrollbar(
+          controller: details.controller,
+          thumbVisibility: false,
+          child: child,
+        );
+      case TargetPlatform.android:
+      case TargetPlatform.fuchsia:
+      case TargetPlatform.linux:
+      case TargetPlatform.windows:
+        return Scrollbar(
+          controller: details.controller,
+          thumbVisibility: false,
+          interactive: false,
+          child: child,
+        );
+    }
+  }
 }

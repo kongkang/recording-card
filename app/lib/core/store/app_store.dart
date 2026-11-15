@@ -101,6 +101,9 @@ class AppStore extends ChangeNotifier {
   /// 按记录 ID 存储的关联照片（含点一机 V1 硬件抓拍与系统相册对齐导入，及排除状态）。
   Map<String, List<EventPhoto>> eventPhotos = {};
 
+  /// 用户确认后的说话人姓名/称呼映射（key 为 `session:<session>:<slot>` 或 `event:<id>:<slot>`）。
+  Map<String, String> _speakerAliases = {};
+
   /// 系统相册访问服务（可在测试中注入假实现）。
   PhotoLibraryService photoLibrary = const PhotoLibraryService();
 
@@ -1516,6 +1519,7 @@ class AppStore extends ChangeNotifier {
       }
       final draft = await generator.generate(
         sources,
+        speakerResolver: displaySpeaker,
         onProgress: (progress, step) {
           _genProgress = progress.clamp(0, 1);
           _genStep = step;
@@ -1533,6 +1537,7 @@ class AppStore extends ChangeNotifier {
         ..points = draft.points
         ..todos = draft.todos
         ..markdown = draft.markdown
+        ..fullText = draft.fullText
         ..subDesc = _describeSources(sources)
         ..srcDesc = sources
             .map((e) => '${dayLabel(e.dayOffset)} ${e.time} ${e.title}')
@@ -1618,6 +1623,235 @@ class AppStore extends ChangeNotifier {
     super.dispose();
   }
 
+  // ── 说话人标记（局部确认并全局联动，未确认仍保留推测标识） ─────────────
+  static String normalizeSpeakerSlot(String raw) {
+    var s = raw.trim();
+    s = s.replaceAll(RegExp(r'（推测）|\(推测\)'), '').trim();
+    if (s.isEmpty || s == '—') return '未区分';
+    if (s == '未区分' || s == '说话人 未区分' || s == '无语音') return s;
+    if (s.startsWith('说话人 ')) return s;
+    if (s.startsWith('说话人')) {
+      final rest = s.substring(3).trim();
+      return rest.isEmpty ? '未区分' : '说话人 $rest';
+    }
+    return '说话人 $s';
+  }
+
+  static bool isUnclusteredSpeaker(String slot) =>
+      slot.isEmpty ||
+      slot == '未区分' ||
+      slot == '说话人 未区分' ||
+      slot == '无语音';
+
+  String? speakerAliasFor(RecordEvent event, String rawSpeaker) {
+    final slot = normalizeSpeakerSlot(rawSpeaker);
+    if (isUnclusteredSpeaker(slot)) return null;
+    final view = segmentViewFor(event.id);
+    if (view != null && view.file.session.isNotEmpty) {
+      final bySession = _speakerAliases['session:${view.file.session}:$slot'];
+      if (bySession != null && bySession.trim().isNotEmpty) {
+        return bySession.trim();
+      }
+    }
+    final byEvent = _speakerAliases['event:${event.id}:$slot'];
+    if (byEvent != null && byEvent.trim().isNotEmpty) {
+      return byEvent.trim();
+    }
+    return null;
+  }
+
+  /// 对外展示名：用户已确认标记则返回确认后的称呼（不带推测），未标记簇保留「（推测）」。
+  String displaySpeaker(
+    RecordEvent event,
+    String rawSpeaker, {
+    bool includeGuessSuffix = true,
+  }) {
+    final slot = normalizeSpeakerSlot(rawSpeaker);
+    if (isUnclusteredSpeaker(slot)) return slot;
+    final alias = speakerAliasFor(event, slot);
+    if (alias != null && alias.isNotEmpty) return alias;
+    return includeGuessSuffix ? '$slot（推测）' : slot;
+  }
+
+  /// 生成卡片/详情摘要行里的说话人汇总文本。
+  String displaySpeakersSummary(RecordEvent event) {
+    final view = segmentViewFor(event.id);
+    if (view != null && view.segment.speakerCount > 0) {
+      return view.segment.speakerLabels
+          .map((s) => displaySpeaker(event, s))
+          .join(' / ');
+    }
+    final raw = event.speakers.trim();
+    if (raw.isEmpty || raw == '无语音' || raw == '未区分') {
+      return raw.isEmpty ? '未区分' : raw;
+    }
+    final parts = raw
+        .split('/')
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return raw;
+    return parts.map((p) => displaySpeaker(event, p)).join(' / ');
+  }
+
+  /// 收集一组记录中可标记的说话人条目（保持原始声纹簇与代表原话）。
+  List<({String slot, String currentAlias, String sampleQuote, List<RecordEvent> events})>
+  speakerEntriesForEvents(List<RecordEvent> targets) {
+    final bySlot = <String, ({String alias, String sample, List<RecordEvent> events})>{};
+    void addTurn(RecordEvent event, String rawSpk, String text) {
+      final slot = normalizeSpeakerSlot(rawSpk);
+      if (isUnclusteredSpeaker(slot)) return;
+      final trimmedText = text.trim();
+      final existing = bySlot[slot];
+      final alias = speakerAliasFor(event, slot) ?? '';
+      if (existing == null) {
+        bySlot[slot] = (
+          alias: alias,
+          sample: trimmedText,
+          events: [event],
+        );
+      } else {
+        if (!existing.events.any((item) => item.id == event.id)) {
+          existing.events.add(event);
+        }
+        if (existing.sample.isEmpty && trimmedText.isNotEmpty) {
+          bySlot[slot] = (
+            alias: existing.alias.isNotEmpty ? existing.alias : alias,
+            sample: trimmedText,
+            events: existing.events,
+          );
+        } else if (existing.alias.isEmpty && alias.isNotEmpty) {
+          bySlot[slot] = (
+            alias: alias,
+            sample: existing.sample,
+            events: existing.events,
+          );
+        }
+      }
+    }
+
+    for (final e in targets) {
+      final view = segmentViewFor(e.id);
+      if (view != null && view.turns.isNotEmpty) {
+        for (final t in view.turns) {
+          addTurn(e, t.speakerLabel, t.text);
+        }
+      } else if (view != null && view.utterances.isNotEmpty) {
+        for (final u in view.utterances) {
+          addTurn(e, u.speakerLabel ?? '未区分', u.text);
+        }
+      } else if (e.dialog.isNotEmpty) {
+        for (final t in e.dialog) {
+          addTurn(e, t.spk, t.text);
+        }
+      } else if (e.raw.isNotEmpty) {
+        for (final t in e.raw) {
+          addTurn(e, t.spk, t.text);
+        }
+      } else {
+        for (final part in e.speakers.split('/')) {
+          addTurn(e, part, '');
+        }
+      }
+    }
+
+    return [
+      for (final entry in bySlot.entries)
+        (
+          slot: entry.key,
+          currentAlias: entry.value.alias,
+          sampleQuote: entry.value.sample,
+          events: entry.value.events,
+        ),
+    ];
+  }
+
+  /// 设置或清除某个声纹簇的说话人称呼。
+  void setSpeakerAlias(
+    RecordEvent event,
+    String rawSpeaker,
+    String alias, {
+    bool applyToSession = true,
+  }) {
+    final slot = normalizeSpeakerSlot(rawSpeaker);
+    if (isUnclusteredSpeaker(slot)) return;
+    final trimmed = alias.trim();
+    final view = segmentViewFor(event.id);
+    final keys = <String>['event:${event.id}:$slot'];
+    if (applyToSession && view != null && view.file.session.isNotEmpty) {
+      keys.add('session:${view.file.session}:$slot');
+    }
+    var changed = false;
+    for (final k in keys) {
+      if (trimmed.isEmpty) {
+        if (_speakerAliases.remove(k) != null) changed = true;
+      } else {
+        if (_speakerAliases[k] != trimmed) {
+          _speakerAliases[k] = trimmed;
+          changed = true;
+        }
+      }
+    }
+    if (!changed) return;
+    _persist();
+    notifyListeners();
+  }
+
+  /// 批量为多条记录中的同一说话人槽位更新称呼。
+  void setSpeakerAliasForEvents(
+    List<RecordEvent> targets,
+    String slot,
+    String alias,
+  ) {
+    final normalized = normalizeSpeakerSlot(slot);
+    if (isUnclusteredSpeaker(normalized)) return;
+    final trimmed = alias.trim();
+    for (final e in targets) {
+      final view = segmentViewFor(e.id);
+      final keys = <String>['event:${e.id}:$normalized'];
+      if (view != null && view.file.session.isNotEmpty) {
+        keys.add('session:${view.file.session}:$normalized');
+      }
+      for (final k in keys) {
+        if (trimmed.isEmpty) {
+          _speakerAliases.remove(k);
+        } else {
+          _speakerAliases[k] = trimmed;
+        }
+      }
+    }
+    _persist();
+    notifyListeners();
+  }
+
+  /// 将文本（如行动项、润色全文）中已一致确认的声纹簇名称替换为称呼，冲突槽位保持原样。
+  String applySpeakerAliasesToText(String text, List<RecordEvent> events) {
+    if (text.isEmpty || _speakerAliases.isEmpty || events.isEmpty) return text;
+    final slotAliases = <String, Set<String>>{};
+    for (final item in speakerEntriesForEvents(events)) {
+      if (item.currentAlias.isEmpty) continue;
+      slotAliases.putIfAbsent(item.slot, () => <String>{}).add(item.currentAlias);
+    }
+    var out = text;
+    for (final entry in slotAliases.entries) {
+      if (entry.value.length != 1) continue;
+      final alias = entry.value.first;
+      final slot = entry.key;
+      final escapedSlot = RegExp.escape(slot);
+      // 先替换带（推测）或(推测)的完整形式
+      out = out.replaceAll(
+        RegExp('$escapedSlot\\s*(?:（推测）|\\(推测\\))'),
+        alias,
+      );
+      // 再替换未带（推测）的完整边界匹配（避免误伤「说话人 10」中的「说话人 1」）
+      out = out.replaceAll(
+        RegExp('(?<![A-Za-z0-9\\u4e00-\\u9fff])$escapedSlot(?![0-9A-Za-z])'),
+        alias,
+      );
+    }
+    return out;
+  }
+
   // ── 会话持久化（对应原型 sessionStorage rc-route-v1） ──
   Map<String, dynamic> exportState() => {
     'stack': [
@@ -1633,6 +1867,8 @@ class AppStore extends ChangeNotifier {
           if (entry.value.isNotEmpty)
             entry.key: [for (final p in entry.value) p.toJson()],
       },
+    if (_speakerAliases.isNotEmpty)
+      'spkAliases': Map<String, String>.from(_speakerAliases),
   };
 
   void restoreState(Map<String, dynamic>? data) {
@@ -1655,6 +1891,16 @@ class AppStore extends ChangeNotifier {
         }
       }
       eventPhotos = restored;
+    }
+    final rawAliases = data['spkAliases'];
+    if (rawAliases is Map) {
+      _speakerAliases = {
+        for (final entry in rawAliases.entries)
+          if ('${entry.key}'.isNotEmpty && '${entry.value}'.trim().isNotEmpty)
+            '${entry.key}': '${entry.value}'.trim(),
+      };
+    } else {
+      _speakerAliases = {};
     }
     subStack = [
       for (final e in (data['stack'] as List? ?? []))

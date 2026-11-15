@@ -33,9 +33,31 @@ void main() {
     expect(draft.points.length, 4);
     expect(draft.points.first.title, '排期偏紧，先移除低优先级功能');
     expect(draft.todos, ['发出分工文档', '跟进客户加载速度问题', '准备周五书面结论']);
+    expect(draft.fullText, contains('【13:05 · 客户回访要点】'));
     // 「全部」视图展示的是结构化内容，Markdown 只是导出用的原文
     expect(draft.markdown, contains('# 项目排期与客户反馈'));
     expect(draft.markdown, contains('## 概览'));
+  });
+
+  test('模型 JSON 缺省 fullText 时按时间顺序拼接清洗并剔除口水词', () async {
+    const noFullTextJson = '''
+{
+  "title": "无全文兜底测试",
+  "overview": "验证兜底拼接全文逻辑。",
+  "structure": [{"name": "沟通", "leaves": ["结论"]}],
+  "points": [{"title": "测试", "detail": "详情", "sources": ["e2"]}],
+  "todos": ["跟进"]
+}
+''';
+    final model = SummaryModel(content: noFullTextJson);
+    final generator = await model.generator();
+    final draft = await generator.generate([seedEvents[1], seedEvents[2]]);
+    // 按时间顺序（晨间 10:12 先于回访 13:05）
+    final idxMorning = draft.fullText.indexOf('晨间工作计划');
+    final idxCallback = draft.fullText.indexOf('客户回访要点');
+    expect(idxMorning, greaterThanOrEqualTo(0));
+    expect(idxCallback, greaterThan(idxMorning));
+    expect(draft.fullText, isNot(contains('呃')));
   });
 
   test('溯源链接来自真实记录：标签用记录标题，范围用时间·时长', () async {

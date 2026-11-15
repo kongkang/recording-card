@@ -23,6 +23,7 @@
 	<key>UIAppFonts</key>
 	<array>
 		<string>RCLcdDigital-Regular.ttf</string>
+		<string>RCLcdBlink-Regular.ttf</string>
 	</array>
 	<key>NSExtension</key>
 	<dict>

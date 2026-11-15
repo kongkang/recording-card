@@ -14,6 +14,8 @@
 /// - 所有尺寸都在「逻辑像素」空间里排版，最后按 pixelRatio 放大栅格化，保证 2x 清晰度。
 library;
 
+import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -69,7 +71,7 @@ class DocumentPageOptions {
 
 /// 长图参数（图片导出降级路径使用）。
 class LongImageOptions {
-  const LongImageOptions({this.pixelRatio = 1.5, this.maxPixelHeight = 12000});
+  const LongImageOptions({this.pixelRatio = 1.5, this.maxPixelHeight = 24000});
 
   /// 长图倍率：1.5 → 宽 810px。
   /// 为什么不沿用 2.0：一张长图是**单次** `toImage`，像素总量 = 宽 × 高，
@@ -94,31 +96,37 @@ class DocumentRenderer {
     DocumentPageOptions? pageOptions,
   }) async {
     final o = pageOptions ?? options;
-    final laidOut = _paginate(buildDocBlocks(doc, preferMarkdown: preferMarkdown), o);
+    final blocks = buildDocBlocks(doc, preferMarkdown: preferMarkdown);
+    final images = await _loadDocImages(blocks);
     try {
-      final pngs = <Uint8List>[];
-      for (var i = 0; i < laidOut.pages.length; i++) {
-        final picture = _recordPage(
-          laidOut.pages[i],
-          o,
-          doc: doc,
-          pageIndex: i,
-          totalPages: laidOut.pages.length,
-        );
-        try {
-          final image = await picture.toImage(o.pixelWidth, o.pixelHeight);
+      final laidOut = _paginate(blocks, o, images: images);
+      try {
+        final pngs = <Uint8List>[];
+        for (var i = 0; i < laidOut.pages.length; i++) {
+          final picture = _recordPage(
+            laidOut.pages[i],
+            o,
+            doc: doc,
+            pageIndex: i,
+            totalPages: laidOut.pages.length,
+          );
           try {
-            pngs.add(await _encodePng(image));
+            final image = await picture.toImage(o.pixelWidth, o.pixelHeight);
+            try {
+              pngs.add(await _encodePng(image));
+            } finally {
+              image.dispose();
+            }
           } finally {
-            image.dispose();
+            picture.dispose();
           }
-        } finally {
-          picture.dispose();
         }
+        return pngs;
+      } finally {
+        laidOut.dispose();
       }
-      return pngs;
     } finally {
-      laidOut.dispose();
+      _disposeImages(images);
     }
   }
 
@@ -132,73 +140,107 @@ class DocumentRenderer {
     LongImageOptions longImage = const LongImageOptions(),
   }) async {
     final o = pageOptions ?? options;
-    final laidOut = _paginate(buildDocBlocks(doc, preferMarkdown: preferMarkdown), o);
+    final blocks = buildDocBlocks(doc, preferMarkdown: preferMarkdown);
+    final images = await _loadDocImages(blocks);
     try {
-      final pages = laidOut.pages;
-      final ratio = longImage.pixelRatio;
-      final maxLogicalHeight = longImage.maxPixelHeight / ratio;
-
-      // 文档末页只取实际用到的高度，避免长图底部留一大片空白
-      double pageSliceHeight(int i) =>
-          i == pages.length - 1 ? (o.margin + pages[i].used + o.margin * 0.6) : o.pageHeight;
-
-      final included = <int>[];
-      var logicalHeight = 0.0;
-      var truncated = false;
-      for (var i = 0; i < pages.length; i++) {
-        final sliceHeight = pageSliceHeight(i);
-        if (logicalHeight + sliceHeight > maxLogicalHeight) {
-          truncated = true;
-          break;
-        }
-        included.add(i);
-        logicalHeight += sliceHeight;
-      }
-      if (included.isEmpty) {
-        throw const ExportException('图片导出失败：内容超出单张图片高度上限，请改用 PDF 导出');
-      }
-
-      // 截断提示占用底部空间
-      final notePainter = truncated ? _layoutNote('内容过长，长图已截断；完整内容请导出 PDF', o) : null;
-      if (notePainter != null) {
-        logicalHeight += notePainter.height + 12;
-      }
-      final minHeight = o.margin * 2 + 120;
-      if (logicalHeight < minHeight) logicalHeight = minHeight;
-
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder)..scale(ratio);
-      // 白底（导出文档固定浅色底，深色模式下也保持可打印）
-      canvas.drawRect(
-        Rect.fromLTWH(0, 0, o.logicalWidth, logicalHeight),
-        Paint()..color = const Color(0xFFFFFFFF),
-      );
-
-      var offsetY = 0.0;
-      for (final pageIndex in included) {
-        _paintPlacedItems(canvas, pages[pageIndex], o, offsetY);
-        offsetY += pageSliceHeight(pageIndex);
-      }
-
-      notePainter?.paint(canvas, Offset(o.margin, logicalHeight - notePainter.height - o.margin * 0.6));
-
-      final picture = recorder.endRecording();
+      final laidOut = _paginate(blocks, o, images: images);
       try {
-        final image = await picture.toImage(
-          (o.logicalWidth * ratio).round(),
-          (logicalHeight * ratio).round(),
+        final pages = laidOut.pages;
+        final ratio = longImage.pixelRatio;
+        final maxLogicalHeight = longImage.maxPixelHeight / ratio;
+
+        // 文档末页只取实际用到的高度，避免长图底部留一大片空白
+        double pageSliceHeight(int i) =>
+            i == pages.length - 1 ? (o.margin + pages[i].used + o.margin * 0.6) : o.pageHeight;
+
+        final included = <int>[];
+        var logicalHeight = 0.0;
+        var truncated = false;
+        for (var i = 0; i < pages.length; i++) {
+          final sliceHeight = pageSliceHeight(i);
+          if (logicalHeight + sliceHeight > maxLogicalHeight) {
+            truncated = true;
+            break;
+          }
+          included.add(i);
+          logicalHeight += sliceHeight;
+        }
+        if (included.isEmpty) {
+          throw const ExportException('图片导出失败：内容超出单张图片高度上限，请改用 PDF 导出');
+        }
+
+        // 截断提示占用底部空间
+        final notePainter = truncated ? _layoutNote('内容过长，长图已截断；完整内容请导出 PDF', o) : null;
+        if (notePainter != null) {
+          logicalHeight += notePainter.height + 12;
+        }
+        final minHeight = o.margin * 2 + 120;
+        if (logicalHeight < minHeight) logicalHeight = minHeight;
+
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder)..scale(ratio);
+        // 白底（导出文档固定浅色底，深色模式下也保持可打印）
+        canvas.drawRect(
+          Rect.fromLTWH(0, 0, o.logicalWidth, logicalHeight),
+          Paint()..color = const Color(0xFFFFFFFF),
         );
+
+        var offsetY = 0.0;
+        for (final pageIndex in included) {
+          _paintPlacedItems(canvas, pages[pageIndex], o, offsetY);
+          offsetY += pageSliceHeight(pageIndex);
+        }
+
+        notePainter?.paint(canvas, Offset(o.margin, logicalHeight - notePainter.height - o.margin * 0.6));
+
+        final picture = recorder.endRecording();
         try {
-          return await _encodePng(image);
+          final image = await picture.toImage(
+            (o.logicalWidth * ratio).round(),
+            (logicalHeight * ratio).round(),
+          );
+          try {
+            return await _encodePng(image);
+          } finally {
+            image.dispose();
+          }
         } finally {
-          image.dispose();
+          picture.dispose();
+          notePainter?.dispose();
         }
       } finally {
-        picture.dispose();
-        notePainter?.dispose();
+        laidOut.dispose();
       }
     } finally {
-      laidOut.dispose();
+      _disposeImages(images);
+    }
+  }
+
+  Future<Map<String, ui.Image>> _loadDocImages(List<DocBlock> blocks) async {
+    final result = <String, ui.Image>{};
+    for (final block in blocks) {
+      if (block.kind != DocBlockKind.image) continue;
+      final path = block.imagePath?.trim() ?? '';
+      if (path.isEmpty || result.containsKey(path)) continue;
+      try {
+        final file = File(path);
+        if (!await file.exists()) continue;
+        final bytes = await file.readAsBytes();
+        if (bytes.isEmpty) continue;
+        final codec = await ui.instantiateImageCodec(bytes);
+        final frame = await codec.getNextFrame();
+        codec.dispose();
+        result[path] = frame.image;
+      } catch (_) {
+        // 无法读取或解码本地图片时回退为文本图注
+      }
+    }
+    return result;
+  }
+
+  void _disposeImages(Map<String, ui.Image> images) {
+    for (final img in images.values) {
+      img.dispose();
     }
   }
 
@@ -207,7 +249,11 @@ class DocumentRenderer {
   // ---------------------------------------------------------------------------
 
   /// 把块序列排进若干页（逻辑坐标，y=0 表示正文区顶部）。
-  _PaginatedDoc _paginate(List<DocBlock> blocks, DocumentPageOptions o) {
+  _PaginatedDoc _paginate(
+    List<DocBlock> blocks,
+    DocumentPageOptions o, {
+    Map<String, ui.Image> images = const {},
+  }) {
     final pages = <_Page>[_Page()];
     final contentWidth = o.contentWidth;
     final contentHeight = o.contentHeight;
@@ -229,6 +275,56 @@ class DocumentRenderer {
         page.items.add(_PlacedItem.divider(y: page.used + gap2));
         page.used += gap2 + spec.gapAfter + 1;
         continue;
+      }
+
+      if (block.kind == DocBlockKind.image) {
+        final path = block.imagePath?.trim() ?? '';
+        final img = path.isEmpty ? null : images[path];
+        if (img != null) {
+          final caption = block.text.trim();
+          final captionSpec = _specFor(DocBlockKind.note);
+          final captionPainter = caption.isNotEmpty
+              ? _layoutText(caption, captionSpec, contentWidth)
+              : null;
+          final captionH = captionPainter == null ? 0.0 : (captionPainter.height + 4);
+          final maxW = contentWidth;
+          final maxH = math.min(contentHeight * 0.42, 220.0);
+          final scale = math.min(maxW / img.width, maxH / img.height).clamp(0.01, 2.0);
+          final drawW = img.width * scale;
+          final drawH = img.height * scale;
+
+          var page = pages.last;
+          final gap = page.items.isEmpty ? 0.0 : spec.gapBefore;
+          if (page.used + gap + drawH + captionH > contentHeight && page.items.isNotEmpty) {
+            if (pages.length >= o.maxPages) {
+              captionPainter?.dispose();
+              truncated = true;
+              break blocksLoop;
+            }
+            pages.add(_Page());
+            page = pages.last;
+          }
+          final gap2 = page.items.isEmpty ? 0.0 : spec.gapBefore;
+          final imgY = page.used + gap2;
+          page.items.add(
+            _PlacedItem.image(
+              image: img,
+              rect: Rect.fromLTWH(o.margin, imgY, drawW, drawH),
+              y: imgY,
+            ),
+          );
+          if (captionPainter != null) {
+            page.items.add(
+              _PlacedItem.text(
+                painter: captionPainter,
+                x: o.margin,
+                y: imgY + drawH + 4,
+              ),
+            );
+          }
+          page.used += gap2 + drawH + captionH + spec.gapAfter;
+          continue;
+        }
       }
 
       final text = _composeText(block);
@@ -325,8 +421,22 @@ class DocumentRenderer {
     for (final item in page.items) {
       final y = o.margin + item.y + offsetY;
       final painter = item.painter;
+      final img = item.image;
+      final imgRect = item.imageRect;
       if (painter != null) {
         painter.paint(canvas, Offset(item.x, y));
+      } else if (img != null && imgRect != null) {
+        final dst = Rect.fromLTWH(imgRect.left, y, imgRect.width, imgRect.height);
+        final src = Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
+        canvas.save();
+        canvas.clipRRect(RRect.fromRectAndRadius(dst, const Radius.circular(8)));
+        canvas.drawImageRect(
+          img,
+          src,
+          dst,
+          Paint()..filterQuality = FilterQuality.medium,
+        );
+        canvas.restore();
       } else {
         // 分隔线
         canvas.drawLine(
@@ -412,6 +522,9 @@ class DocumentRenderer {
         return '· ${block.text}';
       case DocBlockKind.numbered:
         return '${block.index ?? 1}. ${block.text}';
+      case DocBlockKind.image:
+        final t = block.text.trim();
+        return t.isEmpty ? '[现场图片]' : '[现场图片] $t';
       default:
         return block.text;
     }
@@ -423,6 +536,8 @@ class DocumentRenderer {
         return const _BlockSpec(size: 26, weight: FontWeight.w700, color: Color(0xFF1D1D1F), lineHeight: 1.35, gapAfter: 10);
       case DocBlockKind.meta:
         return const _BlockSpec(size: 12.5, weight: FontWeight.w400, color: Color(0xFF8A8A8E), lineHeight: 1.4, gapBefore: 2, gapAfter: 18);
+      case DocBlockKind.partHeader:
+        return const _BlockSpec(size: 18.5, weight: FontWeight.w700, color: Color(0xFF1D1D1F), lineHeight: 1.38, gapBefore: 16, gapAfter: 10);
       case DocBlockKind.heading:
         return const _BlockSpec(size: 16, weight: FontWeight.w600, color: Color(0xFF1D1D1F), lineHeight: 1.4, gapBefore: 18, gapAfter: 7);
       case DocBlockKind.subheading:
@@ -432,6 +547,8 @@ class DocumentRenderer {
       case DocBlockKind.bullet:
       case DocBlockKind.numbered:
         return const _BlockSpec(size: 13.5, weight: FontWeight.w400, color: Color(0xFF3C3C43), lineHeight: 1.58, gapAfter: 6, indent: 12);
+      case DocBlockKind.image:
+        return const _BlockSpec(size: 12, weight: FontWeight.w400, color: Color(0xFF8A8A8E), lineHeight: 1.5, gapBefore: 6, gapAfter: 10);
       case DocBlockKind.note:
         return const _BlockSpec(size: 12, weight: FontWeight.w400, color: Color(0xFF8A8A8E), lineHeight: 1.5, gapAfter: 8);
       case DocBlockKind.divider:
@@ -477,12 +594,25 @@ class _Page {
 }
 
 class _PlacedItem {
-  _PlacedItem.text({required this.painter, required this.x, required this.y});
+  _PlacedItem.text({required this.painter, required this.x, required this.y})
+      : image = null,
+        imageRect = null;
 
-  /// 分隔线不持有文本，painter 为 null 时按 1px 横线绘制。
-  _PlacedItem.divider({required this.y}) : painter = null, x = 0;
+  _PlacedItem.image({required this.image, required Rect rect, required this.y})
+      : painter = null,
+        x = rect.left,
+        imageRect = rect;
+
+  /// 分隔线不持有文本与图片，painter 与 image 均为 null 时按 1px 横线绘制。
+  _PlacedItem.divider({required this.y})
+      : painter = null,
+        image = null,
+        imageRect = null,
+        x = 0;
 
   final TextPainter? painter;
+  final ui.Image? image;
+  final Rect? imageRect;
   final double x;
   final double y;
 }

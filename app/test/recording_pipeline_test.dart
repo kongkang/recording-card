@@ -483,9 +483,12 @@ void main() {
       sliceDuration: const Duration(seconds: 1),
       onSliceReady: slices.add,
     );
+    addTearDown(recorder.stop);
     recorder.updateDeviceSessionId('1ABE9622');
     await recorder.start();
-    await Future<void>.delayed(const Duration(milliseconds: 80));
+    for (var i = 0; i < 80 && slices.length < 2; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
     expect(recorder.isRunning, isTrue, reason: '仍在录音状态中');
     expect(slices.length, 2);
 

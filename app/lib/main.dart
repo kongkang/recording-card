@@ -67,6 +67,7 @@ class RecordingCardApp extends StatelessWidget {
       theme: buildRCTheme(),
       darkTheme: buildRCDarkTheme(),
       themeMode: ThemeMode.system,
+      scrollBehavior: const RCScrollBehavior(),
       // 产品当前只有简体中文：显式声明语言，系统组件（日期选择、复制粘贴菜单）才会走中文
       supportedLocales: const [Locale('zh', 'CN')],
       localizationsDelegates: const [

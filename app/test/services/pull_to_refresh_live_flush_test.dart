@@ -212,6 +212,7 @@ void main() {
     });
     addTearDown(() async {
       await sub.cancel();
+      await recorder.stop();
       recorder.dispose();
       await gateway.dispose();
     });
@@ -260,7 +261,9 @@ void main() {
     gateway.controller.add(
       RealtimeAudioEvent(kind: RealtimeAudioKind.audio, pcm: Uint8List(restBytes)),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    for (var i = 0; i < 80 && emitted.length < 2; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
     await appStore.finishLiveRecording();
 
     expect(emitted.length, 2);

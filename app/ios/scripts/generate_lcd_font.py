@@ -124,6 +124,35 @@ GLYPH_SPECS: list[tuple[str, int | None, int, list[list[tuple[int, int]]]]] = [
     ("minus", 0x2212, DIGIT_ADVANCE, [SEG_G]),
 ]
 
+# 伴生闪烁字体 RCLcdBlink-Regular：用于 ≥1 小时紧凑灵动岛「HH:MM」1Hz 冒号叠加。
+# 仅偶数秒个位（0/2/4/6/8）绘制液晶双点冒号，其余字符全部为空轮廓且统一等宽 COLON_ADVANCE；
+# 配合系统原生秒级 Text(TimeDataSource) 与右侧单字宽裁剪，实现零轮询低功耗 1Hz 闪烁。
+_BLINK_COLON_DOTS = [_colon_dot(125, 525), _colon_dot(125, 235)]
+BLINK_GLYPH_SPECS: list[tuple[str, int | None, int, list[list[tuple[int, int]]]]] = [
+    (".notdef", None, COLON_ADVANCE, _BLINK_COLON_DOTS),
+    ("space", 0x0020, COLON_ADVANCE, []),
+    ("hyphen", 0x002D, COLON_ADVANCE, []),
+    ("period", 0x002E, COLON_ADVANCE, []),
+    ("zero", 0x0030, COLON_ADVANCE, _BLINK_COLON_DOTS),
+    ("one", 0x0031, COLON_ADVANCE, []),
+    ("two", 0x0032, COLON_ADVANCE, _BLINK_COLON_DOTS),
+    ("three", 0x0033, COLON_ADVANCE, []),
+    ("four", 0x0034, COLON_ADVANCE, _BLINK_COLON_DOTS),
+    ("five", 0x0035, COLON_ADVANCE, []),
+    ("six", 0x0036, COLON_ADVANCE, _BLINK_COLON_DOTS),
+    ("seven", 0x0037, COLON_ADVANCE, []),
+    ("eight", 0x0038, COLON_ADVANCE, _BLINK_COLON_DOTS),
+    ("nine", 0x0039, COLON_ADVANCE, []),
+    ("colon", 0x003A, COLON_ADVANCE, []),
+    ("nbspace", 0x00A0, COLON_ADVANCE, []),
+    ("uni2010", 0x2010, COLON_ADVANCE, []),
+    ("uni2011", 0x2011, COLON_ADVANCE, []),
+    ("figuredash", 0x2012, COLON_ADVANCE, []),
+    ("endash", 0x2013, COLON_ADVANCE, []),
+    ("emdash", 0x2014, COLON_ADVANCE, []),
+    ("minus", 0x2212, COLON_ADVANCE, []),
+]
+
 
 def _encode_glyf_entry(contours: list[list[tuple[int, int]]]) -> tuple[bytes, tuple[int, int, int, int]]:
     if not contours:
@@ -208,14 +237,14 @@ def _build_cmap(codepoints: dict[int, int]) -> bytes:
     return bytes(cmap)
 
 
-def _build_name() -> bytes:
+def _build_name(family_name: str, ps_name: str) -> bytes:
     records_src = [
-        (1, "RC LCD Digital"),
+        (1, family_name),
         (2, "Regular"),
-        (3, "RecordingCard: RCLcdDigital-Regular: 1.0"),
-        (4, "RC LCD Digital Regular"),
+        (3, f"RecordingCard: {ps_name}: 1.0"),
+        (4, f"{family_name} Regular"),
         (5, "Version 1.0"),
-        (6, "RCLcdDigital-Regular"),
+        (6, ps_name),
     ]
     recs: list[tuple[int, int, int, int, bytes]] = []
     for name_id, text in records_src:
@@ -241,14 +270,19 @@ def _checksum(data: bytes) -> int:
     return total
 
 
-def build_ttf() -> bytes:
+def build_ttf(
+    glyph_specs: list[tuple[str, int | None, int, list[list[tuple[int, int]]]]] = GLYPH_SPECS,
+    family_name: str = "RC LCD Digital",
+    ps_name: str = "RCLcdDigital-Regular",
+    avg_width: int = DIGIT_ADVANCE,
+) -> bytes:
     glyf_blobs: list[bytes] = []
     bboxes: list[tuple[int, int, int, int]] = []
     advances: list[int] = []
     lsbs: list[int] = []
     codepoints: dict[int, int] = {}
 
-    for gid, (_, cp, adv, contours) in enumerate(GLYPH_SPECS):
+    for gid, (_, cp, adv, contours) in enumerate(glyph_specs):
         blob, bbox = _encode_glyf_entry(contours)
         glyf_blobs.append(blob)
         bboxes.append(bbox)
@@ -257,8 +291,8 @@ def build_ttf() -> bytes:
         if cp is not None:
             codepoints[cp] = gid
 
-    num_glyphs = len(GLYPH_SPECS)
-    non_empty = [b for b, (_, _, _, cs) in zip(bboxes, GLYPH_SPECS) if cs]
+    num_glyphs = len(glyph_specs)
+    non_empty = [b for b, (_, _, _, cs) in zip(bboxes, glyph_specs) if cs]
     xmin = min(b[0] for b in non_empty)
     ymin = min(b[1] for b in non_empty)
     xmax = max(b[2] for b in non_empty)
@@ -271,8 +305,8 @@ def build_ttf() -> bytes:
         glyf.extend(blob)
     loca.extend(struct.pack(">I", len(glyf)))
 
-    max_pts = max((sum(len(c) for c in cs) for _, _, _, cs in GLYPH_SPECS), default=0)
-    max_contours = max((len(cs) for _, _, _, cs in GLYPH_SPECS), default=0)
+    max_pts = max((sum(len(c) for c in cs) for _, _, _, cs in glyph_specs), default=0)
+    max_contours = max((len(cs) for _, _, _, cs in glyph_specs), default=0)
 
     head = struct.pack(
         ">IIIIHHqqhhhhHHhhh",
@@ -336,7 +370,7 @@ def build_ttf() -> bytes:
     os2 = struct.pack(
         ">HhHHH11h10sIIII4sHHHhhhHHIIhhHHH",
         4,              # version
-        DIGIT_ADVANCE,  # xAvgCharWidth
+        avg_width,      # xAvgCharWidth
         500,            # usWeightClass (Medium)
         5,              # usWidthClass
         0,              # fsType (installable)
@@ -384,7 +418,7 @@ def build_ttf() -> bytes:
         "hmtx": bytes(hmtx),
         "loca": bytes(loca),
         "maxp": maxp,
-        "name": _build_name(),
+        "name": _build_name(family_name, ps_name),
         "post": post,
     }
 
@@ -420,15 +454,36 @@ def build_ttf() -> bytes:
 
 
 def main() -> None:
-    out_path = Path(
-        sys.argv[1]
-        if len(sys.argv) > 1
-        else Path(__file__).resolve().parent.parent / "Shared" / "Fonts" / "RCLcdDigital-Regular.ttf"
+    if len(sys.argv) > 1:
+        out_path = Path(sys.argv[1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        ttf = build_ttf()
+        out_path.write_bytes(ttf)
+        print(f"Wrote {out_path} ({len(ttf)} bytes)")
+        return
+
+    fonts_dir = Path(__file__).resolve().parent.parent / "Shared" / "Fonts"
+    fonts_dir.mkdir(parents=True, exist_ok=True)
+
+    digital_path = fonts_dir / "RCLcdDigital-Regular.ttf"
+    digital_ttf = build_ttf(
+        GLYPH_SPECS,
+        family_name="RC LCD Digital",
+        ps_name="RCLcdDigital-Regular",
+        avg_width=DIGIT_ADVANCE,
     )
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    ttf = build_ttf()
-    out_path.write_bytes(ttf)
-    print(f"Wrote {out_path} ({len(ttf)} bytes)")
+    digital_path.write_bytes(digital_ttf)
+    print(f"Wrote {digital_path} ({len(digital_ttf)} bytes)")
+
+    blink_path = fonts_dir / "RCLcdBlink-Regular.ttf"
+    blink_ttf = build_ttf(
+        BLINK_GLYPH_SPECS,
+        family_name="RC LCD Blink",
+        ps_name="RCLcdBlink-Regular",
+        avg_width=COLON_ADVANCE,
+    )
+    blink_path.write_bytes(blink_ttf)
+    print(f"Wrote {blink_path} ({len(blink_ttf)} bytes)")
 
 
 if __name__ == "__main__":
