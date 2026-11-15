@@ -20,8 +20,32 @@ final RegExp _clauseEnd = RegExp(r'[，,、]+');
 
 /// 模型特殊标记（`<|zh|>`、`<|NEUTRAL|>`、`<blank>` 等）。
 final RegExp _specialToken = RegExp(r'^<.*>$');
+final RegExp _inlineSpecialTag = RegExp(r'<[^>]*>');
+final RegExp _meaningfulChar = RegExp(r'[\p{L}\p{N}]', unicode: true);
 
 const int _maxCharsPerUtterance = 80;
+
+/// 判断一段 ASR 文本是否包含真实语音文字（过滤掉静音触发的孤立 `"。"`、`"."`、`"，。"` 等纯标点幻觉）。
+bool isMeaningfulSpeechText(String text) {
+  final cleaned = text.replaceAll(_inlineSpecialTag, '').trim();
+  if (cleaned.isEmpty) return false;
+  return _meaningfulChar.hasMatch(cleaned);
+}
+
+/// 从有效语音中提取干净可读的短标题（彻底杜绝纯标点与「实时切片 #N」）。
+String buildReadableFallbackTitle(
+  String text, {
+  String fallback = '语音对话',
+}) {
+  final stripped = text.replaceAll(_inlineSpecialTag, '').trim();
+  if (!isMeaningfulSpeechText(stripped)) return fallback;
+  final clauses = stripped
+      .split(RegExp(r'[\n。！？!?，,；;]+'))
+      .map((s) => s.trim())
+      .where(isMeaningfulSpeechText);
+  final first = clauses.isEmpty ? stripped : clauses.first;
+  return first.length <= 18 ? first : '${first.substring(0, 18)}…';
+}
 
 /// 优先使用 token 时间戳；不可用时按标点 + 比例兜底。
 List<RawUtterance> buildUtterancesFromAsr({
@@ -35,6 +59,12 @@ List<RawUtterance> buildUtterancesFromAsr({
   String? emotion,
   int pauseMs = 500,
 }) {
+  final tokensText = tokens
+      .where((t) => t.trim().isNotEmpty && !_specialToken.hasMatch(t.trim()))
+      .join();
+  if (!isMeaningfulSpeechText(text) && !isMeaningfulSpeechText(tokensText)) {
+    return const [];
+  }
   final aligned = _buildFromTokens(
     sliceId: sliceId,
     sliceStartMs: sliceStartMs,
@@ -168,7 +198,7 @@ List<RawUtterance>? _buildFromTokens({
   for (var gi = 0; gi < merged.length; gi++) {
     final g = merged[gi];
     final groupText = g.map((i) => keptTokens[i]).join().trim();
-    if (groupText.isEmpty) continue;
+    if (!isMeaningfulSpeechText(groupText)) continue;
     final start = sliceStartMs + keptTimes[g.first];
     final nextStart = gi + 1 < merged.length
         ? sliceStartMs + keptTimes[merged[gi + 1].first]
@@ -191,7 +221,7 @@ List<RawUtterance>? _buildFromTokens({
       ),
     );
   }
-  return out.isEmpty ? null : out;
+  return out;
 }
 
 String _normalize(String value) =>
@@ -200,11 +230,11 @@ String _normalize(String value) =>
 /// 按句末标点切句；过长的句子再按逗号切。
 List<String> splitSentences(String text) {
   final trimmed = text.trim();
-  if (trimmed.isEmpty) return const [];
+  if (!isMeaningfulSpeechText(trimmed)) return const [];
   final out = <String>[];
   for (final part in trimmed.split(_sentenceEnd)) {
     final s = part.trim();
-    if (s.isEmpty) continue;
+    if (!isMeaningfulSpeechText(s)) continue;
     if (s.length <= _maxCharsPerUtterance) {
       out.add(s);
       continue;
@@ -212,7 +242,7 @@ List<String> splitSentences(String text) {
     final buffer = StringBuffer();
     for (final clause in s.split(_clauseEnd)) {
       final c = clause.trim();
-      if (c.isEmpty) continue;
+      if (!isMeaningfulSpeechText(c)) continue;
       if (buffer.isNotEmpty && buffer.length + c.length > _maxCharsPerUtterance) {
         out.add(buffer.toString());
         buffer.clear();
@@ -220,7 +250,7 @@ List<String> splitSentences(String text) {
       if (buffer.isNotEmpty) buffer.write('，');
       buffer.write(c);
     }
-    if (buffer.isNotEmpty) out.add(buffer.toString());
+    if (isMeaningfulSpeechText(buffer.toString())) out.add(buffer.toString());
   }
   return out;
 }

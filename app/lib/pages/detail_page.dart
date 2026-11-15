@@ -13,8 +13,10 @@ import 'package:flutter/material.dart';
 
 import '../core/models/record.dart';
 import '../core/models/segment_view.dart';
+import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
+import '../services/transcribe/utterance_builder.dart';
 import '../widgets/photo_preview_sheet.dart';
 import '../widgets/quick_speaker_sheet.dart';
 import '../widgets/raw_audio_player.dart';
@@ -326,7 +328,7 @@ class _DetailPageState extends State<DetailPage> {
                         (view.file.polishStale
                             ? '部分内容未润色，以下为本地原始转写。'
                             : (view.file.deviceName.startsWith('LIVE_')
-                                  ? '实时切片本地转写（保留原始文本，暂未接入云端润色）。'
+                                  ? '本地实时转写已完成，将在当前清洗周期或停录后自动由云端整理。'
                                   : '云端润色未完成，以下为本地原始转写。')),
                     key: const Key('detail-note'),
                     style: const TextStyle(
@@ -516,10 +518,49 @@ class _DetailPageState extends State<DetailPage> {
     }
 
     final activePhotos = store.activePhotosForEvent(e);
-    final entries = <({int sortSec, int order, Widget widget})>[];
-    var order = 0;
+    final photoSecs = <int>[
+      for (final p in activePhotos)
+        p.capturedAtMs != null
+            ? _secOfDayFromEpoch(p.capturedAtMs!)
+            : (_secOfDayFromClock(p.time) ?? _secOfDayFromClock(e.time) ?? 0),
+    ];
+
+    bool hasPhotoBetween(int prevSec, int nextSec) {
+      if (nextSec <= prevSec) return false;
+      for (final pSec in photoSecs) {
+        if (pSec > prevSec && pSec < nextSec) return true;
+      }
+      return false;
+    }
+
+    String extractClockHead(String clock) {
+      final parts = clock.split('—');
+      return parts.first.trim();
+    }
+
+    String extractClockTail(String clock) {
+      final parts = clock.split('—');
+      return parts.length > 1 ? parts.last.trim() : parts.first.trim();
+    }
+
+    // 同一说话人相邻发言在语义展示层自动合并成连贯自然段（不因短切片时间戳切碎），
+    // 若两句之间穿插了现场照片则按时间先后保留分隔。
+    final groups = <({
+      int firstTurnIndex,
+      String rawSpk,
+      String displaySpk,
+      String avatarSpk,
+      bool canQuickName,
+      String text,
+      String startClock,
+      String endClock,
+      int sortSec,
+      int lastSortSec,
+    })>[];
+
     for (var turnIdx = 0; turnIdx < lines.length; turnIdx++) {
       final l = lines[turnIdx];
+      if (!isMeaningfulSpeechText(l.text)) continue;
       final displaySpk = store.displayTurnSpeaker(e, turnIdx, l.spk);
       final avatarSpk = store.displayTurnSpeaker(
         e,
@@ -528,16 +569,61 @@ class _DetailPageState extends State<DetailPage> {
         includeGuessSuffix: false,
       );
       final canQuickName = l.spk.trim() != '无语音';
+      final startClock = extractClockHead(l.clock);
+      final endClock = extractClockTail(l.clock);
+      final prev = groups.isNotEmpty ? groups.last : null;
+      final canMerge =
+          prev != null &&
+          prev.displaySpk == displaySpk &&
+          !hasPhotoBetween(prev.lastSortSec, l.sortSec);
+      if (canMerge) {
+        groups[groups.length - 1] = (
+          firstTurnIndex: prev.firstTurnIndex,
+          rawSpk: prev.rawSpk,
+          displaySpk: prev.displaySpk,
+          avatarSpk: prev.avatarSpk,
+          canQuickName: prev.canQuickName,
+          text: joinPolishedUtterances(prev.text, l.text.trim()),
+          startClock: prev.startClock,
+          endClock: endClock.isNotEmpty ? endClock : prev.endClock,
+          sortSec: prev.sortSec,
+          lastSortSec: l.sortSec > prev.lastSortSec
+              ? l.sortSec
+              : prev.lastSortSec,
+        );
+      } else {
+        groups.add((
+          firstTurnIndex: turnIdx,
+          rawSpk: l.spk,
+          displaySpk: displaySpk,
+          avatarSpk: avatarSpk,
+          canQuickName: canQuickName,
+          text: l.text.trim(),
+          startClock: startClock,
+          endClock: endClock,
+          sortSec: l.sortSec,
+          lastSortSec: l.sortSec,
+        ));
+      }
+    }
+
+    final entries = <({int sortSec, int order, Widget widget})>[];
+    var order = 0;
+    for (final g in groups) {
+      final clockRange =
+          (g.endClock.isNotEmpty && g.endClock != g.startClock)
+              ? '${g.startClock}—${g.endClock}'
+              : g.startClock;
       void openQuickSheet() => showQuickSpeakerSheet(
         context,
         store: store,
         event: e,
-        turnIndex: turnIdx,
-        rawSpeaker: l.spk,
-        sampleQuote: l.text,
+        turnIndex: g.firstTurnIndex,
+        rawSpeaker: g.rawSpk,
+        sampleQuote: g.text,
       );
       entries.add((
-        sortSec: l.sortSec,
+        sortSec: g.sortSec,
         order: order++,
         widget: Padding(
           padding: const EdgeInsets.only(bottom: 14),
@@ -545,19 +631,19 @@ class _DetailPageState extends State<DetailPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               InkWell(
-                key: Key('turn-spk-$turnIdx'),
+                key: Key('turn-spk-${g.firstTurnIndex}'),
                 borderRadius: BorderRadius.circular(14),
-                onTap: canQuickName ? openQuickSheet : null,
+                onTap: g.canQuickName ? openQuickSheet : null,
                 child: Container(
                   width: 28,
                   height: 28,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _speakerColor(displaySpk),
+                    color: _speakerColor(g.displaySpk),
                   ),
                   child: Text(
-                    _avatar(avatarSpk),
+                    _avatar(g.avatarSpk),
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
@@ -571,26 +657,26 @@ class _DetailPageState extends State<DetailPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     GestureDetector(
-                      key: Key('turn-who-${e.id}-$turnIdx'),
-                      onTap: canQuickName ? openQuickSheet : null,
+                      key: Key('turn-who-${e.id}-${g.firstTurnIndex}'),
+                      onTap: g.canQuickName ? openQuickSheet : null,
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Flexible(
                             child: Text(
-                              '$displaySpk · ${l.clock}',
+                              '${g.displaySpk} · $clockRange',
                               style: TextStyle(
                                 fontSize: 11,
-                                color: canQuickName
+                                color: g.canQuickName
                                     ? RCColors.ink
                                     : RCColors.sec,
-                                fontWeight: canQuickName
+                                fontWeight: g.canQuickName
                                     ? FontWeight.w500
                                     : FontWeight.w400,
                               ),
                             ),
                           ),
-                          if (canQuickName) ...[
+                          if (g.canQuickName) ...[
                             const SizedBox(width: 4),
                             const Icon(
                               Icons.edit_outlined,
@@ -610,7 +696,7 @@ class _DetailPageState extends State<DetailPage> {
                         border: Border.all(color: RCColors.sep),
                       ),
                       child: Text(
-                        l.text,
+                        g.text,
                         style: const TextStyle(fontSize: 14, height: 1.5),
                       ),
                     ),
@@ -625,9 +711,7 @@ class _DetailPageState extends State<DetailPage> {
 
     for (var i = 0; i < activePhotos.length; i++) {
       final p = activePhotos[i];
-      final sortSec = p.capturedAtMs != null
-          ? _secOfDayFromEpoch(p.capturedAtMs!)
-          : (_secOfDayFromClock(p.time) ?? _secOfDayFromClock(e.time) ?? 0);
+      final sortSec = photoSecs[i];
       String? nearestQuote;
       int? bestDelta;
       for (final l in lines) {
@@ -649,8 +733,16 @@ class _DetailPageState extends State<DetailPage> {
       return cmp != 0 ? cmp : a.order.compareTo(b.order);
     });
 
+    final overviewText = e.longText.trim();
+    final showOverviewCard =
+        groups.isNotEmpty &&
+        isMeaningfulSpeechText(overviewText) &&
+        !overviewText.contains('未检测到有效人声') &&
+        !overviewText.startsWith('已保存本地原始转写') &&
+        !(groups.length == 1 && overviewText == groups.single.text.trim());
+
     return [
-      if (lines.isEmpty)
+      if (groups.isEmpty)
         Padding(
           padding: const EdgeInsets.only(bottom: 14),
           child: Container(
@@ -670,6 +762,42 @@ class _DetailPageState extends State<DetailPage> {
                 height: 1.55,
                 color: RCColors.sec,
               ),
+            ),
+          ),
+        ),
+      if (showOverviewCard)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Container(
+            key: const Key('detail-overview-card'),
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: RCColors.bg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: RCColors.sep),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '阶段概述',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: RCColors.sec,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  overviewText,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    height: 1.55,
+                    color: RCColors.ink,
+                  ),
+                ),
+              ],
             ),
           ),
         ),

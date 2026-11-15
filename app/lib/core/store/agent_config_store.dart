@@ -234,6 +234,40 @@ class AgentConfigStore extends ChangeNotifier {
   String contextMode = 'full_day'; // 'full_day' | 'scoped'
   double temperature = 0.2;
 
+  // ── 开发者设置：连续录音清洗周期与层叠重叠策略 ─────────────
+  /// 阶段清洗触发周期（分钟，支持 1..180 分钟，从分钟到小时可调）。
+  int cleanCycleMinutes = 10;
+
+  /// 遇到 >=1 分钟静音空白或停止录音时自动提前收敛清洗。
+  bool cleanOnSilenceGap = true;
+
+  /// 层叠上下文重叠模式：'paragraphs'（上一轮已整理段落）| 'minutes'（上一轮时间窗口）。
+  String cleanOverlapMode = 'paragraphs';
+
+  /// 按已整理段落重叠时，附带上一轮末尾段落条数（0..10）。
+  int cleanOverlapParagraphs = 3;
+
+  /// 按时间重叠时，回溯包含上一轮末尾的分钟数（1..30）。
+  int cleanOverlapMinutes = 3;
+
+  static String formatCleanCycle(int minutes) {
+    final clamped = minutes.clamp(1, 180);
+    if (clamped < 60) return '$clamped 分钟';
+    final h = clamped ~/ 60;
+    final m = clamped % 60;
+    return m == 0 ? '$h 小时' : '$h 小时 $m 分钟';
+  }
+
+  String get developerCleanSummary {
+    final cycleText = formatCleanCycle(cleanCycleMinutes);
+    final overlapText = cleanOverlapMode == 'minutes'
+        ? '重叠 $cleanOverlapMinutes 分钟'
+        : (cleanOverlapParagraphs == 0
+              ? '无重叠'
+              : '重叠 $cleanOverlapParagraphs 段');
+    return '每 $cycleText · $overlapText';
+  }
+
   String get cloudStatusSummary {
     if (!cloudEnabled) return '已关闭';
     if (developerMode) return cloudModel;
@@ -355,6 +389,26 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['temp'] is num) {
       temperature = (data['temp'] as num).toDouble().clamp(0.0, 1.0);
     }
+    if (data['cleanCycleMinutes'] is num) {
+      cleanCycleMinutes = (data['cleanCycleMinutes'] as num).toInt().clamp(1, 180);
+    }
+    if (data['cleanOnSilenceGap'] is bool) {
+      cleanOnSilenceGap = data['cleanOnSilenceGap'] as bool;
+    }
+    if (data['cleanOverlapMode'] == 'paragraphs' ||
+        data['cleanOverlapMode'] == 'minutes') {
+      cleanOverlapMode = data['cleanOverlapMode'] as String;
+    }
+    if (data['cleanOverlapParagraphs'] is num) {
+      cleanOverlapParagraphs = (data['cleanOverlapParagraphs'] as num)
+          .toInt()
+          .clamp(0, 10);
+    }
+    if (data['cleanOverlapMinutes'] is num) {
+      cleanOverlapMinutes = (data['cleanOverlapMinutes'] as num)
+          .toInt()
+          .clamp(1, 30);
+    }
     if (data['preset'] is String && (data['preset'] as String).isNotEmpty) {
       presetId = data['preset'] as String;
     }
@@ -456,6 +510,37 @@ class AgentConfigStore extends ChangeNotifier {
     await _save();
   }
 
+  Future<void> setCleanCycleMinutes(int minutes) async {
+    cleanCycleMinutes = minutes.clamp(1, 180);
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setCleanOnSilenceGap(bool value) async {
+    cleanOnSilenceGap = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setCleanOverlapMode(String mode) async {
+    if (mode != 'paragraphs' && mode != 'minutes') return;
+    cleanOverlapMode = mode;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setCleanOverlapParagraphs(int count) async {
+    cleanOverlapParagraphs = count.clamp(0, 10);
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setCleanOverlapMinutes(int minutes) async {
+    cleanOverlapMinutes = minutes.clamp(1, 30);
+    notifyListeners();
+    await _save();
+  }
+
   Future<void> selectPreset(String id) async {
     final spec = presets.where((p) => p.id == id).firstOrNull;
     if (spec == null) return;
@@ -542,6 +627,11 @@ class AgentConfigStore extends ChangeNotifier {
       'pickedModel': userPickedCloudModel,
       'ctx': contextMode,
       'temp': temperature,
+      'cleanCycleMinutes': cleanCycleMinutes,
+      'cleanOnSilenceGap': cleanOnSilenceGap,
+      'cleanOverlapMode': cleanOverlapMode,
+      'cleanOverlapParagraphs': cleanOverlapParagraphs,
+      'cleanOverlapMinutes': cleanOverlapMinutes,
       'preset': presetId,
       'prompts': prompts,
       'ext': extensionStates,

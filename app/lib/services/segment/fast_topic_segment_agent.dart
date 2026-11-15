@@ -13,6 +13,52 @@ import 'dart:io';
 import '../../core/models/recording.dart';
 import '../analysis/chat_completion.dart';
 
+class TopicParagraph {
+  const TopicParagraph({
+    required this.speaker,
+    required this.text,
+    required this.startAtMs,
+    required this.endAtMs,
+    this.srcUtteranceIds = const [],
+  });
+
+  final String speaker;
+  final String text;
+  final int startAtMs;
+  final int endAtMs;
+  final List<String> srcUtteranceIds;
+
+  TopicParagraph copyWith({
+    String? speaker,
+    String? text,
+    int? startAtMs,
+    int? endAtMs,
+    List<String>? srcUtteranceIds,
+  }) => TopicParagraph(
+    speaker: speaker ?? this.speaker,
+    text: text ?? this.text,
+    startAtMs: startAtMs ?? this.startAtMs,
+    endAtMs: endAtMs ?? this.endAtMs,
+    srcUtteranceIds: srcUtteranceIds ?? this.srcUtteranceIds,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'sp': speaker,
+    'tx': text,
+    's': startAtMs,
+    'e': endAtMs,
+    if (srcUtteranceIds.isNotEmpty) 'u': srcUtteranceIds,
+  };
+
+  factory TopicParagraph.fromJson(Map<String, dynamic> j) => TopicParagraph(
+    speaker: '${j['sp'] ?? ''}',
+    text: '${j['tx'] ?? ''}',
+    startAtMs: (j['s'] as num?)?.toInt() ?? 0,
+    endAtMs: (j['e'] as num?)?.toInt() ?? 0,
+    srcUtteranceIds: [for (final u in (j['u'] as List? ?? const [])) '$u'],
+  );
+}
+
 class TopicSectionOverride {
   const TopicSectionOverride({
     required this.title,
@@ -20,6 +66,11 @@ class TopicSectionOverride {
     required this.startTurnIndex,
     required this.endTurnIndex,
     this.tags = const [],
+    this.overview = '',
+    this.paragraphs = const [],
+    this.cleanedByCloud = false,
+    this.startAtMs = 0,
+    this.endAtMs = 0,
   });
 
   final String title;
@@ -27,6 +78,35 @@ class TopicSectionOverride {
   final int startTurnIndex;
   final int endTurnIndex;
   final List<String> tags;
+  final String overview;
+  final List<TopicParagraph> paragraphs;
+  final bool cleanedByCloud;
+  final int startAtMs;
+  final int endAtMs;
+
+  TopicSectionOverride copyWith({
+    String? title,
+    String? brief,
+    int? startTurnIndex,
+    int? endTurnIndex,
+    List<String>? tags,
+    String? overview,
+    List<TopicParagraph>? paragraphs,
+    bool? cleanedByCloud,
+    int? startAtMs,
+    int? endAtMs,
+  }) => TopicSectionOverride(
+    title: title ?? this.title,
+    brief: brief ?? this.brief,
+    startTurnIndex: startTurnIndex ?? this.startTurnIndex,
+    endTurnIndex: endTurnIndex ?? this.endTurnIndex,
+    tags: tags ?? this.tags,
+    overview: overview ?? this.overview,
+    paragraphs: paragraphs ?? this.paragraphs,
+    cleanedByCloud: cleanedByCloud ?? this.cleanedByCloud,
+    startAtMs: startAtMs ?? this.startAtMs,
+    endAtMs: endAtMs ?? this.endAtMs,
+  );
 
   Map<String, dynamic> toJson() => {
     't': title,
@@ -34,6 +114,11 @@ class TopicSectionOverride {
     's': startTurnIndex,
     'e': endTurnIndex,
     if (tags.isNotEmpty) 'tg': tags,
+    if (overview.isNotEmpty) 'ov': overview,
+    if (paragraphs.isNotEmpty) 'p': [for (final p in paragraphs) p.toJson()],
+    if (cleanedByCloud) 'cl': true,
+    if (startAtMs > 0) 'sa': startAtMs,
+    if (endAtMs > 0) 'ea': endAtMs,
   };
 
   factory TopicSectionOverride.fromJson(Map<String, dynamic> j) =>
@@ -43,6 +128,14 @@ class TopicSectionOverride {
         startTurnIndex: (j['s'] as num?)?.toInt() ?? 0,
         endTurnIndex: (j['e'] as num?)?.toInt() ?? 0,
         tags: [for (final t in (j['tg'] as List? ?? const [])) '$t'],
+        overview: '${j['ov'] ?? ''}',
+        paragraphs: [
+          for (final p in (j['p'] as List? ?? const []))
+            if (p is Map<String, dynamic>) TopicParagraph.fromJson(p),
+        ],
+        cleanedByCloud: j['cl'] == true,
+        startAtMs: (j['sa'] as num?)?.toInt() ?? 0,
+        endAtMs: (j['ea'] as num?)?.toInt() ?? 0,
       );
 }
 
@@ -53,6 +146,8 @@ class TopicRunSegmentation {
     required this.endAtMs,
     required this.sections,
     required this.evaluatedAtMs,
+    this.coveredUtteranceEndMs = 0,
+    this.coveredUtteranceIds = const {},
   });
 
   final String runKey;
@@ -60,6 +155,8 @@ class TopicRunSegmentation {
   final int endAtMs;
   final List<TopicSectionOverride> sections;
   final int evaluatedAtMs;
+  final int coveredUtteranceEndMs;
+  final Set<String> coveredUtteranceIds;
 
   Map<String, dynamic> toJson() => {
     'k': runKey,
@@ -67,6 +164,8 @@ class TopicRunSegmentation {
     'e': endAtMs,
     'sec': [for (final sec in sections) sec.toJson()],
     'at': evaluatedAtMs,
+    if (coveredUtteranceEndMs > 0) 'cue': coveredUtteranceEndMs,
+    if (coveredUtteranceIds.isNotEmpty) 'cui': coveredUtteranceIds.toList(),
   };
 
   factory TopicRunSegmentation.fromJson(Map<String, dynamic> j) =>
@@ -79,6 +178,10 @@ class TopicRunSegmentation {
             if (s is Map<String, dynamic>) TopicSectionOverride.fromJson(s),
         ],
         evaluatedAtMs: (j['at'] as num?)?.toInt() ?? 0,
+        coveredUtteranceEndMs: (j['cue'] as num?)?.toInt() ?? 0,
+        coveredUtteranceIds: {
+          for (final id in (j['cui'] as List? ?? const [])) '$id',
+        },
       );
 }
 
@@ -87,17 +190,22 @@ class TopicSegmentationState {
     this.watermarkEndAtMs = 0,
     this.lockedRunKeys = const {},
     this.runsByKey = const {},
+    this.rollingByAnchor = const {},
   });
 
   const TopicSegmentationState.empty()
     : watermarkEndAtMs = 0,
       lockedRunKeys = const {},
-      runsByKey = const {};
+      runsByKey = const {},
+      rollingByAnchor = const {};
 
   /// 单调水位：endAtMs <= watermarkEndAtMs 的历史连续说话簇已结算锁定，不重跑。
   final int watermarkEndAtMs;
   final Set<String> lockedRunKeys;
   final Map<String, TopicRunSegmentation> runsByKey;
+
+  /// 滚动语义+声纹联合清洗分段结果（key 为连续说话组 anchorSegmentId）。
+  final Map<String, TopicRunSegmentation> rollingByAnchor;
 
   bool isLocked(String runKey, int endAtMs) =>
       lockedRunKeys.contains(runKey) ||
@@ -111,23 +219,51 @@ class TopicSegmentationState {
       watermarkEndAtMs: nextWatermark,
       lockedRunKeys: {...lockedRunKeys, run.runKey},
       runsByKey: {...runsByKey, run.runKey: run},
+      rollingByAnchor: rollingByAnchor,
     );
   }
 
+  TopicSegmentationState withRollingRun(TopicRunSegmentation run) =>
+      TopicSegmentationState(
+        watermarkEndAtMs: watermarkEndAtMs,
+        lockedRunKeys: lockedRunKeys,
+        runsByKey: runsByKey,
+        rollingByAnchor: {...rollingByAnchor, run.runKey: run},
+      );
+
+  TopicSegmentationState withoutRollingRuns() => TopicSegmentationState(
+    watermarkEndAtMs: 0,
+    lockedRunKeys: const {},
+    runsByKey: const {},
+    rollingByAnchor: const {},
+  );
+
   Map<String, dynamic> toJson() => {
-    'v': 1,
+    'v': 2,
     'wm': watermarkEndAtMs,
     'lk': lockedRunKeys.toList(),
     'runs': {for (final e in runsByKey.entries) e.key: e.value.toJson()},
+    if (rollingByAnchor.isNotEmpty)
+      'rolling': {
+        for (final e in rollingByAnchor.entries) e.key: e.value.toJson(),
+      },
   };
 
   factory TopicSegmentationState.fromJson(Map<String, dynamic> j) {
     final rawRuns = j['runs'] as Map<String, dynamic>? ?? const {};
+    final rawRolling = j['rolling'] as Map<String, dynamic>? ?? const {};
     return TopicSegmentationState(
       watermarkEndAtMs: (j['wm'] as num?)?.toInt() ?? 0,
       lockedRunKeys: {for (final k in (j['lk'] as List? ?? const [])) '$k'},
       runsByKey: {
         for (final entry in rawRuns.entries)
+          if (entry.value is Map<String, dynamic>)
+            entry.key: TopicRunSegmentation.fromJson(
+              entry.value as Map<String, dynamic>,
+            ),
+      },
+      rollingByAnchor: {
+        for (final entry in rawRolling.entries)
           if (entry.value is Map<String, dynamic>)
             entry.key: TopicRunSegmentation.fromJson(
               entry.value as Map<String, dynamic>,
@@ -254,24 +390,32 @@ class _SpeechRun {
 class FastTopicSegmentAgent {
   FastTopicSegmentAgent({
     required ChatCompletion chat,
-    required String model,
+    String model = '',
+    String Function()? modelResolver,
     bool Function()? ready,
     this.speechMergeGap = const Duration(seconds: 30),
     this.blankThreshold = const Duration(minutes: 1),
     DateTime Function()? now,
   }) : _chat = chat,
        _model = model,
+       _modelResolver = modelResolver,
        _ready = ready,
        _now = now ?? DateTime.now;
 
   final ChatCompletion _chat;
   final String _model;
+  final String Function()? _modelResolver;
   final bool Function()? _ready;
   final Duration speechMergeGap;
   final Duration blankThreshold;
   final DateTime Function() _now;
 
-  bool get isReady => _model.isNotEmpty && (_ready?.call() ?? true);
+  String get effectiveModel {
+    final resolved = _modelResolver?.call().trim() ?? '';
+    return resolved.isNotEmpty ? resolved : _model.trim();
+  }
+
+  bool get isReady => effectiveModel.isNotEmpty && (_ready?.call() ?? true);
 
   /// 提取全局连续说话簇（同一天内相邻语音间隔 `< speechMergeGap` 合并）。
   static String buildRunKey(String anchorSegmentId, int startAtMs, int endAtMs) =>
@@ -536,7 +680,7 @@ class FastTopicSegmentAgent {
               '对话条数：${run.turns.length}\n\n${buf.toString()}',
         ),
       ],
-      model: _model,
+      model: effectiveModel,
       temperature: 0.1,
       maxTokens: 1024,
     );
