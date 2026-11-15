@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Card · 录音卡 — 随身语音记忆硬件与端侧优先伴侣 App</title>
-  <meta name="description" content="一张随身录音卡，一套端侧优先的伴侣 App。早鸟登记承诺赠送至少 1 个月会员，并自动参与抽取实体录音卡（价值 ¥1,000）。">
+  <title>AI Card · 录音卡 — 专心聊，它替你记住</title>
+  <meta name="description" content="随身戴着不用管，把开会、见客、上课与日常对话自动整理成重点、待办和每日小结。早鸟免费登记赠至少 1 个月会员，并抽价值 ¥1,000 实体录音卡。">
   <link rel="icon" type="image/svg+xml" href="./assets/icon.svg">
   <meta property="og:title" content="AI Card · 录音卡">
-  <meta property="og:description" content="把每天说过的每句话，整理成可检索的记忆。早鸟登记赠至少 1 个月会员 + 抽实体录音卡（价值 ¥1,000）。">
+  <meta property="og:description" content="专心聊，它替你记住。早鸟免费登记赠至少 1 个月会员，并抽价值 ¥1,000 实体录音卡。">
   <meta property="og:url" content="https://ai-card.app.reai.com">
   <meta property="og:type" content="website">
   <style>
@@ -36,7 +36,7 @@
       --ok-ink: oklch(0.49 0.14 145);
       --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
       --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-      --max-w: 1180px;
+      --max-w: 1140px;
       --radius-md: 12px;
       --radius-lg: 18px;
     }
@@ -123,21 +123,11 @@
       display: block;
     }
 
-    .brand-tag {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      font-weight: 500;
-      color: var(--muted);
-      padding: 2px 7px;
-      border: 1px solid var(--rule);
-      border-radius: 999px;
-    }
-
     .nav-links {
       display: flex;
       align-items: center;
-      gap: 22px;
-      font-size: 13px;
+      gap: 24px;
+      font-size: 13.5px;
       color: var(--ink-2);
     }
 
@@ -217,7 +207,7 @@
       border-radius: 10px;
     }
 
-    /* ── Hero: Asymmetric 12-Col Editorial Grid ── */
+    /* ── Hero ── */
     .hero {
       padding: 56px 0 64px;
       border-bottom: 1px solid var(--rule);
@@ -225,7 +215,7 @@
 
     .hero-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+      grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
       gap: 48px;
       align-items: center;
     }
@@ -234,11 +224,10 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      font-family: var(--font-mono);
-      font-size: 11.5px;
-      letter-spacing: 0.04em;
+      font-size: 12.5px;
+      font-weight: 500;
       color: var(--ink-2);
-      padding: 5px 11px;
+      padding: 5px 12px;
       border: 1px solid var(--rule);
       border-radius: 999px;
       background: var(--surface);
@@ -259,19 +248,31 @@
     }
 
     .hero h1 {
-      font-size: clamp(32px, 4.4vw, 50px);
+      font-size: clamp(32px, 4.4vw, 52px);
       font-weight: 750;
-      line-height: 1.14;
+      line-height: 1.16;
       letter-spacing: -0.03em;
       color: var(--ink);
       margin-bottom: 18px;
+    }
+
+    .hero h1 s {
+      color: var(--muted);
+      text-decoration: line-through;
+      text-decoration-color: var(--rec);
+      text-decoration-thickness: 0.08em;
+    }
+
+    .hero h1 em {
+      font-style: normal;
+      color: var(--ok-ink);
     }
 
     .hero-lead {
       font-size: 16.5px;
       line-height: 1.7;
       color: var(--ink-2);
-      max-width: 540px;
+      max-width: 520px;
       margin-bottom: 22px;
     }
 
@@ -307,18 +308,17 @@
     .hero-meta {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px 20px;
+      gap: 8px 22px;
       padding-top: 20px;
       border-top: 1px solid var(--rule);
-      font-family: var(--font-mono);
-      font-size: 12px;
+      font-size: 13px;
       color: var(--muted);
     }
 
     .hero-meta span {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 7px;
     }
 
     .hero-meta i {
@@ -329,7 +329,7 @@
       display: inline-block;
     }
 
-    /* ── Interactive Hardware Stage ── */
+    /* ── Interactive Card Stage ── */
     .stage {
       background: var(--well);
       border: 1px solid var(--rule);
@@ -344,12 +344,12 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: 12px;
+      font-weight: 500;
       color: var(--muted);
     }
 
-    .capsule-demo {
+    .capsule-pill {
       display: inline-flex;
       align-items: center;
       gap: 6px;
@@ -357,12 +357,11 @@
       border: 1px solid var(--rule);
       border-radius: 999px;
       padding: 4px 10px;
-      font-family: var(--font-sans);
       font-size: 11.5px;
       color: var(--ink-2);
     }
 
-    .capsule-demo .dot-ok {
+    .capsule-pill .dot-ok {
       width: 7px;
       height: 7px;
       border-radius: 50%;
@@ -490,8 +489,7 @@
     }
 
     .hw-spec {
-      font-family: var(--font-mono);
-      font-size: 10.5px;
+      font-size: 11.5px;
       color: #8E8E93;
     }
 
@@ -571,93 +569,77 @@
       border-bottom: 1px solid var(--rule);
     }
 
-    .sec-head {
-      display: grid;
-      grid-template-columns: 200px minmax(0, 1fr);
-      gap: 28px;
+    .sec-head-clean {
+      max-width: 680px;
       margin-bottom: 36px;
-      align-items: baseline;
     }
 
-    .sec-num {
+    .eyebrow {
       font-family: var(--font-mono);
-      font-size: 12px;
+      font-size: 11.5px;
+      letter-spacing: 0.08em;
       color: var(--muted);
-      letter-spacing: 0.04em;
-    }
-
-    .sec-title h2 {
-      font-size: clamp(24px, 3vw, 32px);
-      font-weight: 700;
-      letter-spacing: -0.025em;
-      line-height: 1.2;
+      text-transform: uppercase;
       margin-bottom: 10px;
     }
 
-    .sec-title p {
-      font-size: 15px;
-      color: var(--ink-2);
-      max-width: 620px;
+    .sec-head-clean h2 {
+      font-size: clamp(26px, 3.2vw, 36px);
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      line-height: 1.18;
+      color: var(--ink);
+      margin-bottom: 10px;
     }
 
-    /* ── 01 Pipeline Ledger ── */
-    .pipeline {
+    .sec-head-clean p {
+      font-size: 15.5px;
+      color: var(--ink-2);
+      line-height: 1.65;
+    }
+
+    /* ── 01 What It Does ── */
+    .solve-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .solve-card {
+      background: var(--surface);
       border: 1px solid var(--rule);
       border-radius: var(--radius-md);
-      background: var(--surface);
-      overflow: hidden;
-    }
-
-    .pipe-step {
-      padding: 22px 20px;
-      border-right: 1px solid var(--rule);
+      padding: 24px;
       display: flex;
       flex-direction: column;
       gap: 10px;
+      transition: border-color 0.18s ease, transform 0.18s ease;
     }
 
-    .pipe-step:last-child {
-      border-right: none;
+    .solve-card:hover {
+      border-color: var(--rule-strong);
+      transform: translateY(-2px);
     }
 
-    .pipe-idx {
+    .solve-num {
       font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: 12px;
       color: var(--muted);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+      letter-spacing: 0.06em;
     }
 
-    .pipe-pill {
-      font-size: 10.5px;
-      padding: 1px 7px;
-      border-radius: 999px;
-      background: var(--well);
-      color: var(--ink-2);
-    }
-
-    .pipe-step h3 {
-      font-size: 16px;
+    .solve-card h3 {
+      font-size: 17px;
       font-weight: 700;
-      letter-spacing: -0.01em;
+      letter-spacing: -0.015em;
+      color: var(--ink);
+      line-height: 1.3;
     }
 
-    .pipe-step p {
-      font-size: 13.5px;
+    .solve-card p {
+      font-size: 14px;
       color: var(--ink-2);
-      line-height: 1.6;
-    }
-
-    .pipe-foot {
-      margin-top: auto;
-      padding-top: 12px;
-      border-top: 1px dashed var(--rule);
-      font-family: var(--font-mono);
-      font-size: 11px;
-      color: var(--muted);
+      line-height: 1.65;
     }
 
     /* ── 02 App Showcase ── */
@@ -709,32 +691,16 @@
     }
 
     .feat-body h3 {
-      font-size: 16px;
+      font-size: 16.5px;
       font-weight: 700;
       margin-bottom: 6px;
       color: var(--ink);
     }
 
     .feat-body p {
-      font-size: 13.5px;
+      font-size: 14px;
       color: var(--ink-2);
       line-height: 1.65;
-    }
-
-    .feat-tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 10px;
-    }
-
-    .feat-tags span {
-      font-size: 11px;
-      color: var(--ink-2);
-      background: var(--well);
-      border: 1px solid var(--rule);
-      border-radius: 5px;
-      padding: 2px 8px;
     }
 
     .feat-arrow {
@@ -774,147 +740,128 @@
     }
 
     .phone-caption {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
       padding: 10px 6px 2px;
-      font-family: var(--font-mono);
-      font-size: 11px;
-      color: var(--muted);
-    }
-
-    /* ── 03 Hardware & Standby Grid ── */
-    .split-2 {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 20px;
-    }
-
-    .panel-box {
-      background: var(--surface);
-      border: 1px solid var(--rule);
-      border-radius: var(--radius-md);
-      padding: 24px;
-    }
-
-    .panel-box h3 {
-      font-size: 17px;
-      font-weight: 700;
-      margin-bottom: 12px;
-      letter-spacing: -0.01em;
-    }
-
-    .panel-box p {
-      font-size: 14px;
-      color: var(--ink-2);
-      line-height: 1.65;
-      margin-bottom: 16px;
-    }
-
-    .key-rows {
-      border-top: 1px solid var(--rule);
-    }
-
-    .key-row {
-      display: grid;
-      grid-template-columns: 116px minmax(0, 1fr);
-      gap: 14px;
-      padding: 13px 0;
-      border-bottom: 1px solid var(--rule);
-      font-size: 13.5px;
-    }
-
-    .key-row:last-child {
-      border-bottom: none;
-    }
-
-    .key-row strong {
-      font-family: var(--font-mono);
       font-size: 12px;
-      color: var(--ink);
+      color: var(--muted);
+      text-align: center;
     }
 
-    .key-row span {
-      color: var(--ink-2);
-    }
-
-    /* ── 04 Privacy & Honesty Matrix ── */
-    .matrix {
+    /* ── 03 Built Around You (2x2 Grid) ── */
+    .value-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .value-card {
+      background: var(--surface);
       border: 1px solid var(--rule);
       border-radius: var(--radius-md);
-      background: var(--surface);
-      overflow: hidden;
+      padding: 26px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 10px;
+      transition: border-color 0.18s ease;
     }
 
-    .matrix-cell {
-      padding: 26px 24px;
-      border-right: 1px solid var(--rule);
-      border-bottom: 1px solid var(--rule);
+    .value-card:hover {
+      border-color: var(--rule-strong);
     }
 
-    .matrix-cell:nth-child(2n) {
-      border-right: none;
-    }
-
-    .matrix-cell:nth-last-child(-n+2) {
-      border-bottom: none;
-    }
-
-    .matrix-label {
+    .val-pill {
       font-family: var(--font-mono);
       font-size: 11px;
-      color: var(--muted);
-      margin-bottom: 8px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--ink-2);
+      background: var(--well);
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+      padding: 3px 10px;
       text-transform: uppercase;
     }
 
-    .matrix-cell h3 {
-      font-size: 16.5px;
+    .value-card h3 {
+      font-size: 17px;
       font-weight: 700;
-      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+      color: var(--ink);
+      margin-top: 2px;
     }
 
-    .matrix-cell p {
-      font-size: 13.5px;
+    .value-card p {
+      font-size: 14px;
       color: var(--ink-2);
       line-height: 1.65;
     }
 
-    /* ── 05 Specs ── */
-    .spec-table {
-      width: 100%;
-      border-collapse: collapse;
+    /* ── 04 FAQ Accordion ── */
+    .faq-list {
       background: var(--surface);
       border: 1px solid var(--rule);
       border-radius: var(--radius-md);
       overflow: hidden;
-      font-size: 13.5px;
     }
 
-    .spec-table tr {
-      border-bottom: 1px solid var(--rule);
+    .faq-item + .faq-item {
+      border-top: 1px solid var(--rule);
     }
 
-    .spec-table tr:last-child {
-      border-bottom: none;
-    }
-
-    .spec-table th {
-      width: 220px;
+    .faq-q {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
       text-align: left;
-      padding: 14px 20px;
-      font-weight: 600;
-      color: var(--muted);
-      background: var(--bg);
-      font-family: var(--font-mono);
-      font-size: 12px;
+      padding: 20px 24px;
+      font-size: 16px;
+      font-weight: 650;
+      color: var(--ink);
+      background: transparent;
+      border: none;
+      transition: background 0.15s ease;
     }
 
-    .spec-table td {
-      padding: 14px 20px;
+    .faq-q:hover {
+      background: rgba(0, 0, 0, 0.02);
+    }
+
+    .faq-fx {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 400;
+      color: var(--muted);
+      flex: none;
+      transition: transform 0.22s ease, color 0.22s ease;
+    }
+
+    .faq-item.open .faq-fx {
+      transform: rotate(45deg);
       color: var(--ink);
+    }
+
+    .faq-a {
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows 0.24s ease;
+    }
+
+    .faq-item.open .faq-a {
+      grid-template-rows: 1fr;
+    }
+
+    .faq-a-inner {
+      overflow: hidden;
+    }
+
+    .faq-a p {
+      padding: 0 24px 20px;
+      font-size: 14.5px;
+      color: var(--ink-2);
+      line-height: 1.7;
+      max-width: 720px;
     }
 
     /* ── Waitlist Section ── */
@@ -937,7 +884,7 @@
       font-size: clamp(24px, 3vw, 32px);
       font-weight: 750;
       letter-spacing: -0.025em;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
 
     .wl-copy p {
@@ -1033,7 +980,7 @@
 
     footer {
       border-top: 1px solid var(--rule);
-      padding: 28px 0 40px;
+      padding: 28px 0 calc(48px + env(safe-area-inset-bottom, 0px));
       font-size: 12.5px;
       color: var(--muted);
     }
@@ -1048,6 +995,7 @@
 
     .foot-links {
       display: flex;
+      flex-wrap: wrap;
       gap: 18px;
     }
 
@@ -1114,22 +1062,12 @@
     @media (max-width: 960px) {
       .hero-grid,
       .showcase,
-      .sec-head,
-      .split-2,
       .wl-card {
         grid-template-columns: 1fr;
       }
 
-      .pipeline {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .pipe-step:nth-child(2n) {
-        border-right: none;
-      }
-
-      .pipe-step:nth-child(-n+2) {
-        border-bottom: 1px solid var(--rule);
+      .solve-grid {
+        grid-template-columns: 1fr;
       }
 
       .phone-frame {
@@ -1140,38 +1078,26 @@
     }
 
     @media (max-width: 640px) {
-      .nav-links, .brand-tag {
+      .nav-links {
         display: none;
       }
 
-      .pipeline,
-      .matrix,
+      .value-grid,
       .wl-row {
         grid-template-columns: 1fr;
       }
 
-      .pipe-step,
-      .matrix-cell {
-        border-right: none;
-        border-bottom: 1px solid var(--rule);
-      }
-
-      .pipe-step:last-child,
-      .matrix-cell:last-child {
-        border-bottom: none;
-      }
-
-      .spec-table th {
-        width: 120px;
-        padding: 12px 14px;
-      }
-
-      .spec-table td {
-        padding: 12px 14px;
-      }
-
       .wl-card {
         padding: 24px;
+      }
+
+      .faq-q {
+        padding: 18px 18px;
+        font-size: 15px;
+      }
+
+      .faq-a p {
+        padding: 0 18px 18px;
       }
     }
   </style>
@@ -1181,16 +1107,14 @@
   <header class="topbar">
     <div class="container topbar-inner">
       <a class="brand" href="#">
-        <img src="./assets/icon.svg" alt="AI Card 录音卡图标">
+        <img src="./assets/icon.svg" alt="AI Card">
         <span data-i18n="brandName">AI Card · 录音卡</span>
-        <span class="brand-tag">ai-card.app.reai.com</span>
       </a>
       <nav class="nav-links" aria-label="Primary">
-        <a href="#pipeline" data-i18n="navPipeline">处理链路</a>
-        <a href="#app" data-i18n="navApp">伴侣 App</a>
-        <a href="#hardware" data-i18n="navHardware">物理按键</a>
-        <a href="#privacy" data-i18n="navPrivacy">隐私架构</a>
-        <a href="#specs" data-i18n="navSpecs">技术规格</a>
+        <a href="#what" data-i18n="navWhat">能帮你做什么</a>
+        <a href="#app" data-i18n="navApp">App 界面</a>
+        <a href="#details" data-i18n="navDetails">省心细节</a>
+        <a href="#faq" data-i18n="navFaq">常见问题</a>
       </nav>
       <div class="nav-cta">
         <div class="lang-switch" role="group" aria-label="Language">
@@ -1209,32 +1133,35 @@
         <div>
           <div class="kicker">
             <span class="live-dot" aria-hidden="true"></span>
-            <span data-i18n="heroKicker">ALWAYS-ON VOICE MEMORY · 物理按键 × 本地转写</span>
+            <span data-i18n="heroKicker">AI Card · 早鸟预约开放</span>
           </div>
-          <h1 data-i18n="heroTitle">把每天说过的每句话，整理成可检索的记忆。</h1>
+          <h1 id="hero-title">
+            <span>别再 </span><s>边听边记</s><span>，</span><br>
+            <span>专心聊，它替你 </span><em>记住</em><span>。</span>
+          </h1>
           <p class="hero-lead" data-i18n="heroLead">
-            一张随身录音卡，一套端侧优先的伴侣 App。无感连续录音、SenseVoice 本地转写、声纹与上下文推理，晚上帮你写好睡前日记与三元记忆图谱。
+            开会、见客户、上课、陪家人看诊——随身戴着不用管，聊完就有清晰的重点、待办和每日小结。
           </p>
           <div class="perk-banner">
             <span class="ok-dot" aria-hidden="true"></span>
-            <span data-i18n="heroPerk">早鸟礼遇：登记即赠至少 1 个月会员 · 抽实体录音卡（价值 ¥1,000）</span>
+            <span data-i18n="heroPerk">早鸟福利：免费登记赠至少 1 个月会员 · 抽实体录音卡（价值 ¥1,000）</span>
           </div>
           <div class="hero-actions">
-            <a class="btn btn-lg" href="#waitlist" data-i18n="heroCtaPrimary">加入早鸟 Waitlist</a>
-            <a class="btn btn-ghost btn-lg" href="#app" data-i18n="heroCtaSecondary">查看 App 真实界面</a>
+            <a class="btn btn-lg" href="#waitlist" data-i18n="heroCtaPrimary">免费加入早鸟 →</a>
+            <a class="btn btn-ghost btn-lg" href="#app" data-i18n="heroCtaSecondary">看 App 界面</a>
           </div>
           <div class="hero-meta">
-            <span><i></i><em style="font-style:normal" data-i18n="meta1">SenseVoice + Silero VAD 端侧转写</em></span>
-            <span><i></i><em style="font-style:normal" data-i18n="meta2">BLE 5.3 + 2.4GHz Wi-Fi</em></span>
-            <span><i></i><em style="font-style:normal" data-i18n="meta3">GNU AGPL-3.0 开源</em></span>
+            <span><i></i><em style="font-style:normal" data-i18n="meta1">录音留在自己手机里</em></span>
+            <span><i></i><em style="font-style:normal" data-i18n="meta2">不掏手机盲按即用</em></span>
+            <span><i></i><em style="font-style:normal" data-i18n="meta3">支持 iPhone · Android · Watch</em></span>
           </div>
         </div>
 
-        <!-- Interactive Hardware & Dynamic Island Demo -->
-        <div class="stage" aria-label="Interactive hardware preview">
+        <!-- Interactive Card & Live Status -->
+        <div class="stage" aria-label="Card interaction preview">
           <div class="stage-bar">
-            <span data-i18n="stageLabel">INTERACTIVE HARDWARE PREVIEW</span>
-            <span class="capsule-demo"><span class="dot-ok"></span><span data-i18n="capsuleStatus">DYJ-Card · 录音中</span></span>
+            <span data-i18n="stageLabel">按键体验 · 点一下试试</span>
+            <span class="capsule-pill"><span class="dot-ok"></span><span data-i18n="capsuleStatus">录音中</span></span>
           </div>
 
           <div class="island-wrap">
@@ -1242,15 +1169,15 @@
               <div class="island-bars" aria-hidden="true">
                 <span></span><span></span><span></span><span></span>
               </div>
-              <span id="island-text">灵动岛实况 · 硬件录音中</span>
+              <span id="island-text">正在记录对话</span>
               <span class="island-clock" id="island-clock">01:24:08</span>
             </div>
           </div>
 
           <div class="hw-card">
             <div class="hw-top">
-              <span class="hw-name">REAI · AI CARD // DYJ</span>
-              <span class="hw-led" title="Recording LED"></span>
+              <span class="hw-name">REAI · AI CARD</span>
+              <span class="hw-led" title="Recording"></span>
             </div>
 
             <div class="hw-wave" aria-hidden="true">
@@ -1258,10 +1185,10 @@
             </div>
 
             <div class="hw-bottom">
-              <span class="hw-spec" data-i18n="pressHint">PRESS TO TEST →</span>
+              <span class="hw-spec" data-i18n="pressHint">不用掏手机 →</span>
               <div class="hw-btn-row">
-                <button class="hw-trigger" type="button" id="btn-mark" data-i18n="btnMark">单击 · 打重点</button>
-                <button class="hw-trigger" type="button" id="btn-cmd" data-i18n="btnCmd">长按 · 语音提问</button>
+                <button class="hw-trigger" type="button" id="btn-mark" data-i18n="btnMark">按一下 · 记重点</button>
+                <button class="hw-trigger" type="button" id="btn-cmd" data-i18n="btnCmd">按住问 · 查记忆</button>
               </div>
             </div>
           </div>
@@ -1271,44 +1198,32 @@
       </div>
     </section>
 
-    <!-- 01 Pipeline -->
-    <section class="block" id="pipeline">
+    <!-- 01 What It Does -->
+    <section class="block" id="what">
       <div class="container">
-        <div class="sec-head">
-          <div class="sec-num" data-i18n="s1Num">01 / SIGNAL PIPELINE</div>
-          <div class="sec-title">
-            <h2 data-i18n="s1Title">从设备切片到记忆图谱，每一步都有诚实边界。</h2>
-            <p data-i18n="s1Desc">连续录音默认不分段，5 分钟自动切片传回手机；音频与转写默认留在本机，云端只处理用于润色与总结的文本。</p>
-          </div>
+        <div class="sec-head-clean">
+          <div class="eyebrow" data-i18n="s1Eyebrow">WHAT IT DOES</div>
+          <h2 data-i18n="s1Title">聊完就忘、几小时录音懒得重听？交给它。</h2>
+          <p data-i18n="s1Desc">不用改变说话习惯，也不用会后熬夜补纪要。</p>
         </div>
 
-        <div class="pipeline">
-          <article class="pipe-step">
-            <div class="pipe-idx"><span>STEP 01</span><span class="pipe-pill" data-i18n="p1Pill">硬件</span></div>
-            <h3 data-i18n="p1Title">随身采集与盲按打点</h3>
-            <p data-i18n="p1Desc">支持 DYJ 系列录音卡 BLE 连接与 2.4GHz Wi-Fi 自动同步；手机连接硬件期间不并行开麦，断连时本机零功耗待命自动接力。</p>
-            <div class="pipe-foot" data-i18n="p1Foot">5 min / 切片 · BLE + STA</div>
+        <div class="solve-grid">
+          <article class="solve-card">
+            <div class="solve-num">/ 01</div>
+            <h3 data-i18n="w1Title">开会见客，只管专心聊</h3>
+            <p data-i18n="w1Desc">不用低头打字，也不用刻意掏手机点录音。聊完自动理出重点与待办，谁说了什么随时查原话。</p>
           </article>
 
-          <article class="pipe-step">
-            <div class="pipe-idx"><span>STEP 02</span><span class="pipe-pill" data-i18n="p2Pill">端侧</span></div>
-            <h3 data-i18n="p2Title">本地 VAD 与离线转写</h3>
-            <p data-i18n="p2Desc">Silero VAD 切分静音，SenseVoice 直接在手机端侧完成转写；模型缺失时音频入库排队，绝不偷传音频或编造文本。</p>
-            <div class="pipe-foot" data-i18n="p2Foot">Audio stays on-device</div>
+          <article class="solve-card">
+            <div class="solve-num">/ 02</div>
+            <h3 data-i18n="w2Title">拍张白板，自动对上当时的话</h3>
+            <p data-i18n="w2Desc">开会拍投影、上课拍板书，照片自动贴进那一刻的对话里，回头复盘一目了然。</p>
           </article>
 
-          <article class="pipe-step">
-            <div class="pipe-idx"><span>STEP 03</span><span class="pipe-pill" data-i18n="p3Pill">清洗</span></div>
-            <h3 data-i18n="p3Title">增量润色与逻辑分段</h3>
-            <p data-i18n="p3Desc">连续录音遇到 ≥1 分钟空白触发话题切片，&lt;30 秒紧邻分片自动合并；去除口癖改口，同时完整保留低权重原始对话。</p>
-            <div class="pipe-foot" data-i18n="p3Foot">相对起点毫秒时间戳</div>
-          </article>
-
-          <article class="pipe-step">
-            <div class="pipe-idx"><span>STEP 04</span><span class="pipe-pill" data-i18n="p4Pill">记忆</span></div>
-            <h3 data-i18n="p4Title">睡前日记与三元图谱</h3>
-            <p data-i18n="p4Desc">每晚生成 1～5 项轻标注确认说话人与打点意图，夜间做梦整理「事件 — 关系 — 实体」图谱并提炼可复用 Skill。</p>
-            <div class="pipe-foot" data-i18n="p4Foot">Event · Relation · Entity</div>
+          <article class="solve-card">
+            <div class="solve-num">/ 03</div>
+            <h3 data-i18n="w3Title">忘了细节，按住问一句就有</h3>
+            <p data-i18n="w3Desc">想不起前几天聊过的报价、医嘱或电影名？按住卡片问一句，答案直接推到手机上。</p>
           </article>
         </div>
       </div>
@@ -1317,12 +1232,10 @@
     <!-- 02 App Showcase -->
     <section class="block" id="app">
       <div class="container">
-        <div class="sec-head">
-          <div class="sec-num" data-i18n="s2Num">02 / COMPANION APP</div>
-          <div class="sec-title">
-            <h2 data-i18n="s2Title">没有多余花哨的面板，只有时间轴和可验证的结论。</h2>
-            <p data-i18n="s2Desc">点击左侧模块，在右侧真实 App 界面中切换查看核心交互。</p>
-          </div>
+        <div class="sec-head-clean">
+          <div class="eyebrow" data-i18n="s2Eyebrow">IN THE APP</div>
+          <h2 data-i18n="s2Title">不用翻几小时录音，打开就是结论。</h2>
+          <p data-i18n="s2Desc">点选场景，看看每天说的话怎么变成好用的记录。</p>
         </div>
 
         <div class="showcase">
@@ -1332,9 +1245,8 @@
               data-shot="./assets/shots/timeline-expanded.png">
               <span class="feat-num">01</span>
               <span class="feat-body">
-                <h3 data-i18n="t1Title">Timeline 时间轴与相册融合</h3>
-                <p data-i18n="t1Desc">按今天、昨天倒序排列；点击卡片展开摘要、说话人与打点标记，再点「详情」进入对话流。拍照按时刻自动嵌入对话，支持一键移入或分拣「未归类图片」。</p>
-                <span class="feat-tags"></span>
+                <h3 data-i18n="t1Title">按天排好，图文对轨</h3>
+                <p data-i18n="t1Desc">一天聊了几场、每场讲了什么，两行看清；当时拍的照片就在对话旁。</p>
               </span>
               <span class="feat-arrow" aria-hidden="true">→</span>
             </button>
@@ -1344,9 +1256,8 @@
               data-shot="./assets/shots/summary-result.png">
               <span class="feat-num">02</span>
               <span class="feat-body">
-                <h3 data-i18n="t2Title">多维度总结与双向溯源</h3>
-                <p data-i18n="t2Desc">勾选今日、本周或任意片段生成结构化总结：概览、逻辑结构、信息点、行动项与合并后全文。每条行动项都可定位原话与现场图，支持导出 Markdown / PDF / 图片 / Word。</p>
-                <span class="feat-tags"></span>
+                <h3 data-i18n="t2Title">结论与待办，一键发给同事</h3>
+                <p data-i18n="t2Desc">选几段记录就能汇总要点和行动项，点一下核对原话，直接导出 PDF、Word 或长图。</p>
               </span>
               <span class="feat-arrow" aria-hidden="true">→</span>
             </button>
@@ -1356,9 +1267,8 @@
               data-shot="./assets/shots/bedtime-diary.png">
               <span class="feat-num">03</span>
               <span class="feat-body">
-                <h3 data-i18n="t3Title">睡前日记与轻标注确认</h3>
-                <p data-i18n="t3Desc">告别枯燥的自动会议纪要。每晚用叙事回顾当天经历，高亮上下文推理（支持点赞调高权重），只问你 1～5 个模型无法自行证伪的细节，一锤定音后反哺当晚记忆整理。</p>
-                <span class="feat-tags"></span>
+                <h3 data-i18n="t3Title">睡前五分钟，轻松回顾今天</h3>
+                <p data-i18n="t3Desc">晚上把一天的忙碌写成好读的日记；拿不准的人名问你一句，点一下就记住。</p>
               </span>
               <span class="feat-arrow" aria-hidden="true">→</span>
             </button>
@@ -1368,9 +1278,8 @@
               data-shot="./assets/shots/memory-graph.png">
               <span class="feat-num">04</span>
               <span class="feat-body">
-                <h3 data-i18n="t4Title">端侧声纹与三元记忆图谱</h3>
-                <p data-i18n="t4Desc">通过 3D-Speaker CAM++ 在端侧聚类说话人（未确认前始终标注「推测」），确认后沉淀跨对话人物偏好、关系边与私有概念，越用越懂你的团队语境。</p>
-                <span class="feat-tags"></span>
+                <h3 data-i18n="t4Title">聊过的人和事，越用越熟</h3>
+                <p data-i18n="t4Desc">新声音先标「推测」等你确认；认熟之后，自动帮你串起每个人的偏好与约定。</p>
               </span>
               <span class="feat-arrow" aria-hidden="true">→</span>
             </button>
@@ -1380,9 +1289,8 @@
               data-shot="./assets/shots/dream-comic.png">
               <span class="feat-num">05</span>
               <span class="feat-body">
-                <h3 data-i18n="t5Title">夜间做梦漫画与重复 Skill 养成</h3>
-                <p data-i18n="t5Desc">夜间空白超过 5 小时自动进入「做梦」整理，按需生成 4～6 格梦境漫画；当发现同一类琐事重复出现 2～3 次，主动提醒沉淀为可复用 Agent Skill。</p>
-                <span class="feat-tags"></span>
+                <h3 data-i18n="t5Title">睡着时归档，常做的事顺手代劳</h3>
+                <p data-i18n="t5Desc">夜里自动把记忆整理归档，偶尔画成几格小漫画；重复两三次的琐事还会提醒你下次交办。</p>
               </span>
               <span class="feat-arrow" aria-hidden="true">→</span>
             </button>
@@ -1390,143 +1298,122 @@
 
           <div class="phone-frame">
             <div class="phone-screen">
-              <img id="app-shot" src="./assets/shots/timeline-expanded.png" alt="AI Card App Preview">
+              <img id="app-shot" src="./assets/shots/timeline-expanded.png" alt="AI Card App">
             </div>
             <div class="phone-caption">
-              <span id="shot-caption">Timeline · 按日倒序与事件展开态</span>
-              <span>390×844</span>
+              <span id="shot-caption">每天的对话按时间清晰排列</span>
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- 03 Hardware & Standby -->
-    <section class="block" id="hardware">
+    <!-- 03 Built Around You -->
+    <section class="block" id="details">
       <div class="container">
-        <div class="sec-head">
-          <div class="sec-num" data-i18n="s3Num">03 / HARDWARE &amp; LIVE ACTIVITY</div>
-          <div class="sec-title">
-            <h2 data-i18n="s3Title">不掏手机就能用，断连了也不丢话。</h2>
-            <p data-i18n="s3Desc">物理按键直接触发记忆检索，硬件优先与零功耗待命机制兼顾续航与可靠性。</p>
-          </div>
+        <div class="sec-head-clean">
+          <div class="eyebrow" data-i18n="s3Eyebrow">BUILT AROUND YOU</div>
+          <h2 data-i18n="s3Title">顺着你的习惯，守住你的隐私。</h2>
+          <p data-i18n="s3Desc">好的工具不抢戏——需要时稳稳接住，平时几乎感觉不到它的存在。</p>
         </div>
 
-        <div class="split-2">
-          <div class="panel-box">
-            <h3 data-i18n="hwBox1Title">物理按键交互定义</h3>
-            <p data-i18n="hwBox1Desc">无需解锁手机或打开 App，盲按录音卡物理按钮即可完成标记与提问。</p>
-            <div class="key-rows">
-              <div class="key-row">
-                <strong data-i18n="hwKey1Label">单击 · MARK</strong>
-                <span data-i18n="hwKey1Val">无感打重点。时间戳随音频写入，模型在总结与睡前日记中优先聚焦此处并推测打点意图。</span>
-              </div>
-              <div class="key-row">
-                <strong data-i18n="hwKey2Label">长按 · COMMAND</strong>
-                <span data-i18n="hwKey2Val">唤起手机顶部灵动岛收听语音提问；松手后先推送 A【立即回执】，查完再推 B【记忆结果】。</span>
-              </div>
-              <div class="key-row">
-                <strong data-i18n="hwKey3Label">双击 · RESERVED</strong>
-                <span data-i18n="hwKey3Val">暂空预留，后续支持绑定自定义快捷指令或特定 Skill。</span>
-              </div>
-            </div>
-          </div>
+        <div class="value-grid">
+          <article class="value-card">
+            <span class="val-pill" data-i18n="v1Tag">PRIVACY FIRST</span>
+            <h3 data-i18n="v1Title">录音留在手机里，不上云</h3>
+            <p data-i18n="v1Desc">语音在你的手机本地转成文字，原始录音默认不上传服务器，聊什么都安心。</p>
+          </article>
 
-          <div class="panel-box">
-            <h3 data-i18n="hwBox2Title">硬件优先与零功耗保底</h3>
-            <p data-i18n="hwBox2Desc">蓝牙正常录音期间手机麦克风绝不并行采集，避免手机发热耗电；只有意外发生时才接力。</p>
-            <div class="key-rows">
-              <div class="key-row">
-                <strong data-i18n="hwSb1Label">正常连接</strong>
-                <span data-i18n="hwSb1Val">隐藏「本机录音」入口，由硬件低功耗采集并驱动 iOS 灵动岛与锁屏实况卡片。</span>
-              </div>
-              <div class="key-row">
-                <strong data-i18n="hwSb2Label">意外断连</strong>
-                <span data-i18n="hwSb2Val">蓝牙失联、硬件没电或 OTA 重启时，手机本机录音立即自动启动接力，实况卡片无缝切换。</span>
-              </div>
-              <div class="key-row">
-                <strong data-i18n="hwSb3Label">重连退回</strong>
-                <span data-i18n="hwSb3Val">硬件恢复连接后自动停掉手机麦克风，退回零功耗待命状态；手动停录则解除待命。</span>
-              </div>
-            </div>
-          </div>
+          <article class="value-card">
+            <span class="val-pill" data-i18n="v2Tag">ALWAYS READY</span>
+            <h3 data-i18n="v2Title">不费手机电，断连也不漏话</h3>
+            <p data-i18n="v2Desc">平时由录音卡省电记录，手机不发热；万一卡片没电或走远断连，手机会自动接上。</p>
+          </article>
+
+          <article class="value-card">
+            <span class="val-pill" data-i18n="v3Tag">VERIFIABLE</span>
+            <h3 data-i18n="v3Title">看的是清爽重点，留的是完整原话</h3>
+            <p data-i18n="v3Desc">默认展示去掉口头禅的干净记录，同时完整保留原始录音与原词，随时点开重听或删除。</p>
+          </article>
+
+          <article class="value-card">
+            <span class="val-pill" data-i18n="v4Tag">FLEXIBLE</span>
+            <h3 data-i18n="v4Title">录音卡、手机、手表都能记</h3>
+            <p data-i18n="v4Desc">随身戴卡最无感；没带卡时用手机或抬起 Apple Watch 也能录，自动归进同一条时间轴。</p>
+          </article>
         </div>
       </div>
     </section>
 
-    <!-- 04 Privacy & Honesty -->
-    <section class="block" id="privacy">
+    <!-- 04 FAQ -->
+    <section class="block" id="faq">
       <div class="container">
-        <div class="sec-head">
-          <div class="sec-num" data-i18n="s4Num">04 / ARCHITECTURE</div>
-          <div class="sec-title">
-            <h2 data-i18n="s4Title">对隐私和数据边界保持克制与诚实。</h2>
-            <p data-i18n="s4Desc">我们不在产品里包装黑魔法，每一条设计红线都在代码与文档中公开可查。</p>
-          </div>
+        <div class="sec-head-clean">
+          <div class="eyebrow" data-i18n="s4Eyebrow">FAQ</div>
+          <h2 data-i18n="s4Title">常见问题</h2>
         </div>
 
-        <div class="matrix">
-          <div class="matrix-cell">
-            <div class="matrix-label">ON-DEVICE FIRST</div>
-            <h3 data-i18n="m1Title">音频默认不出本机</h3>
-            <p data-i18n="m1Desc">切片、VAD 检测、SenseVoice 语音转写与 CAM++ 声纹 embedding 提取均在手机本地执行；云端仅接收用于润色与总结的文本。</p>
+        <div class="faq-list">
+          <div class="faq-item">
+            <button class="faq-q" type="button" aria-expanded="false">
+              <span data-i18n="fq1">整天开着录音，手机会跟着耗电发热吗？</span>
+              <span class="faq-fx" aria-hidden="true">+</span>
+            </button>
+            <div class="faq-a">
+              <div class="faq-a-inner">
+                <p data-i18n="fa1">不会。连着录音卡时只由卡片自己录音，手机麦克风完全休息，平时几乎感觉不到耗电。</p>
+              </div>
+            </div>
           </div>
 
-          <div class="matrix-cell">
-            <div class="matrix-label">NO HALLUCINATED IDENTITY</div>
-            <h3 data-i18n="m2Title">说话人只做推测，不断言</h3>
-            <p data-i18n="m2Desc">未经过你手动确认的说话人永远展示「说话人 1 / 2（推测）」，低置信度片段如实显示「未区分」，保留原始映射可随时纠偏。</p>
+          <div class="faq-item">
+            <button class="faq-q" type="button" aria-expanded="false">
+              <span data-i18n="fq2">我的录音安全吗？别人能听到吗？</span>
+              <span class="faq-fx" aria-hidden="true">+</span>
+            </button>
+            <div class="faq-a">
+              <div class="faq-a-inner">
+                <p data-i18n="fa2">原始录音保存在你自己的手机里，转文字也在本地完成，音频默认不上传云端。你随时可以在手机里单条或全部删除。</p>
+              </div>
+            </div>
           </div>
 
-          <div class="matrix-cell">
-            <div class="matrix-label">RAW DATA PRESERVED</div>
-            <h3 data-i18n="m3Title">清洗内容优先，原始记录永不销毁</h3>
-            <p data-i18n="m3Desc">对话详情与总结默认展示润色后的整洁文本，但原始转写与原始音频切片以低权重完整保留，随时可播放核对或删除。</p>
+          <div class="faq-item">
+            <button class="faq-q" type="button" aria-expanded="false">
+              <span data-i18n="fq3">飞机上、地下室这种没网的地方能用吗？</span>
+              <span class="faq-fx" aria-hidden="true">+</span>
+            </button>
+            <div class="faq-a">
+              <div class="faq-a-inner">
+                <p data-i18n="fa3">能。录音和转文字都不依赖网络；等回到有网的地方，再自动帮你生成总结。</p>
+              </div>
+            </div>
           </div>
 
-          <div class="matrix-cell">
-            <div class="matrix-label">OPEN SOURCE · AGPL-3.0</div>
-            <h3 data-i18n="m4Title">Rust BLE 桥接与全栈透明</h3>
-            <p data-i18n="m4Desc">App 基于 Flutter 构建，通过 Rust C-ABI 桥接 reai-card-sdk 直连真实硬件；OAuth2 PKCE 鉴权与自托管模型网关均可审计。</p>
+          <div class="faq-item">
+            <button class="faq-q" type="button" aria-expanded="false">
+              <span data-i18n="fq4">还没有实体录音卡，能先用起来吗？</span>
+              <span class="faq-fx" aria-hidden="true">+</span>
+            </button>
+            <div class="faq-a">
+              <div class="faq-a-inner">
+                <p data-i18n="fa4">可以。App 支持直接用手机录音，也能配合 Apple Watch 抬腕记录；以后拿到录音卡，连上就能接着用。</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="faq-item">
+            <button class="faq-q" type="button" aria-expanded="false">
+              <span data-i18n="fq5">早鸟登记收费吗？有什么福利？</span>
+              <span class="faq-fx" aria-hidden="true">+</span>
+            </button>
+            <div class="faq-a">
+              <div class="faq-a-inner">
+                <p data-i18n="fa5">完全免费。正式上线后，所有早鸟登记用户都会获赠至少 1 个月会员，并自动参与抽取实体录音卡（价值 ¥1,000）。</p>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    </section>
-
-    <!-- 05 Specs -->
-    <section class="block" id="specs">
-      <div class="container">
-        <div class="sec-head">
-          <div class="sec-num" data-i18n="s5Num">05 / SPECIFICATIONS</div>
-          <div class="sec-title">
-            <h2 data-i18n="s5Title">技术规格与支持环境</h2>
-          </div>
-        </div>
-
-        <table class="spec-table">
-          <tbody>
-            <tr>
-              <th data-i18n="sp1K">支持硬件</th>
-              <td data-i18n="sp1V">DYJ 系列随身录音卡（BLE 扫描按 RSSI 信号强度就近排序）</td>
-            </tr>
-            <tr>
-              <th data-i18n="sp2K">传输与固件</th>
-              <td data-i18n="sp2V">BLE 5.3 控制与切片传输 · 2.4GHz Wi-Fi STA 高速同步 · 主控 / Wi-Fi 两阶段 OTA</td>
-            </tr>
-            <tr>
-              <th data-i18n="sp3K">端侧语音引擎</th>
-              <td data-i18n="sp3V">sherpa_onnx · SenseVoice (int8) · Silero VAD · 3D-Speaker CAM++ 声纹聚类</td>
-            </tr>
-            <tr>
-              <th data-i18n="sp4K">客户端支持</th>
-              <td data-i18n="sp4V">iOS（含灵动岛 Live Activity）· Android · Apple Watch 伴侣端</td>
-            </tr>
-            <tr>
-              <th data-i18n="sp5K">开源协议</th>
-              <td data-i18n="sp5V">GNU Affero General Public License v3.0 (AGPL-3.0)</td>
-            </tr>
-          </tbody>
-        </table>
       </div>
     </section>
 
@@ -1535,25 +1422,25 @@
       <div class="container">
         <div class="wl-card">
           <div class="wl-copy">
-            <h2 data-i18n="wlTitle">早鸟 Waitlist 登记已开启</h2>
-            <p data-i18n="wlDesc">留下你的邮箱与常用设备。所有早鸟登记用户承诺赠送至少 1 个月会员，并自动参与实体录音卡抽奖（价值 ¥1,000）。</p>
+            <h2 data-i18n="wlTitle">抢先预约体验</h2>
+            <p data-i18n="wlDesc">留下常用邮箱，上线第一时间通知你。</p>
             <div class="wl-perks">
-              <div><span class="check">✓</span><span data-i18n="wlPerk1">承诺赠送至少 1 个月正式版会员</span></div>
-              <div><span class="check">✓</span><span data-i18n="wlPerk2">自动获得实体录音卡抽奖资格（价值 ¥1,000）</span></div>
+              <div><span class="check">✓</span><span data-i18n="wlPerk1">赠送至少 1 个月正式版会员</span></div>
+              <div><span class="check">✓</span><span data-i18n="wlPerk2">自动参与抽取实体录音卡（价值 ¥1,000）</span></div>
             </div>
           </div>
 
           <div data-wl-widget>
             <form class="wl-form" novalidate>
               <div class="wl-row">
-                <input class="wl-input" type="email" required data-i18n-placeholder="wlEmailPlaceholder" placeholder="输入你的常用邮箱，例如 you@example.com">
+                <input class="wl-input" type="email" required data-i18n-placeholder="wlEmailPlaceholder" placeholder="你的常用邮箱，例如 you@example.com">
                 <select class="wl-select" aria-label="Platform">
                   <option value="iOS + Watch">iOS + Watch</option>
                   <option value="iOS">iOS</option>
                   <option value="Android">Android</option>
                 </select>
               </div>
-              <button class="btn btn-lg" type="submit" data-i18n="wlSubmit">提交早鸟登记</button>
+              <button class="btn btn-lg" type="submit" data-i18n="wlSubmit">免费加入早鸟</button>
               <div class="wl-err" aria-live="polite"></div>
             </form>
             <div class="wl-done" hidden>
@@ -1569,12 +1456,12 @@
 
   <footer>
     <div class="container foot-inner">
-      <span data-i18n="footCopy">© 2026 ReAI · AI Card 录音卡 · ai-card.app.reai.com</span>
+      <span data-i18n="footCopy">© 2026 ReAI · AI Card 录音卡</span>
       <div class="foot-links">
-        <a href="#pipeline" data-i18n="navPipeline">处理链路</a>
-        <a href="#app" data-i18n="navApp">伴侣 App</a>
-        <a href="#privacy" data-i18n="navPrivacy">隐私架构</a>
-        <a href="#specs" data-i18n="navSpecs">技术规格</a>
+        <a href="#what" data-i18n="navWhat">能帮你做什么</a>
+        <a href="#app" data-i18n="navApp">App 界面</a>
+        <a href="#details" data-i18n="navDetails">省心细节</a>
+        <a href="#faq" data-i18n="navFaq">常见问题</a>
       </div>
     </div>
   </footer>
@@ -1583,19 +1470,19 @@
   <div class="modal-backdrop" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal">
       <div class="modal-head">
-        <h3 id="modal-title" data-i18n="modalTitle">早鸟 Waitlist 登记</h3>
+        <h3 id="modal-title" data-i18n="modalTitle">早鸟免费登记</h3>
         <button class="modal-close" type="button" id="modal-close" aria-label="Close">×</button>
       </div>
-      <p class="modal-lead" data-i18n="modalLead">输入邮箱加入 AI Card 早鸟名单：承诺赠送至少 1 个月会员，并参与实体录音卡抽奖（价值 ¥1,000）。</p>
+      <p class="modal-lead" data-i18n="modalLead">留下常用邮箱，上线第一时间通知你：赠送至少 1 个月会员，并自动参与抽取实体录音卡（价值 ¥1,000）。</p>
       <div data-wl-widget>
         <form class="wl-form" novalidate>
-          <input class="wl-input" type="email" required data-i18n-placeholder="wlEmailPlaceholder" placeholder="输入你的常用邮箱，例如 you@example.com">
+          <input class="wl-input" type="email" required data-i18n-placeholder="wlEmailPlaceholder" placeholder="你的常用邮箱，例如 you@example.com">
           <select class="wl-select" aria-label="Platform">
             <option value="iOS + Watch">iOS + Watch</option>
             <option value="iOS">iOS</option>
             <option value="Android">Android</option>
           </select>
-          <button class="btn btn-lg" type="submit" data-i18n="wlSubmit">提交早鸟登记</button>
+          <button class="btn btn-lg" type="submit" data-i18n="wlSubmit">免费加入早鸟</button>
           <div class="wl-err" aria-live="polite"></div>
         </form>
         <div class="wl-done" hidden>
@@ -1607,6 +1494,6 @@
     </div>
   </div>
 
-  <script src="./assets/app.js"></script>
+  <script src="./assets/app.js?v=20261115b"></script>
 </body>
 </html>
