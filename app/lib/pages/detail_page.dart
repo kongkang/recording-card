@@ -16,8 +16,8 @@ import '../core/models/segment_view.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
 import '../widgets/photo_preview_sheet.dart';
+import '../widgets/quick_speaker_sheet.dart';
 import '../widgets/raw_audio_player.dart';
-import '../widgets/speaker_mark_sheet.dart';
 import '../widgets/store_scope.dart';
 
 class DetailPage extends StatefulWidget {
@@ -142,10 +142,13 @@ class _DetailPageState extends State<DetailPage> {
     final refs = store.doneSummariesReferencing(e.id);
     final view = store.segmentViewFor(e.id);
     final speakerText = store.displaySpeakersSummary(e);
+    final dialogOrRaw = e.dialog.isNotEmpty ? e.dialog : e.raw;
+    final hasAnyTurns =
+        dialogOrRaw.any((t) => t.spk.trim() != '无语音');
     final markableSpeakers = store.speakerEntriesForEvents([e]);
-    final hasMarkedSpeaker = markableSpeakers.any(
-      (s) => s.currentAlias.isNotEmpty,
-    );
+    final hasMarkedSpeaker =
+        markableSpeakers.any((s) => s.currentAlias.isNotEmpty) ||
+        store.hasTurnOverridesFor([e]);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -198,15 +201,25 @@ class _DetailPageState extends State<DetailPage> {
                     key: const Key('dt-speakers'),
                     style: const TextStyle(fontSize: 12, color: RCColors.sec),
                   ),
-                  if (markableSpeakers.isNotEmpty)
+                  if (hasAnyTurns)
                     InkWell(
                       key: const Key('mark-speaker-btn'),
                       borderRadius: BorderRadius.circular(999),
-                      onTap: () => showSpeakerMarkSheet(
-                        context,
-                        store: store,
-                        events: [e],
-                      ),
+                      onTap: () {
+                        final firstTurn = dialogOrRaw.firstWhere(
+                          (t) => t.spk.trim() != '无语音',
+                          orElse: () => dialogOrRaw.first,
+                        );
+                        final firstIdx = dialogOrRaw.indexOf(firstTurn);
+                        showQuickSpeakerSheet(
+                          context,
+                          store: store,
+                          event: e,
+                          turnIndex: firstIdx < 0 ? 0 : firstIdx,
+                          rawSpeaker: firstTurn.spk,
+                          sampleQuote: firstTurn.text,
+                        );
+                      },
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
@@ -262,7 +275,7 @@ class _DetailPageState extends State<DetailPage> {
         if (_tab == 'raw')
           Builder(
             builder: (context) {
-              final activeAudioView = (view != null && view.isMergedSilent)
+              final activeAudioView = (view != null && view.isMerged)
                   ? view.mergedChildren[_selectedMergedSliceIdx.clamp(
                       0,
                       view.mergedChildren.length - 1,
@@ -507,14 +520,21 @@ class _DetailPageState extends State<DetailPage> {
     var order = 0;
     for (var turnIdx = 0; turnIdx < lines.length; turnIdx++) {
       final l = lines[turnIdx];
-      final displaySpk = store.displaySpeaker(e, l.spk);
-      final avatarSpk = store.displaySpeaker(
+      final displaySpk = store.displayTurnSpeaker(e, turnIdx, l.spk);
+      final avatarSpk = store.displayTurnSpeaker(
         e,
+        turnIdx,
         l.spk,
         includeGuessSuffix: false,
       );
-      final canMark = !AppStore.isUnclusteredSpeaker(
-        AppStore.normalizeSpeakerSlot(l.spk),
+      final canQuickName = l.spk.trim() != '无语音';
+      void openQuickSheet() => showQuickSpeakerSheet(
+        context,
+        store: store,
+        event: e,
+        turnIndex: turnIdx,
+        rawSpeaker: l.spk,
+        sampleQuote: l.text,
       );
       entries.add((
         sortSec: l.sortSec,
@@ -527,21 +547,14 @@ class _DetailPageState extends State<DetailPage> {
               InkWell(
                 key: Key('turn-spk-$turnIdx'),
                 borderRadius: BorderRadius.circular(14),
-                onTap: canMark
-                    ? () => showSpeakerMarkSheet(
-                          context,
-                          store: store,
-                          events: [e],
-                          initialSlot: AppStore.normalizeSpeakerSlot(l.spk),
-                        )
-                    : null,
+                onTap: canQuickName ? openQuickSheet : null,
                 child: Container(
                   width: 28,
                   height: 28,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _speakerColor(l.spk),
+                    color: _speakerColor(displaySpk),
                   ),
                   child: Text(
                     _avatar(avatarSpk),
@@ -558,22 +571,34 @@ class _DetailPageState extends State<DetailPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     GestureDetector(
-                      onTap: canMark
-                          ? () => showSpeakerMarkSheet(
-                                context,
-                                store: store,
-                                events: [e],
-                                initialSlot: AppStore.normalizeSpeakerSlot(
-                                  l.spk,
-                                ),
-                              )
-                          : null,
-                      child: Text(
-                        '$displaySpk · ${l.clock}',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: RCColors.sec,
-                        ),
+                      key: Key('turn-who-${e.id}-$turnIdx'),
+                      onTap: canQuickName ? openQuickSheet : null,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              '$displaySpk · ${l.clock}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: canQuickName
+                                    ? RCColors.ink
+                                    : RCColors.sec,
+                                fontWeight: canQuickName
+                                    ? FontWeight.w500
+                                    : FontWeight.w400,
+                              ),
+                            ),
+                          ),
+                          if (canQuickName) ...[
+                            const SizedBox(width: 4),
+                            const Icon(
+                              Icons.edit_outlined,
+                              size: 11,
+                              color: RCColors.sec,
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                     const SizedBox(height: 3),
@@ -861,6 +886,72 @@ class _DetailPageState extends State<DetailPage> {
             },
           ),
         );
+      }
+      return widgets;
+    }
+
+    if (view.isMergedSpeech) {
+      final selectedIdx = _selectedMergedSliceIdx.clamp(
+        0,
+        view.mergedChildren.length - 1,
+      );
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Text(
+            '连续 ${view.mergedChildren.length} 个分片已按 <30s 停顿自动合并，点击任一分片切换上方播放器回听对应原始 WAV：',
+            style: const TextStyle(fontSize: 12, color: RCColors.sec, height: 1.5),
+          ),
+        ),
+      );
+      for (var i = 0; i < view.mergedChildren.length; i++) {
+        final child = view.mergedChildren[i];
+        final cStart = child.segment.startAtMs;
+        final cEnd =
+            child.segment.endAtMs ??
+            (cStart + (child.file.durationMs > 0 ? child.file.durationMs : 1000));
+        final durSec = ((cEnd - cStart) / 1000).round().clamp(1, 86400);
+        final active = i == selectedIdx;
+        widgets.add(
+          _rawBubble(
+            '分片 ${i + 1} · ${_hms(cStart)}—${_hms(cEnd)} · $durSec 秒',
+            child.file.deviceName,
+            bubbleKey: Key('raw-merged-slice-$i'),
+            active: active,
+            onTap: () {
+              setState(() {
+                _selectedMergedSliceIdx = i;
+                _activeFilePosMs = null;
+              });
+            },
+          ),
+        );
+        for (final u in child.utterances) {
+          final pos = _activeFilePosMs;
+          final uActive = active && pos != null && pos >= u.startMs && pos <= u.endMs;
+          widgets.add(
+            _rawBubble(
+              '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
+              '${_hms(child.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
+              u.text,
+              bubbleKey: Key('raw-utt-${u.id}'),
+              active: uActive,
+              onTap: () {
+                final switched = _selectedMergedSliceIdx != i;
+                setState(() {
+                  _selectedMergedSliceIdx = i;
+                });
+                if (switched) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _seekRawAudio(u.startMs);
+                  });
+                } else {
+                  _seekRawAudio(u.startMs);
+                }
+              },
+            ),
+          );
+        }
       }
       return widgets;
     }

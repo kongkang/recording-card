@@ -23,12 +23,15 @@ import '../../services/recordings/recording_store.dart';
 import '../../services/recordings/recordings_manifest.dart';
 import '../../services/recordings/recording_sync_service.dart';
 import '../../services/recordings/segment_projection.dart';
+import '../../services/recordings/speaker_profile_store.dart';
+import '../../services/segment/fast_topic_segment_agent.dart';
 import '../device/card_gateway.dart';
 import '../models/record.dart';
 import '../models/recording.dart';
 import '../models/segment_view.dart';
 import '../models/summary.dart';
 import '../storage/storage.dart';
+import 'voiceprint_library_store.dart';
 
 enum RootTab { timeline, setting }
 
@@ -73,7 +76,15 @@ class AppStore extends ChangeNotifier {
        _generator = generator,
        _status = status,
        _json = jsonStore,
-       _loadPersisted = loadPersistedState;
+       _loadPersisted = loadPersistedState {
+    voiceprintStore.addListener(_onVoiceprintChanged);
+  }
+
+  void _onVoiceprintChanged() {
+    if (_disposed || _restoringState) return;
+    _persist();
+    notifyListeners();
+  }
 
   /// 录音数据（真实设备同步进来的记录）。
   List<RecordEvent> events;
@@ -84,6 +95,7 @@ class AppStore extends ChangeNotifier {
   RecordingSyncService? _recordings;
   RecordingPipeline? _pipeline;
   RecordingStore? _recordingStore;
+  TopicSegmentationStore? _topicStore;
   RecordingStatusController? _status;
   SummaryGenerator? _generator;
   JsonStore? _json;
@@ -103,6 +115,13 @@ class AppStore extends ChangeNotifier {
 
   /// 用户确认后的说话人姓名/称呼映射（key 为 `session:<session>:<slot>` 或 `event:<id>:<slot>`）。
   Map<String, String> _speakerAliases = {};
+
+  /// 按具体发言 turn 覆盖的说话人称呼（key 为 `turn:<eventId>:<turnIdx>`）。
+  Map<String, String> _turnSpeakerOverrides = {};
+
+  /// 声纹人物库与 5 常用自动识别槽位（第 1 槽位固定为「我的声音」）。
+  final VoiceprintLibraryStore voiceprintStore = VoiceprintLibraryStore();
+  bool _restoringState = false;
 
   /// 系统相册访问服务（可在测试中注入假实现）。
   PhotoLibraryService photoLibrary = const PhotoLibraryService();
@@ -171,8 +190,20 @@ class AppStore extends ChangeNotifier {
   }) {
     _pipeline = pipeline;
     _recordingStore = store;
+    _topicStore = pipeline.topicStore;
     _generator = generator;
     _status = status;
+  }
+
+  TopicSegmentationStore? _topicStoreFor() {
+    if (_topicStore != null) return _topicStore;
+    final p = _pipeline;
+    if (p != null) return _topicStore = p.topicStore;
+    final rs = _recordingStore;
+    if (rs != null) {
+      return _topicStore = TopicSegmentationStore(resolveRoot: rs.root);
+    }
+    return null;
   }
 
   SegmentView? segmentViewFor(String segmentId) => segmentViews[segmentId];
@@ -237,7 +268,29 @@ class AppStore extends ChangeNotifier {
     if (_status?.isRecording != true && _liveSlicesInFlight == 0) {
       _status?.stopRecording();
     }
+    unawaited(evaluateTopicSegmentationAndRefresh(sessionJustEnded: true));
     return _liveSlicesSavedThisRun;
+  }
+
+  /// 检查是否有连续说话簇后出现 `>= 1 分钟` 空白或刚结束录音，异步执行快速主题分段并刷新时间轴。
+  Future<void> evaluateTopicSegmentationAndRefresh({
+    bool sessionJustEnded = false,
+    int? wallClockNowMs,
+  }) async {
+    if (_disposed) return;
+    final p = _pipeline;
+    if (p == null) return;
+    try {
+      final res = await p.evaluateTopicSegmentation(
+        sessionJustEnded: sessionJustEnded,
+        wallClockNowMs: wallClockNowMs,
+      );
+      if (!_disposed && res != null && res.evaluatedCount > 0) {
+        await refreshFromStore();
+      }
+    } on Object catch (e) {
+      debugPrint('[store] 快速主题分段检查失败：$e');
+    }
   }
 
   // ── 启动装载 ────────────────────────────────────────────
@@ -279,7 +332,11 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
     try {
       final files = await store.loadAll(refresh: true);
-      final projection = SegmentProjection.build(files);
+      final topicState = await _topicStoreFor()?.load();
+      final projection = SegmentProjection.build(
+        files,
+        topicState: topicState,
+      );
       recordingFiles = files;
       events = projection.events;
       segmentViews = projection.views;
@@ -430,6 +487,7 @@ class AppStore extends ChangeNotifier {
           );
           await refreshFromStore();
           unawaited(syncPhotosAutomatically(recentOnly: false));
+          unawaited(evaluateTopicSegmentationAndRefresh());
           if (localReport.failed > 0) {
             syncError =
                 '${localReport.failed} 条本机语音转写失败：${localReport.failures.first}';
@@ -570,6 +628,7 @@ class AppStore extends ChangeNotifier {
         if (recovered > 0) {
           await refreshFromStore();
           unawaited(syncPhotosAutomatically(recentOnly: false));
+          unawaited(evaluateTopicSegmentationAndRefresh());
         }
       } on Object catch (e) {
         debugPrint('[store] 本地实时切片重检失败：$e');
@@ -717,7 +776,7 @@ class AppStore extends ChangeNotifier {
 
   List<SummaryCard> doneSummariesReferencing(String eventId) {
     final view = segmentViews[eventId];
-    final ids = view != null && view.isMergedSilent
+    final ids = view != null && view.isMerged
         ? view.constituentSegmentIds.toSet()
         : <String>{eventId};
     return summaries
@@ -729,10 +788,10 @@ class AppStore extends ChangeNotifier {
 
   // ── 照片关联（点一机 V1 硬件抓拍 + 系统相册录音时段对齐）────
 
-  /// 合并事件自带照片与持久化关联照片（若为合并无语音块，聚合全部子切片下的照片并去重）。
+  /// 合并事件自带照片与持久化关联照片（若为合并块，聚合全部子切片下的照片并去重）。
   List<EventPhoto> photosForEvent(RecordEvent e) {
     final view = segmentViews[e.id];
-    final ids = view != null && view.isMergedSilent
+    final ids = view != null && view.isMerged
         ? view.constituentSegmentIds
         : <String>[e.id];
     final byId = <String, EventPhoto>{
@@ -757,7 +816,7 @@ class AppStore extends ChangeNotifier {
     final canonicalId = _mergedIdRedirects[eventId] ?? eventId;
     nextMap[canonicalId] = merged;
     final view = segmentViews[canonicalId];
-    if (view != null && view.isMergedSilent) {
+    if (view != null && view.isMerged) {
       for (final childId in view.constituentSegmentIds) {
         if (childId != canonicalId) {
           nextMap.remove(childId);
@@ -976,7 +1035,7 @@ class AppStore extends ChangeNotifier {
   ({int startMs, int endMs}) _windowForEvent(RecordEvent e) {
     final view = segmentViews[e.id];
     if (view != null) {
-      if (view.isMergedSilent) {
+      if (view.isMerged && !view.segment.id.contains('#t')) {
         final firstChild = view.mergedChildren.first;
         final lastChild = view.mergedChildren.last;
         final start = firstChild.segment.startAtMs;
@@ -1620,15 +1679,26 @@ class AppStore extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _genTicker?.cancel();
+    voiceprintStore.removeListener(_onVoiceprintChanged);
+    voiceprintStore.dispose();
     super.dispose();
   }
 
   // ── 说话人标记（局部确认并全局联动，未确认仍保留推测标识） ─────────────
+  static bool isClusterSlotToken(String raw) {
+    final s = raw.trim().replaceAll(RegExp(r'（推测）|\(推测\)'), '').trim();
+    if (s.isEmpty || s == '—') return true;
+    if (s == '未区分' || s == '说话人 未区分' || s == '无语音') return true;
+    if (s.startsWith('说话人')) return true;
+    return RegExp(r'^[A-Za-z0-9]{1,3}$').hasMatch(s);
+  }
+
   static String normalizeSpeakerSlot(String raw) {
     var s = raw.trim();
     s = s.replaceAll(RegExp(r'（推测）|\(推测\)'), '').trim();
     if (s.isEmpty || s == '—') return '未区分';
     if (s == '未区分' || s == '说话人 未区分' || s == '无语音') return s;
+    if (!isClusterSlotToken(s)) return s;
     if (s.startsWith('说话人 ')) return s;
     if (s.startsWith('说话人')) {
       final rest = s.substring(3).trim();
@@ -1666,11 +1736,275 @@ class AppStore extends ChangeNotifier {
     String rawSpeaker, {
     bool includeGuessSuffix = true,
   }) {
+    final clean = rawSpeaker
+        .trim()
+        .replaceAll(RegExp(r'（推测）|\(推测\)'), '')
+        .trim();
     final slot = normalizeSpeakerSlot(rawSpeaker);
     if (isUnclusteredSpeaker(slot)) return slot;
     final alias = speakerAliasFor(event, slot);
     if (alias != null && alias.isNotEmpty) return alias;
+    if (!isClusterSlotToken(clean)) return clean;
     return includeGuessSuffix ? '$slot（推测）' : slot;
+  }
+
+  /// 逐句展示说话人名称（优先单句覆盖 `turn:<eventId>:<turnIdx>`，次优先会话/记录槽位映射）。
+  String displayTurnSpeaker(
+    RecordEvent event,
+    int turnIndex,
+    String rawSpeaker, {
+    bool includeGuessSuffix = true,
+  }) {
+    final override = _turnSpeakerOverrides['turn:${event.id}:$turnIndex'];
+    if (override != null && override.trim().isNotEmpty) {
+      return override.trim();
+    }
+    return displaySpeaker(
+      event,
+      rawSpeaker,
+      includeGuessSuffix: includeGuessSuffix,
+    );
+  }
+
+  bool hasTurnOverridesFor(Iterable<RecordEvent> targets) {
+    final ids = {for (final e in targets) e.id};
+    for (final k in _turnSpeakerOverrides.keys) {
+      for (final id in ids) {
+        if (k.startsWith('turn:$id:')) return true;
+      }
+    }
+    return false;
+  }
+
+  /// 统计同一记录（及同会话）中其余同类待批量同步修改的发言条数（用于「同改其余 xxx 处」）。
+  int countOtherMatchingTurns(
+    RecordEvent event,
+    int turnIndex,
+    String rawSpeaker,
+  ) {
+    final targetSlot = normalizeSpeakerSlot(rawSpeaker);
+    final view = segmentViewFor(event.id);
+    final sessionId = view?.file.session.trim() ?? '';
+    final candidateEvents = <RecordEvent>[];
+    if (!isUnclusteredSpeaker(targetSlot) && sessionId.isNotEmpty) {
+      for (final e in events) {
+        final evView = segmentViewFor(e.id);
+        if (e.id == event.id ||
+            (evView != null && evView.file.session.trim() == sessionId)) {
+          candidateEvents.add(e);
+        }
+      }
+    } else {
+      candidateEvents.add(event);
+    }
+
+    var count = 0;
+    for (final e in candidateEvents) {
+      final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
+      for (var i = 0; i < turns.length; i++) {
+        if (e.id == event.id && i == turnIndex) continue;
+        final tSlot = normalizeSpeakerSlot(turns[i].spk);
+        if (isUnclusteredSpeaker(targetSlot)) {
+          final over = _turnSpeakerOverrides['turn:${e.id}:$i'];
+          if (isUnclusteredSpeaker(tSlot) &&
+              (over == null || over.trim().isEmpty)) {
+            count++;
+          }
+        } else if (tSlot == targetSlot) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  static final RegExp _vocativePattern = RegExp(
+    r'(?:^|[，,。！？!\s])(老[\u4e00-\u9fff]|小[\u4e00-\u9fff]|[\u4e00-\u9fff]{1,2}[总哥姐叔伯姨]|[\u4e00-\u9fff]{2,3})[，,]\s*(?:你|您|咱|咱们|请|看|说|讲|来|帮|觉得|同意|明天|今天|这|那)',
+  );
+  static const _vocativeStopWords = {
+    '自己',
+    '大家',
+    '各位',
+    '同学',
+    '老师',
+    '同事',
+    '客户',
+    '谢谢',
+    '好的',
+    '可以',
+    '没有',
+    '不是',
+    '觉得',
+    '同意',
+    '那个',
+    '这个',
+  };
+
+  /// 为快捷命名浮层推断「可能为：XXX」候选名（端侧声纹弱匹配 > 相邻对话上下文称呼）。
+  String? speakerHintFor(
+    RecordEvent event,
+    int turnIndex,
+    String rawSpeaker,
+  ) {
+    final slot = normalizeSpeakerSlot(rawSpeaker);
+    final view = segmentViewFor(event.id);
+    if (view != null && !isUnclusteredSpeaker(slot)) {
+      final sesKey = view.file.session.isNotEmpty
+          ? view.file.session
+          : view.file.id;
+      final vpHint = voiceprintStore.fuzzyHintFor(
+        session: sesKey,
+        speakerSlot: slot,
+      );
+      if (vpHint != null && vpHint.trim().isNotEmpty) {
+        return vpHint.trim();
+      }
+    }
+
+    final turns = event.dialog.isNotEmpty ? event.dialog : event.raw;
+    if (turnIndex < 0 || turnIndex >= turns.length) return null;
+    final direct = _contextualSpeakerHint(turns, turnIndex);
+    if (direct != null) return direct;
+
+    // 同一声纹簇在同一段对话中若此前或随后存在称呼/自报家门线索，整簇共享弱提示
+    if (!isUnclusteredSpeaker(slot)) {
+      for (var i = 0; i < turns.length; i++) {
+        if (i == turnIndex) continue;
+        if (normalizeSpeakerSlot(turns[i].spk) != slot) continue;
+        final hint = _contextualSpeakerHint(turns, i);
+        if (hint != null) return hint;
+      }
+    }
+    return null;
+  }
+
+  static String? _contextualSpeakerHint(List<TurnLine> turns, int index) {
+    final currentText = turns[index].text;
+    final selfMatch = RegExp(
+      r'我是([\u4e00-\u9fffA-Za-z]{2,4})(?:[，,。！？\s]|$)',
+    ).firstMatch(currentText);
+    if (selfMatch != null) {
+      final name = (selfMatch.group(1) ?? '').trim();
+      if (name.isNotEmpty && !_vocativeStopWords.contains(name)) return name;
+    }
+    if (index > 0) {
+      final prev = turns[index - 1];
+      final m = _vocativePattern.firstMatch(prev.text);
+      if (m != null) {
+        final cand = (m.group(1) ?? '').trim();
+        if (cand.isNotEmpty && !_vocativeStopWords.contains(cand)) {
+          return cand;
+        }
+      }
+    }
+    return null;
+  }
+
+  /// 快捷命名：支持仅改本句 / 同改其余同类说话人，以及记住声纹（入常用 5 槽位或人物库）与记录最近使用名称。
+  Future<({bool saved, bool frequentFull, PersonVoiceProfile? profile})>
+  applyQuickSpeakerNaming({
+    required RecordEvent event,
+    required int turnIndex,
+    required String rawSpeaker,
+    required String newName,
+    bool rememberVoiceprint = true,
+    bool applyToOtherMatching = true,
+    List<double>? sampleEmbedding,
+    String? sampleDeviceLabel,
+    String? sampleSceneLabel,
+  }) async {
+    final clean = newName.trim();
+    if (clean.isEmpty) {
+      return (saved: false, frequentFull: false, profile: null);
+    }
+
+    final slot = normalizeSpeakerSlot(rawSpeaker);
+    final view = segmentViewFor(event.id);
+    voiceprintStore.recordRecentName(clean, notify: false);
+
+    if (!applyToOtherMatching) {
+      _turnSpeakerOverrides['turn:${event.id}:$turnIndex'] = clean;
+    } else if (!isUnclusteredSpeaker(slot)) {
+      _turnSpeakerOverrides['turn:${event.id}:$turnIndex'] = clean;
+      final sesId = view?.file.session.trim() ?? '';
+      final targets = <RecordEvent>[
+        for (final e in events)
+          if (e.id == event.id ||
+              (sesId.isNotEmpty &&
+                  segmentViewFor(e.id)?.file.session.trim() == sesId))
+            e,
+      ];
+      if (!targets.any((e) => e.id == event.id)) targets.add(event);
+      for (final e in targets) {
+        _turnSpeakerOverrides.removeWhere((k, _) {
+          if (!k.startsWith('turn:${e.id}:')) return false;
+          final idx = int.tryParse(k.split(':').last);
+          if (idx == null) return false;
+          final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
+          if (idx < 0 || idx >= turns.length) return false;
+          return normalizeSpeakerSlot(turns[idx].spk) == slot;
+        });
+        _turnSpeakerOverrides['turn:${event.id}:$turnIndex'] = clean;
+        if (view != null && sesId.isNotEmpty) {
+          _speakerAliases['session:$sesId:$slot'] = clean;
+        }
+        _speakerAliases['event:${e.id}:$slot'] = clean;
+      }
+    } else {
+      final turns = event.dialog.isNotEmpty ? event.dialog : event.raw;
+      for (var i = 0; i < turns.length; i++) {
+        if (i == turnIndex ||
+            (isUnclusteredSpeaker(normalizeSpeakerSlot(turns[i].spk)) &&
+                (_turnSpeakerOverrides['turn:${event.id}:$i'] ?? '')
+                    .trim()
+                    .isEmpty)) {
+          _turnSpeakerOverrides['turn:${event.id}:$i'] = clean;
+        }
+      }
+    }
+
+    PersonVoiceProfile? savedProfile;
+    var frequentFull = false;
+    if (rememberVoiceprint) {
+      var centroid = sampleEmbedding;
+      if ((centroid == null || centroid.isEmpty) &&
+          view != null &&
+          _recordingStore != null &&
+          view.file.session.isNotEmpty &&
+          !isUnclusteredSpeaker(slot)) {
+        final matchNum = RegExp(r'(\d+)$').firstMatch(slot);
+        final clusterIdx = matchNum != null
+            ? (int.tryParse(matchNum.group(1)!) ?? 1) - 1
+            : 0;
+        try {
+          final pStore = SpeakerProfileStore(
+            root: await _recordingStore!.root(),
+          );
+          final set = await pStore.load(view.file.session);
+          centroid = set.byIndex(clusterIdx)?.centroid;
+        } on Object {
+          // 离线/单测无声纹文件时不阻塞文本命名保存
+        }
+      }
+      final existing = voiceprintStore.findByName(clean);
+      final hadSlot = existing?.isInFrequentSlot ?? false;
+      savedProfile = voiceprintStore.upsertPersonAndSample(
+        name: clean,
+        embedding: centroid,
+        deviceLabel:
+            sampleDeviceLabel ??
+            (view?.file.deviceName ?? '录音卡'),
+        sceneLabel: sampleSceneLabel ?? event.title,
+        preferFrequentSlot: true,
+      );
+      if (!hadSlot && !savedProfile.isInFrequentSlot) {
+        frequentFull = true;
+      }
+    }
+
+    _persist();
+    notifyListeners();
+    return (saved: true, frequentFull: frequentFull, profile: savedProfile);
   }
 
   /// 生成卡片/详情摘要行里的说话人汇总文本。
@@ -1869,48 +2203,72 @@ class AppStore extends ChangeNotifier {
       },
     if (_speakerAliases.isNotEmpty)
       'spkAliases': Map<String, String>.from(_speakerAliases),
+    if (_turnSpeakerOverrides.isNotEmpty)
+      'turnSpkOverrides': Map<String, String>.from(_turnSpeakerOverrides),
+    'voiceprints': voiceprintStore.exportJson(),
   };
 
   void restoreState(Map<String, dynamic>? data) {
     if (data == null) return;
-    summaries = [
-      for (final j in (data['sums'] as List? ?? []))
-        if (j is Map<String, dynamic>) SummaryCard.fromJson(j),
-    ];
-    final rawPhotos = data['photos'];
-    if (rawPhotos is Map) {
-      final restored = <String, List<EventPhoto>>{};
-      for (final entry in rawPhotos.entries) {
-        final key = '${entry.key}';
-        final val = entry.value;
-        if (val is List) {
-          restored[key] = [
-            for (final item in val)
-              if (item is Map<String, dynamic>) EventPhoto.fromJson(item),
-          ];
+    _restoringState = true;
+    try {
+      summaries = [
+        for (final j in (data['sums'] as List? ?? []))
+          if (j is Map<String, dynamic>) SummaryCard.fromJson(j),
+      ];
+      final rawPhotos = data['photos'];
+      if (rawPhotos is Map) {
+        final restored = <String, List<EventPhoto>>{};
+        for (final entry in rawPhotos.entries) {
+          final key = '${entry.key}';
+          final val = entry.value;
+          if (val is List) {
+            restored[key] = [
+              for (final item in val)
+                if (item is Map<String, dynamic>) EventPhoto.fromJson(item),
+            ];
+          }
         }
+        eventPhotos = restored;
       }
-      eventPhotos = restored;
+      final rawAliases = data['spkAliases'];
+      if (rawAliases is Map) {
+        _speakerAliases = {
+          for (final entry in rawAliases.entries)
+            if ('${entry.key}'.isNotEmpty && '${entry.value}'.trim().isNotEmpty)
+              '${entry.key}': '${entry.value}'.trim(),
+        };
+      } else {
+        _speakerAliases = {};
+      }
+      final rawTurnOverrides = data['turnSpkOverrides'];
+      if (rawTurnOverrides is Map) {
+        _turnSpeakerOverrides = {
+          for (final entry in rawTurnOverrides.entries)
+            if ('${entry.key}'.isNotEmpty && '${entry.value}'.trim().isNotEmpty)
+              '${entry.key}': '${entry.value}'.trim(),
+        };
+      } else {
+        _turnSpeakerOverrides = {};
+      }
+      final rawVp = data['voiceprints'];
+      if (rawVp is Map<String, dynamic>) {
+        voiceprintStore.restoreJson(rawVp);
+      } else {
+        voiceprintStore.restoreJson(null);
+      }
+      subStack = [
+        for (final e in (data['stack'] as List? ?? []))
+          if (e is Map<String, dynamic> &&
+              ((e['t'] == 'detail') ||
+                  (e['t'] == 'unc') ||
+                  (e['t'] == 'setsub') ||
+                  (e['t'] == 'sum' && summaries.any((s) => s.id == e['id']))))
+            RouteEntry(e['t'] as String, e['id'] as String),
+      ];
+    } finally {
+      _restoringState = false;
     }
-    final rawAliases = data['spkAliases'];
-    if (rawAliases is Map) {
-      _speakerAliases = {
-        for (final entry in rawAliases.entries)
-          if ('${entry.key}'.isNotEmpty && '${entry.value}'.trim().isNotEmpty)
-            '${entry.key}': '${entry.value}'.trim(),
-      };
-    } else {
-      _speakerAliases = {};
-    }
-    subStack = [
-      for (final e in (data['stack'] as List? ?? []))
-        if (e is Map<String, dynamic> &&
-            ((e['t'] == 'detail') ||
-                (e['t'] == 'unc') ||
-                (e['t'] == 'setsub') ||
-                (e['t'] == 'sum' && summaries.any((s) => s.id == e['id']))))
-          RouteEntry(e['t'] as String, e['id'] as String),
-    ];
     notifyListeners();
   }
 

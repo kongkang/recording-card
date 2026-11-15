@@ -5,13 +5,19 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/device/card_gateway.dart';
 import '../../core/store/agent_config_store.dart';
 import '../../core/store/device_store.dart';
+import '../../core/store/voiceprint_library_store.dart';
 import '../../core/theme/tokens.dart';
+import '../../services/audio/voice_sample_capture.dart';
 import '../../services/auth/oauth_config.dart';
 import '../../services/auth_service.dart';
 import '../../services/transcribe/asr_models.dart';
@@ -1648,7 +1654,7 @@ class _LoginAuthBodyState extends State<_LoginAuthBody> {
   }
 }
 
-// ── 5) 声纹识别说明 ───────────────────────────────────────────
+// ── 5) 声纹识别说明与 5 常用槽位 / 人物库管理 ─────────────────
 
 class _VoiceprintBody extends StatefulWidget {
   const _VoiceprintBody({required this.controller});
@@ -1660,6 +1666,11 @@ class _VoiceprintBody extends StatefulWidget {
 }
 
 class _VoiceprintBodyState extends State<_VoiceprintBody> {
+  VoiceprintLibraryStore? _fallbackStore;
+  String? _recordingTargetKey;
+  String? _vpHint;
+  bool _vpError = false;
+
   @override
   void initState() {
     super.initState();
@@ -1670,106 +1681,634 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final c = context.rc;
-    final ctrl = widget.controller;
-    Widget content() {
-      final installed =
-          ctrl?.statusFor(campplusEmbeddingSpec)?.installed ?? false;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: c.card,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: c.sep),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '说话人聚类（推测）',
-                        style: TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w700,
-                          color: c.label,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      installed ? '已就绪' : '待下载',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: installed ? RCColors.okInk : c.sec,
-                      ),
-                    ),
-                    if (ctrl != null && !installed) ...[
-                      const SizedBox(width: 10),
-                      OutlinedButton(
-                        key: const Key('voiceprint-install-btn'),
-                        onPressed: ctrl.busy || !ctrl.configured
-                            ? null
-                            : () => unawaited(
-                                  ctrl.installSpec(campplusEmbeddingSpec),
-                                ),
-                        child: Text(
-                          ctrl.busy
-                              ? '下载中…'
-                              : (ctrl.error != null ? '重试' : '下载'),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '基于本机声纹特征将对话归类为「说话人 1 / 2（推测）」，原始声纹特征仅留存在本机，不断言真实身份。',
-                  style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
-                ),
-                if (ctrl != null && ctrl.busy) ...[
-                  const SizedBox(height: 10),
-                  LinearProgressIndicator(
-                    value: ctrl.progress > 0 ? ctrl.progress : null,
-                    minHeight: 4,
-                    backgroundColor: c.sep,
-                  ),
-                  if (ctrl.text.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      ctrl.text,
-                      key: const Key('voiceprint-progress-text'),
-                      style: TextStyle(fontSize: 12, color: c.sec),
-                    ),
-                  ],
-                ],
-                if (ctrl != null && !installed && ctrl.error != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    ctrl.error!,
-                    key: const Key('voiceprint-error'),
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.4,
-                      color: c.danger,
-                    ),
-                  ),
-                ],
-              ],
-            ),
+  void dispose() {
+    _fallbackStore?.dispose();
+    super.dispose();
+  }
+
+  VoiceprintLibraryStore _resolveStore(BuildContext context) {
+    final scoped = StoreScope.maybeOf(context)?.voiceprintStore;
+    if (scoped != null) return scoped;
+    return _fallbackStore ??= VoiceprintLibraryStore();
+  }
+
+  Future<void> _recordVoiceSample(
+    VoiceprintLibraryStore vpStore, {
+    required String targetKey,
+    required String targetName,
+    required bool isSelf,
+    int? slot,
+  }) async {
+    if (_recordingTargetKey != null) return;
+    setState(() {
+      _recordingTargetKey = targetKey;
+      _vpHint = null;
+      _vpError = false;
+    });
+    try {
+      final driver = VoiceSampleCaptureDriver(
+        installer: widget.controller?.installer,
+      );
+      final res = await driver.captureAndEmbed(
+        targetName: targetName,
+        deviceLabel: '本机麦克风',
+        sceneLabel: isSelf ? '单独录音' : '补充录音',
+      );
+      if (!mounted) return;
+      if (!res.ok || res.embedding.isEmpty) {
+        setState(() {
+          _vpError = true;
+          _vpHint = res.error ?? '采集声纹样本失败，请确认麦克风权限与声纹模型状态';
+        });
+        return;
+      }
+      if (isSelf) {
+        vpStore.recordSelfSample(
+          embedding: res.embedding,
+          deviceLabel: '本机麦克风',
+          sceneLabel: '单独录音',
+        );
+      } else {
+        vpStore.upsertPersonAndSample(
+          name: targetName,
+          embedding: res.embedding,
+          deviceLabel: '本机麦克风',
+          sceneLabel: '补充录音',
+          explicitSlot: slot,
+        );
+      }
+      setState(() {
+        _vpError = false;
+        _vpHint = '已为「$targetName」录入 1 组声纹样本（${res.embedding.length} 维）';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _recordingTargetKey = null);
+      }
+    }
+  }
+
+  Future<void> _showAddPersonDialog(
+    BuildContext context,
+    VoiceprintLibraryStore vpStore,
+  ) async {
+    final textCtrl = TextEditingController();
+    final created = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('新增人物档案'),
+        content: TextField(
+          key: const Key('vp-add-person-input'),
+          controller: textCtrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: '输入姓名或常用称呼（例如：张总）',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('vp-add-person-confirm-btn'),
+            onPressed: () => Navigator.of(ctx).pop(textCtrl.text.trim()),
+            child: const Text('添加到人物库'),
           ),
         ],
+      ),
+    );
+    textCtrl.dispose();
+    if (!mounted || created == null || created.isEmpty) return;
+    vpStore.upsertPersonAndSample(name: created, preferFrequentSlot: false);
+    setState(() {
+      _vpError = false;
+      _vpHint = '已将「$created」加入人物库（默认仅手动选用，不占用常用识别槽位）';
+    });
+  }
+
+  Widget _buildSampleChips(
+    RCColorScheme c,
+    List<VoiceSampleRecord> samples, {
+    String emptyLabel = '暂无音频样本，仅名称记录',
+  }) {
+    if (samples.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: c.bg,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: c.sep),
+        ),
+        child: Text(emptyLabel, style: TextStyle(fontSize: 11, color: c.sec)),
+      );
+    }
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final s in samples)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: c.bg,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: c.sep),
+            ),
+            child: Text(
+              '${s.deviceLabel} · ${s.sceneLabel}',
+              style: TextStyle(fontSize: 11, color: c.sec),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildFrequentSlotCard(
+    RCColorScheme c,
+    VoiceprintLibraryStore vpStore,
+    int slot,
+  ) {
+    final isSelfSlot = slot == 1;
+    final p = isSelfSlot
+        ? (vpStore.profileAtSlot(1) ?? vpStore.selfProfile)
+        : vpStore.profileAtSlot(slot);
+
+    if (p == null) {
+      return Container(
+        key: Key('vp-slot-$slot'),
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: c.bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: c.sep),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                '槽位 $slot · 空槽位（可从下方人物库设入）',
+                style: TextStyle(fontSize: 12.5, color: c.sec),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: c.sep),
+              ),
+              child: Text('未占用', style: TextStyle(fontSize: 11, color: c.sec)),
+            ),
+          ],
+        ),
       );
     }
 
-    if (ctrl == null) return content();
+    final targetKey = isSelfSlot ? 'self' : 'slot-$slot';
+    final capturingThis = _recordingTargetKey == targetKey;
+    final badgeText = isSelfSlot
+        ? '本人声纹（${p.samples.length} 组样本）'
+        : '自动识别 · 含 ${p.samples.length} 组样本';
+
+    return Container(
+      key: Key('vp-slot-$slot'),
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isSelfSlot ? c.okInk.withValues(alpha: 0.08) : c.bg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isSelfSlot ? c.okInk.withValues(alpha: 0.35) : c.sep,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                isSelfSlot ? '槽位 1 · 本人' : '槽位 $slot',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: isSelfSlot ? RCColors.okInk : c.sec,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  p.name,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: c.label,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: c.card,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: c.sep),
+                ),
+                child: Text(
+                  badgeText,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: isSelfSlot ? RCColors.okInk : c.sec,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _buildSampleChips(
+            c,
+            p.samples,
+            emptyLabel: isSelfSlot ? '尚未单独录制我的声音样本，建议点击下方按钮录入' : '暂无音频样本',
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton(
+                key: Key(
+                  isSelfSlot ? 'vp-record-self-btn' : 'vp-record-slot-$slot',
+                ),
+                onPressed: _recordingTargetKey != null
+                    ? null
+                    : () => unawaited(
+                        _recordVoiceSample(
+                          vpStore,
+                          targetKey: targetKey,
+                          targetName: p.name,
+                          isSelf: isSelfSlot,
+                          slot: slot,
+                        ),
+                      ),
+                child: Text(
+                  capturingThis
+                      ? '采集声纹中…'
+                      : (isSelfSlot ? '单独录音增加' : '+ 补充录音样本'),
+                ),
+              ),
+              if (!isSelfSlot)
+                OutlinedButton(
+                  key: Key('vp-remove-slot-$slot'),
+                  onPressed: () {
+                    vpStore.demoteFromFrequentSlot(p.id);
+                    setState(() {
+                      _vpError = false;
+                      _vpHint = '已将「${p.name}」移出常用自动识别槽位';
+                    });
+                  },
+                  child: const Text('移出常用'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLibraryPersonCard(
+    RCColorScheme c,
+    VoiceprintLibraryStore vpStore,
+    PersonVoiceProfile p,
+    int index,
+  ) {
+    final targetKey = 'lib-${p.id}';
+    final capturingThis = _recordingTargetKey == targetKey;
+    final inFrequent = p.isInFrequentSlot;
+    return Container(
+      key: Key('vp-lib-person-$index'),
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: c.bg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.sep),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  p.name,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: c.label,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: inFrequent ? c.okInk.withValues(alpha: 0.08) : c.card,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: inFrequent
+                        ? c.okInk.withValues(alpha: 0.35)
+                        : c.sep,
+                  ),
+                ),
+                child: Text(
+                  inFrequent ? '常用自动识别' : '仅手动标记 · 省算力',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: inFrequent ? RCColors.okInk : c.sec,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _buildSampleChips(c, p.samples),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton(
+                key: Key('vp-lib-sample-$index'),
+                onPressed: _recordingTargetKey != null
+                    ? null
+                    : () => unawaited(
+                        _recordVoiceSample(
+                          vpStore,
+                          targetKey: targetKey,
+                          targetName: p.name,
+                          isSelf: false,
+                          slot: p.frequentSlot,
+                        ),
+                      ),
+                child: Text(capturingThis ? '采集声纹中…' : '+ 补充设备/场景样本'),
+              ),
+              OutlinedButton(
+                key: Key('vp-lib-toggle-$index'),
+                onPressed: () {
+                  if (inFrequent) {
+                    vpStore.demoteFromFrequentSlot(p.id);
+                    setState(() {
+                      _vpError = false;
+                      _vpHint = '已将「${p.name}」移出常用自动识别槽位';
+                    });
+                  } else {
+                    final ok = vpStore.promoteToFrequentSlot(p.id);
+                    setState(() {
+                      _vpError = !ok;
+                      _vpHint = ok
+                          ? '已将「${p.name}」设为常用自动识别（槽位 ${vpStore.findByName(p.name)?.frequentSlot ?? ''}）'
+                          : '常用槽位已满（上限 5 个），请先移出其他常用人物';
+                    });
+                  }
+                },
+                child: Text(
+                  inFrequent ? '常用槽位 ${p.frequentSlot}（点击移出）' : '设为常用',
+                ),
+              ),
+              OutlinedButton(
+                key: Key('vp-lib-del-$index'),
+                style: OutlinedButton.styleFrom(foregroundColor: c.danger),
+                onPressed: () {
+                  vpStore.deletePerson(p.id);
+                  setState(() {
+                    _vpError = false;
+                    _vpHint = '已从人物库移除「${p.name}」';
+                  });
+                },
+                child: const Text('删除'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final ctrl = widget.controller;
+    final vpStore = _resolveStore(context);
+    final listenable = ctrl == null
+        ? vpStore
+        : Listenable.merge([ctrl, vpStore]);
+
     return ListenableBuilder(
-      listenable: ctrl,
-      builder: (context, _) => content(),
+      listenable: listenable,
+      builder: (context, _) {
+        final installed =
+            ctrl?.statusFor(campplusEmbeddingSpec)?.installed ?? false;
+        final libPersons = vpStore.allPersons.where((p) => !p.isSelf).toList();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '说话人聚类（推测）',
+                          style: TextStyle(
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w700,
+                            color: c.label,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        installed ? '已就绪' : '待下载',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: installed ? RCColors.okInk : c.sec,
+                        ),
+                      ),
+                      if (ctrl != null && !installed) ...[
+                        const SizedBox(width: 10),
+                        OutlinedButton(
+                          key: const Key('voiceprint-install-btn'),
+                          onPressed: ctrl.busy || !ctrl.configured
+                              ? null
+                              : () => unawaited(
+                                  ctrl.installSpec(campplusEmbeddingSpec),
+                                ),
+                          child: Text(
+                            ctrl.busy
+                                ? '下载中…'
+                                : (ctrl.error != null ? '重试' : '下载'),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '基于本机声纹特征将对话归类为「说话人 1 / 2（推测）」，原始声纹特征仅留存在本机，不断言真实身份。',
+                    style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
+                  ),
+                  if (ctrl != null && ctrl.busy) ...[
+                    const SizedBox(height: 10),
+                    LinearProgressIndicator(
+                      value: ctrl.progress > 0 ? ctrl.progress : null,
+                      minHeight: 4,
+                      backgroundColor: c.sep,
+                    ),
+                    if (ctrl.text.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        ctrl.text,
+                        key: const Key('voiceprint-progress-text'),
+                        style: TextStyle(fontSize: 12, color: c.sec),
+                      ),
+                    ],
+                  ],
+                  if (ctrl != null && !installed && ctrl.error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      ctrl.error!,
+                      key: const Key('voiceprint-error'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.4,
+                        color: c.danger,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (_vpHint != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                _vpHint!,
+                key: const Key('vp-hint-text'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _vpError ? c.danger : RCColors.okInk,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Container(
+              key: const Key('vp-frequent-section'),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '常用声纹（自动识别 · 上限 5 个）',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: c.label,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '槽位 1 固定为本人',
+                        style: TextStyle(fontSize: 11.5, color: c.sec),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '为平衡本机算力消耗，仅这 5 个常用档案参与自动识别与模糊匹配（「几乎准确」直接标为他，「无法确定」提示可能为他）。',
+                    style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+                  ),
+                  for (
+                    var slot = 1;
+                    slot <= VoiceprintLibraryStore.maxFrequentSlots;
+                    slot++
+                  )
+                    _buildFrequentSlotCard(c, vpStore, slot),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              key: const Key('vp-library-section'),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '已记录声纹与最近使用人物库（不限数量）',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: c.label,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '共 ${libPersons.length} 人',
+                        style: TextStyle(fontSize: 11.5, color: c.sec),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        key: const Key('vp-add-person-btn'),
+                        onPressed: () =>
+                            unawaited(_showAddPersonDialog(context, vpStore)),
+                        child: const Text('+ 新增人物'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '标记过即入库，人数无上限；同一个人名下归并不同设备与场景声纹，默认仅手动选用，不消耗自动比对算力。',
+                    style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+                  ),
+                  if (libPersons.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Text(
+                        '尚无他人声纹档案：可在对话详情或总结全文中点击说话人命名，或点击「+ 新增人物」预先录入。',
+                        style: TextStyle(fontSize: 12, color: c.sec),
+                      ),
+                    )
+                  else
+                    for (var i = 0; i < libPersons.length; i++)
+                      _buildLibraryPersonCard(c, vpStore, libPersons[i], i),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -1870,6 +2409,9 @@ class _AppleWatchLinkBody extends StatefulWidget {
 class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
   String? _hint;
   bool _busy = false;
+  AudioPlayer? _player;
+  StreamSubscription<void>? _playerCompleteSub;
+  String? _playingSliceId;
 
   @override
   void initState() {
@@ -1880,12 +2422,56 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
     }
   }
 
+  @override
+  void dispose() {
+    unawaited(_playerCompleteSub?.cancel());
+    final player = _player;
+    _player = null;
+    if (player != null) {
+      unawaited(player.dispose().catchError((_) {}));
+    }
+    super.dispose();
+  }
+
   static String _batteryTierText(WatchBridgeStatus s) {
     if (s.isCharging) return '充电中';
     if (s.batteryLevel <= 0) return '未知';
     if (s.batteryLevel < 20) return '电量低';
     if (s.batteryLevel < 40) return '电量中';
     return '电量高';
+  }
+
+  static String _formatClockFromSec(int sec) {
+    final s = sec < 0 ? 0 : sec;
+    final h = s ~/ 3600;
+    final m = (s % 3600) ~/ 60;
+    final r = s % 60;
+    return '${h.toString().padLeft(2, '0')}:'
+        '${m.toString().padLeft(2, '0')}:${r.toString().padLeft(2, '0')}';
+  }
+
+  static String _formatTimeOfDay(int startAtMs) {
+    if (startAtMs <= 0) return '刚刚';
+    final dt = DateTime.fromMillisecondsSinceEpoch(startAtMs).toLocal();
+    return '${dt.hour.toString().padLeft(2, '0')}:'
+        '${dt.minute.toString().padLeft(2, '0')}:'
+        '${dt.second.toString().padLeft(2, '0')}';
+  }
+
+  static String _formatDurMs(int durationMs) {
+    final sec = (durationMs / 1000).round();
+    if (sec < 60) return '${sec}s';
+    final m = sec ~/ 60;
+    final r = sec % 60;
+    return r == 0 ? '$m 分钟' : '$m 分 $r 秒';
+  }
+
+  static String _formatSizeBytes(int bytes) {
+    if (bytes <= 0) return '';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    }
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
   }
 
   Future<void> _toggleLink(bool next) async {
@@ -1898,6 +2484,33 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
     setState(() {
       _hint = next ? '已开启 Apple Watch 联动，可在右上角胶囊扫描连接' : '已关闭 Apple Watch 联动';
     });
+  }
+
+  Future<bool> _ensureWatchConnected(DeviceStore dev) async {
+    final alreadyWatch =
+        dev.isConnected && dev.activeKind == DeviceKind.appleWatch;
+    if (alreadyWatch) return true;
+    if (!widget.config.watchLinkEnabled) {
+      await widget.config.setWatchLinkEnabled(true);
+      await dev.setWatchLinkEnabled(true);
+    } else {
+      await dev.watchHardware.refreshStatus();
+    }
+    final cardDev = dev.watchHardware.asCardDevice;
+    if (cardDev == null) {
+      if (mounted) {
+        setState(() => _hint = '未检测到已配对的 Apple Watch');
+      }
+      return false;
+    }
+    await dev.connectTo(cardDev);
+    final ok = dev.isConnected && dev.activeKind == DeviceKind.appleWatch;
+    if (!ok && mounted) {
+      setState(() {
+        _hint = dev.linkError ?? 'Apple Watch 连接未完成，请确认手表端已安装「录音卡」';
+      });
+    }
+    return ok;
   }
 
   Future<void> _connectOrDisconnect() async {
@@ -1917,26 +2530,9 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
         }
         return;
       }
-      if (!widget.config.watchLinkEnabled) {
-        await widget.config.setWatchLinkEnabled(true);
-        await dev.setWatchLinkEnabled(true);
-      } else {
-        await dev.watchHardware.refreshStatus();
-      }
-      final cardDev = dev.watchHardware.asCardDevice;
-      if (cardDev == null) {
-        if (mounted) {
-          setState(() => _hint = '未检测到已配对的 Apple Watch');
-        }
-        return;
-      }
-      await dev.connectTo(cardDev);
-      if (mounted) {
-        setState(() {
-          _hint = dev.isConnected && dev.activeKind == DeviceKind.appleWatch
-              ? '已将 Apple Watch 设为当前采集硬件'
-              : (dev.linkError ?? 'Apple Watch 连接未完成，请确认手表端已安装「录音卡」');
-        });
+      final ok = await _ensureWatchConnected(dev);
+      if (ok && mounted) {
+        setState(() => _hint = '已将 Apple Watch 设为当前采集硬件');
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -1964,6 +2560,189 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
     }
   }
 
+  Future<void> _toggleRemoteRec() async {
+    final dev = widget.device;
+    if (dev == null) return;
+    setState(() {
+      _busy = true;
+      _hint = null;
+    });
+    try {
+      final connected = await _ensureWatchConnected(dev);
+      if (!connected) return;
+      final wasRecording = dev.isRecording;
+      final err = await dev.toggleRecording();
+      if (!mounted) return;
+      if (err != null) {
+        setState(() => _hint = err);
+        return;
+      }
+      setState(() {
+        _hint = !wasRecording && dev.isRecording
+            ? '已远程开启手表录音（灵动岛与本机待命保底已同步激活）'
+            : (wasRecording && !dev.isRecording
+                  ? '已停止手表录音，切片将自动同步并转为 16kHz WAV 入库'
+                  : (dev.recordingError ?? '手表录音状态已更新'));
+      });
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _sendRemoteMark() async {
+    final dev = widget.device;
+    if (dev == null) return;
+    final isWatchRecording =
+        dev.isConnected &&
+        dev.activeKind == DeviceKind.appleWatch &&
+        dev.isRecording;
+    if (!isWatchRecording) {
+      setState(() => _hint = '请先开启手表录音后再打重点');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final sec = dev.recSeconds > 0
+          ? dev.recSeconds
+          : dev.watchHardware.currentStatus.elapsedSec;
+      await dev.watchHardware.addMark(atMs: sec * 1000);
+      if (mounted) {
+        setState(() => _hint = '已在腕上录音 ${sec}s 处打重点标记');
+      }
+    } on Object catch (e) {
+      if (mounted) {
+        setState(() => _hint = '重点标记发送失败：$e');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _refreshWatchStatus() async {
+    final dev = widget.device;
+    if (dev == null) return;
+    setState(() => _busy = true);
+    try {
+      await dev.watchHardware.refreshStatus();
+      if (mounted) {
+        setState(() => _hint = '已刷新手表连接与待传队列状态');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _toggleSlicePlay(WatchReceivedSliceRecord sl) async {
+    if (_playingSliceId == sl.sliceId) {
+      setState(() => _playingSliceId = null);
+      final player = _player;
+      if (player != null) {
+        unawaited(player.stop().catchError((_) {}));
+      }
+      return;
+    }
+    final trimmed = sl.wavPath.trim();
+    if (trimmed.isEmpty || !File(trimmed).existsSync()) {
+      setState(() => _hint = '本地音频文件不存在或尚未同步：${sl.fileName}');
+      return;
+    }
+    setState(() {
+      _playingSliceId = sl.sliceId;
+      _hint = '正在试听本地 16kHz WAV：${sl.fileName}';
+    });
+    try {
+      var player = _player;
+      if (player == null) {
+        player = AudioPlayer();
+        _player = player;
+        _playerCompleteSub = player.onPlayerComplete.listen((_) {
+          if (!mounted) return;
+          setState(() => _playingSliceId = null);
+        });
+      }
+      await player.play(DeviceFileSource(trimmed));
+    } on MissingPluginException {
+      // 单元测试环境未挂载原生音频插件时保留试听切换反馈
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _playingSliceId = null;
+        _hint = '试听失败：${e.message ?? e.code}';
+      });
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _playingSliceId = null;
+        _hint = '试听失败：$e';
+      });
+    }
+  }
+
+  Future<void> _exportSlice(WatchReceivedSliceRecord sl) async {
+    final trimmed = sl.wavPath.trim();
+    final f = File(trimmed);
+    if (trimmed.isEmpty || !f.existsSync()) {
+      setState(() => _hint = '未找到可导出的本地 WAV 文件：${sl.fileName}');
+      return;
+    }
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [
+            XFile(trimmed, mimeType: 'audio/wav', length: f.lengthSync()),
+          ],
+          title: sl.fileName,
+          subject: sl.fileName,
+        ),
+      );
+      if (mounted) {
+        setState(() => _hint = '已调起系统分享：${sl.fileName}');
+      }
+    } on MissingPluginException {
+      if (mounted) {
+        setState(() => _hint = '已准备导出本地文件：${sl.fileName}');
+      }
+    } on Object catch (e) {
+      if (mounted) {
+        setState(() => _hint = '导出失败：$e');
+      }
+    }
+  }
+
+  Future<void> _deleteSlice(
+    DeviceStore dev,
+    WatchReceivedSliceRecord sl,
+  ) async {
+    if (_playingSliceId == sl.sliceId) {
+      _playingSliceId = null;
+      final player = _player;
+      if (player != null) {
+        unawaited(player.stop().catchError((_) {}));
+      }
+    }
+    await dev.watchHardware.deleteReceivedSlice(sl.sliceId);
+    if (!mounted) return;
+    setState(() => _hint = '已删除本地切片：${sl.fileName}');
+  }
+
+  Widget _buildTagChip(
+    String text, {
+    required Color bg,
+    required Color fg,
+    required Color border,
+  }) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+    decoration: BoxDecoration(
+      color: bg,
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(color: border),
+    ),
+    child: Text(
+      text,
+      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
@@ -1979,6 +2758,10 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
         final isWatchConnected =
             dev?.isConnected == true &&
             dev?.activeKind == DeviceKind.appleWatch;
+        final isWatchRecording = isWatchConnected && (dev?.isRecording ?? false);
+        final clockText = dev != null && dev.recSeconds > 0
+            ? dev.recClockText
+            : _formatClockFromSec(status?.elapsedSec ?? 0);
         final pairedText = status == null
             ? '待检测'
             : (!status.supported
@@ -1992,6 +2775,9 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
             : (status?.reachable == true ? '表端在线可达' : '离线待命（支持表端先存后传）');
         final battText = status == null ? '未知' : _batteryTierText(status);
         final pendingText = '${status?.pendingCount ?? 0} 段';
+        final slices =
+            dev?.watchHardware.receivedSlices ??
+            const <WatchReceivedSliceRecord>[];
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2061,6 +2847,15 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                   _WatchKvRow(label: '手表端应用', value: installedText),
                   _WatchKvRow(label: '协同链路', value: linkText),
                   _WatchKvRow(label: '手表电量', value: battText),
+                  _WatchKvRow(
+                    label: '腕上录音',
+                    value: isWatchRecording ? '录音中 · $clockText' : '未录音',
+                  ),
+                  if (isWatchRecording)
+                    const _WatchKvRow(
+                      label: '息屏保活通道',
+                      value: 'HKWorkoutSession 运动保活',
+                    ),
                   _WatchKvRow(label: '本地待传队列', value: pendingText, last: true),
                   if (status != null &&
                       status.paired &&
@@ -2117,6 +2912,229 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                       ),
                     ],
                   ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const _SubSectionLabel('远程控制（纯本地直连）'),
+            const SizedBox(height: 8),
+            Container(
+              key: const Key('watch-remote-card'),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '直连 WatchConnectivity 控制',
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                            color: c.label,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '不经服务器',
+                        style: TextStyle(fontSize: 11.5, color: c.sec),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton(
+                    key: const Key('watch-remote-rec-btn'),
+                    style: isWatchRecording
+                        ? FilledButton.styleFrom(
+                            backgroundColor: c.danger,
+                            foregroundColor: Colors.white,
+                          )
+                        : null,
+                    onPressed: (_busy || dev == null)
+                        ? null
+                        : _toggleRemoteRec,
+                    child: Text(
+                      isWatchRecording ? '停止手表录音（腕上采集中）' : '开启手表录音',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton(
+                        key: const Key('watch-remote-mark-btn'),
+                        onPressed: (_busy || dev == null)
+                            ? null
+                            : _sendRemoteMark,
+                        child: const Text('打重点（Mark）'),
+                      ),
+                      OutlinedButton(
+                        key: const Key('watch-refresh-btn'),
+                        onPressed: (_busy || dev == null)
+                            ? null
+                            : _refreshWatchStatus,
+                        child: const Text('刷新手表状态'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Expanded(
+                  child: _SubSectionLabel('已接收切片（本地 16kHz WAV）'),
+                ),
+                Text(
+                  '共 ${slices.length} 片',
+                  style: TextStyle(fontSize: 11.5, color: c.sec),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Container(
+              key: const Key('watch-slices-card'),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    '表端以 32kbps .m4a 低功耗录制并离线暂存，回传 iPhone 后本机自动转码为 16kHz / 16-bit 单声道 PCM WAV 送入 SenseVoice 转写，原始音频不上传云端。',
+                    style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+                  ),
+                  if (slices.isEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      '暂无已接收的手表切片。开启手表录音或拉取待传切片后，切片将自动本地落盘到这里。',
+                      key: const Key('watch-slices-empty'),
+                      style: TextStyle(fontSize: 12.5, color: c.sec),
+                    ),
+                  ] else
+                    for (var i = 0; i < slices.length; i++) ...[
+                      const SizedBox(height: 10),
+                      Builder(
+                        builder: (context) {
+                          final sl = slices[i];
+                          final playing = _playingSliceId == sl.sliceId;
+                          final sizeText = _formatSizeBytes(sl.fileSizeBytes);
+                          final meta = [
+                            _formatTimeOfDay(sl.startAtMs),
+                            '时长 ${_formatDurMs(sl.durationMs)}',
+                            if (sizeText.isNotEmpty) sizeText,
+                          ].join(' · ');
+                          return Container(
+                            key: Key('watch-slice-item-$i'),
+                            padding: const EdgeInsets.all(11),
+                            decoration: BoxDecoration(
+                              color: c.bg,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: c.sep),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 4,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    Text(
+                                      '第 ${sl.sliceIndex + 1} 片 · ${sl.fileName}',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: c.label,
+                                      ),
+                                    ),
+                                    if (sl.offlineRecorded)
+                                      _buildTagChip(
+                                        '离线补传',
+                                        bg: RCColors.warn.withValues(
+                                          alpha: 0.12,
+                                        ),
+                                        fg: const Color(0xFF8A4300),
+                                        border: RCColors.warn.withValues(
+                                          alpha: 0.35,
+                                        ),
+                                      ),
+                                    _buildTagChip(
+                                      '已入 Timeline 转写',
+                                      bg: c.okInk.withValues(alpha: 0.08),
+                                      fg: c.okInk,
+                                      border: c.okInk.withValues(alpha: 0.32),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  playing ? '$meta · 正在回放' : meta,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: playing ? c.okInk : c.sec,
+                                  ),
+                                ),
+                                if (sl.marksMs.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '重点标记（相对起点）：${sl.marksMs.map((m) => '${(m / 1000).round()}s').join('、')}',
+                                    style: const TextStyle(
+                                      fontSize: 11.5,
+                                      color: Color(0xFF0F4C81),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 6,
+                                  children: [
+                                    OutlinedButton(
+                                      key: Key('watch-slice-play-$i'),
+                                      onPressed: () =>
+                                          unawaited(_toggleSlicePlay(sl)),
+                                      child: Text(
+                                        playing ? '停止试听' : '试听 WAV',
+                                      ),
+                                    ),
+                                    OutlinedButton(
+                                      key: Key('watch-slice-export-$i'),
+                                      onPressed: () =>
+                                          unawaited(_exportSlice(sl)),
+                                      child: const Text('导出'),
+                                    ),
+                                    OutlinedButton(
+                                      key: Key('watch-slice-del-$i'),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: c.danger,
+                                      ),
+                                      onPressed: dev == null
+                                          ? null
+                                          : () => unawaited(
+                                              _deleteSlice(dev, sl),
+                                            ),
+                                      child: const Text('删除'),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ],
                 ],
               ),
             ),

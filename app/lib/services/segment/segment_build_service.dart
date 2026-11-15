@@ -2,8 +2,8 @@
 /// 产出 Timeline 上的一张张分段卡。
 ///
 /// 复用 `StagedSummaryCoordinator`：
-/// - 相邻 turn 间隔 ≥ [silenceGap]（默认 20s）→ 切一个事件；
-/// - 单事件超过 [maxSegmentMs]（默认 15 分钟）→ 强制切；
+/// - 相邻 turn 间隔 ≥ [silenceGap]（默认 30s）→ 切一个事件；
+/// - [maxSegmentMs] 默认 null（不设单段时长上限；显式传值时才按上限强切）；
 /// - 录音结束 → flush 最后一段；
 /// - 云端失败 → 用原文兜底（`SegmentRecord.fallback=true`），不丢段。
 ///
@@ -31,8 +31,8 @@ class SegmentBuildService {
   SegmentBuildService({
     required ChatCompletion chat,
     required String model,
-    this.silenceGap = const Duration(seconds: 20),
-    this.maxSegmentMs = 15 * 60 * 1000,
+    this.silenceGap = const Duration(seconds: 30),
+    this.maxSegmentMs,
     bool Function()? ready,
   }) : _chat = chat,
        _model = model,
@@ -42,7 +42,7 @@ class SegmentBuildService {
   final String _model;
   final bool Function()? _ready;
   final Duration silenceGap;
-  final int maxSegmentMs;
+  final int? maxSegmentMs;
 
   bool get configured =>
       _model.trim().isNotEmpty && (_ready?.call() ?? true);
@@ -71,8 +71,9 @@ class SegmentBuildService {
     Object? error;
 
     for (final turn in turns) {
-      // 单事件超长：强制收段（即使中间没有 20s 静音）
-      if (turn.startMs - pendingStartMs >= maxSegmentMs) {
+      // 可选单段时长上限（默认不限时长，仅按 30s 静音与主题分段切分）
+      if (maxSegmentMs != null &&
+          turn.startMs - pendingStartMs >= maxSegmentMs!) {
         final forced = await coordinator.flush();
         if (forced.finalized != null) {
           closed.add(_toSegment(forced.finalized!, file, turnById, closed.length));
