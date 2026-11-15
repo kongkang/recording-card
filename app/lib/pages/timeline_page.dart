@@ -550,7 +550,7 @@ class _EventCardView extends StatelessWidget {
                           runSpacing: 6,
                           children: [
                             Text(
-                              '说话人 ${event.speakers}',
+                              store.displaySpeakersSummary(event),
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: RCColors.sec,

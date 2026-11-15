@@ -3,6 +3,7 @@ import SwiftUI
 import WidgetKit
 
 private let lcdFontName = "RCLcdDigital-Regular"
+private let lcdBlinkFontName = "RCLcdBlink-Regular"
 private let posixLocale = Locale(identifier: "en_US_POSIX")
 private let islandLcdInk = Color(red: 0.93, green: 0.94, blue: 0.92)
 
@@ -132,6 +133,10 @@ private struct CompactLcdTimer: View {
     Date(timeIntervalSince1970: Double(startedAtMs) / 1000.0)
   }
 
+  private var effectiveOverOneHour: Bool {
+    isOverOneHour || Date().timeIntervalSince(startDate) >= 3600
+  }
+
   var body: some View {
     ZStack(alignment: .trailing) {
       Text("88:88")
@@ -142,26 +147,44 @@ private struct CompactLcdTimer: View {
         .frame(width: Self.boxWidth, height: Self.boxHeight, alignment: .trailing)
 
       if #available(iOSApplicationExtension 18.0, *) {
-        if isOverOneHour {
+        if effectiveOverOneHour {
+          // ≥1 小时模式：紧凑灵动岛显示「HH:MM」；由于 SpringBoard / chronod 会把仅含时分的
+          // TimeDataSource 节流成每分钟刷新 1 次，此处用 destinationOut 镂空静态冒号至底纹层，
+          // 再叠加一个由系统秒级时间源原生驱动的 1Hz 伴生闪烁字体层，无需 App 进程每秒唤醒更新。
+          ZStack(alignment: .trailing) {
+            Text(
+              TimeDataSource<Duration>.durationOffset(to: startDate),
+              format: .time(pattern: .hourMinute(padHourToLength: 2, roundSeconds: .down))
+                .locale(posixLocale)
+            )
+            .font(.custom(lcdFontName, fixedSize: Self.fontSize))
+            .foregroundStyle(islandLcdInk)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .multilineTextAlignment(.trailing)
+            .frame(width: Self.boxWidth, height: Self.boxHeight, alignment: .trailing)
+
+            Rectangle()
+              .fill(Color.black)
+              .frame(width: 3.45, height: Self.boxHeight)
+              .padding(.trailing, 15.62)
+              .blendMode(.destinationOut)
+          }
+          .compositingGroup()
+
           Text(
             TimeDataSource<Duration>.durationOffset(to: startDate),
-            format: .time(pattern: .hourMinute(padHourToLength: 2, roundSeconds: .down))
+            format: .time(pattern: .hourMinuteSecond(padHourToLength: 2))
               .locale(posixLocale)
           )
-          .font(.custom(lcdFontName, fixedSize: Self.fontSize))
+          .font(.custom(lcdBlinkFontName, fixedSize: Self.fontSize))
           .foregroundStyle(islandLcdInk)
           .lineLimit(1)
-          .minimumScaleFactor(0.75)
           .multilineTextAlignment(.trailing)
           .frame(width: Self.boxWidth, height: Self.boxHeight, alignment: .trailing)
-
-          if !colonVisible {
-            // 遮暗 HH:MM 正中央冒号至底纹亮度（2 位分钟宽 2 * 0.58 * 13.5 = 15.66pt）
-            Rectangle()
-              .fill(Color.black.opacity(0.86))
-              .frame(width: 3.4, height: 14)
-              .padding(.trailing, 15.66)
-          }
+          .frame(width: 3.375, height: Self.boxHeight, alignment: .trailing)
+          .clipped()
+          .padding(.trailing, 15.66)
         } else {
           Text(
             TimeDataSource<Duration>.durationOffset(to: startDate),
@@ -179,7 +202,7 @@ private struct CompactLcdTimer: View {
         Text(
           timerInterval: startDate...Date.distantFuture,
           countsDown: false,
-          showsHours: isOverOneHour
+          showsHours: effectiveOverOneHour
         )
         .font(.custom(lcdFontName, fixedSize: Self.fontSize))
         .foregroundStyle(islandLcdInk)

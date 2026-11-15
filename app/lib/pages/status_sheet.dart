@@ -381,6 +381,7 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay> {
                     borderRadius: BorderRadius.circular(18),
                   ),
                   child: SingleChildScrollView(
+                    primary: false,
                     child: switch (store.view) {
                       DeviceView.main => _MainView(
                         store: store,

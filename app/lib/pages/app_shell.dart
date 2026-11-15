@@ -316,6 +316,36 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
+/// 仅让当前可见的唯一主页面继承 Scaffold 的 PrimaryScrollController：
+/// 避免 Offstage / 双栏同时挂载多个可滚动视图时 positions.length > 1，
+/// 确保 iOS 点击状态栏（以及顶部标题区）回顶始终命中当前页。
+Widget _withPrimaryScroll(
+  ScrollController? controller, {
+  required bool active,
+  required Widget child,
+}) {
+  if (active && controller != null) {
+    return PrimaryScrollController(
+      controller: controller,
+      scrollDirection: Axis.vertical,
+      automaticallyInheritForPlatforms: TargetPlatform.values.toSet(),
+      child: child,
+    );
+  }
+  return PrimaryScrollController.none(child: child);
+}
+
+void _scrollActiveToTop(BuildContext context) {
+  final ctrl = PrimaryScrollController.maybeOf(context);
+  if (ctrl == null || ctrl.positions.length != 1) return;
+  if (ctrl.position.pixels <= 0) return;
+  ctrl.animateTo(
+    0.0,
+    duration: const Duration(milliseconds: 320),
+    curve: Curves.easeOutCubic,
+  );
+}
+
 /// 顶栏标题区：根页「录音卡」+ 胶囊；子页「‹ {返回目标}」（窄屏）
 class _Header extends StatelessWidget {
   const _Header({
@@ -345,7 +375,7 @@ class _Header extends StatelessWidget {
       ),
       child: Row(
         children: [
-          if (!wide && sub)
+          if (!wide && sub) ...[
             TextButton(
               key: const Key('crumb-back'),
               onPressed: store.goBack,
@@ -361,13 +391,30 @@ class _Header extends StatelessWidget {
                     key: const Key('crumb-dest'),
                     style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
               ]),
-            )
-          else
-            Text('录音卡',
-                key: const Key('app-title'),
-                style:
-                    const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-          const Spacer(),
+            ),
+            Expanded(
+              child: GestureDetector(
+                key: const Key('header-tap-top'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _scrollActiveToTop(context),
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ] else
+            Expanded(
+              child: GestureDetector(
+                key: const Key('header-tap-top'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _scrollActiveToTop(context),
+                child: const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('录音卡',
+                      key: Key('app-title'),
+                      style:
+                          TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                ),
+              ),
+            ),
           // 真实电量经 DeviceStore 刷新（refreshFromDevice），需监听设备状态重建胶囊
           ListenableBuilder(
             listenable: device,
@@ -503,6 +550,7 @@ class _NarrowLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
     final sub = store.subStack.isNotEmpty;
+    final primaryScroll = PrimaryScrollController.maybeOf(context);
     // 真机安全区：刘海并入顶栏背景，home indicator 并入底栏背景
     // （widget 测试里 padding 为 0，高度与原型/断言一致）
     final insets = MediaQuery.paddingOf(context);
@@ -521,34 +569,42 @@ class _NarrowLayout extends StatelessWidget {
             pages: [
               MaterialPage(
                 // 覆盖路由包 Offstage：与旧内联渲染语义一致（被盖页不进 hit test/find）
-                child: Offstage(
-                  offstage: store.subStack.isNotEmpty,
-                  child: switch (store.rootTab) {
-                    RootTab.timeline =>
-                      TimelinePage(recordingStatus: recordingStatus),
-                    RootTab.setting => SettingPage(
-                      device: device,
-                      modelManager: modelManager,
-                      settings: settings,
-                      agentConfig: agentConfig,
-                      authService: authService,
-                      photoLibrary: photoLibrary,
-                      supportsDynamicIsland: supportsDynamicIsland,
-                    ),
-                  },
+                child: _withPrimaryScroll(
+                  primaryScroll,
+                  active: store.subStack.isEmpty,
+                  child: Offstage(
+                    offstage: store.subStack.isNotEmpty,
+                    child: switch (store.rootTab) {
+                      RootTab.timeline =>
+                        TimelinePage(recordingStatus: recordingStatus),
+                      RootTab.setting => SettingPage(
+                        device: device,
+                        modelManager: modelManager,
+                        settings: settings,
+                        agentConfig: agentConfig,
+                        authService: authService,
+                        photoLibrary: photoLibrary,
+                        supportsDynamicIsland: supportsDynamicIsland,
+                      ),
+                    },
+                  ),
                 ),
               ),
               for (final e in store.subStack)
                 MaterialPage(
                   key: ValueKey('sub-${e.type}-${e.id}'),
-                  child: Offstage(
-                    offstage: e != store.subStack.last,
-                    child: _subPage(
-                      e,
-                      agentConfig,
-                      device,
-                      modelManager,
-                      authService,
+                  child: _withPrimaryScroll(
+                    primaryScroll,
+                    active: e == store.subStack.last,
+                    child: Offstage(
+                      offstage: e != store.subStack.last,
+                      child: _subPage(
+                        e,
+                        agentConfig,
+                        device,
+                        modelManager,
+                        authService,
+                      ),
                     ),
                   ),
                 ),
@@ -630,6 +686,7 @@ class _WideLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
     final sub = store.subStack.isNotEmpty;
+    final primaryScroll = PrimaryScrollController.maybeOf(context);
     return Column(
       children: [
         _Header(height: RCDims.wideChrome, wide: true, device: device),
@@ -639,37 +696,45 @@ class _WideLayout extends StatelessWidget {
             children: [
               SizedBox(
                 width: 380,
-                child: switch (store.rootTab) {
-                  RootTab.timeline => TimelinePage(
-                    asLeftPane: true,
-                    recordingStatus: recordingStatus,
-                  ),
-                  RootTab.setting => SettingPage(
-                    device: device,
-                    modelManager: modelManager,
-                    settings: settings,
-                    agentConfig: agentConfig,
-                    authService: authService,
-                    photoLibrary: photoLibrary,
-                    supportsDynamicIsland: supportsDynamicIsland,
-                  ),
-                },
+                child: _withPrimaryScroll(
+                  primaryScroll,
+                  active: !sub,
+                  child: switch (store.rootTab) {
+                    RootTab.timeline => TimelinePage(
+                      asLeftPane: true,
+                      recordingStatus: recordingStatus,
+                    ),
+                    RootTab.setting => SettingPage(
+                      device: device,
+                      modelManager: modelManager,
+                      settings: settings,
+                      agentConfig: agentConfig,
+                      authService: authService,
+                      photoLibrary: photoLibrary,
+                      supportsDynamicIsland: supportsDynamicIsland,
+                    ),
+                  },
+                ),
               ),
               Container(width: 1, color: RCColors.sep),
               Expanded(
-                child: sub
-                    ? Material(
-                        color: RCColors.bg,
-                        child: _stackTopPage(
-                          store,
-                          wide: true,
-                          agentConfig: agentConfig,
-                          device: device,
-                          modelManager: modelManager,
-                          authService: authService,
-                        ),
-                      )
-                    : const _EmptyPane(),
+                child: _withPrimaryScroll(
+                  primaryScroll,
+                  active: sub,
+                  child: sub
+                      ? Material(
+                          color: RCColors.bg,
+                          child: _stackTopPage(
+                            store,
+                            wide: true,
+                            agentConfig: agentConfig,
+                            device: device,
+                            modelManager: modelManager,
+                            authService: authService,
+                          ),
+                        )
+                      : const _EmptyPane(),
+                ),
               ),
             ],
           ),

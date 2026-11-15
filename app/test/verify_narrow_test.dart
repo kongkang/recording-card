@@ -200,19 +200,20 @@ void main() {
     final sub = tester.widget<Text>(find.byKey(const Key('sum-sub'))).data!;
     expect(sub.contains('条记录'), isTrue);
     expect(sub.contains('来源'), isFalse);
-    // 6 个 Tab 齐备
+    // 7 个 Tab 齐备（含「全文」）
     for (final k in [
       'stab-all',
       'stab-ov',
       'stab-map',
       'stab-pt',
       'stab-todo',
+      'stab-ft',
       'stab-src',
     ]) {
       expect(find.byKey(Key(k)), findsOneWidget, reason: k);
     }
-    // 「全部」视图五节齐备；不含 Markdown 原文
-    for (final k in ['sec-ov', 'sec-map', 'sec-pt', 'sec-todo', 'sec-src']) {
+    // 「全部」视图六节齐备；不含 Markdown 原文
+    for (final k in ['sec-ov', 'sec-map', 'sec-pt', 'sec-todo', 'sec-ft', 'sec-src']) {
       expect(find.byKey(Key(k)), findsOneWidget, reason: k);
     }
     expect(find.textContaining('# 项目排期'), findsNothing);
@@ -332,15 +333,20 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byKey(const Key('sum-title')), findsOneWidget); // 返回弹栈至总结
 
-    // 导出：5 种格式 → 真实生成文件并调起系统分享
+    // 导出：4 种纯格式完整导出（含图文纪要与文字记录：默认 AI 智能优化版 / 原文切换）→ 真实生成文件并调起系统分享
     await tester.tap(find.byKey(const Key('export-btn')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300)); // 菜单入场动画
-    for (final f in ['完整文档', 'Markdown', 'PDF', '图片', 'Word 文档']) {
+    await tester.pump(const Duration(milliseconds: 300)); // 面板入场动画
+    expect(find.byKey(const Key('export-sheet')), findsOneWidget);
+    expect(find.byKey(const Key('export-mode-ai')), findsOneWidget);
+    expect(find.byKey(const Key('export-mode-raw')), findsOneWidget);
+    expect(find.text('完整文档'), findsNothing);
+    for (final f in ['PDF', 'Word 文档', 'Markdown', '图片']) {
       expect(find.byKey(Key('export-item-$f')), findsOneWidget, reason: f);
     }
+    await tester.ensureVisible(find.byKey(const Key('export-item-PDF')));
     await tester.tap(find.byKey(const Key('export-item-PDF')));
-    await tester.pump(); // 菜单关场
+    await tester.pump(); // 面板关场
     // 真实导出要落盘：测试进程没有存储插件，这一步的失败在真实事件循环上才会回来
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 300)),

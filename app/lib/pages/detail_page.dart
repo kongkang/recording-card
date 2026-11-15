@@ -17,6 +17,7 @@ import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
 import '../widgets/photo_preview_sheet.dart';
 import '../widgets/raw_audio_player.dart';
+import '../widgets/speaker_mark_sheet.dart';
 import '../widgets/store_scope.dart';
 
 class DetailPage extends StatefulWidget {
@@ -140,9 +141,11 @@ class _DetailPageState extends State<DetailPage> {
     }
     final refs = store.doneSummariesReferencing(e.id);
     final view = store.segmentViewFor(e.id);
-    final speakerText = view != null && view.segment.speakerCount > 0
-        ? '${view.segment.speakerLabels.join(' / ')}（推测）'
-        : (e.speakers == '无语音' ? '无语音' : '说话人 ${e.speakers}');
+    final speakerText = store.displaySpeakersSummary(e);
+    final markableSpeakers = store.speakerEntriesForEvents([e]);
+    final hasMarkedSpeaker = markableSpeakers.any(
+      (s) => s.currentAlias.isNotEmpty,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -182,7 +185,8 @@ class _DetailPageState extends State<DetailPage> {
               const SizedBox(height: 6),
               Wrap(
                 spacing: 10,
-                runSpacing: 4,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Text(
                     '${_dayLabel(e)} ${e.time} · ${e.dur}',
@@ -191,8 +195,38 @@ class _DetailPageState extends State<DetailPage> {
                   ),
                   Text(
                     speakerText,
+                    key: const Key('dt-speakers'),
                     style: const TextStyle(fontSize: 12, color: RCColors.sec),
                   ),
+                  if (markableSpeakers.isNotEmpty)
+                    InkWell(
+                      key: const Key('mark-speaker-btn'),
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: () => showSpeakerMarkSheet(
+                        context,
+                        store: store,
+                        events: [e],
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2.5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: RCColors.card,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: RCColors.sep),
+                        ),
+                        child: Text(
+                          hasMarkedSpeaker ? '编辑说话人' : '标记说话人',
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: RCColors.label,
+                          ),
+                        ),
+                      ),
+                    ),
                   if (e.mark.isNotEmpty)
                     Text(
                       e.mark,
@@ -336,7 +370,7 @@ class _DetailPageState extends State<DetailPage> {
       case 'dlg':
         return _dialogWidgets(store, e, view);
       case 'raw':
-        return _rawWidgets(e, view);
+        return _rawWidgets(store, e, view);
       case 'refs':
         return [
           for (final r in refs)
@@ -434,16 +468,14 @@ class _DetailPageState extends State<DetailPage> {
     RecordEvent e,
     SegmentView? view,
   ) {
-    final lines = <({String spk, String text, String meta, int sortSec})>[];
+    final lines = <({String spk, String text, String clock, int sortSec})>[];
     if (view != null && view.turns.isNotEmpty) {
       for (final t in view.turns) {
         final ts = view.file.startAtMs + t.startMs;
         lines.add((
           spk: t.speakerLabel,
           text: t.text,
-          meta:
-              '${_speakerText(t.speakerLabel)} · '
-              '${_hms(ts)}—${_hms(view.file.startAtMs + t.endMs)}',
+          clock: '${_hms(ts)}—${_hms(view.file.startAtMs + t.endMs)}',
           sortSec: _secOfDayFromEpoch(ts),
         ));
       }
@@ -454,9 +486,7 @@ class _DetailPageState extends State<DetailPage> {
         lines.add((
           spk: label,
           text: u.text,
-          meta:
-              '${_speakerText(label)} · '
-              '${_hms(ts)}—${_hms(view.file.startAtMs + u.endMs)}',
+          clock: '${_hms(ts)}—${_hms(view.file.startAtMs + u.endMs)}',
           sortSec: _secOfDayFromEpoch(ts),
         ));
       }
@@ -466,7 +496,7 @@ class _DetailPageState extends State<DetailPage> {
         lines.add((
           spk: l.spk,
           text: l.text,
-          meta: '说话人 ${l.spk} · $rawClock',
+          clock: rawClock,
           sortSec: _secOfDayFromClock(rawClock) ?? _secOfDayFromClock(e.time) ?? 0,
         ));
       }
@@ -475,7 +505,17 @@ class _DetailPageState extends State<DetailPage> {
     final activePhotos = store.activePhotosForEvent(e);
     final entries = <({int sortSec, int order, Widget widget})>[];
     var order = 0;
-    for (final l in lines) {
+    for (var turnIdx = 0; turnIdx < lines.length; turnIdx++) {
+      final l = lines[turnIdx];
+      final displaySpk = store.displaySpeaker(e, l.spk);
+      final avatarSpk = store.displaySpeaker(
+        e,
+        l.spk,
+        includeGuessSuffix: false,
+      );
+      final canMark = !AppStore.isUnclusteredSpeaker(
+        AppStore.normalizeSpeakerSlot(l.spk),
+      );
       entries.add((
         sortSec: l.sortSec,
         order: order++,
@@ -484,19 +524,31 @@ class _DetailPageState extends State<DetailPage> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 28,
-                height: 28,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _speakerColor(l.spk),
-                ),
-                child: Text(
-                  _avatar(l.spk),
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
+              InkWell(
+                key: Key('turn-spk-$turnIdx'),
+                borderRadius: BorderRadius.circular(14),
+                onTap: canMark
+                    ? () => showSpeakerMarkSheet(
+                          context,
+                          store: store,
+                          events: [e],
+                          initialSlot: AppStore.normalizeSpeakerSlot(l.spk),
+                        )
+                    : null,
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _speakerColor(l.spk),
+                  ),
+                  child: Text(
+                    _avatar(avatarSpk),
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
@@ -505,11 +557,23 @@ class _DetailPageState extends State<DetailPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      l.meta,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: RCColors.sec,
+                    GestureDetector(
+                      onTap: canMark
+                          ? () => showSpeakerMarkSheet(
+                                context,
+                                store: store,
+                                events: [e],
+                                initialSlot: AppStore.normalizeSpeakerSlot(
+                                  l.spk,
+                                ),
+                              )
+                          : null,
+                      child: Text(
+                        '$displaySpk · ${l.clock}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: RCColors.sec,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 3),
@@ -545,7 +609,7 @@ class _DetailPageState extends State<DetailPage> {
         final d = (l.sortSec - sortSec).abs();
         if (bestDelta == null || d < bestDelta) {
           bestDelta = d;
-          nearestQuote = '${_speakerText(l.spk)}：${l.text}';
+          nearestQuote = '${store.displaySpeaker(e, l.spk)}：${l.text}';
         }
       }
       entries.add((
@@ -731,7 +795,7 @@ class _DetailPageState extends State<DetailPage> {
     return h * 3600 + min * 60 + sec;
   }
 
-  List<Widget> _rawWidgets(RecordEvent e, SegmentView? view) {
+  List<Widget> _rawWidgets(AppStore store, RecordEvent e, SegmentView? view) {
     // 播放器已置顶吸顶在「原始数据」tab 顶部（raw-sticky-player），此处只滚句子流。
     final widgets = <Widget>[
       if (view != null && !view.file.timeSynced)
@@ -751,7 +815,7 @@ class _DetailPageState extends State<DetailPage> {
         final parsedMs = _parseRelativeClockMs(l.src);
         widgets.add(
           _rawBubble(
-            '${l.spk} · ${l.src}',
+            '${_rawSpeakerLabel(store, e, l.spk)} · ${l.src}',
             l.text,
             bubbleKey: Key('raw-utt-$i'),
             onTap: parsedMs != null ? () => _seekRawAudio(parsedMs) : null,
@@ -815,7 +879,7 @@ class _DetailPageState extends State<DetailPage> {
           final active = pos != null && pos >= u.startMs && pos <= u.endMs;
           widgets.add(
             _rawBubble(
-              '${_speakerText(u.speakerLabel ?? '未区分')} · '
+              '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
               '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
               u.text,
               bubbleKey: Key('raw-utt-${u.id}'),
@@ -859,7 +923,7 @@ class _DetailPageState extends State<DetailPage> {
         final active = pos != null && pos >= u.startMs && pos <= u.endMs;
         widgets.add(
           _rawBubble(
-            '${_speakerText(u.speakerLabel ?? '未区分')} · '
+            '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
             '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
             u.text,
             bubbleKey: Key('raw-utt-${u.id}'),
@@ -960,6 +1024,18 @@ class _DetailPageState extends State<DetailPage> {
     if (v.isEmpty) return '说话人 未区分';
     if (v.startsWith('说话人')) return v;
     return '说话人 $v';
+  }
+
+  /// 「原始数据」tab 始终保留原始簇名，已标记时附括号备注，保留原始映射关系。
+  static String _rawSpeakerLabel(
+    AppStore store,
+    RecordEvent event,
+    String rawSpk,
+  ) {
+    final base = _speakerText(rawSpk);
+    final alias = store.speakerAliasFor(event, rawSpk);
+    if (alias == null || alias.isEmpty) return base;
+    return '$base（已标：$alias）';
   }
 
   static String _emotion(String? emotion) {

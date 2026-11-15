@@ -27,61 +27,54 @@ import 'package:share_plus/share_plus.dart';
 import 'export_document.dart';
 import 'export_exception.dart';
 import 'export_naming.dart';
-import 'full_doc_exporter.dart';
 import 'image_exporter.dart';
 import 'markdown_exporter.dart';
 import 'pdf_exporter.dart';
 import 'word_exporter.dart';
 
-/// 导出格式（与页面菜单一一对应）。
+/// 导出格式（与导出面板一一对应：仅区分格式，所有格式均导出完整两部分内容）。
 enum ExportFormat {
-  /// 完整文档（结构化全文 PDF）。
-  fullDoc,
-
-  /// Markdown 原文。
-  markdown,
-
   /// PDF（A4 分页）。
   pdf,
 
-  /// 图片（PNG，优先页面截图，退化文本长图）。
-  image,
-
-  /// Word 文档（HTML + Office 命名空间，.doc 兼容方案）。
+  /// Word 文档（RTF / HTML，.doc 兼容方案）。
   word,
+
+  /// Markdown 文档。
+  markdown,
+
+  /// 长图（PNG）。
+  image,
 }
 
 /// 格式元信息：菜单文案、扩展名、MIME、文件名标注。
 extension ExportFormatInfo on ExportFormat {
   /// 中文名，同时作为 [ExportResult.shareLabel]（页面提示交给它拼文案）。
   String get label => switch (this) {
-        ExportFormat.fullDoc => '完整文档',
-        ExportFormat.markdown => 'Markdown',
         ExportFormat.pdf => 'PDF',
-        ExportFormat.image => '图片',
         ExportFormat.word => 'Word 文档',
+        ExportFormat.markdown => 'Markdown',
+        ExportFormat.image => '图片',
       };
 
   /// 文件扩展名（不含点）。
   String get fileExtension => switch (this) {
-        ExportFormat.fullDoc => 'pdf',
-        ExportFormat.markdown => 'md',
         ExportFormat.pdf => 'pdf',
-        ExportFormat.image => 'png',
         ExportFormat.word => 'doc',
+        ExportFormat.markdown => 'md',
+        ExportFormat.image => 'png',
       };
 
   /// 分享给系统时声明的 MIME 类型；iOS 依据它决定"按图片/文档"处理。
   String get mimeType => switch (this) {
-        ExportFormat.fullDoc => 'application/pdf',
-        ExportFormat.markdown => 'text/markdown',
         ExportFormat.pdf => 'application/pdf',
-        ExportFormat.image => 'image/png',
         ExportFormat.word => 'application/msword',
+        ExportFormat.markdown => 'text/markdown',
+        ExportFormat.image => 'image/png',
       };
 
-  /// 文件名里的语义标注：仅「完整文档」需要与普通 PDF 区分。
-  String? get nameTag => this == ExportFormat.fullDoc ? '完整文档' : null;
+  /// 所有格式均导出完整内容，不再额外区分标注。
+  String? get nameTag => null;
 }
 
 /// 导出结果。
@@ -97,7 +90,6 @@ class ExportResult {
 
 class ExportService {
   ExportService({
-    FullDocExporter? fullDocExporter,
     PdfExporter? pdfExporter,
     ImageExporter? imageExporter,
     MarkdownExporter? markdownExporter,
@@ -107,7 +99,6 @@ class ExportService {
     Future<Directory> Function()? outputDirectoryProvider,
     Future<ShareResult> Function(ShareParams params)? shareLauncher,
   })  : _wordFlavor = wordFlavor,
-        _fullDocExporter = fullDocExporter ?? const FullDocExporter(),
         _pdfExporter = pdfExporter ?? const PdfExporter(),
         _imageExporter = imageExporter ?? const ImageExporter(),
         _markdownExporter = markdownExporter ?? const MarkdownExporter(),
@@ -116,7 +107,6 @@ class ExportService {
         _outputDirectoryProvider = outputDirectoryProvider ?? _defaultOutputDirectory,
         _shareLauncher = shareLauncher ?? SharePlus.instance.share;
 
-  final FullDocExporter _fullDocExporter;
   final PdfExporter _pdfExporter;
   final ImageExporter _imageExporter;
   final MarkdownExporter _markdownExporter;
@@ -156,16 +146,14 @@ class ExportService {
     // 1) 生成文件
     try {
       switch (format) {
-        case ExportFormat.fullDoc:
-          await _fullDocExporter.write(doc, path);
-        case ExportFormat.markdown:
-          await _markdownExporter.write(doc, path);
         case ExportFormat.pdf:
           await _pdfExporter.write(doc, path);
-        case ExportFormat.image:
-          await _imageExporter.write(doc, path, captureKey: captureKey);
         case ExportFormat.word:
           await _wordExporter.write(doc, path, flavor: _wordFlavor);
+        case ExportFormat.markdown:
+          await _markdownExporter.write(doc, path);
+        case ExportFormat.image:
+          await _imageExporter.write(doc, path, captureKey: captureKey);
       }
     } on ExportException {
       rethrow;

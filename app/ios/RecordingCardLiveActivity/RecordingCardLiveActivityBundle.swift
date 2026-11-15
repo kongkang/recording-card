@@ -14,10 +14,12 @@ enum RCLcdFontRegistrar {
     registered = true
 
     let bundles: [Bundle] = [Bundle.main, Bundle(for: BundleAnchor.self)]
-    for bundle in bundles {
-      if let url = bundle.url(forResource: "RCLcdDigital-Regular", withExtension: "ttf") {
-        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
-        return
+    for fontName in ["RCLcdDigital-Regular", "RCLcdBlink-Regular"] {
+      for bundle in bundles {
+        if let url = bundle.url(forResource: fontName, withExtension: "ttf") {
+          CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+          break
+        }
       }
     }
   }
