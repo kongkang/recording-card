@@ -29,9 +29,15 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   const navVisible = () => p.$eval('nav.bottom', x => getComputedStyle(x).display !== 'none');
   const secVis = id => p.$eval('#' + id, x => getComputedStyle(x).display !== 'none');
 
-  // 首页：固定高度顶栏、底栏、tab 文案、根页 crumb 隐藏
-  assert.equal(await p.$$eval('nav.bottom button', e => e.length), 2);
-  assert.deepEqual(await p.$$eval('nav.bottom button', e => e.map(x => x.innerText.trim())), ['Timeline', 'Setting']);
+  // 首页：固定高度顶栏、底栏（含居中凸起日出 AI 入口 OS1）、tab 文案、根页 crumb 隐藏
+  assert.equal(await p.$$eval('nav.bottom button', e => e.length), 3);
+  assert.deepEqual(await p.$$eval('nav.bottom button', e => e.map(x => x.innerText.trim())), ['Timeline', 'OS1', 'Setting']);
+  const sunriseRise = await p.evaluate(() => {
+    const navTop = document.querySelector('nav.bottom').getBoundingClientRect().top;
+    const orbTop = document.querySelector('[data-testid="nav-ai-sunrise"] .ai-sunrise-orb').getBoundingClientRect().top;
+    return navTop - orbTop;
+  });
+  assert(sunriseRise >= 14, '底部日出圆钮应高于底栏顶部 >=14px，实际 ' + sunriseRise);
   assert.deepEqual(await p.$$eval('#p-timeline .tabs button', e => e.map(x => x.innerText.trim())), ['全部', '记录', '总结']);
   assert(await p.$eval('#app-title', x => !x.hidden && x.innerText === '录音卡'));
   assert.equal(await p.$eval('#crumb-back', x => getComputedStyle(x).display), 'none');
@@ -610,7 +616,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="parity-btn"]');
   assert(await p.$eval('#parity-wrap', x => x.classList.contains('show')));
   assert.equal(await p.$('#parity-tabs'), null, '清理后不再保留 App 超前对比分页');
-  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 9);
+  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 12);
   await p.evaluate(() => closeParity());
   assert(await p.$('[data-testid="nc-btn"]'), 'NC 待确认清单胶囊保持展示');
   await p.click('[data-testid="hw-capsule"]');
@@ -871,7 +877,68 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   // demo 卡每次初始化都会补回；这里验证 sessionStorage 里的两张生成卡
   assert.equal(await p.$$eval('.card[data-kind="summary"]:not([data-id="sum-demo"])', x => x.length), 2);
 
-  // 当前版本基线（current.html · App 已有功能）：零 TBC 标记、无睡前日记/做梦卡、含四通道登录页与声纹下载入口
+  // 目标版三项新特性（TBC）：1) GPS 圈地运动；2) 睡眠 × 心率/HRV 对话情绪标定；3) 底部日出 AI 空间（Her OS1 + 有人味轻聊）
+  await p.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 });
+  await p.click('[data-testid="nav-timeline"]');
+  assert(await p.$eval('[data-testid="territory-card"]', x => !x.hidden && x.innerText.includes('老陈') && x.innerText.includes('TBC')));
+  await p.click('[data-testid="territory-card"]');
+  assert(await p.$eval('#territory-wrap', x => x.classList.contains('show')));
+  assert(await p.$eval('[data-testid="tr-zone-today"]', x => x.tagName.toLowerCase() === 'polygon'));
+  assert.equal(await p.$eval('[data-testid="tr-fast-route"] path', x => x.getAttribute('fill')), 'none', '高速骑行/驾车路段只画虚线，不填充圈地');
+  assert(await p.$eval('[data-testid="tr-total-area"]', x => x.innerText.includes('0.42 km²')));
+  const sw0 = await p.$eval('[data-testid="tr-path-afternoon"]', x => parseFloat(x.getAttribute('stroke-width')));
+  await p.click('[data-testid="tr-walk-plus-btn"]');
+  await p.click('[data-testid="tr-walk-plus-btn"]');
+  const sw2 = await p.$eval('[data-testid="tr-path-afternoon"]', x => parseFloat(x.getAttribute('stroke-width')));
+  assert(sw2 > sw0, `同路径走得越多线条应越粗: ${sw0} -> ${sw2}`);
+  await p.click('[data-testid="tr-color-sky"]');
+  await p.$eval('[data-testid="territory-sign-inp"]', el => { el.value = '陈哥'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  await p.click('[data-testid="tr-close-loop-btn"]');
+  assert(await p.$eval('[data-testid="tr-zone-afternoon"]', x => x.tagName.toLowerCase() === 'polygon' && x.getAttribute('fill') === '#2563EB'));
+  assert(await p.$eval('[data-testid="tr-total-area"]', x => x.innerText.includes('陈哥 · 0.69 km²')));
+  await shot('territory-map');
+  await p.evaluate(() => closeTerritorySheet());
+
+  await p.evaluate(() => openDetail('e1', true));
+  assert(await p.$eval('#dt-bio-box', x => !x.hidden));
+  assert(await p.$eval('[data-testid="bio-sleep-baseline"]', x => x.innerText.includes('深睡') && x.innerText.includes('HRV 48ms')));
+  assert(await p.$('[data-testid="bio-chart-svg"]'));
+  assert(await p.$eval('[data-testid="turn-bio-e1-3"]', x => x.innerText.includes('静坐 0 步/分') && x.innerText.includes('情绪波动') && x.innerText.includes('HRV 22ms')));
+  assert(await p.$eval('[data-testid="turn-bio-e1-6"]', x => x.innerText.includes('106 步/分') && x.innerText.includes('非情绪')));
+  await shot('bio-emotion-detail');
+  await p.click('[data-testid="crumb-back"]');
+
+  await p.click('[data-testid="nav-ai-sunrise"]');
+  assert(await p.$eval('#ai-space', x => x.classList.contains('show')));
+  assert(await p.$eval('#ai-her-pane', x => !x.hidden), '日出 AI 默认进入《Her》OS1 沉浸通话形态');
+  assert(await p.$eval('#ai-chat-pane', x => x.hidden));
+  await p.click('[data-testid="ai-her-prompt-mood"]');
+  await new Promise(r => setTimeout(r, 360));
+  const herPixels = await p.$eval('[data-testid="ai-her-canvas"]', cv => {
+    const ctx = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let cnt = 0; for (let i = 3; i < ctx.length; i += 16) if (ctx[i] > 20) cnt++;
+    return cnt;
+  });
+  assert(herPixels > 50, '《Her》OS1 蠕动声波条纹圆环应正常绘制');
+  assert((await p.$$eval('#ai-her-emojis .her-emoji', els => els.length)) >= 1, '情绪起伏应冒出无声小心思 emoji');
+  await shot('ai-her-os1');
+
+  await p.click('[data-testid="ai-mode-chat"]');
+  assert(await p.$eval('#ai-chat-pane', x => !x.hidden));
+  await p.click('[data-testid="ai-quick-1"]');
+  await new Promise(r => setTimeout(r, 220));
+  assert(await p.$('[data-testid="ai-typing-bubble"]'), '工作时仅显示极简 typing 省略点');
+  const latestReact = await p.$$eval('.ai-msg.me .ai-react', els => els[els.length - 1].innerText);
+  assert(latestReact.includes('get'), '发出任务后应实时贴上轻确认反应徽章: ' + latestReact);
+  const chatTxtBusy = await p.$eval('#ai-chat-pane', x => x.innerText);
+  assert(!chatTxtBusy.includes('思考过程') && !chatTxtBusy.includes('调用工具'), '轻聊不应展示冰冷工具/思考链');
+  await new Promise(r => setTimeout(r, 600));
+  assert.equal(await p.$('[data-testid="ai-typing-bubble"]'), null);
+  await shot('ai-human-chat');
+  await p.click('[data-testid="ai-space-close"]');
+  assert(!(await p.$eval('#ai-space', x => x.classList.contains('show'))));
+
+  // 当前版本基线（current.html · App 已有功能）：零 TBC 标记、保持两栏底栏、无日出 AI 与目标版新项
   const pCur = await b.newPage();
   await pCur.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 });
   pCur.on('pageerror', e => errors.push('current.html: ' + e.message));
@@ -882,6 +949,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.getAttribute('href')), 'index.html');
   assert.equal(await p.$eval('[data-testid="ver-switch-current"]', x => x.getAttribute('href')), 'current.html');
   assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0, 'current.html 不应出现 TBC 标记');
+  assert.deepEqual(await pCur.$$eval('nav.bottom button', e => e.map(x => x.innerText.trim())), ['Timeline', 'Setting'], 'current.html 保持两枚底部 Tab，不含目标版 OS1 入口');
+  assert.equal(await pCur.$('[data-testid="nav-ai-sunrise"]'), null);
   assert.equal(await pCur.$eval('[data-testid="nc-btn"]', x => x.innerText.trim()), 'NC·1', 'current.html 顶栏展示 NC·1 待确认清单');
   assert((await pCur.$$eval('.nc-badge', x => x.length)) >= 1, 'current.html 展示 NC 徽标（行为与健康信号）');
   assert.equal(await pCur.$$eval('.card[data-kind="daily"], .card[data-kind="dream"]', x => x.length), 0);
@@ -934,7 +1003,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.evaluate(() => diClockHTML(3660).includes('di-colon') && diClockHTML(3661).includes('dim')));
   await pCur.click('[data-testid="crumb-back"]');
   // 验证「当前版」已落地清单、合并分片徽标及声纹管理（5 常用槽位含我的声音+单独录音 / 不限人数人物库）
-  assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·9');
+  assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·12');
   assert(await pCur.$('[data-testid="nc-btn"]'), 'NC 待确认清单胶囊保持展示');
   await pCur.click('[data-testid="parity-btn"]');
   assert(await pCur.$eval('#parity-wrap', x => x.classList.contains('show')));
@@ -1099,6 +1168,6 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'bedtime-diary', 'diary-likes-annotations', 'dream-card', 'dream-sheet', 'dream-comic-skill', 'unc-triage-sheet', 'voiceprint-context-tag', 'voiceprint-merge-detach', 'memory-graph-triad', 'memory-provenance-metabolism', 'hw-button-island-push', 'tbc-markers', 'parity-drawer', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'raw-seek', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'sum-contextual-photos', 'map-photo-hierarchy', 'todo-progressive-meta', 'point-expand', 'point-trace', 'src-photo-infocards', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'setting-v2-subpages', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'multi-hw-scan', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'dfu-rec-guard', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'apple-watch-hardware-link', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'bedtime-diary', 'diary-likes-annotations', 'dream-card', 'dream-sheet', 'dream-comic-skill', 'unc-triage-sheet', 'voiceprint-context-tag', 'voiceprint-merge-detach', 'memory-graph-triad', 'memory-provenance-metabolism', 'hw-button-island-push', 'tbc-markers', 'parity-drawer', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'raw-seek', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'sum-contextual-photos', 'map-photo-hierarchy', 'todo-progressive-meta', 'point-expand', 'point-trace', 'src-photo-infocards', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'setting-v2-subpages', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'multi-hw-scan', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'dfu-rec-guard', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'apple-watch-hardware-link', 'territory-checkin-map', 'sleep-hr-hrv-emotion', 'sunrise-ai-her-chat', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });

@@ -1171,7 +1171,7 @@ button:disabled{opacity:.38;cursor:not-allowed}
   <div class="proto-actions">
     <div class="seg" data-testid="phone-version-seg" role="group" aria-label="主端设计稿版本">
       <button type="button" class="on" data-pver="current" onclick="setPhoneVersion('current')">当前版（App 已实现）</button>
-      <button type="button" data-pver="target" onclick="setPhoneVersion('target')">目标版·9</button>
+      <button type="button" data-pver="target" onclick="setPhoneVersion('target')">目标版·12</button>
     </div>
     <div class="seg" data-testid="view-mode-seg" role="group" aria-label="视图模式">
       <button type="button" class="on" data-mode="both" onclick="setViewMode('both')">双端同屏</button>
@@ -2186,7 +2186,7 @@ function renderToolbar() {
   var cap = document.getElementById("phone-ver-caption");
   if (cap) {
     cap.textContent = S.phoneVersion === "target"
-      ? "iPhone「录音卡」真源设计稿（目标版·9）"
+      ? "iPhone「录音卡」真源设计稿（目标版·12）"
       : "iPhone「录音卡」真源设计稿（当前版）";
   }
   var rb = document.getElementById("tb-reach-btn");
