@@ -12,7 +12,6 @@ import '../../core/device/card_gateway.dart';
 import '../../core/store/agent_config_store.dart';
 import '../../core/store/device_store.dart';
 import '../../core/store/voiceprint_library_store.dart';
-import '../../core/theme/rc_icons.dart';
 import '../../core/theme/tokens.dart';
 import '../../services/audio/voice_sample_capture.dart';
 import '../../services/auth/oauth_config.dart';
@@ -2866,42 +2865,55 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
       builder: (context, _) {
         final getSeedOn = widget.config.getSeedLinkEnabled;
         final omiOn = widget.config.omiLinkEnabled;
+        final gsConn =
+            dev?.isConnected == true &&
+            dev?.activeKind == DeviceKind.getSeedGsc10;
+        final omiConn =
+            dev?.isConnected == true && dev?.activeKind == DeviceKind.omiCv1;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              '默认蓝牙扫描仅保留 ReAI 三款自研硬件；按需开启以下经 ReAI SDK 协议层封装的第三方硬件后，设备可出现在扫描列表并按实际能力裁剪状态卡。',
-              style: TextStyle(fontSize: 13, height: 1.5, color: c.sec),
-            ),
-            const SizedBox(height: 14),
-            _extDeviceCard(
-              context,
-              cardKey: const Key('ext-getseed-card'),
-              switchKey: const Key('ext-getseed-switch'),
-              kind: DeviceKind.getSeedGsc10,
-              title: '得到 Get 笔记录音卡（GSC10）',
-              sdkCrate: 'reai-getseed-sdk · 广播 Get-* / MFG 0x544A',
-              capabilityDesc:
-                  '离线 Ogg Opus 存储同步 · 机身按键控录 · 单文件安全清理（不调全盘格式化指令），本地解码为 16kHz 单声道 WAV 转写。',
-              enabled: getSeedOn,
-              connected: dev?.isConnected == true &&
-                  dev?.activeKind == DeviceKind.getSeedGsc10,
-              onChanged: () => unawaited(_toggleGetSeed(!getSeedOn)),
-            ),
-            const SizedBox(height: 12),
-            _extDeviceCard(
-              context,
-              cardKey: const Key('ext-omi-card'),
-              switchKey: const Key('ext-omi-switch'),
-              kind: DeviceKind.omiCv1,
-              title: 'Omi 量产版录音器（CV1 / Friend）',
-              sdkCrate: 'reai-omi-sdk · 服务 UUID 19B1 / 1A3F',
-              capabilityDesc:
-                  'BLE 实时音频流（Opus / PCM / μ-law / LC3 纯 Rust 解码）+ 板载 Ring/SD 离线同步 + 物理按键手势打标，无 App 端 Wi-Fi 配网/OTA。',
-              enabled: omiOn,
-              connected:
-                  dev?.isConnected == true && dev?.activeKind == DeviceKind.omiCv1,
-              onChanged: () => unawaited(_toggleOmi(!omiOn)),
+            Container(
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                children: [
+                  _extHardwareRow(
+                    context,
+                    cardKey: const Key('ext-getseed-card'),
+                    switchKey: const Key('ext-getseed-switch'),
+                    title: '得到 Get 笔记录音卡',
+                    modelTag: 'GSC10',
+                    subtitle: '机身物理按键控录与打点，离线录音靠近手机自动同步',
+                    enabled: getSeedOn,
+                    connected: gsConn,
+                    topRadius: 12,
+                    onChanged: () => unawaited(_toggleGetSeed(!getSeedOn)),
+                  ),
+                  Divider(
+                    height: 1,
+                    thickness: 1,
+                    indent: 16,
+                    endIndent: 16,
+                    color: c.sep,
+                  ),
+                  _extHardwareRow(
+                    context,
+                    cardKey: const Key('ext-omi-card'),
+                    switchKey: const Key('ext-omi-switch'),
+                    title: 'Omi 随身录音器',
+                    modelTag: 'Friend',
+                    subtitle: '蓝牙随身拾音，支持按键打点与板载存储同步',
+                    enabled: omiOn,
+                    connected: omiConn,
+                    bottomRadius: 12,
+                    onChanged: () => unawaited(_toggleOmi(!omiOn)),
+                  ),
+                ],
+              ),
             ),
             if (_hint != null) ...[
               const SizedBox(height: 10),
@@ -2911,99 +2923,100 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                 style: TextStyle(fontSize: 12, color: c.sec),
               ),
             ],
-            const SizedBox(height: 16),
-            const _SubSectionLabel('ReAI SDK 分层边界说明'),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: c.card,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: c.sep),
-              ),
-              child: Text(
-                '1. 每款第三方硬件均独立封装为一个 Rust SDK crate（实现 RecorderSdkDriver 与 RecorderDevice 契约），后续新增固件修订或更多品牌设备仅需更新对应 SDK 包，无需改动 Flutter 业务层。\n'
-                '2. 所有设备实时帧与离线文件均在本地转换为标准 16kHz / 16bit / 单声道 PCM/WAV，继续走端侧 SenseVoice + Silero VAD + CAM++ 声纹流程，原始音频默认留存本机。',
-                style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
-              ),
-            ),
           ],
         );
       },
     );
   }
 
-  Widget _extDeviceCard(
+  Widget _extHardwareRow(
     BuildContext context, {
     required Key cardKey,
     required Key switchKey,
-    required DeviceKind kind,
     required String title,
-    required String sdkCrate,
-    required String capabilityDesc,
+    required String modelTag,
+    required String subtitle,
     required bool enabled,
     required bool connected,
+    double topRadius = 0,
+    double bottomRadius = 0,
     required VoidCallback onChanged,
   }) {
     final c = context.rc;
+    final radius = BorderRadius.vertical(
+      top: Radius.circular(topRadius),
+      bottom: Radius.circular(bottomRadius),
+    );
     return Container(
       key: cardKey,
-      decoration: BoxDecoration(
-        color: c.card,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: c.sep),
-      ),
       child: InkWell(
         key: switchKey,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: radius,
         onTap: onChanged,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              Row(
-                children: [
-                  DeviceKindBadge(kind: kind),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w700,
-                        color: c.label,
-                      ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w600,
+                            color: c.label,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: c.bg,
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text(
+                            modelTag,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: c.sec,
+                            ),
+                          ),
+                        ),
+                        if (connected)
+                          Text(
+                            '· 已连接',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: c.okInk,
+                            ),
+                          ),
+                      ],
                     ),
-                  ),
-                  if (connected) ...[
+                    const SizedBox(height: 4),
                     Text(
-                      '已连接',
+                      subtitle,
                       style: TextStyle(
                         fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: RCColors.okInk,
+                        height: 1.45,
+                        color: c.sec,
                       ),
                     ),
-                    const SizedBox(width: 8),
                   ],
-                  RCSwitch(on: enabled),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                sdkCrate,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                  color: c.sec,
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                capabilityDesc,
-                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
-              ),
+              const SizedBox(width: 14),
+              RCSwitch(on: enabled),
             ],
           ),
         ),
