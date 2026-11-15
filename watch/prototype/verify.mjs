@@ -297,7 +297,7 @@ if (pp && chromePath) {
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
     );
 
-    // Flow 1: Version switch 当前版 <-> 目标版·9 inside shared phone iframe
+    // Flow 1: Version switch 当前版 <-> 目标版·12 inside shared phone iframe
     assert.equal(await pf.$eval('[data-testid="parity-btn"]', (el) => el.innerText.trim()), '当前版', 'Current version parity-btn must say 当前版');
     assert.equal(await pf.$$eval('.tbc-badge', (els) => els.length), 0, 'Current version must have zero TBC badges');
     await Promise.all([
@@ -305,7 +305,7 @@ if (pp && chromePath) {
       page.click('[data-testid="phone-version-seg"] button[data-pver="target"]'),
     ]);
     pf = await getPhoneFrame(page);
-    assert.equal(await pf.$eval('[data-testid="parity-btn"]', (el) => el.innerText.trim()), '目标版·9', 'Target version parity-btn must say 目标版·9');
+    assert.equal(await pf.$eval('[data-testid="parity-btn"]', (el) => el.innerText.trim()), '目标版·12', 'Target version parity-btn must say 目标版·12');
     assert((await pf.$$eval('.tbc-badge', (els) => els.length)) > 0, 'Target version must contain TBC badges');
 
     await Promise.all([
@@ -314,7 +314,7 @@ if (pp && chromePath) {
     ]);
     pf = await getPhoneFrame(page);
     assert.equal(await pf.$eval('[data-testid="parity-btn"]', (el) => el.innerText.trim()), '当前版');
-    check('E2E: Dual-version switch (当前版 <-> 目标版·9) syncs real phone iframe', true);
+    check('E2E: Dual-version switch (当前版 <-> 目标版·12) syncs real phone iframe', true);
 
     // Flow 2: Real Setting -> Apple Watch link -> 4-device scan -> capability gating
     await pf.click('[data-testid="hw-capsule"]');

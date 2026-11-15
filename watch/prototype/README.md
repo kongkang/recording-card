@@ -5,7 +5,7 @@
 ## 文件说明
 
 - `watch/prototype/index.html`：双端联调宿主页
-  - **左侧 iPhone 16 Pro 屏（`390×844`）**：通过同源 `<iframe>` 直接加载确认版主端设计稿（支持顶部切换 `[ 当前版（App 已实现） | 目标版·9 ]`，分别对应 `../../prototype/current.html` 与 `../../prototype/index.html`）；状态栏灵动岛与锁屏实况卡片 1:1 对齐 `RecordingCardLiveActivityWidget.swift` 与 `live_activity_service.dart`。
+  - **左侧 iPhone 16 Pro 屏（`390×844`）**：通过同源 `<iframe>` 直接加载确认版主端设计稿（支持顶部切换 `[ 当前版（App 已实现） | 目标版·12 ]`，分别对应 `../../prototype/current.html` 与 `../../prototype/index.html`）；状态栏灵动岛与锁屏实况卡片 1:1 对齐 `RecordingCardLiveActivityWidget.swift` 与 `live_activity_service.dart`。
   - **右侧 Apple Watch Series 10（46mm）**：提供「手表应用 / 表盘组件 / 息屏预览」三视图，1:1 对齐 `watch/WatchApp/WatchMainView.swift` 与 `watch/WatchWidgets/RecordingCardComplication.swift`；电量文案严格使用三档表达（`充电中 / 电量高 / 电量中 / 电量低`），不显示百分比或「已充满」。
 - `watch/prototype/verify.mjs`：静态红线检查 + 基于本地 HTTP + 无头 Chrome 的双端联动 E2E 验收脚本（由 `.github/workflows/watch-prototype.yml` 自动运行）。
 
