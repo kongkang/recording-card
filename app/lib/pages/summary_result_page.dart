@@ -12,7 +12,7 @@ import '../core/store/app_store.dart';
 import '../services/export/export.dart';
 import '../core/theme/tokens.dart';
 import '../widgets/photo_preview_sheet.dart';
-import '../widgets/speaker_mark_sheet.dart';
+import '../widgets/quick_speaker_sheet.dart';
 import '../widgets/store_scope.dart';
 
 /// 吸顶 Tab 栏高度（原型 .stabs 行高 46）。
@@ -517,10 +517,12 @@ class _ResultView extends StatelessWidget {
     final sourceEvents = [
       for (final id in card.srcIds) ?store.eventByIdOrNull(id),
     ];
-    final markableSpeakers = store.speakerEntriesForEvents(sourceEvents);
+    final orderedSourceEvents = sortEventsChronological(sourceEvents);
     final fullText = card.resolvedFullText(
       sourceEvents,
       speakerResolver: store.displaySpeaker,
+      turnSpeakerResolver: store.displayTurnSpeaker,
+      preferResolvedTurns: store.hasTurnOverridesFor(sourceEvents),
       aliasTextTransformer: store.applySpeakerAliasesToText,
     );
     return [
@@ -602,44 +604,11 @@ class _ResultView extends StatelessWidget {
         ]),
       if (show('ft'))
         _section('sec-ft', '全文', [
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'AI 智能优化版 · 保持原意并去除口水词与错别字',
-                    style: TextStyle(fontSize: 12, color: RCColors.sec),
-                  ),
-                ),
-                if (markableSpeakers.isNotEmpty)
-                  TextButton.icon(
-                    key: const Key('sum-mark-speaker-btn'),
-                    onPressed: () => showSpeakerMarkSheet(
-                      context,
-                      store: store,
-                      events: sourceEvents,
-                    ),
-                    icon: const Icon(
-                      Icons.record_voice_over_outlined,
-                      size: 15,
-                    ),
-                    label: const Text('标记说话人'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: RCColors.okInk,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      textStyle: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-              ],
+          const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: Text(
+              'AI 智能优化版 · 保持原意并去除口水词与错别字（点击说话人可快捷命名）',
+              style: TextStyle(fontSize: 12, color: RCColors.sec),
             ),
           ),
           Container(
@@ -651,13 +620,11 @@ class _ResultView extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: RCColors.sep),
             ),
-            child: SelectableText(
-              fullText.trim().isNotEmpty ? fullText : '暂无可拼接的来源转写文本',
-              style: TextStyle(
-                fontSize: 14,
-                height: 1.65,
-                color: fullText.trim().isNotEmpty ? RCColors.ink : RCColors.sec,
-              ),
+            child: _buildMergedFullTextContent(
+              context,
+              store,
+              orderedSourceEvents,
+              fallbackText: fullText,
             ),
           ),
         ]),
@@ -782,6 +749,189 @@ class _ResultView extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildMergedFullTextContent(
+    BuildContext context,
+    AppStore store,
+    List<RecordEvent> orderedEvents, {
+    required String fallbackText,
+  }) {
+    if (orderedEvents.isEmpty) {
+      final t = fallbackText.trim();
+      return SelectableText(
+        t.isNotEmpty ? t : '暂无可拼接的来源转写文本',
+        style: TextStyle(
+          fontSize: 14,
+          height: 1.65,
+          color: t.isNotEmpty ? RCColors.ink : RCColors.sec,
+        ),
+      );
+    }
+
+    final rc = context.rc;
+    final widgets = <Widget>[];
+    for (final e in orderedEvents) {
+      final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
+      final groups = <({
+        String resolvedSpeaker,
+        String rawSpeaker,
+        int firstTurnIndex,
+        String sampleQuote,
+        String joinedText,
+      })>[];
+
+      String? curSpk;
+      var curRaw = '';
+      var curFirstIdx = 0;
+      var curSample = '';
+      var curText = '';
+
+      void flushGroup() {
+        if (curSpk == null || curText.trim().isEmpty) return;
+        groups.add((
+          resolvedSpeaker: curSpk,
+          rawSpeaker: curRaw,
+          firstTurnIndex: curFirstIdx,
+          sampleQuote: curSample,
+          joinedText: curText,
+        ));
+      }
+
+      for (var ti = 0; ti < turns.length; ti++) {
+        final t = turns[ti];
+        final cleaned = cleanSpokenFillers(t.text);
+        if (cleaned.isEmpty) continue;
+        final resolved = store.displayTurnSpeaker(e, ti, t.spk).trim();
+        final effective = resolved.isEmpty ? '未区分' : resolved;
+        if (effective == curSpk) {
+          curText = joinPolishedUtterances(curText, cleaned);
+        } else {
+          flushGroup();
+          curSpk = effective;
+          curRaw = t.spk;
+          curFirstIdx = ti;
+          curSample = t.text;
+          curText = cleaned;
+        }
+      }
+      flushGroup();
+
+      final fallback = (e.longText.trim().isNotEmpty ? e.longText : e.brief)
+          .trim();
+      if (groups.isEmpty && fallback.isEmpty) continue;
+
+      if (orderedEvents.length > 1) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 8),
+            child: Text(
+              '【${e.time} · ${e.title}】',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: rc.sec,
+              ),
+            ),
+          ),
+        );
+      }
+
+      if (groups.isEmpty) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: SelectableText(
+              fallback,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.65,
+                color: RCColors.ink,
+              ),
+            ),
+          ),
+        );
+        continue;
+      }
+
+      for (var gi = 0; gi < groups.length; gi++) {
+        final g = groups[gi];
+        final canTap = g.rawSpeaker.trim() != '无语音';
+        widgets.add(
+          Padding(
+            key: Key('sum-ft-group-${e.id}-$gi'),
+            padding: EdgeInsets.only(bottom: gi == groups.length - 1 ? 4 : 10),
+            child: Text.rich(
+              TextSpan(
+                style: const TextStyle(
+                  fontSize: 14,
+                  height: 1.65,
+                  color: RCColors.ink,
+                ),
+                children: [
+                  WidgetSpan(
+                    alignment: PlaceholderAlignment.middle,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: GestureDetector(
+                        key: Key('sum-ft-who-${e.id}-$gi'),
+                        onTap: canTap
+                            ? () => showQuickSpeakerSheet(
+                                context,
+                                store: store,
+                                event: e,
+                                turnIndex: g.firstTurnIndex,
+                                rawSpeaker: g.rawSpeaker,
+                                sampleQuote: g.sampleQuote,
+                              )
+                            : null,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1.5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: rc.bg,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: rc.sep),
+                          ),
+                          child: Text(
+                            g.resolvedSpeaker,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: canTap ? rc.okInk : rc.sec,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  TextSpan(text: '：${g.joinedText}'),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    if (widgets.isEmpty) {
+      final t = fallbackText.trim();
+      return SelectableText(
+        t.isNotEmpty ? t : '暂无可拼接的来源转写文本',
+        style: TextStyle(
+          fontSize: 14,
+          height: 1.65,
+          color: t.isNotEmpty ? RCColors.ink : RCColors.sec,
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: widgets,
+    );
+  }
 }
 
 /// 导出按钮：4 种格式仅格式区分（均含第一部分图文纪要 + 第二部分文字记录），支持「AI 智能优化版 / 原文」切换与标记说话人。
@@ -876,10 +1026,6 @@ class _ExportButtonState extends State<_ExportButton> {
           return ListenableBuilder(
             listenable: store,
             builder: (sheetCtx, _) {
-              final sourceEvents = [
-                for (final id in widget.card.srcIds) ?store.eventByIdOrNull(id),
-              ];
-              final speakerEntries = store.speakerEntriesForEvents(sourceEvents);
               return SafeArea(
                 top: false,
                 child: ConstrainedBox(
@@ -889,7 +1035,12 @@ class _ExportButtonState extends State<_ExportButton> {
                   child: SingleChildScrollView(
                     key: const Key('export-sheet'),
                     primary: false,
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                    padding: const EdgeInsets.fromLTRB(
+                      16,
+                      12,
+                      16,
+                      16 + RCDims.pageBottomPad,
+                    ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -986,65 +1137,6 @@ class _ExportButtonState extends State<_ExportButton> {
                             ],
                           ],
                         ),
-                        if (speakerEntries.isNotEmpty) ...[
-                          const SizedBox(height: 10),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: RCColors.bg,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: RCColors.sep),
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    speakerEntries
-                                        .map(
-                                          (s) => s.currentAlias.isNotEmpty
-                                              ? '${s.slot}→${s.currentAlias}'
-                                              : '${s.slot}（推测）',
-                                        )
-                                        .join(' · '),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: RCColors.sec,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                TextButton(
-                                  key: const Key('export-mark-speaker-btn'),
-                                  onPressed: () => showSpeakerMarkSheet(
-                                    sheetCtx,
-                                    store: store,
-                                    events: sourceEvents,
-                                  ),
-                                  style: TextButton.styleFrom(
-                                    foregroundColor: RCColors.okInk,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    minimumSize: Size.zero,
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                    textStyle: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  child: const Text('标记说话人'),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
                         const SizedBox(height: 12),
                         const Text(
                           '选择导出格式',
@@ -1149,6 +1241,8 @@ class _ExportButtonState extends State<_ExportButton> {
             ),
         ],
         speakerResolver: store.displaySpeaker,
+        turnSpeakerResolver: store.displayTurnSpeaker,
+        preferResolvedTurns: store.hasTurnOverridesFor(sourceEvents),
         aliasTextTransformer: store.applySpeakerAliasesToText,
       );
       final captureKey = picked.format == ExportFormat.image

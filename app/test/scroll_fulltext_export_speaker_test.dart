@@ -127,14 +127,30 @@ void main() {
     expect(find.byKey(const Key('sec-ft')), findsOneWidget);
     expect(find.byKey(const Key('sec-ov')), findsNothing);
     expect(find.byKey(const Key('sum-fulltext-body')), findsOneWidget);
-    final ftText = tester.widget<SelectableText>(
+    expect(find.byKey(const Key('sum-mark-speaker-btn')), findsNothing);
+    expect(
       find.descendant(
         of: find.byKey(const Key('sum-fulltext-body')),
-        matching: find.byType(SelectableText),
+        matching: find.textContaining('【13:05 · 客户回访要点】'),
       ),
+      findsOneWidget,
     );
-    expect(ftText.data, contains('【13:05 · 客户回访要点】'));
-    expect(ftText.data, contains('【14:20 · 午后项目方向讨论】'));
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('sum-fulltext-body')),
+        matching: find.textContaining('【14:20 · 午后项目方向讨论】'),
+      ),
+      findsOneWidget,
+    );
+    // e2 首段由「说话人 B（推测）」聚合为 sum-ft-group-e2-0 段落展示
+    expect(find.byKey(const Key('sum-ft-group-e2-0')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('sum-ft-group-e2-0')),
+        matching: find.textContaining('偏慢'),
+      ),
+      findsOneWidget,
+    );
 
     // 目录菜单中也含「全文」项，点击可切回全部并定位
     await tester.tap(find.byKey(const Key('toc-btn')));
@@ -148,7 +164,7 @@ void main() {
     expect(find.byKey(const Key('sec-ov')), findsOneWidget);
   });
 
-  testWidgets('3. 标记说话人跨对话详情 / 总结全文同步，未标簇保持「推测」，原始数据保留原始簇标签', (
+  testWidgets('3. 极简说话人命名弹窗跨对话详情 / 总结全文同步，未标簇保持「推测」，原始数据保留原始簇标签', (
     tester,
   ) async {
     final model = SummaryModel();
@@ -159,20 +175,22 @@ void main() {
     );
     await pumpShell(tester, store: store, model: model);
 
-    // 进 e1 详情打开标记说话人面板
+    // 进 e1 详情点击说话人弹出极简「为说话人命名」弹层
     await tester.tap(find.byKey(const Key('card-e1')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('detail-e1')));
     await tester.pump();
 
     expect(find.byKey(const Key('mark-speaker-btn')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('mark-speaker-btn')));
+    await tester.tap(find.byKey(const Key('turn-spk-0')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('speaker-mark-sheet')), findsOneWidget);
-    await tester.enterText(find.byKey(const Key('speaker-input-0')), '老陈');
-    await tester.tap(find.byKey(const Key('speaker-save-btn')));
+    expect(find.byKey(const Key('spk-quick-sheet')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('qspk-name-inp')), '老陈');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('qspk-save-btn')));
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('spk-quick-sheet')), findsNothing);
 
     // 对话详情已改为「老陈」，而未标记的 B 依然保留「推测」后缀
     expect(find.textContaining('老陈'), findsWidgets);
@@ -191,14 +209,20 @@ void main() {
     await generateWeekSummary(tester, model);
 
     await tapTab(tester, const Key('stab-ft'));
-    final ftText = tester.widget<SelectableText>(
+    expect(
       find.descendant(
         of: find.byKey(const Key('sum-fulltext-body')),
-        matching: find.byType(SelectableText),
+        matching: find.textContaining('老陈'),
       ),
+      findsWidgets,
     );
-    expect(ftText.data, contains('老陈'));
-    expect(ftText.data, contains('说话人 B（推测）'));
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('sum-fulltext-body')),
+        matching: find.textContaining('说话人 B（推测）'),
+      ),
+      findsWidgets,
+    );
   });
 
   testWidgets('4. 导出区分格式且固定含两部分：默认「AI 智能优化版」、可切「原文」、四格式落盘完整无「完整文档」', (
@@ -226,7 +250,7 @@ void main() {
     await pumpShell(tester, store: store, model: model);
     await generateWeekSummary(tester, model);
 
-    // 校验导出 Sheet：默认选中 AI 智能优化版、支持切换原文、含标记说话人入口、只有 4 种格式
+    // 校验导出 Sheet：默认选中 AI 智能优化版、支持切换原文、移除复杂标记按钮、只有 4 种格式
     await tester.tap(find.byKey(const Key('export-btn')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
@@ -234,7 +258,8 @@ void main() {
     expect(find.text('完整文档'), findsNothing);
     expect(find.byKey(const Key('export-mode-ai')), findsOneWidget);
     expect(find.byKey(const Key('export-mode-raw')), findsOneWidget);
-    expect(find.byKey(const Key('export-mark-speaker-btn')), findsOneWidget);
+    expect(find.byKey(const Key('export-mark-speaker-btn')), findsNothing);
+    expect(find.byKey(const Key('sum-mark-speaker-btn')), findsNothing);
     for (final f in ['PDF', 'Word 文档', 'Markdown', '图片']) {
       expect(find.byKey(Key('export-item-$f')), findsOneWidget);
     }

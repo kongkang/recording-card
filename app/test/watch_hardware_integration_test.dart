@@ -343,4 +343,106 @@ void main() {
     await env.device.stopPhoneRecording();
     await tester.pump();
   });
+
+  testWidgets('Setting → Apple Watch 联动页提供远程启停、打重点、刷新与已接收 16kHz WAV 切片试听/删除', (
+    tester,
+  ) async {
+    final tmpDir = Directory.systemTemp.createTempSync('rc-watch-subpage-');
+    addTearDown(() {
+      if (tmpDir.existsSync()) tmpDir.deleteSync(recursive: true);
+    });
+    final wavFile = File('${tmpDir.path}/LIVE_WATCH_S10_001.WAV');
+    wavFile.writeAsBytesSync(encodeWav(Float32List(16000)));
+
+    final env = await _pumpWatchShell(
+      tester,
+      initialWatchLinkEnabled: true,
+    );
+
+    await tester.tap(find.byKey(const Key('nav-setting')));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('set-apple-watch')),
+      220,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('setting-list')),
+        matching: find.byType(Scrollable),
+      ).first,
+    );
+    await tester.tap(find.byKey(const Key('set-apple-watch')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('watch-remote-card')), findsOneWidget);
+    expect(find.byKey(const Key('watch-slices-card')), findsOneWidget);
+    expect(find.byKey(const Key('watch-slices-empty')), findsOneWidget);
+
+    // 远程开启腕上录音 + 打重点 + 刷新状态
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('watch-remote-rec-btn')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const Key('watch-remote-rec-btn')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(env.device.isConnected, isTrue);
+    expect(env.device.activeKind, DeviceKind.appleWatch);
+    expect(env.device.isRecording, isTrue);
+    expect(find.text('HKWorkoutSession 运动保活'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('watch-remote-mark-btn')));
+    await tester.pump();
+    expect(env.watchBackend.marks.length, 1);
+
+    await tester.tap(find.byKey(const Key('watch-refresh-btn')));
+    await tester.pump();
+    expect(find.byKey(const Key('watch-link-hint')), findsOneWidget);
+
+    // 推送切片后展示在已接收切片列表中，支持试听切换与删除
+    env.watchBackend.pushReadySlice(
+      WatchPendingSlicePayload(
+        sliceId: 'slice-sub-1',
+        sessionId: 'watch-sess-sub',
+        sliceIndex: 0,
+        startAtMs: 1_794_758_400_000,
+        durationMs: 2_000,
+        wavPath: wavFile.path,
+        marksMs: const [1200],
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('watch-slice-item-0')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.byKey(const Key('watch-slice-item-0')), findsOneWidget);
+    expect(find.textContaining('LIVE_WATCH_S10_001.WAV'), findsOneWidget);
+    expect(find.textContaining('重点标记（相对起点）：1s'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('watch-slice-play-0')));
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('watch-slice-play-0')),
+        matching: find.text('停止试听'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('watch-slice-del-0')));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('watch-slice-item-0')), findsNothing);
+    expect(find.byKey(const Key('watch-slices-empty')), findsOneWidget);
+
+    // 停止手表录音释放内部时钟与状态
+    await tester.tap(find.byKey(const Key('watch-remote-rec-btn')));
+    await tester.pump();
+    await tester.pump();
+    expect(env.device.isRecording, isFalse);
+  });
 }

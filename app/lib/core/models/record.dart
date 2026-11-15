@@ -96,6 +96,9 @@ class RecordEvent {
   /// 本段录音关联照片（含初始注入或持久化恢复）。
   final List<EventPhoto> photos;
 
+  /// 由连续 `< 30s` 停顿声学合并的底层分片数（默认 1；`> 1` 时时间轴显示合并徽标）。
+  final int mergedSliceCount;
+
   const RecordEvent({
     required this.id,
     required this.dayOffset,
@@ -112,6 +115,7 @@ class RecordEvent {
     this.live = false,
     this.note,
     this.photos = const [],
+    this.mergedSliceCount = 1,
   });
 }
 
@@ -137,6 +141,7 @@ extension RecordEventJson on RecordEvent {
         if (live) 'live': true,
         if (note != null) 'note': note,
         if (photos.isNotEmpty) 'pics': [for (final p in photos) p.toJson()],
+        if (mergedSliceCount > 1) 'msc': mergedSliceCount,
       };
 }
 
@@ -166,5 +171,6 @@ RecordEvent recordEventFromJson(Map<String, dynamic> j) {
       for (final p in (j['pics'] as List? ?? const []))
         if (p is Map<String, dynamic>) EventPhoto.fromJson(p),
     ],
+    mergedSliceCount: ((j['msc'] as num?)?.toInt() ?? 1).clamp(1, 9999),
   );
 }

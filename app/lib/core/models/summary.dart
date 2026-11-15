@@ -44,7 +44,7 @@ String cleanSpokenFillers(String raw) {
   return s.isEmpty ? raw.trim() : s;
 }
 
-String _joinPolishedUtterances(String prev, String next) {
+String joinPolishedUtterances(String prev, String next) {
   if (prev.isEmpty) return next;
   if (next.isEmpty) return prev;
   final tail = prev[prev.length - 1];
@@ -60,6 +60,8 @@ String _joinPolishedUtterances(String prev, String next) {
 String stitchPolishedFullText(
   Iterable<RecordEvent> events, {
   String Function(RecordEvent event, String rawSpeaker)? speakerResolver,
+  String Function(RecordEvent event, int turnIndex, String rawSpeaker)?
+  turnSpeakerResolver,
 }) {
   final ordered = sortEventsChronological(events);
   if (ordered.isEmpty) return '';
@@ -78,14 +80,18 @@ String stitchPolishedFullText(
         paragraphs.add('$currentSpeaker：$currentText');
       }
 
-      for (final t in turns) {
+      for (var ti = 0; ti < turns.length; ti++) {
+        final t = turns[ti];
         final cleaned = cleanSpokenFillers(t.text);
         if (cleaned.isEmpty) continue;
         final resolvedSpk =
-            (speakerResolver?.call(e, t.spk) ?? t.spk).trim();
+            (turnSpeakerResolver?.call(e, ti, t.spk) ??
+                    speakerResolver?.call(e, t.spk) ??
+                    t.spk)
+                .trim();
         final spk = resolvedSpk.isEmpty ? '未区分' : resolvedSpk;
         if (spk == currentSpeaker) {
-          currentText = _joinPolishedUtterances(currentText, cleaned);
+          currentText = joinPolishedUtterances(currentText, cleaned);
         } else {
           flush();
           currentSpeaker = spk;
@@ -154,15 +160,19 @@ class SummaryCard {
   String resolvedFullText(
     List<RecordEvent> sourceEvents, {
     String Function(RecordEvent event, String rawSpeaker)? speakerResolver,
+    String Function(RecordEvent event, int turnIndex, String rawSpeaker)?
+    turnSpeakerResolver,
+    bool preferResolvedTurns = false,
     String Function(String text, List<RecordEvent> events)? aliasTextTransformer,
   }) {
     final stored = fullText.trim();
-    if (stored.isNotEmpty) {
+    if (stored.isNotEmpty && !preferResolvedTurns) {
       return aliasTextTransformer?.call(stored, sourceEvents) ?? stored;
     }
     return stitchPolishedFullText(
       sourceEvents,
       speakerResolver: speakerResolver,
+      turnSpeakerResolver: turnSpeakerResolver,
     );
   }
 

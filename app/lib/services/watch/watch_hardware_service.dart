@@ -10,12 +10,15 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/device/card_gateway.dart';
 import '../audio/live_audio_recorder.dart';
+import '../recordings/recording_store.dart';
 
 /// iPhone 原生 `WatchHardwareBridge` 上报的 Apple Watch 状态快照。
 @immutable
@@ -150,6 +153,7 @@ class WatchPendingSlicePayload {
     this.gapCount = 0,
     this.isFinal = false,
     this.offlineRecorded = true,
+    this.marksMs = const [],
   });
 
   factory WatchPendingSlicePayload.fromMap(Map<Object?, Object?> raw) {
@@ -157,6 +161,14 @@ class WatchPendingSlicePayload {
       final v = raw[key];
       return v is num ? v.toInt() : fallback;
     }
+
+    final rawMarks = raw['marksMs'];
+    final marks = rawMarks is List
+        ? List<int>.unmodifiable([
+            for (final item in rawMarks)
+              if (item is num) item.toInt(),
+          ])
+        : const <int>[];
 
     return WatchPendingSlicePayload(
       sliceId: '${raw['sliceId'] ?? ''}',
@@ -168,6 +180,7 @@ class WatchPendingSlicePayload {
       gapCount: readInt('gapCount'),
       isFinal: raw['isFinal'] == true,
       offlineRecorded: raw['offlineRecorded'] != false,
+      marksMs: marks,
     );
   }
 
@@ -180,6 +193,7 @@ class WatchPendingSlicePayload {
   final int gapCount;
   final bool isFinal;
   final bool offlineRecorded;
+  final List<int> marksMs;
 
   LiveAudioSlice toLiveAudioSlice() {
     final safeSession = sessionId.isNotEmpty ? sessionId : 'watch';
@@ -198,6 +212,99 @@ class WatchPendingSlicePayload {
       sliceKeyOverride: 'watch_$safeSliceId',
     );
   }
+}
+
+/// 已传回 iPhone 并完成 16kHz Mono PCM WAV 转码入库的手表切片历史记录（用于 Setting › Apple Watch 联动试听/导出/清理）。
+@immutable
+class WatchReceivedSliceRecord {
+  const WatchReceivedSliceRecord({
+    required this.sliceId,
+    required this.sessionId,
+    required this.sliceIndex,
+    required this.startAtMs,
+    required this.durationMs,
+    required this.wavPath,
+    this.offlineRecorded = true,
+    this.marksMs = const [],
+    this.fileSizeBytes = 0,
+  });
+
+  factory WatchReceivedSliceRecord.fromPayload(
+    WatchPendingSlicePayload p, {
+    int fileSizeBytes = 0,
+  }) {
+    final resolvedPath = RecordingStore.rebaseAppSupportPath(p.wavPath);
+    var bytes = fileSizeBytes;
+    if (bytes <= 0 && resolvedPath.isNotEmpty) {
+      try {
+        final f = File(resolvedPath);
+        if (f.existsSync()) {
+          bytes = f.lengthSync();
+        }
+      } on Object {
+        bytes = 0;
+      }
+    }
+    return WatchReceivedSliceRecord(
+      sliceId: p.sliceId,
+      sessionId: p.sessionId,
+      sliceIndex: p.sliceIndex,
+      startAtMs: p.startAtMs,
+      durationMs: p.durationMs,
+      wavPath: resolvedPath,
+      offlineRecorded: p.offlineRecorded,
+      marksMs: p.marksMs,
+      fileSizeBytes: bytes,
+    );
+  }
+
+  factory WatchReceivedSliceRecord.fromJson(Map<String, dynamic> j) =>
+      WatchReceivedSliceRecord(
+        sliceId: '${j['id'] ?? ''}',
+        sessionId: '${j['ses'] ?? ''}',
+        sliceIndex: (j['idx'] as num?)?.toInt() ?? 0,
+        startAtMs: (j['at'] as num?)?.toInt() ?? 0,
+        durationMs: (j['dur'] as num?)?.toInt() ?? 0,
+        wavPath: RecordingStore.rebaseAppSupportPath('${j['wav'] ?? ''}'),
+        offlineRecorded: j['off'] != false,
+        marksMs: [
+          for (final m in (j['mks'] as List? ?? const []))
+            if (m is num) m.toInt(),
+        ],
+        fileSizeBytes: (j['sz'] as num?)?.toInt() ?? 0,
+      );
+
+  final String sliceId;
+  final String sessionId;
+  final int sliceIndex;
+  final int startAtMs;
+  final int durationMs;
+  final String wavPath;
+  final bool offlineRecorded;
+  final List<int> marksMs;
+  final int fileSizeBytes;
+
+  String get fileName {
+    final trimmed = wavPath.trim();
+    if (trimmed.isEmpty) {
+      final numStr = (sliceIndex + 1).toString().padLeft(3, '0');
+      return 'WATCH_$numStr.WAV';
+    }
+    final sepIdx = trimmed.lastIndexOf('/');
+    return sepIdx >= 0 ? trimmed.substring(sepIdx + 1) : trimmed;
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': sliceId,
+    'ses': sessionId,
+    'idx': sliceIndex,
+    'at': startAtMs,
+    'dur': durationMs,
+    'wav': wavPath,
+    'off': offlineRecorded,
+    if (marksMs.isNotEmpty) 'mks': marksMs,
+    if (fileSizeBytes > 0) 'sz': fileSizeBytes,
+  };
 }
 
 /// Apple Watch 平台通道抽象，便于 iOS `MethodChannel` 与测试注入双态切换。
@@ -497,8 +604,12 @@ class FakeWatchBridgeBackend implements WatchBridgeBackend {
 
 /// 协调 iOS `WatchHardwareBridge`、设置联动开关与 `DeviceStore` / `AppStore` 切片入库的业务服务。
 class WatchHardwareService extends ChangeNotifier {
-  WatchHardwareService({WatchBridgeBackend? backend})
-    : _backend = backend ?? MethodChannelWatchBackend() {
+  WatchHardwareService({
+    WatchBridgeBackend? backend,
+    String? historyFilePath,
+  }) : _backend = backend ?? MethodChannelWatchBackend(),
+       _historyFilePath = historyFilePath {
+    _loadHistorySync();
     _statusSub = _backend.statusStream.listen(_handleStatusPush);
     _sliceSub = _backend.sliceReadyStream.listen(_handleSlicePush);
   }
@@ -506,12 +617,14 @@ class WatchHardwareService extends ChangeNotifier {
   static const String watchDeviceId = 'apple_watch_paired';
 
   final WatchBridgeBackend _backend;
+  final String? _historyFilePath;
   late final StreamSubscription<WatchBridgeStatus> _statusSub;
   late final StreamSubscription<WatchPendingSlicePayload> _sliceSub;
 
   final StreamController<LiveAudioSlice> _audioSlicesCtrl =
       StreamController<LiveAudioSlice>.broadcast();
   final Set<String> _deliveredSliceIds = <String>{};
+  final List<WatchReceivedSliceRecord> _receivedSlices = [];
 
   bool _linkEnabled = false;
   bool _connectedAsHardware = false;
@@ -527,6 +640,8 @@ class WatchHardwareService extends ChangeNotifier {
   bool get isConnectedAsHardware => _connectedAsHardware;
   WatchBridgeStatus get currentStatus => _status;
   Stream<LiveAudioSlice> get audioSlices => _audioSlicesCtrl.stream;
+  List<WatchReceivedSliceRecord> get receivedSlices =>
+      List.unmodifiable(_receivedSlices);
 
   /// 开启联动且系统已支持并配对 Apple Watch 时进入扫描列表与一键连接。
   bool get availableForScan =>
@@ -697,9 +812,70 @@ class WatchHardwareService extends ChangeNotifier {
   Future<bool> _emitSlice(WatchPendingSlicePayload p) async {
     if (_disposed || p.sliceId.isEmpty || p.wavPath.isEmpty) return false;
     if (!_deliveredSliceIds.add(p.sliceId)) return false;
+    final record = WatchReceivedSliceRecord.fromPayload(p);
+    _receivedSlices.removeWhere((r) => r.sliceId == record.sliceId);
+    _receivedSlices.insert(0, record);
+    if (_receivedSlices.length > 50) {
+      _receivedSlices.removeRange(50, _receivedSlices.length);
+    }
+    _persistHistorySync();
     _audioSlicesCtrl.add(p.toLiveAudioSlice());
     await _backend.ackConsumedSlice(p.sliceId);
+    if (!_disposed) {
+      notifyListeners();
+    }
     return true;
+  }
+
+  /// 从 Setting › Apple Watch 联动页删除一条已接收切片记录。
+  Future<void> deleteReceivedSlice(String sliceId) async {
+    final before = _receivedSlices.length;
+    _receivedSlices.removeWhere((r) => r.sliceId == sliceId);
+    if (_receivedSlices.length != before) {
+      _persistHistorySync();
+      if (!_disposed) {
+        notifyListeners();
+      }
+    }
+  }
+
+  void _loadHistorySync() {
+    final path = _historyFilePath;
+    if (path == null || path.isEmpty) return;
+    try {
+      final f = File(path);
+      if (!f.existsSync()) return;
+      final decoded = jsonDecode(f.readAsStringSync());
+      if (decoded is List) {
+        for (final item in decoded) {
+          if (item is Map<String, dynamic>) {
+            final rec = WatchReceivedSliceRecord.fromJson(item);
+            if (rec.sliceId.isNotEmpty) {
+              _receivedSlices.add(rec);
+            }
+          }
+        }
+      }
+    } on Object {
+      // 损坏历史不阻塞正常使用
+    }
+  }
+
+  void _persistHistorySync() {
+    final path = _historyFilePath;
+    if (path == null || path.isEmpty) return;
+    try {
+      final f = File(path);
+      f.parent.createSync(recursive: true);
+      final tmp = File('$path.tmp');
+      tmp.writeAsStringSync(
+        jsonEncode([for (final r in _receivedSlices) r.toJson()]),
+        flush: true,
+      );
+      tmp.renameSync(path);
+    } on Object {
+      // 忽略落盘异常，保留内存态
+    }
   }
 
   void _applyStatus(WatchBridgeStatus next, {required bool fromPush}) {

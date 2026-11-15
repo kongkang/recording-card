@@ -273,7 +273,17 @@ void main() {
       reason: '下一片起点必须精确等于上一片下拉封口终点，无重叠无丢帧',
     );
     expect(emitted[1].durationMs, 60000);
-    expect(appStore.events.length, 2);
+    // 两段语音分片间隔 0ms（< 30s）按新规则无上限合并为 1 条 Timeline 记录，底层 2 片完整保留
+    expect(appStore.recordingFiles.length, 2);
+    expect(appStore.events.length, 1);
+    expect(appStore.events.single.mergedSliceCount, 2);
+    expect(
+      appStore.events.single.dialog.map((d) => d.text).join('\n'),
+      allOf(
+        contains('刚才刚说的二十二秒语音'),
+        contains('紧接在下拉刷新之后的第二段内容'),
+      ),
+    );
 
     await recorder.stop();
   });
@@ -349,7 +359,17 @@ void main() {
 
     expect(emitted.length, 2);
     expect(emitted[1].startAtMs, emitted[0].startAtMs + 10000);
-    expect(appStore.events.length, 2);
+    // 两段连续语音分片间隔 0ms（< 30s）无上限合并为 1 条 Timeline 记录，底层 2 片完整保留
+    expect(appStore.recordingFiles.length, 2);
+    expect(appStore.events.length, 1);
+    expect(appStore.events.single.mergedSliceCount, 2);
+    expect(
+      appStore.events.single.dialog.map((d) => d.text).join('\n'),
+      allOf(
+        contains('本机麦克风刚录十秒下拉即出'),
+        contains('本机麦克风后续六秒尾片'),
+      ),
+    );
   });
 
   test('未连接录音卡且未在录音时下拉刷新：本地排队音频直接离线转写，无待办时诚实提示不报错', () async {

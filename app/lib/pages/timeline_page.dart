@@ -514,15 +514,48 @@ class _EventCardView extends StatelessWidget {
                                   ),
                                 ],
                                 const SizedBox(height: 4),
-                                Text(
-                                  '${event.time} · ${event.dur}',
-                                  key: Key('when-${event.id}'),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: RCColors.sec,
-                                  ),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 4,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    Text(
+                                      '${event.time} · ${event.dur}',
+                                      key: Key('when-${event.id}'),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: RCColors.sec,
+                                      ),
+                                    ),
+                                    if (event.mergedSliceCount > 1 &&
+                                        event.speakers != '无语音')
+                                      Container(
+                                        key: Key('ev-merge-badge-${event.id}'),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 1.5,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: context.rc.bg,
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
+                                          border: Border.all(
+                                            color: context.rc.sep,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '已合并 ${event.mergedSliceCount} 分片',
+                                          style: TextStyle(
+                                            fontSize: 10.5,
+                                            fontWeight: FontWeight.w500,
+                                            color: context.rc.sec,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ],
                             ),

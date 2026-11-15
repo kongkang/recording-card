@@ -34,6 +34,8 @@ class ModelManagerController extends ChangeNotifier {
   final String _explicitBaseUrl;
   final String _fallbackBaseUrl;
 
+  ModelInstaller get installer => _installer;
+
   /// 安装完成后的回调（通常是 `AppStore.processPendingRecordings`）。
   final Future<void> Function()? onInstalled;
 

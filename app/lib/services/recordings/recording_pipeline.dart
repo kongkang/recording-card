@@ -17,8 +17,10 @@ import 'package:flutter/foundation.dart';
 import '../../core/device/card_gateway.dart';
 import '../../core/models/recording.dart';
 import '../../core/store/settings_store.dart';
+import '../../core/store/voiceprint_library_store.dart';
 import '../audio/live_audio_recorder.dart';
 import '../polish/slice_polish_service.dart';
+import '../segment/fast_topic_segment_agent.dart';
 import '../segment/segment_build_service.dart';
 import '../transcribe/slice_planner.dart';
 import '../transcribe/speaker_clusterer.dart';
@@ -112,14 +114,39 @@ class RecordingPipeline {
     this.clusterer = const SpeakerClusterer(),
     this.polish,
     this.segments,
+    this.topicAgent,
+    TopicSegmentationStore? topicStore,
+    this.voiceprintStore,
     this.network = const NetworkPolicy(),
     this.liveAudioBaseDir,
-  });
+  }) : _topicStore = topicStore;
 
   final CardGateway gateway;
   final RecordingStore store;
   final SpeechEngine engine;
   final SpeechModelProvider models;
+  final FastTopicSegmentAgent? topicAgent;
+  final VoiceprintLibraryStore? voiceprintStore;
+  TopicSegmentationStore? _topicStore;
+
+  TopicSegmentationStore get topicStore =>
+      _topicStore ??= TopicSegmentationStore(resolveRoot: store.root);
+
+  /// 在录音出现 `>= 1 分钟` 空白或录音停止时，触发快速话题分段 Agent 并写入幂等水位锁。
+  Future<TopicSegmentEvaluationResult?> evaluateTopicSegmentation({
+    bool sessionJustEnded = false,
+    int? wallClockNowMs,
+  }) async {
+    final agent = topicAgent;
+    if (agent == null) return null;
+    final all = await store.loadAll(refresh: true);
+    return agent.evaluateRuns(
+      all,
+      store: topicStore,
+      sessionJustEnded: sessionJustEnded,
+      wallClockNowMs: wallClockNowMs,
+    );
+  }
 
   /// 实时音频存储根目录（测试注入；生产为 null 默认走 ApplicationSupport）。
   final Directory? liveAudioBaseDir;
@@ -1316,12 +1343,37 @@ class RecordingPipeline {
 
     int sessionIndexOf(int cluster) => clusterToSpeaker[cluster] ?? cluster;
 
+    // 仅对照 5 常用自动识别槽位（1..5）匹配声纹；高分直接落真实姓名，次高区间记录弱提示
+    final vpStore = voiceprintStore;
+    final resolvedLabelByCluster = <int, String>{};
+    for (final entry in cluster.centroids.entries) {
+      final cIdx = entry.key;
+      final defaultSlot = '说话人 ${sessionIndexOf(cIdx) + 1}';
+      if (vpStore != null) {
+        final match = vpStore.matchFrequentOnly(entry.value);
+        if (match.confirmed != null) {
+          resolvedLabelByCluster[cIdx] = match.confirmed!.name;
+          continue;
+        }
+        if (match.fuzzyHint != null) {
+          vpStore.recordFuzzyHint(
+            session: file.session.isEmpty ? file.id : file.session,
+            speakerSlot: defaultSlot,
+            candidateName: match.fuzzyHint!.name,
+          );
+        }
+      }
+      resolvedLabelByCluster[cIdx] = defaultSlot;
+    }
+
     file.utterances = [
       for (final u in file.utterances)
         if (byId[u.id] != null && byId[u.id]!.known)
           u.copyWith(
             speakerCluster: sessionIndexOf(byId[u.id]!.cluster),
-            speakerLabel: '说话人 ${sessionIndexOf(byId[u.id]!.cluster) + 1}',
+            speakerLabel:
+                resolvedLabelByCluster[byId[u.id]!.cluster] ??
+                '说话人 ${sessionIndexOf(byId[u.id]!.cluster) + 1}',
             spkConfidence: byId[u.id]!.confidence,
           )
         else

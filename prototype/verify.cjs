@@ -111,11 +111,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('[data-testid="card-daily-1"]', x => x.innerText.includes('昨日睡前日记') && x.innerText.includes('已标注')));
   assert.equal(await p.$eval('[data-testid="tbc-daily"]', x => x.innerText.trim()), 'TBC');
   assert.equal(await p.$('[data-testid="tbc-slice-merge"]'), null);
-  assert.equal(await p.$eval('[data-testid="nc-slice-merge"]', x => x.innerText.trim()), 'NC');
-  await p.click('[data-testid="nc-merge-rule-btn"]');
-  assert(await p.$eval('[data-testid="nc-merge-panel"]', x => !x.hidden && x.innerText.includes('30 秒') && x.innerText.includes('1 分钟') && x.innerText.includes('水位')));
-  await p.click('[data-testid="nc-merge-rule-btn"]');
-  assert(await p.$eval('[data-testid="nc-merge-panel"]', x => x.hidden));
+  assert.equal(await p.$('[data-testid="nc-btn"]'), null, 'NC 已全部落地，index.html 顶栏不再展示 NC 胶囊');
+  assert.equal(await p.$$eval('.nc-badge', x => x.length), 0, 'index.html 不应残留 NC 徽标');
+  assert.equal(await p.$('[data-testid="nc-merge-panel"]'), null);
   assert(await p.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
   const sumTop = await p.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
   const e1Top = await p.$eval('[data-testid="card-e1"]', x => x.getBoundingClientRect().top);
@@ -601,11 +599,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$('#parity-tabs'), null, '清理后不再保留 App 超前对比分页');
   assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 9);
   await p.evaluate(() => closeParity());
-  assert.equal(await p.$eval('[data-testid="nc-btn"]', x => x.innerText.trim()), 'NC·3');
-  await p.click('[data-testid="nc-btn"]');
-  assert(await p.$eval('#nc-wrap', x => x.classList.contains('show')));
-  assert.equal(await p.$$eval('#nc-list .p-item', x => x.length), 3);
-  await p.evaluate(() => closeNcSheet());
+  assert.equal(await p.$('[data-testid="nc-btn"]'), null);
   await p.click('[data-testid="hw-capsule"]');
   assert(await p.$eval('#sheet', x => x.classList.contains('show')));
   // 默认未连接：弹层先给连接引导，自动扫描三款自有硬件（DYJ* / REAI_VB_*），按 RSSI 从强到弱
@@ -875,6 +869,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.getAttribute('href')), 'index.html');
   assert.equal(await p.$eval('[data-testid="ver-switch-current"]', x => x.getAttribute('href')), 'current.html');
   assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0, 'current.html 不应出现 TBC 标记');
+  assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, 'current.html 不应出现 NC 胶囊');
+  assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0, 'current.html 不应出现 NC 标记');
   assert.equal(await pCur.$$eval('.card[data-kind="daily"], .card[data-kind="dream"]', x => x.length), 0);
   assert(!(await pCur.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
   // 验证当前版同样具备：总结卡左下图片数、未归类双列正方形详情页与「不归类」按钮、总结正文自然穿插配图
@@ -892,7 +888,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.deepEqual(await pCur.$$eval('#stabs button', e => e.map(x => x.innerText.trim())), ['全部', '概览', '逻辑结构', '信息点', '行动项', '全文', '来源记录']);
   assert(await pCur.$eval('[data-testid="sum-fulltext-body"]', x => x.innerText.trim().length > 10));
   assert.equal(await pCur.$('[data-testid="sum-mark-speaker-btn"]'), null, '全文直接点击说话人命名，不再展示复杂按钮');
-  assert.equal(await pCur.$eval('[data-testid="nc-ft-merge"]', x => x.innerText.trim()), 'NC');
+  assert.equal(await pCur.$('[data-testid="nc-ft-merge"]'), null);
   // 全文同说话人连续发言应合并为单段整段（e2 共 5 条 dlg，首两条均为说话人 2，合并后为 4 组）
   assert.equal(await pCur.$$eval('#sec-ft [data-testid^="sum-ft-group-e2-"]', e => e.length), 4);
   assert(await pCur.$eval('[data-testid="sum-ft-group-e2-0"]', x => x.innerText.includes('偏慢') && x.innerText.includes('两三秒')));
@@ -924,13 +920,13 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$eval('[data-testid="sum-ft-who-e2-0"]', x => x.innerText.includes('张总')));
   assert(await pCur.evaluate(() => diClockHTML(3660).includes('di-colon') && diClockHTML(3661).includes('dim')));
   await pCur.click('[data-testid="crumb-back"]');
-  // 验证 NC·3 汇总窗及分段规则、声纹管理（5 常用槽位含我的声音+单独录音 / 不限人数人物库）
+  // 验证「当前版」已落地清单、合并分片徽标及声纹管理（5 常用槽位含我的声音+单独录音 / 不限人数人物库）
   assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·9');
-  assert.equal(await pCur.$eval('[data-testid="nc-btn"]', x => x.innerText.trim()), 'NC·3');
-  await pCur.click('[data-testid="nc-btn"]');
-  assert.equal(await pCur.$$eval('#nc-list .p-item', x => x.length), 3);
-  await pCur.click('#nc-list .p-item');
-  assert(await pCur.$eval('[data-testid="nc-merge-panel"]', x => !x.hidden && x.innerText.includes('30 秒') && x.innerText.includes('1 分钟') && x.innerText.includes('水位')));
+  assert.equal(await pCur.$('[data-testid="nc-btn"]'), null);
+  await pCur.click('[data-testid="parity-btn"]');
+  assert(await pCur.$eval('#parity-wrap', x => x.classList.contains('show')));
+  assert((await pCur.$$eval('#parity-list .p-item', x => x.length)) >= 9);
+  await pCur.evaluate(() => closeParity());
   assert(await pCur.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
   await pCur.click('[data-testid="nav-setting"]');
   await pCur.evaluate(() => { agCfg.local.spk = 'none'; syncSetSummary(); });
@@ -974,10 +970,22 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="crumb-back"]');
   assert.equal(await pCur.$eval('#sv-watch', x => x.innerText.trim()), '未开启');
   await pCur.$eval('[data-testid="set-apple-watch"]', x => x.scrollIntoView({ block: 'center' }));
+  assert.equal(await pCur.$('[data-testid="nc-watch-entry"]'), null);
   await pCur.click('[data-testid="set-apple-watch"]');
   assert(await pCur.$('[data-testid="watch-link-status-card"]'));
+  assert(await pCur.$('[data-testid="watch-remote-card"]'));
+  assert(await pCur.$('[data-testid="watch-slices-card"]'));
   assert(await pCur.$('[data-testid="watch-complication-guide"]'));
+  assert.equal(await pCur.$$eval('#p-setsub .nc-badge', x => x.length), 0);
   assert(await pCur.$eval('[data-testid="watch-link-status-card"]', x => !x.innerText.includes('%') && !x.innerText.includes('已充满')));
+  // 验证「表端未安装」自检提示切换与本地 16kHz WAV 切片试听
+  await pCur.click('[data-testid="watch-toggle-install-btn"]');
+  assert(await pCur.$('[data-testid="watch-install-guide-banner"]'));
+  await pCur.click('[data-testid="watch-toggle-install-btn"]');
+  assert.equal(await pCur.$('[data-testid="watch-install-guide-banner"]'), null);
+  await pCur.click('[data-testid="watch-slice-play-0"]');
+  assert(await pCur.$eval('[data-testid="watch-slice-play-0"]', x => x.innerText.includes('停止试听')));
+  await pCur.click('[data-testid="watch-slice-play-0"]');
   await pCur.click('[data-testid="watch-link-switch"]');
   await pCur.click('[data-testid="crumb-back"]');
   assert.equal(await pCur.$eval('#sv-watch', x => x.innerText.trim()), '已配对');

@@ -24,6 +24,7 @@ import 'services/net/model_gateway.dart';
 import 'services/polish/slice_polish_service.dart';
 import 'services/recordings/recording_pipeline.dart';
 import 'services/recordings/recording_store.dart';
+import 'services/segment/fast_topic_segment_agent.dart';
 import 'services/segment/segment_build_service.dart';
 import 'services/transcribe/model_manager_controller.dart';
 import 'services/transcribe/asr_models.dart';
@@ -158,6 +159,12 @@ class _HomeGateState extends State<_HomeGate> {
         model: _modelGateway.textModel,
         ready: () => _modelGateway.ready,
       ),
+      topicAgent: FastTopicSegmentAgent(
+        chat: chat,
+        model: _modelGateway.textModel,
+        ready: () => _modelGateway.ready,
+      ),
+      voiceprintStore: _store.voiceprintStore,
     );
     _store.attachPipeline(
       pipeline: _pipeline,

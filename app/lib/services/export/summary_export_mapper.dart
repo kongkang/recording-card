@@ -13,6 +13,9 @@ ExportDocument exportDocumentFromSummary(
   TranscriptExportMode transcriptMode = TranscriptExportMode.aiOptimized,
   List<ExportImageItem> Function(RecordEvent event)? photosResolver,
   String Function(RecordEvent event, String rawSpeaker)? speakerResolver,
+  String Function(RecordEvent event, int turnIndex, String rawSpeaker)?
+  turnSpeakerResolver,
+  bool preferResolvedTurns = false,
   String Function(String text, List<RecordEvent> events)? aliasTextTransformer,
 }) {
   final orderedEvents = sortEventsChronological(sourceEvents);
@@ -21,7 +24,10 @@ ExportDocument exportDocumentFromSummary(
   String transformText(String raw) =>
       aliasTextTransformer?.call(raw, orderedEvents) ?? raw;
 
-  String resolveSpk(RecordEvent event, String rawSpk) =>
+  String resolveSpk(RecordEvent event, String rawSpk, [int? turnIndex]) =>
+      (turnIndex != null
+          ? turnSpeakerResolver?.call(event, turnIndex, rawSpk)
+          : null) ??
       speakerResolver?.call(event, rawSpk) ??
       (rawSpk.trim().startsWith('说话人') || rawSpk.trim() == '未区分'
           ? rawSpk.trim()
@@ -133,7 +139,9 @@ ExportDocument exportDocumentFromSummary(
   if (transcriptMode == TranscriptExportMode.aiOptimized) {
     final resolvedFull = card.resolvedFullText(
       orderedEvents,
-      speakerResolver: resolveSpk,
+      speakerResolver: speakerResolver,
+      turnSpeakerResolver: turnSpeakerResolver,
+      preferResolvedTurns: preferResolvedTurns,
       aliasTextTransformer: aliasTextTransformer,
     );
     if (resolvedFull.isNotEmpty) {
@@ -148,9 +156,9 @@ ExportDocument exportDocumentFromSummary(
       final eventImages = photosForEvent(e);
       final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
       final turnLines = <String>[
-        for (final t in turns)
-          if (cleanSpokenFillers(t.text).isNotEmpty)
-            '${t.src.replaceFirst('来源 ', '')} · ${resolveSpk(e, t.spk)}：${cleanSpokenFillers(t.text)}',
+        for (var ti = 0; ti < turns.length; ti++)
+          if (cleanSpokenFillers(turns[ti].text).isNotEmpty)
+            '${turns[ti].src.replaceFirst('来源 ', '')} · ${resolveSpk(e, turns[ti].spk, ti)}：${cleanSpokenFillers(turns[ti].text)}',
       ];
       final fallback = (e.longText.trim().isNotEmpty ? e.longText : e.brief)
           .trim();
@@ -169,7 +177,9 @@ ExportDocument exportDocumentFromSummary(
           heading: '原始文字记录',
           body: card.resolvedFullText(
             orderedEvents,
-            speakerResolver: resolveSpk,
+            speakerResolver: speakerResolver,
+            turnSpeakerResolver: turnSpeakerResolver,
+            preferResolvedTurns: preferResolvedTurns,
             aliasTextTransformer: aliasTextTransformer,
           ),
         ),
@@ -180,13 +190,15 @@ ExportDocument exportDocumentFromSummary(
       final rawTurns = e.raw;
       final lines = <String>[];
       if (rawTurns.isNotEmpty) {
-        for (final t in rawTurns) {
-          lines.add('${t.src} · ${resolveSpk(e, t.spk)}：${t.text}');
+        for (var ti = 0; ti < rawTurns.length; ti++) {
+          final t = rawTurns[ti];
+          lines.add('${t.src} · ${resolveSpk(e, t.spk, ti)}：${t.text}');
         }
       } else if (e.dialog.isNotEmpty) {
         lines.add('（该记录无独立未润色原文，以下为本地转写内容）');
-        for (final t in e.dialog) {
-          lines.add('${t.src} · ${resolveSpk(e, t.spk)}：${t.text}');
+        for (var ti = 0; ti < e.dialog.length; ti++) {
+          final t = e.dialog[ti];
+          lines.add('${t.src} · ${resolveSpk(e, t.spk, ti)}：${t.text}');
         }
       } else {
         final fallback = (e.longText.trim().isNotEmpty ? e.longText : e.brief)

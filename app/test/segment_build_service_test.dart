@@ -52,7 +52,7 @@ PolishedTurn _turn(
 );
 
 void main() {
-  test('20s 静音切事件：两段，时间/标题/turnIds 正确', () async {
+  test('30s 静音切事件：两段，时间/标题/turnIds 正确', () async {
     final chat = _SummaryChat();
     final service = SegmentBuildService(chat: chat, model: 'test-model');
     final file = _file(
@@ -79,13 +79,28 @@ void main() {
     expect(result.fallback, isFalse);
   });
 
+  test('<30s 停顿连续超 25 分钟默认不设时长上限，保持为 1 段', () async {
+    final chat = _SummaryChat();
+    final service = SegmentBuildService(chat: chat, model: 'test-model');
+    final turns = [
+      // 31 个 turn，每间隔 29s，共跨 ~15 分钟；再加到 60 个，共 ~29 分钟
+      for (var i = 0; i < 60; i++)
+        _turn('t$i', i * 29000, i * 29000 + 1000, text: '持续讨论 $i'),
+    ];
+    final file = _file(turns: turns);
+
+    final result = await service.build(file, save: () async {});
+    expect(result.segments.length, 1);
+    expect(result.segments.single.turnIds.length, 60);
+  });
+
   test('未配置云端：用原文兜底分段，不丢 turn', () async {
     final chat = _SummaryChat();
     final service = SegmentBuildService(chat: chat, model: '');
     final file = _file(
       turns: [
         _turn('t0', 0, 1000, text: '第一段内容'),
-        _turn('t1', 30000, 31000, text: '第二段内容'),
+        _turn('t1', 31000, 32000, text: '第二段内容'),
       ],
     );
 
@@ -110,7 +125,7 @@ void main() {
     expect(result.segments.single.turnIds, ['t0']);
   });
 
-  test('单事件超过上限强制切段（没有 20s 静音也会切）', () async {
+  test('显式指定单事件上限时按上限强制切段', () async {
     final chat = _SummaryChat();
     final service = SegmentBuildService(
       chat: chat,
