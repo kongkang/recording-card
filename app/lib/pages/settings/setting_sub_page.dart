@@ -5,12 +5,8 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../core/device/card_gateway.dart';
 import '../../core/store/agent_config_store.dart';
@@ -2409,9 +2405,6 @@ class _AppleWatchLinkBody extends StatefulWidget {
 class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
   String? _hint;
   bool _busy = false;
-  AudioPlayer? _player;
-  StreamSubscription<void>? _playerCompleteSub;
-  String? _playingSliceId;
 
   @override
   void initState() {
@@ -2422,56 +2415,12 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
     }
   }
 
-  @override
-  void dispose() {
-    unawaited(_playerCompleteSub?.cancel());
-    final player = _player;
-    _player = null;
-    if (player != null) {
-      unawaited(player.dispose().catchError((_) {}));
-    }
-    super.dispose();
-  }
-
   static String _batteryTierText(WatchBridgeStatus s) {
     if (s.isCharging) return '充电中';
     if (s.batteryLevel <= 0) return '未知';
     if (s.batteryLevel < 20) return '电量低';
     if (s.batteryLevel < 40) return '电量中';
     return '电量高';
-  }
-
-  static String _formatClockFromSec(int sec) {
-    final s = sec < 0 ? 0 : sec;
-    final h = s ~/ 3600;
-    final m = (s % 3600) ~/ 60;
-    final r = s % 60;
-    return '${h.toString().padLeft(2, '0')}:'
-        '${m.toString().padLeft(2, '0')}:${r.toString().padLeft(2, '0')}';
-  }
-
-  static String _formatTimeOfDay(int startAtMs) {
-    if (startAtMs <= 0) return '刚刚';
-    final dt = DateTime.fromMillisecondsSinceEpoch(startAtMs).toLocal();
-    return '${dt.hour.toString().padLeft(2, '0')}:'
-        '${dt.minute.toString().padLeft(2, '0')}:'
-        '${dt.second.toString().padLeft(2, '0')}';
-  }
-
-  static String _formatDurMs(int durationMs) {
-    final sec = (durationMs / 1000).round();
-    if (sec < 60) return '${sec}s';
-    final m = sec ~/ 60;
-    final r = sec % 60;
-    return r == 0 ? '$m 分钟' : '$m 分 $r 秒';
-  }
-
-  static String _formatSizeBytes(int bytes) {
-    if (bytes <= 0) return '';
-    if (bytes < 1024 * 1024) {
-      return '${(bytes / 1024).toStringAsFixed(0)} KB';
-    }
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
   }
 
   Future<void> _toggleLink(bool next) async {
@@ -2484,33 +2433,6 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
     setState(() {
       _hint = next ? '已开启 Apple Watch 联动，可在右上角胶囊扫描连接' : '已关闭 Apple Watch 联动';
     });
-  }
-
-  Future<bool> _ensureWatchConnected(DeviceStore dev) async {
-    final alreadyWatch =
-        dev.isConnected && dev.activeKind == DeviceKind.appleWatch;
-    if (alreadyWatch) return true;
-    if (!widget.config.watchLinkEnabled) {
-      await widget.config.setWatchLinkEnabled(true);
-      await dev.setWatchLinkEnabled(true);
-    } else {
-      await dev.watchHardware.refreshStatus();
-    }
-    final cardDev = dev.watchHardware.asCardDevice;
-    if (cardDev == null) {
-      if (mounted) {
-        setState(() => _hint = '未检测到已配对的 Apple Watch');
-      }
-      return false;
-    }
-    await dev.connectTo(cardDev);
-    final ok = dev.isConnected && dev.activeKind == DeviceKind.appleWatch;
-    if (!ok && mounted) {
-      setState(() {
-        _hint = dev.linkError ?? 'Apple Watch 连接未完成，请确认手表端已安装「录音卡」';
-      });
-    }
-    return ok;
   }
 
   Future<void> _connectOrDisconnect() async {
@@ -2530,9 +2452,26 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
         }
         return;
       }
-      final ok = await _ensureWatchConnected(dev);
-      if (ok && mounted) {
-        setState(() => _hint = '已将 Apple Watch 设为当前采集硬件');
+      if (!widget.config.watchLinkEnabled) {
+        await widget.config.setWatchLinkEnabled(true);
+        await dev.setWatchLinkEnabled(true);
+      } else {
+        await dev.watchHardware.refreshStatus();
+      }
+      final cardDev = dev.watchHardware.asCardDevice;
+      if (cardDev == null) {
+        if (mounted) {
+          setState(() => _hint = '未检测到已配对的 Apple Watch');
+        }
+        return;
+      }
+      await dev.connectTo(cardDev);
+      if (mounted) {
+        setState(() {
+          _hint = dev.isConnected && dev.activeKind == DeviceKind.appleWatch
+              ? '已将 Apple Watch 设为当前采集硬件'
+              : (dev.linkError ?? 'Apple Watch 连接未完成，请确认手表端已安装「录音卡」');
+        });
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -2560,189 +2499,6 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
     }
   }
 
-  Future<void> _toggleRemoteRec() async {
-    final dev = widget.device;
-    if (dev == null) return;
-    setState(() {
-      _busy = true;
-      _hint = null;
-    });
-    try {
-      final connected = await _ensureWatchConnected(dev);
-      if (!connected) return;
-      final wasRecording = dev.isRecording;
-      final err = await dev.toggleRecording();
-      if (!mounted) return;
-      if (err != null) {
-        setState(() => _hint = err);
-        return;
-      }
-      setState(() {
-        _hint = !wasRecording && dev.isRecording
-            ? '已远程开启手表录音（灵动岛与本机待命保底已同步激活）'
-            : (wasRecording && !dev.isRecording
-                  ? '已停止手表录音，切片将自动同步并转为 16kHz WAV 入库'
-                  : (dev.recordingError ?? '手表录音状态已更新'));
-      });
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _sendRemoteMark() async {
-    final dev = widget.device;
-    if (dev == null) return;
-    final isWatchRecording =
-        dev.isConnected &&
-        dev.activeKind == DeviceKind.appleWatch &&
-        dev.isRecording;
-    if (!isWatchRecording) {
-      setState(() => _hint = '请先开启手表录音后再打重点');
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      final sec = dev.recSeconds > 0
-          ? dev.recSeconds
-          : dev.watchHardware.currentStatus.elapsedSec;
-      await dev.watchHardware.addMark(atMs: sec * 1000);
-      if (mounted) {
-        setState(() => _hint = '已在腕上录音 ${sec}s 处打重点标记');
-      }
-    } on Object catch (e) {
-      if (mounted) {
-        setState(() => _hint = '重点标记发送失败：$e');
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _refreshWatchStatus() async {
-    final dev = widget.device;
-    if (dev == null) return;
-    setState(() => _busy = true);
-    try {
-      await dev.watchHardware.refreshStatus();
-      if (mounted) {
-        setState(() => _hint = '已刷新手表连接与待传队列状态');
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _toggleSlicePlay(WatchReceivedSliceRecord sl) async {
-    if (_playingSliceId == sl.sliceId) {
-      setState(() => _playingSliceId = null);
-      final player = _player;
-      if (player != null) {
-        unawaited(player.stop().catchError((_) {}));
-      }
-      return;
-    }
-    final trimmed = sl.wavPath.trim();
-    if (trimmed.isEmpty || !File(trimmed).existsSync()) {
-      setState(() => _hint = '本地音频文件不存在或尚未同步：${sl.fileName}');
-      return;
-    }
-    setState(() {
-      _playingSliceId = sl.sliceId;
-      _hint = '正在试听本地 16kHz WAV：${sl.fileName}';
-    });
-    try {
-      var player = _player;
-      if (player == null) {
-        player = AudioPlayer();
-        _player = player;
-        _playerCompleteSub = player.onPlayerComplete.listen((_) {
-          if (!mounted) return;
-          setState(() => _playingSliceId = null);
-        });
-      }
-      await player.play(DeviceFileSource(trimmed));
-    } on MissingPluginException {
-      // 单元测试环境未挂载原生音频插件时保留试听切换反馈
-    } on PlatformException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _playingSliceId = null;
-        _hint = '试听失败：${e.message ?? e.code}';
-      });
-    } on Object catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _playingSliceId = null;
-        _hint = '试听失败：$e';
-      });
-    }
-  }
-
-  Future<void> _exportSlice(WatchReceivedSliceRecord sl) async {
-    final trimmed = sl.wavPath.trim();
-    final f = File(trimmed);
-    if (trimmed.isEmpty || !f.existsSync()) {
-      setState(() => _hint = '未找到可导出的本地 WAV 文件：${sl.fileName}');
-      return;
-    }
-    try {
-      await SharePlus.instance.share(
-        ShareParams(
-          files: [
-            XFile(trimmed, mimeType: 'audio/wav', length: f.lengthSync()),
-          ],
-          title: sl.fileName,
-          subject: sl.fileName,
-        ),
-      );
-      if (mounted) {
-        setState(() => _hint = '已调起系统分享：${sl.fileName}');
-      }
-    } on MissingPluginException {
-      if (mounted) {
-        setState(() => _hint = '已准备导出本地文件：${sl.fileName}');
-      }
-    } on Object catch (e) {
-      if (mounted) {
-        setState(() => _hint = '导出失败：$e');
-      }
-    }
-  }
-
-  Future<void> _deleteSlice(
-    DeviceStore dev,
-    WatchReceivedSliceRecord sl,
-  ) async {
-    if (_playingSliceId == sl.sliceId) {
-      _playingSliceId = null;
-      final player = _player;
-      if (player != null) {
-        unawaited(player.stop().catchError((_) {}));
-      }
-    }
-    await dev.watchHardware.deleteReceivedSlice(sl.sliceId);
-    if (!mounted) return;
-    setState(() => _hint = '已删除本地切片：${sl.fileName}');
-  }
-
-  Widget _buildTagChip(
-    String text, {
-    required Color bg,
-    required Color fg,
-    required Color border,
-  }) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-    decoration: BoxDecoration(
-      color: bg,
-      borderRadius: BorderRadius.circular(6),
-      border: Border.all(color: border),
-    ),
-    child: Text(
-      text,
-      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg),
-    ),
-  );
-
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
@@ -2758,10 +2514,6 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
         final isWatchConnected =
             dev?.isConnected == true &&
             dev?.activeKind == DeviceKind.appleWatch;
-        final isWatchRecording = isWatchConnected && (dev?.isRecording ?? false);
-        final clockText = dev != null && dev.recSeconds > 0
-            ? dev.recClockText
-            : _formatClockFromSec(status?.elapsedSec ?? 0);
         final pairedText = status == null
             ? '待检测'
             : (!status.supported
@@ -2775,9 +2527,6 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
             : (status?.reachable == true ? '表端在线可达' : '离线待命（支持表端先存后传）');
         final battText = status == null ? '未知' : _batteryTierText(status);
         final pendingText = '${status?.pendingCount ?? 0} 段';
-        final slices =
-            dev?.watchHardware.receivedSlices ??
-            const <WatchReceivedSliceRecord>[];
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2847,15 +2596,6 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                   _WatchKvRow(label: '手表端应用', value: installedText),
                   _WatchKvRow(label: '协同链路', value: linkText),
                   _WatchKvRow(label: '手表电量', value: battText),
-                  _WatchKvRow(
-                    label: '腕上录音',
-                    value: isWatchRecording ? '录音中 · $clockText' : '未录音',
-                  ),
-                  if (isWatchRecording)
-                    const _WatchKvRow(
-                      label: '息屏保活通道',
-                      value: 'HKWorkoutSession 运动保活',
-                    ),
                   _WatchKvRow(label: '本地待传队列', value: pendingText, last: true),
                   if (status != null &&
                       status.paired &&
@@ -2912,229 +2652,6 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                       ),
                     ],
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            const _SubSectionLabel('远程控制（纯本地直连）'),
-            const SizedBox(height: 8),
-            Container(
-              key: const Key('watch-remote-card'),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: c.card,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: c.sep),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '直连 WatchConnectivity 控制',
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600,
-                            color: c.label,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        '不经服务器',
-                        style: TextStyle(fontSize: 11.5, color: c.sec),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  FilledButton(
-                    key: const Key('watch-remote-rec-btn'),
-                    style: isWatchRecording
-                        ? FilledButton.styleFrom(
-                            backgroundColor: c.danger,
-                            foregroundColor: Colors.white,
-                          )
-                        : null,
-                    onPressed: (_busy || dev == null)
-                        ? null
-                        : _toggleRemoteRec,
-                    child: Text(
-                      isWatchRecording ? '停止手表录音（腕上采集中）' : '开启手表录音',
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton(
-                        key: const Key('watch-remote-mark-btn'),
-                        onPressed: (_busy || dev == null)
-                            ? null
-                            : _sendRemoteMark,
-                        child: const Text('打重点（Mark）'),
-                      ),
-                      OutlinedButton(
-                        key: const Key('watch-refresh-btn'),
-                        onPressed: (_busy || dev == null)
-                            ? null
-                            : _refreshWatchStatus,
-                        child: const Text('刷新手表状态'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Expanded(
-                  child: _SubSectionLabel('已接收切片（本地 16kHz WAV）'),
-                ),
-                Text(
-                  '共 ${slices.length} 片',
-                  style: TextStyle(fontSize: 11.5, color: c.sec),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Container(
-              key: const Key('watch-slices-card'),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: c.card,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: c.sep),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    '表端以 32kbps .m4a 低功耗录制并离线暂存，回传 iPhone 后本机自动转码为 16kHz / 16-bit 单声道 PCM WAV 送入 SenseVoice 转写，原始音频不上传云端。',
-                    style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
-                  ),
-                  if (slices.isEmpty) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      '暂无已接收的手表切片。开启手表录音或拉取待传切片后，切片将自动本地落盘到这里。',
-                      key: const Key('watch-slices-empty'),
-                      style: TextStyle(fontSize: 12.5, color: c.sec),
-                    ),
-                  ] else
-                    for (var i = 0; i < slices.length; i++) ...[
-                      const SizedBox(height: 10),
-                      Builder(
-                        builder: (context) {
-                          final sl = slices[i];
-                          final playing = _playingSliceId == sl.sliceId;
-                          final sizeText = _formatSizeBytes(sl.fileSizeBytes);
-                          final meta = [
-                            _formatTimeOfDay(sl.startAtMs),
-                            '时长 ${_formatDurMs(sl.durationMs)}',
-                            if (sizeText.isNotEmpty) sizeText,
-                          ].join(' · ');
-                          return Container(
-                            key: Key('watch-slice-item-$i'),
-                            padding: const EdgeInsets.all(11),
-                            decoration: BoxDecoration(
-                              color: c.bg,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: c.sep),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 4,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: [
-                                    Text(
-                                      '第 ${sl.sliceIndex + 1} 片 · ${sl.fileName}',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                        color: c.label,
-                                      ),
-                                    ),
-                                    if (sl.offlineRecorded)
-                                      _buildTagChip(
-                                        '离线补传',
-                                        bg: RCColors.warn.withValues(
-                                          alpha: 0.12,
-                                        ),
-                                        fg: const Color(0xFF8A4300),
-                                        border: RCColors.warn.withValues(
-                                          alpha: 0.35,
-                                        ),
-                                      ),
-                                    _buildTagChip(
-                                      '已入 Timeline 转写',
-                                      bg: c.okInk.withValues(alpha: 0.08),
-                                      fg: c.okInk,
-                                      border: c.okInk.withValues(alpha: 0.32),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  playing ? '$meta · 正在回放' : meta,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: playing ? c.okInk : c.sec,
-                                  ),
-                                ),
-                                if (sl.marksMs.isNotEmpty) ...[
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '重点标记（相对起点）：${sl.marksMs.map((m) => '${(m / 1000).round()}s').join('、')}',
-                                    style: const TextStyle(
-                                      fontSize: 11.5,
-                                      color: Color(0xFF0F4C81),
-                                    ),
-                                  ),
-                                ],
-                                const SizedBox(height: 8),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 6,
-                                  children: [
-                                    OutlinedButton(
-                                      key: Key('watch-slice-play-$i'),
-                                      onPressed: () =>
-                                          unawaited(_toggleSlicePlay(sl)),
-                                      child: Text(
-                                        playing ? '停止试听' : '试听 WAV',
-                                      ),
-                                    ),
-                                    OutlinedButton(
-                                      key: Key('watch-slice-export-$i'),
-                                      onPressed: () =>
-                                          unawaited(_exportSlice(sl)),
-                                      child: const Text('导出'),
-                                    ),
-                                    OutlinedButton(
-                                      key: Key('watch-slice-del-$i'),
-                                      style: OutlinedButton.styleFrom(
-                                        foregroundColor: c.danger,
-                                      ),
-                                      onPressed: dev == null
-                                          ? null
-                                          : () => unawaited(
-                                              _deleteSlice(dev, sl),
-                                            ),
-                                      child: const Text('删除'),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ],
                 ],
               ),
             ),

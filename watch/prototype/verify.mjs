@@ -245,6 +245,7 @@ if (pp && chromePath) {
     await page.click('[data-testid="nav-timeline"]');
 
     // Flow 2: Watch complication start -> Dynamic Island -> slice cut -> iPhone WAV Timeline play/delete
+    await page.click('[data-testid="watch-screen-tabs"] button[data-wtab="face"]');
     await page.click('[data-testid="comp-corner"]');
     assert.equal(await page.evaluate(() => S.hwRecOn && S.watchTab === 'app'), true);
     assert(

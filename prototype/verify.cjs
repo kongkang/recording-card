@@ -972,20 +972,18 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.$eval('[data-testid="set-apple-watch"]', x => x.scrollIntoView({ block: 'center' }));
   assert.equal(await pCur.$('[data-testid="nc-watch-entry"]'), null);
   await pCur.click('[data-testid="set-apple-watch"]');
+  assert(await pCur.$('[data-testid="watch-link-toggle-row"]'));
   assert(await pCur.$('[data-testid="watch-link-status-card"]'));
-  assert(await pCur.$('[data-testid="watch-remote-card"]'));
-  assert(await pCur.$('[data-testid="watch-slices-card"]'));
   assert(await pCur.$('[data-testid="watch-complication-guide"]'));
+  assert.equal(await pCur.$('[data-testid="watch-remote-card"]'), null);
+  assert.equal(await pCur.$('[data-testid="watch-slices-card"]'), null);
   assert.equal(await pCur.$$eval('#p-setsub .nc-badge', x => x.length), 0);
   assert(await pCur.$eval('[data-testid="watch-link-status-card"]', x => !x.innerText.includes('%') && !x.innerText.includes('已充满')));
-  // 验证「表端未安装」自检提示切换与本地 16kHz WAV 切片试听
-  await pCur.click('[data-testid="watch-toggle-install-btn"]');
+  // 验证「表端未安装」自检横幅按状态显示与恢复
+  await pCur.evaluate(() => { agCfg.watchInstalled = false; renderSetSub('watch'); });
   assert(await pCur.$('[data-testid="watch-install-guide-banner"]'));
-  await pCur.click('[data-testid="watch-toggle-install-btn"]');
+  await pCur.evaluate(() => { agCfg.watchInstalled = true; renderSetSub('watch'); });
   assert.equal(await pCur.$('[data-testid="watch-install-guide-banner"]'), null);
-  await pCur.click('[data-testid="watch-slice-play-0"]');
-  assert(await pCur.$eval('[data-testid="watch-slice-play-0"]', x => x.innerText.includes('停止试听')));
-  await pCur.click('[data-testid="watch-slice-play-0"]');
   await pCur.click('[data-testid="watch-link-switch"]');
   await pCur.click('[data-testid="crumb-back"]');
   assert.equal(await pCur.$eval('#sv-watch', x => x.innerText.trim()), '已配对');

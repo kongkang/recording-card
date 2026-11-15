@@ -972,106 +972,98 @@ nav.bottom button.on{color:var(--label);font-weight:600}
   color:rgba(255,255,255,.66);
 }
 
-/* 手表端极简录音卡 App（无本地转写，纯采集 + 缓存） */
+/* 手表端极简录音卡 App（1:1 对齐 WatchMainView.swift） */
 .w-app{
   flex:1;
   display:flex;
   flex-direction:column;
-  justify-content:space-between;
-  gap:6px;
+  justify-content:flex-start;
+  gap:10px;
   min-height:0;
 }
-.w-pill-row{
+.w-status-hd{
   display:flex;
   align-items:center;
-  justify-content:space-between;
   gap:6px;
+  font-size:11px;
+  color:rgba(255,255,255,.68);
 }
-.w-pill{
-  font-size:10px;
-  font-weight:600;
-  padding:3px 8px;
-  border-radius:999px;
-  background:rgba(255,255,255,.12);
-  color:#FFFFFF;
-  white-space:nowrap;
+.w-status-dot{
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:#34C759;
+  flex:none;
 }
-.w-pill.ok{background:rgba(52,199,89,.22);color:#70F294}
-.w-pill.warn{background:rgba(255,149,0,.22);color:#FFB340}
+.w-status-dot.warn{background:#FF9500}
+.w-batt-txt{
+  margin-left:auto;
+  font-variant-numeric:tabular-nums;
+  color:rgba(255,255,255,.62);
+}
 .w-timer{
   text-align:center;
   padding:4px 0;
 }
 .w-timer b{
   display:block;
-  font-size:26px;
-  font-weight:700;
+  font-size:29px;
+  font-weight:600;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   font-variant-numeric:tabular-nums;
+  color:#FFFFFF;
 }
+.w-timer b.rec{color:#FF3B30}
 .w-timer span{
   display:block;
-  font-size:10px;
-  color:rgba(255,255,255,.68);
+  font-size:10.5px;
+  color:rgba(255,255,255,.65);
   margin-top:2px;
 }
 .w-controls{
   display:flex;
-  gap:7px;
+  flex-direction:column;
+  gap:8px;
 }
 .w-rec-btn{
-  flex:1;
+  width:100%;
   border:0;
-  border-radius:14px;
-  padding:10px 8px;
-  font-size:12.5px;
-  font-weight:700;
-  background:#FF3B30;
+  border-radius:999px;
+  padding:11px 10px;
+  font-size:13px;
+  font-weight:600;
+  background:#34C759;
   color:#FFFFFF;
 }
-.w-rec-btn.on{background:#2C2C30;border:1px solid #FF3B30;color:#FF6B63}
+.w-rec-btn.on{background:#FF3B30;color:#FFFFFF}
 .w-mark-btn{
-  border:0;
-  border-radius:14px;
-  padding:10px 10px;
-  font-size:11.5px;
-  font-weight:700;
-  background:#2C2C30;
-  color:#FF9F0A;
-}
-.w-queue-box{
-  background:rgba(255,255,255,.09);
-  border-radius:12px;
+  width:100%;
+  border:1px solid rgba(255,255,255,.22);
+  border-radius:999px;
   padding:8px 10px;
-  display:flex;
-  flex-direction:column;
-  gap:5px;
-  overflow-y:auto;
-  max-height:92px;
-}
-.w-queue-hd{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  font-size:10.5px;
-  color:rgba(255,255,255,.78);
+  font-size:12px;
   font-weight:600;
+  background:rgba(255,255,255,.12);
+  color:#FFFFFF;
+}
+.w-footer-row{
+  margin-top:auto;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:6px;
+  padding:5px 2px 0;
+  font-size:11px;
+  color:rgba(255,255,255,.78);
 }
 .w-flush-btn{
   border:0;
   border-radius:999px;
   background:#34C759;
   color:#082410;
-  font-size:10px;
+  font-size:10.5px;
   font-weight:700;
   padding:3px 9px;
-}
-.w-qitem{
-  font-size:10px;
-  color:rgba(255,255,255,.72);
-  display:flex;
-  justify-content:space-between;
-  font-variant-numeric:tabular-nums;
 }
 </style>
 </head>
@@ -1325,9 +1317,9 @@ nav.bottom button.on{color:var(--label);font-weight:600}
 
     <div class="watch-panel">
       <div class="watch-tabs" data-testid="watch-screen-tabs">
-        <button type="button" class="on" data-wtab="face" onclick="setWatchTab('face')">表盘复杂功能</button>
-        <button type="button" data-wtab="app" onclick="setWatchTab('app')">手表录音卡</button>
-        <button type="button" data-testid="watch-aod-toggle" onclick="toggleWatchAOD()">常亮暗屏</button>
+        <button type="button" class="on" data-wtab="app" onclick="setWatchTab('app')">录音卡（表端）</button>
+        <button type="button" data-wtab="face" onclick="setWatchTab('face')">表盘组件</button>
+        <button type="button" data-testid="watch-aod-toggle" onclick="toggleWatchAOD()">息屏预览</button>
       </div>
 
       <div class="watch-band-top" aria-hidden="true"></div>
@@ -1335,12 +1327,12 @@ nav.bottom button.on{color:var(--label);font-weight:600}
         <div class="watch-case">
           <div class="watch-screen" id="watch-screen">
             <div class="watch-top">
-              <span id="w-status-mini">表盘组件</span>
+              <span id="w-status-mini" style="font-weight:600;color:#FFFFFF">录音卡</span>
               <span id="w-top-clock">14:38</span>
             </div>
 
             <!-- Watch Face 4 Complications -->
-            <div class="w-face" id="w-face">
+            <div class="w-face" id="w-face" hidden>
               <button type="button" class="comp-inline" data-testid="comp-inline" onclick="launchFromComplication('inline')">
                 <span id="comp-inline-txt">录音卡 · 轻触开启表盘录音</span>
               </button>
@@ -1370,35 +1362,32 @@ nav.bottom button.on{color:var(--label);font-weight:600}
               </button>
             </div>
 
-            <!-- Watch Collector App -->
-            <div class="w-app" id="w-app" hidden>
-              <div class="w-pill-row">
-                <span class="w-pill ok" id="w-conn-pill">已连通手机</span>
-                <span class="w-pill" id="w-batt-pill">电量 高</span>
+            <!-- Watch Collector App (1:1 WatchMainView.swift) -->
+            <div class="w-app" id="w-app">
+              <div class="w-status-hd">
+                <span class="w-status-dot" id="w-conn-dot"></span>
+                <span id="w-conn-pill">已连手机</span>
+                <span class="w-batt-txt" id="w-batt-pill">电量高</span>
               </div>
 
               <div class="w-timer">
                 <b id="w-clock">00:00:00</b>
-                <span id="w-keepalive">轻触开始 · 支持熄屏后台持续采音</span>
+                <span id="w-keepalive">每 60s 本地切片</span>
               </div>
 
               <div class="w-controls">
                 <button type="button" class="w-rec-btn" id="w-rec-btn" data-testid="watch-record-toggle" onclick="toggleWatchRec()">
                   开始录音
                 </button>
-                <button type="button" class="w-mark-btn" data-testid="watch-mark-btn" onclick="triggerWatchMark()">
-                  Mark <span id="w-mark-cnt">0</span>
+                <button type="button" class="w-mark-btn" id="w-mark-btn" data-testid="watch-mark-btn" onclick="triggerWatchMark()" hidden>
+                  打重点
                 </button>
               </div>
 
-              <div class="w-queue-box" data-testid="watch-queue-entry">
-                <div class="w-queue-hd">
-                  <span>待传队列 · <span id="w-q-cnt">0</span> 段</span>
-                  <button type="button" class="w-flush-btn" data-testid="watch-flush-btn" onclick="flushWatchQueue()">立即回传</button>
-                </div>
-                <div id="w-q-list">
-                  <div class="w-qitem"><span>无待传离线分片</span><span>AAC 32k</span></div>
-                </div>
+              <div class="w-footer-row" id="w-footer-row" data-testid="watch-queue-entry">
+                <span id="w-q-summary">已传 1 段</span>
+                <span id="w-q-cnt" hidden>0</span>
+                <button type="button" class="w-flush-btn" id="w-flush-btn" data-testid="watch-flush-btn" onclick="flushWatchQueue()" hidden>立即同步</button>
               </div>
             </div>
           </div>
@@ -1431,7 +1420,7 @@ function defaultState() {
     viewMode: "both",
     sheetOpen: false,
     discConfirm: false,
-    watchTab: "face",
+    watchTab: "app",
     watchAOD: false,
 
     watchLinkEnabled: false,
@@ -1710,6 +1699,10 @@ function toggleWatchLink() {
 }
 
 function connectWatchFromSetting() {
+  if (isWatchConnected()) {
+    confirmDisconnect();
+    return;
+  }
   S.watchLinkEnabled = true;
   S.wcsReachable = true;
   S.connectedDevId = "APPLE_WATCH_S10";
@@ -1718,7 +1711,7 @@ function connectWatchFromSetting() {
     S.phoneFailover = false;
     if (S.hwRecOn) S.phoneStandby = true;
   }
-  toast("已将 Apple Watch 接入为第 4 硬件");
+  toast("已将 Apple Watch 设为当前采集硬件");
   renderAll();
 }
 
@@ -2037,27 +2030,29 @@ function renderSetSubWatch() {
   if (!body) return;
   var wConn = isWatchConnected();
   var qCount = S.watchQueue.length;
+  var linkTxt = wConn ? "已作为当前硬件接入" : (S.wcsReachable ? "表端在线可达" : "离线待命（支持表端先存后传）");
   body.innerHTML =
-    '<div class="set-group"><div class="switchrow">'
-    + '<div><div style="font-size:13.5px;font-weight:600">开启 Apple Watch 硬件联动</div>'
-    + '<div style="font-size:11.5px;color:var(--sec);margin-top:2px">开启后将 Apple Watch 加入四硬件扫描列表；默认关闭以保持三硬件</div></div>'
-    + '<div class="sw' + (S.watchLinkEnabled ? " on" : "") + '" data-testid="watch-link-switch" role="switch" aria-checked="' + S.watchLinkEnabled + '" tabindex="0" onclick="toggleWatchLink()"></div>'
+    '<div class="set-group"><div class="switchrow" data-testid="watch-link-toggle-row" style="cursor:pointer" onclick="toggleWatchLink()">'
+    + '<div><div style="font-size:14px;font-weight:600">将 Apple Watch 作为录音硬件接入</div>'
+    + '<div style="font-size:11.5px;color:var(--sec);margin-top:2px;line-height:1.45">开启后手表与录音卡 V2 / 点一机 V1 / 语音 AI 键盘并列出现在右上角设备选单，表端仅负责轻量采集与本地缓存，切片全部在本机离线转码入库。</div></div>'
+    + '<div class="sw' + (S.watchLinkEnabled ? " on" : "") + '" data-testid="watch-link-switch" role="switch" aria-checked="' + S.watchLinkEnabled + '" tabindex="0" onclick="event.stopPropagation();toggleWatchLink()"></div>'
     + '</div></div>'
-    + '<div class="subcard" data-testid="watch-link-status-card">'
-    + '<h4><span>手表状态</span><span class="ext-tag">' + (wConn ? "已连接" : S.watchPaired ? "已配对" : "未配对") + '</span></h4>'
-    + '<div class="navrow"><span>配对与装端</span><span class="navval"><span>已配对 · 已安装</span></span></div>'
-    + '<div class="navrow"><span>手表电量</span><span class="navval"><span>电量' + esc(S.watchBattTier) + '</span></span></div>'
-    + '<div class="navrow"><span>WCSession 通道</span><span class="navval"><span>' + (S.wcsReachable ? "已连通" : "离线暂存") + '</span></span></div>'
-    + '<div class="navrow"><span>本地待传切片</span><span class="navval"><span>' + qCount + ' 段</span></span></div>'
+    + '<div class="set-title">配对与协同状态</div>'
+    + '<div class="subcard" data-testid="watch-link-status-card" style="margin-top:0">'
+    + '<div class="navrow" style="cursor:default"><span>配对状态</span><span class="navval"><b style="color:var(--label)">' + (S.watchPaired ? "已配对" : "未配对") + '</b></span></div>'
+    + '<div class="navrow" style="cursor:default"><span>手表端应用</span><span class="navval"><b style="color:var(--label)">' + (S.watchInstalled ? "已安装" : "未安装") + '</b></span></div>'
+    + '<div class="navrow" style="cursor:default"><span>协同链路</span><span class="navval"><b style="color:var(--label)">' + linkTxt + '</b></span></div>'
+    + '<div class="navrow" style="cursor:default"><span>手表电量</span><span class="navval"><b style="color:var(--label)">电量' + esc(S.watchBattTier) + '</b></span></div>'
+    + '<div class="navrow" style="cursor:default"><span>本地待传队列</span><span class="navval"><b style="color:var(--label)">' + qCount + ' 段</b></span></div>'
     + '<div class="wbtns">'
-    + '<button type="button" class="btn" data-testid="watch-connect-btn" onclick="connectWatchFromSetting()">' + (wConn ? "已作为当前录音硬件" : "连接手表") + '</button>'
-    + '<button type="button" class="btn ghost" data-testid="phone-flush-btn" onclick="flushWatchQueue()">回传待同步分片</button>'
+    + '<button type="button" class="btn" data-testid="watch-connect-btn" onclick="connectWatchFromSetting()">' + (wConn ? "断开手表连接" : "设为当前录音硬件") + '</button>'
+    + '<button type="button" class="btn ghost" data-testid="phone-flush-btn" ' + (S.watchLinkEnabled ? "" : "disabled ") + 'onclick="flushWatchQueue()">立即拉取待传录音</button>'
     + '</div></div>'
-    + '<div class="subcard" data-testid="watch-complication-guide">'
-    + '<h4><span>表盘常驻持续录音设置（3 步）</span></h4>'
-    + '<p>1. 长按 Apple Watch 表盘进入编辑，滑至「复杂功能」槽位。<br>'
-    + '2. 添加「录音卡」组件（支持边角 / 圆形 / 矩形 / 顶部内联 4 种槽位）。<br>'
-    + '3. 点击表盘即刻启动后台持续采音，连上手机后本地自动转 16kHz WAV 入库。</p></div>';
+    + '<div class="set-title">表盘常驻采集配置（三步）</div>'
+    + '<div class="subcard" data-testid="watch-complication-guide" style="margin-top:0">'
+    + '<p style="color:var(--label);margin-bottom:6px">1. 长按 Apple Watch 表盘 →「编辑」→ 选定角落、圆形、矩形或内嵌槽位，添加「录音卡」表盘组件；</p>'
+    + '<p style="color:var(--label);margin-bottom:6px">2. 抬腕轻点组件即可直接拉起手表端持续录音（HKWorkoutSession + 扩展后台保活，支持抬腕打重点 Mark）；</p>'
+    + '<p>3. 表端先存 .m4a 切片（无网络/断连也不断录），靠近手机自动回传，并在 iPhone 本机转为 16kHz 单声道 WAV 送入 SenseVoice 转写，原始音频不直传云端。</p></div>';
 }
 
 function renderDetail(id) {
@@ -2149,9 +2144,9 @@ function renderWatch() {
   var isApp = S.watchTab === "app";
   document.getElementById("w-face").hidden = isApp;
   document.getElementById("w-app").hidden = !isApp;
-  document.getElementById("w-status-mini").innerHTML = S.hwRecOn
-    ? '<span class="w-dot-live"></span>正在采音'
-    : (isApp ? "手表录音卡" : "表盘组件");
+  document.getElementById("w-status-mini").innerHTML = isApp
+    ? "录音卡"
+    : (S.hwRecOn ? '<span class="w-dot-live"></span>正在采音' : "表盘组件");
 
   // 表盘复杂功能实时刷新
   var inlineEl = document.getElementById("comp-inline-txt");
@@ -2179,34 +2174,47 @@ function renderWatch() {
   }
   rectSub.textContent = "待传队列 " + S.watchQueue.length + " 段 · 电量 " + S.watchBattTier;
 
-  // 手表应用页刷新
+  // 手表应用页刷新（1:1 WatchMainView.swift）
+  var connDot = document.getElementById("w-conn-dot");
   var connPill = document.getElementById("w-conn-pill");
-  if (S.watchLinkEnabled && S.wcsReachable) {
-    connPill.textContent = "已连通手机";
-    connPill.className = "w-pill ok";
+  if (S.wcsReachable) {
+    connDot.className = "w-status-dot";
+    connPill.textContent = "已连手机";
   } else {
-    connPill.textContent = "离线本地录";
-    connPill.className = "w-pill warn";
+    connDot.className = "w-status-dot warn";
+    connPill.textContent = "离线暂存";
   }
-  document.getElementById("w-batt-pill").textContent = "电量 " + S.watchBattTier;
-  document.getElementById("w-clock").textContent = clockHMS(S.hwRecSec);
+  document.getElementById("w-batt-pill").textContent = "电量" + S.watchBattTier;
+  var wClock = document.getElementById("w-clock");
+  wClock.textContent = clockHMS(S.hwRecSec);
+  wClock.classList.toggle("rec", S.hwRecOn);
+  var sliceIdx = Math.floor(S.hwRecSec / 60) + 1;
   document.getElementById("w-keepalive").textContent = S.hwRecOn
-    ? (S.watchLinkEnabled ? "后台持续采音中 · 每 60s 切分回传" : "仅存手表本地 · 未开启手机联动")
-    : "轻触开始 · 熄屏持续写入 .m4a";
+    ? ("录音中 · 运动保活 · 第" + sliceIdx + "片")
+    : "每 60s 本地切片";
 
   var recBtn = document.getElementById("w-rec-btn");
   recBtn.classList.toggle("on", S.hwRecOn);
   recBtn.textContent = S.hwRecOn ? "停止录音" : "开始录音";
-  document.getElementById("w-mark-cnt").textContent = String(S.watchMarks);
+  var markBtn = document.getElementById("w-mark-btn");
+  if (markBtn) {
+    markBtn.hidden = !S.hwRecOn;
+    markBtn.textContent = S.watchMarks > 0 ? ("打重点 · " + S.watchMarks) : "打重点";
+  }
 
-  document.getElementById("w-q-cnt").textContent = String(S.watchQueue.length);
-  var qList = document.getElementById("w-q-list");
-  if (!S.watchQueue.length) {
-    qList.innerHTML = '<div class="w-qitem"><span>无待传离线分片</span><span>AAC 32k</span></div>';
+  var qCnt = S.watchQueue.length;
+  document.getElementById("w-q-cnt").textContent = String(qCnt);
+  var syncedCnt = S.items.filter(function(x) { return x.source === "Apple Watch"; }).length;
+  var footerRow = document.getElementById("w-footer-row");
+  var qSummary = document.getElementById("w-q-summary");
+  var flushBtn = document.getElementById("w-flush-btn");
+  footerRow.hidden = (qCnt === 0 && syncedCnt === 0);
+  if (qCnt > 0) {
+    qSummary.textContent = "待传 " + qCnt + " 段";
+    flushBtn.hidden = false;
   } else {
-    qList.innerHTML = S.watchQueue.map(function(q) {
-      return '<div class="w-qitem"><span>' + esc(q.fileName) + '</span><span>' + q.durSec + 's · 待传</span></div>';
-    }).join("");
+    qSummary.textContent = "已传 " + syncedCnt + " 段";
+    flushBtn.hidden = true;
   }
 }
 
