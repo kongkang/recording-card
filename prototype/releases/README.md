@@ -14,4 +14,4 @@ node prototype/snapshot-release.mjs v1.0.0
 1. 将当前 `prototype/current.html` 归档为只读单文件 `prototype/releases/v1.0.0.html`（隔离存储键前缀，并将顶栏跳转路径修正为 `../current.html` 与 `../index.html`）；
 2. 将该版本登记进 `prototype/current.html` 与 `prototype/index.html` 的 `RELEASE_SNAPSHOTS` 列表，使顶栏分段胶囊右侧自动展示 `▾` 历史快照下拉切换入口。
 
-> 归档后的历史快照文件为**只读记录**，后续迭代请修改 `prototype/current.html` 或 `prototype/index.html`。
+> 双版本与 `NC`（当前版待确认开发）/ `TBC`（目标版未来规划）进度标记规范见 [`../README.md`](../README.md)。归档后的历史快照文件为**只读记录**，后续迭代请修改 `prototype/current.html` 或 `prototype/index.html`。

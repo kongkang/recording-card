@@ -110,7 +110,13 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('[data-testid="card-daily-0"]', x => x.innerText.includes('今日睡前日记') && x.innerText.includes('待标注 3')));
   assert(await p.$eval('[data-testid="card-daily-1"]', x => x.innerText.includes('昨日睡前日记') && x.innerText.includes('已标注')));
   assert.equal(await p.$eval('[data-testid="tbc-daily"]', x => x.innerText.trim()), 'TBC');
-  assert.equal(await p.$eval('[data-testid="tbc-slice-merge"]', x => x.innerText.trim()), 'TBC');
+  assert.equal(await p.$('[data-testid="tbc-slice-merge"]'), null);
+  assert.equal(await p.$eval('[data-testid="nc-slice-merge"]', x => x.innerText.trim()), 'NC');
+  await p.click('[data-testid="nc-merge-rule-btn"]');
+  assert(await p.$eval('[data-testid="nc-merge-panel"]', x => !x.hidden && x.innerText.includes('30 秒') && x.innerText.includes('1 分钟') && x.innerText.includes('水位')));
+  await p.click('[data-testid="nc-merge-rule-btn"]');
+  assert(await p.$eval('[data-testid="nc-merge-panel"]', x => x.hidden));
+  assert(await p.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
   const sumTop = await p.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
   const e1Top = await p.$eval('[data-testid="card-e1"]', x => x.getBoundingClientRect().top);
   assert(sumTop < e1Top, '总结卡应在当天记录上方');
@@ -423,9 +429,10 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="crumb-back"]');
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
 
-  // 导出：4 种纯格式完整导出（含图文纪要与文字记录：默认 AI 智能优化版 / 可切原文）→ 模拟调起系统分享
+  // 导出：4 种纯格式完整导出（含图文纪要与文字记录：默认 AI 智能优化版 / 可切原文，不包含标记说话人按钮）
   await p.click('[data-testid="export-btn"]');
   assert(await p.$eval('#export-pop', x => !x.hidden));
+  assert.equal(await p.$('[data-testid="export-mark-speaker-btn"]'), null, '导出弹层不应展示标记说话人按钮');
   assert.deepEqual(await p.$$eval('#export-pop .export-fmt-btn', e => e.map(x => x.innerText.trim())), ['PDF', 'Word 文档', 'Markdown', '图片']);
   assert(await p.$eval('#exp-mode-ai', x => x.classList.contains('on')));
   await p.click('#exp-mode-raw');
@@ -535,9 +542,11 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   // 交叉反馈：每分钟自动关联系统相册照片（默认开启开关 + 关后重开弹权限弹窗）+ 灵动岛按机型隐藏
   assert.equal(await p.$eval('[data-testid="sw-photo-sync"]', x => x.getAttribute('aria-checked')), 'true');
   assert(await p.$eval('#sv-photo-imp', x => x.innerText.includes('每分钟随切片自动对齐')));
+  await p.$eval('[data-testid="set-photo-import"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="set-photo-import"]');
   assert.equal(await p.$eval('[data-testid="sw-photo-sync"]', x => x.getAttribute('aria-checked')), 'false');
   assert(await p.$eval('#sv-photo-imp', x => x.innerText.includes('已关闭')));
+  await p.$eval('[data-testid="set-photo-import"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="set-photo-import"]');
   assert(await p.$eval('#photo-perm-wrap', x => x.classList.contains('show')));
   assert(await p.$('[data-testid="photo-perm-dialog"]'));
@@ -545,8 +554,10 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-testid="sw-photo-sync"]', x => x.getAttribute('aria-checked')), 'true');
   assert(await p.$eval('#sv-photo-imp', x => x.innerText.includes('每分钟随切片自动对齐')));
   assert(await p.$eval('[data-testid="set-dynamic-island"]', x => !x.hidden));
+  await p.$eval('[data-testid="toggle-island-hw"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="toggle-island-hw"]');
   assert(await p.$eval('[data-testid="set-dynamic-island"]', x => x.hidden));
+  await p.$eval('[data-testid="toggle-island-hw"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="toggle-island-hw"]');
   assert(await p.$eval('[data-testid="set-dynamic-island"]', x => !x.hidden));
   await p.click('[data-testid="set-prompts"]');
@@ -588,8 +599,13 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="parity-btn"]');
   assert(await p.$eval('#parity-wrap', x => x.classList.contains('show')));
   assert.equal(await p.$('#parity-tabs'), null, '清理后不再保留 App 超前对比分页');
-  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 10);
+  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 9);
   await p.evaluate(() => closeParity());
+  assert.equal(await p.$eval('[data-testid="nc-btn"]', x => x.innerText.trim()), 'NC·3');
+  await p.click('[data-testid="nc-btn"]');
+  assert(await p.$eval('#nc-wrap', x => x.classList.contains('show')));
+  assert.equal(await p.$$eval('#nc-list .p-item', x => x.length), 3);
+  await p.evaluate(() => closeNcSheet());
   await p.click('[data-testid="hw-capsule"]');
   assert(await p.$eval('#sheet', x => x.classList.contains('show')));
   // 默认未连接：弹层先给连接引导，自动扫描三款自有硬件（DYJ* / REAI_VB_*），按 RSSI 从强到弱
@@ -875,19 +891,62 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$('[data-testid="pt-figs-0"]'));
   assert.deepEqual(await pCur.$$eval('#stabs button', e => e.map(x => x.innerText.trim())), ['全部', '概览', '逻辑结构', '信息点', '行动项', '全文', '来源记录']);
   assert(await pCur.$eval('[data-testid="sum-fulltext-body"]', x => x.innerText.trim().length > 10));
+  assert.equal(await pCur.$('[data-testid="sum-mark-speaker-btn"]'), null, '全文直接点击说话人命名，不再展示复杂按钮');
+  assert.equal(await pCur.$eval('[data-testid="nc-ft-merge"]', x => x.innerText.trim()), 'NC');
+  // 全文同说话人连续发言应合并为单段整段（e2 共 5 条 dlg，首两条均为说话人 2，合并后为 4 组）
+  assert.equal(await pCur.$$eval('#sec-ft [data-testid^="sum-ft-group-e2-"]', e => e.length), 4);
+  assert(await pCur.$eval('[data-testid="sum-ft-group-e2-0"]', x => x.innerText.includes('偏慢') && x.innerText.includes('两三秒')));
   assert.equal(await pCur.$$eval('#export-pop .export-fmt-btn', e => e.length), 4);
   assert(await pCur.$eval('#exp-mode-ai', x => x.classList.contains('on')));
-  assert(await pCur.$('[data-testid="export-mark-speaker-btn"]'));
+  assert.equal(await pCur.$('[data-testid="export-mark-speaker-btn"]'), null, '导出弹层不应出现标记说话人按钮');
+  // 点击全文说话人弹出极简命名弹窗（记住声音、同改其余 X 处、最近 5 个名称、可能为他提示）
+  await pCur.click('[data-testid="sum-ft-who-e2-0"]');
+  assert(await pCur.$eval('#spk-quick-wrap', x => x.classList.contains('show')));
+  assert(await pCur.$eval('[data-testid="qspk-fuzzy-hint"]', x => x.innerText.includes('可能为') && x.innerText.includes('张总')));
+  assert.equal(await pCur.$eval('[data-testid="qspk-chk-remember"]', x => x.checked), true);
+  assert.equal(await pCur.$eval('[data-testid="qspk-chk-batch"]', x => x.checked), true);
+  assert.equal(await pCur.$eval('[data-testid="qspk-other-cnt"]', x => x.textContent.trim()), '2');
+  assert.equal(await pCur.$$eval('[data-testid="qspk-recent-list"] .qspk-chip', e => e.length), 5);
+  // 取消勾选「同时修改其他 X 处」时，只修改当前这 1 处
+  await pCur.click('[data-testid="qspk-chk-batch"]');
+  await pCur.$eval('[data-testid="qspk-name-inp"]', x => { x.value = '陈总'; x.dispatchEvent(new Event('input', { bubbles: true })); });
+  await pCur.click('[data-testid="qspk-save-btn"]');
+  assert(!(await pCur.$eval('#spk-quick-wrap', x => x.classList.contains('show'))));
+  assert.equal(await pCur.$$eval('#sec-ft [data-testid^="sum-ft-group-e2-"]', e => e.length), 5, '只改首句后与次句说话人不同应拆开');
+  assert(await pCur.$eval('[data-testid="sum-ft-who-e2-0"]', x => x.innerText.includes('陈总')));
+  assert(await pCur.$eval('[data-testid="sum-ft-who-e2-1"]', x => x.innerText.includes('说话人 2')));
+  // 再次勾选「同时修改其他 X 处」并用「可能为：张总」快捷填入
+  await pCur.click('[data-testid="sum-ft-who-e2-1"]');
+  await pCur.click('[data-testid="qspk-apply-hint"]');
+  assert.equal(await pCur.$eval('[data-testid="qspk-name-inp"]', x => x.value), '张总');
+  await pCur.click('[data-testid="qspk-save-btn"]');
+  assert.equal(await pCur.$$eval('#sec-ft [data-testid^="sum-ft-group-e2-"]', e => e.length), 4);
+  assert(await pCur.$eval('[data-testid="sum-ft-who-e2-0"]', x => x.innerText.includes('张总')));
   assert(await pCur.evaluate(() => diClockHTML(3660).includes('di-colon') && diClockHTML(3661).includes('dim')));
   await pCur.click('[data-testid="crumb-back"]');
+  // 验证 NC·3 汇总窗及分段规则、声纹管理（5 常用槽位含我的声音+单独录音 / 不限人数人物库）
+  assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·9');
+  assert.equal(await pCur.$eval('[data-testid="nc-btn"]', x => x.innerText.trim()), 'NC·3');
+  await pCur.click('[data-testid="nc-btn"]');
+  assert.equal(await pCur.$$eval('#nc-list .p-item', x => x.length), 3);
+  await pCur.click('#nc-list .p-item');
+  assert(await pCur.$eval('[data-testid="nc-merge-panel"]', x => !x.hidden && x.innerText.includes('30 秒') && x.innerText.includes('1 分钟') && x.innerText.includes('水位')));
+  assert(await pCur.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
   await pCur.click('[data-testid="nav-setting"]');
   await pCur.evaluate(() => { agCfg.local.spk = 'none'; syncSetSummary(); });
+  await pCur.$eval('[data-testid="set-voiceprint"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="set-voiceprint"]');
   assert(await pCur.$('[data-testid="voiceprint-install-btn"]'));
   await pCur.click('[data-testid="voiceprint-install-btn"]');
   await pCur.waitForFunction(() => agCfg.local.spk === 'ready', { timeout: 3000 });
   assert.equal(await pCur.$('[data-testid="voiceprint-install-btn"]'), null);
+  assert.equal(await pCur.$$eval('[data-testid="vp-frequent-section"] .vp-slot', e => e.length), 5);
+  assert(await pCur.$eval('[data-testid="vp-slot-1"]', x => x.innerText.includes('我的声音') && x.innerText.includes('3 组样本')));
+  await pCur.click('[data-testid="vp-record-self-btn"]');
+  await pCur.waitForFunction(() => document.querySelector('[data-testid="vp-slot-1"]').innerText.includes('4 组样本'), { timeout: 3000 });
+  assert((await pCur.$$eval('[data-testid="vp-library-section"] [data-testid^="vp-lib-person-"]', e => e.length)) >= 7, '人物库人数应大于 5（无上限）');
   await pCur.click('[data-testid="crumb-back"]');
+  await pCur.$eval('[data-testid="set-auth-entry"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="set-auth-entry"]');
   await pCur.click('[data-testid="auth-open-login-page"]');
   assert(await pCur.$eval('#login-gate', x => x.classList.contains('show')));
