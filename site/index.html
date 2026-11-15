@@ -864,6 +864,146 @@
       max-width: 720px;
     }
 
+    /* ── 02b Demo Videos ── */
+    .demo-list {
+      display: flex;
+      flex-direction: column;
+      gap: 48px;
+    }
+
+    .demo-row {
+      display: grid;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      gap: 40px;
+      align-items: center;
+    }
+
+    .demo-row.flip .demo-info { order: 2; }
+    .demo-row.flip .demo-video { order: 1; }
+
+    .demo-num {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      margin-bottom: 10px;
+    }
+
+    .demo-info h3 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      color: var(--ink);
+      line-height: 1.3;
+      margin-bottom: 10px;
+    }
+
+    .demo-info p {
+      font-size: 14.5px;
+      color: var(--ink-2);
+      line-height: 1.7;
+    }
+
+    .demo-video {
+      position: relative;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: var(--well);
+      border: 1px solid var(--rule);
+      cursor: pointer;
+      aspect-ratio: 16 / 9;
+    }
+
+    .demo-video video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      background: #0E1116;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+    }
+
+    .demo-video.playing video { opacity: 1; }
+
+    .demo-poster {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      transition: transform 0.25s ease, opacity 0.25s ease;
+    }
+
+    .demo-video:hover .demo-poster { transform: scale(1.025); }
+    .demo-video.playing .demo-poster { opacity: 0; }
+
+    .demo-tag {
+      position: absolute;
+      left: 14px;
+      top: 14px;
+      z-index: 2;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.45);
+      padding: 5px 10px;
+      border-radius: 99px;
+      backdrop-filter: blur(4px);
+      transition: opacity 0.2s ease;
+    }
+
+    .demo-video.playing .demo-tag { opacity: 0; }
+
+    .demo-play {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 62px;
+      height: 62px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: transform 0.18s ease, background 0.18s ease, opacity 0.2s ease;
+      z-index: 2;
+    }
+
+    .demo-video:hover .demo-play {
+      transform: translate(-50%, -50%) scale(1.08);
+      background: #fff;
+    }
+
+    .demo-play svg {
+      width: 22px;
+      height: 22px;
+      margin-left: 3px;
+      fill: var(--ink);
+    }
+
+    .demo-video.playing .demo-play { opacity: 0; pointer-events: none; }
+
+    .demo-hint {
+      margin-top: 22px;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 860px) {
+      .demo-row, .demo-row.flip { grid-template-columns: 1fr; gap: 16px; }
+      .demo-row.flip .demo-info { order: 1; }
+      .demo-row.flip .demo-video { order: 2; }
+    }
+
     /* ── Waitlist Section ── */
     .waitlist-section {
       padding: 68px 0;
@@ -1113,6 +1253,7 @@
       <nav class="nav-links" aria-label="Primary">
         <a href="#what" data-i18n="navWhat">能帮你做什么</a>
         <a href="#app" data-i18n="navApp">App 界面</a>
+        <a href="#demo" data-i18n="navDemo">视频演示</a>
         <a href="#details" data-i18n="navDetails">省心细节</a>
         <a href="#faq" data-i18n="navFaq">常见问题</a>
       </nav>
@@ -1308,6 +1449,180 @@
       </div>
     </section>
 
+    <!-- 02b Demo Videos -->
+    <section class="block" id="demo">
+      <div class="container">
+        <div class="sec-head-clean">
+          <div class="eyebrow" data-i18n="s2bEyebrow">WATCH IT WORK</div>
+          <h2 data-i18n="s2bTitle">真实界面，点开就看。</h2>
+          <p data-i18n="s2bDesc">下面每一段都来自 App 的真实界面——悬停看封面，点击播放。</p>
+        </div>
+
+        <div class="demo-list">
+          <article class="demo-row">
+            <div class="demo-info">
+              <div class="demo-num">/ 01</div>
+              <h3 data-i18n="d1Title">开会见客，只管专心聊</h3>
+              <p data-i18n="d1Desc">录音卡在桌上自动记录，每满 1 分钟，手机上就多一段整理好的文字；会开完，稿子也差不多齐了。</p>
+            </div>
+            <div class="demo-video" data-video="./assets/videos/s01-meeting.mp4">
+              <img class="demo-poster" src="./assets/posters/s01-meeting.jpg" alt="" loading="lazy">
+              <span class="demo-tag">S01</span>
+              <button class="demo-play" type="button" aria-label="Play">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+              </button>
+              <video preload="none" playsinline><source src="./assets/videos/s01-meeting.mp4" type="video/mp4"></video>
+            </div>
+          </article>
+
+          <article class="demo-row flip">
+            <div class="demo-info">
+              <div class="demo-num">/ 02</div>
+              <h3 data-i18n="d2Title">散会 30 秒，纪要就绪</h3>
+              <p data-i18n="d2Desc">勾选刚聊的几段，一键生成结构化总结——概览、要点、待办，直接转给同事。</p>
+            </div>
+            <div class="demo-video" data-video="./assets/videos/s02-minutes.mp4">
+              <img class="demo-poster" src="./assets/posters/s02-minutes.jpg" alt="" loading="lazy">
+              <span class="demo-tag">S02</span>
+              <button class="demo-play" type="button" aria-label="Play">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+              </button>
+              <video preload="none" playsinline><source src="./assets/videos/s02-minutes.mp4" type="video/mp4"></video>
+            </div>
+          </article>
+
+          <article class="demo-row">
+            <div class="demo-info">
+              <div class="demo-num">/ 03</div>
+              <h3 data-i18n="d3Title">两个人对谈，发言各自成段</h3>
+              <p data-i18n="d3Desc">谁说的哪句，按人分好段；现场拍的照片自动贴回那一刻的对话。人名先标「推测」，等你确认。</p>
+            </div>
+            <div class="demo-video" data-video="./assets/videos/s03-interview.mp4">
+              <img class="demo-poster" src="./assets/posters/s03-interview.jpg" alt="" loading="lazy">
+              <span class="demo-tag">S03</span>
+              <button class="demo-play" type="button" aria-label="Play">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+              </button>
+              <video preload="none" playsinline><source src="./assets/videos/s03-interview.mp4" type="video/mp4"></video>
+            </div>
+          </article>
+
+          <article class="demo-row flip">
+            <div class="demo-info">
+              <div class="demo-num">/ 04</div>
+              <h3 data-i18n="d4Title">断网，照样出稿</h3>
+              <p data-i18n="d4Desc">转写引擎就装在手机里，没网也能把话变成字；原始录音只留在本机。</p>
+            </div>
+            <div class="demo-video" data-video="./assets/videos/s04-offline.mp4">
+              <img class="demo-poster" src="./assets/posters/s04-offline.jpg" alt="" loading="lazy">
+              <span class="demo-tag">S04</span>
+              <button class="demo-play" type="button" aria-label="Play">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+              </button>
+              <video preload="none" playsinline><source src="./assets/videos/s04-offline.mp4" type="video/mp4"></video>
+            </div>
+          </article>
+
+          <article class="demo-row">
+            <div class="demo-info">
+              <div class="demo-num">/ 05</div>
+              <h3 data-i18n="d5Title">原声完整保留，按句回听</h3>
+              <p data-i18n="d5Desc">看的是清爽重点，留的是完整原话——点哪句，跳哪句。</p>
+            </div>
+            <div class="demo-video" data-video="./assets/videos/s05-raw.mp4">
+              <img class="demo-poster" src="./assets/posters/s05-raw.jpg" alt="" loading="lazy">
+              <span class="demo-tag">S05</span>
+              <button class="demo-play" type="button" aria-label="Play">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+              </button>
+              <video preload="none" playsinline><source src="./assets/videos/s05-raw.mp4" type="video/mp4"></video>
+            </div>
+          </article>
+
+          <article class="demo-row flip">
+            <div class="demo-info">
+              <div class="demo-num">/ 06</div>
+              <h3 data-i18n="d6Title">每天的叮嘱，收成一份日报</h3>
+              <p data-i18n="d6Desc">按天整理成好读的小结，重要的事自动列清楚，早晚各看一眼就安心。</p>
+            </div>
+            <div class="demo-video" data-video="./assets/videos/s06-family.mp4">
+              <img class="demo-poster" src="./assets/posters/s06-family.jpg" alt="" loading="lazy">
+              <span class="demo-tag">S06</span>
+              <button class="demo-play" type="button" aria-label="Play">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+              </button>
+              <video preload="none" playsinline><source src="./assets/videos/s06-family.mp4" type="video/mp4"></video>
+            </div>
+          </article>
+
+          <article class="demo-row">
+            <div class="demo-info">
+              <div class="demo-num">/ 07</div>
+              <h3 data-i18n="d7Title">医嘱、交代，自动成清单</h3>
+              <p data-i18n="d7Desc">复查回来打开一看，该做的事一条条列好，不易漏。</p>
+            </div>
+            <div class="demo-video" data-video="./assets/videos/s07-care.mp4">
+              <img class="demo-poster" src="./assets/posters/s07-care.jpg" alt="" loading="lazy">
+              <span class="demo-tag">S07</span>
+              <button class="demo-play" type="button" aria-label="Play">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+              </button>
+              <video preload="none" playsinline><source src="./assets/videos/s07-care.mp4" type="video/mp4"></video>
+            </div>
+          </article>
+
+          <article class="demo-row flip">
+            <div class="demo-info">
+              <div class="demo-num">/ 08</div>
+              <h3 data-i18n="d8Title">几小时的课，重点自己浮出来</h3>
+              <p data-i18n="d8Desc">信息点带溯源，点一下回到老师原话；复习不用重听整节课。</p>
+            </div>
+            <div class="demo-video" data-video="./assets/videos/s08-class.mp4">
+              <img class="demo-poster" src="./assets/posters/s08-class.jpg" alt="" loading="lazy">
+              <span class="demo-tag">S08</span>
+              <button class="demo-play" type="button" aria-label="Play">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+              </button>
+              <video preload="none" playsinline><source src="./assets/videos/s08-class.mp4" type="video/mp4"></video>
+            </div>
+          </article>
+
+          <article class="demo-row">
+            <div class="demo-info">
+              <div class="demo-num">/ 09</div>
+              <h3 data-i18n="d9Title">采访素材，秒级回放</h3>
+              <p data-i18n="d9Desc">长录音按句定位，金句随点随听；整理完一键导出 PDF、Markdown 或 Word。</p>
+            </div>
+            <div class="demo-video" data-video="./assets/videos/s09-podcast.mp4">
+              <img class="demo-poster" src="./assets/posters/s09-podcast.jpg" alt="" loading="lazy">
+              <span class="demo-tag">S09</span>
+              <button class="demo-play" type="button" aria-label="Play">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+              </button>
+              <video preload="none" playsinline><source src="./assets/videos/s09-podcast.mp4" type="video/mp4"></video>
+            </div>
+          </article>
+
+          <article class="demo-row flip">
+            <div class="demo-info">
+              <div class="demo-num">/ 10</div>
+              <h3 data-i18n="d10Title">开箱到出稿，只要一分钟</h3>
+              <p data-i18n="d10Desc">自动扫描连接、按下开关就录；第一段文字稿很快出现在手机上。</p>
+            </div>
+            <div class="demo-video" data-video="./assets/videos/s10-unbox.mp4">
+              <img class="demo-poster" src="./assets/posters/s10-unbox.jpg" alt="" loading="lazy">
+              <span class="demo-tag">S10</span>
+              <button class="demo-play" type="button" aria-label="Play">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+              </button>
+              <video preload="none" playsinline><source src="./assets/videos/s10-unbox.mp4" type="video/mp4"></video>
+            </div>
+          </article>
+        </div>
+        <p class="demo-hint" data-i18n="demoHint">点击播放 · 有声音</p>
+      </div>
+    </section>
+
     <!-- 03 Built Around You -->
     <section class="block" id="details">
       <div class="container">
@@ -1460,6 +1775,7 @@
       <div class="foot-links">
         <a href="#what" data-i18n="navWhat">能帮你做什么</a>
         <a href="#app" data-i18n="navApp">App 界面</a>
+        <a href="#demo" data-i18n="navDemo">视频演示</a>
         <a href="#details" data-i18n="navDetails">省心细节</a>
         <a href="#faq" data-i18n="navFaq">常见问题</a>
       </div>

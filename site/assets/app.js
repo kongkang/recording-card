@@ -26,6 +26,31 @@
       navApp: 'App 界面',
       navDetails: '省心细节',
       navFaq: '常见问题',
+      navDemo: '视频演示',
+      s2bEyebrow: 'WATCH IT WORK',
+      s2bTitle: '真实界面，点开就看。',
+      s2bDesc: '下面每一段都来自 App 的真实界面——悬停看封面，点击播放。',
+      d1Title: '开会见客，只管专心聊',
+      d1Desc: '录音卡在桌上自动记录，每满 1 分钟，手机上就多一段整理好的文字；会开完，稿子也差不多齐了。',
+      d2Title: '散会 30 秒，纪要就绪',
+      d2Desc: '勾选刚聊的几段，一键生成结构化总结——概览、要点、待办，直接转给同事。',
+      d3Title: '两个人对谈，发言各自成段',
+      d3Desc: '谁说的哪句，按人分好段；现场拍的照片自动贴回那一刻的对话。人名先标「推测」，等你确认。',
+      d4Title: '断网，照样出稿',
+      d4Desc: '转写引擎就装在手机里，没网也能把话变成字；原始录音只留在本机。',
+      d5Title: '原声完整保留，按句回听',
+      d5Desc: '看的是清爽重点，留的是完整原话——点哪句，跳哪句。',
+      d6Title: '每天的叮嘱，收成一份日报',
+      d6Desc: '按天整理成好读的小结，重要的事自动列清楚，早晚各看一眼就安心。',
+      d7Title: '医嘱、交代，自动成清单',
+      d7Desc: '复查回来打开一看，该做的事一条条列好，不易漏。',
+      d8Title: '几小时的课，重点自己浮出来',
+      d8Desc: '信息点带溯源，点一下回到老师原话；复习不用重听整节课。',
+      d9Title: '采访素材，秒级回放',
+      d9Desc: '长录音按句定位，金句随点随听；整理完一键导出 PDF、Markdown 或 Word。',
+      d10Title: '开箱到出稿，只要一分钟',
+      d10Desc: '自动扫描连接、按下开关就录；第一段文字稿很快出现在手机上。',
+      demoHint: '点击播放 · 有声音',
       navCta: '早鸟登记',
       heroKicker: 'AI Card · 早鸟预约开放',
       heroLead: '开会、见客户、上课、陪家人看诊——随身戴着不用管，聊完就有清晰的重点、待办和每日小结。',
@@ -126,6 +151,31 @@
       navApp: 'The App',
       navDetails: 'Why it fits',
       navFaq: 'FAQ',
+      navDemo: 'Videos',
+      s2bEyebrow: 'WATCH IT WORK',
+      s2bTitle: 'Real screens, one click away.',
+      s2bDesc: 'Every clip below comes from the actual app — hover for a preview, click to play.',
+      d1Title: 'Meetings run themselves',
+      d1Desc: 'Keep the card on the table and just talk. Every minute, another tidy block of notes appears on your phone.',
+      d2Title: 'Minutes, thirty seconds after',
+      d2Desc: 'Pick the recent clips, tap once, and get a structured summary with key points and action items.',
+      d3Title: 'Two speakers, cleanly split',
+      d3Desc: 'Lines are grouped by speaker and photos slot back into the moment. Names start as a guess until you confirm.',
+      d4Title: 'Works offline',
+      d4Desc: 'The transcription engine runs on your phone — no network needed, and audio never leaves the device.',
+      d5Title: 'Full audio, sentence-level replay',
+      d5Desc: 'Clean summaries up front, complete recordings behind. Tap any line to hear that exact moment.',
+      d6Title: 'Daily notes, written for you',
+      d6Desc: 'Each day becomes a readable recap, with the important things neatly listed.',
+      d7Title: "Doctor's orders, auto-listed",
+      d7Desc: 'After the clinic, open the app — everything to do is already laid out.',
+      d8Title: 'Hours of class, key points first',
+      d8Desc: 'Key points link back to the exact words. No more re-listening to whole lectures.',
+      d9Title: 'Interview tapes, instant replay',
+      d9Desc: 'Jump to any sentence in long recordings, then export to PDF, Markdown or Word.',
+      d10Title: 'Unbox to first draft in a minute',
+      d10Desc: 'Scan, connect, press record — the first block of text shows up on your phone shortly.',
+      demoHint: 'Click to play · sound on',
       navCta: 'Join Waitlist',
       heroKicker: 'AI Card · Early-Bird Open',
       heroLead: 'Meetings, client chats, lectures, doctor visits — wear it and forget it. Walk away with clear takeaways, to-dos, and a daily recap.',
@@ -502,6 +552,30 @@
   // 7. Language Switcher
   document.getElementById('lang-zh').addEventListener('click', function () { applyLang('zh'); });
   document.getElementById('lang-en').addEventListener('click', function () { applyLang('en'); });
+
+  // 8. Demo Videos（悬停看封面 · 点击播放；同时只播一个）
+  var demoCards = document.querySelectorAll('.demo-video');
+  demoCards.forEach(function (card) {
+    var video = card.querySelector('video');
+    if (!video) return;
+    card.addEventListener('click', function () {
+      if (video.paused) {
+        demoCards.forEach(function (other) {
+          var v = other.querySelector('video');
+          if (other !== card && v && !v.paused) v.pause();
+        });
+        video.play();
+      } else {
+        video.pause();
+      }
+    });
+    video.addEventListener('play', function () { card.classList.add('playing'); });
+    video.addEventListener('pause', function () { card.classList.remove('playing'); });
+    video.addEventListener('ended', function () {
+      card.classList.remove('playing');
+      try { video.load(); } catch (e) {}
+    });
+  });
 
   // Init
   applyLang(currentLang);
