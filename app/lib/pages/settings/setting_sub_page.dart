@@ -35,7 +35,7 @@ class SettingSubPage extends StatelessWidget {
     this.standalone = false,
   });
 
-  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'island' | 'watch' | 'exthw'
+  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'island' | 'watch' | 'exthw' | 'dev'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
@@ -53,6 +53,7 @@ class SettingSubPage extends StatelessWidget {
     'island' => '灵动岛与操作按钮',
     'watch' => 'Apple Watch 联动',
     'exthw' => '第三方硬件联动',
+    'dev' => '开发者设置',
     _ => '设置详情',
   };
 
@@ -148,6 +149,7 @@ class SettingSubPage extends StatelessWidget {
                       config: agentConfig,
                       device: device,
                     ),
+                    'dev' => _DeveloperCleanBody(config: agentConfig),
                     _ => const SizedBox.shrink(),
                   },
                 ],
@@ -3005,6 +3007,363 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 开发者设置 —— 语义清洗周期、上轮重叠上下文窗口、静音停顿触发与全量重洗。
+class _DeveloperCleanBody extends StatelessWidget {
+  const _DeveloperCleanBody({required this.config});
+
+  final AgentConfigStore config;
+
+  static const _cyclePresets = [2, 5, 10, 15, 30, 60, 120];
+  static const _paraPresets = [0, 1, 3, 5, 8];
+  static const _minutePresets = [1, 2, 3, 5, 10, 15];
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final primary = Theme.of(context).colorScheme.primary;
+    final store = StoreScope.maybeOf(context);
+    return ListenableBuilder(
+      listenable: config,
+      builder: (context, _) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+        _SubSectionLabel('增量清洗与逻辑分段周期'),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: c.card,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: c.sep),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '清洗整理周期',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: c.label,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    AgentConfigStore.formatCleanCycle(config.cleanCycleMinutes),
+                    key: const Key('dev-cycle-value'),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: primary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '持续录音达到该时长阈值后，自动结合声纹与语义对整段语音去口水词、合并同说话人段落并生成阶段标题与概述。',
+                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final m in _cyclePresets)
+                    ChoiceChip(
+                      key: Key('dev-cycle-preset-$m'),
+                      label: Text(AgentConfigStore.formatCleanCycle(m)),
+                      selected: config.cleanCycleMinutes == m,
+                      onSelected: (_) =>
+                          unawaited(config.setCleanCycleMinutes(m)),
+                    ),
+                ],
+              ),
+              Slider(
+                key: const Key('dev-cycle-slider'),
+                min: 1,
+                max: 180,
+                divisions: 179,
+                value: config.cleanCycleMinutes.toDouble().clamp(1, 180),
+                label: AgentConfigStore.formatCleanCycle(config.cleanCycleMinutes),
+                onChanged: (v) =>
+                    unawaited(config.setCleanCycleMinutes(v.round())),
+              ),
+              Divider(height: 18, color: c.sep),
+              InkWell(
+                key: const Key('dev-silence-trigger'),
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => unawaited(
+                  config.setCleanOnSilenceGap(!config.cleanOnSilenceGap),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '停顿 ≥ 1 分钟自动触发清洗',
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w600,
+                                color: c.label,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '未满周期但检测到明显沉默空白或停止录音时提前整理',
+                              style: TextStyle(fontSize: 11.5, color: c.sec),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      RCSwitch(on: config.cleanOnSilenceGap),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _SubSectionLabel('层叠连续上下文（Overlap）'),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: c.card,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: c.sep),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '重叠依据',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: c.label,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      key: const Key('dev-overlap-mode-paragraphs'),
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: config.cleanOverlapMode == 'paragraphs'
+                            ? primary.withValues(alpha: 0.12)
+                            : null,
+                        side: BorderSide(
+                          color: config.cleanOverlapMode == 'paragraphs'
+                              ? primary
+                              : c.sep,
+                        ),
+                      ),
+                      onPressed: () =>
+                          unawaited(config.setCleanOverlapMode('paragraphs')),
+                      child: const Text('按上一轮已整理段落'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton(
+                      key: const Key('dev-overlap-mode-minutes'),
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: config.cleanOverlapMode == 'minutes'
+                            ? primary.withValues(alpha: 0.12)
+                            : null,
+                        side: BorderSide(
+                          color: config.cleanOverlapMode == 'minutes'
+                              ? primary
+                              : c.sep,
+                        ),
+                      ),
+                      onPressed: () =>
+                          unawaited(config.setCleanOverlapMode('minutes')),
+                      child: const Text('按上一轮尾部时长'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (config.cleanOverlapMode == 'paragraphs') ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '携带上一轮末尾已整理段落数',
+                        style: TextStyle(fontSize: 13, color: c.label),
+                      ),
+                    ),
+                    Text(
+                      '${config.cleanOverlapParagraphs} 段',
+                      key: const Key('dev-overlap-value'),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: primary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final n in _paraPresets)
+                      ChoiceChip(
+                        key: Key('dev-overlap-para-$n'),
+                        label: Text('$n 段'),
+                        selected: config.cleanOverlapParagraphs == n,
+                        onSelected: (_) =>
+                            unawaited(config.setCleanOverlapParagraphs(n)),
+                      ),
+                  ],
+                ),
+                Slider(
+                  key: const Key('dev-overlap-para-slider'),
+                  min: 0,
+                  max: 10,
+                  divisions: 10,
+                  value: config.cleanOverlapParagraphs.toDouble().clamp(0, 10),
+                  label: '${config.cleanOverlapParagraphs} 段',
+                  onChanged: (v) =>
+                      unawaited(config.setCleanOverlapParagraphs(v.round())),
+                ),
+              ] else ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '携带上一轮尾部时间窗',
+                        style: TextStyle(fontSize: 13, color: c.label),
+                      ),
+                    ),
+                    Text(
+                      '${config.cleanOverlapMinutes} 分钟',
+                      key: const Key('dev-overlap-value'),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: primary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final m in _minutePresets)
+                      ChoiceChip(
+                        key: Key('dev-overlap-min-$m'),
+                        label: Text('$m 分钟'),
+                        selected: config.cleanOverlapMinutes == m,
+                        onSelected: (_) =>
+                            unawaited(config.setCleanOverlapMinutes(m)),
+                      ),
+                  ],
+                ),
+                Slider(
+                  key: const Key('dev-overlap-min-slider'),
+                  min: 1,
+                  max: 30,
+                  divisions: 29,
+                  value: config.cleanOverlapMinutes.toDouble().clamp(1, 30),
+                  label: '${config.cleanOverlapMinutes} 分钟',
+                  onChanged: (v) =>
+                      unawaited(config.setCleanOverlapMinutes(v.round())),
+                ),
+              ],
+              Text(
+                '下一轮整理会自动承接上文标题、概述及末尾重叠段，确保跨周期讨论被平滑接续、不断章取义。',
+                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _SubSectionLabel('存量清洗与验证'),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: c.card,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: c.sep),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '清理历史仅含句号/孤立标点的误判切片，并按上方周期与层叠参数重新梳理所有已保存录音的阶段标题、概述与合并段落。',
+                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+              ),
+              const SizedBox(height: 12),
+              if (store == null)
+                const Text(
+                  '当前为独立预览环境，无法操作本地录音库。',
+                  style: TextStyle(fontSize: 12, color: RCColors.sec),
+                )
+              else
+                ListenableBuilder(
+                  listenable: store,
+                  builder: (context, _) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FilledButton.icon(
+                        key: const Key('dev-reclean-btn'),
+                        onPressed: store.isRecleaning
+                            ? null
+                            : () => unawaited(store.recleanAllRecordings()),
+                        icon: store.isRecleaning
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.auto_fix_high_outlined, size: 18),
+                        label: Text(
+                          store.isRecleaning
+                              ? '正在清洗整理…'
+                              : '立即重新清洗整理本地记录',
+                        ),
+                      ),
+                      if (store.recleanStatus.trim().isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          store.recleanStatus,
+                          key: const Key('dev-reclean-status'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.4,
+                            color: c.sec,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
       ),
     );
   }

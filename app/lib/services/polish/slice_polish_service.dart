@@ -34,13 +34,15 @@ class PolishResult {
 class SlicePolishService {
   SlicePolishService({
     required ChatCompletion chat,
-    required String model,
+    String model = '',
+    String Function()? modelResolver,
     this.windowSize = 3,
     this.temperature = 0.2,
     bool Function()? ready,
   }) : _refiner = CloudSliceRefiner(
          chat: chat,
          model: model,
+         modelResolver: modelResolver,
          temperature: temperature,
        ),
        _ready = ready;
@@ -51,7 +53,7 @@ class SlicePolishService {
   final bool Function()? _ready;
 
   bool get configured =>
-      _refiner.model.trim().isNotEmpty && (_ready?.call() ?? true);
+      _refiner.effectiveModel.isNotEmpty && (_ready?.call() ?? true);
 
   /// 对一条录音做窗口润色；每完成一个窗口就通过 [save] 落盘。
   ///
@@ -162,13 +164,20 @@ class SlicePolishService {
 class CloudSliceRefiner implements SegmentRefiner {
   CloudSliceRefiner({
     required this.chat,
-    required this.model,
+    this.model = '',
+    this.modelResolver,
     this.temperature = 0.2,
   });
 
   final ChatCompletion chat;
   final String model;
+  final String Function()? modelResolver;
   final double temperature;
+
+  String get effectiveModel {
+    final resolved = modelResolver?.call().trim() ?? '';
+    return resolved.isNotEmpty ? resolved : model.trim();
+  }
 
   static const _systemPrompt = '''
 你是录音整理助手。输入是 JSON 数组，每项是一个音频切片：
@@ -187,12 +196,13 @@ class CloudSliceRefiner implements SegmentRefiner {
   @override
   Future<List<RefinedSegment>> refine(List<RefineSegmentInput> window) async {
     if (window.isEmpty) return const [];
+    final resolvedModel = effectiveModel;
     final content = await chat.complete(
       [
         const ChatMessage(role: 'system', content: _systemPrompt),
         ChatMessage(role: 'user', content: jsonEncode(_payload(window))),
       ],
-      model: model,
+      model: resolvedModel,
       temperature: temperature,
       maxTokens: 3000,
     );

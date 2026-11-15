@@ -16,11 +16,14 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/device/card_gateway.dart';
 import '../../core/models/recording.dart';
+import '../../core/models/summary.dart';
+import '../../core/store/agent_config_store.dart';
 import '../../core/store/settings_store.dart';
 import '../../core/store/voiceprint_library_store.dart';
 import '../audio/live_audio_recorder.dart';
 import '../polish/slice_polish_service.dart';
 import '../segment/fast_topic_segment_agent.dart';
+import '../segment/rolling_clean_segment_service.dart';
 import '../segment/segment_build_service.dart';
 import '../transcribe/slice_planner.dart';
 import '../transcribe/speaker_clusterer.dart';
@@ -109,12 +112,14 @@ class RecordingPipeline {
     required this.engine,
     required this.models,
     this.settings,
+    this.agentConfig,
     this.language = 'zh',
     this.slicePlanner = const SlicePlanner(),
     this.clusterer = const SpeakerClusterer(),
     this.polish,
     this.segments,
     this.topicAgent,
+    this.rollingCleaner,
     TopicSegmentationStore? topicStore,
     this.voiceprintStore,
     this.network = const NetworkPolicy(),
@@ -125,12 +130,165 @@ class RecordingPipeline {
   final RecordingStore store;
   final SpeechEngine engine;
   final SpeechModelProvider models;
+  final AgentConfigStore? agentConfig;
   final FastTopicSegmentAgent? topicAgent;
+  final RollingCleanSegmentService? rollingCleaner;
   final VoiceprintLibraryStore? voiceprintStore;
   TopicSegmentationStore? _topicStore;
 
   TopicSegmentationStore get topicStore =>
       _topicStore ??= TopicSegmentationStore(resolveRoot: store.root);
+
+  /// 清理本地存量“仅孤立标点幻觉（如 `。`）”与历史 `实时切片 #N` 标题，一次性幂等清洗落盘。
+  Future<int> sanitizeLegacyDirtyRecordings() async {
+    final files = await store.loadAll(refresh: true);
+    final legacyTitlePattern = RegExp(r'^实时切片\s*#\d+(?:（未识别到人声）)?$');
+    var fixed = 0;
+
+    for (final file in files) {
+      var changed = false;
+      final cleanUtterances = [
+        for (final u in file.utterances)
+          if (isMeaningfulSpeechText(u.text)) u,
+      ];
+      if (cleanUtterances.length != file.utterances.length) {
+        file.utterances = cleanUtterances;
+        changed = true;
+      }
+
+      final cleanTurns = [
+        for (final t in file.turns)
+          if (isMeaningfulSpeechText(t.text)) t,
+      ];
+      if (cleanTurns.length != file.turns.length) {
+        file.turns = cleanTurns;
+        changed = true;
+      }
+
+      final nextSegments = <SegmentRecord>[];
+      for (final seg in file.segments) {
+        final hasSpeech = cleanUtterances.isNotEmpty || cleanTurns.isNotEmpty;
+        final badTitle =
+            legacyTitlePattern.hasMatch(seg.title.trim()) ||
+            !isMeaningfulSpeechText(seg.title);
+        final badBrief =
+            !isMeaningfulSpeechText(seg.brief) ||
+            legacyTitlePattern.hasMatch(seg.brief.trim());
+        final badLong =
+            !isMeaningfulSpeechText(seg.longText) ||
+            legacyTitlePattern.hasMatch(seg.longText.trim());
+        final shouldSilent = !hasSpeech && seg.status != SegmentStatus.live;
+
+        if (shouldSilent &&
+            (seg.title.trim() != '未识别到语音' ||
+                seg.turnIds.isNotEmpty ||
+                badTitle ||
+                badBrief)) {
+          changed = true;
+          nextSegments.add(
+            SegmentRecord(
+              id: seg.id,
+              sessionId: seg.sessionId,
+              index: seg.index,
+              startAtMs: seg.startAtMs,
+              endAtMs: seg.endAtMs,
+              title: '未识别到语音',
+              brief: '本段未检测到有效人声，原始录音已保存在本机。',
+              longText: '本段未检测到有效人声，原始录音已保存在本机，可在详情「原始数据」回听。',
+              tags: seg.tags,
+              status: seg.status,
+              sliceIds: seg.sliceIds,
+              turnIds: const [],
+              mark: seg.mark,
+              polishStale: false,
+              fallback: false,
+            ),
+          );
+          continue;
+        }
+
+        if (hasSpeech && (badTitle || badBrief || badLong)) {
+          changed = true;
+          final seedText = cleanTurns.isNotEmpty
+              ? cleanTurns.map((t) => t.text.trim()).join(' ')
+              : cleanUtterances.map((u) => u.text.trim()).join(' ');
+          final fallbackBrief = seedText.length <= 68
+              ? seedText
+              : '${seedText.substring(0, 68)}…';
+          final fallbackLong = seedText.length <= 120
+              ? seedText
+              : '${seedText.substring(0, 120)}…';
+          nextSegments.add(
+            SegmentRecord(
+              id: seg.id,
+              sessionId: seg.sessionId,
+              index: seg.index,
+              startAtMs: seg.startAtMs,
+              endAtMs: seg.endAtMs,
+              title: badTitle
+                  ? buildReadableFallbackTitle(seedText, fallback: '语音片段')
+                  : seg.title,
+              brief: badBrief ? fallbackBrief : seg.brief,
+              longText: badLong ? fallbackLong : seg.longText,
+              speakerLabels: seg.speakerLabels,
+              speakerCount: seg.speakerCount,
+              tags: seg.tags,
+              status: seg.status,
+              sliceIds: seg.sliceIds,
+              turnIds: [for (final t in cleanTurns) t.id],
+              mark: seg.mark,
+              polishStale: seg.polishStale,
+              fallback: seg.fallback,
+            ),
+          );
+          continue;
+        }
+
+        nextSegments.add(seg);
+      }
+      file.segments = nextSegments;
+
+      if (changed) {
+        await store.save(file);
+        fixed++;
+      }
+    }
+    return fixed;
+  }
+
+  /// 检查当前是否存在到达清洗周期或静音停顿门槛的未清洗语料。
+  Future<bool> hasReadyRollingCleanTrigger({int? wallClockNowMs}) async {
+    final cleaner = rollingCleaner;
+    if (cleaner == null || !cleaner.isReady) return false;
+    final files = await store.loadAll(refresh: false);
+    final state = await topicStore.load();
+    return cleaner.hasReadyTrigger(
+      files,
+      state,
+      wallClockNowMs: wallClockNowMs,
+    );
+  }
+
+  /// 执行滚动语意+声纹联合清洗与话题分段（按配置周期或停顿/停录/手动强制重洗）。
+  Future<RollingCleanResult?> runRollingClean({
+    bool forceRecleanAll = false,
+    bool sessionJustEnded = false,
+    int? wallClockNowMs,
+    void Function(String status)? onProgress,
+  }) async {
+    await sanitizeLegacyDirtyRecordings();
+    final cleaner = rollingCleaner;
+    if (cleaner == null) return null;
+    final all = await store.loadAll(refresh: true);
+    return cleaner.run(
+      all,
+      topicStore: topicStore,
+      forceRecleanAll: forceRecleanAll,
+      sessionJustEnded: sessionJustEnded,
+      wallClockNowMs: wallClockNowMs,
+      onProgress: onProgress,
+    );
+  }
 
   /// 在录音出现 `>= 1 分钟` 空白或录音停止时，触发快速话题分段 Agent 并写入幂等水位锁。
   Future<TopicSegmentEvaluationResult?> evaluateTopicSegmentation({
@@ -490,8 +648,10 @@ class RecordingPipeline {
     RecordingFile file,
     LiveAudioSlice slice,
   ) {
-    final utterances = [...file.utterances]
-      ..sort((a, b) => a.startMs.compareTo(b.startMs));
+    final utterances = [
+      for (final u in file.utterances)
+        if (isMeaningfulSpeechText(u.text)) u,
+    ]..sort((a, b) => a.startMs.compareTo(b.startMs));
     final startAtMs = file.startAtMs;
     final endAtMs = file.startAtMs +
         (file.durationMs > 0
@@ -504,7 +664,6 @@ class RecordingPipeline {
           u.speakerLabel!,
     };
     final sliceIds = [for (final s in file.slices) s.id];
-    final seqNo = slice.sliceIndex + 1;
 
     if (utterances.isEmpty) {
       return SegmentRecord(
@@ -522,33 +681,45 @@ class RecordingPipeline {
       );
     }
 
-    final lines = [
-      for (final u in utterances)
-        if (u.text.trim().isNotEmpty) u.text.trim(),
-    ];
-    final flat = lines.join(' ');
-    final cleanedClauses = [
-      for (final line in lines)
-        line.replaceAll(RegExp(r'[，,。！？!?；;\s]+$'), '').trim(),
-    ].where((s) => s.isNotEmpty).toList();
-    final paragraph = cleanedClauses.join('，');
-    // Timeline 展开简介只需 3~5 行（完整对话进详情页查看），避免整段原文撑满时间轴
-    final longText = paragraph.isEmpty
-        ? '已保存本地原始转写'
-        : (paragraph.length <= 120
-              ? '$paragraph。'
-              : '${paragraph.substring(0, 120)}…');
-    final firstClause = lines.isEmpty
-        ? ''
-        : lines.first.split(RegExp(r'[\n。！？!?，,；;]')).first.trim();
-    final title = firstClause.isEmpty
-        ? '实时切片 #$seqNo'
-        : (firstClause.length <= 18
-              ? firstClause
-              : '${firstClause.substring(0, 18)}…');
-    final brief = flat.isEmpty
-        ? '已保存本地原始转写'
-        : (flat.length <= 68 ? flat : '${flat.substring(0, 68)}…');
+    final cleanTexts = <String>[];
+    for (final u in utterances) {
+      final clean = cleanSpokenFillers(u.text);
+      if (clean.isNotEmpty && isMeaningfulSpeechText(clean)) {
+        cleanTexts.add(clean);
+      }
+    }
+    if (cleanTexts.isEmpty) {
+      return SegmentRecord(
+        id: 'seg-${file.id}-0',
+        sessionId: file.session,
+        index: slice.sliceIndex,
+        startAtMs: startAtMs,
+        endAtMs: endAtMs,
+        title: '未识别到语音',
+        brief: '本段未检测到有效人声，原始录音已保存在本机。',
+        longText: '本段未检测到有效人声，原始录音已保存在本机，可在详情「原始数据」回听。',
+        status: SegmentStatus.closed,
+        sliceIds: sliceIds,
+        mark: slice.gapCount > 0 ? '流中断 ${slice.gapCount} 次' : null,
+      );
+    }
+
+    var mergedParagraph = '';
+    for (final line in cleanTexts) {
+      mergedParagraph = mergedParagraph.isEmpty
+          ? line
+          : joinPolishedUtterances(mergedParagraph, line);
+    }
+    final longText = mergedParagraph.length <= 120
+        ? mergedParagraph
+        : '${mergedParagraph.substring(0, 120)}…';
+    final title = buildReadableFallbackTitle(
+      mergedParagraph,
+      fallback: '语音片段',
+    );
+    final brief = mergedParagraph.length <= 68
+        ? mergedParagraph
+        : '${mergedParagraph.substring(0, 68)}…';
 
     return SegmentRecord(
       id: 'seg-${file.id}-0',

@@ -104,6 +104,11 @@ class AppStore extends ChangeNotifier {
   /// 本地录音文件（含未完成/失败的，供空态与处理状态使用）。
   List<RecordingFile> recordingFiles = const [];
 
+  /// 滚动语义清洗是否正在手动全量重洗。
+  bool isRecleaning = false;
+  String recleanStatus = '';
+  bool _rollingCleanInFlight = false;
+
   /// 分段详情视图：Timeline 与详情页共用同一份 turns/utterances。
   Map<String, SegmentView> segmentViews = const {};
 
@@ -238,6 +243,7 @@ class AppStore extends ChangeNotifier {
         await refreshFromStore();
         await syncPhotosAutomatically(recentOnly: true, targetFile: saved);
         _liveSlicesSavedThisRun++;
+        unawaited(_maybeTriggerScheduledRollingClean());
         completer.complete(saved);
       } on Object catch (e, st) {
         debugPrint('[store] 实时切片转写失败：$e');
@@ -272,15 +278,42 @@ class AppStore extends ChangeNotifier {
     return _liveSlicesSavedThisRun;
   }
 
-  /// 检查是否有连续说话簇后出现 `>= 1 分钟` 空白或刚结束录音，异步执行快速主题分段并刷新时间轴。
+  Future<void> _maybeTriggerScheduledRollingClean() async {
+    if (_disposed || _rollingCleanInFlight) return;
+    final p = _pipeline;
+    if (p == null) return;
+    try {
+      final ready = await p.hasReadyRollingCleanTrigger();
+      if (ready) {
+        await evaluateTopicSegmentationAndRefresh();
+      }
+    } on Object catch (e) {
+      debugPrint('[store] 周期清洗门槛检查失败：$e');
+    }
+  }
+
+  /// 检查是否有连续说话簇到达清洗周期、`>= 1 分钟` 空白或刚结束录音，异步执行滚动语意+声纹联合清洗分段并刷新时间轴。
   Future<void> evaluateTopicSegmentationAndRefresh({
     bool sessionJustEnded = false,
     int? wallClockNowMs,
   }) async {
-    if (_disposed) return;
+    if (_disposed || _rollingCleanInFlight) return;
     final p = _pipeline;
     if (p == null) return;
+    _rollingCleanInFlight = true;
     try {
+      if (p.rollingCleaner != null) {
+        final rolling = await p.runRollingClean(
+          sessionJustEnded: sessionJustEnded,
+          wallClockNowMs: wallClockNowMs,
+        );
+        if (!_disposed &&
+            rolling != null &&
+            (rolling.evaluatedRuns > 0 || rolling.evaluatedBatches > 0)) {
+          await refreshFromStore();
+          return;
+        }
+      }
       final res = await p.evaluateTopicSegmentation(
         sessionJustEnded: sessionJustEnded,
         wallClockNowMs: wallClockNowMs,
@@ -289,7 +322,52 @@ class AppStore extends ChangeNotifier {
         await refreshFromStore();
       }
     } on Object catch (e) {
-      debugPrint('[store] 快速主题分段检查失败：$e');
+      debugPrint('[store] 滚动语义分段检查失败：$e');
+    } finally {
+      _rollingCleanInFlight = false;
+    }
+  }
+
+  /// 开发者设置手动触发：清理旧版垃圾标点/占位并按当前周期与重叠配置重洗本地全部有声记录。
+  Future<int> recleanAllRecordings({
+    void Function(String status)? onProgress,
+  }) async {
+    final p = _pipeline;
+    if (p == null) return 0;
+    if (_rollingCleanInFlight) return 0;
+    _rollingCleanInFlight = true;
+    isRecleaning = true;
+    recleanStatus = '正在清理孤立标点与旧版占位…';
+    notifyListeners();
+    try {
+      void forward(String msg) {
+        recleanStatus = msg;
+        onProgress?.call(msg);
+        notifyListeners();
+      }
+
+      final sanitized = await p.sanitizeLegacyDirtyRecordings();
+      final res = await p.runRollingClean(
+        forceRecleanAll: true,
+        onProgress: forward,
+      );
+      await refreshFromStore();
+      final runs = res?.evaluatedRuns ?? 0;
+      if (res != null && res.error != null && runs == 0) {
+        recleanStatus = '部分清洗未完成（请检查登录与云端模型配置）：${res.error}';
+      } else if (p.rollingCleaner?.isReady != true) {
+        recleanStatus = '已清理 $sanitized 条本地记录（云端模型未就绪，暂未执行语义重排）';
+      } else {
+        recleanStatus = '已完成 $runs 组连续对话清洗整理（清理本地异常 $sanitized 条）';
+      }
+      return runs;
+    } on Object catch (e) {
+      recleanStatus = '重新清洗失败：$e';
+      return 0;
+    } finally {
+      _rollingCleanInFlight = false;
+      isRecleaning = false;
+      notifyListeners();
     }
   }
 
@@ -306,6 +384,11 @@ class AppStore extends ChangeNotifier {
         await _recordingStore!.migrateFromV1(RecordingsManifest());
       } on Object catch (e) {
         debugPrint('[store] v1 迁移失败（不阻塞启动）：$e');
+      }
+      try {
+        await _pipeline!.sanitizeLegacyDirtyRecordings();
+      } on Object catch (e) {
+        debugPrint('[store] 存量标点清洗失败（不阻塞启动）：$e');
       }
       await refreshFromStore();
       unawaited(syncPhotosAutomatically(recentOnly: false));
@@ -583,6 +666,7 @@ class AppStore extends ChangeNotifier {
       );
       final report = await pipeline.sync(onProgress: _onPipelineProgress);
       await refreshFromStore();
+      unawaited(evaluateTopicSegmentationAndRefresh());
       unawaited(
         syncPhotosAutomatically(
           recentOnly: false,
@@ -625,11 +709,12 @@ class AppStore extends ChangeNotifier {
       // 1) 纯本机一次性重检此前因直流偏置误判为「未识别到人声」的实时切片（无需连接录音卡）
       try {
         final recovered = await pipeline.reprocessSilentLiveSlices();
-        if (recovered > 0) {
+        final sanitized = await pipeline.sanitizeLegacyDirtyRecordings();
+        if (recovered > 0 || sanitized > 0) {
           await refreshFromStore();
           unawaited(syncPhotosAutomatically(recentOnly: false));
-          unawaited(evaluateTopicSegmentationAndRefresh());
         }
+        unawaited(evaluateTopicSegmentationAndRefresh());
       } on Object catch (e) {
         debugPrint('[store] 本地实时切片重检失败：$e');
       }

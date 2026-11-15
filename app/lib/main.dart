@@ -25,6 +25,7 @@ import 'services/polish/slice_polish_service.dart';
 import 'services/recordings/recording_pipeline.dart';
 import 'services/recordings/recording_store.dart';
 import 'services/segment/fast_topic_segment_agent.dart';
+import 'services/segment/rolling_clean_segment_service.dart';
 import 'services/segment/segment_build_service.dart';
 import 'services/transcribe/model_manager_controller.dart';
 import 'services/transcribe/asr_models.dart';
@@ -149,20 +150,29 @@ class _HomeGateState extends State<_HomeGate> {
       engine: _asr,
       models: _models,
       settings: _settings,
+      agentConfig: _agentConfig,
       polish: SlicePolishService(
         chat: chat,
-        model: _modelGateway.textModel,
-        ready: () => _modelGateway.ready,
+        modelResolver: _resolveCloudTextModel,
+        ready: _isCloudReady,
       ),
       segments: SegmentBuildService(
         chat: chat,
-        model: _modelGateway.textModel,
-        ready: () => _modelGateway.ready,
+        modelResolver: _resolveCloudTextModel,
+        ready: _isCloudReady,
       ),
       topicAgent: FastTopicSegmentAgent(
         chat: chat,
-        model: _modelGateway.textModel,
-        ready: () => _modelGateway.ready,
+        modelResolver: _resolveCloudTextModel,
+        ready: _isCloudReady,
+      ),
+      rollingCleaner: RollingCleanSegmentService(
+        chat: chat,
+        modelResolver: _resolveCloudTextModel,
+        ready: _isCloudReady,
+        resolveRoot: _recordingStore.root,
+        voiceprintStore: _store.voiceprintStore,
+        agentConfig: _agentConfig,
       ),
       voiceprintStore: _store.voiceprintStore,
     );
@@ -191,6 +201,18 @@ class _HomeGateState extends State<_HomeGate> {
     }
   }
 
+  String _resolveCloudTextModel() {
+    final override = _agentConfig.cloudModel.trim();
+    if (override.isNotEmpty) return override;
+    return _modelGateway.textModel.trim();
+  }
+
+  bool _isCloudReady() =>
+      _agentConfig.cloudEnabled &&
+      _auth.isSignedIn &&
+      _modelGateway.config.configured &&
+      _resolveCloudTextModel().isNotEmpty;
+
   Future<void> _discoverAndSyncModels() async {
     await _modelGateway.discoverModels();
     _agentConfig.syncGatewayModels(
@@ -199,14 +221,15 @@ class _HomeGateState extends State<_HomeGate> {
     );
   }
 
-  /// 启动装载：等鉴权恢复 → 载入历史状态与本地录音 → 后台确保本地语音模型已安装。
+  /// 启动装载：等鉴权恢复 → 并行拉取模型目录与本地历史 → 等模型目录就绪后继续处理未完录音。
   Future<void> _boot() async {
     await _auth.ready;
     _wasSignedIn = _auth.isSignedIn;
     // 无论是否已登录，后台自动检查并补齐端侧语音模型（iOS Apple-Hosted / RC_MODEL_BASE）。
     unawaited(_modelManager.autoEnsureInstalled());
+    Future<void>? discoverFuture;
     if (_auth.isSignedIn) {
-      unawaited(_discoverAndSyncModels());
+      discoverFuture = _discoverAndSyncModels();
       // 已登录用户后台预热微信 SDK 与社会化渠道（决定设置页/登出后入口可用性），不阻塞启动。
       unawaited(_auth.prewarmWechat());
       unawaited(_auth.prewarmSocialProviders());
@@ -219,8 +242,15 @@ class _HomeGateState extends State<_HomeGate> {
     }
     await _store.init();
     if (mounted) setState(() => _booted = true);
-    // 有本地未完成的录音就继续处理（不访问设备）；模型未装时只下载/转码排队
-    unawaited(_store.processPendingRecordings());
+    // 有本地未完成的录音就继续处理（不访问设备）；等模型目录探测完再触发云端清洗
+    unawaited(_continuePendingAfterModels(discoverFuture));
+  }
+
+  Future<void> _continuePendingAfterModels(Future<void>? discoverFuture) async {
+    if (discoverFuture != null) {
+      await discoverFuture.timeout(const Duration(seconds: 6), onTimeout: () {});
+    }
+    await _store.processPendingRecordings();
   }
 
   void _onAuthChanged() {
@@ -229,6 +259,10 @@ class _HomeGateState extends State<_HomeGate> {
       unawaited(_device.stopAllRecordingsForSignOut());
       _device.closeSheet();
       _store.go(RootTab.timeline);
+    } else if (!_wasSignedIn && signedIn) {
+      unawaited(
+        _discoverAndSyncModels().then((_) => _store.processPendingRecordings()),
+      );
     }
     _wasSignedIn = signedIn;
   }

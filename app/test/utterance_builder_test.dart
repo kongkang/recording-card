@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:recording_card/core/models/summary.dart';
 import 'package:recording_card/services/transcribe/utterance_builder.dart';
 
 void main() {
@@ -121,6 +122,40 @@ void main() {
         ),
         isEmpty,
       );
+    });
+
+    test('孤立句号与纯标点/标记幻觉被过滤，不产生脏文本', () {
+      expect(isMeaningfulSpeechText('。'), isFalse);
+      expect(isMeaningfulSpeechText('<|zh|><|NEUTRAL|>。'), isFalse);
+      expect(isMeaningfulSpeechText('...？！，'), isFalse);
+      expect(isMeaningfulSpeechText('好。'), isTrue);
+
+      expect(splitSentences('。'), isEmpty);
+      expect(splitSentences('？！...'), isEmpty);
+      expect(
+        buildUtterancesFromAsr(
+          sliceId: '0009',
+          sliceStartMs: 0,
+          sliceEndMs: 4000,
+          text: '。',
+          tokens: const ['<|zh|>', '。'],
+          tokenTimestampsMs: const [0, 200],
+        ),
+        isEmpty,
+      );
+      expect(
+        buildUtterancesFromAsr(
+          sliceId: '0010',
+          sliceStartMs: 0,
+          sliceEndMs: 4000,
+          text: '<|zh|> 。',
+          tokens: const ['。'],
+          tokenTimestampsMs: const [100],
+        ),
+        isEmpty,
+      );
+      expect(cleanSpokenFillers('。'), isEmpty);
+      expect(cleanSpokenFillers('嗯，。'), isEmpty);
     });
   });
 }

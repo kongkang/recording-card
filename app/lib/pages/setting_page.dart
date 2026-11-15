@@ -418,6 +418,15 @@ class _SettingPageState extends State<SettingPage> {
                   valueKey: const Key('sv-ext'),
                   onTap: () => _openSub(context, 'ext'),
                 ),
+                const _RowDivider(),
+                _navRow(
+                  context,
+                  keyName: 'set-developer',
+                  label: '开发者设置',
+                  value: _agent.developerCleanSummary,
+                  valueKey: const Key('sv-developer'),
+                  onTap: () => _openSub(context, 'dev'),
+                ),
                 if (widget.supportsDynamicIsland) ...<Widget>[
                   const _RowDivider(),
                   _navRow(

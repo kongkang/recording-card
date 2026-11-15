@@ -568,6 +568,18 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="sw-sk-risk"]');
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$eval('#sv-ext', x => x.innerText.trim()), '已启用 6 项');
+  // 开发者设置（清洗周期 + 层叠重叠上下文 + 存量重洗）
+  await p.click('[data-testid="set-developer"]');
+  assert.equal(await p.$eval('[data-testid="dev-cycle-value"]', x => x.innerText.trim()), '10 分钟');
+  await p.click('[data-testid="dev-cycle-preset-30"]');
+  assert.equal(await p.$eval('[data-testid="dev-cycle-value"]', x => x.innerText.trim()), '30 分钟');
+  await p.click('[data-testid="dev-overlap-mode-minutes"]');
+  await p.click('[data-testid="dev-overlap-min-5"]');
+  assert.equal(await p.$eval('[data-testid="dev-overlap-value"]', x => x.innerText.trim()), '5 分钟');
+  await p.click('[data-testid="dev-reclean-btn"]');
+  assert(await p.$eval('[data-testid="dev-reclean-status"]', x => x.innerText.includes('30 分钟')));
+  await p.click('[data-testid="crumb-back"]');
+  assert.equal(await p.$eval('#sv-developer', x => x.innerText.trim()), '每 30 分钟 · 叠 5分');
   await p.click('[data-testid="privacy-entry"]');
   assert(await p.$eval('#p-setsub', x => x.innerText.includes('privacy@reai.chat')));
   await p.click('[data-testid="crumb-back"]');
@@ -942,6 +954,14 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.waitForFunction(() => document.querySelector('[data-testid="vp-slot-1"]').innerText.includes('4 组样本'), { timeout: 3000 });
   assert((await pCur.$$eval('[data-testid="vp-library-section"] [data-testid^="vp-lib-person-"]', e => e.length)) >= 7, '人物库人数应大于 5（无上限）');
   await pCur.click('[data-testid="crumb-back"]');
+  await pCur.$eval('[data-testid="set-developer"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-developer"]');
+  await pCur.click('[data-testid="dev-cycle-preset-60"]');
+  await pCur.click('[data-testid="dev-overlap-para-5"]');
+  await pCur.click('[data-testid="dev-reclean-btn"]');
+  assert(await pCur.$eval('[data-testid="dev-reclean-status"]', x => x.innerText.includes('1 小时')));
+  await pCur.click('[data-testid="crumb-back"]');
+  assert.equal(await pCur.$eval('#sv-developer', x => x.innerText.trim()), '每 1 小时 · 叠 5段');
   await pCur.$eval('[data-testid="set-auth-entry"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="set-auth-entry"]');
   await pCur.click('[data-testid="auth-open-login-page"]');

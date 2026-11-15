@@ -1,6 +1,7 @@
 /// 总结卡片（Action Card）模型 —— 状态机 pending → generating → done。
 library;
 
+import '../../services/transcribe/utterance_builder.dart';
 import 'record.dart';
 
 enum SummaryState { pending, generating, done, failed }
@@ -27,9 +28,12 @@ List<RecordEvent> sortEventsChronological(Iterable<RecordEvent> events) {
 }
 
 /// 清理句首及停顿中的常见口水词（仅作保真润色，不删改实义内容）。
+///
+/// 对仅有标点/标记而无实际语言内容（如孤立的 `"。"`）的片段返回空串，
+/// 避免静音幻觉标点在润色后保留下来。
 String cleanSpokenFillers(String raw) {
   var s = raw.trim();
-  if (s.isEmpty) return '';
+  if (s.isEmpty || !isMeaningfulSpeechText(s)) return '';
   s = s.replaceAll(RegExp(r'[（(]\s*(?:静音|停顿)[^)）]*[)）]\s*'), '');
   s = s.replaceAll(
     RegExp(r'^(?:(?:嗯+|啊+|呃+|唉+|哦+|那个+|就是说|就是|然后呢)[，,、。\s]+)+'),
@@ -41,7 +45,8 @@ String cleanSpokenFillers(String raw) {
   );
   s = s.replaceAll(RegExp(r'[，,]{2,}'), '，').trim();
   s = s.replaceFirst(RegExp(r'^[，,、\s]+'), '').trim();
-  return s.isEmpty ? raw.trim() : s;
+  if (!isMeaningfulSpeechText(s)) return '';
+  return s;
 }
 
 String joinPolishedUtterances(String prev, String next) {

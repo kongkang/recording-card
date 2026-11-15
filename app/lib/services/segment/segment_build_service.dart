@@ -30,22 +30,30 @@ class SegmentBuildResult {
 class SegmentBuildService {
   SegmentBuildService({
     required ChatCompletion chat,
-    required String model,
+    String model = '',
+    String Function()? modelResolver,
     this.silenceGap = const Duration(seconds: 30),
     this.maxSegmentMs,
     bool Function()? ready,
   }) : _chat = chat,
        _model = model,
+       _modelResolver = modelResolver,
        _ready = ready;
 
   final ChatCompletion _chat;
   final String _model;
+  final String Function()? _modelResolver;
   final bool Function()? _ready;
   final Duration silenceGap;
   final int? maxSegmentMs;
 
+  String get effectiveModel {
+    final resolved = _modelResolver?.call().trim() ?? '';
+    return resolved.isNotEmpty ? resolved : _model.trim();
+  }
+
   bool get configured =>
-      _model.trim().isNotEmpty && (_ready?.call() ?? true);
+      effectiveModel.isNotEmpty && (_ready?.call() ?? true);
 
   Future<SegmentBuildResult> build(
     RecordingFile file, {
@@ -58,8 +66,9 @@ class SegmentBuildService {
       return const SegmentBuildResult(segments: [], fallback: false);
     }
 
+    final resolvedModel = effectiveModel;
     final summarizer = configured
-        ? CloudEventSummarizer(chat: _chat, model: _model)
+        ? CloudEventSummarizer(chat: _chat, model: resolvedModel)
         : _UnavailableSummarizer();
     final coordinator = StagedSummaryCoordinator(
       summarizer: summarizer,

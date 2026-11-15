@@ -7,7 +7,9 @@ library;
 import '../../core/models/record.dart';
 import '../../core/models/recording.dart';
 import '../../core/models/segment_view.dart';
+import '../../core/models/summary.dart';
 import '../segment/fast_topic_segment_agent.dart';
+import '../transcribe/utterance_builder.dart';
 
 class ProjectionResult {
   const ProjectionResult({
@@ -23,12 +25,27 @@ class ProjectionResult {
   final Map<String, String> mergedIdRedirects;
 }
 
+/// 连续语音段组（与 Timeline / 滚动清洗引擎共用同源分组边界）。
+class ProjectedSpeechGroup {
+  const ProjectedSpeechGroup({
+    required this.anchorSegmentId,
+    required this.views,
+    required this.startAtMs,
+    required this.endAtMs,
+  });
+
+  final String anchorSegmentId;
+  final List<SegmentView> views;
+  final int startAtMs;
+  final int endAtMs;
+}
+
 class SegmentProjection {
   const SegmentProjection._();
 
   static final RegExp _gapMarkPattern = RegExp(r'^流中断\s*(\d+)\s*次$');
-  static final RegExp _legacySilentTitlePattern = RegExp(
-    r'^实时切片\s*#\d+（未识别到人声）$',
+  static final RegExp _legacyRawTitlePattern = RegExp(
+    r'^实时切片\s*#\d+(?:（未识别到人声）)?$',
   );
 
   /// 同会话内允许连续无语音切片合并的最大间隔（10 分钟）；跨会话按相邻切片窗口（5 分钟）容差。
@@ -38,10 +55,59 @@ class SegmentProjection {
   /// `< 30s` 连续语音物理停顿合并阈值（不设总时长上限）。
   static const int _speechMergeGapLimitMs = 30 * 1000;
 
-  static ProjectionResult build(
-    List<RecordingFile> files, {
-    TopicSegmentationState? topicState,
-  }) {
+  /// 提取当前全部「连续有声说话簇」，供滚动清洗分段服务与投影共源对齐 `anchorSegmentId`。
+  static List<ProjectedSpeechGroup> collectSpeechGroups(
+    List<RecordingFile> files,
+  ) {
+    final rawViews = _sortedRawViews(files);
+    final groups = <ProjectedSpeechGroup>[];
+    var i = 0;
+    while (i < rawViews.length) {
+      final head = rawViews[i];
+      if (_isMergeableSilent(head)) {
+        var j = i + 1;
+        while (j < rawViews.length &&
+            _canMergeConsecutiveSilent(rawViews[j - 1], rawViews[j])) {
+          j++;
+        }
+        i = j;
+        continue;
+      }
+      if (!_isMergeableSpeech(head)) {
+        if (head.turns.isNotEmpty || head.utterances.isNotEmpty) {
+          groups.add(
+            ProjectedSpeechGroup(
+              anchorSegmentId: head.segment.id,
+              views: [head],
+              startAtMs: head.segment.startAtMs,
+              endAtMs: _endMsOf(head),
+            ),
+          );
+        }
+        i++;
+        continue;
+      }
+      final speechGroup = <SegmentView>[head];
+      var j = i + 1;
+      while (j < rawViews.length &&
+          _canMergeConsecutiveSpeech(speechGroup.last, rawViews[j])) {
+        speechGroup.add(rawViews[j]);
+        j++;
+      }
+      groups.add(
+        ProjectedSpeechGroup(
+          anchorSegmentId: speechGroup.first.segment.id,
+          views: speechGroup,
+          startAtMs: speechGroup.first.segment.startAtMs,
+          endAtMs: _endMsOf(speechGroup.last),
+        ),
+      );
+      i = j;
+    }
+    return groups;
+  }
+
+  static List<SegmentView> _sortedRawViews(List<RecordingFile> files) {
     final rawViews = <SegmentView>[];
     for (final file in files) {
       for (final segment in file.segments) {
@@ -57,6 +123,14 @@ class SegmentProjection {
       if (cmpEnd != 0) return cmpEnd;
       return a.segment.id.compareTo(b.segment.id);
     });
+    return rawViews;
+  }
+
+  static ProjectionResult build(
+    List<RecordingFile> files, {
+    TopicSegmentationState? topicState,
+  }) {
+    final rawViews = _sortedRawViews(files);
 
     final events = <RecordEvent>[];
     final views = <String, SegmentView>{};
@@ -228,6 +302,7 @@ class SegmentProjection {
     final anchor = group.first;
     final startAtMs = anchor.segment.startAtMs;
     final endAtMs = _endMsOf(group.last);
+    final rollingRun = topicState?.rollingByAnchor[anchor.segment.id];
     final runKey = FastTopicSegmentAgent.buildRunKey(
       anchor.segment.id,
       startAtMs,
@@ -235,8 +310,9 @@ class SegmentProjection {
     );
     final topicRun = topicState?.runsByKey[runKey];
 
-    // 单个未拆分的片段直接走原始投影（无合并徽标）
+    // 单个未拆分且无滚动清洗结果的片段直接走原始投影（无合并徽标）
     if (group.length == 1 &&
+        (rollingRun == null || rollingRun.sections.isEmpty) &&
         (topicRun == null || topicRun.sections.isEmpty)) {
       views[anchor.segment.id] = anchor;
       final event = _eventFor(anchor);
@@ -248,6 +324,7 @@ class SegmentProjection {
     // 把多片中的相对时间统一换算到 anchor.file.startAtMs 坐标系
     final combinedTurns = <PolishedTurn>[];
     final combinedUtterances = <RawUtterance>[];
+    final utteranceCompositeKey = <int, String>{};
     final combinedSlices = <AudioSlice>[];
     for (final child in group) {
       final delta = child.file.startAtMs - anchor.file.startAtMs;
@@ -265,20 +342,21 @@ class SegmentProjection {
         );
       }
       for (final u in child.utterances) {
-        combinedUtterances.add(
-          RawUtterance(
-            id: u.id,
-            sliceId: u.sliceId,
-            startMs: u.startMs + delta,
-            endMs: u.endMs + delta,
-            text: u.text,
-            lang: u.lang,
-            emotion: u.emotion,
-            speakerCluster: u.speakerCluster,
-            speakerLabel: u.speakerLabel,
-            spkConfidence: u.spkConfidence,
-          ),
+        final shifted = RawUtterance(
+          id: u.id,
+          sliceId: u.sliceId,
+          startMs: u.startMs + delta,
+          endMs: u.endMs + delta,
+          text: u.text,
+          lang: u.lang,
+          emotion: u.emotion,
+          speakerCluster: u.speakerCluster,
+          speakerLabel: u.speakerLabel,
+          spkConfidence: u.spkConfidence,
         );
+        combinedUtterances.add(shifted);
+        utteranceCompositeKey[identityHashCode(shifted)] =
+            '${child.file.id}::${u.id}';
       }
       for (final s in child.slices) {
         combinedSlices.add(
@@ -297,6 +375,22 @@ class SegmentProjection {
     }
     combinedTurns.sort((a, b) => a.startMs.compareTo(b.startMs));
     combinedUtterances.sort((a, b) => a.startMs.compareTo(b.startMs));
+
+    if (rollingRun != null && rollingRun.sections.isNotEmpty) {
+      _projectRollingSections(
+        anchor: anchor,
+        group: group,
+        rollingRun: rollingRun,
+        combinedUtterances: combinedUtterances,
+        utteranceCompositeKey: utteranceCompositeKey,
+        combinedSlices: combinedSlices,
+        events: events,
+        views: views,
+        redirects: redirects,
+        startMsByEventId: startMsByEventId,
+      );
+      return;
+    }
 
     if (topicRun != null &&
         topicRun.sections.length >= 2 &&
@@ -441,19 +535,34 @@ class SegmentProjection {
     }.toList();
     final resolvedTitle = singleTopic != null && singleTopic.title.trim().isNotEmpty
         ? singleTopic.title.trim()
-        : group
-              .map((c) => c.segment.title.trim())
-              .firstWhere((t) => t.isNotEmpty, orElse: () => '录音片段');
+        : _resolveCleanTitle(
+            group
+                .map((c) => c.segment.title.trim())
+                .firstWhere(
+                  (t) =>
+                      t.isNotEmpty &&
+                      !_legacyRawTitlePattern.hasMatch(t) &&
+                      isMeaningfulSpeechText(t),
+                  orElse: () => '',
+                ),
+            combinedTurns: combinedTurns,
+            combinedUtterances: combinedUtterances,
+          );
     final distinctBriefs = group
         .map((c) => c.segment.brief.trim())
-        .where((b) => b.isNotEmpty)
+        .where(
+          (b) =>
+              b.isNotEmpty &&
+              isMeaningfulSpeechText(b) &&
+              !_legacyRawTitlePattern.hasMatch(b),
+        )
         .toSet()
         .toList();
     final resolvedBrief =
         singleTopic != null && singleTopic.brief.trim().isNotEmpty
         ? singleTopic.brief.trim()
         : (distinctBriefs.isEmpty
-              ? anchor.segment.brief
+              ? _fallbackBrief(combinedTurns, combinedUtterances)
               : distinctBriefs.take(2).join('；'));
     final distinctLongs = group
         .map((c) => c.segment.longText.trim())
@@ -503,6 +612,312 @@ class SegmentProjection {
     );
     events.add(ev);
     startMsByEventId[ev.id] = startAtMs;
+  }
+
+  static void _projectRollingSections({
+    required SegmentView anchor,
+    required List<SegmentView> group,
+    required TopicRunSegmentation rollingRun,
+    required List<RawUtterance> combinedUtterances,
+    required Map<int, String> utteranceCompositeKey,
+    required List<AudioSlice> combinedSlices,
+    required List<RecordEvent> events,
+    required Map<String, SegmentView> views,
+    required Map<String, String> redirects,
+    required Map<String, int> startMsByEventId,
+  }) {
+    final emittedTopics = <({String id, int startMs, int endMs})>[];
+    final anchorStartMs = anchor.file.startAtMs;
+
+    void emitSection({
+      required int sectionIndex,
+      required String title,
+      required String brief,
+      required String overview,
+      required List<String> tags,
+      required List<PolishedTurn> turns,
+      required List<RawUtterance> utterances,
+      required int secStartMs,
+      required int secEndMs,
+      required bool cleanedByCloud,
+      String? explicitId,
+    }) {
+      if (turns.isEmpty && utterances.isEmpty) return;
+      final subChildren = [
+        for (final c in group)
+          if (_endMsOf(c) > secStartMs && c.segment.startAtMs < secEndMs) c,
+      ];
+      final effectiveChildren = subChildren.isEmpty ? [anchor] : subChildren;
+      final speakers = <String>{
+        for (final t in turns)
+          if (t.speakerLabel.trim().isNotEmpty && t.speakerLabel != '未区分')
+            t.speakerLabel.trim(),
+        if (turns.isEmpty)
+          for (final u in utterances)
+            if ((u.speakerLabel ?? '').trim().isNotEmpty &&
+                u.speakerLabel != '未区分')
+              u.speakerLabel!.trim(),
+      }.toList();
+
+      final seedText = turns.isNotEmpty
+          ? turns.map((t) => t.text).join(' ')
+          : utterances.map((u) => u.text).join(' ');
+      final resolvedTitle =
+          (title.trim().isNotEmpty &&
+              !_legacyRawTitlePattern.hasMatch(title.trim()) &&
+              isMeaningfulSpeechText(title))
+          ? title.trim()
+          : buildReadableFallbackTitle(seedText, fallback: '阶段话题');
+      final resolvedBrief =
+          (brief.trim().isNotEmpty &&
+              isMeaningfulSpeechText(brief) &&
+              !_legacyRawTitlePattern.hasMatch(brief.trim()))
+          ? brief.trim()
+          : _truncateClean(seedText, 68);
+      final resolvedLong =
+          (overview.trim().isNotEmpty && isMeaningfulSpeechText(overview))
+          ? overview.trim()
+          : resolvedBrief;
+
+      final eventId =
+          explicitId ??
+          (emittedTopics.isEmpty
+              ? anchor.segment.id
+              : '${anchor.segment.id}#t$sectionIndex');
+      final secSeg = SegmentRecord(
+        id: eventId,
+        sessionId: anchor.segment.sessionId,
+        index: anchor.segment.index + sectionIndex,
+        startAtMs: secStartMs,
+        endAtMs: secEndMs > secStartMs ? secEndMs : secStartMs + 1000,
+        title: resolvedTitle,
+        brief: resolvedBrief,
+        longText: resolvedLong,
+        speakerLabels: speakers,
+        speakerCount: speakers.length,
+        tags: tags.isNotEmpty ? tags : anchor.segment.tags,
+        status: anchor.segment.status,
+        sliceIds: {for (final u in utterances) u.sliceId}.toList(),
+        turnIds: [for (final t in turns) t.id],
+        mark: emittedTopics.isEmpty ? anchor.segment.mark : null,
+        polishStale: cleanedByCloud
+            ? false
+            : effectiveChildren.any(
+                (c) => c.segment.polishStale || c.file.polishStale,
+              ),
+        fallback: cleanedByCloud
+            ? false
+            : effectiveChildren.any((c) => c.segment.fallback),
+      );
+      final secView = SegmentView(
+        segment: secSeg,
+        file: anchor.file,
+        turns: turns,
+        utterances: utterances,
+        slices: combinedSlices,
+        mergedChildren: effectiveChildren.length > 1
+            ? List<SegmentView>.unmodifiable(effectiveChildren)
+            : const [],
+      );
+      views[eventId] = secView;
+      final ev = _eventFor(
+        secView,
+        mergedSliceCount: secView.mergedSliceCount,
+      );
+      events.add(ev);
+      startMsByEventId[eventId] = secStartMs;
+      emittedTopics.add((id: eventId, startMs: secStartMs, endMs: secEndMs));
+    }
+
+    for (var si = 0; si < rollingRun.sections.length; si++) {
+      final sec = rollingRun.sections[si];
+      final paragraphs = sec.paragraphs
+          .where((p) => isMeaningfulSpeechText(p.text))
+          .toList();
+      final subTurns = <PolishedTurn>[
+        for (var pi = 0; pi < paragraphs.length; pi++)
+          () {
+            final p = paragraphs[pi];
+            final relStart = (p.startAtMs - anchorStartMs).clamp(0, 1 << 30);
+            final relEnd = (p.endAtMs - anchorStartMs).clamp(
+              relStart + 500,
+              1 << 30,
+            );
+            return PolishedTurn(
+              id: 'rc-$si-$pi',
+              startMs: relStart,
+              endMs: relEnd,
+              speakerLabel: p.speaker.trim().isEmpty
+                  ? '未区分'
+                  : p.speaker.trim(),
+              text: p.text.trim(),
+              srcUtteranceIds: p.srcUtteranceIds,
+            );
+          }(),
+      ];
+      final srcSet = {for (final p in paragraphs) ...p.srcUtteranceIds};
+      final rawSecStart = sec.startAtMs > 0
+          ? sec.startAtMs
+          : (subTurns.isNotEmpty
+                ? anchorStartMs + subTurns.first.startMs
+                : anchor.segment.startAtMs);
+      final rawSecEnd = sec.endAtMs > rawSecStart
+          ? sec.endAtMs
+          : (subTurns.isNotEmpty
+                ? anchorStartMs + subTurns.last.endMs
+                : rawSecStart + 1000);
+      final subUtterances = combinedUtterances.where((u) {
+        final cKey = utteranceCompositeKey[identityHashCode(u)];
+        if (srcSet.isNotEmpty) {
+          if (cKey != null && srcSet.contains(cKey)) return true;
+          if (srcSet.contains(u.id)) return true;
+        }
+        final absMs = anchorStartMs + u.startMs;
+        return srcSet.isEmpty &&
+            absMs >= rawSecStart - 500 &&
+            absMs <= rawSecEnd + 500;
+      }).toList();
+      emitSection(
+        sectionIndex: si,
+        title: sec.title,
+        brief: sec.brief,
+        overview: sec.overview,
+        tags: sec.tags,
+        turns: subTurns,
+        utterances: subUtterances,
+        secStartMs: rawSecStart,
+        secEndMs: rawSecEnd,
+        cleanedByCloud: sec.cleanedByCloud,
+      );
+    }
+
+    // 保留处于当前清洗周期末尾、尚未到达下次清洗点的最新语音片段，避免新讲话暂不可见
+    final coveredIds = rollingRun.coveredUtteranceIds;
+    final trailingUtterances = <RawUtterance>[
+      for (final u in combinedUtterances)
+        if (!coveredIds.contains(utteranceCompositeKey[identityHashCode(u)]) &&
+            !coveredIds.contains(u.id) &&
+            (anchorStartMs + u.endMs) > rollingRun.coveredUtteranceEndMs)
+          u,
+    ];
+    if (trailingUtterances.isNotEmpty) {
+      final tailTurns = _consolidateUtterancesLocally(trailingUtterances);
+      if (tailTurns.isNotEmpty) {
+        final tStart = anchorStartMs + tailTurns.first.startMs;
+        final tEnd = anchorStartMs + tailTurns.last.endMs;
+        final combined = tailTurns.map((t) => t.text).join(' ');
+        emitSection(
+          sectionIndex: rollingRun.sections.length,
+          title: buildReadableFallbackTitle(combined, fallback: '最新片段'),
+          brief: _truncateClean(combined, 68),
+          overview: '本地实时转写已完成，将在当前清洗周期或停录后与上文一并由云端整理。',
+          tags: const [],
+          turns: tailTurns,
+          utterances: trailingUtterances,
+          secStartMs: tStart,
+          secEndMs: tEnd,
+          cleanedByCloud: false,
+          explicitId: emittedTopics.isEmpty
+              ? anchor.segment.id
+              : '${anchor.segment.id}#tail',
+        );
+      }
+    }
+
+    if (emittedTopics.isEmpty) {
+      views[anchor.segment.id] = anchor;
+      final ev = _eventFor(anchor);
+      events.add(ev);
+      startMsByEventId[ev.id] = anchor.segment.startAtMs;
+      return;
+    }
+
+    for (var k = 1; k < group.length; k++) {
+      final child = group[k];
+      final childMid = (child.segment.startAtMs + _endMsOf(child)) ~/ 2;
+      var targetId = emittedTopics.first.id;
+      for (final t in emittedTopics) {
+        if (childMid >= t.startMs && childMid <= t.endMs) {
+          targetId = t.id;
+          break;
+        }
+      }
+      redirects[child.segment.id] = targetId;
+    }
+  }
+
+  static List<PolishedTurn> _consolidateUtterancesLocally(
+    List<RawUtterance> utterances,
+  ) {
+    final sorted = utterances
+        .where((u) => isMeaningfulSpeechText(u.text))
+        .toList()
+      ..sort((a, b) => a.startMs.compareTo(b.startMs));
+    final turns = <PolishedTurn>[];
+    for (var i = 0; i < sorted.length; i++) {
+      final u = sorted[i];
+      final clean = cleanSpokenFillers(u.text);
+      if (clean.isEmpty || !isMeaningfulSpeechText(clean)) continue;
+      final spk = (u.speakerLabel ?? '').trim().isEmpty
+          ? '未区分'
+          : u.speakerLabel!.trim();
+      if (turns.isNotEmpty && turns.last.speakerLabel == spk) {
+        final prev = turns.last;
+        turns[turns.length - 1] = PolishedTurn(
+          id: prev.id,
+          startMs: prev.startMs,
+          endMs: u.endMs > prev.endMs ? u.endMs : prev.endMs,
+          speakerLabel: spk,
+          text: joinPolishedUtterances(prev.text, clean),
+          srcUtteranceIds: [...prev.srcUtteranceIds, u.id],
+        );
+      } else {
+        turns.add(
+          PolishedTurn(
+            id: 'loc-$i',
+            startMs: u.startMs,
+            endMs: u.endMs,
+            speakerLabel: spk,
+            text: clean,
+            srcUtteranceIds: [u.id],
+          ),
+        );
+      }
+    }
+    return turns;
+  }
+
+  static String _resolveCleanTitle(
+    String candidate, {
+    required List<PolishedTurn> combinedTurns,
+    required List<RawUtterance> combinedUtterances,
+  }) {
+    final t = candidate.trim();
+    if (t.isNotEmpty &&
+        !_legacyRawTitlePattern.hasMatch(t) &&
+        isMeaningfulSpeechText(t)) {
+      return t;
+    }
+    final seed = combinedTurns.isNotEmpty
+        ? combinedTurns.map((e) => e.text).join(' ')
+        : combinedUtterances.map((e) => e.text).join(' ');
+    return buildReadableFallbackTitle(seed, fallback: '录音片段');
+  }
+
+  static String _fallbackBrief(
+    List<PolishedTurn> turns,
+    List<RawUtterance> utterances,
+  ) {
+    final seed = turns.isNotEmpty
+        ? turns.map((t) => t.text).join('；')
+        : utterances.map((u) => u.text).join('；');
+    return seed.trim().isEmpty ? '尚无摘要' : _truncateClean(seed, 68);
+  }
+
+  static String _truncateClean(String text, int maxLen) {
+    final clean = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (clean.length <= maxLen) return clean;
+    return '${clean.substring(0, maxLen)}…';
   }
 
   static int _endMsOf(SegmentView view) {
@@ -578,7 +993,10 @@ class SegmentProjection {
           )
           .toList();
     }
-    turns.sort((a, b) => a.startMs.compareTo(b.startMs));
+    turns = turns
+        .where((t) => isMeaningfulSpeechText(t.text))
+        .toList()
+      ..sort((a, b) => a.startMs.compareTo(b.startMs));
 
     final sliceIds = segment.sliceIds.toSet();
     final slices = <AudioSlice>[
@@ -592,11 +1010,12 @@ class SegmentProjection {
     final sliceSet = {for (final s in slices) s.id};
     var utterances = <RawUtterance>[
       for (final u in file.utterances)
-        if (sliceSet.contains(u.sliceId) ||
-            (sliceSet.isEmpty &&
-                file.startAtMs + u.startMs >= segment.startAtMs &&
-                file.startAtMs + u.startMs <=
-                    (segment.endAtMs ?? segment.startAtMs)))
+        if (isMeaningfulSpeechText(u.text) &&
+            (sliceSet.contains(u.sliceId) ||
+                (sliceSet.isEmpty &&
+                    file.startAtMs + u.startMs >= segment.startAtMs &&
+                    file.startAtMs + u.startMs <=
+                        (segment.endAtMs ?? segment.startAtMs))))
           u,
     ];
     utterances.sort((a, b) => a.startMs.compareTo(b.startMs));
@@ -668,22 +1087,45 @@ class SegmentProjection {
                     ? '时间未校准'
                     : null;
 
-    final normalizedSilent =
-        isReadySilent && _legacySilentTitlePattern.hasMatch(segment.title.trim());
-    final resolvedTitle = normalizedSilent
+    final rawTitle = segment.title.trim();
+    final isSilentOrLegacyTitle =
+        isReadySilent &&
+        (rawTitle.isEmpty || _legacyRawTitlePattern.hasMatch(rawTitle));
+    final isNonSilentLegacyTitle =
+        !isReadySilent &&
+        (rawTitle.isEmpty ||
+            _legacyRawTitlePattern.hasMatch(rawTitle) ||
+            !isMeaningfulSpeechText(rawTitle));
+    final fallbackSeedText = dialog.isNotEmpty
+        ? dialog.map((t) => t.text).join(' ')
+        : raw.map((t) => t.text).join(' ');
+    final resolvedTitle = isSilentOrLegacyTitle
         ? '未识别到语音'
-        : (segment.title.trim().isEmpty ? '录音片段' : segment.title);
-    final brief = normalizedSilent
+        : (isNonSilentLegacyTitle
+              ? buildReadableFallbackTitle(
+                  fallbackSeedText,
+                  fallback: '录音片段',
+                )
+              : rawTitle);
+    final rawBrief = segment.brief.trim();
+    final brief = isReadySilent
         ? '本段未检测到有效人声，原始录音已保存在本机。'
-        : segment.brief.trim().isNotEmpty
-            ? segment.brief
+        : (rawBrief.isNotEmpty &&
+                  isMeaningfulSpeechText(rawBrief) &&
+                  !_legacyRawTitlePattern.hasMatch(rawBrief))
+            ? rawBrief
             : segment.status == SegmentStatus.live
                 ? '正在整理这段对话…'
-                : '尚无摘要';
-    final longText = normalizedSilent
+                : (fallbackSeedText.trim().isNotEmpty
+                      ? _truncateClean(fallbackSeedText, 68)
+                      : '尚无摘要');
+    final rawLong = segment.longText.trim();
+    final longText = isReadySilent
         ? '本段未检测到有效人声，原始录音已保存在本机，可在详情「原始数据」回听。'
-        : segment.longText.trim().isNotEmpty
-            ? segment.longText
+        : (rawLong.isNotEmpty &&
+                  isMeaningfulSpeechText(rawLong) &&
+                  !_legacyRawTitlePattern.hasMatch(rawLong))
+            ? rawLong
             : dialog.map((t) => t.text).join('\n');
 
     return RecordEvent(
