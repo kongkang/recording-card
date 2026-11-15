@@ -1,0 +1,1446 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Recording Card · 15-Engine Promo Video Renderer</title>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage" width="1920" height="1080"></canvas>
+<script>
+'use strict';
+
+const cv = document.getElementById('stage');
+const ctx = cv.getContext('2d', { alpha: true });
+ctx.imageSmoothingEnabled = true;
+ctx.imageSmoothingQuality = 'high';
+
+const TAU = Math.PI * 2;
+const SANS = '"PingFang SC", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont, sans-serif';
+const SERIF = '"Songti SC", "STSong", "New York", Georgia, serif';
+const MONO = '"SF Mono", "Menlo", "Monaco", monospace';
+
+/* ---------- Math & Deterministic Motion Curves (remotion-dev & video-shotcraft) ---------- */
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, p) => a + (b - a) * p;
+const seg = (t, a, b) => (b <= a ? (t >= b ? 1 : 0) : clamp((t - a) / (b - a), 0, 1));
+const eOutCubic = (p) => 1 - Math.pow(1 - p, 3);
+const eOutQuint = (p) => 1 - Math.pow(1 - p, 5);
+const eOutExpo = (p) => (p >= 1 ? 1 : 1 - Math.pow(2, -10 * p));
+const eInOutCubic = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const eSpring = (p) => {
+  if (p <= 0) return 0;
+  if (p >= 1) return 1;
+  return 1 - Math.exp(-6.5 * p) * Math.cos(9.5 * p);
+};
+const eBack = (p) => {
+  if (p <= 0) return 0;
+  if (p >= 1) return 1;
+  const c1 = 1.55, c3 = c1 + 1;
+  return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
+};
+
+function mulberry32(seed) {
+  let a = seed | 0;
+  return function () {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hexA(hex, alpha) {
+  const h = hex.replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${clamp(alpha, 0, 1)})`;
+}
+
+function rrect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2));
+}
+
+function fillCard(x, y, w, h, r, fill, opts) {
+  const o = opts || {};
+  ctx.save();
+  if (o.shadow) {
+    ctx.shadowColor = o.shadow;
+    ctx.shadowBlur = o.blur ?? 40;
+    ctx.shadowOffsetX = o.dx ?? 0;
+    ctx.shadowOffsetY = o.dy ?? 16;
+  }
+  ctx.fillStyle = fill;
+  rrect(x, y, w, h, r);
+  ctx.fill();
+  ctx.restore();
+  if (o.border) {
+    ctx.save();
+    ctx.strokeStyle = o.border;
+    ctx.lineWidth = o.bw ?? 2;
+    rrect(x, y, w, h, r);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function setFont(weight, size, fam) {
+  ctx.font = `${weight} ${Math.round(size)}px ${fam || SANS}`;
+}
+
+function fitSize(str, weight, targetSize, maxW, fam, minSz) {
+  const floor = minSz || 16;
+  let sz = Math.round(targetSize);
+  setFont(weight, sz, fam);
+  if (!str || maxW <= 0) return sz;
+  let w = ctx.measureText(str).width;
+  if (w > maxW) {
+    sz = Math.max(floor, Math.floor(sz * (maxW / w)));
+    setFont(weight, sz, fam);
+    while (sz > floor && ctx.measureText(str).width > maxW) {
+      sz -= 1;
+      setFont(weight, sz, fam);
+    }
+  }
+  return sz;
+}
+
+/* ---------- Preload All Real UI Screenshots ---------- */
+const UI_NAMES = [
+  'ui-feed', 'ui-expanded', 'ui-detail-photo', 'ui-unc-album', 'ui-raw-audio',
+  'ui-sum-select', 'ui-sum-all', 'ui-sum-overview', 'ui-sum-logic', 'ui-sum-points',
+  'ui-sum-todo', 'ui-sum-export', 'ui-phone-rec', 'ui-device-scan', 'ui-hw-sheet',
+  'ui-live-hw', 'ui-standby-relay', 'ui-setting', 'ui-local-models', 'ui-cloud-models',
+  'ui-prompts', 'ui-extensions', 'ui-login', 'ui-wide-sum', 'ui-wide-detail'
+];
+const LIVE_NAMES = [
+  'live-16-hook', 'live-16-reveal', 'live-16-payoff',
+  'live-17-hook', 'live-17-reveal', 'live-17-payoff',
+  'live-18-hook', 'live-18-reveal', 'live-18-payoff',
+  'live-19-hook', 'live-19-reveal', 'live-19-payoff',
+  'live-20-hook', 'live-20-reveal', 'live-20-payoff'
+];
+window.IMGS = {};
+window.LIVE_IMGS = {};
+window.LIVE_OVERLAY_ONLY = false;
+window.preloadAll = async function () {
+  await Promise.all([
+    ...UI_NAMES.map(name => new Promise((res) => {
+      const im = new Image();
+      im.onload = () => { window.IMGS[name] = im; res(true); };
+      im.onerror = () => res(false);
+      im.src = `../assets/ui/${name}.png`;
+    })),
+    ...LIVE_NAMES.map(name => new Promise((res) => {
+      const im = new Image();
+      im.onload = () => { window.LIVE_IMGS[name] = im; res(true); };
+      im.onerror = () => res(false);
+      im.src = `../assets/live/${name}.jpg`;
+    }))
+  ]);
+  return Object.keys(window.IMGS).length + Object.keys(window.LIVE_IMGS).length;
+};
+
+let ACTIVE_PLAN = null;
+window.setPlan = function (plan) {
+  ACTIVE_PLAN = plan;
+  cv.width = plan.width;
+  cv.height = plan.height;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  return true;
+};
+
+/* ---------- Brand & Hardware Reusable Vector Props ---------- */
+function drawAppIcon(cx, cy, size, accent, dark) {
+  const r = size * 0.23;
+  ctx.save();
+  ctx.translate(cx, cy);
+  const g = ctx.createLinearGradient(-size / 2, -size / 2, size / 2, size / 2);
+  g.addColorStop(0, '#161B26');
+  g.addColorStop(1, '#0A0D14');
+  fillCard(-size / 2, -size / 2, size, size, r, g, {
+    shadow: dark ? hexA(accent, 0.35) : 'rgba(15,23,42,0.28)',
+    blur: size * 0.35,
+    dy: size * 0.1,
+    border: 'rgba(255,255,255,0.2)',
+    bw: Math.max(2, size * 0.02)
+  });
+  // Inner rounded square frame
+  const inS = size * 0.62;
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = Math.max(3, size * 0.045);
+  rrect(-inS / 2, -inS / 2, inS, inS, inS * 0.26);
+  ctx.stroke();
+  // 3 soundwave bars inside + live rec dot
+  const bars = [0.28, 0.48, 0.34];
+  bars.forEach((bh, i) => {
+    const bx = (i - 1) * size * 0.13;
+    const h = size * bh;
+    ctx.fillStyle = i === 1 ? accent : '#FFFFFF';
+    rrect(bx - size * 0.032, -h / 2, size * 0.064, h, size * 0.032);
+    ctx.fill();
+  });
+  ctx.fillStyle = '#FF4D5E';
+  ctx.beginPath();
+  ctx.arc(inS * 0.3, -inS * 0.3, size * 0.048, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawHardwareCard(cx, cy, scale, t, opts) {
+  const o = opts || {};
+  const w = 380 * scale, h = 240 * scale;
+  ctx.save();
+  ctx.translate(cx, cy + Math.sin(t * 1.8) * 6 * scale);
+  if (o.rot) ctx.rotate(o.rot);
+
+  const bodyGrad = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
+  if (o.darkBody) {
+    bodyGrad.addColorStop(0, '#242A36');
+    bodyGrad.addColorStop(1, '#12161F');
+  } else {
+    bodyGrad.addColorStop(0, '#F9FAFC');
+    bodyGrad.addColorStop(1, '#DCE2EC');
+  }
+  fillCard(-w / 2, -h / 2, w, h, 30 * scale, bodyGrad, {
+    shadow: o.dark ? 'rgba(0,0,0,0.62)' : 'rgba(15,23,42,0.24)',
+    blur: 55 * scale,
+    dy: 22 * scale,
+    border: o.darkBody ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.9)',
+    bw: 2 * scale
+  });
+
+  // OLED mini window
+  const sw = w * 0.58, sh = h * 0.42;
+  fillCard(-sw / 2, -h * 0.36, sw, sh, 13 * scale, '#0B0F17', {
+    border: 'rgba(255,255,255,0.12)', bw: 1.5 * scale
+  });
+
+  // Live waveform inside OLED
+  const bars = 20;
+  const bw = (sw - 28 * scale) / bars;
+  for (let i = 0; i < bars; i++) {
+    const amp = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t * 7.2 + i * 0.7));
+    const bh = Math.max(4 * scale, sh * 0.52 * amp);
+    ctx.fillStyle = o.accent || '#2EE6A6';
+    rrect(-sw / 2 + 14 * scale + i * bw + bw * 0.2, -h * 0.36 + sh * 0.42 - bh / 2, bw * 0.6, bh, bw * 0.3);
+    ctx.fill();
+  }
+  // REC indicator
+  if (Math.sin(t * 5.5) > -0.3) {
+    ctx.fillStyle = '#FF4D5E';
+    ctx.beginPath();
+    ctx.arc(-sw / 2 + 20 * scale, -h * 0.36 + sh - 15 * scale, 4.5 * scale, 0, TAU);
+    ctx.fill();
+  }
+  setFont(600, 12 * scale, MONO);
+  ctx.fillStyle = '#CBD5E1';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('REC · BLE LIVE', -sw / 2 + 32 * scale, -h * 0.36 + sh - 15 * scale);
+
+  // Physical mark button + mic array
+  fillCard(w * 0.28, h * 0.14, 42 * scale, 42 * scale, 21 * scale, o.darkBody ? '#1B2230' : '#E5EAF2', {
+    border: o.accent || '#3B82F6', bw: 2 * scale
+  });
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = o.darkBody ? 'rgba(255,255,255,0.35)' : 'rgba(71,85,105,0.45)';
+    ctx.beginPath();
+    ctx.arc(-w * 0.34 + i * 18 * scale, h * 0.3, 3 * scale, 0, TAU);
+    ctx.fill();
+  }
+  setFont(700, 15 * scale, SANS);
+  ctx.fillStyle = o.darkBody ? '#E2E8F0' : '#475569';
+  ctx.textAlign = 'left';
+  ctx.fillText(o.label || '录音卡 V2', -w * 0.36, h * 0.14);
+
+  // Contained specular sheen (video-shotcraft Q4: clipped to border radius, single pass)
+  if (o.sheen != null && o.sheen > 0 && o.sheen < 1) {
+    ctx.save();
+    rrect(-w / 2, -h / 2, w, h, 30 * scale);
+    ctx.clip();
+    const sx = lerp(-w, w, o.sheen);
+    const sg = ctx.createLinearGradient(sx - 90 * scale, -h / 2, sx + 90 * scale, h / 2);
+    sg.addColorStop(0, 'rgba(255,255,255,0)');
+    sg.addColorStop(0.5, 'rgba(255,255,255,0.28)');
+    sg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = sg;
+    ctx.fillRect(-w / 2, -h / 2, w, h);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawDynamicIslandHero(cx, cy, scale, t, clockStr, subStr, accent) {
+  const w = 680 * scale, h = 118 * scale;
+  ctx.save();
+  ctx.translate(cx, cy);
+  fillCard(-w / 2, -h / 2, w, h, h / 2, '#07090D', {
+    shadow: hexA(accent || '#F59E0B', 0.32),
+    blur: 48 * scale,
+    dy: 16 * scale,
+    border: 'rgba(255,255,255,0.16)',
+    bw: 2 * scale
+  });
+  drawAppIcon(-w / 2 + 64 * scale, 0, 66 * scale, accent || '#F59E0B', true);
+
+  setFont(700, 36 * scale, MONO);
+  const clockW = ctx.measureText(clockStr).width;
+  const textMaxW = w - (114 * scale) - clockW - (66 * scale);
+
+  const tTitle = '录音卡 · 实时守护中';
+  const sz1 = fitSize(tTitle, 700, 25 * scale, textMaxW, SANS, 14);
+  setFont(700, sz1, SANS);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(tTitle, -w / 2 + 114 * scale, -16 * scale);
+
+  const tSub = subStr || '每满 1 分钟本地转写 · 锁屏实况已开启';
+  const sz2 = fitSize(tSub, 500, 18 * scale, textMaxW, SANS, 12);
+  setFont(500, sz2, SANS);
+  ctx.fillStyle = '#94A3B8';
+  ctx.fillText(tSub, -w / 2 + 114 * scale, 19 * scale);
+
+  // Right-aligned 7-seg style amber LCD timer
+  setFont(700, 36 * scale, MONO);
+  ctx.fillStyle = '#F59E0B';
+  ctx.textAlign = 'right';
+  ctx.fillText(clockStr, w / 2 - 36 * scale, 2 * scale);
+  ctx.restore();
+}
+
+/* ---------- High-DPI Real Device Frame + Uncropped Camera Push ---------- */
+function drawRealScreenCard(imgKey, cx, cy, maxW, maxH, progress, focus, opts) {
+  const im = window.IMGS[imgKey];
+  if (!im) return;
+  const o = opts || {};
+  const isWideImg = im.width > im.height;
+  const hasTopBanner = imgKey === 'ui-phone-rec' || imgKey === 'ui-live-hw' || imgKey === 'ui-standby-relay';
+  const topSafe = (!isWideImg && !hasTopBanner) ? 16 : 0;
+  const aspect = im.width / (im.height + topSafe * 3);
+
+  let dw = maxW, dh = dw / aspect;
+  if (dh > maxH) {
+    dh = maxH;
+    dw = dh * aspect;
+  }
+
+  // Push the whole physical device card gently forward (never cropping UI text inside the bezel!)
+  const camScale = lerp(0.965, 1.028, eInOutCubic(clamp(progress, 0, 1)));
+  const floatY = Math.sin(clamp(progress, 0, 1) * Math.PI) * -6;
+
+  ctx.save();
+  ctx.translate(cx, cy + floatY);
+  if (o.tilt) ctx.rotate(o.tilt);
+  ctx.scale(camScale, camScale);
+
+  const pad = isWideImg ? 13 : 12;
+  const outerR = isWideImg ? 24 : 36;
+  const innerR = isWideImg ? 14 : 24;
+
+  // Device chassis
+  fillCard(-dw / 2 - pad, -dh / 2 - pad, dw + pad * 2, dh + pad * 2, outerR, '#0D1017', {
+    shadow: o.dark ? 'rgba(0,0,0,0.65)' : 'rgba(15,23,42,0.26)',
+    blur: o.brutal ? 0 : 54,
+    dx: o.brutal ? 12 : 0,
+    dy: o.brutal ? 12 : 22,
+    border: o.brutal ? '#111111' : (o.accentBorder || 'rgba(255,255,255,0.22)'),
+    bw: o.brutal ? 5 : 2.5
+  });
+
+  // Uncropped high-DPI UI screen inside rounded bezel
+  ctx.save();
+  rrect(-dw / 2, -dh / 2, dw, dh, innerR);
+  ctx.clip();
+  const topStripBg = (imgKey === 'ui-hw-sheet' || imgKey === 'ui-device-scan' || imgKey === 'ui-sum-export')
+    ? '#9E9E9C'
+    : '#F7F7F5';
+  ctx.fillStyle = hasTopBanner ? '#10131A' : topStripBg;
+  ctx.fillRect(-dw / 2, -dh / 2, dw, dh);
+
+  const safePx = (!isWideImg && !hasTopBanner) ? Math.round(dh * 0.022) : 0;
+  ctx.drawImage(im, -dw / 2, -dh / 2 + safePx, dw, dh - safePx);
+  ctx.restore();
+
+  // Subtle Dynamic Island capsule notch on standard portrait screens
+  if (!isWideImg && !hasTopBanner) {
+    fillCard(-dw * 0.11, -dh / 2 + 5, dw * 0.22, 11, 5.5, '#080A0F');
+  }
+  ctx.restore();
+}
+
+/* ---------- Layer 1: 15 Distinct Engine Background & Atmosphere Renderers ---------- */
+function drawBackground(plan, t, sceneIdx) {
+  const W = plan.width, H = plan.height;
+  const P = plan.palette;
+  const eng = plan.engine;
+
+  // Base gradient with slow ambient drift
+  const drift = Math.sin(t * 0.6) * 0.08;
+  const bg = ctx.createLinearGradient(0, H * drift, W * 0.3, H);
+  bg.addColorStop(0, P.bg1);
+  bg.addColorStop(1, P.bg2);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  if (eng === 'keynote-gold' || eng === 'grand-finale') {
+    // Stage volumetric spotlight beams
+    const rg = ctx.createRadialGradient(W * 0.5, -H * 0.1, 20, W * 0.5, H * 0.35, Math.max(W, H) * 0.78);
+    rg.addColorStop(0, hexA(P.accent, eng === 'grand-finale' ? 0.24 : 0.18));
+    rg.addColorStop(0.55, hexA(P.accent2, 0.07));
+    rg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Floating stage dust particles
+    const rnd = mulberry32(42);
+    for (let i = 0; i < 36; i++) {
+      const px = (rnd() * W + t * (12 + rnd() * 18)) % W;
+      const py = (rnd() * H - t * (15 + rnd() * 20) + H * 4) % H;
+      const r = 1.5 + rnd() * 2.5;
+      ctx.fillStyle = hexA(P.accent, 0.18 + 0.22 * Math.sin(t * 2 + i));
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, TAU);
+      ctx.fill();
+    }
+  } else if (eng === 'bento-swiss') {
+    // Crisp Swiss 60px grid + soft sapphire orb
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.045)';
+    ctx.lineWidth = 1;
+    const step = 60;
+    for (let x = 0; x < W; x += step) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (let y = 0; y < H; y += step) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    const rg = ctx.createRadialGradient(W * 0.78, H * 0.28, 10, W * 0.78, H * 0.28, 620);
+    rg.addColorStop(0, hexA(P.accent, 0.12));
+    rg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, W, H);
+  } else if (eng === 'cyber-diagram') {
+    // Emerald dot matrix + subtle telemetry horizon
+    ctx.fillStyle = hexA(P.accent, 0.12);
+    const step = 44;
+    for (let x = 22; x < W; x += step) {
+      for (let y = 22; y < H; y += step) {
+        ctx.fillRect(x, y, 2, 2);
+      }
+    }
+    const scanY = (t * 140) % H;
+    const sg = ctx.createLinearGradient(0, scanY - 60, 0, scanY + 20);
+    sg.addColorStop(0, 'rgba(46,230,166,0)');
+    sg.addColorStop(0.8, 'rgba(46,230,166,0.06)');
+    sg.addColorStop(1, 'rgba(46,230,166,0)');
+    ctx.fillStyle = sg;
+    ctx.fillRect(0, scanY - 60, W, 80);
+  } else if (eng === 'editorial-law') {
+    // Classical editorial framing lines
+    ctx.strokeStyle = 'rgba(28, 27, 24, 0.10)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(48, 48, W - 96, H - 96);
+    ctx.beginPath();
+    ctx.moveTo(48, 132);
+    ctx.lineTo(W - 48, 132);
+    ctx.stroke();
+  } else if (eng === 'pop-brutalism') {
+    // High-energy Neo-Brutalist color block + bold polka/grid accents
+    const bgs = ['#FFE135', '#FFF0F6', '#EBF3FF', '#FFF6CC', '#FFE135'];
+    ctx.fillStyle = bgs[sceneIdx % bgs.length];
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(17,17,17,0.07)';
+    ctx.lineWidth = 2;
+    for (let x = 0; x < W; x += 72) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (let y = 0; y < H; y += 72) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    // Brutalist border frame
+    ctx.strokeStyle = '#111111';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(20, 20, W - 40, H - 40);
+  } else if (eng === 'analog-reel') {
+    // Subtle spinning dual studio tape reels in background
+    [W * 0.22, W * 0.78].forEach((rx, idx) => {
+      ctx.save();
+      ctx.translate(rx, H * 0.52);
+      ctx.rotate(t * 0.55 * (idx === 0 ? 1 : 1));
+      ctx.strokeStyle = 'rgba(255, 122, 69, 0.08)';
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(0, 0, 290, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 95, 0, TAU); ctx.stroke();
+      for (let k = 0; k < 3; k++) {
+        const a = (k * TAU) / 3;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * 95, Math.sin(a) * 95);
+        ctx.lineTo(Math.cos(a) * 270, Math.sin(a) * 270);
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+  } else if (eng === 'paper-warmth') {
+    // Paper Cut Parallax warm sun & layered hills (harish-anumula Preset #8!)
+    const sunY = H * 0.22 - Math.sin(t * 0.3) * 12;
+    for (let r = 3; r >= 1; r--) {
+      ctx.fillStyle = hexA('#F59E0B', 0.06 * (4 - r));
+      ctx.beginPath();
+      ctx.arc(W * 0.78, sunY, 90 + r * 55, 0, TAU);
+      ctx.fill();
+    }
+    const hills = [
+      { y: H * 0.76, c: '#F5DEC0', amp: 42, sp: 0.2 },
+      { y: H * 0.83, c: '#EBC89E', amp: 35, sp: 0.35 },
+      { y: H * 0.90, c: '#DFB07C', amp: 28, sp: 0.5 }
+    ];
+    hills.forEach((hl, hi) => {
+      ctx.fillStyle = hl.c;
+      ctx.beginPath();
+      ctx.moveTo(0, H);
+      for (let x = 0; x <= W; x += 40) {
+        const y = hl.y + Math.sin(x * 0.004 + t * hl.sp + hi * 1.7) * hl.amp;
+        ctx.lineTo(x, y);
+      }
+      ctx.lineTo(W, H);
+      ctx.closePath();
+      ctx.fill();
+    });
+  } else if (eng === 'island-street') {
+    // Radar pulse rings from top Dynamic Island zone
+    for (let k = 0; k < 3; k++) {
+      const rp = ((t * 0.45 + k * 0.33) % 1);
+      ctx.strokeStyle = hexA(P.accent, 0.16 * (1 - rp));
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(W * 0.5, H * 0.18, 120 + rp * 650, 0, TAU);
+      ctx.stroke();
+    }
+  } else if (eng === 'cream-magazine') {
+    // Editorial magazine soft coral/rose aura + corner crop marks
+    const rg = ctx.createRadialGradient(W * 0.2, H * 0.2, 20, W * 0.2, H * 0.2, 540);
+    rg.addColorStop(0, hexA(P.accent, 0.09));
+    rg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = hexA(P.ink, 0.18);
+    ctx.lineWidth = 2;
+    [[44, 44, 1, 1], [W - 44, 44, -1, 1], [44, H - 44, 1, -1], [W - 44, H - 44, -1, -1]].forEach(([x, y, dx, dy]) => {
+      ctx.beginPath();
+      ctx.moveTo(x, y + dy * 28); ctx.lineTo(x, y); ctx.lineTo(x + dx * 28, y);
+      ctx.stroke();
+    });
+  } else if (eng === 'academic-split') {
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.07)';
+    ctx.lineWidth = 1;
+    for (let y = 80; y < H; y += 64) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    const rg = ctx.createRadialGradient(W * 0.65, H * 0.45, 40, W * 0.65, H * 0.45, 760);
+    rg.addColorStop(0, hexA(P.accent, 0.15));
+    rg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, W, H);
+  } else if (eng === 'calm-glass') {
+    // Slow breathing mindfulness circles (4s inhale / 4s exhale feel)
+    const breathe = 0.5 + 0.5 * Math.sin(t * 1.1);
+    const rg = ctx.createRadialGradient(W * 0.5, H * 0.45, 40, W * 0.5, H * 0.45, 380 + breathe * 180);
+    rg.addColorStop(0, hexA(P.accent, 0.16));
+    rg.addColorStop(0.6, hexA(P.accent2, 0.06));
+    rg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, W, H);
+  } else if (eng === 'ai-orbital') {
+    // Orbital ellipses in deep cyber space
+    ctx.save();
+    ctx.translate(W * 0.5, H * 0.52);
+    [320, 520, 720].forEach((rx, idx) => {
+      ctx.strokeStyle = hexA(idx % 2 ? P.accent2 : P.accent, 0.14);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx, rx * 0.42, -0.18, 0, TAU);
+      ctx.stroke();
+    });
+    ctx.restore();
+  } else if (eng === 'blueprint-edc') {
+    // Precision CAD blueprint grid (minor 24px + major 120px)
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.06)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < W; x += 30) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (let y = 0; y < H; y += 30) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.14)';
+    for (let x = 0; x < W; x += 150) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (let y = 0; y < H; y += 150) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  } else if (eng === 'emerald-academy') {
+    const rg = ctx.createRadialGradient(W * 0.8, H * 0.18, 20, W * 0.8, H * 0.18, 560);
+    rg.addColorStop(0, hexA(P.accent, 0.12));
+    rg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+/* ---------- HUD Top Bar (Brand + Scene Tag + Running Timecode) ---------- */
+function drawTopHud(plan, sc, t) {
+  const W = plan.width;
+  const P = plan.palette;
+  const isV = plan.aspect === '9:16';
+  const padX = isV ? 58 : 76;
+  const topY = isV ? 74 : 56;
+
+  ctx.save();
+  // Left pill badge
+  const tagTxt = sc.badge || plan.styleName.split('·')[0].trim();
+  setFont(700, isV ? 22 : 20, MONO);
+  const tw = ctx.measureText(tagTxt).width + 36;
+  fillCard(padX, topY - 18, tw, 38, 19, hexA(P.accent, P.dark ? 0.16 : 0.11), {
+    border: hexA(P.accent, 0.38), bw: 1.5
+  });
+  ctx.fillStyle = P.accent;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(tagTxt, padX + 18, topY + 1);
+
+  // Right product lockup
+  setFont(700, isV ? 26 : 24, SANS);
+  ctx.fillStyle = hexA(P.ink, 0.85);
+  ctx.textAlign = 'right';
+  ctx.fillText('录音卡 · Recording Card', W - padX, topY + 1);
+  ctx.restore();
+}
+
+/* ---------- Kinetic Headline Block with Accent Highlight (Q11 ≥ 60px guaranteed!) ---------- */
+function drawHeadlineBlock(plan, sc, localT, cx, topY, maxW, align, baseSize) {
+  const P = plan.palette;
+  const useSerif = plan.engine === 'editorial-law' || plan.engine === 'paper-warmth' || plan.engine === 'cream-magazine';
+  const fam = useSerif ? SERIF : SANS;
+  const lines = sc.headline.filter(Boolean);
+  const brutal = plan.engine === 'pop-brutalism';
+
+  lines.forEach((lineStr, idx) => {
+    const enterP = eOutExpo(seg(localT, 0.04 + idx * 0.14, 0.52 + idx * 0.14));
+    if (enterP <= 0.01) return;
+
+    const hasAcc = Boolean(sc.accentWord && lineStr.includes(sc.accentWord));
+    const extraPad = hasAcc ? (brutal ? 44 : 24) : 10;
+    const sz = fitSize(lineStr, 800, baseSize - idx * 4, maxW - extraPad, fam, 26);
+    const y = topY + idx * (sz * 1.28);
+
+    ctx.save();
+    ctx.globalAlpha = clamp(enterP * 1.35, 0, 1);
+    const slideY = (1 - enterP) * 34;
+    const scale = 0.94 + 0.06 * enterP;
+    ctx.translate(cx, y + slideY);
+    ctx.scale(scale, scale);
+
+    setFont(800, sz, fam);
+    ctx.textAlign = align || 'center';
+    ctx.textBaseline = 'middle';
+
+    // Check if accentWord is in this line
+    const acc = sc.accentWord;
+    if (acc && lineStr.includes(acc)) {
+      const before = lineStr.slice(0, lineStr.indexOf(acc));
+      const after = lineStr.slice(lineStr.indexOf(acc) + acc.length);
+      const beforeW = ctx.measureText(before).width;
+      const accW = ctx.measureText(acc).width;
+      const afterW = ctx.measureText(after).width;
+      const padL = (brutal && before.length > 0) ? 14 : 0;
+      const padR = (brutal && after.length > 0) ? 14 : 0;
+      const fullW = beforeW + padL + accW + padR + afterW;
+      const startX = align === 'left' ? 0 : -fullW / 2;
+      const accX = startX + beforeW + padL;
+
+      const hlP = eOutQuint(seg(localT, 0.28 + idx * 0.14, 0.72 + idx * 0.14));
+      if (hlP > 0) {
+        if (brutal) {
+          fillCard(accX - 10, -sz * 0.56, (accW + 20) * hlP, sz * 1.12, 12, '#FFFFFF', {
+            border: '#111111', bw: 4, shadow: '#111111', blur: 0, dx: 6, dy: 6
+          });
+        } else {
+          // Soft highlight pill + animated underline
+          fillCard(accX - 8, -sz * 0.52, (accW + 16) * hlP, sz * 1.04, 14, hexA(P.accent, P.dark ? 0.22 : 0.14));
+          ctx.fillStyle = P.accent;
+          rrect(accX - 4, sz * 0.48, (accW + 8) * hlP, Math.max(5, sz * 0.09), 4);
+          ctx.fill();
+        }
+      }
+
+      // Draw 3 segments cleanly so accentWord takes accent color
+      ctx.textAlign = 'left';
+      ctx.fillStyle = P.ink;
+      if (before) ctx.fillText(before, startX, 0);
+      ctx.fillStyle = brutal ? P.accent2 : P.accent;
+      ctx.fillText(acc, accX, 0);
+      ctx.fillStyle = P.ink;
+      if (after) ctx.fillText(after, accX + accW + padR, 0);
+    } else {
+      if (brutal) {
+        ctx.lineWidth = 10;
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineJoin = 'round';
+        ctx.strokeText(lineStr, 0, 0);
+      }
+      ctx.fillStyle = idx === 1 && lines.length > 1 ? (P.dark ? '#D8E2F0' : P.ink) : P.ink;
+      ctx.fillText(lineStr, 0, 0);
+    }
+    ctx.restore();
+  });
+}
+
+/* ---------- Act 0: Bespoke Hook Visual Stage (Product Artifact Within First 3s!) ---------- */
+function drawHookAct(plan, sc, localT, t) {
+  const W = plan.width, H = plan.height;
+  const P = plan.palette;
+  const isV = plan.aspect === '9:16';
+  const eng = plan.engine;
+
+  // 1. Massive Kinetic Headline (≥ 74px on 9:16, ≥ 86px on 16:9)
+  const headY = isV ? H * 0.21 : H * 0.26;
+  const baseSz = isV ? 74 : 88;
+  drawHeadlineBlock(plan, sc, localT, W / 2, headY, W * 0.86, 'center', baseSz);
+
+  // 2. Signature Hero Centerpiece per Engine (enters immediately at 0.25s!)
+  const p = eSpring(seg(localT, 0.18, 0.85));
+  const cy = isV ? H * 0.60 : H * 0.64;
+
+  ctx.save();
+  ctx.globalAlpha = clamp(p * 1.4, 0, 1);
+
+  if (eng === 'cyber-diagram') {
+    // Live security shield: Cloud crossed out vs Local On-Device Lock (zero overflow, zero model names!)
+    const boxW = isV ? 920 : 1240, boxH = 276;
+    fillCard(W / 2 - boxW / 2, cy - boxH / 2, boxW, boxH, 28, '#0D1724', {
+      border: hexA(P.accent, 0.45), bw: 2.5, shadow: 'rgba(0,0,0,0.55)', blur: 50
+    });
+    const cardW = boxW * 0.44;
+    const leftX = W / 2 - boxW * 0.46;
+    const rightX = W / 2 + boxW * 0.02;
+
+    // Left: Red warning cloud upload blocked
+    fillCard(leftX, cy - 88, cardW, 176, 20, 'rgba(255,77,94,0.10)', { border: '#FF4D5E', bw: 2 });
+    const l1 = '✕ 普通云端录音：原声被迫外传';
+    const lSz1 = fitSize(l1, 700, 30, cardW - 48, SANS, 18);
+    setFont(700, lSz1, SANS); ctx.fillStyle = '#FF4D5E'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(l1, leftX + cardW / 2, cy - 20);
+    const l2 = '原始音频上传外部服务器 · 隐私不可控';
+    const lSz2 = fitSize(l2, 500, 21, cardW - 48, SANS, 15);
+    setFont(500, lSz2, SANS); ctx.fillStyle = '#FDA4AF';
+    ctx.fillText(l2, leftX + cardW / 2, cy + 32);
+
+    // Right: Green Local Sandbox
+    fillCard(rightX, cy - 88, cardW, 176, 20, 'rgba(46,230,166,0.12)', { border: '#2EE6A6', bw: 2 });
+    const r1 = '✓ 录音卡：本地模型离线直转';
+    const rSz1 = fitSize(r1, 700, 30, cardW - 48, SANS, 18);
+    setFont(700, rSz1, SANS); ctx.fillStyle = '#2EE6A6';
+    ctx.fillText(r1, rightX + cardW / 2, cy - 20);
+    const r2 = '极致压缩小体积 · 原始音频锁死本机';
+    const rSz2 = fitSize(r2, 500, 21, cardW - 48, SANS, 15);
+    setFont(500, rSz2, SANS); ctx.fillStyle = '#A7F3D0';
+    ctx.fillText(r2, rightX + cardW / 2, cy + 32);
+  } else if (eng === 'bento-swiss') {
+    // 4 Bento Problem-to-Solution pills snapping in (strictly fitted with generous padding!)
+    const tiles = [
+      ['01 · 实时流切片', '每 1 分钟自动成稿', '边开会边出清晰文字', '#2563EB'],
+      ['02 · 白板自动配图', '按拍照秒数嵌进原话', '画面与讨论严丝合缝', '#0EA5E9'],
+      ['03 · 逻辑结构树', '概览 · 信息点 · 待办', '结构化结论一目了然', '#10B981'],
+      ['04 · 五格式直出', 'MD / PDF / Word', '一键分发飞书与 Notion', '#6366F1']
+    ];
+    tiles.forEach((tl, k) => {
+      const tp = eBack(seg(localT, 0.22 + k * 0.1, 0.68 + k * 0.1));
+      const tx = W / 2 + (k - 1.5) * 404;
+      const cw = 376, ch = 220, padX = 28;
+      const innerMaxW = cw - padX * 2;
+      ctx.save();
+      ctx.translate(tx, cy + (1 - tp) * 50);
+      ctx.scale(0.85 + 0.15 * tp, 0.85 + 0.15 * tp);
+      fillCard(-cw / 2, -ch / 2, cw, ch, 26, '#FFFFFF', {
+        shadow: 'rgba(15,23,42,0.10)', blur: 36, dy: 14, border: 'rgba(15,23,42,0.08)', bw: 1.5
+      });
+      const s0 = fitSize(tl[0], 700, 21, innerMaxW, MONO, 15);
+      setFont(700, s0, MONO); ctx.fillStyle = tl[3]; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(tl[0], -cw / 2 + padX, -52);
+
+      const s1 = fitSize(tl[1], 800, 31, innerMaxW, SANS, 20);
+      setFont(800, s1, SANS); ctx.fillStyle = P.ink;
+      ctx.fillText(tl[1], -cw / 2 + padX, 8);
+
+      const s2 = fitSize(tl[2], 500, 20, innerMaxW, SANS, 14);
+      setFont(500, s2, SANS); ctx.fillStyle = P.sub;
+      ctx.fillText(tl[2], -cw / 2 + padX, 58);
+      ctx.restore();
+    });
+  } else if (eng === 'blueprint-edc') {
+    // 3 Hardware Form Factors side by side on CAD blueprint!
+    const items = [
+      { name: '录音卡 V2', spec: '双芯片 OTA · Wi-Fi 快传', x: W * 0.24, dark: false },
+      { name: '点一机 V1', spec: '物理盲拍键 · 图文同步', x: W * 0.50, dark: true },
+      { name: '语音AI键盘 V2.1', spec: '桌面一键开录 · 实时出稿', x: W * 0.76, dark: false }
+    ];
+    items.forEach((it, k) => {
+      const ip = eBack(seg(localT, 0.2 + k * 0.12, 0.7 + k * 0.12));
+      ctx.save();
+      ctx.translate(it.x, cy - 20 + (1 - ip) * 60);
+      ctx.scale(ip, ip);
+      drawHardwareCard(0, 0, 0.92, t + k, { dark: true, darkBody: it.dark, accent: P.accent, label: it.name });
+      const spSz = fitSize(it.spec, 600, 24, 380, SANS, 16);
+      setFont(600, spSz, SANS);
+      ctx.fillStyle = P.accent2;
+      ctx.textAlign = 'center';
+      ctx.fillText(it.spec, 0, 165);
+      ctx.restore();
+    });
+  } else if (eng === 'calm-glass') {
+    // Chaos-to-Calm Accordion Collapse animation!
+    const collapseP = eInOutCubic(seg(localT, 0.55, 1.65));
+    for (let k = 4; k >= 0; k--) {
+      const spreadY = (k - 2) * 86 * (1 - collapseP);
+      const alpha = k === 2 ? 1 : (1 - collapseP * 0.85);
+      ctx.save();
+      ctx.globalAlpha *= alpha;
+      fillCard(W / 2 - 410, cy + spreadY - 56, 820, 112, 26, 'rgba(255,255,255,0.88)', {
+        shadow: 'rgba(20,158,131,0.14)', blur: 32, dy: 10, border: hexA(P.accent, 0.35), bw: 2
+      });
+      const cgTxt = collapseP > 0.7 ? '✦ 连续空白已折叠 · 下拉随时补看重点' : `静音切片 #0${k + 1} · 自动折叠降噪中…`;
+      const cgSz = fitSize(cgTxt, 700, 32, 740, SANS, 20);
+      setFont(700, cgSz, SANS);
+      ctx.fillStyle = P.ink;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(cgTxt, W / 2, cy + spreadY);
+      ctx.restore();
+    }
+  } else if (eng === 'ai-orbital') {
+    // Capability Orbital Chips around Recording Card Hub (zero hard-coded model names!)
+    drawAppIcon(W / 2, cy, 150, P.accent, true);
+    const caps = ['自定义网关', '自由 Prompt', '术语自动纠错', '相册时间对轨', 'Skills · MCP'];
+    caps.forEach((m, k) => {
+      const ang = (k * TAU) / caps.length + t * 0.45;
+      const mx = W / 2 + Math.cos(ang) * 420;
+      const my = cy + Math.sin(ang) * 145;
+      fillCard(mx - 140, my - 34, 280, 68, 34, '#181538', {
+        border: k % 2 ? P.accent2 : P.accent, bw: 2, shadow: 'rgba(0,0,0,0.45)', blur: 24
+      });
+      const mSz = fitSize(m, 700, 24, 232, SANS, 16);
+      setFont(700, mSz, SANS);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(m, mx, my + 1);
+    });
+  } else if (isV) {
+    // Vertical 9:16 Hook: Dynamic Island Hero + Sleek Hardware / Live Waveform Card
+    drawDynamicIslandHero(W / 2, cy - 150, 1.24, t, '0:08:42', '手机直录 & 硬件协同 · 每分钟自动出稿', P.accent);
+    drawHardwareCard(W / 2, cy + 140, 1.38, t, {
+      dark: P.dark,
+      darkBody: P.dark || eng === 'pop-brutalism',
+      accent: P.accent,
+      rot: -0.03,
+      sheen: seg(localT, 0.5, 1.6)
+    });
+  } else {
+    // Widescreen 16:9 Hook: Hardware Hero + Dynamic Island Live Pill floating in unison
+    drawHardwareCard(W / 2 - 280, cy + 10, 1.22, t, {
+      dark: P.dark,
+      darkBody: P.dark,
+      accent: P.accent,
+      rot: -0.035,
+      sheen: seg(localT, 0.45, 1.55)
+    });
+    drawDynamicIslandHero(W / 2 + 270, cy + 10, 0.96, t, '0:12:35', '蓝牙实时流 · 本机离线秒转写', P.accent);
+  }
+  ctx.restore();
+}
+
+/* ---------- Acts 1..3: Diverse Product Proof Layouts (Zero Consecutive Repetition!) ---------- */
+function drawProofAct(plan, sc, sceneIdx, localT, sceneDur, t) {
+  const W = plan.width, H = plan.height;
+  const P = plan.palette;
+  const isV = plan.aspect === '9:16';
+  const progress = clamp(localT / Math.max(0.1, sceneDur), 0, 1);
+  const enterP = eOutExpo(seg(localT, 0.0, 0.55));
+  const brutal = plan.engine === 'pop-brutalism';
+
+  if (isV) {
+    // ========== 9:16 VERTICAL FEED LAYOUT ==========
+    // Top: Bold 2-line Headline
+    drawHeadlineBlock(plan, sc, localT, W / 2, 188, W * 0.88, 'center', 62);
+
+    // Center: High-Clarity Phone Showcase with generous clearance above 2-line subtitle pill
+    const stageCy = H * 0.562;
+    if (sc.uiShot2) {
+      const p2 = eOutQuint(seg(localT, 0.25, 0.85));
+      ctx.save();
+      ctx.globalAlpha = clamp(enterP * 1.4, 0, 1);
+      drawRealScreenCard(sc.uiShot, W * 0.36, stageCy - 24 + (1 - enterP) * 60, 465, 920, progress, sc.focus, {
+        dark: P.dark, tilt: -0.032, brutal, accentBorder: hexA(P.accent, 0.5)
+      });
+      ctx.restore();
+
+      ctx.save();
+      ctx.globalAlpha = clamp(p2 * 1.4, 0, 1);
+      drawRealScreenCard(sc.uiShot2, W * 0.65, stageCy + 24 + (1 - p2) * 80, 465, 920, progress, [0.5, 0.35, 1.1], {
+        dark: P.dark, tilt: 0.028, brutal, accentBorder: hexA(P.accent2, 0.55)
+      });
+      ctx.restore();
+    } else {
+      const tiltDir = sceneIdx % 2 === 1 ? -0.014 : 0.014;
+      ctx.save();
+      ctx.globalAlpha = clamp(enterP * 1.4, 0, 1);
+      ctx.translate(0, (1 - enterP) * 60);
+      drawRealScreenCard(sc.uiShot || 'ui-feed', W / 2, stageCy, 575, 1020, progress, sc.focus, {
+        dark: P.dark, tilt: brutal ? tiltDir * 1.6 : tiltDir * 0.6, brutal, accentBorder: hexA(P.accent, 0.45)
+      });
+      ctx.restore();
+    }
+    return;
+  }
+
+  // ========== 16:9 WIDESCREEN LAYOUTS (Zero Collision with Top Headline & Bottom Subtitle!) ==========
+  const isWideShot = (sc.uiShot || '').startsWith('ui-wide');
+
+  if (isWideShot) {
+    // Full-Stage Wide iPad / Desktop Split-View Showcase (plenty of gap below headline & above subtitle!)
+    drawHeadlineBlock(plan, sc, localT, W / 2, 122, W * 0.86, 'center', 56);
+    ctx.save();
+    ctx.globalAlpha = clamp(enterP * 1.4, 0, 1);
+    ctx.translate(0, (1 - enterP) * 50);
+    drawRealScreenCard(sc.uiShot, W / 2, 582, 1020, 560, progress, sc.focus, {
+      dark: P.dark, accentBorder: hexA(P.accent, 0.5)
+    });
+    ctx.restore();
+    return;
+  }
+
+  // Alternate Left-Copy/Right-UI (odd sceneIdx) vs Left-UI/Right-Copy (even sceneIdx)
+  const copyOnLeft = sceneIdx % 2 === 1;
+  const copyX = copyOnLeft ? 110 : W * 0.52;
+  const copyMaxW = W * 0.41;
+  const uiCenterX = copyOnLeft ? W * 0.72 : W * 0.28;
+
+  // Draw Copy Column + Feature Proof Chips
+  drawHeadlineBlock(plan, sc, localT, copyX, 295, copyMaxW, 'left', 62);
+
+  // Supporting visual element under copy column (Engine-aware!)
+  const subP = eOutQuint(seg(localT, 0.32, 0.88));
+  if (subP > 0) {
+    ctx.save();
+    ctx.globalAlpha = subP;
+    ctx.translate(0, (1 - subP) * 26);
+
+    if (plan.engine === 'cyber-diagram' && sceneIdx === 1) {
+      // Clean 3-stage On-Device Privacy Flow (zero technical model names, generous card widths!)
+      const nodes = ['① 本机实时拾音', '② 轻量本地模型', '③ 音频锁死本机'];
+      const nw = 232, nh = 76, stepX = 272;
+      nodes.forEach((nd, k) => {
+        const nx = copyX + k * stepX;
+        const ny = 555;
+        fillCard(nx, ny, nw, nh, 18, '#101E2E', { border: hexA(P.accent, 0.55), bw: 2 });
+        const nSz = fitSize(nd, 700, 23, nw - 32, SANS, 16);
+        setFont(700, nSz, SANS);
+        ctx.fillStyle = P.accent;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(nd, nx + nw / 2, ny + nh / 2);
+        if (k < 2) {
+          setFont(700, 22, MONO);
+          ctx.fillStyle = P.accent;
+          ctx.fillText('→', nx + nw + (stepX - nw) / 2, ny + nh / 2);
+        }
+      });
+    } else {
+      // Crisp Key Takeaway Card
+      fillCard(copyX, 538, copyMaxW, 132, 22, P.dark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.85)', {
+        border: hexA(P.accent, 0.35), bw: 2, shadow: P.dark ? 'rgba(0,0,0,0.3)' : 'rgba(15,23,42,0.07)', blur: 24
+      });
+      ctx.fillStyle = P.accent;
+      ctx.beginPath();
+      ctx.arc(copyX + 42, 604, 13, 0, TAU);
+      ctx.fill();
+      const subLine = plan.ctaSub;
+      const sSz = fitSize(subLine, 600, 29, copyMaxW - 96, SANS, 18);
+      setFont(600, sSz, SANS);
+      ctx.fillStyle = P.ink;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(subLine, copyX + 74, 604);
+    }
+    ctx.restore();
+  }
+
+  // Draw Real UI Showcase Column (Single Hero or Dual Cascade — strictly above 2-line subtitle!)
+  if (sc.uiShot2) {
+    const p2 = eOutQuint(seg(localT, 0.22, 0.82));
+    ctx.save();
+    ctx.globalAlpha = clamp(enterP * 1.4, 0, 1);
+    drawRealScreenCard(sc.uiShot, uiCenterX - 108, 486 + (1 - enterP) * 48, 355, 680, progress, sc.focus, {
+      dark: P.dark, tilt: -0.026, accentBorder: hexA(P.accent, 0.5)
+    });
+    ctx.restore();
+
+    ctx.save();
+    ctx.globalAlpha = clamp(p2 * 1.4, 0, 1);
+    drawRealScreenCard(sc.uiShot2, uiCenterX + 122, 510 + (1 - p2) * 65, 355, 680, progress, [0.5, 0.35, 1.12], {
+      dark: P.dark, tilt: 0.024, accentBorder: hexA(P.accent2, 0.55)
+    });
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.globalAlpha = clamp(enterP * 1.4, 0, 1);
+    ctx.translate((copyOnLeft ? 1 : -1) * (1 - enterP) * 65, 0);
+    drawRealScreenCard(sc.uiShot || 'ui-feed', uiCenterX, 498, 385, 735, progress, sc.focus, {
+      dark: P.dark, tilt: copyOnLeft ? -0.016 : 0.016, accentBorder: hexA(P.accent, 0.5)
+    });
+    ctx.restore();
+  }
+}
+
+/* ---------- Act 4: Grand Conversion CTA Lockup (video-shotcraft R1 Hold ≥ 1.3s + Q8 Convergence!) ---------- */
+function drawCtaAct(plan, sc, localT, t) {
+  const W = plan.width, H = plan.height;
+  const P = plan.palette;
+  const isV = plan.aspect === '9:16';
+  const brutal = plan.engine === 'pop-brutalism';
+
+  // Background peripheral convergence cards (Shotcraft Q8 "全家福合影" — skipped on live-cinema so real-person film shines through)
+  const fanShots = plan.engine === 'live-cinema' ? [] : ['ui-phone-rec', 'ui-detail-photo', 'ui-sum-overview', 'ui-local-models'];
+  const convP = eOutExpo(seg(localT, 0.05, 0.85));
+  fanShots.forEach((k, idx) => {
+    const side = idx < 2 ? -1 : 1;
+    const row = idx % 2;
+    const tx = isV
+      ? W / 2 + side * (430 - convP * 40)
+      : W / 2 + side * (740 - row * 90);
+    const ty = isV
+      ? (row === 0 ? H * 0.24 : H * 0.76)
+      : (row === 0 ? H * 0.32 : H * 0.72);
+    ctx.save();
+    ctx.globalAlpha = 0.22 * convP;
+    drawRealScreenCard(k, tx, ty, isV ? 230 : 250, isV ? 460 : 480, 0.5, [0.5, 0.4, 1.0], {
+      dark: P.dark, tilt: side * (row === 0 ? 0.12 : -0.10)
+    });
+    ctx.restore();
+  });
+
+  // Expanding Halo Rings around App Icon
+  for (let r = 0; r < 2; r++) {
+    const rp = clamp((localT - 0.1 - r * 0.35) / 1.4, 0, 1);
+    if (rp > 0 && rp < 1) {
+      ctx.strokeStyle = hexA(P.accent, 0.32 * (1 - rp));
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(W / 2, isV ? H * 0.33 : H * 0.29, 90 + rp * 280, 0, TAU);
+      ctx.stroke();
+    }
+  }
+
+  // 1. App Icon Squircle bounce in
+  const iconP = eSpring(seg(localT, 0.04, 0.65));
+  ctx.save();
+  ctx.translate(W / 2, isV ? H * 0.33 : H * 0.29);
+  ctx.scale(iconP, iconP);
+  drawAppIcon(0, 0, isV ? 168 : 148, P.accent, P.dark);
+  ctx.restore();
+
+  // 2. Brand Wordmark + Slogan
+  const brandP = eOutExpo(seg(localT, 0.16, 0.68));
+  ctx.save();
+  ctx.globalAlpha = brandP;
+  ctx.translate(0, (1 - brandP) * 28);
+  setFont(800, isV ? 104 : 112, SANS);
+  ctx.fillStyle = P.ink;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(sc.headline[0] || '录音卡', W / 2, isV ? H * 0.46 : H * 0.48);
+
+  const slogan = sc.headline[1] || '录下，即记住。';
+  const slSz = fitSize(slogan, 600, isV ? 48 : 50, W * 0.84, SANS);
+  setFont(600, slSz, SANS);
+  ctx.fillStyle = brutal ? P.ink : P.accent;
+  ctx.fillText(slogan, W / 2, isV ? H * 0.535 : H * 0.585);
+  ctx.restore();
+
+  // 3. High-Conversion Download CTA Pill Button (Q11: Large, Crisp, Unmissable, Zero Overflow!)
+  const btnP = eBack(seg(localT, 0.34, 0.85));
+  if (btnP > 0) {
+    const btnY = isV ? H * 0.655 : H * 0.725;
+    const pulse = 1 + 0.018 * Math.sin(t * 5.2);
+    const label = `↓  ${plan.ctaButton}`;
+    setFont(800, 42, SANS);
+    const btnW = Math.min(W * 0.86, Math.max(540, ctx.measureText(label).width + 116));
+    const btnTxtSz = fitSize(label, 800, 42, btnW - 92, SANS, 24);
+    const btnH = isV ? 114 : 104;
+
+    ctx.save();
+    ctx.translate(W / 2, btnY);
+    ctx.scale(btnP * pulse, btnP * pulse);
+
+    const btnFill = brutal ? '#2563EB' : P.accent;
+    fillCard(-btnW / 2, -btnH / 2, btnW, btnH, btnH / 2, btnFill, {
+      shadow: brutal ? '#111111' : hexA(btnFill, 0.48),
+      blur: brutal ? 0 : 44,
+      dx: brutal ? 8 : 0,
+      dy: brutal ? 8 : 16,
+      border: brutal ? '#111111' : 'rgba(255,255,255,0.35)',
+      bw: brutal ? 5 : 2
+    });
+
+    // Contained button sheen sweep (video-shotcraft Q4: strictly clipped to pill!)
+    const sweep = ((localT - 0.7) / 1.1);
+    if (sweep > 0 && sweep < 1) {
+      ctx.save();
+      rrect(-btnW / 2, -btnH / 2, btnW, btnH, btnH / 2);
+      ctx.clip();
+      const sx = lerp(-btnW * 0.7, btnW * 0.7, sweep);
+      const sg = ctx.createLinearGradient(sx - 80, 0, sx + 80, 0);
+      sg.addColorStop(0, 'rgba(255,255,255,0)');
+      sg.addColorStop(0.5, 'rgba(255,255,255,0.38)');
+      sg.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = sg;
+      ctx.fillRect(-btnW / 2, -btnH / 2, btnW, btnH);
+      ctx.restore();
+    }
+
+    // Ensure high contrast text on button
+    const darkTextOnAccent = ['#E5B869', '#2EE6A6', '#F59E0B', '#38BDF8', '#FFE135'].includes(btnFill);
+    setFont(800, btnTxtSz, SANS);
+    ctx.fillStyle = darkTextOnAccent ? '#090D16' : '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, 0, 2);
+    ctx.restore();
+
+    // Subtitle trust badge below CTA button
+    ctx.save();
+    ctx.globalAlpha = clamp((btnP - 0.3) * 1.5, 0, 1);
+    const subSz = fitSize(plan.ctaSub, 600, isV ? 31 : 28, W * 0.84, SANS, 18);
+    setFont(600, subSz, SANS);
+    ctx.fillStyle = P.sub;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(plan.ctaSub, W / 2, btnY + (isV ? 94 : 80));
+    ctx.restore();
+  }
+}
+
+function splitVoLines(vo, maxChars) {
+  if (vo.length <= maxChars) return [vo];
+  const mid = Math.floor(vo.length / 2);
+  let best = -1;
+  let bestDist = 999;
+  const punct = '，、：；！？——,';
+  for (let i = 4; i < vo.length - 4; i++) {
+    if (punct.includes(vo[i])) {
+      const d = Math.abs(i + 1 - mid);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i + 1;
+      }
+    }
+  }
+  if (best === -1) best = mid;
+  return [vo.slice(0, best).trim(), vo.slice(best).trim()].filter(Boolean);
+}
+
+/* ---------- Broadcast Synced Voiceover Subtitle Pill (Muted & Unmuted Dual Friendly!) ---------- */
+function drawSyncedSubtitle(plan, sc, t) {
+  if (!sc.vo) return;
+  const W = plan.width, H = plan.height;
+  const isV = plan.aspect === '9:16';
+  const voP = seg(t, sc.voStartSec, sc.voEndSec);
+  const vis = Math.min(1, seg(t, sc.startSec + 0.05, sc.startSec + 0.25)) *
+              (sc.act === 'cta' ? 1 : (1 - seg(t, sc.endSec - 0.18, sc.endSec)));
+  if (vis <= 0.02) return;
+
+  const subLines = splitVoLines(sc.vo, isV ? 23 : 44);
+  const maxBoxW = W * (isV ? 0.88 : 0.84);
+  const targetSz = isV ? 32 : (subLines.length > 1 ? 28 : 30);
+  const longest = subLines.reduce((a, b) => (a.length >= b.length ? a : b), '');
+  const sz = fitSize(longest, 600, targetSz, maxBoxW - 68, SANS, 19);
+  setFont(600, sz, SANS);
+
+  const lineWidths = subLines.map(l => ctx.measureText(l).width);
+  const maxTxtW = Math.max(...lineWidths);
+  const lineGap = Math.round(sz * 1.34);
+  const pillW = Math.min(W - 64, maxTxtW + 64);
+  const pillH = subLines.length === 1 ? sz + 30 : sz + lineGap + 28;
+  const y = isV ? (subLines.length > 1 ? H - 150 : H - 140) : (subLines.length > 1 ? H - 62 : H - 54);
+
+  ctx.save();
+  ctx.globalAlpha = vis * 0.96;
+  fillCard(W / 2 - pillW / 2, y - pillH / 2, pillW, pillH, Math.min(34, pillH / 2), 'rgba(10, 14, 22, 0.84)', {
+    border: 'rgba(255,255,255,0.16)', bw: 1.5, shadow: 'rgba(0,0,0,0.28)', blur: 20, dy: 6
+  });
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  const totalLen = subLines.reduce((s, l) => s + l.length, 0) || 1;
+  let accChars = 0;
+
+  subLines.forEach((line, idx) => {
+    const lw = lineWidths[idx];
+    const lx = W / 2 - lw / 2;
+    const ly = subLines.length === 1 ? y + 1 : (y - lineGap / 2 + idx * lineGap + 1);
+    ctx.fillStyle = 'rgba(255,255,255,0.66)';
+    ctx.fillText(line, lx, ly);
+
+    const pStart = accChars / totalLen;
+    const pEnd = (accChars + line.length) / totalLen;
+    accChars += line.length;
+    const lineP = seg(voP, pStart, pEnd);
+    if (lineP > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(lx, ly - sz * 0.7, lw * lineP, sz * 1.4);
+      ctx.clip();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText(line, lx, ly);
+      ctx.restore();
+    }
+  });
+  ctx.restore();
+}
+
+/* ---------- Subtle Film Grain & Bottom Timeline Progress ---------- */
+function drawFinishing(plan, t) {
+  const W = plan.width, H = plan.height;
+  const P = plan.palette;
+  // Subtle progress bar at very bottom
+  const pr = clamp(t / plan.durationSec, 0, 1);
+  ctx.fillStyle = hexA(P.accent, 0.78);
+  ctx.fillRect(0, H - 6, W * pr, 6);
+}
+
+/* ---------- Live-Action Hybrid Cinema Engine (v16–v20 Real-Person Scenarios) ---------- */
+function drawLivePhotoStill(imgName, W, H, motion, p) {
+  const im = window.LIVE_IMGS[imgName];
+  if (!im) {
+    ctx.fillStyle = '#0B101B';
+    ctx.fillRect(0, 0, W, H);
+    return;
+  }
+  const iw = im.naturalWidth || 1920, ih = im.naturalHeight || 1080;
+  const baseScale = Math.max(W / iw, H / ih);
+  let zoom = 1.06;
+  let ox = 0, oy = 0;
+  if (motion === 'push-in') {
+    zoom = lerp(1.02, 1.12, p);
+  } else if (motion === 'pull-out') {
+    zoom = lerp(1.12, 1.02, p);
+  } else if (motion === 'pan-right') {
+    zoom = 1.10;
+    ox = lerp(-W * 0.03, W * 0.03, p);
+  } else if (motion === 'pan-left') {
+    zoom = 1.10;
+    ox = lerp(W * 0.03, -W * 0.03, p);
+  } else {
+    zoom = lerp(1.05, 1.09, p);
+  }
+  const dw = iw * baseScale * zoom;
+  const dh = ih * baseScale * zoom;
+  const dx = (W - dw) / 2 + ox;
+  const dy = (H - dh) / 2 + oy;
+  ctx.drawImage(im, dx, dy, dw, dh);
+}
+
+function drawLiveCinemaScene(plan, sc, sIdx, localT, dur, tc) {
+  const W = plan.width, H = plan.height;
+  const P = plan.palette;
+  const isV = plan.aspect === '9:16';
+  const progress = clamp(localT / Math.max(0.1, dur), 0, 1);
+
+  // 1. Backdrop: transparent when compositing over FFmpeg real moving video, or still preview
+  if (window.LIVE_OVERLAY_ONLY) {
+    ctx.clearRect(0, 0, W, H);
+  } else {
+    const prim = (sc.liveMedia && sc.liveMedia.primary) || '';
+    const cut = (sc.liveMedia && sc.liveMedia.cutaway) || '';
+    const photoKey = prim.endsWith('.jpg') ? prim.replace('.jpg', '') : (cut.endsWith('.jpg') ? cut.replace('.jpg', '') : 'live-16-hook');
+    drawLivePhotoStill(photoKey, W, H, sc.liveMedia?.motion || 'push-in', progress);
+  }
+
+  // 2. Cinema Scrims (protect typography legibility while keeping center human subjects vivid!)
+  if (sc.act === 'cta') {
+    ctx.fillStyle = 'rgba(6, 10, 18, 0.72)';
+    ctx.fillRect(0, 0, W, H);
+    drawCtaAct(plan, sc, localT, tc);
+    return;
+  }
+
+  const topG = ctx.createLinearGradient(0, 0, 0, isV ? H * 0.28 : H * 0.36);
+  topG.addColorStop(0, 'rgba(5, 8, 15, 0.82)');
+  topG.addColorStop(0.68, 'rgba(5, 8, 15, 0.42)');
+  topG.addColorStop(1, 'rgba(5, 8, 15, 0)');
+  ctx.fillStyle = topG;
+  ctx.fillRect(0, 0, W, isV ? H * 0.28 : H * 0.36);
+
+  const botG = ctx.createLinearGradient(0, isV ? H * 0.62 : H * 0.64, 0, H);
+  botG.addColorStop(0, 'rgba(5, 8, 15, 0)');
+  botG.addColorStop(0.45, 'rgba(5, 8, 15, 0.48)');
+  botG.addColorStop(1, 'rgba(5, 8, 15, 0.86)');
+  ctx.fillStyle = botG;
+  ctx.fillRect(0, isV ? H * 0.62 : H * 0.64, W, isV ? H * 0.38 : H * 0.36);
+
+  drawTopHud(plan, sc, tc);
+
+  // 3. Editorial Cinema Headline
+  if (isV) {
+    drawHeadlineBlock(plan, sc, localT, W / 2, 168, W - 128, 'center', 52);
+  } else {
+    drawHeadlineBlock(plan, sc, localT, 76, 146, 920, 'left', 50);
+  }
+
+  // 4. Spatial Frosted-Glass AR Callout + Optional Picture-in-Picture Real App UI
+  const enterP = eSpring(seg(localT, 0.14, 0.76));
+  const arTag = sc.liveMedia?.arTag || '';
+  const arQuote = sc.liveMedia?.arQuote || '';
+  const hasUi = Boolean(sc.uiShot) && (sc.act === 'proof1' || sc.act === 'proof2');
+
+  if (!isV) {
+    // 16:9 Widescreen Live Cinema Layout
+    if (arTag || arQuote) {
+      const cx = 76, cy = 764, cw = 690, ch = 132;
+      ctx.save();
+      ctx.globalAlpha = clamp(enterP * 1.25, 0, 1) * 0.95;
+      ctx.translate(0, (1 - enterP) * 28);
+      fillCard(cx, cy, cw, ch, 24, 'rgba(10, 15, 26, 0.80)', {
+        border: hexA(P.accent, 0.52), bw: 2, shadow: 'rgba(0,0,0,0.42)', blur: 28, dy: 10
+      });
+      // Animated live equalizer bars on left of arTag
+      for (let b = 0; b < 4; b++) {
+        const bh = 10 + 14 * (0.5 + 0.5 * Math.sin(tc * 8.5 + b * 1.4));
+        ctx.fillStyle = P.accent;
+        rrect(cx + 26 + b * 8, cy + 40 - bh / 2, 5, bh, 2.5);
+        ctx.fill();
+      }
+      const tagSz = fitSize(arTag, 700, 24, cw - 104, SANS, 16);
+      setFont(700, tagSz, SANS);
+      ctx.fillStyle = P.accent;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(arTag, cx + 68, cy + 40);
+
+      const qSz = fitSize(arQuote, 500, 22, cw - 56, SANS, 15);
+      setFont(500, qSz, SANS);
+      ctx.fillStyle = '#F1F5F9';
+      ctx.fillText(arQuote, cx + 28, cy + 92);
+      ctx.restore();
+    }
+
+    if (hasUi) {
+      ctx.save();
+      ctx.globalAlpha = clamp(enterP * 1.35, 0, 1);
+      ctx.translate((1 - enterP) * 54, 0);
+      drawRealScreenCard(sc.uiShot, 1548, 532, 306, 594, progress, sc.focus, {
+        dark: true, tilt: -0.015, accentBorder: hexA(P.accent, 0.62)
+      });
+      ctx.restore();
+    }
+  } else {
+    // 9:16 Vertical Live Cinema Layout
+    if (hasUi) {
+      // Side-by-side lower third: Left AR glass card + Right PiP iPhone
+      if (arTag || arQuote) {
+        const cx = 54, cy = 1325, cw = 544, ch = 220;
+        ctx.save();
+        ctx.globalAlpha = clamp(enterP * 1.25, 0, 1) * 0.95;
+        ctx.translate(0, (1 - enterP) * 28);
+        fillCard(cx, cy, cw, ch, 26, 'rgba(10, 15, 26, 0.82)', {
+          border: hexA(P.accent, 0.55), bw: 2, shadow: 'rgba(0,0,0,0.42)', blur: 28, dy: 10
+        });
+        const tagSz = fitSize(arTag, 700, 25, cw - 52, SANS, 16);
+        setFont(700, tagSz, SANS);
+        ctx.fillStyle = P.accent;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(arTag, cx + 26, cy + 52);
+
+        const qLines = splitVoLines(arQuote, 16);
+        const longestQ = qLines.reduce((a, b) => (a.length >= b.length ? a : b), '');
+        const qSz = fitSize(longestQ, 500, 23, cw - 52, SANS, 15);
+        setFont(500, qSz, SANS);
+        ctx.fillStyle = '#F1F5F9';
+        qLines.forEach((ql, qi) => {
+          ctx.fillText(ql, cx + 26, cy + 112 + qi * 38);
+        });
+        ctx.restore();
+      }
+
+      ctx.save();
+      ctx.globalAlpha = clamp(enterP * 1.35, 0, 1);
+      ctx.translate(0, (1 - enterP) * 44);
+      drawRealScreenCard(sc.uiShot, 820, 1286, 294, 570, progress, sc.focus, {
+        dark: true, tilt: 0.015, accentBorder: hexA(P.accent, 0.62)
+      });
+      ctx.restore();
+    } else if (arTag || arQuote) {
+      // Full-width sleek floating AR card near bottom
+      const cx = 68, cy = 1482, cw = W - 136, ch = 148;
+      ctx.save();
+      ctx.globalAlpha = clamp(enterP * 1.25, 0, 1) * 0.95;
+      ctx.translate(0, (1 - enterP) * 28);
+      fillCard(cx, cy, cw, ch, 26, 'rgba(10, 15, 26, 0.82)', {
+        border: hexA(P.accent, 0.55), bw: 2, shadow: 'rgba(0,0,0,0.42)', blur: 28, dy: 10
+      });
+      const tagSz = fitSize(arTag, 700, 27, cw - 60, SANS, 17);
+      setFont(700, tagSz, SANS);
+      ctx.fillStyle = P.accent;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(arTag, cx + 30, cy + 48);
+
+      const qSz = fitSize(arQuote, 500, 25, cw - 60, SANS, 16);
+      setFont(500, qSz, SANS);
+      ctx.fillStyle = '#F1F5F9';
+      ctx.fillText(arQuote, cx + 30, cy + 102);
+      ctx.restore();
+    }
+  }
+}
+
+/* ---------- Main Deterministic Frame Entry ---------- */
+window.renderFrame = function (t) {
+  if (!ACTIVE_PLAN) return false;
+  const plan = ACTIVE_PLAN;
+  const tc = clamp(t, 0, plan.durationSec - 0.0001);
+
+  let sIdx = plan.scenes.length - 1;
+  for (let i = 0; i < plan.scenes.length; i++) {
+    if (tc >= plan.scenes[i].startSec && tc < plan.scenes[i].endSec) {
+      sIdx = i;
+      break;
+    }
+  }
+  const sc = plan.scenes[sIdx];
+  const localT = tc - sc.startSec;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+
+  if (plan.engine === 'live-cinema') {
+    drawLiveCinemaScene(plan, sc, sIdx, localT, sc.durationSec, tc);
+    drawSyncedSubtitle(plan, sc, tc);
+    drawFinishing(plan, tc);
+    return true;
+  }
+
+  drawBackground(plan, tc, sIdx);
+  if (sc.act !== 'cta') drawTopHud(plan, sc, tc);
+
+  if (sc.act === 'hook') {
+    drawHookAct(plan, sc, localT, tc);
+  } else if (sc.act === 'cta') {
+    drawCtaAct(plan, sc, localT, tc);
+  } else {
+    drawProofAct(plan, sc, sIdx, localT, sc.durationSec, tc);
+  }
+
+  drawSyncedSubtitle(plan, sc, tc);
+  drawFinishing(plan, tc);
+
+  // Crisp optical transition flash/fade on scene boundary (first 0.14s)
+  if (sIdx > 0 && localT < 0.14) {
+    const fp = 1 - localT / 0.14;
+    ctx.fillStyle = hexA(plan.palette.bg1, fp * 0.45);
+    ctx.fillRect(0, 0, plan.width, plan.height);
+  }
+  return true;
+};
+</script>
+</body>
+</html>
