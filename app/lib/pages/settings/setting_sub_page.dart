@@ -2062,6 +2062,30 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                   _WatchKvRow(label: '协同链路', value: linkText),
                   _WatchKvRow(label: '手表电量', value: battText),
                   _WatchKvRow(label: '本地待传队列', value: pendingText, last: true),
+                  if (status != null &&
+                      status.paired &&
+                      !status.watchAppInstalled) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      key: const Key('watch-install-guide-banner'),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: c.bg,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: c.sep),
+                      ),
+                      child: Text(
+                        '检测到已配对 Apple Watch，但表端尚未完成安装：\n'
+                        '① 开发测试版请先在手表端开启「设置 → 隐私与安全性 → 开发者模式」并按提示重启确认；\n'
+                        '② 打开 iPhone 系统「Watch」App →「我的手表」滑到底部「可用 App」→ 找到「录音卡手表」点击「安装」。',
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.5,
+                          color: c.sec,
+                        ),
+                      ),
+                    ),
+                  ],
                   if (_hint != null) ...[
                     const SizedBox(height: 8),
                     Text(

@@ -213,6 +213,20 @@ void main() {
 
     expect(find.byKey(const Key('watch-link-status-card')), findsOneWidget);
     expect(find.byKey(const Key('watch-complication-guide')), findsOneWidget);
+    expect(find.byKey(const Key('watch-install-guide-banner')), findsNothing);
+    // 模拟已配对但手表尚未安装表端应用：展示开发者模式与 Watch App 安装指引
+    env.watchBackend.emitStatus(
+      env.watchBackend.currentStatus.copyWith(watchAppInstalled: false),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('watch-install-guide-banner')), findsOneWidget);
+    env.watchBackend.emitStatus(
+      env.watchBackend.currentStatus.copyWith(watchAppInstalled: true),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('watch-install-guide-banner')), findsNothing);
     // 电量禁止出现 % 或「已充满」
     expect(find.textContaining('%'), findsNothing);
     expect(find.textContaining('已充满'), findsNothing);
