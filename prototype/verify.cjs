@@ -978,6 +978,12 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$('[data-testid="watch-remote-card"]'), null);
   assert.equal(await pCur.$('[data-testid="watch-slices-card"]'), null);
   assert.equal(await pCur.$$eval('#p-setsub .nc-badge', x => x.length), 0);
+  const watchBtnGeom = await pCur.evaluate(() => {
+    const b1 = document.querySelector('[data-testid="watch-connect-btn"]').getBoundingClientRect();
+    const b2 = document.querySelector('[data-testid="watch-flush-btn"]').getBoundingClientRect();
+    return { topDiff: Math.abs(b1.top - b2.top), widthDiff: Math.abs(b1.width - b2.width), w1: b1.width };
+  });
+  assert(watchBtnGeom.topDiff <= 1 && watchBtnGeom.widthDiff <= 1 && watchBtnGeom.w1 > 100, 'Watch 两个操作按钮必须左右同行且 50%/50% 等宽: ' + JSON.stringify(watchBtnGeom));
   assert(await pCur.$eval('[data-testid="watch-link-status-card"]', x => !x.innerText.includes('%') && !x.innerText.includes('已充满')));
   // 验证「表端未安装」自检横幅按状态显示与恢复
   await pCur.evaluate(() => { agCfg.watchInstalled = false; renderSetSub('watch'); });
