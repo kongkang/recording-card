@@ -970,6 +970,37 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.evaluate(() => stopPhoneRec());
   assert(!(await pCur.$eval('#dyn-island', x => x.classList.contains('show'))));
   assert.equal(await pCur.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  // 当前版验证：Setting → Apple Watch 硬件联动（默认关闭保持3设备，开启后加入四硬件扫描与能力裁剪）
+  await pCur.click('[data-testid="crumb-back"]');
+  assert.equal(await pCur.$eval('#sv-watch', x => x.innerText.trim()), '未开启');
+  await pCur.$eval('[data-testid="set-apple-watch"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-apple-watch"]');
+  assert(await pCur.$('[data-testid="watch-link-status-card"]'));
+  assert(await pCur.$('[data-testid="watch-complication-guide"]'));
+  assert(await pCur.$eval('[data-testid="watch-link-status-card"]', x => !x.innerText.includes('%') && !x.innerText.includes('已充满')));
+  await pCur.click('[data-testid="watch-link-switch"]');
+  await pCur.click('[data-testid="crumb-back"]');
+  assert.equal(await pCur.$eval('#sv-watch', x => x.innerText.trim()), '已配对');
+  await pCur.click('[data-testid="hw-capsule"]');
+  await pCur.waitForFunction(() => document.querySelectorAll('#conn-list .conn-item').length === 4, { timeout: 5000 });
+  assert(await pCur.$eval('#conn-list', x => x.innerText.includes('Apple Watch')));
+  await pCur.click('[data-testid="dev-item-APPLE_WATCH_S10"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
+  assert.equal(await pCur.$eval('#dev-kind-badge', x => x.innerText.trim()), 'Apple Watch');
+  assert(await pCur.$eval('#row-sync', x => !x.hidden));
+  assert(await pCur.$eval('#row-wifi', x => x.hidden));
+  assert(await pCur.$eval('#row-fw', x => x.hidden));
+  assert(await pCur.$eval('#row-batt', x => !x.innerText.includes('%') && !x.innerText.includes('已充满')));
+  await pCur.click('[data-testid="rec-toggle"]');
+  assert.deepEqual(await pCur.evaluate(() => ({ hw: rec.on, phone: phoneRec.on, standby: phoneRec.standby })), { hw: true, phone: false, standby: true });
+  assert(await pCur.$eval('#dyn-island', x => x.classList.contains('show') && x.innerText.includes('Apple Watch 录音中') && x.innerText.includes('锁屏实况')));
+  await pCur.click('[data-testid="rec-toggle"]');
+  await pCur.click('[data-testid="dev-disconnect"]');
+  await pCur.click('[data-testid="disconnect-confirm"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
+  await pCur.evaluate(() => closeSheet());
+  await pCur.evaluate(() => { agCfg.watchLinkEnabled = false; syncSetSummary(); });
+  assert.equal(await pCur.$eval('#sv-watch', x => x.innerText.trim()), '未开启');
   // 当前版宽屏全页面滚动到底部留白验证（Timeline / Setting / 总结详情 / 记录详情）
   await pCur.setViewport({ width: 900, height: 680, deviceScaleFactor: 2 });
   await pCur.click('[data-testid="nav-timeline"]');
@@ -999,6 +1030,6 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'bedtime-diary', 'diary-likes-annotations', 'dream-card', 'dream-sheet', 'dream-comic-skill', 'unc-triage-sheet', 'voiceprint-context-tag', 'voiceprint-merge-detach', 'memory-graph-triad', 'memory-provenance-metabolism', 'hw-button-island-push', 'tbc-markers', 'parity-drawer', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'raw-seek', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'sum-contextual-photos', 'map-photo-hierarchy', 'todo-progressive-meta', 'point-expand', 'point-trace', 'src-photo-infocards', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'setting-v2-subpages', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'multi-hw-scan', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'dfu-rec-guard', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'bedtime-diary', 'diary-likes-annotations', 'dream-card', 'dream-sheet', 'dream-comic-skill', 'unc-triage-sheet', 'voiceprint-context-tag', 'voiceprint-merge-detach', 'memory-graph-triad', 'memory-provenance-metabolism', 'hw-button-island-push', 'tbc-markers', 'parity-drawer', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'raw-seek', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'sum-contextual-photos', 'map-photo-hierarchy', 'todo-progressive-meta', 'point-expand', 'point-trace', 'src-photo-infocards', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'setting-v2-subpages', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'multi-hw-scan', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'dfu-rec-guard', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'apple-watch-hardware-link', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });

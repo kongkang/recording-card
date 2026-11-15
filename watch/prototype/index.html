@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>录音卡 · 手表与手机伴侣 1:1 设计稿</title>
+<title>录音卡 · Apple Watch 独立硬件与手机 1:1 联调原型</title>
 <style>
 :root{
   --bg:#FAFAF8;
-  --card:#fff;
+  --card:#FFFFFF;
   --label:#1D1D1F;
   --ink:#3C3C43;
   --sec:#8A8A8E;
@@ -36,1933 +36,2226 @@ body{
 button{font-family:inherit;cursor:pointer}
 button:disabled{opacity:.38;cursor:not-allowed}
 
-/* 顶部工作台切换栏（仅设计稿切换视图与重置用） */
+/* 顶部联调工具栏 */
 .proto-bar{
-  position:sticky;
-  top:0;
-  z-index:80;
+  position:relative;
+  z-index:90;
   display:flex;
   align-items:center;
   justify-content:space-between;
-  gap:12px;
+  gap:10px;
   flex-wrap:wrap;
-  padding:10px 20px;
-  background:rgba(250,250,248,.94);
+  padding:10px 18px;
+  background:rgba(250,250,248,.95);
   backdrop-filter:blur(12px);
   -webkit-backdrop-filter:blur(12px);
   border-bottom:1px solid var(--sep);
 }
-.proto-brand{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  min-width:0;
-}
-.proto-mark{
-  width:26px;height:26px;border-radius:8px;background:var(--label);color:#fff;
-  display:inline-flex;align-items:center;justify-content:center;flex:none;
-}
-.proto-title{font-size:14px;font-weight:700;letter-spacing:-.2px;white-space:nowrap}
-.proto-sub{font-size:11.5px;color:var(--sec);white-space:nowrap}
-.proto-ctrls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.ver-seg{
-  display:inline-flex;align-items:center;background:var(--fill);
-  border:1px solid var(--sep);border-radius:999px;padding:2px;gap:2px;
-}
-.ver-opt{
-  border:0;background:transparent;color:var(--sec);border-radius:999px;
-  padding:5px 12px;font-size:12px;font-weight:600;line-height:1.25;
-  white-space:nowrap;transition:.16s ease;
-}
-.ver-opt.on{background:var(--card);color:var(--label);box-shadow:0 1px 3px rgba(0,0,0,.08)}
-.proto-reset{
-  border:1px solid var(--sep);background:var(--card);color:var(--ink);
-  border-radius:999px;padding:5px 12px;font-size:12px;font-weight:600;
-}
-.proto-reset:hover{border-color:var(--ax)}
-
-/* 主舞台 */
-.stage{
-  flex:1;
-  width:100%;
-  max-width:1320px;
-  margin:0 auto;
-  padding:22px 20px calc(env(safe-area-inset-bottom) + var(--page-pad-b));
-  display:grid;
-  grid-template-columns:minmax(350px,393px) minmax(320px,1fr);
-  gap:24px;
-  align-items:start;
-}
-body[data-view="phone"]{background:var(--bg)}
-body[data-view="phone"] .stage{
-  max-width:560px;
-  padding:0 0 calc(env(safe-area-inset-bottom) + var(--page-pad-b));
-  display:block;
-}
-body[data-view="phone"] .watch-col{display:none}
-body[data-view="phone"] .phone-bezel{
-  background:none;padding:0;border-radius:0;box-shadow:none;border:none;
-}
-body[data-view="phone"] .phone-screen{
-  height:auto;min-height:calc(100vh - 54px);border-radius:0;overflow:visible;background:var(--bg);
-}
-body[data-view="phone"] .phone-status-strip{display:none}
-body[data-view="phone"] .phone-scroll{overflow:visible;height:auto}
-body[data-view="phone"] #dyn-island{position:fixed;top:60px}
-body[data-view="phone"] .sheet-wrap{position:fixed}
-body[data-view="phone"] .toast{position:fixed;bottom:calc(env(safe-area-inset-bottom) + 28px)}
-body[data-view="watch"] .phone-col{display:none}
-body[data-view="watch"] .stage{
-  grid-template-columns:minmax(0,1fr);
-  max-width:1080px;
-}
-
-/* iPhone 硬件外框（both 模式） */
-.phone-col{position:sticky;top:72px}
-.phone-bezel{
-  background:#1A1A1D;
-  border-radius:46px;
-  padding:11px;
-  box-shadow:0 24px 54px rgba(0,0,0,.18),0 2px 6px rgba(0,0,0,.1);
-  border:1px solid #303036;
-}
-.phone-screen{
-  position:relative;
-  background:var(--bg);
-  border-radius:36px;
-  overflow:hidden;
-  height:min(780px,calc(100vh - 118px));
-  display:flex;
-  flex-direction:column;
-}
-.phone-status-strip{
-  flex:none;
-  height:36px;
-  padding:10px 24px 0;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  font-size:12px;
-  font-weight:700;
-  color:var(--label);
-  background:var(--bg);
-  position:relative;
-}
-.phone-island-idle{
-  position:absolute;
-  left:50%;
-  top:9px;
-  transform:translateX(-50%);
-  width:92px;
-  height:24px;
-  border-radius:999px;
-  background:#0B0B0E;
-}
-.phone-scroll{
-  flex:1;
-  overflow-y:auto;
-  overflow-x:hidden;
-  position:relative;
-}
-
-/* 灵动岛（1:1 复刻 current.html） */
-#dyn-island{
-  position:absolute;
-  top:8px;
-  left:50%;
-  transform:translateX(-50%) scale(.88);
-  opacity:0;
-  pointer-events:none;
-  z-index:65;
-  background:#0B0B0E;
-  color:#fff;
-  border-radius:999px;
-  padding:8px 14px;
-  min-width:248px;
-  max-width:min(92%,354px);
-  box-shadow:0 10px 28px rgba(0,0,0,.28);
+.proto-title{
   display:flex;
   align-items:center;
   gap:9px;
-  transition:.26s cubic-bezier(.2,.9,.3,1);
+  min-width:0;
 }
-#dyn-island.show{opacity:1;transform:translateX(-50%) scale(1)}
+.proto-title h1{
+  font-size:15px;
+  font-weight:700;
+  letter-spacing:-.2px;
+  white-space:nowrap;
+}
+.proto-badge{
+  font-size:11px;
+  font-weight:600;
+  padding:2px 8px;
+  border-radius:999px;
+  background:#EAF7EE;
+  color:#186A3B;
+  border:1px solid #B7E1C4;
+  white-space:nowrap;
+}
+.proto-actions{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  flex-wrap:wrap;
+}
+.seg{
+  display:inline-flex;
+  align-items:center;
+  background:var(--fill);
+  border:1px solid var(--sep);
+  border-radius:999px;
+  padding:2px;
+  gap:2px;
+}
+.seg button{
+  border:0;
+  background:transparent;
+  color:var(--sec);
+  border-radius:999px;
+  padding:4px 10px;
+  font-size:11.5px;
+  font-weight:600;
+}
+.seg button.on{
+  background:var(--card);
+  color:var(--label);
+  box-shadow:0 1px 2px rgba(0,0,0,.08);
+}
+.tb-btn{
+  border:1px solid var(--sep);
+  background:var(--card);
+  color:var(--label);
+  border-radius:999px;
+  padding:5px 11px;
+  font-size:11.5px;
+  font-weight:600;
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  white-space:nowrap;
+}
+.tb-btn:hover{border-color:var(--ax)}
+.tb-btn.warn{background:#FFF8EB;border-color:#F2C97D;color:#8A4300}
+.tb-btn.ok{background:#EDF7F0;border-color:#B7E1C4;color:#186A3B}
+.tb-dot{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+.tb-btn.warn .tb-dot{background:var(--warn)}
+
+/* 主舞台：左 iPhone 390x844 + 右 Apple Watch Series 10 */
+.stage{
+  flex:1;
+  display:flex;
+  align-items:flex-start;
+  justify-content:center;
+  gap:28px;
+  padding:22px 20px 44px;
+  flex-wrap:wrap;
+}
+.stage.mode-phone .watch-col{display:none}
+.stage.mode-watch .phone-col{display:none}
+.dev-col{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:10px;
+}
+.dev-caption{
+  font-size:12px;
+  font-weight:600;
+  color:var(--ink);
+  display:flex;
+  align-items:center;
+  gap:7px;
+}
+.dev-subcap{
+  font-size:11px;
+  color:var(--sec);
+}
+
+/* ============ 左侧：1:1 录音卡 iPhone App ============ */
+.iphone-shell{
+  width:390px;
+  height:844px;
+  max-width:calc(100vw - 24px);
+  background:#111113;
+  border-radius:48px;
+  padding:11px;
+  box-shadow:0 24px 60px rgba(0,0,0,.22), inset 0 0 0 2px rgba(255,255,255,.12);
+  position:relative;
+  flex:none;
+}
+.iphone-screen{
+  width:100%;
+  height:100%;
+  background:var(--bg);
+  border-radius:38px;
+  overflow:hidden;
+  position:relative;
+  display:flex;
+  flex-direction:column;
+}
+.ios-statusbar{
+  height:48px;
+  flex:none;
+  padding:12px 24px 0;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  font-size:13px;
+  font-weight:700;
+  color:var(--label);
+  position:relative;
+  background:var(--bg);
+  z-index:25;
+}
+/* 灵动岛 */
+.dyn-island{
+  position:absolute;
+  top:9px;
+  left:50%;
+  transform:translateX(-50%);
+  width:118px;
+  height:32px;
+  background:#09090B;
+  color:#FFFFFF;
+  border-radius:999px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  padding:0 11px;
+  transition:all .24s cubic-bezier(.2,.9,.3,1);
+  z-index:45;
+  overflow:hidden;
+  box-shadow:0 6px 18px rgba(0,0,0,.22);
+}
+.dyn-island.show{
+  width:348px;
+  height:44px;
+  justify-content:space-between;
+  padding:0 13px;
+}
+.di-idle-pill{
+  display:flex;
+  align-items:center;
+  gap:5px;
+  font-size:10.5px;
+  font-weight:600;
+  color:rgba(255,255,255,.78);
+}
+.dyn-island.show .di-idle-pill{display:none}
+.di-active{
+  display:none;
+  width:100%;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.dyn-island.show .di-active{display:flex}
 .di-logo{
-  width:22px;height:22px;border-radius:6px;background:#fff;color:#1D1D1F;
-  display:inline-flex;align-items:center;justify-content:center;flex:none;
+  width:20px;
+  height:20px;
+  border-radius:6px;
+  background:#FFFFFF;
+  color:#1D1D1F;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex:none;
 }
-.di-wave{display:inline-flex;align-items:center;gap:2.5px;height:14px;flex:none}
-.di-wave i{display:block;width:2.5px;border-radius:2px;background:#FF9F0A;height:6px;animation:diBar .7s ease-in-out infinite alternate}
-.di-wave i:nth-child(2){height:12px;animation-delay:.15s;background:#32D74B}
-.di-wave i:nth-child(3){height:8px;animation-delay:.3s;background:#64D2FF}
-.di-wave i:nth-child(4){height:14px;animation-delay:.45s;background:#FF9F0A}
-@keyframes diBar{from{transform:scaleY(.45)}to{transform:scaleY(1.15)}}
 .di-txt{flex:1;min-width:0}
-.di-txt b{display:block;font-size:11.5px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.di-txt span{display:block;font-size:10.5px;color:rgba(255,255,255,.74);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.di-txt b{
+  display:block;
+  font-size:11px;
+  font-weight:600;
+  color:#FFFFFF;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.di-txt span{
+  display:block;
+  font-size:10px;
+  color:rgba(255,255,255,.74);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
 .di-lcd{
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   font-variant-numeric:tabular-nums;
-  font-size:12.5px;font-weight:700;letter-spacing:.4px;
-  color:#FF9F0A;text-align:right;min-width:48px;flex:none;
+  font-size:11.5px;
+  font-weight:700;
+  color:#FF9F0A;
+  flex:none;
 }
 
-/* 1:1 手机伴侣 UI（沿用 current.html 视觉语言） */
+/* 录音卡 App 顶栏 */
 header.app{
-  position:sticky;top:0;z-index:30;
-  display:flex;align-items:center;justify-content:space-between;gap:10px;
-  height:52px;padding:0 16px 0 22px;
-  background:rgba(250,250,248,.92);
+  position:sticky;
+  top:0;
+  z-index:20;
+  flex:none;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  height:52px;
+  padding:0 16px 0 20px;
+  background:rgba(250,250,248,.94);
   backdrop-filter:blur(10px);
-  -webkit-backdrop-filter:blur(10px);
-  border-bottom:1px solid rgba(228,228,224,.55);
+  border-bottom:1px solid rgba(228,228,224,.6);
 }
-header.app h1{font-size:20px;font-weight:700;letter-spacing:-.2px;white-space:nowrap}
+header.app h2{
+  font-size:20px;
+  font-weight:700;
+  letter-spacing:-.2px;
+}
+body.sub header.app #app-title{display:none}
 .crumb{
-  background:none;border:none;color:var(--label);font-size:16px;font-weight:600;
-  min-height:36px;padding:0 6px 0 0;display:flex;align-items:center;letter-spacing:-.2px;
+  background:none;
+  border:none;
+  color:var(--label);
+  font-size:16px;
+  font-weight:600;
+  padding:0 4px 0 0;
+  display:inline-flex;
+  align-items:center;
+  gap:2px;
+  min-height:36px;
 }
-.crumb .chev{font-size:22px;font-weight:400;margin-right:2px;line-height:1;transform:translateY(-1px)}
-.hdr-right{display:flex;align-items:center;gap:8px;flex:none}
-.icon-btn{
-  width:30px;height:30px;border-radius:999px;border:1px solid var(--sep);
-  background:transparent;color:var(--ink);display:inline-flex;align-items:center;justify-content:center;
-}
-.icon-btn:active{background:var(--fill)}
+.crumb .chev{font-size:22px;font-weight:400;line-height:1;transform:translateY(-1px)}
+
+/* HwCapsule */
 .capsule{
-  display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--sep);
-  border-radius:999px;padding:5px 11px;font-size:12px;color:var(--ink);
-  min-height:30px;flex:none;white-space:nowrap;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  background:transparent;
+  border:1px solid var(--sep);
+  border-radius:999px;
+  padding:5px 11px;
+  font-size:12px;
+  color:var(--ink);
+  min-height:30px;
+  flex:none;
 }
-.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none;animation:pulse 2.2s ease-in-out infinite}
+.dot{
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:var(--ok);
+  flex:none;
+  animation:pulse 2.2s ease-in-out infinite;
+}
 .dot.big{width:10px;height:10px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
-.capsule.st-off .dot{background:var(--ax);animation:none}
-.capsule.st-idle .dot{background:#FF9500;animation:none}
-.capsule.st-standby .dot{background:#FF9500;animation:none}
-.capsule.st-wake .dot{background:var(--accent);animation:pulse 1s ease-in-out infinite}
-.capsule.st-rec .dot{background:var(--ok);animation:pulse 1.6s ease-in-out infinite}
-.capsule.st-off .batt{display:none}
-.batt{display:inline-flex;color:var(--ok);vertical-align:-2px;flex:none}
+.capsule.off .dot{background:var(--ax);animation:none}
+.capsule.idle .dot{background:var(--warn);animation:none}
+.capsule.phonerec .dot{background:var(--ok)}
+.capsule.off .batt,.capsule.phonerec .batt{display:none}
+.capsule-none,.capsule-phonerec{font-size:12px;white-space:nowrap}
+.capsule-none{color:var(--sec)}
+.capsule-phonerec{color:var(--label);font-weight:600;display:none}
+.capsule:not(.off) .capsule-none{display:none}
+.capsule.phonerec .capsule-phonerec{display:inline}
+.batt{display:inline-flex;color:var(--ok);vertical-align:-2px}
 .batt svg{display:block}
 .batt-fill{fill:currentColor}
 .batt .batt-bolt{display:none}
 .batt.charging .batt-bolt{display:block}
-@keyframes battBreathe{0%,100%{opacity:.34}50%{opacity:.95}}
-.batt.charging .batt-fill{animation:battBreathe 1.6s ease-in-out infinite}
-.batt.lv-mid{color:#FF9500}
-.batt.lv-low{color:#FF3B30}
+.batt.lv-mid{color:var(--warn)}
+.batt.lv-low{color:var(--danger)}
 
-.phone-main{
-  padding:8px 20px calc(env(safe-area-inset-bottom) + var(--page-pad-b));
+/* 滚动主区：遵守 --page-pad-b:48px 留白规范 */
+.phone-scroll{
+  flex:1;
+  min-height:0;
+  overflow-y:auto;
+  padding:0 20px calc(var(--page-pad-b) + 72px);
 }
-.set-title{
-  font-size:12px;color:var(--sec);margin:16px 0 8px;
-  display:flex;align-items:center;justify-content:space-between;gap:8px;
+body.sub .phone-scroll{
+  padding-bottom:var(--page-pad-b);
 }
-.set-group{
-  background:var(--card);border:1px solid var(--sep);border-radius:12px;
-  padding:4px 16px;margin-bottom:14px;
-}
-.row-item{
-  display:flex;justify-content:space-between;align-items:center;gap:12px;
-  padding:12px 0;border-bottom:1px solid var(--sep);font-size:14px;
-}
-.row-item:last-child{border-bottom:none}
-.row-k{color:var(--sec);flex:none}
-.row-v{display:inline-flex;align-items:center;gap:7px;font-weight:500;text-align:right;min-width:0}
-.clock{
-  display:inline-block;font-family:ui-monospace,"SF Mono",Menlo,monospace;
-  font-size:13px;font-weight:600;color:var(--label);font-variant-numeric:tabular-nums;
-}
-.recdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--danger);animation:pulse 1.2s ease-in-out infinite}
-.slice-mini-prog{
-  width:100%;height:3px;border-radius:999px;background:rgba(120,120,128,.16);
-  overflow:hidden;margin-top:6px;
-}
-.slice-mini-prog i{display:block;height:100%;background:var(--label);border-radius:999px;transition:width .25s ease}
-.banner-ok{
-  margin:8px 0 6px;padding:8px 11px;border-radius:10px;font-size:12px;line-height:1.5;
-  color:var(--ok-ink);background:rgba(52,199,89,.12);border:1px solid rgba(52,199,89,.28);
-}
-.banner-err{
-  margin:8px 0 6px;padding:8px 11px;border-radius:10px;font-size:12px;line-height:1.5;
-  color:#B00020;background:#FFF5F4;border:1px solid #FFD2CE;
-}
+.panel{display:none}
+.panel.show{display:block}
 
-/* 按钮与控制组（1:1 匹配 current.html） */
-.ctrl-box{background:var(--card);border:1px solid var(--sep);border-radius:12px;padding:14px;margin-bottom:14px}
+/* Timeline 页 */
+.tl-bar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  border-bottom:1px solid var(--sep);
+  margin:8px 0 12px;
+  gap:8px;
+}
+.tabs{display:flex;gap:16px}
+.tabs button{
+  background:none;
+  border:none;
+  font-size:13px;
+  color:var(--sec);
+  padding:7px 0 10px;
+  border-bottom:2px solid transparent;
+}
+.tabs button.on{
+  color:var(--label);
+  border-bottom-color:var(--label);
+  font-weight:600;
+}
+.mini-refresh{
+  border:1px solid var(--sep);
+  background:var(--card);
+  color:var(--ink);
+  border-radius:999px;
+  padding:4px 10px;
+  font-size:11.5px;
+  font-weight:600;
+  margin-bottom:5px;
+}
+.live{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  background:var(--card);
+  border:1px solid var(--sep);
+  border-radius:12px;
+  padding:10px 12px;
+  margin:0 0 14px;
+}
+.live .ldot{
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:var(--ok);
+  flex:none;
+}
+.live.rec .ldot{
+  background:var(--danger);
+  animation:pulse 1s ease-in-out infinite alternate;
+}
+.live b{font-size:13px;font-weight:600;white-space:nowrap}
+.live .lsub{
+  font-size:11.5px;
+  color:var(--sec);
+  margin-left:auto;
+  text-align:right;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.tl-date{font-size:14.5px;font-weight:700;margin:8px 0 12px}
+.tl-item{position:relative;padding-left:22px;display:flow-root}
+.tl-item::before{
+  content:"";
+  position:absolute;
+  left:4.5px;
+  top:0;
+  bottom:0;
+  width:1px;
+  background:var(--sep);
+}
+.tl-item.first::before{top:9px}
+.tl-item.last::before{bottom:auto;height:9px}
+.tl-item.only::before{display:none}
+.tl-node{
+  position:absolute;
+  left:0;
+  top:8px;
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  background:var(--bg);
+  border:1.5px solid var(--ax);
+}
+.card{margin-bottom:24px;cursor:pointer;position:relative}
+.card h3{
+  font-size:16px;
+  font-weight:600;
+  margin-bottom:3px;
+  letter-spacing:-.1px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.when{font-size:12px;color:var(--sec)}
+.src-pill{
+  font-size:10px;
+  font-weight:600;
+  padding:1px 6px;
+  border-radius:999px;
+  background:#EAF7EE;
+  color:#186A3B;
+  border:1px solid #B7E1C4;
+  flex:none;
+}
+.src-pill.cleared{background:var(--fill);color:var(--sec);border-color:var(--sep)}
+.exp{display:none;margin-top:8px;font-size:13.5px;line-height:1.65;color:var(--ink)}
+.card.open .exp{display:block}
+.btn-line{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
 .btn{
-  background:var(--label);color:#fff;border:none;border-radius:10px;
-  padding:10px 16px;font-size:13.5px;font-weight:600;min-height:40px;
-  display:inline-flex;align-items:center;justify-content:center;gap:7px;transition:.15s ease;
+  background:var(--label);
+  color:#FFFFFF;
+  border:none;
+  border-radius:9px;
+  padding:8px 14px;
+  font-size:12.5px;
+  font-weight:600;
+  min-height:34px;
 }
-.btn:active{transform:scale(.99)}
-.btn.full{width:100%}
-.btn.danger{background:var(--danger);color:#fff}
 .btn.ghost{background:transparent;color:var(--label);border:1px solid var(--sep)}
-.ctrl-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.btn.sm{padding:5px 10px;font-size:11.5px;min-height:28px;border-radius:7px}
+.btn.danger{background:var(--danger);color:#FFFFFF}
 
-/* 可折叠指南（匹配 current.html details.dec） */
-details.dec{
-  background:var(--card);border:1px solid var(--sep);border-radius:12px;
-  padding:10px 14px;margin-bottom:14px;font-size:13.5px;
-}
-details.dec summary{
-  cursor:pointer;font-weight:600;min-height:28px;display:flex;align-items:center;justify-content:space-between;list-style:none;
-}
-details.dec summary::-webkit-details-marker{display:none}
-details.dec[open] .dchev{transform:rotate(180deg)}
-.dchev{color:var(--sec);transition:transform .18s}
-.guide-steps{padding-top:10px;border-top:1px solid var(--sep);margin-top:8px;font-size:12.5px;color:var(--ink);line-height:1.65;display:flex;flex-direction:column;gap:6px}
-.guide-btn{margin-top:6px;align-self:flex-start;border:1px solid var(--sep);background:var(--bg);color:var(--label);border-radius:999px;padding:5px 12px;font-size:11.5px;font-weight:600}
-
-/* 切片过滤芯片 & 列表 */
-.filter-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
-.mini-chip{
-  background:var(--card);border:1px solid var(--sep);border-radius:999px;
-  padding:4px 11px;font-size:11.5px;color:var(--ink);font-weight:500;
-}
-.mini-chip.on{background:var(--label);color:#fff;border-color:var(--label);font-weight:600}
-.slice-card{
-  background:var(--card);border:1px solid var(--sep);border-radius:12px;
-  padding:13px 14px;margin-bottom:12px;
-}
-.slice-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:5px}
-.slice-title{font-size:14.5px;font-weight:600;line-height:1.4;min-width:0;word-break:break-all}
-.slice-badges{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;flex:none}
-.tag{font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:999px;background:rgba(0,0,0,.055);color:var(--ink);white-space:nowrap}
-.tag.off{background:#FFF3DC;color:#8A4B08}
-.tag.ok{background:rgba(52,199,89,.15);color:var(--ok-ink)}
-.tag.gap{background:#FFF5F4;color:#B00020}
-.slice-sub{font-size:12px;color:var(--sec);line-height:1.5;margin-bottom:8px}
-.marks-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:9px}
-.mark-chip{
-  background:#EEF4FF;border:1px solid #C6DAFA;color:#143A66;
-  border-radius:999px;padding:3px 9px;font-size:11px;font-weight:600;
-}
-.mark-chip:active{opacity:.7}
-/* 1:1 复刻 current.html .rawaudio 播放器 */
+/* Detail 页 */
+.ph{padding:12px 0 0}
+.ph h2{font-size:20px;font-weight:700;margin-bottom:5px}
+.pmeta{font-size:12px;color:var(--sec);margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px 12px}
 .rawaudio{
-  display:flex;flex-direction:column;gap:6px;background:var(--bg);
-  border:1px solid var(--sep);border-radius:10px;padding:7px 10px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  background:var(--card);
+  border:1px solid var(--sep);
+  border-radius:12px;
+  padding:8px 12px;
+  margin-bottom:14px;
 }
-.rawaudio-top{display:flex;align-items:center;gap:8px}
-.raplay{
-  height:32px;padding:0 10px;border-radius:8px;border:1px solid var(--sep);
-  background:var(--card);font-size:12px;font-weight:600;color:var(--label);
-  display:inline-flex;align-items:center;gap:5px;flex:none;
+.rawaudio.cleared{color:var(--sec);font-size:12.5px}
+.turn{display:flex;gap:10px;margin-bottom:14px}
+.ava{
+  width:26px;
+  height:26px;
+  border-radius:50%;
+  flex:none;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:12px;
+  font-weight:600;
+  color:#FFFFFF;
+  background:var(--label);
 }
-.rameta{flex:1;min-width:0}
-.ratime{font-size:11.5px;color:var(--ink);font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace}
-.rastate{font-size:11px;color:var(--sec)}
-.raacts{display:flex;align-items:center;gap:4px;flex:none}
-.raact{
-  border:1px solid var(--sep);background:var(--card);color:var(--ink);
-  border-radius:7px;padding:4px 9px;font-size:11.5px;font-weight:500;
+.txt{
+  font-size:14px;
+  line-height:1.65;
+  color:var(--label);
+  background:var(--card);
+  border:1px solid var(--sep);
+  border-radius:4px 12px 12px 12px;
+  padding:9px 12px;
 }
-.raact.del:hover{color:var(--danger);border-color:#FFB3AE}
-.raslider{width:100%;accent-color:var(--label);height:4px;cursor:pointer}
-.slice-detail-btn{
-  margin-top:8px;width:100%;border:1px dashed var(--sep);background:transparent;
-  border-radius:8px;padding:5px 10px;font-size:11.5px;color:var(--sec);text-align:center;
-}
-.slice-detail-btn:hover{color:var(--label);border-color:var(--ax)}
 
-/* 半屏设备状态 Sheet（1:1 复刻 current.html .sheet-wrap） */
-.sheet-wrap{position:absolute;inset:0;z-index:70;display:none}
+/* Setting 与 Apple Watch 联动二级页 */
+.set-title{font-size:12px;color:var(--sec);margin:16px 0 7px}
+.set-group{
+  background:var(--card);
+  border:1px solid var(--sep);
+  border-radius:12px;
+  padding:2px 14px;
+  margin-bottom:10px;
+}
+.navrow,.switchrow{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  padding:12px 0;
+  border-bottom:1px solid var(--sep);
+  font-size:13.5px;
+}
+.navrow:last-child,.switchrow:last-child{border-bottom:none}
+.navrow{cursor:pointer}
+.navval{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  font-size:12.5px;
+  color:var(--sec);
+  flex:none;
+}
+.rowchev{color:var(--ax);font-size:15px}
+.sw{
+  width:46px;
+  height:28px;
+  border-radius:999px;
+  background:rgba(120,120,128,.32);
+  position:relative;
+  transition:.2s;
+  flex:none;
+  cursor:pointer;
+}
+.sw.on{background:var(--label)}
+.sw::after{
+  content:"";
+  position:absolute;
+  top:2px;
+  left:2px;
+  width:24px;
+  height:24px;
+  border-radius:50%;
+  background:#FFFFFF;
+  transition:.2s;
+}
+.sw.on::after{left:20px}
+.subcard{
+  background:var(--card);
+  border:1px solid var(--sep);
+  border-radius:12px;
+  padding:12px 14px;
+  margin:10px 0 12px;
+}
+.subcard h4{
+  font-size:13.5px;
+  font-weight:600;
+  margin-bottom:6px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.subcard p{font-size:12px;color:var(--sec);line-height:1.6}
+.ext-tag{
+  font-size:10.5px;
+  font-weight:600;
+  padding:2px 7px;
+  border-radius:6px;
+  background:var(--fill);
+  color:var(--ink);
+}
+.wbtns{display:flex;gap:8px;margin-top:10px}
+.wbtns .btn{flex:1}
+
+/* 底栏 */
+nav.bottom{
+  position:absolute;
+  left:0;
+  right:0;
+  bottom:0;
+  height:62px;
+  background:rgba(250,250,248,.94);
+  backdrop-filter:blur(10px);
+  border-top:1px solid var(--sep);
+  display:flex;
+  padding-bottom:6px;
+  z-index:25;
+}
+body.sub nav.bottom{display:none}
+nav.bottom button{
+  flex:1;
+  background:none;
+  border:none;
+  font-size:11px;
+  color:var(--sec);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:2px;
+}
+nav.bottom button.on{color:var(--label);font-weight:600}
+
+/* StatusSheet 弹层（在 iPhone 屏幕内定位） */
+.sheet-wrap{position:absolute;inset:0;z-index:60;display:none}
 .sheet-wrap.show{display:block}
 .backdrop{position:absolute;inset:0;background:rgba(0,0,0,.4)}
 .sheet{
-  position:absolute;bottom:0;left:50%;transform:translateX(-50%);
-  width:100%;max-width:560px;background:var(--card);
-  border-radius:16px 16px 0 0;
-  padding:18px 20px calc(env(safe-area-inset-bottom) + var(--page-pad-b));
-  max-height:85%;overflow-y:auto;
+  position:absolute;
+  bottom:0;
+  left:0;
+  right:0;
+  max-height:84%;
+  overflow-y:auto;
+  background:var(--card);
+  border-radius:18px 18px 0 0;
+  padding:16px 18px 24px;
 }
-.devhead{display:flex;align-items:center;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--sep)}
-.devhead h2{margin:0;font-size:16.5px}
-.devsub{font-size:12px;color:var(--sec);margin-top:2px}
-.chip-ok{margin-left:auto;font-size:11px;color:var(--ok-ink);background:rgba(52,199,89,.15);border-radius:999px;padding:3px 10px;flex:none}
-.chip-off{margin-left:auto;font-size:11px;color:var(--sec);background:rgba(0,0,0,.05);border-radius:999px;padding:3px 10px;flex:none}
+.devhead{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding-bottom:11px;
+  border-bottom:1px solid var(--sep);
+}
+.devhead h2{font-size:15.5px;display:flex;align-items:center;gap:5px;min-width:0}
+.devsub{font-size:11.5px;color:var(--sec);margin-top:2px}
+.cbadge{
+  font-size:10.5px;
+  color:var(--ink);
+  background:var(--fill);
+  border:1px solid transparent;
+  border-radius:999px;
+  padding:2px 7px;
+  font-weight:600;
+  white-space:nowrap;
+  flex:none;
+}
+.cbadge.k-v1{background:#FFFFFF;color:#1D1D1F;border-color:#D2D2CE}
+.cbadge.k-v2{background:#1D1D1F;color:#FFFFFF;border-color:#1D1D1F}
+.cbadge.k-kb{background:#E8F2FF;color:#1456B8;border-color:#BBD8FF}
+.cbadge.k-watch{background:#EAF7EE;color:#186A3B;border-color:#B7E1C4}
+.disc-btn{
+  background:none;
+  border:none;
+  width:30px;
+  height:30px;
+  border-radius:8px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  color:var(--sec);
+  margin-left:auto;
+}
 .sheet .row{
-  display:flex;justify-content:space-between;align-items:center;
-  font-size:13px;padding:13px 0;border-bottom:1px solid var(--sep);gap:10px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  font-size:13px;
+  padding:13px 0;
+  border-bottom:1px solid var(--sep);
 }
-.sheet .row.act-row{cursor:pointer}
 .sheet .row>span:first-child{color:var(--sec);flex:none}
 .sheet .row>span:last-child{
-  flex:1;min-width:0;display:inline-flex;align-items:center;justify-content:flex-end;gap:7px;
-  text-align:right;white-space:nowrap;overflow:hidden;
+  flex:1;
+  min-width:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:8px;
+  text-align:right;
+  white-space:nowrap;
 }
-.sw{width:48px;height:28px;border-radius:999px;background:rgba(120,120,128,.32);position:relative;transition:.2s;flex:none;cursor:pointer}
-.sw.on{background:var(--label)}
-.sw::after{content:"";position:absolute;top:2px;left:2px;width:24px;height:24px;border-radius:50%;background:#fff;transition:.2s}
-.sw.on::after{left:22px}
-.spin{display:inline-flex;animation:spin 1s linear infinite;color:var(--ink)}
-@keyframes spin{to{transform:rotate(360deg)}}
-.syncidle{display:inline-flex;color:var(--sec)}
-.okcheck{display:inline-block;color:var(--ok);font-weight:700}
-
+.row.act-row{cursor:pointer}
+.recdot{
+  display:inline-block;
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:var(--danger);
+  animation:pulse 1.1s ease-in-out infinite;
+}
+.clock{
+  font-family:ui-monospace,Menlo,monospace;
+  font-variant-numeric:tabular-nums;
+  font-size:12px;
+  color:var(--ink);
+}
+.conn-item{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  border:1px solid var(--sep);
+  border-radius:10px;
+  padding:9px 11px;
+  margin:7px 0;
+  cursor:pointer;
+}
+.conn-item:hover{border-color:var(--ax)}
+.conn-item .cn{font-size:13.5px;font-weight:600;flex:1}
+.conn-item .cm{font-size:11.5px;color:var(--ok-ink)}
+.disc-box{
+  background:#FFF8F7;
+  border:1px solid #FFD2CE;
+  border-radius:10px;
+  padding:10px 12px;
+  margin:10px 0 2px;
+  font-size:12px;
+}
 .toast{
-  position:absolute;left:50%;bottom:24px;transform:translateX(-50%) translateY(8px);
-  background:var(--label);color:#fff;border-radius:999px;padding:8px 15px;
-  font-size:12px;z-index:75;opacity:0;pointer-events:none;transition:.22s;white-space:nowrap;max-width:90%;overflow:hidden;text-overflow:ellipsis;
+  position:absolute;
+  left:50%;
+  bottom:76px;
+  transform:translateX(-50%) translateY(6px);
+  background:var(--label);
+  color:#FFFFFF;
+  border-radius:999px;
+  padding:7px 14px;
+  font-size:11.5px;
+  z-index:85;
+  opacity:0;
+  pointer-events:none;
+  transition:.2s;
+  white-space:nowrap;
 }
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
-/* 仅看手机版时的快捷联调浮钮 */
-.phone-sim-fab{
-  display:none;position:fixed;right:18px;bottom:calc(env(safe-area-inset-bottom) + 18px);
-  z-index:60;border:1px solid var(--sep);background:var(--card);color:var(--label);
-  border-radius:999px;padding:8px 14px;font-size:12px;font-weight:600;
-  box-shadow:0 8px 24px rgba(0,0,0,.12);
+/* ============ 右侧：Apple Watch Series 10（46mm） ============ */
+.watch-panel{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:12px;
 }
-body[data-view="phone"] .phone-sim-fab{display:inline-flex;align-items:center;gap:6px}
-
-/* 右栏：Apple Watch 与联调工作台 */
-.watch-col{display:flex;flex-direction:column;gap:18px}
-.studio-card{
-  background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:18px 20px;
+.watch-tabs{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  background:var(--card);
+  border:1px solid var(--sep);
+  border-radius:999px;
+  padding:4px;
 }
-.studio-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px}
-.studio-hd h2{font-size:16px;font-weight:700;letter-spacing:-.2px}
-.studio-hd p{font-size:12px;color:var(--sec)}
-
-.watch-stage{
-  display:flex;align-items:center;justify-content:center;gap:24px;flex-wrap:wrap;
-  padding:12px 6px;
+.watch-tabs button{
+  border:0;
+  background:transparent;
+  color:var(--sec);
+  font-size:12px;
+  font-weight:600;
+  border-radius:999px;
+  padding:5px 12px;
 }
-body[data-view="watch"] .watch-single-wrap{display:none}
-.watch-grid{display:none;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:18px}
-body[data-view="watch"] .watch-grid{display:grid}
-.watch-grid-item{display:flex;flex-direction:column;align-items:center;gap:10px}
-.watch-grid-lbl{font-size:12.5px;font-weight:600;color:var(--ink)}
-
-/* Apple Watch 45mm 真实表壳 */
-.watch-shell{
+.watch-tabs button.on{
+  background:var(--label);
+  color:#FFFFFF;
+}
+.watch-band-top,.watch-band-bot{
+  width:154px;
+  height:42px;
+  background:linear-gradient(180deg,#2C2C30,#1D1D20);
+  border-radius:18px 18px 6px 6px;
+  box-shadow:inset 0 2px 6px rgba(255,255,255,.08);
+}
+.watch-band-bot{
+  border-radius:6px 6px 18px 18px;
+}
+.watch-case-wrap{
   position:relative;
-  width:214px;
-  height:258px;
-  background:linear-gradient(145deg,#313338,#1B1C1E);
-  border-radius:48px;
-  padding:12px;
-  box-shadow:0 18px 40px rgba(0,0,0,.22),inset 0 0 0 1px rgba(255,255,255,.12);
-  flex:none;
+  display:flex;
+  align-items:center;
+}
+.watch-case{
+  width:272px;
+  height:328px;
+  background:linear-gradient(145deg,#2E2E32,#141417);
+  border-radius:58px;
+  padding:15px;
+  box-shadow:0 22px 48px rgba(0,0,0,.28), inset 0 0 0 2px rgba(255,255,255,.12);
+  position:relative;
 }
 .watch-crown{
-  position:absolute;right:-8px;top:52px;width:8px;height:38px;
-  background:linear-gradient(180deg,#52545A,#2A2B2F 50%,#45474D);
-  border:none;border-radius:0 5px 5px 0;
-  box-shadow:inset 0 2px 0 rgba(255,255,255,.18);
+  position:absolute;
+  right:-11px;
+  top:82px;
+  width:12px;
+  height:48px;
+  border-radius:5px;
+  background:linear-gradient(180deg,#5A5A62,#2C2C30);
+  border:1px solid rgba(255,255,255,.2);
+  box-shadow:2px 2px 6px rgba(0,0,0,.25);
 }
-.watch-crown:active{transform:translateX(-1px)}
 .watch-sidebtn{
-  position:absolute;right:-5px;top:116px;width:5px;height:46px;
-  background:#2C2D32;border:none;border-radius:0 4px 4px 0;
+  position:absolute;
+  right:-7px;
+  top:162px;
+  width:8px;
+  height:64px;
+  border-radius:4px;
+  background:linear-gradient(180deg,#44444A,#242428);
+  border:1px solid rgba(255,255,255,.15);
 }
-.watch-sidebtn:active{transform:translateX(-1px)}
-.watch-oled{
-  width:100%;height:100%;border-radius:36px;background:#000;color:#fff;
-  overflow:hidden;display:flex;flex-direction:column;position:relative;
-  font-family:-apple-system,"SF Compact Rounded","SF Pro Text","PingFang SC",sans-serif;
+.watch-screen{
+  width:100%;
+  height:100%;
+  background:#000000;
+  color:#FFFFFF;
+  border-radius:44px;
+  overflow:hidden;
+  padding:14px 14px 16px;
+  display:flex;
+  flex-direction:column;
+  position:relative;
+  transition:opacity .2s, filter .2s;
 }
-.watch-oled.aod{opacity:.78;filter:brightness(.76)}
-.w-sysbar{
-  flex:none;height:28px;padding:8px 16px 0;display:flex;align-items:center;justify-content:space-between;
-  font-size:11px;font-weight:600;color:#fff;
+.watch-screen.aod{
+  opacity:.72;
+  filter:brightness(.68);
 }
-.w-sysbar .w-title-txt{color:#30D158;font-size:11.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.w-body{flex:1;overflow-y:auto;padding:4px 12px 14px}
-.w-body::-webkit-scrollbar{display:none}
-
-/* Watch 表盘与 4 个真实 WidgetKit 槽位 */
-.wf-dial{display:flex;flex-direction:column;height:100%;justify-content:space-between;padding:4px 2px 2px}
-.wf-top-row{display:flex;justify-content:space-between;align-items:flex-start;gap:4px}
-.wf-corner{
-  width:42px;height:42px;border-radius:14px;background:rgba(255,255,255,.08);
-  border:1px solid rgba(255,255,255,.14);color:#fff;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:3px;
+.watch-top{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  font-size:10.5px;
+  color:rgba(255,255,255,.68);
+  margin-bottom:6px;
 }
-.wf-corner b{font-size:8.5px;font-weight:700;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.85)}
-.wf-time-wrap{text-align:right;flex:1}
-.wf-date{font-size:10px;color:#FF9F0A;font-weight:600}
-.wf-time{font-size:32px;font-weight:700;line-height:.95;letter-spacing:-1px;font-variant-numeric:tabular-nums}
-.wf-inline{
-  width:100%;border-radius:8px;padding:3px 7px;background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.1);color:#fff;font-size:10px;font-weight:600;
-  display:flex;align-items:center;gap:5px;text-align:left;
-}
-.wf-rect{
-  width:100%;border-radius:13px;padding:7px 9px;
-  background:rgba(48,209,88,.14);border:1px solid rgba(48,209,88,.34);
-  color:#fff;text-align:left;display:flex;flex-direction:column;gap:2px;
-}
-.wf-rect.rec{background:rgba(255,69,58,.18);border-color:rgba(255,69,58,.46)}
-.wf-rect-hd{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700}
-.wf-rect-sub{font-size:10px;color:rgba(255,255,255,.78);font-variant-numeric:tabular-nums}
-.wf-bot-row{display:flex;justify-content:space-between;align-items:center;padding:0 2px}
-.wf-circ{
-  width:42px;height:42px;border-radius:50%;
-  background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);color:#fff;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
-}
-.wf-circ.rec{background:rgba(255,69,58,.24);border-color:rgba(255,69,58,.6)}
-.wf-circ span{font-size:8.5px;font-weight:700}
-.wf-dummy{
-  width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.07);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  font-size:9px;color:rgba(255,255,255,.7);font-weight:600;
+.w-dot-live{
+  display:inline-block;
+  width:6px;
+  height:6px;
+  border-radius:50%;
+  background:var(--danger);
+  margin-right:4px;
+  animation:pulse 1s infinite;
 }
 
-/* Watch 主页（1:1 复刻 WatchMainView.swift） */
-.wm-status{display:flex;align-items:center;gap:5px;font-size:10.5px;color:#AEAEB2;margin-bottom:4px}
-.wm-dot{width:7px;height:7px;border-radius:50%;background:#30D158;flex:none}
-.wm-dot.off{background:#FF9F0A}
-.wm-clock{
-  font-size:26px;font-weight:700;text-align:center;letter-spacing:-.5px;
-  font-family:ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums;
-  margin-top:4px;
+/* 表盘复杂功能页 */
+.w-face{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
 }
-.wm-clock.rec{color:#FF453A}
-.wm-cap{font-size:10px;color:#8E8E93;text-align:center;margin-bottom:8px;min-height:14px}
-.wm-btn-pri{
-  width:100%;border:none;border-radius:14px;padding:9px 10px;
-  font-size:13px;font-weight:700;color:#fff;background:#248A3D;
-  display:flex;align-items:center;justify-content:center;gap:5px;
+.comp-inline{
+  background:rgba(255,255,255,.1);
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:999px;
+  padding:4px 10px;
+  font-size:10.5px;
+  color:#FF9F0A;
+  font-weight:600;
+  text-align:center;
+  width:100%;
 }
-.wm-btn-pri.rec{background:#D70015}
-.wm-btn-sec{
-  width:100%;border:none;border-radius:12px;padding:7px 10px;margin-top:6px;
-  font-size:12px;font-weight:600;color:#fff;background:#2C2C2E;
-  display:flex;align-items:center;justify-content:center;gap:5px;
+.w-face-center{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  padding:2px 0;
 }
-.wm-qentry{
-  width:100%;border:none;border-radius:12px;padding:7px 9px;margin-top:7px;
-  background:#1C1C1E;color:#fff;font-size:11px;
-  display:flex;align-items:center;gap:6px;text-align:left;
+.comp-corner{
+  width:56px;
+  height:56px;
+  border-radius:18px;
+  background:rgba(255,159,10,.16);
+  border:1px solid rgba(255,159,10,.45);
+  color:#FF9F0A;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:2px;
+  font-size:9.5px;
+  font-weight:700;
+  flex:none;
 }
-.wm-note{font-size:10px;color:#8E8E93;text-align:center;margin-top:7px;line-height:1.4}
-.wm-note.err{color:#FF6961}
+.w-face-clock{
+  text-align:center;
+  flex:1;
+}
+.w-face-clock b{
+  display:block;
+  font-size:34px;
+  font-weight:700;
+  line-height:1;
+  letter-spacing:-1px;
+  font-variant-numeric:tabular-nums;
+}
+.w-face-clock span{
+  font-size:10px;
+  color:rgba(255,255,255,.62);
+}
+.comp-circular{
+  width:56px;
+  height:56px;
+  border-radius:50%;
+  background:rgba(52,199,89,.16);
+  border:2px solid #34C759;
+  color:#FFFFFF;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  font-size:9.5px;
+  font-weight:700;
+  flex:none;
+}
+.comp-circular.rec{
+  background:rgba(255,59,48,.22);
+  border-color:#FF3B30;
+}
+.comp-rectangular{
+  background:rgba(255,255,255,.11);
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:14px;
+  padding:9px 11px;
+  text-align:left;
+  color:#FFFFFF;
+  width:100%;
+}
+.comp-rectangular .cr-top{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  font-size:11px;
+  font-weight:700;
+  color:#FF9F0A;
+}
+.comp-rectangular .cr-mid{
+  font-size:13px;
+  font-weight:700;
+  margin:3px 0 2px;
+  font-variant-numeric:tabular-nums;
+}
+.comp-rectangular .cr-sub{
+  font-size:10px;
+  color:rgba(255,255,255,.66);
+}
 
-/* Watch 队列页（1:1 复刻 WatchQueueView） */
-.wq-sync{
-  width:100%;border:none;border-radius:12px;padding:7px 8px;margin-bottom:7px;
-  background:#248A3D;color:#fff;font-size:11.5px;font-weight:700;
+/* 手表端极简录音卡 App（无本地转写，纯采集 + 缓存） */
+.w-app{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  gap:6px;
+  min-height:0;
 }
-.wq-row{background:#1C1C1E;border-radius:10px;padding:7px 9px;margin-bottom:6px}
-.wq-top{display:flex;justify-content:space-between;align-items:center;font-size:11px;font-weight:700}
-.wq-sub{font-size:10px;color:#8E8E93;margin-top:2px}
-.wq-st-pending{color:#FF9F0A}
-.wq-st-transferring{color:#64D2FF}
-.wq-st-synced{color:#30D158}
-
-/* 联调控制说明 */
-.watch-notes{flex:1;min-width:230px;display:flex;flex-direction:column;gap:8px}
-.wn-box{background:var(--bg);border:1px solid var(--sep);border-radius:12px;padding:10px 12px;font-size:12px;line-height:1.55;color:var(--ink)}
-.wn-box b{color:var(--label)}
-.sim-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:8px;margin-top:8px}
-.sim-btn{
-  border:1px solid var(--sep);background:var(--bg);color:var(--label);
-  border-radius:10px;padding:8px 11px;font-size:12px;font-weight:600;text-align:left;
-  display:flex;align-items:center;justify-content:space-between;gap:8px;
+.w-pill-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:6px;
 }
-.sim-btn span:last-child{white-space:nowrap;flex-shrink:0;font-size:11px;color:var(--sec)}
-.sim-btn:hover{border-color:var(--ax);background:var(--card)}
-.sim-btn.on{background:var(--label);color:#fff;border-color:var(--label)}
-
-@media (max-width:860px){
-  .stage{grid-template-columns:1fr}
-  .phone-col{position:static}
-  .phone-screen{height:auto;min-height:660px}
+.w-pill{
+  font-size:10px;
+  font-weight:600;
+  padding:3px 8px;
+  border-radius:999px;
+  background:rgba(255,255,255,.12);
+  color:#FFFFFF;
+  white-space:nowrap;
+}
+.w-pill.ok{background:rgba(52,199,89,.22);color:#70F294}
+.w-pill.warn{background:rgba(255,149,0,.22);color:#FFB340}
+.w-timer{
+  text-align:center;
+  padding:4px 0;
+}
+.w-timer b{
+  display:block;
+  font-size:26px;
+  font-weight:700;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-variant-numeric:tabular-nums;
+}
+.w-timer span{
+  display:block;
+  font-size:10px;
+  color:rgba(255,255,255,.68);
+  margin-top:2px;
+}
+.w-controls{
+  display:flex;
+  gap:7px;
+}
+.w-rec-btn{
+  flex:1;
+  border:0;
+  border-radius:14px;
+  padding:10px 8px;
+  font-size:12.5px;
+  font-weight:700;
+  background:#FF3B30;
+  color:#FFFFFF;
+}
+.w-rec-btn.on{background:#2C2C30;border:1px solid #FF3B30;color:#FF6B63}
+.w-mark-btn{
+  border:0;
+  border-radius:14px;
+  padding:10px 10px;
+  font-size:11.5px;
+  font-weight:700;
+  background:#2C2C30;
+  color:#FF9F0A;
+}
+.w-queue-box{
+  background:rgba(255,255,255,.09);
+  border-radius:12px;
+  padding:8px 10px;
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  overflow-y:auto;
+  max-height:92px;
+}
+.w-queue-hd{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  font-size:10.5px;
+  color:rgba(255,255,255,.78);
+  font-weight:600;
+}
+.w-flush-btn{
+  border:0;
+  border-radius:999px;
+  background:#34C759;
+  color:#082410;
+  font-size:10px;
+  font-weight:700;
+  padding:3px 9px;
+}
+.w-qitem{
+  font-size:10px;
+  color:rgba(255,255,255,.72);
+  display:flex;
+  justify-content:space-between;
+  font-variant-numeric:tabular-nums;
 }
 </style>
 </head>
-<body data-view="both">
+<body>
 
 <div class="proto-bar">
-  <div class="proto-brand">
-    <span class="proto-mark" aria-hidden="true">
-      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-        <path d="M3 6.5v3M6.2 4.2v7.6M9.8 3v10M13 6v4"/>
-      </svg>
-    </span>
-    <div>
-      <div class="proto-title">录音卡 · 手表与手机伴侣 1:1 设计稿</div>
-      <div class="proto-sub">纯本地采集与 WatchConnectivity 直连 · 零云端依赖</div>
-    </div>
+  <div class="proto-title">
+    <h1>录音卡 · Apple Watch 第 4 硬件联调原型</h1>
+    <span class="proto-badge">同一套件 · com.reai.recordingcard</span>
   </div>
-  <div class="proto-ctrls">
-    <div class="ver-seg" data-testid="view-mode-seg" role="group" aria-label="视图切换">
-      <button type="button" class="ver-opt on" data-mode="both" onclick="setViewMode('both')">双端同屏联动</button>
-      <button type="button" class="ver-opt" data-mode="phone" onclick="setViewMode('phone')">仅看手机版 (1:1)</button>
-      <button type="button" class="ver-opt" data-mode="watch" onclick="setViewMode('watch')">仅看手表与表盘</button>
+  <div class="proto-actions">
+    <div class="seg" data-testid="view-mode-seg" role="group" aria-label="视图模式">
+      <button type="button" class="on" data-mode="both" onclick="setViewMode('both')">双端同屏</button>
+      <button type="button" data-mode="phone" onclick="setViewMode('phone')">仅看手机</button>
+      <button type="button" data-mode="watch" onclick="setViewMode('watch')">仅看手表</button>
     </div>
-    <button type="button" class="proto-reset" data-testid="proto-reset" onclick="resetDemo()">重置演示</button>
+    <button type="button" class="tb-btn ok" id="tb-reach-btn" data-testid="tb-toggle-reach" onclick="toggleReachability()">
+      <span class="tb-dot"></span>
+      <span id="tb-reach-txt">WCSession 已连通</span>
+    </button>
+    <button type="button" class="tb-btn warn" data-testid="tb-unexpected-drop" onclick="triggerWatchUnexpectedDrop()">
+      手表意外断连
+    </button>
+    <button type="button" class="tb-btn" data-testid="tb-cut-slice" onclick="cutWatchSlice()">
+      生成 60s 手表切片
+    </button>
+    <button type="button" class="tb-btn" data-testid="proto-reset" onclick="resetPrototype()">
+      重置状态
+    </button>
   </div>
 </div>
 
-<div class="stage">
-  <!-- 左栏：iPhone 伴侣端 1:1 真实界面 -->
-  <section class="phone-col" aria-label="iPhone 伴侣端">
-    <div class="phone-bezel">
-      <div class="phone-screen" id="phone-stage">
-        <div class="phone-status-strip">
-          <span id="phone-time-txt">09:41</span>
-          <span class="phone-island-idle" aria-hidden="true"></span>
-          <span>5G · 92%</span>
+<main class="stage" id="stage">
+  <!-- 左侧：1:1 录音卡 iPhone App -->
+  <section class="dev-col phone-col" aria-label="iPhone 录音卡 App">
+    <div class="dev-caption">
+      <span>iPhone「录音卡」App（1:1 对齐当前版）</span>
+      <span class="dev-subcap">本地 .m4a → 16kHz WAV 转码 + 零功耗待命保底</span>
+    </div>
+    <div class="iphone-shell">
+      <div class="iphone-screen" id="iphone-screen">
+        <div class="ios-statusbar">
+          <span id="ios-clock">14:38</span>
+          <span>5G · Wi-Fi</span>
         </div>
 
-        <!-- 灵动岛（手表远程唤醒或录音期间点亮） -->
-        <div id="dyn-island" data-testid="phone-dyn-island" role="status" aria-live="polite">
-          <span class="di-logo" aria-hidden="true">
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
-              <rect x="2.2" y="1.8" width="11.6" height="12.4" rx="2.6"/>
-              <path d="M5.5 6.4v3.2M8 5v6M10.5 6.8v2.4"/>
-            </svg>
-          </span>
-          <span class="di-wave"><i></i><i></i><i></i><i></i></span>
-          <div class="di-txt">
-            <b id="di-title">手表录音中</b>
-            <span id="di-sub">HKWorkoutSession 保活 · 本地直传</span>
+        <div class="dyn-island" id="phone-dyn-island" data-testid="phone-dyn-island" role="status" aria-live="polite">
+          <div class="di-idle-pill"><span>●</span><span>录音卡</span></div>
+          <div class="di-active">
+            <span class="di-logo" aria-hidden="true">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                <rect x="2.5" y="1.8" width="11" height="12.4" rx="2.6"/><path d="M5.6 6.4v3.2M8 5v6M10.4 6.8v2.4"/>
+              </svg>
+            </span>
+            <div class="di-txt">
+              <b id="di-title">录音卡 · Apple Watch 录音中（锁屏实况已开启）</b>
+              <span id="di-sub">我的手表 · 本机保底待命中</span>
+            </div>
+            <span class="di-lcd" id="di-lcd">0:00:00</span>
           </div>
-          <span class="di-lcd" id="di-lcd">00:00</span>
         </div>
+
+        <header class="app">
+          <h2 id="app-title">录音卡</h2>
+          <button type="button" class="crumb" id="crumb-back" data-testid="crumb-back" onclick="goBack()" hidden>
+            <span class="chev">‹</span><span id="crumb-dest">Setting</span>
+          </button>
+          <button type="button" class="capsule off" data-testid="hw-capsule" aria-label="录音卡状态：无设备" onclick="openSheet()">
+            <span class="dot"></span>
+            <span class="capsule-none" data-testid="capsule-nodata">无设备</span>
+            <span class="capsule-phonerec" data-testid="capsule-phone-rec">本机录音</span>
+            <span class="batt lv-hi" aria-hidden="true">
+              <svg width="23" height="11" viewBox="0 0 23 11">
+                <rect x="0.75" y="0.75" width="18.5" height="9.5" rx="2.75" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                <rect id="cap-fill" class="batt-fill" x="3" y="3" width="12.3" height="5" rx="1.25" fill="currentColor"/>
+                <rect x="20.75" y="3.25" width="1.5" height="4.5" rx="0.75" fill="currentColor"/>
+                <path class="batt-bolt" d="M11.2 1.2L7.8 5.7h2.5l-.7 4.1 3.8-4.6h-2.5z" fill="#fff" stroke="currentColor" stroke-width="0.7"/>
+              </svg>
+            </span>
+          </button>
+        </header>
 
         <div class="phone-scroll" id="phone-scroll">
-          <header class="app">
-            <h1 id="phone-title">手表录音笔</h1>
-            <button type="button" class="crumb" id="phone-crumb" hidden onclick="closePhoneSub()">
-              <span class="chev">‹</span><span id="phone-crumb-label">返回</span>
-            </button>
-            <div class="hdr-right">
-              <button type="button" class="icon-btn" data-testid="phone-refresh-btn" title="刷新手表状态" aria-label="刷新手表状态" onclick="phoneRefreshStatus()">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/>
-                  <path d="M13.6 2.1v3.3h-3.3"/>
-                </svg>
-              </button>
-              <button type="button" class="capsule st-idle" id="watch-capsule" data-testid="watch-capsule" onclick="openWatchSheet()">
-                <span class="dot"></span>
-                <span id="cap-txt">手表已连接</span>
-                <span class="batt lv-hi" id="cap-batt" aria-hidden="true">
-                  <svg width="23" height="11" viewBox="0 0 23 11">
-                    <rect x="0.75" y="0.75" width="18.5" height="9.5" rx="2.75" fill="none" stroke="currentColor" stroke-width="1.5"/>
-                    <rect id="cap-batt-fill" class="batt-fill" x="3" y="3" width="11.7" height="5" rx="1.25" fill="currentColor"/>
-                    <rect x="20.75" y="3.25" width="1.5" height="4.5" rx="0.75" fill="currentColor"/>
-                    <path class="batt-bolt" d="M11.2 1.2L7.8 5.7h2.5l-.7 4.1 3.8-4.6h-2.5z" fill="#fff" stroke="currentColor" stroke-width="0.7" stroke-linejoin="round"/>
-                  </svg>
-                </span>
-              </button>
+          <!-- Timeline 根页 -->
+          <section id="p-timeline" class="panel show">
+            <div class="tl-bar">
+              <div class="tabs" role="tablist">
+                <button type="button" class="on" data-f="all" onclick="setFilter(this)">全部</button>
+                <button type="button" data-f="event" onclick="setFilter(this)">记录</button>
+                <button type="button" data-f="summary" onclick="setFilter(this)">总结</button>
+              </div>
+              <button type="button" class="mini-refresh" data-testid="phone-refresh-btn" onclick="refreshFromTimeline()">下拉切分同步</button>
             </div>
-          </header>
+            <div id="live-status-wrap"></div>
+            <div id="feed"></div>
+          </section>
 
-          <!-- 主视图：PhoneCompanionMainView 1:1 -->
-          <main class="phone-main" id="phone-main-view">
-            <div class="set-title">
-              <span>手表连接与运行状态</span>
-              <span id="phone-disk-txt">手表剩余 2.4 GB</span>
-            </div>
-            <div class="set-group" id="phone-status-card">
-              <div class="row-item">
-                <span class="row-k" id="phone-conn-title">手表已连接（可即时控制）</span>
-                <span class="row-v">
-                  <span id="phone-batt-text">78%</span>
-                </span>
-              </div>
-              <div class="row-item" style="flex-direction:column;align-items:stretch;gap:4px">
-                <div style="display:flex;justify-content:space-between;align-items:center">
-                  <span class="row-k">腕上录音</span>
-                  <span class="row-v" id="phone-rec-state">未录音</span>
-                </div>
-                <div class="slice-mini-prog" id="phone-slice-prog-wrap" hidden>
-                  <i id="phone-slice-prog-bar" style="width:0%"></i>
-                </div>
-              </div>
-              <div class="row-item">
-                <span class="row-k">手表本地待传切片</span>
-                <span class="row-v" id="phone-pending-txt">0 段</span>
-              </div>
-              <div class="row-item" id="phone-keepalive-row" hidden>
-                <span class="row-k">息屏保活通道</span>
-                <span class="row-v" id="phone-keepalive-txt">HKWorkoutSession 运动保活</span>
+          <!-- Setting 根页 -->
+          <section id="p-setting" class="panel">
+            <div class="set-title">账号与云端鉴权</div>
+            <div class="set-group">
+              <div class="navrow">
+                <span>云端账号授权</span>
+                <span class="navval"><span>owner@wainao.chat</span><span class="rowchev">›</span></span>
               </div>
             </div>
-
-            <div class="banner-ok" id="phone-banner" hidden></div>
-            <div class="banner-err" id="phone-error" hidden></div>
-
-            <div class="set-title">
-              <span>远程控制（纯本地直连，不经服务器）</span>
+            <div class="set-title">模型与智能体</div>
+            <div class="set-group">
+              <div class="navrow"><span>本地语音引擎</span><span class="navval"><span>已就绪 3/3</span><span class="rowchev">›</span></span></div>
+              <div class="navrow"><span>云端模型设置</span><span class="navval"><span>已开启</span><span class="rowchev">›</span></span></div>
+              <div class="navrow"><span>灵动岛与操作按钮</span><span class="navval"><span>已开启</span><span class="rowchev">›</span></span></div>
             </div>
-            <div class="ctrl-box">
-              <button type="button" class="btn full" id="phone-record-toggle" data-testid="phone-record-toggle" onclick="phoneToggleRecord()">
-                开启手表录音
-              </button>
-              <div class="ctrl-grid">
-                <button type="button" class="btn ghost" id="phone-mark-btn" data-testid="phone-mark-btn" onclick="phoneAddMark()">打重点</button>
-                <button type="button" class="btn ghost" id="phone-flush-btn" data-testid="phone-flush-btn" onclick="phoneFlushPending()">催传切片</button>
+            <div class="set-title">硬件设备联动</div>
+            <div class="set-group">
+              <div class="navrow" data-testid="set-apple-watch" onclick="openSetSub('watch')">
+                <span>Apple Watch 联动</span>
+                <span class="navval"><span id="sv-watch">未开启</span><span class="rowchev">›</span></span>
               </div>
             </div>
-
-            <details class="dec" open>
-              <summary>
-                <span>添加到表盘以持续开启、持续录音</span>
-                <span class="dchev">▾</span>
-              </summary>
-              <div class="guide-steps">
-                <div>1. 长按 Apple Watch 表盘 → 点「编辑」→ 滑到「复杂功能」。</div>
-                <div>2. 选中角落、圆形或矩形槽位，添加<b>「录音卡」</b>，抬腕一秒开停录。</div>
-                <div>3. 无网络或脱离手机时，手表每 60 秒将音频保存为 <b>240 KB/min AAC</b> 本地切片；靠近手机后按序本地补推为 <b>16kHz WAV</b>，全链路不经服务器。</div>
-                <button type="button" class="guide-btn" onclick="jumpToWatchFaceFromGuide()">在右侧表盘预览 4 种槽位 ›</button>
-              </div>
-            </details>
-
-            <div class="set-title">
-              <span id="received-section-title">手机已收到的本地 WAV 切片（3）</span>
+            <div class="set-title">录音</div>
+            <div class="set-group">
+              <div class="switchrow"><span>持续录音</span><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
+              <div class="switchrow"><span>标记重要对话</span><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
             </div>
-            <div class="filter-row" id="slice-filters">
-              <button type="button" class="mini-chip on" data-sf="all" onclick="setSliceFilter('all')">全部</button>
-              <button type="button" class="mini-chip" data-sf="marked" onclick="setSliceFilter('marked')">含重点标记</button>
-              <button type="button" class="mini-chip" data-sf="offline" onclick="setSliceFilter('offline')">离线补传</button>
+            <div class="set-title">转录与清洗</div>
+            <div class="set-group">
+              <div class="switchrow"><span>自动转录</span><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
+              <div class="switchrow"><span>自动清洗口语</span><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
             </div>
-            <div id="received-slices-list"></div>
-          </main>
+          </section>
 
-          <!-- 子页：切片详情（查看转码信息 / 共享 App Group / 相对起点重点锚点） -->
-          <main class="phone-main" id="phone-detail-view" hidden></main>
+          <!-- 记录详情二级页 -->
+          <section id="p-detail" class="panel">
+            <div class="ph">
+              <h2 id="dt-h3">记录详情</h2>
+              <div class="pmeta" id="dt-meta"></div>
+            </div>
+            <div id="dt-body"></div>
+          </section>
+
+          <!-- Setting → Apple Watch 联动二级页 -->
+          <section id="p-setsub" class="panel">
+            <div class="ph">
+              <h2 id="setsub-title">Apple Watch 联动</h2>
+              <div class="pmeta" id="setsub-sub">作为第 4 款独立录音硬件接入 · 本地直传并转 16kHz WAV</div>
+            </div>
+            <div id="setsub-body"></div>
+          </section>
         </div>
 
-        <!-- 手表状态胶囊半屏弹层 -->
-        <div class="sheet-wrap" id="watch-sheet">
-          <div class="backdrop" onclick="closeWatchSheet()"></div>
-          <div class="sheet" role="dialog" aria-label="Apple Watch 状态">
-            <div class="devhead">
-              <span class="dot big" id="ws-dot"></span>
-              <div style="flex:1;min-width:0">
-                <h2 id="ws-title">Apple Watch · 录音卡</h2>
-                <div class="devsub" id="ws-sub">WatchConnectivity 纯本地直连 · 无云端</div>
+        <nav class="bottom">
+          <button type="button" class="on" id="nt" data-testid="nav-timeline" onclick="go('timeline')">
+            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="8"/><path d="M10 5v5l3 2"/></svg>
+            <span>Timeline</span>
+          </button>
+          <button type="button" id="ns" data-testid="nav-setting" onclick="go('setting')">
+            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="2.5"/><path d="M10 2v3M10 15v3M2 10h3M15 10h3M4.3 4.3l2.1 2.1M13.6 13.6l2.1 2.1M15.7 4.3l-2.1 2.1M6.4 13.6l-2.1 2.1"/></svg>
+            <span>Setting</span>
+          </button>
+        </nav>
+
+        <!-- HwCapsule StatusSheet -->
+        <div class="sheet-wrap" id="sheet">
+          <div class="backdrop" onclick="closeSheet()"></div>
+          <div class="sheet" role="dialog" aria-label="硬件状态">
+            <div id="dev-main" data-testid="dev-main" hidden>
+              <div class="devhead">
+                <span class="dot big" id="dev-dot"></span>
+                <div style="flex:1;min-width:0">
+                  <h2>
+                    <span class="cbadge k-watch" id="dev-kind-badge">Apple Watch</span>
+                    <span id="dev-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">我的手表</span>
+                  </h2>
+                  <div class="devsub" id="dev-sub">watchOS 11.1 · WCSession</div>
+                </div>
+                <button type="button" class="disc-btn" data-testid="dev-disconnect" aria-label="断开连接" onclick="askDisconnect()">✕</button>
               </div>
-              <span class="chip-ok" id="ws-badge">已连接</span>
-            </div>
-            <div class="row">
-              <span>腕上录音</span>
-              <span>
-                <span id="ws-rec-txt">未录音</span>
-                <span class="sw" id="ws-rec-sw" role="switch" aria-checked="false" tabindex="0" onclick="phoneToggleRecord()"></span>
-              </span>
-            </div>
-            <div class="row">
-              <span>手表电量</span>
-              <span id="ws-batt-txt">78% · 电池供电</span>
-            </div>
-            <div class="row">
-              <span>息屏保活模式</span>
-              <span id="ws-ka-txt">待机</span>
-            </div>
-            <div class="row act-row" onclick="phoneFlushPending()">
-              <span>本地同步</span>
-              <span>
-                <span id="ws-sync-txt">等待新切片</span>
-                <span id="ws-sync-ico" class="syncidle">
-                  <svg width="14" height="14" viewBox="0 0 14 14"><path d="M12 7a5 5 0 1 1-1.7-3.75" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M11.8 1.6v3.2h-3.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+
+              <div class="disc-box" id="disc-box" hidden>
+                <div><b>断开与当前硬件的连接？</b><div style="color:var(--sec);margin-top:2px">断开后停止硬件采集与实时流。</div></div>
+                <div class="wbtns">
+                  <button type="button" class="btn ghost" data-testid="disconnect-cancel" onclick="cancelDisconnect()">取消</button>
+                  <button type="button" class="btn danger" data-testid="disconnect-confirm" onclick="confirmDisconnect()">断开连接</button>
+                </div>
+              </div>
+
+              <div class="row" id="row-rec">
+                <span>录音状态</span>
+                <span style="gap:10px">
+                  <span id="sheet-rec-label" style="display:inline-flex;align-items:center;gap:6px">
+                    <span id="sheet-rec-off">未录音</span>
+                  </span>
+                  <span class="sw" id="rec-sw" data-testid="phone-record-toggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleHwRec()"></span>
                 </span>
-              </span>
+              </div>
+              <div class="row" id="row-batt">
+                <span>电量</span>
+                <span id="batt-text">电量高 · 可录至 今天 21:30</span>
+              </div>
+              <div class="row act-row" id="row-sync" data-testid="sync-now" onclick="syncNow()">
+                <span>同步</span>
+                <span id="sync-txt">自动同步 · 刚刚</span>
+              </div>
+              <div class="row act-row" id="row-wifi" data-testid="wifi-row">
+                <span>Wi-Fi</span>
+                <span>已配置 · 2 个网络 ›</span>
+              </div>
+              <div class="row act-row" id="row-fw" data-testid="fw-update">
+                <span>固件</span>
+                <span>有可用更新 ›</span>
+              </div>
+              <div class="wbtns" style="margin-top:12px">
+                <button type="button" class="btn ghost sm" data-testid="phone-mark-btn" onclick="triggerMarkFromPhone()">打重点 Mark</button>
+                <button type="button" class="btn sm" onclick="closeSheet()">关闭</button>
+              </div>
             </div>
-            <div class="row">
-              <span>共享收件箱</span>
-              <span style="font-size:11.5px;color:var(--sec)">group.com.reai.recordingcard/watch_inbox/</span>
+
+            <div id="dev-connect">
+              <div class="devhead">
+                <span class="dot big" style="background:var(--ax);animation:none"></span>
+                <div style="flex:1;min-width:0">
+                  <h2>连接硬件设备</h2>
+                  <div class="devsub">未连接硬件时可使用手机本机录音</div>
+                </div>
+              </div>
+              <div class="row" data-testid="phone-rec-row">
+                <span>本机录音</span>
+                <span style="gap:10px">
+                  <span id="prec-label">未开启 · 手机麦克风</span>
+                  <span class="sw" id="prec-sw" data-testid="phone-rec-toggle" role="switch" aria-checked="false" tabindex="0" onclick="togglePhoneRec()"></span>
+                </span>
+              </div>
+              <div style="font-size:13px;font-weight:600;margin:12px 0 6px">可连接采集硬件</div>
+              <div id="conn-list"></div>
+              <button type="button" class="btn ghost" style="width:100%;margin-top:10px" onclick="closeSheet()">关闭</button>
             </div>
-            <button type="button" class="btn full" style="margin-top:14px" onclick="closeWatchSheet()">关闭</button>
           </div>
         </div>
 
-        <!-- 仅看手机版时的快捷联调抽屉 -->
-        <div class="sheet-wrap" id="phone-sim-sheet">
-          <div class="backdrop" onclick="closePhoneSimSheet()"></div>
-          <div class="sheet" role="dialog" aria-label="手机视图联调模拟">
-            <div class="devhead">
-              <div>
-                <h2>联调状态模拟</h2>
-                <div class="devsub">无需退出 1:1 手机视图即可切换手表状态</div>
-              </div>
-            </div>
-            <div id="phone-sim-mirror" style="padding-top:12px"></div>
-            <button type="button" class="btn ghost full" style="margin-top:14px" onclick="closePhoneSimSheet()">关闭</button>
-          </div>
-        </div>
-
-        <div class="toast" id="phone-toast" role="status"></div>
+        <div class="toast" id="toast" role="status"></div>
       </div>
     </div>
   </section>
 
-  <!-- 右栏：Apple Watch 真机交互 + 4 种视图 + 联调边界模拟 -->
-  <section class="watch-col" aria-label="Apple Watch 与联调控制台">
-    <div class="studio-card">
-      <div class="studio-hd">
-        <div>
-          <h2>Apple Watch 客户端与表盘复杂功能</h2>
-          <p>点击表盘「录音卡」槽位、表内按钮或右侧表冠（打重点）/ 侧边键（开关）与左侧手机 1:1 实时联动</p>
-        </div>
-        <div class="ver-seg" id="watch-screen-tabs" data-testid="watch-screen-tabs" role="tablist">
-          <button type="button" class="ver-opt" data-wtab="face" onclick="setWatchScreen('face')">表盘复杂功能</button>
-          <button type="button" class="ver-opt on" data-wtab="home" onclick="setWatchScreen('home')">手表录音主页</button>
-          <button type="button" class="ver-opt" data-wtab="queue" onclick="setWatchScreen('queue')">手表本地队列</button>
-          <button type="button" class="ver-opt" data-wtab="aod" onclick="setWatchScreen('aod')">垂腕息屏态</button>
-        </div>
-      </div>
-
-      <!-- 双端联动模式：单块可交互手表 + 硬件说明 -->
-      <div class="watch-stage watch-single-wrap">
-        <div id="watch-hardware-mount"></div>
-        <div class="watch-notes">
-          <div class="wn-box">
-            <b>数码表冠（右侧上方凸起）：</b>录音中点按立即在手表端打重点，记录相对录音起点的毫秒偏移（如 <code>+00:18</code>），随切片一同本地推回手机。
-          </div>
-          <div class="wn-box">
-            <b>侧边键（右侧下方长键）：</b>快速切换开始/停止录音；停止时立即封口当前 <code>.m4a</code>，有手机直接推送并转码 WAV，无手机稳妥存入手表队列。
-          </div>
-          <div class="wn-box">
-            <b>手表配额：</b><code>16kHz / Mono / 32kbps AAC</code> 每分钟仅约 240 KB，60s Ping-Pong 双录制器无缝换片；不经云端、手表不做转写。
-          </div>
-        </div>
-      </div>
-
-      <!-- 仅看手表模式：4 屏同框对比 -->
-      <div class="watch-grid" id="watch-quad-grid"></div>
+  <!-- 右侧：Apple Watch 表盘与手表录音卡 App -->
+  <section class="dev-col watch-col" aria-label="Apple Watch 客户端">
+    <div class="dev-caption">
+      <span>Apple Watch 硬件端（表盘常驻 + 轻便采集）</span>
+      <span class="dev-subcap">AAC 32kbps · 16kHz Mono 本地直采</span>
     </div>
 
-    <!-- 联调场景与边界模拟面板 -->
-    <div class="studio-card" id="sim-panel">
-      <div class="studio-hd" style="margin-bottom:8px">
-        <div>
-          <h2>联调场景与边界状态模拟</h2>
-          <p>验证手机冷唤醒、脱离手机离线暂存、重连自动补传、来电中断、空间不足与麦克风拒权</p>
-        </div>
-      </div>
-      <div class="set-title" style="margin-top:4px">1. 手表连接态（WCSession）</div>
-      <div class="filter-row" id="reach-chips">
-        <button type="button" class="mini-chip on" data-reach="reachable" onclick="setReachability('reachable')">已连手机（即时可达）</button>
-        <button type="button" class="mini-chip" data-reach="standby" onclick="setReachability('standby')">待机休眠（HealthKit 冷唤醒）</button>
-        <button type="button" class="mini-chip" data-reach="offline" onclick="setReachability('offline')">脱离手机（离线暂存）</button>
-        <button type="button" class="mini-chip" data-reach="unpaired" onclick="setReachability('unpaired')">未配对</button>
+    <div class="watch-panel">
+      <div class="watch-tabs" data-testid="watch-screen-tabs">
+        <button type="button" class="on" data-wtab="face" onclick="setWatchTab('face')">表盘复杂功能</button>
+        <button type="button" data-wtab="app" onclick="setWatchTab('app')">手表录音卡</button>
+        <button type="button" data-testid="watch-aod-toggle" onclick="toggleWatchAOD()">常亮暗屏</button>
       </div>
 
-      <div class="set-title">2. 采集、传输与异常事件触发</div>
-      <div class="sim-grid" id="sim-actions-root">
-        <button type="button" class="sim-btn" data-testid="sim-rotate-60s" onclick="simRotate60s()">
-          <span>快进 +60s 自动切分封口</span><span>+1 片</span>
-        </button>
-        <button type="button" class="sim-btn" data-testid="sim-interruption" onclick="simInterruption()">
-          <span>模拟来电中断并自动恢复</span><span>gap+1</span>
-        </button>
-        <button type="button" class="sim-btn" data-testid="sim-low-disk" onclick="simLowDiskToggle()">
-          <span>手表空间 &lt;20MB 告警停录</span><span id="sim-disk-badge">正常</span>
-        </button>
-        <button type="button" class="sim-btn" data-testid="sim-mic-denied" onclick="simMicDeniedToggle()">
-          <span>手表麦克风未授权提示</span><span id="sim-mic-badge">已允许</span>
-        </button>
-        <button type="button" class="sim-btn" onclick="simCycleKeepAlive()">
-          <span>切换息屏保活通道</span><span id="sim-ka-badge">workout</span>
-        </button>
-        <button type="button" class="sim-btn" onclick="simToggleCharging()">
-          <span>切换手表充电状态</span><span id="sim-chg-badge">未充电</span>
-        </button>
+      <div class="watch-band-top" aria-hidden="true"></div>
+      <div class="watch-case-wrap">
+        <div class="watch-case">
+          <div class="watch-screen" id="watch-screen">
+            <div class="watch-top">
+              <span id="w-status-mini">表盘组件</span>
+              <span id="w-top-clock">14:38</span>
+            </div>
+
+            <!-- Watch Face 4 Complications -->
+            <div class="w-face" id="w-face">
+              <button type="button" class="comp-inline" data-testid="comp-inline" onclick="launchFromComplication('inline')">
+                <span id="comp-inline-txt">录音卡 · 轻触开启表盘录音</span>
+              </button>
+
+              <div class="w-face-center">
+                <button type="button" class="comp-corner" data-testid="comp-corner" onclick="launchFromComplication('corner')">
+                  <span>●</span>
+                  <span>录音卡</span>
+                </button>
+                <div class="w-face-clock">
+                  <b id="w-face-time">14:38</b>
+                  <span>11月15日 周日</span>
+                </div>
+                <button type="button" class="comp-circular" id="comp-circular" data-testid="comp-circular" onclick="launchFromComplication('circular')">
+                  <span id="comp-circ-state">待机</span>
+                  <span id="comp-circ-sec">0:00</span>
+                </button>
+              </div>
+
+              <button type="button" class="comp-rectangular" data-testid="comp-rectangular" onclick="launchFromComplication('rectangular')">
+                <div class="cr-top">
+                  <span>录音卡 · 表端采集</span>
+                  <span id="comp-rect-badge">就绪</span>
+                </div>
+                <div class="cr-mid" id="comp-rect-mid">轻触立即开始持续录音</div>
+                <div class="cr-sub" id="comp-rect-sub">待传队列 0 段 · 电量 高</div>
+              </button>
+            </div>
+
+            <!-- Watch Collector App -->
+            <div class="w-app" id="w-app" hidden>
+              <div class="w-pill-row">
+                <span class="w-pill ok" id="w-conn-pill">已连通手机</span>
+                <span class="w-pill" id="w-batt-pill">电量 高</span>
+              </div>
+
+              <div class="w-timer">
+                <b id="w-clock">00:00:00</b>
+                <span id="w-keepalive">轻触开始 · 支持熄屏后台持续采音</span>
+              </div>
+
+              <div class="w-controls">
+                <button type="button" class="w-rec-btn" id="w-rec-btn" data-testid="watch-record-toggle" onclick="toggleWatchRec()">
+                  开始录音
+                </button>
+                <button type="button" class="w-mark-btn" data-testid="watch-mark-btn" onclick="triggerWatchMark()">
+                  Mark <span id="w-mark-cnt">0</span>
+                </button>
+              </div>
+
+              <div class="w-queue-box" data-testid="watch-queue-entry">
+                <div class="w-queue-hd">
+                  <span>待传队列 · <span id="w-q-cnt">0</span> 段</span>
+                  <button type="button" class="w-flush-btn" data-testid="watch-flush-btn" onclick="flushWatchQueue()">立即回传</button>
+                </div>
+                <div id="w-q-list">
+                  <div class="w-qitem"><span>无待传离线分片</span><span>AAC 32k</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button type="button" class="watch-crown" title="Digital Crown：返回表盘" onclick="setWatchTab('face')" aria-label="数码表冠返回表盘"></button>
+          <button type="button" class="watch-sidebtn" title="侧边按钮：快捷打点" onclick="triggerWatchMark()" aria-label="侧边按钮打点"></button>
+        </div>
       </div>
+      <div class="watch-band-bot" aria-hidden="true"></div>
     </div>
   </section>
-</div>
-
-<button type="button" class="phone-sim-fab" onclick="openPhoneSimSheet()">联调模拟 ▾</button>
+</main>
 
 <script>
 "use strict";
-var STORAGE_KEY = "rc-watch-proto-v1";
 
-function nowMs(){ return Date.now(); }
-function pad2(n){ return String(n).padStart(2,"0"); }
-function fmtHMS(sec){
-  var s = Math.max(0, Math.floor(sec));
-  return pad2(Math.floor(s/3600)) + ":" + pad2(Math.floor((s%3600)/60)) + ":" + pad2(s%60);
-}
-function fmtMS(sec){
-  var s = Math.max(0, Math.floor(sec));
-  return pad2(Math.floor(s/60)) + ":" + pad2(s%60);
-}
-function fmtDateTime(ms){
-  var d = new Date(ms);
-  return pad2(d.getMonth()+1) + "-" + pad2(d.getDate()) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
-}
-function fmtBytes(bytes){
-  if(bytes >= 1024*1024) return (bytes/(1024*1024)).toFixed(2) + " MB";
-  if(bytes >= 1024) return Math.round(bytes/1024) + " KB";
-  return bytes + " B";
-}
-function esc(s){
-  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-}
+var STORAGE_KEY = "rc-watch-proto-v2";
 
-function makeSeedState(){
-  var base = nowMs();
-  var sid1 = "watch-20261115091000";
-  var sid2 = "watch-20261115084000";
+var DEVICES = [
+  { id: "APPLE_WATCH_S10", name: "我的手表", badge: "Apple Watch", kind: "watch", fw: "watchOS 11.1", rssi: -38 },
+  { id: "DYJV2_T4W25T", name: "DYJV2_T4W25T", badge: "录音卡 V2", kind: "v2", fw: "2.1.0", rssi: -48 },
+  { id: "DYJ_B7K9Q2", name: "DYJ_B7K9Q2", badge: "点一机 V1", kind: "v1", fw: "1.3.4", rssi: -67 },
+  { id: "REAI_VB_L3M8N1", name: "REAI_VB_L3M8N1", badge: "语音AI键盘 V2.1", kind: "kb", fw: "2.1.0", rssi: -83 }
+];
+
+function defaultState() {
   return {
+    tab: "timeline",
+    subPage: null, // null | { t:"setsub", id:"watch" } | { t:"detail", id:"..." }
+    filter: "all",
     viewMode: "both",
-    watchScreen: "home",
-    reachability: "reachable", // reachable | standby | offline | unpaired
-    watchRecording: false,
-    waking: false,
-    syncState: "idle", // idle | busy | done
-    activeSessionId: null,
-    startedAtMs: null,
-    elapsedSec: 0,
-    sliceElapsedSec: 0,
-    currentSliceIndex: 0,
-    currentMarksOffsetMs: [],
-    currentGaps: 0,
-    offlineRecorded: false,
-    batteryPercent: 78,
-    charging: false,
-    lowDisk: false,
-    micGranted: true,
-    keepAlive: "workout", // workout | extended | audio-bg
-    banner: "",
-    error: "",
-    watchNote: "轻点「开始录音」每 60 秒本地切片",
-    sliceFilter: "all",
-    detailSliceId: null,
-    playingSliceId: null,
-    playPosSec: 0,
-    watchQueue: [
+    sheetOpen: false,
+    discConfirm: false,
+    watchTab: "face",
+    watchAOD: false,
+
+    watchLinkEnabled: false,
+    watchPaired: true,
+    watchInstalled: true,
+    wcsReachable: true,
+    connectedDevId: null, // null | DEVICE.id
+
+    hwRecOn: false,
+    hwRecSec: 0,
+    phoneRecOn: false,
+    phoneRecSec: 0,
+    phoneStandby: false,
+    phoneFailover: false,
+
+    watchBattTier: "高",
+    watchMarks: 0,
+    sliceSeq: 2,
+    watchQueue: [],
+    openCards: {},
+    items: [
       {
-        sliceId: sid1 + "_0001", sessionId: sid1, sliceIndex: 0,
-        startAtMs: base - 16*60*1000, durationMs: 60000,
-        marksOffsetMs: [14000, 42000], gapCount: 0, offlineRecorded: false,
-        rawByteSize: 241820, transferState: "synced", lastError: null
+        id: "w-seed-1",
+        kind: "event",
+        day: "今天",
+        time: "14:15",
+        dur: "1分00秒",
+        title: "手表便携采音片段 #1",
+        source: "Apple Watch",
+        sampleRate: "16kHz / 16-bit PCM WAV",
+        hasAudio: true,
+        playing: false,
+        cleared: false,
+        transcript: "已在手表侧以 32kbps .m4a 采集并回传，iPhone 本机实时转码为 16kHz 单声道 WAV 送入端侧语音识别。",
+        brief: "手表端纯采音回传后在手机端完成本地 WAV 转码与语音识别。"
       },
       {
-        sliceId: sid2 + "_0002", sessionId: sid2, sliceIndex: 1,
-        startAtMs: base - 45*60*1000, durationMs: 60000,
-        marksOffsetMs: [], gapCount: 0, offlineRecorded: true,
-        rawByteSize: 239410, transferState: "synced", lastError: null
-      }
-    ],
-    receivedSlices: [
-      {
-        sliceId: sid1 + "_0001", sessionId: sid1, sliceIndex: 0,
-        wavFileName: "LIVE_WATCH_" + sid1 + "_0001.WAV",
-        startAtMs: base - 16*60*1000, durationMs: 60000,
-        marksOffsetMs: [14000, 42000], gapCount: 0, offlineRecorded: false,
-        rawByteSize: 241820, wavByteSize: 1920044,
-        receivedAtMs: base - 15*60*1000, exportedToSharedInbox: true
+        id: "e-card-1",
+        kind: "event",
+        day: "今天",
+        time: "13:05",
+        dur: "9分12秒",
+        title: "客户回访要点",
+        source: "录音卡 V2",
+        sampleRate: "16kHz / 16-bit PCM WAV",
+        hasAudio: true,
+        playing: false,
+        cleared: false,
+        transcript: "确认列表页首屏加载优化与筛选记忆条件，纳入下版本排期。",
+        brief: "电话回访客户，确认列表页加载速度优化建议。"
       },
       {
-        sliceId: sid2 + "_0002", sessionId: sid2, sliceIndex: 1,
-        wavFileName: "LIVE_WATCH_" + sid2 + "_0002.WAV",
-        startAtMs: base - 45*60*1000, durationMs: 60000,
-        marksOffsetMs: [], gapCount: 0, offlineRecorded: true,
-        rawByteSize: 239410, wavByteSize: 1920044,
-        receivedAtMs: base - 38*60*1000, exportedToSharedInbox: true
-      },
-      {
-        sliceId: sid2 + "_0001", sessionId: sid2, sliceIndex: 0,
-        wavFileName: "LIVE_WATCH_" + sid2 + "_0001.WAV",
-        startAtMs: base - 48*60*1000, durationMs: 38000,
-        marksOffsetMs: [9000], gapCount: 1, offlineRecorded: true,
-        rawByteSize: 152680, wavByteSize: 1216044,
-        receivedAtMs: base - 38*60*1000, exportedToSharedInbox: true
+        id: "sum-1",
+        kind: "summary",
+        day: "今天",
+        time: "13:20",
+        dur: "总结",
+        title: "今日沟通总结",
+        source: "总结",
+        hasAudio: false,
+        cleared: false,
+        brief: "包含客户回访核心行动项与分工跟进。",
+        transcript: "汇总今日已入库记录的核心结论与待办清单。"
       }
     ]
   };
 }
 
-function loadState(){
-  try{
+var S = defaultState();
+
+function loadState() {
+  try {
     var raw = localStorage.getItem(STORAGE_KEY);
-    if(raw){
-      var parsed = JSON.parse(raw);
-      if(parsed && Array.isArray(parsed.receivedSlices)){
-        parsed.playingSliceId = null;
-        parsed.playPosSec = 0;
-        parsed.waking = false;
-        parsed.syncState = "idle";
-        return Object.assign(makeSeedState(), parsed);
-      }
+    if (!raw) return;
+    var parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      S = Object.assign(defaultState(), parsed);
     }
-  }catch(e){}
-  return makeSeedState();
+  } catch (e) {}
 }
-var state = loadState();
-function saveState(){
-  try{
-    var copy = Object.assign({}, state, {playingSliceId:null, playPosSec:0, waking:false, syncState:"idle"});
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(copy));
-  }catch(e){}
+
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(S));
+  } catch (e) {}
+}
+
+function clockHMS(sec) {
+  var s = Math.max(0, sec | 0);
+  var h = Math.floor(s / 3600);
+  var m = Math.floor((s % 3600) / 60);
+  var r = s % 60;
+  return h + ":" + String(m).padStart(2, "0") + ":" + String(r).padStart(2, "0");
+}
+
+function clockMS(sec) {
+  var s = Math.max(0, sec | 0);
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 }
 
 var toastTimer = null;
-function showToast(msg){
-  var el = document.getElementById("phone-toast");
-  if(!el) return;
+function toast(msg) {
+  var el = document.getElementById("toast");
+  if (!el) return;
   el.textContent = msg;
   el.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(function(){ el.classList.remove("show"); }, 1800);
+  toastTimer = setTimeout(function() { el.classList.remove("show"); }, 1800);
 }
 
-/* 合成真实 16kHz 16-bit Mono PCM WAV Blob 供浏览器内试听与下载 */
-var audioEl = new Audio();
-var currentWavObjectUrl = null;
-audioEl.addEventListener("ended", function(){
-  if(state.playingSliceId){
-    state.playingSliceId = null;
-    state.playPosSec = 0;
-    renderPhoneSlices();
-  }
-});
-
-function buildWavBlob(slice){
-  var sampleRate = 16000;
-  var previewSec = 4;
-  var numSamples = sampleRate * previewSec;
-  var dataBytes = numSamples * 2;
-  var buffer = new ArrayBuffer(44 + dataBytes);
-  var view = new DataView(buffer);
-  function wr(off, str){
-    for(var i=0;i<str.length;i++) view.setUint8(off+i, str.charCodeAt(i));
-  }
-  wr(0,"RIFF");
-  view.setUint32(4, 36 + dataBytes, true);
-  wr(8,"WAVE");
-  wr(12,"fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  wr(36,"data");
-  view.setUint32(40, dataBytes, true);
-  var baseFreq = 330 + (slice.sliceIndex % 4) * 55;
-  for(var i=0;i<numSamples;i++){
-    var t = i / sampleRate;
-    var env = Math.sin(Math.min(1, t/0.12) * Math.PI/2) * Math.max(0, 1 - t/previewSec);
-    var tone = Math.sin(2*Math.PI*baseFreq*t) * 0.16 + Math.sin(2*Math.PI*(baseFreq*1.5)*t) * 0.08;
-    var sample = Math.max(-1, Math.min(1, tone * env));
-    view.setInt16(44 + i*2, Math.round(sample * 32767), true);
-  }
-  return new Blob([buffer], {type:"audio/wav"});
+function curDevice() {
+  if (!S.connectedDevId) return null;
+  return DEVICES.find(function(d) { return d.id === S.connectedDevId; }) || null;
 }
 
-/* 核心状态流转：手机 ⇄ 手表 1:1 双向协同 */
-function setViewMode(mode){
-  state.viewMode = mode;
-  document.body.setAttribute("data-view", mode);
-  document.querySelectorAll("[data-testid='view-mode-seg'] button").forEach(function(b){
-    b.classList.toggle("on", b.dataset.mode === mode);
+function isWatchConnected() {
+  var d = curDevice();
+  return !!(d && d.kind === "watch");
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/* ===== 视图与导航 ===== */
+function setViewMode(m) {
+  S.viewMode = m;
+  var st = document.getElementById("stage");
+  st.classList.toggle("mode-phone", m === "phone");
+  st.classList.toggle("mode-watch", m === "watch");
+  document.querySelectorAll('[data-testid="view-mode-seg"] button').forEach(function(b) {
+    b.classList.toggle("on", b.dataset.mode === m);
   });
   saveState();
+}
+
+function go(tab) {
+  S.tab = tab;
+  S.subPage = null;
   renderAll();
 }
 
-function setWatchScreen(screen){
-  state.watchScreen = screen;
-  document.querySelectorAll("#watch-screen-tabs button").forEach(function(b){
-    b.classList.toggle("on", b.dataset.wtab === screen);
+function openSetSub(id) {
+  S.tab = "setting";
+  S.subPage = { t: "setsub", id: id };
+  renderAll();
+}
+
+function openDetail(id) {
+  S.subPage = { t: "detail", id: id };
+  renderAll();
+}
+
+function goBack() {
+  S.subPage = null;
+  renderAll();
+}
+
+function setFilter(btn) {
+  S.filter = btn.dataset.f || "all";
+  document.querySelectorAll("#p-timeline .tabs button").forEach(function(b) {
+    b.classList.toggle("on", b.dataset.f === S.filter);
   });
+  renderTimeline();
   saveState();
-  renderWatchArea();
 }
 
-function setReachability(reach){
-  var prev = state.reachability;
-  state.reachability = reach;
-  state.waking = false;
-  if(reach === "reachable" && prev !== "reachable"){
-    state.banner = "手表已回到手机旁，自动补传待传切片";
-    state.error = "";
-    flushPendingQueue(false);
-  } else if(reach === "offline"){
-    if(state.watchRecording) state.offlineRecorded = true;
-    state.banner = "手表当前脱离手机：录音继续在手表本地按 60s 切片缓存";
-    state.watchNote = "离线录音 · 切片先存手表";
-  } else if(reach === "standby"){
-    state.banner = "手表息屏待机中：点「开启手表录音」将经 HealthKit 远程唤醒";
-  } else if(reach === "unpaired"){
-    state.banner = "";
-    state.error = "未检测到配对的 Apple Watch";
-  }
+function setWatchTab(tab) {
+  S.watchTab = tab;
+  renderWatch();
   saveState();
+}
+
+function toggleWatchAOD() {
+  S.watchAOD = !S.watchAOD;
+  renderWatch();
+  saveState();
+}
+
+/* ===== StatusSheet & 4 硬件能力裁剪 ===== */
+function openSheet() {
+  S.sheetOpen = true;
+  S.discConfirm = false;
+  renderSheet();
+  saveState();
+}
+
+function closeSheet() {
+  S.sheetOpen = false;
+  S.discConfirm = false;
+  renderSheet();
+  saveState();
+}
+
+function availableScanDevices() {
+  return DEVICES.filter(function(d) {
+    return d.kind !== "watch" || (S.watchLinkEnabled && S.watchPaired);
+  }).sort(function(a, b) { return b.rssi - a.rssi; });
+}
+
+function connectDevice(id) {
+  var d = DEVICES.find(function(x) { return x.id === id; });
+  if (!d) return;
+  if (d.kind === "watch") {
+    S.watchLinkEnabled = true;
+    S.wcsReachable = true;
+    if (S.phoneRecOn && S.phoneFailover) {
+      S.phoneRecOn = false;
+      S.phoneFailover = false;
+      if (S.hwRecOn) S.phoneStandby = true;
+    }
+  }
+  S.connectedDevId = d.id;
+  S.discConfirm = false;
+  toast("已连接 " + d.badge);
   renderAll();
 }
 
-function makeSessionId(){
-  var d = new Date();
-  return "watch-" + d.getFullYear() + pad2(d.getMonth()+1) + pad2(d.getDate()) + pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds());
+function askDisconnect() {
+  S.discConfirm = true;
+  renderSheet();
 }
 
-function beginWatchRecording(fromSource){
-  if(!state.micGranted){
-    state.error = "手表未授权麦克风权限：请在手表「设置 → 隐私与安全性 → 麦克风」中允许录音";
-    state.watchNote = "请开启手表麦克风权限";
-    saveState();
-    renderAll();
-    showToast("手表麦克风权限被拒绝");
-    return false;
-  }
-  if(state.lowDisk){
-    state.error = "手表可用空间不足 20 MB，无法开启录音（请先同步清理旧切片）";
-    state.watchNote = "手表空间不足 20 MB";
-    saveState();
-    renderAll();
-    showToast("手表可用空间不足 20 MB");
-    return false;
-  }
-  if(state.watchRecording) return true;
-  state.error = "";
-  state.watchRecording = true;
-  state.activeSessionId = makeSessionId();
-  state.startedAtMs = nowMs();
-  state.elapsedSec = 0;
-  state.sliceElapsedSec = 0;
-  state.currentSliceIndex = 0;
-  state.currentMarksOffsetMs = [];
-  state.currentGaps = 0;
-  state.offlineRecorded = (state.reachability !== "reachable");
-  state.watchNote = state.reachability === "reachable" ? "录音中 · 切片实时本地推回手机" : "离线录音中 · 切片先存手表";
-  state.banner = fromSource === "watch"
-    ? "手表端已直接开启连续录音（手机已同步状态）"
-    : "手表已开始本地录音（每 60 秒密封一片传回手机）";
-  saveState();
+function cancelDisconnect() {
+  S.discConfirm = false;
+  renderSheet();
+}
+
+function confirmDisconnect() {
+  S.connectedDevId = null;
+  S.discConfirm = false;
+  S.hwRecOn = false;
+  S.phoneStandby = false;
+  toast("已安全断开硬件连接");
   renderAll();
-  return true;
 }
 
-function sealCurrentSlice(overrideDurSec){
-  if(!state.activeSessionId) return null;
-  var durSec = overrideDurSec != null ? overrideDurSec : Math.max(4, state.sliceElapsedSec);
-  var seq = String(state.currentSliceIndex + 1).padStart(4,"0");
-  var sliceId = state.activeSessionId + "_" + seq;
-  var rawBytes = Math.max(24000, Math.round(durSec * 4000));
-  var entry = {
-    sliceId: sliceId,
-    sessionId: state.activeSessionId,
-    sliceIndex: state.currentSliceIndex,
-    startAtMs: nowMs() - durSec * 1000,
-    durationMs: durSec * 1000,
-    marksOffsetMs: state.currentMarksOffsetMs.slice(),
-    gapCount: state.currentGaps,
-    offlineRecorded: state.offlineRecorded || state.reachability !== "reachable",
-    rawByteSize: rawBytes,
-    transferState: "pending",
-    lastError: null
+function toggleHwRec() {
+  if (!curDevice()) return;
+  if (isWatchConnected() && !S.wcsReachable) {
+    toast("手表离线暂存中，已保留本机队列待连通");
+    return;
+  }
+  S.hwRecOn = !S.hwRecOn;
+  if (S.hwRecOn) {
+    S.hwRecSec = 0;
+    S.phoneStandby = true;
+    S.phoneRecOn = false;
+    S.phoneFailover = false;
+    if (isWatchConnected()) S.watchTab = "app";
+  } else {
+    S.phoneStandby = false;
+  }
+  renderAll();
+}
+
+function togglePhoneRec() {
+  if (curDevice()) return;
+  S.phoneRecOn = !S.phoneRecOn;
+  if (S.phoneRecOn) {
+    S.phoneRecSec = 0;
+    S.phoneFailover = false;
+  }
+  renderAll();
+}
+
+function toggleWatchLink() {
+  S.watchLinkEnabled = !S.watchLinkEnabled;
+  if (!S.watchLinkEnabled && isWatchConnected()) {
+    S.connectedDevId = null;
+    S.hwRecOn = false;
+    S.phoneStandby = false;
+  }
+  toast(S.watchLinkEnabled ? "已开启 Apple Watch 硬件联动" : "已关闭 Apple Watch 硬件联动");
+  renderAll();
+}
+
+function connectWatchFromSetting() {
+  S.watchLinkEnabled = true;
+  S.wcsReachable = true;
+  S.connectedDevId = "APPLE_WATCH_S10";
+  if (S.phoneFailover && S.phoneRecOn) {
+    S.phoneRecOn = false;
+    S.phoneFailover = false;
+    if (S.hwRecOn) S.phoneStandby = true;
+  }
+  toast("已将 Apple Watch 接入为第 4 硬件");
+  renderAll();
+}
+
+/* ===== Apple Watch 交互与 WCSession 切片流转 ===== */
+function launchFromComplication(slot) {
+  S.watchTab = "app";
+  if (!S.hwRecOn) {
+    S.hwRecOn = true;
+    S.hwRecSec = 0;
+  }
+  if (S.watchLinkEnabled && S.wcsReachable) {
+    if (!S.connectedDevId) S.connectedDevId = "APPLE_WATCH_S10";
+    S.phoneStandby = true;
+    S.phoneRecOn = false;
+    S.phoneFailover = false;
+  }
+  toast("已通过表盘（" + slot + "）开启手表持续录音");
+  renderAll();
+}
+
+function toggleWatchRec() {
+  S.hwRecOn = !S.hwRecOn;
+  if (S.hwRecOn) {
+    S.hwRecSec = 0;
+    if (S.watchLinkEnabled && S.wcsReachable) {
+      if (!S.connectedDevId) S.connectedDevId = "APPLE_WATCH_S10";
+      S.phoneStandby = true;
+      S.phoneRecOn = false;
+      S.phoneFailover = false;
+    }
+  } else {
+    S.phoneStandby = false;
+  }
+  renderAll();
+}
+
+function triggerWatchMark() {
+  S.watchMarks += 1;
+  if (S.watchLinkEnabled && S.wcsReachable && S.items.length) {
+    toast("手表打点 Mark #" + S.watchMarks + " 已同步至 iPhone");
+  } else {
+    toast("手表打点 Mark #" + S.watchMarks + " 已写入分片头");
+  }
+  renderAll();
+}
+
+function triggerMarkFromPhone() {
+  triggerWatchMark();
+}
+
+function toggleReachability() {
+  S.wcsReachable = !S.wcsReachable;
+  if (S.wcsReachable && S.watchLinkEnabled) {
+    toast("WCSession 已恢复连通，可同步待传分片");
+  } else {
+    toast("WCSession 已切至离线暂存，手表继续本地录 .m4a");
+  }
+  renderAll();
+}
+
+function triggerWatchUnexpectedDrop() {
+  if (!S.hwRecOn && !isWatchConnected()) {
+    S.watchLinkEnabled = true;
+    S.connectedDevId = "APPLE_WATCH_S10";
+    S.hwRecOn = true;
+    S.phoneStandby = true;
+  }
+  S.wcsReachable = false;
+  if (isWatchConnected()) S.connectedDevId = null;
+  if (S.phoneStandby || S.hwRecOn) {
+    S.phoneStandby = false;
+    S.phoneRecOn = true;
+    S.phoneFailover = true;
+    S.phoneRecSec = 0;
+  }
+  toast("手表连接意外断开，本机保底录音已自动接力");
+  renderAll();
+}
+
+function ingestWatchSlice(sliceObj) {
+  var id = sliceObj.id;
+  S.items.unshift({
+    id: id,
+    kind: "event",
+    day: "今天",
+    time: sliceObj.time,
+    dur: "1分00秒",
+    title: "手表采音切片 #" + sliceObj.seq + (sliceObj.marks ? "（含 " + sliceObj.marks + " 处重点）" : ""),
+    source: "Apple Watch",
+    sampleRate: "16kHz / 16-bit PCM WAV",
+    hasAudio: true,
+    playing: false,
+    cleared: false,
+    transcript: "收到手表直传 32kbps .m4a 分片（" + sliceObj.fileName + "），iPhone 本机已完成 16kHz/16-bit/Mono WAV 转码与语音识别入库。",
+    brief: "由 Apple Watch " + sliceObj.fileName + " 本地转码为 16kHz WAV 并入库。"
+  });
+}
+
+function cutWatchSlice() {
+  var seq = S.sliceSeq++;
+  var now = new Date();
+  var hm = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+  var slice = {
+    id: "watch-slice-" + seq,
+    seq: seq,
+    fileName: "W_" + String(seq).padStart(4, "0") + ".m4a",
+    time: hm,
+    durSec: 60,
+    marks: S.watchMarks
   };
-  state.watchQueue.push(entry);
-  state.currentSliceIndex += 1;
-  state.sliceElapsedSec = 0;
-  state.currentMarksOffsetMs = [];
-  state.currentGaps = 0;
-  state.offlineRecorded = (state.reachability !== "reachable");
-  return entry;
-}
-
-function stopWatchRecording(fromSource){
-  if(!state.watchRecording) return;
-  sealCurrentSlice(null);
-  state.watchRecording = false;
-  state.activeSessionId = null;
-  state.startedAtMs = null;
-  state.elapsedSec = 0;
-  state.sliceElapsedSec = 0;
-  state.currentSliceIndex = 0;
-  state.watchNote = state.reachability === "reachable" ? "已停止录音 · 正在推送末片" : "已停止录音 · 末片已暂存手表";
-  state.banner = state.reachability === "reachable"
-    ? (fromSource === "watch" ? "手表已停录并自动将末片推回手机" : "已下发停止手表录音并回传末片")
-    : "手表已停录，末片已写入手表离线账本待重连补传";
-  if(state.reachability === "reachable"){
-    flushPendingQueue(true);
-  }
-  saveState();
-  renderAll();
-}
-
-function flushPendingQueue(silent){
-  var pending = state.watchQueue.filter(function(x){ return x.transferState !== "synced"; });
-  if(pending.length === 0){
-    if(!silent) showToast("没有待传切片");
-    return;
-  }
-  if(state.reachability !== "reachable"){
-    state.banner = "已投递后台催传指令（手表当前未即时可达，恢复连接后自动推送）";
-    saveState();
-    renderAll();
-    if(!silent) showToast("手表当前离线，待连接后自动传送");
-    return;
-  }
-  state.syncState = "busy";
-  pending.forEach(function(item){ item.transferState = "transferring"; });
-  renderAll();
-
-  setTimeout(function(){
-    var delivered = 0;
-    state.watchQueue.forEach(function(item){
-      if(item.transferState === "transferring"){
-        item.transferState = "synced";
-        delivered += 1;
-        var wavName = "LIVE_WATCH_" + item.sessionId + "_" + String(item.sliceIndex + 1).padStart(4,"0") + ".WAV";
-        var wavBytes = Math.round((item.durationMs / 1000) * 32000) + 44;
-        var exists = state.receivedSlices.some(function(r){ return r.sliceId === item.sliceId; });
-        if(!exists){
-          state.receivedSlices.unshift({
-            sliceId: item.sliceId,
-            sessionId: item.sessionId,
-            sliceIndex: item.sliceIndex,
-            wavFileName: wavName,
-            startAtMs: item.startAtMs,
-            durationMs: item.durationMs,
-            marksOffsetMs: item.marksOffsetMs.slice(),
-            gapCount: item.gapCount,
-            offlineRecorded: item.offlineRecorded,
-            rawByteSize: item.rawByteSize,
-            wavByteSize: wavBytes,
-            receivedAtMs: nowMs(),
-            exportedToSharedInbox: true
-          });
-        }
-      }
-    });
-    state.receivedSlices.sort(function(a,b){ return b.startAtMs - a.startAtMs; });
-    state.syncState = "done";
-    state.watchNote = "已本地送达手机 " + delivered + " 段并清理手表缓存";
-    state.banner = "已本地接收手表 " + delivered + " 段切片并转为 16kHz PCM WAV";
-    saveState();
-    renderAll();
-    setTimeout(function(){ state.syncState = "idle"; renderWatchSheet(); }, 2500);
-  }, 550);
-}
-
-/* 手机端交互动作 */
-function phoneToggleRecord(){
-  if(state.reachability === "unpaired"){
-    state.error = "未检测到配对的 Apple Watch，请先在 Watch App 配对";
-    renderAll();
-    return;
-  }
-  if(state.watchRecording){
-    stopWatchRecording("phone");
-    return;
-  }
-  if(state.reachability === "offline"){
-    state.error = "手表当前完全断连不可达；请点击表盘上的「录音卡」快捷图标独立开录";
-    renderAll();
-    showToast("手表离线，请在表盘直接开启");
-    return;
-  }
-  if(state.reachability === "standby"){
-    state.waking = true;
-    state.error = "";
-    state.banner = "正在经 HKHealthStore().startWatchApp(toHandle:) 远程唤醒 Apple Watch…";
-    renderAll();
-    setTimeout(function(){
-      state.waking = false;
-      state.reachability = "reachable";
-      beginWatchRecording("phone");
-    }, 800);
-    return;
-  }
-  beginWatchRecording("phone");
-}
-
-function phoneAddMark(){
-  if(!state.watchRecording){
-    showToast("当前未在录音");
-    return;
-  }
-  var offsetMs = Math.max(0, state.elapsedSec * 1000);
-  state.currentMarksOffsetMs.push(offsetMs);
-  state.watchNote = "已打重点 @" + fmtMS(state.elapsedSec);
-  state.banner = "已记录重点标记（相对起点 " + fmtMS(state.elapsedSec) + "）";
-  saveState();
-  renderAll();
-  showToast("打重点成功 · +" + fmtMS(state.elapsedSec));
-}
-
-function phoneFlushPending(){
-  flushPendingQueue(false);
-}
-
-function phoneRefreshStatus(){
-  showToast("已刷新手表状态快照");
-  renderAll();
-}
-
-/* 手表端与表盘交互 */
-function watchToggleRecord(){
-  if(state.watchRecording){
-    stopWatchRecording("watch");
+  S.watchMarks = 0;
+  if (S.watchLinkEnabled && S.wcsReachable) {
+    ingestWatchSlice(slice);
+    toast("手表分片已直传手机并本地转 16kHz WAV 入库");
   } else {
-    beginWatchRecording("watch");
+    S.watchQueue.push(slice);
+    toast("当前离线/未联动，分片已暂存手表队列（共 " + S.watchQueue.length + " 段）");
   }
+  renderAll();
 }
 
-function watchAddMark(){
-  if(!state.watchRecording){
-    showToast("手表未在录音，按侧边键可立即开始");
+function flushWatchQueue() {
+  if (!S.watchQueue.length) {
+    toast("手表本地队列暂无待传分片");
     return;
   }
-  var offsetMs = Math.max(0, state.elapsedSec * 1000);
-  state.currentMarksOffsetMs.push(offsetMs);
-  state.watchNote = "已打重点 @" + fmtMS(state.elapsedSec);
-  state.banner = "手表通过数码表冠记录重点 +" + fmtMS(state.elapsedSec);
-  saveState();
+  if (!S.watchLinkEnabled || !S.wcsReachable) {
+    toast("请先开启联动并保持 WCSession 连通再回传");
+    return;
+  }
+  var count = S.watchQueue.length;
+  var pending = S.watchQueue.slice();
+  S.watchQueue = [];
+  pending.forEach(ingestWatchSlice);
+  toast("已回传 " + count + " 段 .m4a 并全部本地转为 16kHz WAV");
   renderAll();
-  showToast("手表已打重点 +" + fmtMS(state.elapsedSec));
 }
 
-function triggerComplication(){
-  if(state.watchScreen === "face"){
-    setWatchScreen("home");
-  }
-  if(state.watchRecording){
-    stopWatchRecording("watch");
+function syncNow() {
+  flushWatchQueue();
+}
+
+function refreshFromTimeline() {
+  if (S.hwRecOn || S.phoneRecOn) {
+    cutWatchSlice();
   } else {
-    beginWatchRecording("watch");
+    flushWatchQueue();
   }
 }
 
-function jumpToWatchFaceFromGuide(){
-  if(state.viewMode === "phone") setViewMode("both");
-  setWatchScreen("face");
-  showToast("已在右侧打开表盘 4 种复杂功能预览");
+function toggleSlicePlay(id, ev) {
+  if (ev) ev.stopPropagation();
+  var item = S.items.find(function(x) { return x.id === id; });
+  if (!item || item.cleared || !item.hasAudio) return;
+  S.items.forEach(function(x) { if (x.id !== id) x.playing = false; });
+  item.playing = !item.playing;
+  renderTimeline();
+  if (S.subPage && S.subPage.t === "detail") renderDetail(S.subPage.id);
+  saveState();
 }
 
-/* 模拟器控制 */
-function simRotate60s(){
-  if(!state.watchRecording){
-    beginWatchRecording("watch");
+function deleteSliceAudio(id, ev) {
+  if (ev) ev.stopPropagation();
+  var item = S.items.find(function(x) { return x.id === id; });
+  if (!item) return;
+  item.hasAudio = false;
+  item.playing = false;
+  item.cleared = true;
+  toast("已清理该段原始 WAV 音频");
+  renderTimeline();
+  if (S.subPage && S.subPage.t === "detail") renderDetail(S.subPage.id);
+  saveState();
+}
+
+function toggleCardOpen(id) {
+  S.openCards[id] = !S.openCards[id];
+  renderTimeline();
+  saveState();
+}
+
+function resetPrototype() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  S = defaultState();
+  renderAll();
+  toast("原型状态已重置");
+}
+
+/* ===== 渲染函数 ===== */
+function renderHeaderAndNav() {
+  var isSub = !!S.subPage;
+  document.body.classList.toggle("sub", isSub);
+  var crumb = document.getElementById("crumb-back");
+  var dest = document.getElementById("crumb-dest");
+  if (crumb && dest) {
+    crumb.hidden = !isSub;
+    dest.textContent = S.subPage && S.subPage.t === "setsub" ? "Setting" : "Timeline";
   }
-  state.elapsedSec += 60;
-  var sealed = sealCurrentSlice(60);
-  if(sealed){
-    if(state.reachability === "reachable"){
-      state.watchNote = "第 " + (sealed.sliceIndex + 1) + " 片满 60s · 自动推回手机";
-      flushPendingQueue(true);
+
+  document.getElementById("p-timeline").classList.toggle("show", !isSub && S.tab === "timeline");
+  document.getElementById("p-setting").classList.toggle("show", !isSub && S.tab === "setting");
+  document.getElementById("p-detail").classList.toggle("show", isSub && S.subPage.t === "detail");
+  document.getElementById("p-setsub").classList.toggle("show", isSub && S.subPage.t === "setsub");
+
+  document.getElementById("nt").classList.toggle("on", S.tab === "timeline");
+  document.getElementById("ns").classList.toggle("on", S.tab === "setting");
+
+  // 胶囊
+  var cap = document.querySelector('[data-testid="hw-capsule"]');
+  var dev = curDevice();
+  var phoneOnly = !dev && S.phoneRecOn;
+  var hwRecording = !!(dev && S.hwRecOn);
+  cap.classList.toggle("off", !dev && !phoneOnly);
+  cap.classList.toggle("phonerec", phoneOnly);
+  cap.classList.toggle("idle", !!(dev && !hwRecording));
+  cap.setAttribute("aria-label", phoneOnly ? "录音卡状态：本机录音" : !dev ? "录音卡状态：无设备" : hwRecording ? "录音卡状态：录音中" : "录音卡状态：已连接");
+
+  // 灵动岛
+  var di = document.getElementById("phone-dyn-island");
+  var watchIslandActive = !!(S.watchLinkEnabled && S.wcsReachable && S.hwRecOn);
+  var phoneIslandActive = !!S.phoneRecOn;
+  var showDI = watchIslandActive || phoneIslandActive;
+  di.classList.toggle("show", showDI);
+  if (showDI) {
+    var titleEl = document.getElementById("di-title");
+    var subEl = document.getElementById("di-sub");
+    var lcdEl = document.getElementById("di-lcd");
+    if (watchIslandActive && !phoneIslandActive) {
+      titleEl.textContent = "录音卡 · Apple Watch 录音中（锁屏实况已开启）";
+      subEl.textContent = "我的手表 · " + (S.phoneStandby ? "本机保底待命中" : "本地直采");
+      lcdEl.textContent = clockHMS(S.hwRecSec);
     } else {
-      state.watchNote = "离线满 60s · 已暂存手表等待手机";
-      state.banner = "手表已离线封口第 " + (sealed.sliceIndex + 1) + " 片，待靠回手机自动补传";
+      titleEl.textContent = "录音卡 · " + (S.phoneFailover ? "本机保底录音中" : "本机录音中") + "（锁屏实况已开启）";
+      subEl.textContent = (S.phoneFailover ? "蓝牙断连自动接力 · " : "手机麦克风 · ") + clockHMS(S.phoneRecSec);
+      lcdEl.textContent = clockHMS(S.phoneRecSec);
     }
   }
-  saveState();
-  renderAll();
-}
 
-function simInterruption(){
-  if(!state.watchRecording){
-    beginWatchRecording("watch");
+  // Setting 摘要与顶栏联调按钮
+  var svWatch = document.getElementById("sv-watch");
+  if (svWatch) {
+    svWatch.textContent = !S.watchLinkEnabled ? "未开启" : isWatchConnected() ? "已连接" : "已配对";
   }
-  sealCurrentSlice(Math.max(12, state.sliceElapsedSec || 22));
-  state.currentGaps += 1;
-  state.watchNote = "来电中断已自动封口 · 恢复继续录制";
-  state.banner = "手表检测到音频中断，已自动保护上一片并无缝开启新片段";
-  if(state.reachability === "reachable"){
-    flushPendingQueue(true);
+
+  var rBtn = document.getElementById("tb-reach-btn");
+  var rTxt = document.getElementById("tb-reach-txt");
+  if (rBtn && rTxt) {
+    rBtn.classList.toggle("ok", S.wcsReachable);
+    rBtn.classList.toggle("warn", !S.wcsReachable);
+    rTxt.textContent = S.wcsReachable ? "WCSession 已连通" : "WCSession 离线暂存";
   }
-  saveState();
-  renderAll();
 }
 
-function simLowDiskToggle(){
-  state.lowDisk = !state.lowDisk;
-  if(state.lowDisk && state.watchRecording){
-    stopWatchRecording("watch");
-    state.error = "手表剩余空间不足 20 MB，已自动封口并停止录音";
-  } else if(!state.lowDisk){
-    state.error = "";
-  }
-  saveState();
-  renderAll();
-}
-
-function simMicDeniedToggle(){
-  state.micGranted = !state.micGranted;
-  if(!state.micGranted && state.watchRecording){
-    stopWatchRecording("watch");
-    state.error = "麦克风权限已关闭，停止录音";
-  } else if(state.micGranted){
-    state.error = "";
-  }
-  saveState();
-  renderAll();
-}
-
-function simCycleKeepAlive(){
-  var order = ["workout","extended","audio-bg"];
-  var idx = order.indexOf(state.keepAlive);
-  state.keepAlive = order[(idx + 1) % order.length];
-  saveState();
-  renderAll();
-}
-
-function simToggleCharging(){
-  state.charging = !state.charging;
-  saveState();
-  renderAll();
-}
-
-function resetDemo(){
-  audioEl.pause();
-  state = makeSeedState();
-  saveState();
-  setViewMode("both");
-  setWatchScreen("home");
-  showToast("已重置演示状态");
-}
-
-/* 音频试听与导出 */
-function toggleSlicePlay(sliceId, seekRatio){
-  var slice = state.receivedSlices.find(function(x){ return x.sliceId === sliceId; });
-  if(!slice) return;
-  if(state.playingSliceId === sliceId && seekRatio == null){
-    audioEl.pause();
-    state.playingSliceId = null;
-    state.playPosSec = 0;
-    renderPhoneSlices();
-    return;
-  }
-  state.playingSliceId = sliceId;
-  var totalSec = Math.max(1, Math.round(slice.durationMs / 1000));
-  if(seekRatio != null){
-    state.playPosSec = Math.round(totalSec * seekRatio);
+function renderTimeline() {
+  var wrap = document.getElementById("live-status-wrap");
+  var watchRecVisible = !!(S.hwRecOn && (isWatchConnected() || (S.watchLinkEnabled && S.wcsReachable)));
+  if (S.phoneRecOn || watchRecVisible) {
+    var label = S.phoneRecOn ? (S.phoneFailover ? "正在本机保底录音" : "正在本机录音") : "Apple Watch 正在录音";
+    var sec = S.phoneRecOn ? S.phoneRecSec : S.hwRecSec;
+    wrap.innerHTML = '<div class="live rec" id="live-status"><span class="ldot"></span><b>' + label + '</b><span class="lsub">已录 <span id="live-clock">' + clockHMS(sec) + '</span> · 待切片转码</span></div>';
+  } else if (S.watchQueue.length) {
+    wrap.innerHTML = '<div class="live" id="live-status"><span class="ldot" style="background:var(--warn)"></span><b>手表待回传分片</b><span class="lsub">' + S.watchQueue.length + ' 段 .m4a 待传</span></div>';
   } else {
-    state.playPosSec = 0;
+    wrap.innerHTML = "";
   }
-  if(currentWavObjectUrl) URL.revokeObjectURL(currentWavObjectUrl);
-  currentWavObjectUrl = URL.createObjectURL(buildWavBlob(slice));
-  audioEl.src = currentWavObjectUrl;
-  try{ audioEl.play().catch(function(){}); }catch(e){}
-  renderPhoneSlices();
-}
 
-function scrubSlice(sliceId, secVal){
-  if(state.playingSliceId !== sliceId){
-    state.playingSliceId = sliceId;
-  }
-  state.playPosSec = Number(secVal) || 0;
-  renderPhoneSlices();
-}
-
-function jumpToMark(sliceId, offsetMs){
-  var slice = state.receivedSlices.find(function(x){ return x.sliceId === sliceId; });
-  if(!slice) return;
-  var totalSec = Math.max(1, Math.round(slice.durationMs / 1000));
-  var sec = Math.min(totalSec, Math.round(offsetMs / 1000));
-  toggleSlicePlay(sliceId, sec / totalSec);
-  showToast("已定位至重点标记 " + fmtMS(sec));
-}
-
-function exportSliceWav(sliceId){
-  var slice = state.receivedSlices.find(function(x){ return x.sliceId === sliceId; });
-  if(!slice) return;
-  var blob = buildWavBlob(slice);
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement("a");
-  a.href = url;
-  a.download = slice.wavFileName;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
-  showToast("已导出 16kHz WAV：" + slice.wavFileName);
-}
-
-function deleteSliceItem(sliceId){
-  if(state.playingSliceId === sliceId){
-    audioEl.pause();
-    state.playingSliceId = null;
-  }
-  state.receivedSlices = state.receivedSlices.filter(function(x){ return x.sliceId !== sliceId; });
-  if(state.detailSliceId === sliceId) closePhoneSub();
-  saveState();
-  renderAll();
-  showToast("已删除本地切片");
-}
-
-function setSliceFilter(f){
-  state.sliceFilter = f;
-  document.querySelectorAll("#slice-filters button").forEach(function(b){
-    b.classList.toggle("on", b.dataset.sf === f);
+  var rows = S.items.filter(function(it) {
+    if (S.filter === "all") return true;
+    return it.kind === S.filter;
   });
-  renderPhoneSlices();
-}
 
-function openSliceDetail(sliceId){
-  var slice = state.receivedSlices.find(function(x){ return x.sliceId === sliceId; });
-  if(!slice) return;
-  state.detailSliceId = sliceId;
-  document.getElementById("phone-main-view").hidden = true;
-  document.getElementById("phone-title").hidden = true;
-  document.getElementById("phone-crumb").hidden = false;
-  document.getElementById("phone-crumb-label").textContent = "手表录音笔";
-
-  var dv = document.getElementById("phone-detail-view");
-  dv.hidden = false;
-  dv.innerHTML =
-    '<div class="set-title" style="margin-top:8px">切片文件与元数据（1:1 对齐 WatchSliceDescriptor）</div>' +
-    '<div class="set-group">' +
-      '<div class="row-item"><span class="row-k">标准 WAV 文件</span><span class="row-v" style="font-size:12px;word-break:break-all">' + esc(slice.wavFileName) + '</span></div>' +
-      '<div class="row-item"><span class="row-k">采样规格</span><span class="row-v">16kHz · 16-bit · Mono PCM</span></div>' +
-      '<div class="row-item"><span class="row-k">原始手表包</span><span class="row-v">AAC .m4a (' + fmtBytes(slice.rawByteSize) + ')</span></div>' +
-      '<div class="row-item"><span class="row-k">转换后 WAV</span><span class="row-v">' + fmtBytes(slice.wavByteSize) + '</span></div>' +
-      '<div class="row-item"><span class="row-k">断点 / 中断</span><span class="row-v">' + (slice.gapCount > 0 ? slice.gapCount + ' 次中断已封口恢复' : '连续无中断') + '</span></div>' +
-      '<div class="row-item"><span class="row-k">共享 App Group</span><span class="row-v" style="font-size:11.5px">group.com.reai.recordingcard/watch_inbox/</span></div>' +
-    '</div>' +
-    '<div class="set-title">重点标记（严格存储相对录制起点偏移）</div>' +
-    '<div class="set-group">' +
-      (slice.marksOffsetMs.length
-        ? slice.marksOffsetMs.map(function(m,i){
-            return '<div class="row-item"><span class="row-k">重点 #' + (i+1) + '</span><span class="row-v"><button type="button" class="mark-chip" onclick="closePhoneSub();jumpToMark(\'' + esc(slice.sliceId) + '\',' + m + ')">+' + fmtMS(m/1000) + ' (' + m + ' ms) · 试听</button></span></div>';
-          }).join("")
-        : '<div class="row-item"><span class="row-k">本片无手工打点</span><span class="row-v">—</span></div>') +
-    '</div>' +
-    '<button type="button" class="btn full" onclick="exportSliceWav(\'' + esc(slice.sliceId) + '\')">导出 .WAV 到文件 / 隔空投送</button>';
-}
-
-function closePhoneSub(){
-  state.detailSliceId = null;
-  document.getElementById("phone-detail-view").hidden = true;
-  document.getElementById("phone-main-view").hidden = false;
-  document.getElementById("phone-title").hidden = false;
-  document.getElementById("phone-crumb").hidden = true;
-}
-
-function openWatchSheet(){ renderWatchSheet(); document.getElementById("watch-sheet").classList.add("show"); }
-function closeWatchSheet(){ document.getElementById("watch-sheet").classList.remove("show"); }
-function syncPhoneSimMirror(){
-  var mirror = document.getElementById("phone-sim-mirror");
-  var panel = document.getElementById("sim-panel");
-  if(!mirror || !panel) return;
-  mirror.innerHTML = "";
-  var chips = document.getElementById("reach-chips").cloneNode(true);
-  var grid = document.getElementById("sim-actions-root").cloneNode(true);
-  [chips, grid].forEach(function(root){
-    root.removeAttribute("id");
-    root.querySelectorAll("[id]").forEach(function(el){ el.removeAttribute("id"); });
-    root.querySelectorAll("[data-testid]").forEach(function(el){ el.removeAttribute("data-testid"); });
-  });
-  grid.style.marginTop = "12px";
-  mirror.appendChild(chips);
-  mirror.appendChild(grid);
-}
-function openPhoneSimSheet(){
-  syncPhoneSimMirror();
-  document.getElementById("phone-sim-sheet").classList.add("show");
-}
-function closePhoneSimSheet(){
-  document.getElementById("phone-sim-sheet").classList.remove("show");
-  var mirror = document.getElementById("phone-sim-mirror");
-  if(mirror) mirror.innerHTML = "";
-}
-
-/* 渲染函数群 */
-function keepAliveLabel(mode){
-  if(mode === "workout") return "HKWorkoutSession 运动保活";
-  if(mode === "extended") return "WKExtendedRuntimeSession";
-  return "UIBackgroundModes audio";
-}
-
-function renderPhoneHeader(){
-  var cap = document.getElementById("watch-capsule");
-  var capTxt = document.getElementById("cap-txt");
-  var battEl = document.getElementById("cap-batt");
-  var battFill = document.getElementById("cap-batt-fill");
-  cap.classList.remove("st-off","st-idle","st-standby","st-wake","st-rec");
-
-  if(state.waking){
-    cap.classList.add("st-wake");
-    capTxt.textContent = "唤醒中…";
-  } else if(state.reachability === "unpaired"){
-    cap.classList.add("st-off");
-    capTxt.textContent = "未配对手表";
-  } else if(state.watchRecording){
-    cap.classList.add("st-rec");
-    capTxt.textContent = "手表录音中 · " + fmtMS(state.elapsedSec);
-  } else if(state.reachability === "offline"){
-    cap.classList.add("st-off");
-    capTxt.textContent = "手表离线";
-  } else if(state.reachability === "standby"){
-    cap.classList.add("st-standby");
-    capTxt.textContent = "手表待机";
-  } else {
-    cap.classList.add("st-idle");
-    capTxt.textContent = "手表已连接";
-  }
-
-  var pct = state.batteryPercent;
-  battEl.classList.remove("lv-low","lv-mid","lv-hi","charging");
-  battEl.classList.add(pct < 20 ? "lv-low" : pct < 40 ? "lv-mid" : "lv-hi");
-  if(state.charging) battEl.classList.add("charging");
-  battFill.setAttribute("width", Math.max(1.5, 15 * pct / 100).toFixed(2));
-
-  /* 灵动岛：手表录音中 或 远程唤醒中 显示 */
-  var di = document.getElementById("dyn-island");
-  var diTitle = document.getElementById("di-title");
-  var diSub = document.getElementById("di-sub");
-  var diLcd = document.getElementById("di-lcd");
-  if(state.waking || state.watchRecording){
-    di.classList.add("show");
-    if(state.waking){
-      diTitle.textContent = "正在经 HealthKit 远程唤醒手表";
-      diSub.textContent = "HKWorkoutConfiguration · 本地会话建立中";
-      diLcd.textContent = "--:--";
-    } else {
-      diTitle.textContent = "Apple Watch · 录音中";
-      diSub.textContent = keepAliveLabel(state.keepAlive) + (state.reachability === "reachable" ? " · 直连手机" : " · 离线本地暂存");
-      diLcd.textContent = fmtMS(state.elapsedSec);
+  var groups = [];
+  var byDay = {};
+  rows.forEach(function(it) {
+    if (!byDay[it.day]) {
+      byDay[it.day] = [];
+      groups.push({ day: it.day, list: byDay[it.day] });
     }
-  } else {
-    di.classList.remove("show");
-  }
-}
-
-function renderPhoneStatusAndControls(){
-  var connTitle = document.getElementById("phone-conn-title");
-  if(state.reachability === "unpaired") connTitle.textContent = "未配对 Apple Watch";
-  else if(state.reachability === "offline") connTitle.textContent = "手表暂脱离手机（支持腕上离线录音）";
-  else if(state.reachability === "standby") connTitle.textContent = "手表已配对（待机可远程唤醒）";
-  else connTitle.textContent = "手表已连接（可即时控制）";
-
-  document.getElementById("phone-batt-text").textContent =
-    state.reachability === "unpaired" ? "—" : (state.batteryPercent + "%" + (state.charging ? " · 充电中" : ""));
-  document.getElementById("phone-disk-txt").textContent =
-    state.lowDisk ? "手表空间不足 <20 MB" : "手表剩余 2.4 GB";
-
-  var recEl = document.getElementById("phone-rec-state");
-  var progWrap = document.getElementById("phone-slice-prog-wrap");
-  var progBar = document.getElementById("phone-slice-prog-bar");
-  var kaRow = document.getElementById("phone-keepalive-row");
-  if(state.watchRecording){
-    recEl.innerHTML = '<i class="recdot"></i><span>第 ' + (state.currentSliceIndex + 1) + ' 片 (' + state.sliceElapsedSec + 's/60s)</span><span class="clock">' + fmtHMS(state.elapsedSec) + '</span>';
-    progWrap.hidden = false;
-    progBar.style.width = Math.min(100, Math.round((state.sliceElapsedSec / 60) * 100)) + "%";
-    kaRow.hidden = false;
-    document.getElementById("phone-keepalive-txt").textContent = keepAliveLabel(state.keepAlive);
-  } else {
-    recEl.innerHTML = '<span style="color:var(--sec)">未录音</span>';
-    progWrap.hidden = true;
-    kaRow.hidden = true;
-  }
-
-  var pendingCnt = state.watchQueue.filter(function(x){ return x.transferState !== "synced"; }).length;
-  var pTxt = document.getElementById("phone-pending-txt");
-  pTxt.textContent = pendingCnt + " 段";
-  pTxt.style.color = pendingCnt > 0 ? "#B25000" : "var(--sec)";
-
-  var bn = document.getElementById("phone-banner");
-  bn.hidden = !state.banner;
-  bn.textContent = state.banner;
-  var er = document.getElementById("phone-error");
-  er.hidden = !state.error;
-  er.textContent = state.error;
-
-  var btn = document.getElementById("phone-record-toggle");
-  btn.disabled = (state.reachability === "unpaired" || state.waking);
-  if(state.waking){
-    btn.className = "btn full";
-    btn.textContent = "正在远程唤醒手表…";
-  } else if(state.watchRecording){
-    btn.className = "btn full danger";
-    btn.textContent = "停止手表录音";
-  } else {
-    btn.className = "btn full";
-    btn.textContent = state.reachability === "standby" ? "开启手表录音（远程唤醒）" : "开启手表录音";
-  }
-  document.getElementById("phone-mark-btn").disabled = !state.watchRecording;
-  document.getElementById("phone-flush-btn").disabled = (state.reachability === "unpaired");
-}
-
-function renderPhoneSlices(){
-  var title = document.getElementById("received-section-title");
-  title.textContent = "手机已收到的本地 WAV 切片（" + state.receivedSlices.length + "）";
-
-  var list = state.receivedSlices.filter(function(s){
-    if(state.sliceFilter === "marked") return s.marksOffsetMs && s.marksOffsetMs.length > 0;
-    if(state.sliceFilter === "offline") return !!s.offlineRecorded;
-    return true;
+    byDay[it.day].push(it);
   });
 
-  var box = document.getElementById("received-slices-list");
-  if(!list.length){
-    box.innerHTML = '<div class="slice-card" style="color:var(--sec);font-size:13px;text-align:center;padding:22px 16px">暂无符合筛选条件的 WAV 切片。点击「开启手表录音」并满 60 秒或停止录音后，将自动本地落盘到这里。</div>';
-    return;
-  }
+  var html = groups.map(function(g) {
+    var cards = g.list.map(function(it, idx) {
+      var cls = g.list.length === 1 ? "only" : idx === 0 ? "first" : idx === g.list.length - 1 ? "last" : "";
+      var isOpen = !!S.openCards[it.id];
+      var isWatchItem = it.source === "Apple Watch";
+      var pill = it.cleared
+        ? '<span class="src-pill cleared">原始录音已清理</span>'
+        : '<span class="src-pill">' + esc(it.source) + '</span>';
+      var playBtn = (isWatchItem || it.hasAudio)
+        ? (it.cleared
+            ? '<span style="font-size:11.5px;color:var(--sec)">原始录音已清理</span>'
+            : '<button type="button" class="btn ghost sm" data-testid="play-slice-' + esc(it.id) + '" onclick="toggleSlicePlay(\'' + esc(it.id) + '\',event)">' + (it.playing ? "暂停播放" : "播放 WAV") + '</button>'
+              + '<button type="button" class="btn ghost sm" data-testid="delete-slice-' + esc(it.id) + '" onclick="deleteSliceAudio(\'' + esc(it.id) + '\',event)">清理音频</button>')
+        : "";
 
-  box.innerHTML = list.map(function(s){
-    var durSec = Math.max(1, Math.round(s.durationMs / 1000));
-    var playing = (state.playingSliceId === s.sliceId);
-    var curSec = playing ? Math.min(durSec, state.playPosSec) : 0;
-    var marksHtml = (s.marksOffsetMs && s.marksOffsetMs.length)
-      ? '<div class="marks-row">' + s.marksOffsetMs.map(function(m){
-          return '<button type="button" class="mark-chip" onclick="jumpToMark(\'' + esc(s.sliceId) + '\',' + m + ')">★ 重点 +' + fmtMS(m/1000) + '</button>';
-        }).join("") + '</div>'
-      : "";
-    return '<article class="slice-card" data-testid="received-slice-' + esc(s.sliceId) + '">' +
-      '<div class="slice-hd">' +
-        '<div class="slice-title">第 ' + (s.sliceIndex + 1) + ' 片 · ' + esc(s.wavFileName) + '</div>' +
-        '<div class="slice-badges">' +
-          (s.offlineRecorded ? '<span class="tag off">离线补传</span>' : '') +
-          (s.gapCount > 0 ? '<span class="tag gap">中断恢复 ' + s.gapCount + '</span>' : '') +
-          (s.exportedToSharedInbox ? '<span class="tag ok">已入共享收件箱</span>' : '') +
-        '</div>' +
-      '</div>' +
-      '<div class="slice-sub">' + fmtDateTime(s.startAtMs) + ' · 时长 ' + durSec + 's · ' + fmtBytes(s.wavByteSize) + '（16kHz 单声道 WAV ← ' + fmtBytes(s.rawByteSize) + ' AAC）</div>' +
-      marksHtml +
-      '<div class="rawaudio">' +
-        '<div class="rawaudio-top">' +
-          '<button type="button" class="raplay" data-testid="play-slice-' + esc(s.sliceId) + '" onclick="toggleSlicePlay(\'' + esc(s.sliceId) + '\')">' +
-            (playing ? '■ 停止' : '▶ 试听 WAV') +
-          '</button>' +
-          '<div class="rameta">' +
-            '<div class="ratime">' + fmtMS(curSec) + ' / ' + fmtMS(durSec) + '</div>' +
-            '<div class="rastate">' + (playing ? '正在本地播放 16kHz PCM' : '纯本地存储 · 未上传云端') + '</div>' +
-          '</div>' +
-          '<div class="raacts">' +
-            '<button type="button" class="raact" data-testid="export-slice-' + esc(s.sliceId) + '" onclick="exportSliceWav(\'' + esc(s.sliceId) + '\')">导出</button>' +
-            '<button type="button" class="raact del" data-testid="delete-slice-' + esc(s.sliceId) + '" onclick="deleteSliceItem(\'' + esc(s.sliceId) + '\')">删除</button>' +
-          '</div>' +
-        '</div>' +
-        '<input type="range" class="raslider" min="0" max="' + durSec + '" value="' + curSec + '" aria-label="试听进度" oninput="scrubSlice(\'' + esc(s.sliceId) + '\',this.value)">' +
-      '</div>' +
-      '<button type="button" class="slice-detail-btn" onclick="openSliceDetail(\'' + esc(s.sliceId) + '\')">查看切片元数据与相对重点锚点 ›</button>' +
-    '</article>';
-  }).join("");
-}
-
-function renderWatchSheet(){
-  var pendingCnt = state.watchQueue.filter(function(x){ return x.transferState !== "synced"; }).length;
-  document.getElementById("ws-dot").style.background = state.watchRecording ? "var(--ok)" : (state.reachability === "unpaired" ? "var(--ax)" : "var(--warn)");
-  document.getElementById("ws-badge").textContent =
-    state.reachability === "reachable" ? "即时直连" :
-    state.reachability === "standby" ? "待机可唤醒" :
-    state.reachability === "offline" ? "离线" : "未配对";
-  document.getElementById("ws-rec-txt").textContent = state.watchRecording ? "录音中 " + fmtHMS(state.elapsedSec) : "未录音";
-  var sw = document.getElementById("ws-rec-sw");
-  sw.classList.toggle("on", state.watchRecording);
-  sw.setAttribute("aria-checked", state.watchRecording ? "true" : "false");
-  document.getElementById("ws-batt-txt").textContent = state.batteryPercent + "%" + (state.charging ? " · 充电中" : " · 预计可录约 5.5 小时");
-  document.getElementById("ws-ka-txt").textContent = state.watchRecording ? keepAliveLabel(state.keepAlive) : "待机未激活";
-
-  var stxt = document.getElementById("ws-sync-txt");
-  var sico = document.getElementById("ws-sync-ico");
-  if(state.syncState === "busy"){
-    stxt.textContent = "正在通过 WatchConnectivity 接收…";
-    sico.className = "spin";
-    sico.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14"><path d="M12 7a5 5 0 1 1-1.7-3.75" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M11.8 1.6v3.2h-3.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  } else if(state.syncState === "done"){
-    stxt.textContent = "同步成功 · 刚刚";
-    sico.className = "okcheck";
-    sico.textContent = "✓";
-  } else {
-    stxt.textContent = pendingCnt > 0 ? "手表现有 " + pendingCnt + " 段待传（点击催传）" : "已全部送达手机";
-    sico.className = "syncidle";
-    sico.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14"><path d="M12 7a5 5 0 1 1-1.7-3.75" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M11.8 1.6v3.2h-3.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  }
-}
-
-/* Watch 表屏幕渲染（复用同一套 1:1 模板既给单块表也给 4 宫格预览） */
-function buildWatchHardwareHTML(screenKind, includeTestIds){
-  var pendingCnt = state.watchQueue.filter(function(x){ return x.transferState !== "synced"; }).length;
-  var syncedCnt = state.watchQueue.filter(function(x){ return x.transferState === "synced"; }).length;
-  var reachable = (state.reachability === "reachable");
-  var isAod = (screenKind === "aod");
-  var body = "";
-  var sysTitle = "录音卡";
-
-  if(screenKind === "face"){
-    sysTitle = "表盘预览";
-    var cornerAttr = includeTestIds ? ' data-testid="comp-corner"' : "";
-    var inlineAttr = includeTestIds ? ' data-testid="comp-inline"' : "";
-    var rectAttr = includeTestIds ? ' data-testid="comp-rectangular"' : "";
-    var circAttr = includeTestIds ? ' data-testid="comp-circular"' : "";
-    body =
-      '<div class="wf-dial">' +
-        '<div class="wf-top-row">' +
-          '<button type="button" class="wf-corner"' + cornerAttr + ' onclick="triggerComplication()" title="表盘角落复杂功能 (.accessoryCorner)">' +
-            '<span style="font-size:12px;color:' + (state.watchRecording ? '#FF453A' : '#30D158') + '">' + (state.watchRecording ? '◉' : '🎙') + '</span>' +
-            '<b>' + (state.watchRecording ? fmtMS(state.elapsedSec) : (pendingCnt ? '待传' + pendingCnt : '开录')) + '</b>' +
-          '</button>' +
-          '<div class="wf-time-wrap"><div class="wf-date">周五 15</div><div class="wf-time">09:41</div></div>' +
-        '</div>' +
-        '<button type="button" class="wf-inline"' + inlineAttr + ' onclick="triggerComplication()" title="表盘内联复杂功能 (.accessoryInline)">' +
-          '<span>' + (state.watchRecording ? '🔴 录音卡 · ' + fmtMS(state.elapsedSec) : '🎙 录音卡 · 点击开录') + '</span>' +
-        '</button>' +
-        '<button type="button" class="wf-rect' + (state.watchRecording ? ' rec' : '') + '"' + rectAttr + ' onclick="triggerComplication()" title="表盘矩形复杂功能 (.accessoryRectangular)">' +
-          '<div class="wf-rect-hd">' +
-            '<span>' + (state.watchRecording ? '🔴' : '🎙') + '</span>' +
-            '<span>录音卡</span>' +
-            (state.watchRecording ? '<span style="margin-left:auto;color:#FF453A">' + fmtMS(state.elapsedSec) + '</span>' : '') +
-          '</div>' +
-          '<div class="wf-rect-sub">' +
-            (state.watchRecording ? '录音中 · 轻点停止并传回手机' : (pendingCnt > 0 ? '轻点开录 · 待传 ' + pendingCnt + ' 段' : '轻点开始持续录音（rcwatch://）')) +
-          '</div>' +
-        '</button>' +
-        '<div class="wf-bot-row">' +
-          '<button type="button" class="wf-circ' + (state.watchRecording ? ' rec' : '') + '"' + circAttr + ' onclick="triggerComplication()" title="表盘圆形复杂功能 (.accessoryCircular)">' +
-            '<span style="font-size:12px">' + (state.watchRecording ? '⏹' : '🎙') + '</span>' +
-            '<span>' + (state.watchRecording ? '录音' : (pendingCnt ? pendingCnt + '待' : '待机')) + '</span>' +
-          '</button>' +
-          '<div class="wf-dummy"><span>21°</span><span style="font-size:8px">晴</span></div>' +
-          '<div class="wf-dummy"><span>' + state.batteryPercent + '%</span><span style="font-size:8px">电量</span></div>' +
-        '</div>' +
-      '</div>';
-  } else if(screenKind === "queue"){
-    sysTitle = "‹ 本地队列";
-    var flushAttr = includeTestIds ? ' data-testid="watch-flush-btn"' : "";
-    var rows = state.watchQueue.slice().reverse().map(function(q){
-      var lbl = q.transferState === "pending" ? "等待手机" : q.transferState === "transferring" ? "传送中" : "已同步";
-      return '<div class="wq-row">' +
-        '<div class="wq-top"><span>第 ' + (q.sliceIndex + 1) + ' 片</span><span class="wq-st-' + q.transferState + '">' + lbl + '</span></div>' +
-        '<div class="wq-sub">' + Math.round(q.durationMs/1000) + 's · ' + fmtBytes(q.rawByteSize) + (q.marksOffsetMs.length ? ' · ★' + q.marksOffsetMs.length : '') + '</div>' +
-      '</div>';
+      return '<div class="tl-item ' + cls + '" data-testid="received-slice-' + esc(it.id) + '">'
+        + '<span class="tl-node"></span>'
+        + '<div class="card' + (isOpen ? " open" : "") + '" onclick="toggleCardOpen(\'' + esc(it.id) + '\')">'
+        + '<h3><span>' + esc(it.title) + '</span>' + pill + '</h3>'
+        + '<div class="when">' + esc(it.time) + ' · ' + esc(it.dur) + (it.playing ? " · 正在播放 WAV" : "") + '</div>'
+        + '<div class="exp">'
+        + '<div>' + esc(it.brief) + '</div>'
+        + '<div class="btn-line">'
+        + '<button type="button" class="btn sm" onclick="event.stopPropagation();openDetail(\'' + esc(it.id) + '\')">详情 ›</button>'
+        + playBtn
+        + '</div></div></div></div>';
     }).join("");
-    body =
-      (pendingCnt > 0 ? '<button type="button" class="wq-sync"' + flushAttr + ' onclick="phoneFlushPending()">立即同步到手机（' + pendingCnt + '）</button>' : '') +
-      (rows || '<div class="wm-note">暂无本地缓存切片</div>');
-  } else if(screenKind === "aod"){
-    sysTitle = "息屏常亮 · 保活";
-    body =
-      '<div style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100%;gap:8px;text-align:center">' +
-        '<div style="font-size:10px;color:#30D158;font-weight:700">' + (state.watchRecording ? '● ' + keepAliveLabel(state.keepAlive) : '垂腕待机（未录音）') + '</div>' +
-        '<div class="wm-clock' + (state.watchRecording ? ' rec' : '') + '">' + fmtHMS(state.elapsedSec) + '</div>' +
-        '<div class="wm-cap">' + (state.watchRecording ? '熄屏持续拾音中 · 第 ' + (state.currentSliceIndex + 1) + ' 片' : '抬腕或按表盘复杂功能开启') + '</div>' +
-        '<div style="font-size:10px;color:#8E8E93">待传 ' + pendingCnt + ' 段 · ' + (reachable ? '蓝牙直连手机' : '离线暂存手表') + '</div>' +
-      '</div>';
+    return '<div class="tl-date">' + esc(g.day) + '</div>' + cards;
+  }).join("");
+
+  document.getElementById("feed").innerHTML = html || '<div class="when" style="padding:20px 0">暂无记录</div>';
+}
+
+function renderSetSubWatch() {
+  var body = document.getElementById("setsub-body");
+  if (!body) return;
+  var wConn = isWatchConnected();
+  var qCount = S.watchQueue.length;
+  body.innerHTML =
+    '<div class="set-group"><div class="switchrow">'
+    + '<div><div style="font-size:13.5px;font-weight:600">开启 Apple Watch 硬件联动</div>'
+    + '<div style="font-size:11.5px;color:var(--sec);margin-top:2px">开启后将 Apple Watch 加入四硬件扫描列表；默认关闭以保持三硬件</div></div>'
+    + '<div class="sw' + (S.watchLinkEnabled ? " on" : "") + '" data-testid="watch-link-switch" role="switch" aria-checked="' + S.watchLinkEnabled + '" tabindex="0" onclick="toggleWatchLink()"></div>'
+    + '</div></div>'
+    + '<div class="subcard" data-testid="watch-link-status-card">'
+    + '<h4><span>手表状态</span><span class="ext-tag">' + (wConn ? "已连接" : S.watchPaired ? "已配对" : "未配对") + '</span></h4>'
+    + '<div class="navrow"><span>配对与装端</span><span class="navval"><span>已配对 · 已安装</span></span></div>'
+    + '<div class="navrow"><span>手表电量</span><span class="navval"><span>电量' + esc(S.watchBattTier) + '</span></span></div>'
+    + '<div class="navrow"><span>WCSession 通道</span><span class="navval"><span>' + (S.wcsReachable ? "已连通" : "离线暂存") + '</span></span></div>'
+    + '<div class="navrow"><span>本地待传切片</span><span class="navval"><span>' + qCount + ' 段</span></span></div>'
+    + '<div class="wbtns">'
+    + '<button type="button" class="btn" data-testid="watch-connect-btn" onclick="connectWatchFromSetting()">' + (wConn ? "已作为当前录音硬件" : "连接手表") + '</button>'
+    + '<button type="button" class="btn ghost" data-testid="phone-flush-btn" onclick="flushWatchQueue()">回传待同步分片</button>'
+    + '</div></div>'
+    + '<div class="subcard" data-testid="watch-complication-guide">'
+    + '<h4><span>表盘常驻持续录音设置（3 步）</span></h4>'
+    + '<p>1. 长按 Apple Watch 表盘进入编辑，滑至「复杂功能」槽位。<br>'
+    + '2. 添加「录音卡」组件（支持边角 / 圆形 / 矩形 / 顶部内联 4 种槽位）。<br>'
+    + '3. 点击表盘即刻启动后台持续采音，连上手机后本地自动转 16kHz WAV 入库。</p></div>';
+}
+
+function renderDetail(id) {
+  var item = S.items.find(function(x) { return x.id === id; });
+  if (!item) return;
+  document.getElementById("dt-h3").textContent = item.title;
+  document.getElementById("dt-meta").textContent = item.day + " " + item.time + " · " + item.dur + " · " + item.source;
+  var audioBox = item.cleared
+    ? '<div class="rawaudio cleared">原始录音已清理（仅保留本地转写与纪要）</div>'
+    : '<div class="rawaudio">'
+      + '<button type="button" class="btn sm" onclick="toggleSlicePlay(\'' + esc(item.id) + '\')">' + (item.playing ? "暂停" : "播放 WAV") + '</button>'
+      + '<div style="flex:1;min-width:0;font-size:12px">'
+      + '<div>' + esc(item.sampleRate || "16kHz / 16-bit PCM WAV") + '</div>'
+      + '<div style="color:var(--sec);font-size:11px">' + (item.playing ? "正在回放本地 WAV" : "本机落盘可离线回听") + '</div>'
+      + '</div>'
+      + '<button type="button" class="btn ghost sm" onclick="deleteSliceAudio(\'' + esc(item.id) + '\')">清理</button>'
+      + '</div>';
+  document.getElementById("dt-body").innerHTML = audioBox
+    + '<div class="turn"><div class="ava">1</div><div>'
+    + '<div style="font-size:11.5px;color:var(--sec);margin-bottom:3px">说话人 1（推测）</div>'
+    + '<div class="txt">' + esc(item.transcript) + '</div>'
+    + '</div></div>';
+}
+
+function renderSheet() {
+  var wrap = document.getElementById("sheet");
+  wrap.classList.toggle("show", S.sheetOpen);
+  if (!S.sheetOpen) return;
+
+  var dev = curDevice();
+  var mainEl = document.getElementById("dev-main");
+  var connEl = document.getElementById("dev-connect");
+
+  if (dev) {
+    mainEl.hidden = false;
+    connEl.hidden = true;
+    var isW = dev.kind === "watch";
+    var badge = document.getElementById("dev-kind-badge");
+    badge.textContent = dev.badge;
+    badge.className = "cbadge " + (isW ? "k-watch" : dev.kind === "v1" ? "k-v1" : dev.kind === "kb" ? "k-kb" : "k-v2");
+    document.getElementById("dev-name").textContent = dev.name;
+    document.getElementById("dev-sub").textContent = (isW ? "WCSession · " : "蓝牙 · 固件 ") + dev.fw;
+    document.getElementById("dev-dot").style.background = S.hwRecOn ? "var(--ok)" : "var(--warn)";
+    document.getElementById("disc-box").hidden = !S.discConfirm;
+
+    var recSw = document.getElementById("rec-sw");
+    recSw.classList.toggle("on", S.hwRecOn);
+    recSw.setAttribute("aria-checked", String(S.hwRecOn));
+    document.getElementById("sheet-rec-label").innerHTML = S.hwRecOn
+      ? '<i class="recdot"></i><span>录音中</span><span class="clock" id="sheet-rec-clock">' + clockHMS(S.hwRecSec) + '</span>'
+      : '<span>未录音</span>';
+
+    document.getElementById("batt-text").textContent = "电量" + S.watchBattTier + " · 可录至 今天 21:30";
+    document.getElementById("sync-txt").textContent = S.watchQueue.length
+      ? "点击回传（待传 " + S.watchQueue.length + " 段）"
+      : "自动同步 · 刚刚";
+    document.getElementById("row-sync").hidden = dev.kind === "kb";
+    document.getElementById("row-wifi").hidden = isW || dev.kind === "kb";
+    document.getElementById("row-fw").hidden = isW;
   } else {
-    var recBtnAttr = includeTestIds ? ' data-testid="watch-record-toggle"' : "";
-    var markBtnAttr = includeTestIds ? ' data-testid="watch-mark-btn"' : "";
-    var qBtnAttr = includeTestIds ? ' data-testid="watch-queue-entry"' : "";
-    var kaCap = !state.watchRecording
-      ? "每 60s 本地切片"
-      : (state.keepAlive === "workout" ? "录音中 · 运动保活 · 第" : state.keepAlive === "extended" ? "录音中 · 扩展保活 · 第" : "录音中 · 音频后台 · 第") + (state.currentSliceIndex + 1) + "片";
-    body =
-      '<div class="wm-status">' +
-        '<span class="wm-dot' + (reachable ? '' : ' off') + '"></span>' +
-        '<span>' + (reachable ? '已连手机' : '离线暂存') + '</span>' +
-        '<span style="margin-left:auto;font-variant-numeric:tabular-nums">' + state.batteryPercent + '%</span>' +
-      '</div>' +
-      '<div class="wm-clock' + (state.watchRecording ? ' rec' : '') + '">' + fmtHMS(state.elapsedSec) + '</div>' +
-      '<div class="wm-cap">' + kaCap + '</div>' +
-      '<button type="button" class="wm-btn-pri' + (state.watchRecording ? ' rec' : '') + '"' + recBtnAttr + ' onclick="watchToggleRecord()">' +
-        '<span>' + (state.watchRecording ? '■ 停止录音' : '🎙 开始录音') + '</span>' +
-      '</button>' +
-      (state.watchRecording ? '<button type="button" class="wm-btn-sec"' + markBtnAttr + ' onclick="watchAddMark()">★ 打重点 (' + state.currentMarksOffsetMs.length + ')</button>' : '') +
-      '<button type="button" class="wm-qentry"' + qBtnAttr + ' onclick="setWatchScreen(\'queue\')">' +
-        '<span style="color:' + (pendingCnt > 0 ? '#FF9F0A' : '#30D158') + '">' + (pendingCnt > 0 ? '↻' : '✓') + '</span>' +
-        '<span style="flex:1">' + (pendingCnt > 0 ? '待传 ' + pendingCnt + ' 段' : '已传 ' + syncedCnt + ' 段') + '</span>' +
-        '<span style="color:#8E8E93">›</span>' +
-      '</button>' +
-      (state.error ? '<div class="wm-note err">' + esc(state.error) + '</div>' : '<div class="wm-note">' + esc(state.watchNote) + '</div>');
-  }
+    mainEl.hidden = true;
+    connEl.hidden = false;
+    var pSw = document.getElementById("prec-sw");
+    pSw.classList.toggle("on", S.phoneRecOn);
+    pSw.setAttribute("aria-checked", String(S.phoneRecOn));
+    document.getElementById("prec-label").innerHTML = S.phoneRecOn
+      ? '<i class="recdot"></i> <span>本机录音中 · <span class="clock" id="prec-clock">' + clockHMS(S.phoneRecSec) + '</span></span>'
+      : '<span>未开启 · 手机麦克风</span>';
 
-  return '<div class="watch-shell">' +
-    '<button type="button" class="watch-crown" title="数码表冠：打重点" aria-label="数码表冠打重点" onclick="watchAddMark()"></button>' +
-    '<button type="button" class="watch-sidebtn" title="侧边键：开始/停止录音" aria-label="侧边键开关录音" onclick="watchToggleRecord()"></button>' +
-    '<div class="watch-oled' + (isAod ? ' aod' : '') + '">' +
-      '<div class="w-sysbar">' +
-        '<button type="button" style="background:none;border:none;padding:0" class="w-title-txt" onclick="setWatchScreen(\'home\')">' + sysTitle + '</button>' +
-        '<span>09:41</span>' +
-      '</div>' +
-      '<div class="w-body">' + body + '</div>' +
-    '</div>' +
-  '</div>';
-}
-
-function renderWatchArea(){
-  var mount = document.getElementById("watch-hardware-mount");
-  var grid = document.getElementById("watch-quad-grid");
-  if(state.viewMode === "watch"){
-    if(mount) mount.innerHTML = "";
-    if(grid){
-      var specs = [
-        {k:"face", t:"1. 表盘复杂功能（4 槽位点击即录）"},
-        {k:"home", t:"2. 手表录音主页（WatchMainView）"},
-        {k:"queue", t:"3. 本地离线与传输队列（WatchQueueView）"},
-        {k:"aod", t:"4. 垂腕息屏常亮保活态（AOD）"}
-      ];
-      grid.innerHTML = specs.map(function(sp){
-        return '<div class="watch-grid-item">' + buildWatchHardwareHTML(sp.k, true) + '<div class="watch-grid-lbl">' + sp.t + '</div></div>';
-      }).join("");
-    }
-  }else{
-    if(mount) mount.innerHTML = buildWatchHardwareHTML(state.watchScreen, true);
-    if(grid) grid.innerHTML = "";
+    var list = availableScanDevices();
+    document.getElementById("conn-list").innerHTML = list.map(function(d) {
+      var cls = d.kind === "watch" ? "k-watch" : d.kind === "v1" ? "k-v1" : d.kind === "kb" ? "k-kb" : "k-v2";
+      return '<div class="conn-item" data-testid="dev-item-' + esc(d.id) + '" onclick="connectDevice(\'' + esc(d.id) + '\')">'
+        + '<span class="cbadge ' + cls + '">' + esc(d.badge) + '</span>'
+        + '<span class="cn">' + esc(d.name) + '</span>'
+        + '<span class="cm">' + d.rssi + ' dBm</span>'
+        + '</div>';
+    }).join("");
   }
 }
 
-function renderSimulator(){
-  document.querySelectorAll("#reach-chips button").forEach(function(b){
-    b.classList.toggle("on", b.dataset.reach === state.reachability);
+function renderWatch() {
+  var screen = document.getElementById("watch-screen");
+  screen.classList.toggle("aod", !!S.watchAOD);
+  document.querySelectorAll('[data-testid="watch-screen-tabs"] button[data-wtab]').forEach(function(b) {
+    b.classList.toggle("on", b.dataset.wtab === S.watchTab);
   });
-  var db = document.getElementById("sim-disk-badge");
-  if(db) db.textContent = state.lowDisk ? "<20MB 告警" : "正常";
-  var mb = document.getElementById("sim-mic-badge");
-  if(mb) mb.textContent = state.micGranted ? "已允许" : "已拒绝";
-  var kb = document.getElementById("sim-ka-badge");
-  if(kb) kb.textContent = state.keepAlive;
-  var cb = document.getElementById("sim-chg-badge");
-  if(cb) cb.textContent = state.charging ? "充电中" : "未充电";
-  var phoneSheet = document.getElementById("phone-sim-sheet");
-  if(phoneSheet && phoneSheet.classList.contains("show")) syncPhoneSimMirror();
+
+  var isApp = S.watchTab === "app";
+  document.getElementById("w-face").hidden = isApp;
+  document.getElementById("w-app").hidden = !isApp;
+  document.getElementById("w-status-mini").innerHTML = S.hwRecOn
+    ? '<span class="w-dot-live"></span>正在采音'
+    : (isApp ? "手表录音卡" : "表盘组件");
+
+  // 表盘复杂功能实时刷新
+  var inlineEl = document.getElementById("comp-inline-txt");
+  var circBtn = document.getElementById("comp-circular");
+  var circState = document.getElementById("comp-circ-state");
+  var circSec = document.getElementById("comp-circ-sec");
+  var rectBadge = document.getElementById("comp-rect-badge");
+  var rectMid = document.getElementById("comp-rect-mid");
+  var rectSub = document.getElementById("comp-rect-sub");
+
+  if (S.hwRecOn) {
+    inlineEl.textContent = "REC " + clockHMS(S.hwRecSec) + " · 点击查看";
+    circBtn.classList.add("rec");
+    circState.textContent = "录音中";
+    circSec.textContent = clockMS(S.hwRecSec);
+    rectBadge.textContent = "正在采音";
+    rectMid.textContent = clockHMS(S.hwRecSec) + " · 本地直采";
+  } else {
+    inlineEl.textContent = "录音卡 · 轻触开启表盘录音";
+    circBtn.classList.remove("rec");
+    circState.textContent = "待机";
+    circSec.textContent = "开录";
+    rectBadge.textContent = S.watchQueue.length ? ("待传 " + S.watchQueue.length + " 段") : "就绪";
+    rectMid.textContent = "轻触立即开始持续录音";
+  }
+  rectSub.textContent = "待传队列 " + S.watchQueue.length + " 段 · 电量 " + S.watchBattTier;
+
+  // 手表应用页刷新
+  var connPill = document.getElementById("w-conn-pill");
+  if (S.watchLinkEnabled && S.wcsReachable) {
+    connPill.textContent = "已连通手机";
+    connPill.className = "w-pill ok";
+  } else {
+    connPill.textContent = "离线本地录";
+    connPill.className = "w-pill warn";
+  }
+  document.getElementById("w-batt-pill").textContent = "电量 " + S.watchBattTier;
+  document.getElementById("w-clock").textContent = clockHMS(S.hwRecSec);
+  document.getElementById("w-keepalive").textContent = S.hwRecOn
+    ? (S.watchLinkEnabled ? "后台持续采音中 · 每 60s 切分回传" : "仅存手表本地 · 未开启手机联动")
+    : "轻触开始 · 熄屏持续写入 .m4a";
+
+  var recBtn = document.getElementById("w-rec-btn");
+  recBtn.classList.toggle("on", S.hwRecOn);
+  recBtn.textContent = S.hwRecOn ? "停止录音" : "开始录音";
+  document.getElementById("w-mark-cnt").textContent = String(S.watchMarks);
+
+  document.getElementById("w-q-cnt").textContent = String(S.watchQueue.length);
+  var qList = document.getElementById("w-q-list");
+  if (!S.watchQueue.length) {
+    qList.innerHTML = '<div class="w-qitem"><span>无待传离线分片</span><span>AAC 32k</span></div>';
+  } else {
+    qList.innerHTML = S.watchQueue.map(function(q) {
+      return '<div class="w-qitem"><span>' + esc(q.fileName) + '</span><span>' + q.durSec + 's · 待传</span></div>';
+    }).join("");
+  }
 }
 
-function renderAll(){
-  document.body.setAttribute("data-view", state.viewMode);
-  document.querySelectorAll("[data-testid='view-mode-seg'] button").forEach(function(b){
-    b.classList.toggle("on", b.dataset.mode === state.viewMode);
-  });
-  document.querySelectorAll("#watch-screen-tabs button").forEach(function(b){
-    b.classList.toggle("on", b.dataset.wtab === state.watchScreen);
-  });
-  renderPhoneHeader();
-  renderPhoneStatusAndControls();
-  renderPhoneSlices();
-  renderWatchSheet();
-  renderWatchArea();
-  renderSimulator();
+function renderAll() {
+  setViewMode(S.viewMode);
+  renderHeaderAndNav();
+  renderTimeline();
+  if (S.subPage && S.subPage.t === "setsub" && S.subPage.id === "watch") renderSetSubWatch();
+  if (S.subPage && S.subPage.t === "detail") renderDetail(S.subPage.id);
+  renderSheet();
+  renderWatch();
+  saveState();
 }
 
-setInterval(function(){
-  var dirty = false;
-  if(state.watchRecording){
-    state.elapsedSec += 1;
-    state.sliceElapsedSec += 1;
-    if(state.sliceElapsedSec >= 60){
-      var sealed = sealCurrentSlice(60);
-      if(sealed && state.reachability === "reachable"){
-        flushPendingQueue(true);
-      }
-    }
-    dirty = true;
+function updateLiveClocks() {
+  var hwTxt = clockHMS(S.hwRecSec);
+  var phTxt = clockHMS(S.phoneRecSec);
+  var diLcd = document.getElementById("di-lcd");
+  if (diLcd) diLcd.textContent = S.phoneRecOn ? phTxt : hwTxt;
+  var diSub = document.getElementById("di-sub");
+  if (diSub && S.phoneRecOn) {
+    diSub.textContent = (S.phoneFailover ? "蓝牙断连自动接力 · " : "手机麦克风 · ") + phTxt;
   }
-  if(state.playingSliceId){
-    var pl = state.receivedSlices.find(function(x){ return x.sliceId === state.playingSliceId; });
-    var maxS = pl ? Math.max(1, Math.round(pl.durationMs/1000)) : 4;
-    if(state.playPosSec < maxS){
-      state.playPosSec += 1;
-    } else {
-      state.playingSliceId = null;
-      state.playPosSec = 0;
-    }
-    renderPhoneSlices();
+  var lc = document.getElementById("live-clock");
+  if (lc) lc.textContent = S.phoneRecOn ? phTxt : hwTxt;
+  var sc = document.getElementById("sheet-rec-clock");
+  if (sc) sc.textContent = hwTxt;
+  var pc = document.getElementById("prec-clock");
+  if (pc) pc.textContent = phTxt;
+  var wc = document.getElementById("w-clock");
+  if (wc) wc.textContent = hwTxt;
+  if (S.hwRecOn) {
+    var ci = document.getElementById("comp-inline-txt");
+    if (ci) ci.textContent = "REC " + hwTxt + " · 点击查看";
+    var cs = document.getElementById("comp-circ-sec");
+    if (cs) cs.textContent = clockMS(S.hwRecSec);
+    var rm = document.getElementById("comp-rect-mid");
+    if (rm) rm.textContent = hwTxt + " · 本地直采";
   }
-  if(dirty){
-    renderPhoneHeader();
-    renderPhoneStatusAndControls();
-    renderWatchArea();
-  }
+}
+
+setInterval(function() {
+  var changed = false;
+  if (S.hwRecOn) { S.hwRecSec += 1; changed = true; }
+  if (S.phoneRecOn) { S.phoneRecSec += 1; changed = true; }
+  if (changed) updateLiveClocks();
 }, 1000);
 
+loadState();
 renderAll();
 </script>
 </body>

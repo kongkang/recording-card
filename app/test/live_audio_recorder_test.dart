@@ -143,7 +143,8 @@ void main() {
 
     recorder.updateDeviceSessionId('1ABE9622');
     await recorder.start();
-    await Future<void>.delayed(const Duration(milliseconds: 80));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await recorder.pendingSliceWrites;
 
     // 关键验证：尚未调用 stop()（仍在录音中！），前两片 1 秒切片已经封口落盘并回调！
     expect(recorder.isRunning, isTrue);
