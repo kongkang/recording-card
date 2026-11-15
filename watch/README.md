@@ -31,6 +31,7 @@ watch/
 ├── WatchWidgets/                           # 表盘复杂功能扩展（WidgetKit）
 ├── CompanionApp/                           # 极简 iOS 伴侣端（远程控制 + 本地收音转 WAV + 试听导出）
 ├── Integration/                            # 预置主端 Flutter Runner 桥接模板（FlutterRunnerWatchBridge.swift）
+├── prototype/                              # 双端联动 1:1 HTML 设计稿（零构建单文件，对标 prototype/current.html）
 ├── scripts/                                # 图标生成与一键 TestFlight 打包脚本
 ├── project.yml                             # XcodeGen 工程描述
 ├── RecordingCardWatch.xcodeproj/           # 可直接在 Xcode 打开运行的完整工程
@@ -61,7 +62,22 @@ cd watch
 
 ---
 
-## 四、后续合入主端 `app/` 的方式
+## 四、1:1 HTML 设计稿预览（零构建）
+
+```bash
+# 直接在浏览器打开单文件设计稿，或起本地静态服务预览：
+python3 -m http.server 18923 --directory watch/prototype
+# 浏览器访问 http://127.0.0.1:18923/index.html
+
+# 运行静态与脚本编译校验：
+node watch/prototype/verify.mjs
+```
+
+- 设计稿严格沿用主端 `prototype/current.html` 视觉体系，提供「双端同屏联动 / 仅看手机版 (1:1) / 仅看手表与表盘」三种视图切换，并内置表盘 4 宫格复杂功能、Apple Watch 4 个界面与联合异常场景模拟器，方便浏览器内实时调优。
+
+---
+
+## 五、后续合入主端 `app/` 的方式
 
 若要把手表采集直接并入主端 `app/`（共享 SenseVoice 本地转写与 Timeline）：
 1. 将 `watch/WatchApp` 与 `watch/WatchWidgets` 目标及其 `Embed Watch Content` 阶段并入 `app/ios/Runner.xcodeproj`（确保 `WKCompanionAppBundleIdentifier` 设为 `com.reai.recordingcard`）；
