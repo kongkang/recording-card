@@ -2,9 +2,9 @@ import Foundation
 
 public enum WatchConstants {
     public static let appGroupId = "group.com.reai.recordingcard"
-    public static let companionBundleId = "com.reai.recordingcard.watch"
-    public static let watchAppBundleId = "com.reai.recordingcard.watch.watchkitapp"
-    public static let widgetsBundleId = "com.reai.recordingcard.watch.watchkitapp.widgets"
+    public static let companionBundleId = "com.reai.recordingcard"
+    public static let watchAppBundleId = "com.reai.recordingcard.watchkitapp"
+    public static let widgetsBundleId = "com.reai.recordingcard.watchkitapp.widgets"
     public static let toggleUrlScheme = "rcwatch://record?action=toggle"
     public static let startUrlScheme = "rcwatch://record?action=start"
     public static let stopUrlScheme = "rcwatch://record?action=stop"

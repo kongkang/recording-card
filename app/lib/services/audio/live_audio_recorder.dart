@@ -255,6 +255,10 @@ class LiveAudioRecorder extends ChangeNotifier {
   int _sliceGapCount = 0;
   Future<void> _sliceWriteChain = Future<void>.value();
 
+  /// 等待当前已封口切片的异步落盘与回调完成（仅供测试做确定性断言，不中断录音）。
+  @visibleForTesting
+  Future<void> get pendingSliceWrites => _sliceWriteChain;
+
   /// 上一块音频之后收到过断档信号：下一块必须另起一段区间。
   /// 不能只靠时间间隔判断——断档期间音频可能仍按原节奏到达，
   /// 时间上看似连续，实际中间丢过块。

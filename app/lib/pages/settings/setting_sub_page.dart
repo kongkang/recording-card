@@ -8,6 +8,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/device/card_gateway.dart';
 import '../../core/store/agent_config_store.dart';
 import '../../core/store/device_store.dart';
 import '../../core/theme/tokens.dart';
@@ -15,6 +16,7 @@ import '../../services/auth/oauth_config.dart';
 import '../../services/auth_service.dart';
 import '../../services/transcribe/asr_models.dart';
 import '../../services/transcribe/model_manager_controller.dart';
+import '../../services/watch/watch_hardware_service.dart';
 import '../../widgets/rc_switch.dart';
 import '../../widgets/store_scope.dart';
 
@@ -30,7 +32,7 @@ class SettingSubPage extends StatelessWidget {
     this.standalone = false,
   });
 
-  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'island'
+  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'island' | 'watch'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
@@ -46,6 +48,7 @@ class SettingSubPage extends StatelessWidget {
     'voiceprint' => '声纹识别',
     'ext' => '扩展能力（Skills · Tools · MCP）',
     'island' => '灵动岛与操作按钮',
+    'watch' => 'Apple Watch 联动',
     _ => '设置详情',
   };
 
@@ -133,6 +136,10 @@ class SettingSubPage extends StatelessWidget {
                     'voiceprint' => _VoiceprintBody(controller: modelManager),
                     'ext' => _AgentExtensionsBody(config: agentConfig),
                     'island' => _DynamicIslandBody(config: agentConfig),
+                    'watch' => _AppleWatchLinkBody(
+                      config: agentConfig,
+                      device: device,
+                    ),
                     _ => const SizedBox.shrink(),
                   },
                 ],
@@ -1840,6 +1847,347 @@ class _DynamicIslandBody extends StatelessWidget {
             child: Text(
               '前往系统「设置 → 操作按钮 → 快捷指令」，选择「录音卡 · 切换录音」即可一键开启或关闭录音（已连硬件时控制硬件录音并开启本机待命保底，未连硬件时控制本机录音）。',
               style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── 7) Apple Watch 联动（独立采集硬件接入）──────────────────
+
+class _AppleWatchLinkBody extends StatefulWidget {
+  const _AppleWatchLinkBody({required this.config, required this.device});
+
+  final AgentConfigStore config;
+  final DeviceStore? device;
+
+  @override
+  State<_AppleWatchLinkBody> createState() => _AppleWatchLinkBodyState();
+}
+
+class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
+  String? _hint;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final wh = widget.device?.watchHardware;
+    if (wh != null) {
+      unawaited(wh.refreshStatus());
+    }
+  }
+
+  static String _batteryTierText(WatchBridgeStatus s) {
+    if (s.isCharging) return '充电中';
+    if (s.batteryLevel <= 0) return '未知';
+    if (s.batteryLevel < 20) return '电量低';
+    if (s.batteryLevel < 40) return '电量中';
+    return '电量高';
+  }
+
+  Future<void> _toggleLink(bool next) async {
+    await widget.config.setWatchLinkEnabled(next);
+    final dev = widget.device;
+    if (dev != null) {
+      await dev.setWatchLinkEnabled(next);
+    }
+    if (!mounted) return;
+    setState(() {
+      _hint = next ? '已开启 Apple Watch 联动，可在右上角胶囊扫描连接' : '已关闭 Apple Watch 联动';
+    });
+  }
+
+  Future<void> _connectOrDisconnect() async {
+    final dev = widget.device;
+    if (dev == null) return;
+    setState(() {
+      _busy = true;
+      _hint = null;
+    });
+    try {
+      final isWatchConnected =
+          dev.isConnected && dev.activeKind == DeviceKind.appleWatch;
+      if (isWatchConnected) {
+        await dev.disconnectSafely();
+        if (mounted) {
+          setState(() => _hint = '已断开 Apple Watch 连接');
+        }
+        return;
+      }
+      if (!widget.config.watchLinkEnabled) {
+        await widget.config.setWatchLinkEnabled(true);
+        await dev.setWatchLinkEnabled(true);
+      } else {
+        await dev.watchHardware.refreshStatus();
+      }
+      final cardDev = dev.watchHardware.asCardDevice;
+      if (cardDev == null) {
+        if (mounted) {
+          setState(() => _hint = '未检测到已配对的 Apple Watch');
+        }
+        return;
+      }
+      await dev.connectTo(cardDev);
+      if (mounted) {
+        setState(() {
+          _hint = dev.isConnected && dev.activeKind == DeviceKind.appleWatch
+              ? '已将 Apple Watch 设为当前采集硬件'
+              : (dev.linkError ?? 'Apple Watch 连接未完成，请确认手表端已安装「录音卡」');
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _flushPending() async {
+    final dev = widget.device;
+    if (dev == null) return;
+    setState(() {
+      _busy = true;
+      _hint = null;
+    });
+    try {
+      final count = await dev.watchHardware.flushAndDrain();
+      if (mounted) {
+        setState(
+          () => _hint = count > 0
+              ? '已拉取 $count 段手表本地切片进入转写队列'
+              : '手表暂无待传切片',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final dev = widget.device;
+    final listenable = dev == null
+        ? widget.config
+        : Listenable.merge([widget.config, dev, dev.watchHardware]);
+    return ListenableBuilder(
+      listenable: listenable,
+      builder: (context, _) {
+        final on = widget.config.watchLinkEnabled;
+        final status = dev?.watchHardware.currentStatus;
+        final isWatchConnected =
+            dev?.isConnected == true &&
+            dev?.activeKind == DeviceKind.appleWatch;
+        final pairedText = status == null
+            ? '待检测'
+            : (!status.supported
+                  ? '当前平台不支持'
+                  : (status.paired ? '已配对' : '未配对'));
+        final installedText = status == null
+            ? '—'
+            : (status.watchAppInstalled ? '已安装' : '未安装');
+        final linkText = isWatchConnected
+            ? '已作为当前硬件接入'
+            : (status?.reachable == true ? '表端在线可达' : '离线待命（支持表端先存后传）');
+        final battText = status == null ? '未知' : _batteryTierText(status);
+        final pendingText = '${status?.pendingCount ?? 0} 段';
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: InkWell(
+                key: const Key('watch-link-toggle-row'),
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => unawaited(_toggleLink(!on)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 13,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '将 Apple Watch 作为录音硬件接入',
+                              style: TextStyle(
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w600,
+                                color: c.label,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '开启后手表与录音卡 V2 / 点一机 V1 / 语音 AI 键盘并列出现在右上角设备选单，表端仅负责轻量采集与本地缓存，切片全部在本机离线转码入库。',
+                              style: TextStyle(fontSize: 12, color: c.sec),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      KeyedSubtree(
+                        key: const Key('watch-link-switch'),
+                        child: RCSwitch(on: on),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const _SubSectionLabel('配对与协同状态'),
+            const SizedBox(height: 8),
+            Container(
+              key: const Key('watch-link-status-card'),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _WatchKvRow(label: '配对状态', value: pairedText),
+                  _WatchKvRow(label: '手表端应用', value: installedText),
+                  _WatchKvRow(label: '协同链路', value: linkText),
+                  _WatchKvRow(label: '手表电量', value: battText),
+                  _WatchKvRow(label: '本地待传队列', value: pendingText, last: true),
+                  if (status != null &&
+                      status.paired &&
+                      !status.watchAppInstalled) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      key: const Key('watch-install-guide-banner'),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: c.bg,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: c.sep),
+                      ),
+                      child: Text(
+                        '检测到已配对 Apple Watch，但表端尚未完成安装：\n'
+                        '① 开发测试版请先在手表端开启「设置 → 隐私与安全性 → 开发者模式」并按提示重启确认；\n'
+                        '② 打开 iPhone 系统「Watch」App →「我的手表」滑到底部「可用 App」→ 找到「录音卡手表」点击「安装」。',
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.5,
+                          color: c.sec,
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (_hint != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _hint!,
+                      key: const Key('watch-link-hint'),
+                      style: TextStyle(fontSize: 12, color: c.okInk),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton(
+                        key: const Key('watch-connect-btn'),
+                        onPressed: (_busy || dev == null)
+                            ? null
+                            : _connectOrDisconnect,
+                        child: Text(
+                          isWatchConnected ? '断开手表连接' : '设为当前录音硬件',
+                        ),
+                      ),
+                      OutlinedButton(
+                        key: const Key('watch-flush-btn'),
+                        onPressed: (_busy || dev == null || !on)
+                            ? null
+                            : _flushPending,
+                        child: const Text('立即拉取待传录音'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const _SubSectionLabel('表盘常驻采集配置（三步）'),
+            const SizedBox(height: 8),
+            Container(
+              key: const Key('watch-complication-guide'),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '1. 长按 Apple Watch 表盘 →「编辑」→ 选定角落、圆形、矩形或内嵌槽位，添加「录音卡」表盘组件；',
+                    style: TextStyle(fontSize: 12.5, height: 1.55, color: c.label),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '2. 抬腕轻点组件即可直接拉起手表端持续录音（HKWorkoutSession + 扩展后台保活，支持抬腕打重点 Mark）；',
+                    style: TextStyle(fontSize: 12.5, height: 1.55, color: c.label),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '3. 表端先存 .m4a 切片（无网络/断连也不断录），靠近手机自动 via WCSession 回传，并在 iPhone 本机转为 16kHz Mono PCM WAV 送入 SenseVoice 转写，原始音频不直传云端。',
+                    style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _WatchKvRow extends StatelessWidget {
+  const _WatchKvRow({
+    required this.label,
+    required this.value,
+    this.last = false,
+  });
+
+  final String label;
+  final String value;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    return Padding(
+      padding: EdgeInsets.only(bottom: last ? 0 : 8),
+      child: Row(
+        children: [
+          Text(label, style: TextStyle(fontSize: 13, color: c.sec)),
+          const Spacer(),
+          Flexible(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: c.label,
+              ),
             ),
           ),
         ],

@@ -1,8 +1,18 @@
 #if canImport(XCTest)
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 import XCTest
 @testable import WatchRecorderCore
 
 final class WatchRecorderCoreTests: XCTestCase {
+    func testBundleConstantsMatchUnifiedRecordingCardApp() {
+        XCTAssertEqual(WatchConstants.appGroupId, "group.com.reai.recordingcard")
+        XCTAssertEqual(WatchConstants.companionBundleId, "com.reai.recordingcard")
+        XCTAssertEqual(WatchConstants.watchAppBundleId, "com.reai.recordingcard.watchkitapp")
+        XCTAssertEqual(WatchConstants.widgetsBundleId, "com.reai.recordingcard.watchkitapp.widgets")
+    }
+
     func testProtocolRoundTrips() {
         let cmd = WatchControlCommand(
             commandId: "cmd-test",
@@ -97,5 +107,51 @@ final class WatchRecorderCoreTests: XCTestCase {
         XCTAssertEqual(parsed?.bitsPerSample, 16)
         XCTAssertEqual(parsed?.dataByteCount, 640)
     }
+
+#if canImport(AVFoundation)
+    func testTranscodeTo16kMonoWavRoundTrip() throws {
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("watch-transcode-xctest-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+
+        let srcURL = tmpDir.appendingPathComponent("input_48k_stereo.wav")
+        let dstURL = tmpDir.appendingPathComponent("output_16k_mono.wav")
+
+        guard let inFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 48_000,
+            channels: 2,
+            interleaved: true
+        ),
+              let buffer = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: 24_000) else {
+            XCTFail("Failed to allocate synthetic audio buffer")
+            return
+        }
+        buffer.frameLength = 24_000 // 500ms
+        do {
+            let writer = try AVAudioFile(
+                forWriting: srcURL,
+                settings: inFormat.settings,
+                commonFormat: .pcmFormatFloat32,
+                interleaved: true
+            )
+            try writer.write(from: buffer)
+        }
+
+        let durationMs = try WatchAudioSliceTranscoder.transcodeTo16kMonoWav(
+            sourceURL: srcURL,
+            destinationURL: dstURL
+        )
+        XCTAssertGreaterThanOrEqual(durationMs, 450)
+        let data = try Data(contentsOf: dstURL)
+        let hdr = WavFileCodec.parseHeader(data)
+        XCTAssertEqual(hdr?.audioFormat, 1)
+        XCTAssertEqual(hdr?.channels, 1)
+        XCTAssertEqual(hdr?.sampleRate, 16_000)
+        XCTAssertEqual(hdr?.bitsPerSample, 16)
+        XCTAssertGreaterThan(hdr?.dataByteCount ?? 0, 0)
+    }
+#endif
 }
 #endif

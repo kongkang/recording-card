@@ -6,16 +6,18 @@ on:
     paths:
       - "watch/**"
       - "!watch/prototype/**"
+      - "app/ios/**"
       - ".github/workflows/watchos.yml"
   pull_request:
     branches: [master]
     paths:
       - "watch/**"
       - "!watch/prototype/**"
+      - "app/ios/**"
       - ".github/workflows/watchos.yml"
 
 jobs:
-  verify-and-archive:
+  verify-and-build:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -36,18 +38,43 @@ jobs:
           fi
           xcrun --sdk watchos --show-sdk-path
 
+      - name: Validate plists and Xcode scheme XML
+        run: |
+          plutil -lint \
+            app/ios/Runner/Info.plist \
+            watch/WatchApp/Info.plist \
+            watch/WatchWidgets/Info.plist \
+            watch/ExportOptions.plist
+          xmllint --noout \
+            app/ios/Runner.xcodeproj/xcshareddata/xcschemes/RecordingCardWatchApp.xcscheme
+
       - name: Run WatchRecorderCore tests & verifier
         run: |
           swift test --package-path watch/Packages/WatchRecorderCore
           swift run --package-path watch/Packages/WatchRecorderCore WatchRecorderCoreVerify
 
-      - name: Build RecordingCardWatchApp (watchOS unsigned)
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.9"
+          channel: stable
+          cache: true
+
+      - name: Configure Flutter iOS & CocoaPods
+        working-directory: app
         run: |
+          flutter precache --ios
+          flutter pub get
+          flutter build ios --config-only --no-codesign
+
+      - name: Build embedded RecordingCardWatchApp + WatchWidgets (watchOS unsigned)
+        run: |
+          mkdir -p watch/build
           xcodebuild build \
-            -project watch/RecordingCardWatch.xcodeproj \
+            -project app/ios/Runner.xcodeproj \
             -scheme RecordingCardWatchApp \
             -configuration Release \
             -destination "generic/platform=watchOS" \
+            -derivedDataPath "$PWD/watch/build/dd" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -56,45 +83,52 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             CODE_SIGN_ENTITLEMENTS=""
 
-      - name: Archive RecordingCardWatchCompanion (iOS + embedded WatchApp + WatchWidgets unsigned)
+      - name: Verify embedded watchOS bundle hierarchy & unified companion ID
         run: |
-          mkdir -p build
-          xcodebuild archive \
-            -project watch/RecordingCardWatch.xcodeproj \
-            -scheme RecordingCardWatchCompanion \
-            -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath "$PWD/build/RecordingCardWatch.xcarchive" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            CODE_SIGN_ENTITLEMENTS=""
-
-      - name: Verify embedded bundle hierarchy & plist invariants
-        run: |
-          APP="$PWD/build/RecordingCardWatch.xcarchive/Products/Applications/RecordingCardWatchCompanion.app"
-          WATCH="$APP/Watch/RecordingCardWatchApp.app"
-          WIDGET="$WATCH/PlugIns/RecordingCardWatchWidgets.appex"
-          test -d "$APP"
-          test -d "$WATCH"
+          WATCH_APP="$PWD/watch/build/dd/Build/Products/Release-watchos/RecordingCardWatchApp.app"
+          WIDGET="$WATCH_APP/PlugIns/RecordingCardWatchWidgets.appex"
+          test -d "$WATCH_APP"
           test -d "$WIDGET"
 
-          COMPANION_ID=$(plutil -extract WKCompanionAppBundleIdentifier raw "$WATCH/Info.plist")
-          test "$COMPANION_ID" = "com.reai.recordingcard.watch"
+          COMPANION_ID=$(plutil -extract WKCompanionAppBundleIdentifier raw "$WATCH_APP/Info.plist")
+          echo "WKCompanionAppBundleIdentifier=$COMPANION_ID"
+          test "$COMPANION_ID" = "com.reai.recordingcard"
 
-          IOS_BUILD=$(plutil -extract CFBundleVersion raw "$APP/Info.plist")
-          WATCH_BUILD=$(plutil -extract CFBundleVersion raw "$WATCH/Info.plist")
-          WIDGET_BUILD=$(plutil -extract CFBundleVersion raw "$WIDGET/Info.plist")
-          echo "Builds: iOS=$IOS_BUILD watchOS=$WATCH_BUILD widget=$WIDGET_BUILD"
-          test "$IOS_BUILD" = "$WATCH_BUILD"
-          test "$IOS_BUILD" = "$WIDGET_BUILD"
+          WATCH_BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$WATCH_APP/Info.plist")
+          WIDGET_BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$WIDGET/Info.plist")
+          echo "BundleIDs: watch=$WATCH_BUNDLE_ID widget=$WIDGET_BUNDLE_ID"
+          test "$WATCH_BUNDLE_ID" = "com.reai.recordingcard.watchkitapp"
+          test "$WIDGET_BUNDLE_ID" = "com.reai.recordingcard.watchkitapp.widgets"
 
-      - name: Upload unsigned archive artifact
+      - name: Typecheck iOS WatchHardwareBridge against WatchRecorderCore
+        run: |
+          FLUTTER_BIN="$(which flutter)"
+          FLUTTER_ROOT="$(cd "$(dirname "$FLUTTER_BIN")/.." && pwd)"
+          FLUTTER_SIM_FW="$(find "$FLUTTER_ROOT/bin/cache/artifacts/engine" -name "Flutter.framework" -path "*simulator*" 2>/dev/null | head -n 1 || true)"
+          if [ -z "$FLUTTER_SIM_FW" ]; then
+            FLUTTER_SIM_FW="$(find "$PWD/app/ios" -name "Flutter.framework" 2>/dev/null | head -n 1 || true)"
+          fi
+          test -n "$FLUTTER_SIM_FW"
+          FLUTTER_SIM_FW_DIR="$(dirname "$FLUTTER_SIM_FW")"
+          mkdir -p watch/build/ios-tc
+          xcrun --sdk iphonesimulator swiftc \
+            -emit-module -emit-library \
+            -module-name WatchRecorderCore \
+            -target arm64-apple-ios15.0-simulator \
+            -parse-as-library \
+            -o watch/build/ios-tc/libWatchRecorderCore.dylib \
+            -emit-module-path watch/build/ios-tc/WatchRecorderCore.swiftmodule \
+            watch/Packages/WatchRecorderCore/Sources/WatchRecorderCore/*.swift
+          xcrun --sdk iphonesimulator swiftc \
+            -typecheck \
+            -target arm64-apple-ios15.0-simulator \
+            -I watch/build/ios-tc \
+            -F "$FLUTTER_SIM_FW_DIR" \
+            app/ios/Runner/WatchHardwareBridge.swift
+
+      - name: Upload unsigned watchOS build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: recording-card-watch-xcarchive
-          path: build/RecordingCardWatch.xcarchive
+          name: recording-card-watch-watchos-build
+          path: watch/build/dd/Build/Products/Release-watchos/RecordingCardWatchApp.app
           retention-days: 7

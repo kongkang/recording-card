@@ -27,7 +27,8 @@ import 'package:flutter/foundation.dart';
 enum DeviceKind {
   cardV2('card_v2', '录音卡 V2'),
   dyjV1('dyj_v1', '点一机 V1'),
-  boardV21('board_v21', '语音AI键盘 V2.1');
+  boardV21('board_v21', '语音AI键盘 V2.1'),
+  appleWatch('apple_watch', 'Apple Watch');
 
   const DeviceKind(this.code, this.displayModel);
 
@@ -73,6 +74,8 @@ enum DeviceKind {
         return DeviceKind.dyjV1;
       case 'board_v21':
         return DeviceKind.boardV21;
+      case 'apple_watch':
+        return DeviceKind.appleWatch;
       default:
         return fromBleName(fallbackName) ?? DeviceKind.cardV2;
     }
@@ -137,10 +140,23 @@ class HardwareCapabilities {
     otaMode: 'none',
   );
 
+  /// Apple Watch 独立采集硬件（WCSession 本地传片 + 表端离线缓存，无蓝牙实时 PCM 流 / Wi-Fi / 固件 OTA）。
+  static const appleWatch = HardwareCapabilities(
+    realtimeAudio: false,
+    hasOnboardStorage: true,
+    hasFileSync: true,
+    hasWifiConfig: false,
+    hasCameraMedia: false,
+    hasPhysicalRecordToggle: true,
+    hasMarkButton: true,
+    otaMode: 'none',
+  );
+
   static HardwareCapabilities forKind(DeviceKind kind) => switch (kind) {
     DeviceKind.cardV2 => cardV2,
     DeviceKind.dyjV1 => dyjV1,
     DeviceKind.boardV21 => boardV21,
+    DeviceKind.appleWatch => appleWatch,
   };
 
   factory HardwareCapabilities.fromJson(

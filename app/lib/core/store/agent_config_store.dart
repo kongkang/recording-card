@@ -222,6 +222,7 @@ class AgentConfigStore extends ChangeNotifier {
   bool developerMode = false;
   bool photoLinkEnabled = true;
   bool islandEnabled = true;
+  bool watchLinkEnabled = false;
 
   String cloudModel = 'deepseek-v3';
   bool userPickedCloudModel = false;
@@ -330,6 +331,9 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['islandEnabled'] is bool) {
       islandEnabled = data['islandEnabled'] as bool;
     }
+    if (data['watchLinkEnabled'] is bool) {
+      watchLinkEnabled = data['watchLinkEnabled'] as bool;
+    }
     if (data['model'] is String && (data['model'] as String).isNotEmpty) {
       cloudModel = data['model'] as String;
     }
@@ -399,6 +403,12 @@ class AgentConfigStore extends ChangeNotifier {
 
   Future<void> setIslandEnabled(bool value) async {
     islandEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setWatchLinkEnabled(bool value) async {
+    watchLinkEnabled = value;
     notifyListeners();
     await _save();
   }
@@ -502,6 +512,7 @@ class AgentConfigStore extends ChangeNotifier {
       if (developerMode) 'devMode': developerMode,
       'photoLinkEnabled': photoLinkEnabled,
       'islandEnabled': islandEnabled,
+      'watchLinkEnabled': watchLinkEnabled,
       'model': cloudModel,
       'pickedModel': userPickedCloudModel,
       'ctx': contextMode,

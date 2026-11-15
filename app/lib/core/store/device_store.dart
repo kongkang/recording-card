@@ -18,6 +18,7 @@ import 'package:flutter/foundation.dart';
 import '../../services/audio/live_audio_recorder.dart';
 import '../../services/audio/phone_mic_service.dart';
 import '../../services/platform/live_activity_service.dart';
+import '../../services/watch/watch_hardware_service.dart';
 import '../device/card_gateway.dart';
 import '../platform/bluetooth_permission.dart';
 
@@ -63,12 +64,20 @@ class DeviceStore extends ChangeNotifier {
     PhoneMicBackend? phoneMicBackend,
     PhoneMicRecorder? phoneMicRecorder,
     LiveActivityService? liveActivityService,
-  }) : _gateway = gateway ?? realOrUnsupported(),
+    WatchHardwareService? watchHardware,
+  }) : _bleGateway = gateway ?? realOrUnsupported(),
+       _ownsWatchHardware = watchHardware == null,
+       _watchHardware = watchHardware ?? WatchHardwareService(),
        _autoStart = autoStart,
        _phoneMicBackend = phoneMicBackend ?? PlatformPhoneMicBackend(),
        _ownsPhoneMicRecorder = phoneMicRecorder == null,
        _phoneMicRecorder = phoneMicRecorder ?? PhoneMicRecorder(),
        _liveActivityService = liveActivityService ?? LiveActivityService() {
+    _gateway = WatchCompositeCardGateway(
+      bleGateway: _bleGateway,
+      watchService: _watchHardware,
+    );
+    _watchHardware.addListener(_onWatchHardwareChanged);
     if (autoStart) {
       unawaited(restoreLink());
       _startHeartbeat();
@@ -78,7 +87,10 @@ class DeviceStore extends ChangeNotifier {
   /// 生产环境在启动时开启心跳；widget 测试传 false，避免悬挂定时器。
   final bool _autoStart;
 
-  final CardGateway _gateway;
+  final CardGateway _bleGateway;
+  final bool _ownsWatchHardware;
+  final WatchHardwareService _watchHardware;
+  late final WatchCompositeCardGateway _gateway;
   final PhoneMicBackend _phoneMicBackend;
   final bool _ownsPhoneMicRecorder;
   final PhoneMicRecorder _phoneMicRecorder;
@@ -89,14 +101,16 @@ class DeviceStore extends ChangeNotifier {
 
   /// 供其它服务复用同一条硬件链路（录音同步、诊断）。
   CardGateway get gateway => _gateway;
+  WatchHardwareService get watchHardware => _watchHardware;
+  Stream<LiveAudioSlice> get watchAudioSlices => _watchHardware.audioSlices;
 
-  /// 真实桥是否就绪。
+  /// 真实桥或已开启 Apple Watch 协同是否就绪。
   bool get liveDeviceAvailable => _gateway.available;
   bool get canScan => _gateway.available;
 
   /// 桥版本串（含 SDK 版本），排障与「关于」页使用。
   String? get bridgeVersion {
-    final gateway = _gateway;
+    final gateway = _bleGateway;
     return gateway is RealCardGateway ? gateway.bridgeVersion : null;
   }
 
@@ -176,12 +190,40 @@ class DeviceStore extends ChangeNotifier {
   static const deviceNamePrefix = 'DYJ';
 
   static bool isOurDevice(CardDevice device) =>
+      device.kind == DeviceKind.appleWatch ||
       DeviceKind.fromBleName(device.name) != null;
 
   /// RSSI → 1~3 格信号（与 Wi-Fi 列表同一套阈值，UI 直接复用）。
   static int signalOf(int? rssi) => _signalOf(rssi ?? -100);
 
-  /// 扫描附近录音卡（DYJ 前缀 + NUS 广播，过滤在 SDK 侧完成）。
+  /// 开启或关闭 Apple Watch 硬件联动；关闭时若当前正连着 Watch 则安全断开。
+  Future<void> setWatchLinkEnabled(bool enabled) async {
+    await _watchHardware.setLinkEnabled(enabled);
+    if (!enabled && isConnected && activeKind == DeviceKind.appleWatch) {
+      await disconnectSafely();
+    } else {
+      notifyListeners();
+    }
+  }
+
+  /// 主动请求 Apple Watch 冲刷本地队列并将已传回切片送入端侧管线。
+  Future<bool> flushWatchRecordingSlice() async {
+    final count = await _watchHardware.flushAndDrain();
+    return count > 0;
+  }
+
+  void _onWatchHardwareChanged() {
+    if (isConnected && activeKind == DeviceKind.appleWatch) {
+      if (_watchHardware.consumeUnexpectedDisconnect()) {
+        unawaited(_retryReconnect());
+        return;
+      }
+      _applySnapshot(_watchHardware.toSnapshot());
+    }
+    notifyListeners();
+  }
+
+  /// 扫描附近硬件（DYJ / REAI_VB 前缀蓝牙硬件 + 开启联动后的已配对 Apple Watch）。
   Future<void> startScan() async {
     if (isLinkBusy || !_gateway.available) {
       if (!_gateway.available) {
@@ -195,8 +237,9 @@ class DeviceStore extends ChangeNotifier {
     // 底层（Rust/CoreBluetooth）在扫描时会自己触发同一个系统对话框，
     // 这里若同步等 30 秒，用户看到的会是"点了扫描没反应"。
     bleAuth = await _permission.status();
-    if (bleAuth == BluetoothAuthorization.denied ||
-        bleAuth == BluetoothAuthorization.restricted) {
+    if (!_watchHardware.availableForScan &&
+        (bleAuth == BluetoothAuthorization.denied ||
+            bleAuth == BluetoothAuthorization.restricted)) {
       linkState = LinkState.disconnected;
       linkError = bleAuth.hint;
       notifyListeners();
@@ -718,8 +761,13 @@ class DeviceStore extends ChangeNotifier {
 
   int? get storageTotalMb => _storageTotalMb;
 
-  /// 设备管理层副标题：紧跟蓝牙图标，仅保留固件版本（去掉「已连接」与可用容量）。
+  /// 设备管理层副标题：紧跟蓝牙图标，仅保留固件版本（Apple Watch 标注 watchOS/WCSession 本地直连）。
   String get deviceSubtitleText {
+    if (activeKind == DeviceKind.appleWatch) {
+      return _fwVersion.isNotEmpty
+          ? '$_fwVersion · 本地直连'
+          : 'WCSession · 本地直连';
+    }
     if (_fwVersion.isEmpty) return '';
     return '固件 $_fwVersion';
   }
@@ -996,9 +1044,15 @@ class DeviceStore extends ChangeNotifier {
   }
 
   String get _hardwareActivityLabel {
+    if (activeKind == DeviceKind.appleWatch) {
+      return 'Apple Watch';
+    }
     final model = activeModelLabel.trim();
     final shortId = connectedDisplayName.trim();
-    if (model.isNotEmpty && shortId.isNotEmpty && shortId != '录音卡') {
+    if (model.isNotEmpty &&
+        shortId.isNotEmpty &&
+        shortId != '录音卡' &&
+        shortId != model) {
       return '$model $shortId';
     }
     if (model.isNotEmpty) return model;
@@ -1356,6 +1410,28 @@ class DeviceStore extends ChangeNotifier {
   /// 点击同步行 = 手动同步。
   Future<void> syncNow({bool manual = true}) async {
     if (!canSync) return;
+    if (isConnected && activeKind == DeviceKind.appleWatch) {
+      syncState = SyncState.busy;
+      syncError = null;
+      notifyListeners();
+      final epoch = _epoch;
+      try {
+        await _watchHardware.flushAndDrain();
+        if (epoch != _epoch) return;
+        _finishSync(manual ? SyncTrigger.manual : SyncTrigger.auto);
+      } on CardException catch (e) {
+        if (epoch != _epoch) return;
+        syncState = SyncState.idle;
+        syncError = e.message;
+        notifyListeners();
+      } on Object catch (e) {
+        if (epoch != _epoch) return;
+        syncState = SyncState.idle;
+        syncError = '$e';
+        notifyListeners();
+      }
+      return;
+    }
     final bleSync = onManualBleSync;
     if (bleSync != null) {
       if (isRecording) {
@@ -1992,6 +2068,10 @@ class DeviceStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    _watchHardware.removeListener(_onWatchHardwareChanged);
+    if (_ownsWatchHardware) {
+      _watchHardware.dispose();
+    }
     _clockTimer?.cancel();
     _phoneClockTimer?.cancel();
     _heartbeatTimer?.cancel();
