@@ -5,11 +5,13 @@ on:
     branches: [master]
     paths:
       - "watch/**"
+      - "!watch/prototype/**"
       - ".github/workflows/watchos.yml"
   pull_request:
     branches: [master]
     paths:
       - "watch/**"
+      - "!watch/prototype/**"
       - ".github/workflows/watchos.yml"
 
 jobs:
