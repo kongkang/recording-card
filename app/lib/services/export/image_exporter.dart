@@ -50,6 +50,10 @@ class ImageExporter {
     GlobalKey? captureKey,
     double pixelRatio = 2.0,
   }) async {
+    // 完整两部分（图文纪要 + 文字记录）直接渲染整份长图，避免屏幕截图只包含可视区域
+    if (doc.hasTwoPartStructure) {
+      return renderer.renderLongImagePng(doc);
+    }
     if (captureKey != null) {
       final captured = await _captureBoundaryPng(captureKey, pixelRatio: pixelRatio);
       if (captured != null) return captured;

@@ -38,6 +38,7 @@ Future<void> showPhotoPreviewSheet(
       return SafeArea(
         key: const Key('photo-preview-sheet'),
         child: SingleChildScrollView(
+          primary: false,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,

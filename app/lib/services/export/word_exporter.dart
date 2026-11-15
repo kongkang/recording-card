@@ -96,11 +96,23 @@ class WordExporter {
     if (doc.meta.trim().isNotEmpty) {
       _rtfParagraph(b, doc.meta.trim(), fs: 19, colorIndex: 3, spaceAfter: 260);
     }
-    if (doc.overview.trim().isNotEmpty) {
+    if (!doc.hasTwoPartStructure && doc.overview.trim().isNotEmpty) {
       _rtfParagraph(b, '概览', fs: 25, bold: true, colorIndex: 1, spaceBefore: 240, spaceAfter: 100);
       _rtfParagraph(b, doc.overview.trim(), fs: 22, colorIndex: 2, spaceAfter: 120);
     }
     for (final section in doc.visibleSections) {
+      if (section.isPartHeader) {
+        _rtfParagraph(
+          b,
+          section.heading.trim(),
+          fs: 28,
+          bold: true,
+          colorIndex: 1,
+          spaceBefore: 320,
+          spaceAfter: 140,
+        );
+        continue;
+      }
       _rtfParagraph(b, section.heading.trim(), fs: 25, bold: true, colorIndex: 1, spaceBefore: 240, spaceAfter: 100);
       final body = section.body?.trim() ?? '';
       if (body.isNotEmpty) {
@@ -122,6 +134,10 @@ class WordExporter {
           hangingIndent: 360,
           prefix: '$prefix\\tab ',
         );
+      }
+      for (final img in section.images) {
+        final label = img.caption.trim().isNotEmpty ? img.caption.trim() : img.path;
+        _rtfParagraph(b, '[现场图片] $label', fs: 19, colorIndex: 3, spaceAfter: 100);
       }
     }
     b.write('}');
@@ -198,11 +214,18 @@ class WordExporter {
     if (doc.meta.trim().isNotEmpty) {
       buffer.writeln('<p class="meta">${_escape(doc.meta.trim())}</p>');
     }
-    if (doc.overview.trim().isNotEmpty) {
+    if (!doc.hasTwoPartStructure && doc.overview.trim().isNotEmpty) {
       buffer.writeln('<h2>概览</h2>');
       buffer.writeln('<p>${_paragraphHtml(doc.overview.trim())}</p>');
     }
     for (final section in doc.visibleSections) {
+      if (section.isPartHeader) {
+        buffer.writeln(
+          '<hr style="border:none;border-top:1px solid #E4E4E0;margin:18pt 0 8pt 0;">'
+          '<h2 style="font-size:14pt;margin-top:6pt;">${_escape(section.heading.trim())}</h2>',
+        );
+        continue;
+      }
       buffer.writeln('<h2>${_escape(section.heading.trim())}</h2>');
       final body = section.body?.trim() ?? '';
       if (body.isNotEmpty) {
@@ -216,6 +239,9 @@ class WordExporter {
           buffer.writeln('<li>${_paragraphHtml(bullet)}</li>');
         }
         buffer.writeln('</$tag>');
+      }
+      for (final img in section.images) {
+        buffer.writeln(_imageHtml(img));
       }
     }
 
@@ -264,6 +290,28 @@ li { margin: 0 0 3pt 0; }
   /// 文本 → HTML 段落内容：转义 + 换行变 `<br>`。
   static String _paragraphHtml(String text) =>
       _escape(text).replaceAll('\r\n', '\n').replaceAll('\n', '<br>');
+
+  static String _imageHtml(ExportImageItem img) {
+    final label = img.caption.trim().isNotEmpty ? img.caption.trim() : img.path;
+    final path = img.path.trim();
+    if (path.isNotEmpty) {
+      try {
+        final file = File(path);
+        if (file.existsSync()) {
+          final b64 = base64Encode(file.readAsBytesSync());
+          final mime = path.toLowerCase().endsWith('.png')
+              ? 'image/png'
+              : 'image/jpeg';
+          return '<p><img src="data:$mime;base64,$b64" '
+              'style="max-width:420pt;height:auto;border-radius:6pt;" /><br>'
+              '<span class="meta">${_escape(label)}</span></p>';
+        }
+      } catch (_) {
+        // 读取本地图片失败时回退为文本图注
+      }
+    }
+    return '<p class="meta">[现场图片] ${_escape(label)}</p>';
+  }
 
   /// HTML 转义（内容来自真实用户总结，必须转义，避免把文本当成标签解析）。
   static String _escape(String text) => text

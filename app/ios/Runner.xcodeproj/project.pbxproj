@@ -33,6 +33,8 @@
 		BC1122330003000000000009 /* RecordingCardLiveActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000009 /* RecordingCardLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BC112233000300000000000A /* RCLcdDigital-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = BC112233000100000000000A /* RCLcdDigital-Regular.ttf */; };
 		BC112233000300000000000B /* RCLcdDigital-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = BC112233000100000000000A /* RCLcdDigital-Regular.ttf */; };
+		BC112233000300000000000C /* RCLcdBlink-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = BC112233000100000000000B /* RCLcdBlink-Regular.ttf */; };
+		BC112233000300000000000D /* RCLcdBlink-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = BC112233000100000000000B /* RCLcdBlink-Regular.ttf */; };
 		CD9FCA54448E50F54EB23CF7 /* AppleAssetPackBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00DA80CA6233BE9B872D8BC /* AppleAssetPackBridge.swift */; };
 		EFF522EEECFBB043C44CF98C /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FA1C2EDD4B2BFC7263509CEF /* Pods_RunnerTests.framework */; };
 		F59F8B47EA35E277F8C46242 /* BackgroundAssets.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D10D3EFC92FF071495784E60 /* BackgroundAssets.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
@@ -133,6 +135,7 @@
 		BC1122330001000000000008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BC1122330001000000000009 /* RecordingCardLiveActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RecordingCardLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC112233000100000000000A /* RCLcdDigital-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "RCLcdDigital-Regular.ttf"; path = "Fonts/RCLcdDigital-Regular.ttf"; sourceTree = "<group>"; };
+		BC112233000100000000000B /* RCLcdBlink-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "RCLcdBlink-Regular.ttf"; path = "Fonts/RCLcdBlink-Regular.ttf"; sourceTree = "<group>"; };
 		C8F37D93C7EA171FC36AAE5F /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		CC01EE02DD33FF44AA55BB66 /* Runner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Runner.entitlements; sourceTree = "<group>"; };
 		D10D3EFC92FF071495784E60 /* BackgroundAssets.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = BackgroundAssets.framework; path = System/Library/Frameworks/BackgroundAssets.framework; sourceTree = SDKROOT; };
@@ -281,6 +284,7 @@
 			children = (
 				BC1122330001000000000001 /* RecordingCardActivityAttributes.swift */,
 				BC112233000100000000000A /* RCLcdDigital-Regular.ttf */,
+				BC112233000100000000000B /* RCLcdBlink-Regular.ttf */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -465,6 +469,7 @@
 				97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */,
 				97C146FC1CF9000F007C117D /* Main.storyboard in Resources */,
 				BC112233000300000000000A /* RCLcdDigital-Regular.ttf in Resources */,
+				BC112233000300000000000C /* RCLcdBlink-Regular.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -481,6 +486,7 @@
 			files = (
 				BC1122330003000000000008 /* Assets.xcassets in Resources */,
 				BC112233000300000000000B /* RCLcdDigital-Regular.ttf in Resources */,
+				BC112233000300000000000D /* RCLcdBlink-Regular.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

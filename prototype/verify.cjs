@@ -297,8 +297,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#stickbar', x => !x.hidden));
   assert.equal(await p.$eval('#sum-title', x => x.innerText), '项目排期与客户反馈');
   assert(await p.$eval('#sum-sub', x => x.innerText.includes('条记录') && !x.innerText.includes('来源')));
-  assert.deepEqual(await p.$$eval('#stabs button', e => e.map(x => x.innerText.trim())), ['全部', '概览', '逻辑结构', '信息点', '行动项', '来源记录']);
-  assert(await secVis('sec-ov') && await secVis('sec-map') && await secVis('sec-pt') && await secVis('sec-todo') && await secVis('sec-src'));
+  assert.deepEqual(await p.$$eval('#stabs button', e => e.map(x => x.innerText.trim())), ['全部', '概览', '逻辑结构', '信息点', '行动项', '全文', '来源记录']);
+  assert(await secVis('sec-ov') && await secVis('sec-map') && await secVis('sec-pt') && await secVis('sec-todo') && await secVis('sec-ft') && await secVis('sec-src'));
+  assert(await p.$eval('[data-testid="sum-fulltext-body"]', x => x.innerText.trim().length > 10));
   // 总结结果页图文穿插（不设独立多媒体模块）：概览自然穿插单张代表图；逻辑结构关联节点配线性 icon；信息点正文内联配图
   assert.equal(await p.$('[data-testid="sum-ov-photos"]'), null, '不应渲染独立多媒体模块框');
   assert(await p.$('[data-testid="sum-ov-inline-photo"]'), '概览下方应自然穿插有价值的代表图');
@@ -422,12 +423,17 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="crumb-back"]');
   assert(await p.$eval('#p-sumres', x => x.classList.contains('show')));
 
-  // 导出：5 种格式 → 模拟调起系统分享
+  // 导出：4 种纯格式完整导出（含图文纪要与文字记录：默认 AI 智能优化版 / 可切原文）→ 模拟调起系统分享
   await p.click('[data-testid="export-btn"]');
   assert(await p.$eval('#export-pop', x => !x.hidden));
-  assert.equal(await p.$$eval('#export-pop button', e => e.length), 5);
+  assert.deepEqual(await p.$$eval('#export-pop .export-fmt-btn', e => e.map(x => x.innerText.trim())), ['PDF', 'Word 文档', 'Markdown', '图片']);
+  assert(await p.$eval('#exp-mode-ai', x => x.classList.contains('on')));
+  await p.click('#exp-mode-raw');
+  assert(await p.$eval('#exp-mode-raw', x => x.classList.contains('on')));
+  await p.click('#exp-mode-ai');
+  assert(await p.$eval('#exp-mode-ai', x => x.classList.contains('on')));
   await shot('summary-export');
-  await p.click('#export-pop button:nth-child(3)');
+  await p.click('[data-testid="export-fmt-PDF"]');
   assert(await p.$eval('#toast', x => x.classList.contains('show') && x.innerText.includes('系统分享') && x.innerText.includes('PDF')));
   assert(await p.$eval('#export-pop', x => x.hidden));
   await p.click('[data-testid="crumb-back"]');
@@ -867,6 +873,12 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$('[data-testid="sum-ov-inline-photo"]'));
   assert(await pCur.$('[data-testid="mleaf-pic-e2-0"]'));
   assert(await pCur.$('[data-testid="pt-figs-0"]'));
+  assert.deepEqual(await pCur.$$eval('#stabs button', e => e.map(x => x.innerText.trim())), ['全部', '概览', '逻辑结构', '信息点', '行动项', '全文', '来源记录']);
+  assert(await pCur.$eval('[data-testid="sum-fulltext-body"]', x => x.innerText.trim().length > 10));
+  assert.equal(await pCur.$$eval('#export-pop .export-fmt-btn', e => e.length), 4);
+  assert(await pCur.$eval('#exp-mode-ai', x => x.classList.contains('on')));
+  assert(await pCur.$('[data-testid="export-mark-speaker-btn"]'));
+  assert(await pCur.evaluate(() => diClockHTML(3660).includes('di-colon') && diClockHTML(3661).includes('dim')));
   await pCur.click('[data-testid="crumb-back"]');
   await pCur.click('[data-testid="nav-setting"]');
   await pCur.evaluate(() => { agCfg.local.spk = 'none'; syncSetSummary(); });

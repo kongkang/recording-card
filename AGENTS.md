@@ -84,6 +84,7 @@ owner 明确要求「做正式发布版，所有问题都要解决」，旧口�
 
 ## 修改约定
 
+- **「提交代码」= 全流程（commit → push → PR → merge）**：当 owner 说「提交代码」时，代表完整执行 `commit → push → PR → merge` 全流程（仅当 owner 明确指定「先做 commit / 仅本地 commit」时才只执行本地 `git commit`）。
 - Flutter 侧测试锚点用 `Key('data-testid 同名')`：`prototype/verify.cjs` 的 `data-testid` 是需求语义，App 与测试两侧改名必须同步。
 - 验收流程顺序与页面导航强相关（如：详情页内先看原始数据再返回），改交互流时同步改测试。
 - Flutter 改完必跑 `cd app && flutter analyze && flutter test`，结果如实贴出；失败不隐瞒。
@@ -93,6 +94,5 @@ owner 明确要求「做正式发布版，所有问题都要解决」，旧口�
 - 转写/润色的时间语义一律用「相对录音起点的毫秒」存储，展示时再叠加设备 `start_at`；不用本地墙钟推算设备时间。
 - Rust 桥构建必须用 rustup 工具链（`app/rust/build-ios.sh` 已固定 1.94.0）：本机 PATH 里 Homebrew 的 rustc 会遮住 rustup，而它没有 iOS std。
 - SDK 未决项（固件 OTA 接口、Wi-Fi 是否仅 2.4GHz）不编造：按设计稿交互实现 + 代码 `TODO` + `docs/SDK-CAPABILITY.md` 对照表登记，不阻塞主线。
-- 阶段性保存：commit → push → PR → merge。
 - OAuth 借鉴 reai_mobile_app：`lib/core/config/auth_mode.dart`、`lib/core/config/remote/endpoint_resolver.dart`、`lib/core/config/remote/client_config.dart`、`lib/main_mobile.dart`；登录 UI 按真实上线形态做，凭据/端点配置走 `--dart-define`。
 - CI 使用规范：本仓库开源（GNU AGPL-3.0），GitHub Actions CI 主要用于构建打包、自动测试与版本分发，请正常、克制地使用 CI 资源（避免高频空跑、死循环触发或无关大产物缓存滥用）。

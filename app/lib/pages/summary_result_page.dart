@@ -12,6 +12,7 @@ import '../core/store/app_store.dart';
 import '../services/export/export.dart';
 import '../core/theme/tokens.dart';
 import '../widgets/photo_preview_sheet.dart';
+import '../widgets/speaker_mark_sheet.dart';
 import '../widgets/store_scope.dart';
 
 /// 吸顶 Tab 栏高度（原型 .stabs 行高 46）。
@@ -31,7 +32,7 @@ class SummaryResultPage extends StatefulWidget {
 }
 
 class _SummaryResultPageState extends State<SummaryResultPage> {
-  final _scroll = ScrollController();
+  final _fallbackScroll = ScrollController();
   final _sectionKeys = <String, GlobalKey>{};
 
   /// 结果态标题块（标题 + 统计行）的实测高度：目录钮的吸附位置由它决定。
@@ -47,13 +48,13 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
     if ((h - _titleH).abs() > 0.5) setState(() => _titleH = h);
   }
 
-  String _tab = 'all'; // all | ov | map | pt | todo | src
+  String _tab = 'all'; // all | ov | map | pt | todo | ft | src
   final Map<int, bool> _ptOpen = {};
   final Set<int> _todosDone = {};
 
   @override
   void dispose() {
-    _scroll.dispose();
+    _fallbackScroll.dispose();
     super.dispose();
   }
 
@@ -252,6 +253,7 @@ class _ResultView extends StatelessWidget {
     ('map', '逻辑结构'),
     ('pt', '信息点'),
     ('todo', '行动项'),
+    ('ft', '全文'),
     ('src', '来源记录'),
   ];
 
@@ -274,11 +276,13 @@ class _ResultView extends StatelessWidget {
     // 原型 .stickbar + .tochold：目录钮是内容区里的 sticky 元素——未滚动时压在
     // 「概览」这一行右侧，向上滚动到与 Tab 栏同一卡点时跟 Tab 一起钉住
     // （距 Tab 栏下沿 10px），而不是永远钉在屏幕同一位置去盖住 Tab。
+    final primaryCtrl = PrimaryScrollController.maybeOf(context);
+    final scrollCtrl = primaryCtrl ?? page._fallbackScroll;
     return AnimatedBuilder(
-      animation: page._scroll,
+      animation: scrollCtrl,
       builder: (context, _) {
-        final offset = page._scroll.hasClients
-            ? page._scroll.position.pixels
+        final offset = scrollCtrl.positions.length == 1
+            ? scrollCtrl.position.pixels
             : 0.0;
         final natural = page._titleH + _kTabsH - offset + 10;
         final tocTop = math.max(_kTabsH + 10, natural);
@@ -288,7 +292,8 @@ class _ResultView extends StatelessWidget {
               key: _exportCaptureKey,
               child: CustomScrollView(
                 key: const Key('sum-scroll'),
-                controller: page._scroll,
+                primary: primaryCtrl != null,
+                controller: primaryCtrl != null ? null : page._fallbackScroll,
                 slivers: [
                   SliverToBoxAdapter(
                     child: Padding(
@@ -509,11 +514,20 @@ class _ResultView extends StatelessWidget {
     bool show(String k) => page._tab == 'all' || page._tab == k;
     final allPhotos = _allActivePhotos(store);
     final leafMatches = _leafPhotoMatches(store, allPhotos);
+    final sourceEvents = [
+      for (final id in card.srcIds) ?store.eventByIdOrNull(id),
+    ];
+    final markableSpeakers = store.speakerEntriesForEvents(sourceEvents);
+    final fullText = card.resolvedFullText(
+      sourceEvents,
+      speakerResolver: store.displaySpeaker,
+      aliasTextTransformer: store.applySpeakerAliasesToText,
+    );
     return [
       if (show('ov'))
         _section('sec-ov', '概览', [
           Text(
-            card.overview ?? '',
+            store.applySpeakerAliasesToText(card.overview ?? '', sourceEvents),
             style: const TextStyle(fontSize: 14, height: 1.6),
           ),
           if (allPhotos.isNotEmpty) ...[
@@ -541,6 +555,7 @@ class _ResultView extends StatelessWidget {
               index: i,
               point: card.points[i],
               photos: _photosForPoint(store, card.points[i]),
+              sourceEvents: sourceEvents,
             ),
         ]),
       if (show('todo'))
@@ -573,7 +588,10 @@ class _ResultView extends StatelessWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        card.todos[i],
+                        store.applySpeakerAliasesToText(
+                          card.todos[i],
+                          sourceEvents,
+                        ),
                         style: const TextStyle(fontSize: 14),
                       ),
                     ),
@@ -581,6 +599,67 @@ class _ResultView extends StatelessWidget {
                 ),
               ),
             ),
+        ]),
+      if (show('ft'))
+        _section('sec-ft', '全文', [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'AI 智能优化版 · 保持原意并去除口水词与错别字',
+                    style: TextStyle(fontSize: 12, color: RCColors.sec),
+                  ),
+                ),
+                if (markableSpeakers.isNotEmpty)
+                  TextButton.icon(
+                    key: const Key('sum-mark-speaker-btn'),
+                    onPressed: () => showSpeakerMarkSheet(
+                      context,
+                      store: store,
+                      events: sourceEvents,
+                    ),
+                    icon: const Icon(
+                      Icons.record_voice_over_outlined,
+                      size: 15,
+                    ),
+                    label: const Text('标记说话人'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: RCColors.okInk,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      textStyle: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Container(
+            key: const Key('sum-fulltext-body'),
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: RCColors.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: RCColors.sep),
+            ),
+            child: SelectableText(
+              fullText.trim().isNotEmpty ? fullText : '暂无可拼接的来源转写文本',
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.65,
+                color: fullText.trim().isNotEmpty ? RCColors.ink : RCColors.sec,
+              ),
+            ),
+          ),
         ]),
       if (show('src'))
         _section('sec-src', '来源记录', [
@@ -705,7 +784,7 @@ class _ResultView extends StatelessWidget {
   }
 }
 
-/// 导出按钮：菜单锚定在按钮自身位置；5 种格式 → 模拟调起系统分享
+/// 导出按钮：4 种格式仅格式区分（均含第一部分图文纪要 + 第二部分文字记录），支持「AI 智能优化版 / 原文」切换与标记说话人。
 class _ExportButton extends StatefulWidget {
   const _ExportButton({required this.card});
 
@@ -715,16 +794,46 @@ class _ExportButton extends StatefulWidget {
   State<_ExportButton> createState() => _ExportButtonState();
 }
 
+typedef _ExportPick = ({
+  String label,
+  ExportFormat format,
+  TranscriptExportMode mode,
+});
+
 class _ExportButtonState extends State<_ExportButton> {
   bool _busy = false;
 
-  static const _formats = <String, ExportFormat>{
-    '完整文档': ExportFormat.fullDoc,
-    'Markdown': ExportFormat.markdown,
-    'PDF': ExportFormat.pdf,
-    '图片': ExportFormat.image,
-    'Word 文档': ExportFormat.word,
-  };
+  static const _formats = <({
+    String label,
+    String desc,
+    ExportFormat format,
+    IconData icon,
+  })>[
+    (
+      label: 'PDF',
+      desc: 'A4 排版 · 含第一部分图文纪要与第二部分文字记录',
+      format: ExportFormat.pdf,
+      icon: Icons.picture_as_pdf_outlined,
+    ),
+    (
+      label: 'Word 文档',
+      desc: '.doc 文档 · Word / WPS / Pages 均可打开',
+      format: ExportFormat.word,
+      icon: Icons.description_outlined,
+    ),
+    (
+      label: 'Markdown',
+      desc: '纯文本标记 · 含场景图引用与完整记录',
+      format: ExportFormat.markdown,
+      icon: Icons.article_outlined,
+    ),
+    (
+      label: '图片',
+      desc: '完整长图 PNG · 图文纪要与文字记录一图输出',
+      format: ExportFormat.image,
+      icon: Icons.image_outlined,
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -749,35 +858,304 @@ class _ExportButtonState extends State<_ExportButton> {
   }
 
   Future<void> _open(BuildContext context) async {
-    final size = MediaQuery.of(context).size;
+    final store = StoreScope.of(context);
     final messenger = ScaffoldMessenger.of(context);
-    final chosen = await showMenu<String>(
+    var mode = TranscriptExportMode.aiOptimized;
+
+    final picked = await showModalBottomSheet<_ExportPick>(
       context: context,
-      // 页头右上锚定（导出按钮位于滚动流内，随内容滚动，菜单用固定位置防跑偏）
-      position: RelativeRect.fromSize(
-        Rect.fromLTWH(size.width - 186, 96, 170, 36),
-        size,
+      useRootNavigator: true,
+      isScrollControlled: true,
+      backgroundColor: RCColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
-      items: [
-        for (final f in _formats.keys)
-          PopupMenuItem(
-            value: f,
-            child: Text(f, key: Key('export-item-$f')),
-          ),
-      ],
+      clipBehavior: Clip.antiAlias,
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheetState) {
+          return ListenableBuilder(
+            listenable: store,
+            builder: (sheetCtx, _) {
+              final sourceEvents = [
+                for (final id in widget.card.srcIds) ?store.eventByIdOrNull(id),
+              ];
+              final speakerEntries = store.speakerEntriesForEvents(sourceEvents);
+              return SafeArea(
+                top: false,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(sheetCtx).size.height * 0.85,
+                  ),
+                  child: SingleChildScrollView(
+                    key: const Key('export-sheet'),
+                    primary: false,
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                '导出完整内容',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => Navigator.pop(sheetCtx),
+                              icon: const Icon(Icons.close, size: 20),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 28,
+                                height: 28,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const Text(
+                          '均含第一部分「图文纪要」与第二部分「文字记录」',
+                          style: TextStyle(fontSize: 12, color: RCColors.sec),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          '文字记录版本',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: RCColors.sec,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            for (final entry in const [
+                              (
+                                mode: TranscriptExportMode.aiOptimized,
+                                key: Key('export-mode-ai'),
+                                label: 'AI 智能优化版',
+                              ),
+                              (
+                                mode: TranscriptExportMode.rawOriginal,
+                                key: Key('export-mode-raw'),
+                                label: '原文',
+                              ),
+                            ]) ...[
+                              Expanded(
+                                child: InkWell(
+                                  key: entry.key,
+                                  borderRadius: BorderRadius.circular(10),
+                                  onTap: () => setSheetState(() => mode = entry.mode),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 8,
+                                    ),
+                                      decoration: BoxDecoration(
+                                        color: mode == entry.mode
+                                            ? RCColors.ok.withValues(alpha: 0.12)
+                                            : RCColors.bg,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: mode == entry.mode
+                                            ? RCColors.ok
+                                            : RCColors.sep,
+                                      ),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Text(
+                                      entry.label,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: mode == entry.mode
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
+                                        color: mode == entry.mode
+                                            ? RCColors.okInk
+                                            : RCColors.ink,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (entry.mode == TranscriptExportMode.aiOptimized)
+                                const SizedBox(width: 8),
+                            ],
+                          ],
+                        ),
+                        if (speakerEntries.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: RCColors.bg,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: RCColors.sep),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    speakerEntries
+                                        .map(
+                                          (s) => s.currentAlias.isNotEmpty
+                                              ? '${s.slot}→${s.currentAlias}'
+                                              : '${s.slot}（推测）',
+                                        )
+                                        .join(' · '),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: RCColors.sec,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                TextButton(
+                                  key: const Key('export-mark-speaker-btn'),
+                                  onPressed: () => showSpeakerMarkSheet(
+                                    sheetCtx,
+                                    store: store,
+                                    events: sourceEvents,
+                                  ),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: RCColors.okInk,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                    textStyle: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  child: const Text('标记说话人'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        const Text(
+                          '选择导出格式',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: RCColors.sec,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        for (final f in _formats)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Material(
+                              color: RCColors.bg,
+                              borderRadius: BorderRadius.circular(10),
+                              clipBehavior: Clip.antiAlias,
+                              child: InkWell(
+                                key: Key('export-item-${f.label}'),
+                                onTap: () => Navigator.pop(
+                                  sheetCtx,
+                                  (
+                                    label: f.label,
+                                    format: f.format,
+                                    mode: mode,
+                                  ),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        f.icon,
+                                        size: 18,
+                                        color: RCColors.ink,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              f.label,
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            Text(
+                                              f.desc,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontSize: 11,
+                                                color: RCColors.sec,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const Icon(
+                                        Icons.chevron_right,
+                                        size: 18,
+                                        color: RCColors.sec,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
-    if (chosen == null) return;
-    final format = _formats[chosen]!;
+    if (picked == null || !mounted) return;
 
     setState(() => _busy = true);
     try {
-      final doc = exportDocumentFromSummary(widget.card);
-      // 图片导出用页面根锚点截屏；其它格式不需要
-      final captureKey = format == ExportFormat.image
+      final sourceEvents = [
+        for (final id in widget.card.srcIds) ?store.eventByIdOrNull(id),
+      ];
+      final doc = exportDocumentFromSummary(
+        widget.card,
+        sourceEvents: sourceEvents,
+        transcriptMode: picked.mode,
+        photosResolver: (ev) => [
+          for (final p in store.activePhotosForEvent(ev))
+            ExportImageItem(
+              path: p.path,
+              caption: '${ev.title} · 现场照片（${p.time}）',
+            ),
+        ],
+        speakerResolver: store.displaySpeaker,
+        aliasTextTransformer: store.applySpeakerAliasesToText,
+      );
+      final captureKey = picked.format == ExportFormat.image
           ? captureKeyForExport()
           : null;
       final result = await ExportService().export(
-        format,
+        picked.format,
         doc,
         captureKey: captureKey,
       );
@@ -786,7 +1164,7 @@ class _ExportButtonState extends State<_ExportButton> {
         ..showSnackBar(
           SnackBar(
             content: Text(
-              '已导出 ${result.path.split('/').last}',
+              '已生成 ${picked.label}（${picked.mode.label}）· 调起系统分享：${result.path.split('/').last}',
               key: const Key('toast'),
             ),
             duration: const Duration(milliseconds: 2000),
@@ -842,6 +1220,7 @@ class _StickyTabs extends SliverPersistentHeaderDelegate {
               child: SingleChildScrollView(
                 key: const Key('stab-strip'),
                 scrollDirection: Axis.horizontal,
+                primary: false,
                 child: Row(
                   children: [
                     for (final (k, label) in tabs)
@@ -901,7 +1280,8 @@ void _showInlinePhotoPreview(
   String? quote;
   if (item.event.dialog.isNotEmpty) {
     final first = item.event.dialog.first;
-    quote = '说话人 ${first.spk}：${first.text}';
+    final store = StoreScope.of(context);
+    quote = '${store.displaySpeaker(item.event, first.spk)}：${first.text}';
   }
   showPhotoPreviewSheet(
     context,
@@ -1146,11 +1526,13 @@ class _PointTile extends StatelessWidget {
     required this.index,
     required this.point,
     this.photos = const [],
+    this.sourceEvents = const [],
   });
   final _SummaryResultPageState page;
   final int index;
   final InfoPoint point;
   final List<_ContextualPhoto> photos;
+  final List<RecordEvent> sourceEvents;
 
   @override
   Widget build(BuildContext context) {
@@ -1175,7 +1557,10 @@ class _PointTile extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      point.title,
+                      store.applySpeakerAliasesToText(
+                        point.title,
+                        sourceEvents,
+                      ),
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -1208,7 +1593,10 @@ class _PointTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    point.detail,
+                    store.applySpeakerAliasesToText(
+                      point.detail,
+                      sourceEvents,
+                    ),
                     key: Key('pt-d-$index'),
                     style: const TextStyle(fontSize: 13, height: 1.6),
                   ),
@@ -1278,6 +1666,7 @@ class _TocButton extends StatelessWidget {
     ('sec-map', '逻辑结构'),
     ('sec-pt', '信息点'),
     ('sec-todo', '行动项'),
+    ('sec-ft', '全文'),
     ('sec-src', '来源记录'),
   ];
 

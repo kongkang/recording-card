@@ -10,11 +10,16 @@ library;
 export 'document_layout.dart'
     show DocBlock, DocBlockKind, buildDocBlocks, buildDocBlocksFromMarkdown, stripInlineMarkdown;
 export 'document_renderer.dart' show DocumentPageOptions, DocumentRenderer, LongImageOptions;
-export 'export_document.dart' show ExportDocument, ExportSection;
+export 'export_document.dart'
+    show
+        ExportDocument,
+        ExportImageItem,
+        ExportSection,
+        TranscriptExportMode,
+        TranscriptExportModeInfo;
 export 'export_exception.dart' show ExportException;
 export 'export_naming.dart' show buildExportFileName, exportTimestamp, sanitizeFileNamePart;
 export 'export_service.dart' show ExportFormat, ExportFormatInfo, ExportResult, ExportService;
-export 'full_doc_exporter.dart' show FullDocExporter;
 export 'image_exporter.dart' show ImageExporter;
 export 'markdown_exporter.dart' show MarkdownExporter;
 export 'pdf_assembler.dart' show PdfAssembler;

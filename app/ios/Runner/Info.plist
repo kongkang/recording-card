@@ -76,6 +76,7 @@
 	<key>UIAppFonts</key>
 	<array>
 		<string>RCLcdDigital-Regular.ttf</string>
+		<string>RCLcdBlink-Regular.ttf</string>
 	</array>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>录音卡仅读取你在录音时间段内拍摄的系统相册照片，将其按拍摄时间插入对应录音对话详情中，不会访问其它时间段照片，也不会未经允许上传。</string>
