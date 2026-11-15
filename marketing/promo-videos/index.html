@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>录音卡 · 15 支跨风格跨人群高转化宣传片矩阵</title>
+<style>
+  :root {
+    --bg: #090b10;
+    --panel: #121621;
+    --panel-2: #181e2c;
+    --border: rgba(255,255,255,0.10);
+    --ink: #f8fafc;
+    --sub: #94a3b8;
+    --accent: #3b82f6;
+    --gold: #e5b869;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: radial-gradient(circle at 50% -10%, rgba(59,130,246,0.18), transparent 45%), var(--bg);
+    color: var(--ink);
+    padding-bottom: 72px;
+  }
+  header {
+    max-width: 1380px;
+    margin: 0 auto;
+    padding: 44px 28px 24px;
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--gold);
+    background: rgba(229,184,105,0.12);
+    border: 1px solid rgba(229,184,105,0.32);
+    padding: 6px 14px;
+    border-radius: 999px;
+  }
+  h1 {
+    font-size: clamp(28px, 3.6vw, 44px);
+    margin: 16px 0 10px;
+    letter-spacing: -0.02em;
+  }
+  .lead {
+    color: var(--sub);
+    font-size: 16px;
+    line-height: 1.65;
+    max-width: 920px;
+    margin: 0 0 26px;
+  }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    background: rgba(18,22,33,0.85);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    position: sticky;
+    top: 14px;
+    z-index: 30;
+  }
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .tab {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--sub);
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .18s ease;
+  }
+  .tab:hover { color: var(--ink); border-color: rgba(255,255,255,0.25); }
+  .tab.active {
+    background: var(--ink);
+    color: #090b10;
+    border-color: var(--ink);
+  }
+  .stats {
+    font-size: 13px;
+    color: var(--sub);
+  }
+  .grid {
+    max-width: 1380px;
+    margin: 24px auto 0;
+    padding: 0 28px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(390px, 1fr));
+    gap: 22px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: transform .2s ease, border-color .2s ease;
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(255,255,255,0.24);
+  }
+  .stage {
+    position: relative;
+    background: #040609;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 16 / 9;
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .stage video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+  }
+  .badge-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .num-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.07);
+  }
+  .aspect-pill {
+    font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 3px 9px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    color: var(--sub);
+  }
+  .body {
+    padding: 18px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
+  .title {
+    font-size: 20px;
+    font-weight: 800;
+    margin: 0 0 6px;
+  }
+  .persona {
+    font-size: 13.5px;
+    color: #cbd5e1;
+    margin-bottom: 4px;
+  }
+  .meta {
+    font-size: 12.5px;
+    color: var(--sub);
+    margin-bottom: 14px;
+  }
+  .copy-box {
+    background: var(--panel-2);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 12px;
+    padding: 11px 13px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: #e2e8f0;
+    margin-bottom: 14px;
+  }
+  details {
+    margin-bottom: 14px;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 10px;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.02);
+  }
+  summary {
+    cursor: pointer;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--sub);
+  }
+  .script-list {
+    margin: 10px 0 2px;
+    padding-left: 16px;
+    font-size: 12.5px;
+    color: #cbd5e1;
+    line-height: 1.6;
+  }
+  .actions {
+    margin-top: auto;
+    display: flex;
+    gap: 10px;
+  }
+  .btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 9px 12px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.05);
+    color: var(--ink);
+    transition: background .15s ease;
+  }
+  .btn:hover { background: rgba(255,255,255,0.12); }
+  .btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .btn.primary:hover { filter: brightness(1.08); }
+  #toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: #10b981;
+    color: #04130d;
+    font-weight: 700;
+    font-size: 13.5px;
+    padding: 10px 20px;
+    border-radius: 999px;
+    opacity: 0;
+    pointer-events: none;
+    transition: all .22s ease;
+    z-index: 99;
+  }
+  #toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="eyebrow">Recording Card · 20 Promo Videos Matrix (15 Motion + 5 Live-Action)</span>
+  <h1>录音卡 · 20 支全矩阵宣传片展映墙（含 5 支真人实景大片）</h1>
+  <p class="lead">
+    涵盖 <strong>5 支 35mm 真人实景电影感商业大片（#16–#20）</strong> 与 <strong>15 支跨风格跨人群高转化动效宣传片（#01–#15）</strong>，覆盖 <strong>12 支 16:9 横屏大片</strong> 与 <strong>8 支 9:16 竖屏信息流爆款</strong>。全片采用真人感神经网络配音、独立编曲 BGM、自动闪避混音与零 TBC 真实产品界面实拍，聚焦轻量化本地模型与原始音频留存本机体验。
+  </p>
+  <div class="toolbar">
+    <div class="tabs">
+      <button class="tab active" data-filter="all">全部成片 (20)</button>
+      <button class="tab" data-filter="live-action">🎬 真人实景大片 (5)</button>
+      <button class="tab" data-filter="motion-design">✨ 风格动效大片 (15)</button>
+      <button class="tab" data-filter="16:9">16:9 横屏 (12)</button>
+      <button class="tab" data-filter="9:16">9:16 竖屏 (8)</button>
+    </div>
+    <div class="stats">编码规格：1080p @ 30fps · H.264 High + AAC 192kbps · 真人实景 + 真实界面实拍</div>
+  </div>
+</header>
+
+<main class="grid" id="grid"></main>
+<div id="toast">已复制社交媒体投放文案</div>
+
+<script>
+const VIDEOS = [{"id":"v01","num":"01","slug":"01-exec-keynote","title":"决策不留隔夜债","persona":"企业高管 · 创始人 · 连续创业者","channel":"官网首屏 / 微信视频号横版 / 商业路演","aspect":"16:9","category":"motion-design","width":1920,"height":1080,"durationSec":30.3,"styleName":"Obsidian Keynote · 黑金流光发布会风","engine":"keynote-gold","palette":{"bg1":"#07080B","bg2":"#11141C","surface":"#171B24","ink":"#F7F8FA","sub":"#949BA8","accent":"#E5B869","accent2":"#3B82F6","dark":true},"voice":{"name":"zh-CN-YunyangNeural","rate":"+6%","pitch":"-2Hz","roleDesc":"沉稳权威高管男声"},"music":{"bpm":108,"rootMidi":45,"scale":"minor","feel":"cinematic"},"ctaButton":"立即下载「录音卡」App","ctaSub":"无硬件手机直录 · 连卡零功耗保底","socialCopy":"一天连开六场决策会，别让拍板的结论散会就走样。#录音卡 #CEO效率工具 #AI会议纪要","scenes":[{"act":"hook","startSec":0,"endSec":4.953,"vo":"一天连开六场决策会，散会后，谁还记得拍板的每一个细节？","headline":"一天六场决策会 / 散会谁来还原拍板细节？"},{"act":"reveal","startSec":4.953,"endSec":11.454,"vo":"打开录音卡 App，没带硬件也能手机一键开录；连上录音卡，灵动岛实时跳字。","headline":"无硬件，手机即刻开录 / 连上卡片，灵动岛从容值守"},{"act":"proof1","startSec":11.454,"endSec":17.159,"vo":"每一分钟自动切片本地转写，会议还没结束，时间轴已经整齐成稿。","headline":"每 1 分钟自动出稿 / 会议未散，脉络已清"},{"act":"proof2","startSec":17.159,"endSec":22.978,"vo":"勾选记录，六秒提炼概览、逻辑结构与行动项，一键导出发给团队。","headline":"6 秒提炼决策与行动项 / 五种格式一键分发全员"},{"act":"cta","startSec":22.978,"endSec":30.3,"vo":"重要决策不留隔夜债。立即下载录音卡 App，开完会，结论已就绪。","headline":"录音卡 / 开完会，结论已就绪。"}]},{"id":"v02","num":"02","slug":"02-pm-bento","title":"评审两小时，纪要六秒钟","persona":"产品经理 · 项目 Leader · 敏捷研发团队","channel":"B站科技区 / 知乎 / 即刻 / Product Hunt","aspect":"16:9","category":"motion-design","width":1920,"height":1080,"durationSec":35.2,"styleName":"Swiss Bento Grid · 极简瑞士网格风","engine":"bento-swiss","palette":{"bg1":"#F8FAFC","bg2":"#EEF2F7","surface":"#FFFFFF","ink":"#0F172A","sub":"#64748B","accent":"#2563EB","accent2":"#10B981","dark":false},"voice":{"name":"zh-CN-XiaoxiaoNeural","rate":"+10%","pitch":"+0Hz","roleDesc":"干练利落产品女声"},"music":{"bpm":120,"rootMidi":48,"scale":"major","feel":"techhouse"},"ctaButton":"免费下载「录音卡」App","ctaSub":"图文对齐纪要 · 一键导出 Markdown","socialCopy":"需求评审开了两小时，白板拍了八张图，以前写纪要写到头秃，现在6秒直出图文PRD！#产品经理 #效率神器","scenes":[{"act":"hook","startSec":0,"endSec":6.153,"vo":"需求评审两小时，白板拍了八张图，下班还要对着录音苦熬写纪要？","headline":"评审 2 小时，写纪要 2 小时？ / 别再用加班填平会议黑洞"},{"act":"reveal","startSec":6.153,"endSec":13.891,"vo":"试试录音卡！边开会边拍照，白板和方案截图按秒级时间窗自动嵌进对话流。","headline":"白板随手拍，自动嵌进对话流 / 哪一分钟拍的图，严丝合缝"},{"act":"proof1","startSec":13.891,"endSec":20.99,"vo":"生成总结时，关键画面自然穿插在概览与逻辑树里，每条结论都能点回原话。","headline":"图文穿插总结 + 逻辑结构树 / 每条排期改动，一键溯源原话"},{"act":"proof2","startSec":20.99,"endSec":27.963,"vo":"六大核心能力同屏就位，支持一键导出纯净 Markdown，直接贴进飞书或 Notion。","headline":"直出纯净 Markdown / PDF / Word / 无缝接入你的飞书与 Notion"},{"act":"cta","startSec":27.963,"endSec":35.2,"vo":"把加班还给生活。现在免费下载录音卡 App，下一场评审立刻爽到！","headline":"录音卡 / 评审刚散场，纪要已发群。"}]},{"id":"v03","num":"03","slug":"03-privacy-geek","title":"声音锁死本机，断网照样转写","persona":"极客开发者 · 安全架构师 · 商业机密敏感人群","channel":"V2EX / GitHub / X / B站硬核数码","aspect":"16:9","category":"motion-design","width":1920,"height":1080,"durationSec":34.467,"styleName":"Night Signal Architecture · 暗黑终端架构风","engine":"cyber-diagram","palette":{"bg1":"#060A0F","bg2":"#0B131D","surface":"#101B28","ink":"#E6F1FF","sub":"#7D92A8","accent":"#2EE6A6","accent2":"#FF4D5E","dark":true},"voice":{"name":"zh-CN-YunxiNeural","rate":"+8%","pitch":"-3Hz","roleDesc":"冷静硬核极客男声"},"music":{"bpm":116,"rootMidi":40,"scale":"minor","feel":"darkpulse"},"ctaButton":"下载「录音卡」· 守护音频主权","ctaSub":"轻量化本地模型 · 极致压缩 · 音频锁死本机","socialCopy":"为什么我卸掉了所有强制上传录音的App？录音卡内置极致压缩的轻量化本地模型，流畅省电不占空间，原始音频100%留在手机本地，开飞行模式照样秒出逐字稿。#隐私安全 #端侧离线","scenes":[{"act":"hook","startSec":0,"endSec":5.367,"vo":"你敢把涉及源码架构、融资底牌的录音，上传到别人的云端服务器吗？","headline":"你的私密录音， / 正在喂给谁的云服务器？"},{"act":"reveal","startSec":5.367,"endSec":14.318,"vo":"录音卡内置极致压缩的轻量化本地模型，秒速唤醒、省电流畅，所有原始音频数据全程留在你的手机本地。","headline":"轻量化本地模型 · 音频不出本机 / 极致压缩体积，流畅省电不占空间"},{"act":"proof1","startSec":14.318,"endSec":20.576,"vo":"哪怕开着飞行模式，地下室完全断网，照样每分钟离线转出清晰文字稿。","headline":"开启飞行模式 · 断网照样出稿 / 无惧地下室、机舱与保密室"},{"act":"proof2","startSec":20.576,"endSec":27.951,"vo":"云端仅在你需要总结时传输纯文本，还支持一键彻底关闭云端，或接入你自建的私有网关。","headline":"云端可一键硬关闭 · 支持私有 API / 安全边界，完全由你掌控"},{"act":"cta","startSec":27.951,"endSec":34.467,"vo":"真正值得信赖的工具，从不窥探你的原声。立即下载录音卡 App。","headline":"录音卡 / 声音锁在本机，安全无需妥协。"}]},{"id":"v04","num":"04","slug":"04-lawyer-consult","title":"字字有据，一秒跳回原声","persona":"执业律师 · 管理咨询顾问 · 投行审计尽调","channel":"公众号视频 / 领英 LinkedIn / 行业社群","aspect":"16:9","category":"motion-design","width":1920,"height":1080,"durationSec":32.967,"styleName":"Editorial Evidence · 律政社论纸本风","engine":"editorial-law","palette":{"bg1":"#F5F2EB","bg2":"#EAE4D7","surface":"#FFFDF9","ink":"#1C1B18","sub":"#6E685C","accent":"#0F6E66","accent2":"#C27D2B","dark":false},"voice":{"name":"zh-TW-YunJheNeural","rate":"+5%","pitch":"-2Hz","roleDesc":"理性严谨顾问男声"},"music":{"bpm":96,"rootMidi":50,"scale":"dorian","feel":"chamber"},"ctaButton":"立即下载「录音卡」App","ctaSub":"声纹推测分段 · 原话毫秒级核验","socialCopy":"商业尽调与当事人访谈容不得半点脑补。录音卡每条总结要点直链原始录音秒数，点一下立刻听原话。#律师工具 #商业尽调","scenes":[{"act":"hook","startSec":0,"endSec":5.414,"vo":"商业尽调与客户访谈，最怕大模型胡乱脑补，关键承诺死无对证。","headline":"尽调访谈，容不得半句脑补 / 每一条结论都必须经得起核查"},{"act":"reveal","startSec":5.414,"endSec":12.201,"vo":"录音卡通过本机声纹聚类，自动按说话人一、二推测分段，克制诚实，绝不冒认身份。","headline":"声纹聚类区分说话人（推测） / 双方陈述脉络清晰，诚实不越界"},{"act":"proof1","startSec":12.201,"endSec":18.47,"vo":"结构化信息点将复杂事实逐条拆解，每一处争议焦点都附带精准时间戳与原话锚点。","headline":"结构化信息点 · 逐条挂接溯源 / 承诺条款、时间节点一目了然"},{"act":"proof2","startSec":18.47,"endSec":25.28,"vo":"存疑的地方只需轻点句子，播放器毫秒级跳回当时那一句原始录音，当场核对语气与原意。","headline":"点哪句，秒跳哪句原始原声 / 清洗内容优先，底层原声完整保留"},{"act":"cta","startSec":25.28,"endSec":32.967,"vo":"专业主义，在于字字有据。立即下载录音卡 App，让每一次访谈都滴水不漏。","headline":"录音卡 / 字字有据，原声随时可查。"}]},{"id":"v05","num":"05","slug":"05-student-exam","title":"早八不慌，期末复习直接开挂","persona":"大学生 · 考研党 · 法考考公备考族","channel":"小红书 / 抖音 / B站竖屏 / 校园墙","aspect":"9:16","category":"motion-design","width":1080,"height":1920,"durationSec":32.433,"styleName":"Neo-Brutalism Pop · 高饱和新粗野贴纸风","engine":"pop-brutalism","palette":{"bg1":"#FFE135","bg2":"#FFF4B8","surface":"#FFFFFF","ink":"#111111","sub":"#444444","accent":"#2563EB","accent2":"#FF3B7F","dark":false},"voice":{"name":"zh-CN-XiaoyiNeural","rate":"+13%","pitch":"+2Hz","roleDesc":"元气学姐快节奏女声"},"music":{"bpm":132,"rootMidi":60,"scale":"major","feel":"hyperpop"},"ctaButton":"去 App Store 搜「录音卡」","ctaSub":"免费下载 · 手机直接录早八大课","socialCopy":"救命！早八三小时高数课走神五分钟直接听天书？自从用录音卡边录边拍PPT，期末复习直接看逻辑树爽飞了！#大学生神器 #期末复习","scenes":[{"act":"hook","startSec":0,"endSec":5.73,"vo":"早八连上三小时大课，低头捡支笔的功夫，老师划的期末考点全漏了！","headline":"早八 3 小时大课 / 低头五秒，考点全漏？！"},{"act":"reveal","startSec":5.73,"endSec":11.823,"vo":"别慌！不用买硬件，打开录音卡 App 直接开本机录音，专心抬头听讲！","headline":"打开手机直接录！ / 不用狂抄笔记，专心跟上思路"},{"act":"proof1","startSec":11.823,"endSec":18.153,"vo":"老师翻 PPT 或写板书，咔嚓拍一张，自动插进对应那分钟的讲课记录里！","headline":"板书 PPT 随手一拍 / 自动对齐老师讲课那一秒！"},{"act":"proof2","startSec":18.153,"endSec":25.677,"vo":"期末勾选整周课程，一键生成知识逻辑树和考点清单，不懂的地方点一下直接回听老师原话！","headline":"秒出知识逻辑树 + 考点 / 听不懂的难点一键回听原声"},{"act":"cta","startSec":25.677,"endSec":32.433,"vo":"学霸都在偷偷用的复习外挂！快去下载录音卡 App，这学期绩点稳了！","headline":"录音卡 / 只管听课，重点我来抓！"}]},{"id":"v06","num":"06","slug":"06-journalist-pod","title":"两小时深度对谈，散场即初稿","persona":"深度报道记者 · 播客主理人 · 非虚构写作者","channel":"小宇宙社群 / B站 / 少数派 / 媒体人朋友圈","aspect":"16:9","category":"motion-design","width":1920,"height":1080,"durationSec":37.067,"styleName":"Analog Studio Reel · 复古磁带声波电影风","engine":"analog-reel","palette":{"bg1":"#161412","bg2":"#221E1A","surface":"#2B2621","ink":"#F7F1E5","sub":"#A89E8E","accent":"#FF7A45","accent2":"#FACC15","dark":true},"voice":{"name":"zh-TW-HsiaoChenNeural","rate":"+6%","pitch":"+0Hz","roleDesc":"知性温暖播客女声"},"music":{"bpm":92,"rootMidi":53,"scale":"dorian","feel":"lofi"},"ctaButton":"立即下载「录音卡」App","ctaSub":"双人对谈分段 · ShowNotes 一键成稿","socialCopy":"每次录完两小时播客和人物专访，最崩溃的就是扒逐字稿写ShowNotes。录音卡不仅离线秒转，还能按说话人分段导出Word！#播客制作 #记者日常","scenes":[{"act":"hook","startSec":0,"endSec":7.337,"vo":"聊完一场酣畅淋漓的两小时深度访谈，想到回去要扒三万字录音，瞬间头皮发麻？","headline":"对谈两小时有多爽， / 回去扒三万字逐字稿就有多痛"},{"act":"reveal","startSec":7.337,"endSec":14.484,"vo":"把录音卡放在咖啡桌中央，边聊边在手机本地实时成稿，完全不打断眼神交流。","headline":"轻放桌面，专注眼神与倾听 / 边聊边在本机静默出稿"},{"act":"proof1","startSec":14.484,"endSec":21.679,"vo":"对谈内容自动按说话人气泡清晰排布，现场拍下的受访者手稿也精准嵌在原位。","headline":"双人交锋气泡分段（推测） / 金句脉络与现场照片同频留存"},{"act":"proof2","startSec":21.679,"endSec":29.29,"vo":"内置访谈提炼专属提示词，秒出播客时间轴与核心观点，一键导出 Word 或完整文档。","headline":"内置「访谈提炼」专属模板 / 一键直出 ShowNotes 与 Word 初稿"},{"act":"cta","startSec":29.29,"endSec":37.067,"vo":"好故事值得被更快写出来。立即下载录音卡 App，让灵感趁热成稿。","headline":"录音卡 / 对谈落幕，初稿已成。"}]},{"id":"v07","num":"07","slug":"07-doctor-family","title":"把医生的每一句叮嘱妥帖收好","persona":"陪诊子女 · 异地牵挂父母的年轻人 · 慢病家庭","channel":"微信视频号 / 家族群转发 / 小红书生活区","aspect":"9:16","category":"motion-design","width":1080,"height":1920,"durationSec":39,"styleName":"Warm Paper Parallax · 暖阳剪纸治愈风","engine":"paper-warmth","palette":{"bg1":"#FFF7EA","bg2":"#F8E7CE","surface":"#FFFDF9","ink":"#432818","sub":"#8C6D53","accent":"#E06D3B","accent2":"#4D9078","dark":false},"voice":{"name":"zh-CN-XiaoxiaoNeural","rate":"+4%","pitch":"+0Hz","roleDesc":"温柔体贴女儿女声"},"music":{"bpm":82,"rootMidi":60,"scale":"major","feel":"warmpad"},"ctaButton":"给家人装上「录音卡」App","ctaSub":"字大清晰 · 医嘱自动变清单 · 原声随时听","socialCopy":"门诊五分钟医生交代七八件事，爸妈走出诊室就忘了一半。给爸妈手机装了录音卡，化验单和用药叮嘱全变成大字清单了。#陪诊 #关爱父母","scenes":[{"act":"hook","startSec":0,"endSec":7.478,"vo":"门诊短短五分钟，医生语速飞快交代七八件事，爸妈刚走出医院就忘了一大半。","headline":"门诊匆匆五分钟， / 爸妈转身就忘怎么吃药？"},{"act":"reveal","startSec":7.478,"endSec":14.428,"vo":"给爸妈手机装个录音卡，进诊室前轻轻一点，全程稳稳记下医生的每一句话。","headline":"进诊室前，轻轻一点 / 不漏掉医生的任何一句叮嘱"},{"act":"proof1","startSec":14.428,"endSec":22.341,"vo":"化验单、药盒随手拍张照，自动跟当时的医嘱对齐，再也不会混在一堆照片里找不到。","headline":"化验单与药盒随手拍 / 和当时的医嘱稳稳绑在一起"},{"act":"proof2","startSec":22.341,"endSec":31.162,"vo":"看病结束一键生成大字待办清单：空腹吃药、周三复查清清楚楚，还能发图片到家庭群！","headline":"自动整理成清晰清单 / 一键导出长图，发进相亲相爱一家人"},{"act":"cta","startSec":31.162,"endSec":39,"vo":"别让关心输给记性。立即下载录音卡 App，把每一句重要叮嘱妥帖收好。","headline":"录音卡 / 把每一句叮嘱，好好收着。"}]},{"id":"v08","num":"08","slug":"08-sales-field","title":"顶级销售只看客户眼睛，不低头记笔记","persona":"大客户销售 · 房产豪宅顾问 · 商务拓展 BD","channel":"抖音商业流 / 视频号 / 销售团队内训","aspect":"9:16","category":"motion-design","width":1080,"height":1920,"durationSec":38.4,"styleName":"Dynamic Island HUD · 灵动岛街头实战风","engine":"island-street","palette":{"bg1":"#090D16","bg2":"#121A2B","surface":"#182338","ink":"#F8FAFC","sub":"#94A3B8","accent":"#F59E0B","accent2":"#22C55E","dark":true},"voice":{"name":"zh-CN-YunjianNeural","rate":"+11%","pitch":"+0Hz","roleDesc":"热血实战销冠男声"},"music":{"bpm":124,"rootMidi":43,"scale":"minor","feel":"streetbeat"},"ctaButton":"立即下载「录音卡」开单神器","ctaSub":"灵动岛跳秒 · 断连无缝保底 · 下拉即转写","socialCopy":"谈百万大单时低头狂记笔记，气场直接输一半！看销冠怎么用录音卡+灵动岛锁死客户每一句预算底牌！#销售技巧 #商务谈判","scenes":[{"act":"hook","startSec":0,"endSec":7.824,"vo":"谈百万大单的时候低头狂记笔记，气场瞬间输一半；可不记，回头又漏掉客户的预算底牌！","headline":"谈单低头记笔记输气场？ / 不记又怕漏掉客户底牌！"},{"act":"reveal","startSec":7.824,"endSec":16.968,"vo":"销冠都在用录音卡！锁屏与灵动岛液晶时钟实时跳动，抬眼一瞥就安心，全程专注盯着客户眼睛聊！","headline":"灵动岛 LCD 实时跳秒 / 眼神全程锁定客户，气场拉满"},{"act":"proof1","startSec":16.968,"endSec":24.297,"vo":"就算进电梯硬件意外断连，手机零功耗待命瞬间无缝接力录音，半秒钟都不会丢！","headline":"意外断连？手机 0 秒无缝接力 / 硬件优先 + 待命保底，绝不掉链子"},{"act":"proof2","startSec":24.297,"endSec":31.994,"vo":"刚送走客户，坐进车里下拉刷新立刻转写，六秒拎出客户痛点、预算区间与跟进承诺！","headline":"上车下拉，秒出回访纪要 / 痛点、预算、下次跟进全齐了"},{"act":"cta","startSec":31.994,"endSec":38.4,"vo":"把精力留给成交！立即下载录音卡 App，每一单都打有准备之仗！","headline":"录音卡 / 专注谈单，细节一字不漏。"}]},{"id":"v09","num":"09","slug":"09-creator-vlog","title":"走路碎碎念，秒变爆款口播稿","persona":"小红书博主 · 短视频口播达人 · 独立写作者","channel":"小红书原生信息流 / 抖音种草 / 微博","aspect":"9:16","category":"motion-design","width":1080,"height":1920,"durationSec":36,"styleName":"Cream Editorial Zine · 奶油杂志手账种草风","engine":"cream-magazine","palette":{"bg1":"#FDFBF7","bg2":"#F6EFE6","surface":"#FFFFFF","ink":"#26211E","sub":"#857970","accent":"#E11D48","accent2":"#F97316","dark":false},"voice":{"name":"zh-CN-XiaoyiNeural","rate":"+11%","pitch":"+1Hz","roleDesc":"灵动种草博主女声"},"music":{"bpm":114,"rootMidi":65,"scale":"major","feel":"indiepop"},"ctaButton":"快去下载「录音卡」接住灵感","ctaSub":"支持自定义提示词 · 碎碎念秒变文案","socialCopy":"姐妹们！散步洗澡突然冒出来的爆款选题再也不会忘了！对着录音卡乱聊五分钟，用自定义Prompt直接生成小红书口播稿！#自媒体工具 #博主日常","scenes":[{"act":"hook","startSec":0,"endSec":7.468,"vo":"散步、吹头发时脑子里突然蹦出绝佳选题，等擦干手打开备忘录打字，那种感觉早没了！","headline":"洗澡散步冒出神仙灵感， / 打开打字却一个字憋不出？"},{"act":"reveal","startSec":7.468,"endSec":15.449,"vo":"现在我一有念头就点开录音卡边走边聊，哪怕中间停顿发呆，空白切片也会自动折叠不刷屏！","headline":"边走边碎碎念就够了！ / 静音发呆自动折叠，时间轴超清爽"},{"act":"proof1","startSec":15.449,"endSec":23.512,"vo":"最绝的是可以自定义提示词模板！把你喜欢的爆款结构存进去，口语废话瞬间洗成丝滑金句！","headline":"自定义专属 Prompt 模板 / 乱糟糟的口语，秒变结构化爆款稿"},{"act":"proof2","startSec":23.512,"endSec":29.672,"vo":"路上随手拍的素材图还能自动配进大纲里，一键导出长图或文档直接开拍！","headline":"灵感配图自动归位大纲 / 导出 Markdown / 长图，直接开录口播"},{"act":"cta","startSec":29.672,"endSec":36,"vo":"别再放跑任何一个十万赞灵感！快去 App Store 下载录音卡试试吧！","headline":"录音卡 / 接住你稍纵即逝的灵感。"}]},{"id":"v10","num":"10","slug":"10-researcher-ipad","title":"组会田野调查，宽屏双栏对照精读","persona":"硕博研究生 · 高校学者 · 桌面/iPad 重度知识工作者","channel":"知乎科研话题 / 小木虫 / B站学术区 / 少数派","aspect":"16:9","category":"motion-design","width":1920,"height":1080,"durationSec":34.667,"styleName":"Oxford Split-View · 学院派宽屏双栏风","engine":"academic-split","palette":{"bg1":"#0F172A","bg2":"#1E293B","surface":"#F8FAFC","ink":"#F8FAFC","sub":"#94A3B8","accent":"#38BDF8","accent2":"#818CF8","dark":true},"voice":{"name":"zh-TW-YunJheNeural","rate":"+6%","pitch":"+0Hz","roleDesc":"温润学者男声"},"music":{"bpm":98,"rootMidi":48,"scale":"lydian","feel":"academic"},"ctaButton":"下载「录音卡」· 手机与大屏同享","ctaSub":"原生宽屏双栏对照 · 历史栈防迷路","socialCopy":"开组会导师一分钟抛三个文献名和实验改法，以前全靠硬记。用录音卡在iPad宽屏双栏左边看Timeline右边溯源原声，科研体验拉满！#读博日常 #文献组会","scenes":[{"act":"hook","startSec":0,"endSec":6.396,"vo":"两小时课题组会，导师随口点拨的实验思路与文献线索，散会整理时总是支离破碎？","headline":"两小时课题组会信息密集 / 导师随口点拨的思路怎能遗漏？"},{"act":"reveal","startSec":6.396,"endSec":13.585,"vo":"录音卡原生适配宽屏双栏布局：左侧时间轴常显全局脉络，右侧深度展开总结与对话详情。","headline":"原生宽屏双栏 · 左目录右深读 / 全局时间脉络与细节论证同屏对照"},{"act":"proof1","startSec":13.585,"endSec":20.447,"vo":"从总结信息点一键穿透至来源记录与白板推导照片，智能扁平化路由栈，层层互跳绝不迷路。","headline":"总结 ↔ 来源记录 ↔ 现场板书 / 智能扁平化路由栈，深度互跳不迷路"},{"act":"proof2","startSec":20.447,"endSec":26.393,"vo":"支持全天连续单上下文推理与多格式导出，直接沉淀进你的 Obsidian 或学术文献库。","headline":"全天连续上下文 + Markdown 导出 / 无缝汇入 Obsidian 与学术知识库"},{"act":"cta","startSec":26.393,"endSec":34.667,"vo":"手机随身采集，大屏沉浸治学。立即下载录音卡 App，构建你的可溯源语料库。","headline":"录音卡 / 随身采集，沉浸治学。"}]},{"id":"v11","num":"11","slug":"11-adhd-focus","title":"走神十分钟也不焦虑的第二外脑","persona":"ADHD 注意力易分散人群 · 创意脑暴者 · 信息过载者","channel":"小红书心理效率区 / 即刻 / 抖音","aspect":"9:16","category":"motion-design","width":1080,"height":1920,"durationSec":39.067,"styleName":"Calm Frosted Glass · 呼吸感毛玻璃减压风","engine":"calm-glass","palette":{"bg1":"#EEF6F3","bg2":"#DCECE7","surface":"#FFFFFF","ink":"#1E2D2B","sub":"#637B76","accent":"#149E83","accent2":"#6366F1","dark":false},"voice":{"name":"zh-TW-HsiaoChenNeural","rate":"+5%","pitch":"+0Hz","roleDesc":"舒缓治愈陪伴女声"},"music":{"bpm":78,"rootMidi":62,"scale":"pentatonic","feel":"ambient"},"ctaButton":"免费下载「录音卡」卸下焦虑","ctaSub":"静音自动折叠 · 走神随时下拉补课","socialCopy":"ADHD开会一走神就疯狂内耗焦虑，普通录音软件还会刷出一堆空白文件。录音卡把静音段自动折叠，下拉立刻看刚刚聊了啥，安全感爆棚！#ADHD自救 #反内耗","scenes":[{"act":"hook","startSec":0,"endSec":6.906,"vo":"开会不小心走神两分钟，回过神来完全接不上话，心跳加速开始疯狂焦虑？","headline":"开会不小心走神两分钟， / 回过神来全接不上，瞬间焦虑？"},{"act":"reveal","startSec":6.906,"endSec":17.37,"vo":"深呼吸，把录音卡开在桌上。刚走神漏听了？手指轻轻下拉刷新，刚才那句话立刻转成文字给你看！","headline":"走神漏听了？手指轻轻下拉 / 刚刚那段语音立刻转出文字救场！"},{"act":"proof1","startSec":17.37,"endSec":25.079,"vo":"安静自习或发呆的空白切片会自动无损合并成一条，绝不用一堆废话卡片轰炸你的视线。","headline":"连续空白切片自动折叠成 1 条 / 过滤环境噪音，只留清爽干货"},{"act":"proof2","startSec":25.079,"endSec":31.401,"vo":"散会后只看极简行动项清单，一步步打勾完成，大脑从此不再超载。","headline":"复杂讨论化作极简待办 / 允许自己偶尔走神，重点它替你兜底"},{"act":"cta","startSec":31.401,"endSec":39.067,"vo":"给紧绷的大脑放个假。立即免费下载录音卡 App，拥有你的零焦虑外脑。","headline":"录音卡 / 过滤噪音，温柔接住重点。"}]},{"id":"v12","num":"12","slug":"12-global-biz","title":"自由改写提示词 + MCP 自动化工作站","persona":"AI 效率玩家 · 跨国团队白领 · 自动化工具发烧友","channel":"X (Twitter) / 即刻 AI 圈 / B站效率评测","aspect":"16:9","category":"motion-design","width":1920,"height":1080,"durationSec":37.867,"styleName":"Orbital AI Matrix · 赛博流光矩阵风","engine":"ai-orbital","palette":{"bg1":"#080714","bg2":"#110E29","surface":"#181538","ink":"#F4F3FF","sub":"#9D99C4","accent":"#38BDF8","accent2":"#A855F7","dark":true},"voice":{"name":"zh-CN-YunxiNeural","rate":"+10%","pitch":"+0Hz","roleDesc":"前沿科技解说男声"},"music":{"bpm":122,"rootMidi":45,"scale":"minor","feel":"synthwave"},"ctaButton":"立即下载「录音卡」AI 工作站","ctaSub":"自定义 API 网关 · 自由 Prompt · MCP 扩展","socialCopy":"受够了千篇一律的套话总结？录音卡支持自定义API网关、可视化改写系统提示词，还原生打通Skills与MCP工作流扩展！#AI效率 #MCP","scenes":[{"act":"hook","startSec":0,"endSec":7.741,"vo":"受够了传统录音软件内置的死板套话总结？真正的效率玩家，纪要逻辑当然由自己定义！","headline":"拒绝千篇一律的套话总结 / 你的纪要工作流，理应由你自由定义"},{"act":"reveal","startSec":7.741,"endSec":15.756,"vo":"本地模型离线秒转守护音频隐私，云端润色一键开关，更支持接入企业自建的自定义 API 网关。","headline":"本地离线打底 · 云端网关自由接入 / 兼顾端侧音频私密与高阶智能总结"},{"act":"proof1","startSec":15.756,"endSec":23.736,"vo":"内置深度会议、访谈提炼、极简待办四套专业预设，更支持可视化自由改写系统提示词。","headline":"四套专业预设 + 自由改写 Prompt / 总结颗粒度与行文风格，听你指挥"},{"act":"proof2","startSec":23.736,"endSec":31.677,"vo":"更率先打通 Skills、Tools 与自定义 MCP Server 扩展，让每一段语音直接驱动你的自动化工作流！","headline":"原生支持 Skills · Tools · MCP / 从语音记录到自动化工作流一步贯通"},{"act":"cta","startSec":31.677,"endSec":37.867,"vo":"不止是录音机，更是你的随身效率中枢。立即下载录音卡 App！","headline":"录音卡 / 开放工作流，听候调遣。"}]},{"id":"v13","num":"13","slug":"13-three-hardware","title":"一软统御三大随身录音硬件","persona":"数码极客 · EDC 随身装备党 · 智能硬件玩家","channel":"少数派 / 数字尾巴 / B站硬件开箱区 / 酷安","aspect":"16:9","category":"motion-design","width":1920,"height":1080,"durationSec":38.9,"styleName":"Industrial CAD Blueprint · 工业蓝图工程风","engine":"blueprint-edc","palette":{"bg1":"#0A192F","bg2":"#0F2547","surface":"#15315B","ink":"#F0F7FF","sub":"#8AB4F8","accent":"#38BDF8","accent2":"#FBBF24","dark":true},"voice":{"name":"zh-CN-YunjianNeural","rate":"+8%","pitch":"-2Hz","roleDesc":"硬核装备评测男声"},"music":{"bpm":118,"rootMidi":41,"scale":"minor","feel":"industrial"},"ctaButton":"下载「录音卡」伴侣 App","ctaSub":"支持录音卡 V2 · 点一机 V1 · 语音 AI 键盘 V2.1","socialCopy":"把Rust原生蓝牙桥写进App是什么体验？一套录音卡App同时驱动超薄录音卡V2、盲拍点一机V1和桌面AI键盘V2.1，按信号强弱秒连！#EDC装备 #智能硬件","scenes":[{"act":"hook","startSec":0,"endSec":8.023,"vo":"随身工牌、街头抓拍机、桌面机械键盘——如果三件生产力装备，共用一颗记忆大脑会怎样？","headline":"三款硬核形态 · 一颗共同大脑 / 全天候无缝接管你的每一次发声"},{"act":"reveal","startSec":8.023,"endSec":15.925,"vo":"点开顶栏状态胶囊，自动扫描附近设备并按蓝牙信号强弱精准排序，靠近哪台连哪台。","headline":"按 RSSI 信号强弱秒速发现 / 录音卡 V2 · 点一机 V1 · AI 键盘 V2.1"},{"act":"proof1","startSec":15.925,"endSec":24.392,"vo":"底层 Rust 桥按硬件能力智能裁剪面板：电量档位、双芯片固件升级、2.4G Wi-Fi 快传一目了然。","headline":"能力自适应面板 · 严控低功耗心跳 / 录音、电量、同步、Wi-Fi 一屏掌控"},{"act":"proof2","startSec":24.392,"endSec":32.805,"vo":"连上硬件自动关闭手机冗余拾音省电防发热，意外掉线瞬间唤醒手机待命保底，硬核到骨子里！","headline":"连卡零发热 · 断连零丢帧保底 / 为全天候随身佩戴而生的工程美学"},{"act":"cta","startSec":32.805,"endSec":38.9,"vo":"无论你手握哪一款装备，或是先用手机体验，立即下载录音卡 App！","headline":"录音卡 / 硬核装备，灵魂伴侣。"}]},{"id":"v14","num":"14","slug":"14-teacher-parent","title":"家长会二十张课件，终于对上老师的话了","persona":"参加家长会/升学讲座的父母 · 进修培训学员","channel":"微信家长群 / 视频号 / 小红书鸡娃教育区","aspect":"9:16","category":"motion-design","width":1080,"height":1920,"durationSec":44.333,"styleName":"Botanical Academy · 翡翠书院清爽风","engine":"emerald-academy","palette":{"bg1":"#F2FBF9","bg2":"#E1F4EF","surface":"#FFFFFF","ink":"#102A26","sub":"#52736D","accent":"#0D9488","accent2":"#F59E0B","dark":false},"voice":{"name":"zh-CN-XiaoxiaoNeural","rate":"+8%","pitch":"+0Hz","roleDesc":"亲切知性妈妈女声"},"music":{"bpm":104,"rootMidi":64,"scale":"major","feel":"acoustic"},"ctaButton":"立即下载「录音卡」App","ctaSub":"课件拍照自动对轨 · 杂图双列相册一键分拣","socialCopy":"每次开完两小时家长会，手机里存了二十多张老师PPT，回家根本想不起来每张图老师强调了啥！录音卡这个图文对齐+相册分拣绝了！#家长会 #升学规划","scenes":[{"act":"hook","startSec":0,"endSec":9.288,"vo":"家长会开了两小时，举着手机拍了二十张课件 PPT，回家翻相册，却想不起老师在每张图上叮嘱了什么？","headline":"家长会狂拍 20 张 PPT， / 回家却忘了老师怎么讲的？"},{"act":"reveal","startSec":9.288,"endSec":18.73,"vo":"下次开会先打开录音卡！你只管用手机系统相机正常拍照，每张课件自动嵌进老师讲到那页的段落里！","headline":"系统相机照常拍，自动嵌进原话 / 每张课件下就是老师当时的讲解！"},{"act":"proof1","startSec":18.73,"endSec":28.454,"vo":"不小心拍糊或拍杂的照片，点一下移入未归类双列相册，按最近时间一键归位或忽略，整洁强迫症狂喜！","headline":"杂图一键分拣 · 双列正方形相册 / 按时间智能推荐归位，干净利落"},{"act":"proof2","startSec":28.454,"endSec":35.894,"vo":"会后生成图文并茂的重点总结，升学时间线、准备材料一条不漏，直接转发给另一半！","headline":"图文穿插总结 · 关键节点不漏 / 一键分享给家人，全家心里有底"},{"act":"cta","startSec":35.894,"endSec":44.333,"vo":"让每一次倾听都有画面可循。立即下载录音卡 App，下场讲座家长会马上用起来！","headline":"录音卡 / 声音与画面，从此同频。"}]},{"id":"v15","num":"15","slug":"15-flagship-allinone","title":"全身心在场，剩下的交给录音卡","persona":"全人群通投主打片 · 品牌置顶旗舰宣传片","channel":"全渠道置顶 / 官网 Hero / 应用商店横幅 / 发布会收官","aspect":"16:9","category":"motion-design","width":1920,"height":1080,"durationSec":38.2,"styleName":"Grand Symphony Convergence · 发布会全家福交响风","engine":"grand-finale","palette":{"bg1":"#050811","bg2":"#0B1326","surface":"#131F3A","ink":"#FFFFFF","sub":"#9FB0CE","accent":"#3B82F6","accent2":"#2EE6A6","dark":true},"voice":{"name":"zh-CN-YunyangNeural","rate":"+7%","pitch":"-1Hz","roleDesc":"恢弘温暖旗舰品牌男声"},"music":{"bpm":112,"rootMidi":48,"scale":"major","feel":"anthem"},"ctaButton":"立即免费下载「录音卡」App","ctaSub":"iOS 灵动岛 · 离线转写 · 图文总结 · 硬件生态","socialCopy":"人生重要的对话，你只管全身心在场倾听与表达——记录、转写、配图、总结与回溯，全部交给「录音卡」。立即免费下载体验！#录音卡 #AI随身外脑","scenes":[{"act":"hook","startSec":0,"endSec":6.865,"vo":"会议、访谈、课堂、门诊——生命里最珍贵的对话，不该被手忙脚乱的记录打断。","headline":"重要的时刻，你只管全身心在场 / 别让低头记录，打断珍贵的对话"},{"act":"reveal","startSec":6.865,"endSec":14.909,"vo":"认识录音卡：无论直接用手机麦克风，还是连接三款专属硬件，灵动岛实时守护，每分钟自动成稿。","headline":"手机直录 & 三大硬件无缝协同 / 灵动岛实时守护 · 1 分钟流式出稿"},{"act":"proof1","startSec":14.909,"endSec":23.357,"vo":"轻量化本地模型极致压缩，原始音频全程留在本机；现场照片自动嵌入时间轴，原声按句秒跳。","headline":"本地模型离线转写 · 拍照自动对轨 / 原始音频不出本机 · 原声毫秒级回听"},{"act":"proof2","startSec":23.357,"endSec":31.017,"vo":"智能生成图文穿插总结、逻辑结构与行动项，宽屏双栏沉浸精读，五种专业格式一键分享。","headline":"图文穿插总结 · 宽屏双栏精读 / 五大格式一键导出，连接你的工作流"},{"act":"cta","startSec":31.017,"endSec":38.2,"vo":"录下，即记住。立即免费下载录音卡 App，开启属于你的随身记忆外脑！","headline":"录音卡 / 录下，即记住 · 立即免费下载"}]},{"id":"v16","num":"16","slug":"16-live-boardroom","title":"散会那一刻，纪要已发群","persona":"企业管理者 · 跨部门负责人 · 真人会议室实景","channel":"微信视频号横版 / 官网真人TVC / 朋友圈品牌广告","aspect":"16:9","category":"live-action","width":1920,"height":1080,"durationSec":36.933,"styleName":"35mm Live Cinema · 真人会议室纪实大片","engine":"live-cinema","palette":{"bg1":"#090D14","bg2":"#131C2B","surface":"#182234","ink":"#F8FAFC","sub":"#CBD5E1","accent":"#E5B869","accent2":"#2EE6A6","dark":true},"voice":{"name":"zh-CN-YunyangNeural","rate":"+7%","pitch":"-1Hz","roleDesc":"沉稳质感商业导演旁白"},"music":{"bpm":106,"rootMidi":48,"scale":"major","feel":"cinematic"},"ctaButton":"立即下载「录音卡」App","ctaSub":"真人会议实测 · 拍照嵌进原话 · 6 秒直出纪要","socialCopy":"一屋子人围着白板激烈拍板，低头记笔记的人反而漏了关键结论。看高管如何把超薄录音卡轻放桌面，散会喝口咖啡纪要已发群！#真人实测 #高管效率 #录音卡","scenes":[{"act":"hook","startSec":0,"endSec":6.665,"vo":"一屋子人围着白板激烈拍板，低头狂敲键盘的人，反而漏掉了最关键的一句决策。","headline":"白板前激烈拍板三件事， / 低头狂记的人却漏了重点？"},{"act":"reveal","startSec":6.665,"endSec":14.737,"vo":"把超薄录音卡轻轻放在会议桌前，轻量化本地模型静默转写，原始音频全程留在手机本地。","headline":"轻放桌面 · 全程抬头参与决策 / 轻量本地模型实时转写，音频不出本机"},{"act":"proof1","startSec":14.737,"endSec":21.628,"vo":"讨论到关键排期随手拍张白板，照片按秒级时间窗自动嵌进当时的对话段落里。","headline":"白板随手一拍，秒级嵌进对话流 / 说话人推测分段 · 现场画面同频留存"},{"act":"proof2","startSec":21.628,"endSec":29.25,"vo":"散会起身喝口咖啡的功夫，六秒生成图文概览与行动项，一键转发团队群，从容不加班。","headline":"起身喝口咖啡，6 秒直出行动项 / 五种专业格式一键分享，散会即闭环"},{"act":"cta","startSec":29.25,"endSec":36.933,"vo":"把注意力还给当下的判断。立即下载录音卡 App，让每一次拍板都有据可查。","headline":"录音卡 / 散会那一刻，纪要已发群。"}]},{"id":"v17","num":"17","slug":"17-live-cafe-interview","title":"只看对方眼睛，不低头看屏幕","persona":"深度记者 · 播客主理人 · 商业顾问 · 真人咖啡馆实景","channel":"B站人文科技区 / 小宇宙社群 / 视频号 / 少数派","aspect":"16:9","category":"live-action","width":1920,"height":1080,"durationSec":42.367,"styleName":"Kodak 250D Documentary · 咖啡馆人文访谈实景","engine":"live-cinema","palette":{"bg1":"#14100C","bg2":"#241C15","surface":"#2E241B","ink":"#FDF8F0","sub":"#D6C7B2","accent":"#F59E0B","accent2":"#34D399","dark":true},"voice":{"name":"zh-TW-HsiaoChenNeural","rate":"+6%","pitch":"+0Hz","roleDesc":"温暖人文纪录片女声"},"music":{"bpm":90,"rootMidi":53,"scale":"dorian","feel":"lofi"},"ctaButton":"立即下载「录音卡」App","ctaSub":"双人对谈分段 · 本地私密转写 · 点击秒听原声","socialCopy":"最好的访谈，诞生在专注看着对方眼睛的那一刻。把录音卡放在两杯手冲之间，喝完最后一口咖啡，三万字对谈初稿已就绪。#人物访谈 #播客创作 #真人实拍","scenes":[{"act":"hook","startSec":0,"endSec":7.342,"vo":"做完一场两小时的人物深访，深夜戴着耳机反复倒带扒三万字录音，灵感早被磨光了。","headline":"深访两小时酣畅淋漓， / 深夜扒三万字录音却让人崩溃？"},{"act":"reveal","startSec":7.342,"endSec":15.73,"vo":"下次约在咖啡馆，把录音卡放在两杯手冲之间，不用低头看屏幕，只管专注看着对方的眼睛聊。","headline":"放在两杯咖啡之间，专注眼神交流 / 手机与卡片静默协同，不打扰松弛感"},{"act":"proof1","startSec":15.73,"endSec":24.462,"vo":"极致压缩的本地语音模型在后台流畅成稿，双人对话气泡自动排布，受访录音锁死本机绝不外传。","headline":"双人对谈自动分段（推测） / 轻量化本地模型 · 私密原声锁死本机"},{"act":"proof2","startSec":24.462,"endSec":33.352,"vo":"日落前喝完最后一口咖啡，访谈金句、逻辑脉络与初稿已经整理就绪，点哪句都能秒跳回听原声。","headline":"喝完最后一口咖啡，初稿已成 / 金句提炼 + 点击句子毫秒级回听原声"},{"act":"cta","startSec":33.352,"endSec":42.367,"vo":"好故事诞生于真诚的凝视。立即下载录音卡 App，把整理交给它，把倾听留给自己。","headline":"录音卡 / 只看对方眼睛，不低头看屏幕。"}]},{"id":"v18","num":"18","slug":"18-live-clinic-care","title":"诊室五分钟，句句有人替爸妈记着","persona":"陪诊子女 · 牵挂父母健康的家庭 · 真人医院温情实景","channel":"微信视频号竖屏 / 家族群转发 / 小红书生活温情区","aspect":"9:16","category":"live-action","width":1080,"height":1920,"durationSec":42.8,"styleName":"Warm Family Cinema · 医院陪诊真人温情实拍","engine":"live-cinema","palette":{"bg1":"#181310","bg2":"#2B211B","surface":"#362A22","ink":"#FFFBF5","sub":"#E6D5C3","accent":"#FB923C","accent2":"#34D399","dark":true},"voice":{"name":"zh-CN-XiaoxiaoNeural","rate":"+4%","pitch":"+0Hz","roleDesc":"温柔真挚女儿实景旁白"},"music":{"bpm":80,"rootMidi":60,"scale":"major","feel":"warmpad"},"ctaButton":"免费下载「录音卡」陪护家人","ctaSub":"手机直接录 · 化验单拍照对齐 · 医嘱变大字清单","socialCopy":"走出诊室看着爸妈攥着化验单发愁的样子太心疼了。进诊室前用手机打开录音卡，药盒拍照自动对齐医嘱，回家直接看大字清单！#陪诊日常 #关爱父母 #录音卡","scenes":[{"act":"hook","startSec":0,"endSec":8.482,"vo":"医院走廊里，爸妈攥着一沓化验单和药盒直犯愁：刚才医生交代的七八件事，转身就记混了。","headline":"走出诊室攥着化验单， / 爸妈转身就记混怎么吃药？"},{"act":"reveal","startSec":8.482,"endSec":16.975,"vo":"陪爸妈看病前，在手机上轻轻点开录音卡本机录音，不用买硬件，稳稳收好医生的每一句叮嘱。","headline":"进诊室前，手机轻轻一点 / 无需额外硬件 · 全程妥帖记下医嘱"},{"act":"proof1","startSec":16.975,"endSec":25.859,"vo":"化验单、药盒随手拍张照，自动贴合在医生讲到那一项的文字旁，再也不会翻遍相册对不上号。","headline":"化验单与药盒随手一拍 / 自动嵌进对应医嘱，图文一眼看懂"},{"act":"proof2","startSec":25.859,"endSec":34.372,"vo":"回到家泡杯温水，忌口事项、早晚用量已经变成清清楚楚的待办清单，一键发进一家人群里。","headline":"回到家，医嘱已变清晰清单 / 早晚用药与复查时间，全家随时可查"},{"act":"cta","startSec":34.372,"endSec":42.8,"vo":"别让牵挂输给记性。立即免费下载录音卡 App，把每一句重要叮嘱稳稳留住。","headline":"录音卡 / 把每一句叮嘱，替爸妈记牢。"}]},{"id":"v19","num":"19","slug":"19-live-campus-lecture","title":"抬头听懂每一堂课，板书录音秒对齐","persona":"大学生 · 考研考公党 · 进修课堂 · 真人阶梯教室实景","channel":"抖音校园流 / 小红书学习区 / B站竖屏","aspect":"9:16","category":"live-action","width":1080,"height":1920,"durationSec":39.1,"styleName":"Campus Daylight Cinema · 大学课堂真人实景片","engine":"live-cinema","palette":{"bg1":"#0B1320","bg2":"#16243B","surface":"#1E314F","ink":"#F8FAFC","sub":"#CBD5E1","accent":"#38BDF8","accent2":"#FACC15","dark":true},"voice":{"name":"zh-CN-XiaoyiNeural","rate":"+11%","pitch":"+1Hz","roleDesc":"真实大学生学姐旁白"},"music":{"bpm":112,"rootMidi":60,"scale":"major","feel":"indiepop"},"ctaButton":"去 App Store 搜「录音卡」","ctaSub":"免费手机直录 · 板书拍照对齐 · 期末秒出逻辑树","socialCopy":"阶梯教室满黑板高数推导根本抄不完！现在上课直接开录音卡手机直录，举手咔嚓拍张板书自动嵌进老师讲课那一秒，期末复习直接封神！#大学生日常 #期末复习 #真人实拍","scenes":[{"act":"hook","startSec":0,"endSec":7.744,"vo":"阶梯教室满黑板微积分推导，低头抄两行公式的功夫，教授最关键的解题破题点已经讲过去了！","headline":"满黑板推导根本抄不完！ / 低头十秒钟，关键破题点全漏了？"},{"act":"reveal","startSec":7.744,"endSec":15.467,"vo":"打开录音卡手机直录，举起手机咔嚓拍下黑板板书，照片自动卡进老师讲到这一步的那一分钟！","headline":"举起手机咔嚓拍下板书！ / 自动对齐老师讲课那一秒的录音"},{"act":"proof1","startSec":15.467,"endSec":23.439,"vo":"轻量化本地模型离线流畅转写，哪怕教学楼信号差、开省电模式，每分钟照样准时出稿。","headline":"信号差也不怕 · 本地离线秒出稿 / 极致压缩体积，流畅省电不发烫"},{"act":"proof2","startSec":23.439,"endSec":31.404,"vo":"期末泡图书馆复习，一键把整章课堂变成清晰的知识逻辑树，没听懂的步骤点一下秒听老师原话！","headline":"期末复习一键生成知识逻辑树 / 哪里卡壳点哪里，1 秒回听老师原声"},{"act":"cta","startSec":31.404,"endSec":39.1,"vo":"把抬头思考的时间还给课堂。快去下载录音卡 App，这学期复习稳稳拿捏！","headline":"录音卡 / 抬头听懂课，重点稳稳抓！"}]},{"id":"v20","num":"20","slug":"20-live-field-commute","title":"从客户电梯到夜归车内，半秒都不丢","persona":"大客户销售 · 商务 BD · 律政投行外勤 · 真人都市夜归实景","channel":"抖音商业流 / 视频号横版 / 领英 / 销售团队内训","aspect":"16:9","category":"live-action","width":1920,"height":1080,"durationSec":41.067,"styleName":"Urban Neo-Noir Cinema · 商务外勤与夜归车内实拍","engine":"live-cinema","palette":{"bg1":"#070B12","bg2":"#101929","surface":"#172338","ink":"#F8FAFC","sub":"#CBD5E1","accent":"#F59E0B","accent2":"#22C55E","dark":true},"voice":{"name":"zh-CN-YunjianNeural","rate":"+9%","pitch":"-1Hz","roleDesc":"沉稳实战派商务男声"},"music":{"bpm":118,"rootMidi":43,"scale":"minor","feel":"streetbeat"},"ctaButton":"立即下载「录音卡」实战神器","ctaSub":"灵动岛实时跳秒 · 断连 0 秒接力 · 上车下拉出纪要","socialCopy":"送客户进电梯的最后三分钟，往往才藏着最真实的预算底牌！看实战派如何靠录音卡+手机零功耗待命无缝接力，夜归坐进车里6秒拎出成交关键！#商务谈判 #销售实战 #录音卡","scenes":[{"act":"hook","startSec":0,"endSec":7.759,"vo":"送客户走向电梯厅的那三分钟，往往才会吐露真正的预算底牌——可你总不能边走边掏笔记本吧？","headline":"送客户进电梯的最后三分钟， / 往往才藏着最真实的预算底牌！"},{"act":"reveal","startSec":7.759,"endSec":16.209,"vo":"随身佩戴录音卡，锁屏与灵动岛实时跳秒；连卡期间自动关闭手机冗余拾音，全天佩戴零发热。","headline":"灵动岛实时守护 · 全天佩戴零发热 / 眼神全程锁定客户，不错过微妙松口"},{"act":"proof1","startSec":16.209,"endSec":24.912,"vo":"就算进电梯、下地库蓝牙意外断连，手机零功耗待命瞬间无缝接力保底录音，关键承诺半秒不丢！","headline":"进电梯蓝牙断连？手机 0 秒接力！ / 零功耗待命保底，极端场景绝不掉链子"},{"act":"proof2","startSec":24.912,"endSec":33.412,"vo":"夜幕下坐回驾驶座，手指轻轻下拉立即完成转写，六秒拎出客户痛点、预算底线与明日跟进清单。","headline":"夜归坐进车里，下拉秒出复盘纪要 / 痛点、预算与明日行动项一目了然"},{"act":"cta","startSec":33.412,"endSec":41.067,"vo":"每一场硬仗都值得滴水不漏。立即下载录音卡 App，让成交赢在每一个细节！","headline":"录音卡 / 从大堂到车内，细节半秒不丢。"}]}];
+const grid = document.getElementById('grid');
+const toast = document.getElementById('toast');
+
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 1800);
+}
+
+function renderGrid(filter) {
+  const list = filter === 'all'
+    ? VIDEOS
+    : (filter === 'live-action' || filter === 'motion-design')
+      ? VIDEOS.filter(v => v.category === filter)
+      : VIDEOS.filter(v => v.aspect === filter);
+  grid.innerHTML = list.map(v => `
+    <article class="card" style="${v.category === 'live-action' ? 'border-color: rgba(229,184,105,0.38);' : ''}">
+      <div class="stage">
+        <video controls preload="metadata" playsinline src="./out/${v.slug}.mp4#t=0.6"></video>
+      </div>
+      <div class="body">
+        <div class="badge-row">
+          <span class="num-pill" style="${v.category === 'live-action' ? 'background: rgba(229,184,105,0.18); color: #fde68a;' : ''}">
+            <span style="width:9px;height:9px;border-radius:50%;background:${v.palette.accent};display:inline-block"></span>
+            #${v.num} · ${v.category === 'live-action' ? '🎬 真人实景 · ' : ''}${v.styleName.split('·')[1] ? v.styleName.split('·')[1].trim() : v.styleName}
+          </span>
+          <span class="aspect-pill">${v.aspect} · ${v.width}×${v.height} · ${v.durationSec.toFixed(1)}s</span>
+        </div>
+        <h2 class="title">${v.title}</h2>
+        <div class="persona">🎯 人群：${v.persona}</div>
+        <div class="meta">📺 渠道：${v.channel} · 🎙️ ${v.voice.roleDesc} (${v.music.bpm} BPM)</div>
+        <div class="copy-box">${v.socialCopy}</div>
+        <details>
+          <summary>查看 5 幕分镜台词与时间轴</summary>
+          <ol class="script-list">
+            ${v.scenes.map(s => `<li><strong>[${s.startSec.toFixed(1)}s–${s.endSec.toFixed(1)}s · ${s.act.toUpperCase()}]</strong> ${s.vo}</li>`).join('')}
+          </ol>
+        </details>
+        <div class="actions">
+          <button class="btn" onclick="copyCopy('${v.id}')">📋 复制投放文案</button>
+          <a class="btn primary" href="./out/${v.slug}.mp4" download="${v.slug}.mp4">⬇ 下载 MP4</a>
+        </div>
+      </div>
+    </article>
+  `).join('');
+
+  // Pause other videos when one starts playing
+  const vids = grid.querySelectorAll('video');
+  vids.forEach(el => {
+    el.addEventListener('play', () => {
+      vids.forEach(other => { if (other !== el && !other.paused) other.pause(); });
+    });
+  });
+}
+
+window.copyCopy = function(id) {
+  const v = VIDEOS.find(x => x.id === id);
+  if (!v) return;
+  navigator.clipboard.writeText(v.socialCopy).then(() => showToast('已复制 #' + v.num + ' 投放文案！'));
+};
+
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderGrid(btn.dataset.filter);
+  });
+});
+
+renderGrid('all');
+</script>
+</body>
+</html>
