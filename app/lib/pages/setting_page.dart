@@ -211,6 +211,19 @@ class _SettingPageState extends State<SettingPage> {
     return '已开启';
   }
 
+  String _extHwSummaryText() {
+    final count = _agent.enabledExtHardwareCount;
+    if (count == 0) return '未开启';
+    final dev = widget.device;
+    if (dev != null &&
+        dev.isConnected &&
+        (dev.activeKind == DeviceKind.getSeedGsc10 ||
+            dev.activeKind == DeviceKind.omiCv1)) {
+      return '已连接 ${dev.activeKind.displayModel}';
+    }
+    return '已开启 $count 款';
+  }
+
   void _toggle(String key) => unawaited(_store.toggle(key));
 
   void _openSub(BuildContext context, String subId) {
@@ -428,6 +441,15 @@ class _SettingPageState extends State<SettingPage> {
                   value: _watchSummaryText(),
                   valueKey: const Key('sv-watch'),
                   onTap: () => _openSub(context, 'watch'),
+                ),
+                const _RowDivider(),
+                _navRow(
+                  context,
+                  keyName: 'set-ext-hw',
+                  label: '第三方硬件联动',
+                  value: _extHwSummaryText(),
+                  valueKey: const Key('sv-exthw'),
+                  onTap: () => _openSub(context, 'exthw'),
                 ),
               ],
             ),

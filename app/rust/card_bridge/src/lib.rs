@@ -18,7 +18,10 @@ use std::time::Duration;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use btleplug::api::{Central as _, Manager as _, Peripheral as _, ScanFilter};
-use capabilities::{classify_ble_name, DeviceKind};
+use capabilities::{classify_ble_advertisement, DeviceKind};
+use reai_ext_sdk::{RecorderDevice, RecorderSdkDriver, SdkDeviceEvent};
+use reai_getseed_sdk::GetSeedSdkDriver;
+use reai_omi_sdk::OmiSdkDriver;
 use reai_board_sdk::kernel::audio::{
     AudioFrame, AudioStreamAction, AudioStreamScope, AudioTransport,
 };
@@ -92,6 +95,11 @@ enum ActiveDevice {
         recording: Arc<AtomicBool>,
         cached_info: Arc<Mutex<Option<reai_board_sdk::kernel::event::DeviceInfo>>>,
     },
+    External {
+        kind: DeviceKind,
+        device: Arc<dyn RecorderDevice>,
+        name: String,
+    },
 }
 
 impl ActiveDevice {
@@ -100,6 +108,7 @@ impl ActiveDevice {
             Self::CardV2 { .. } => DeviceKind::CardV2,
             Self::DyjV1 { .. } => DeviceKind::DyjV1,
             Self::BoardV21 { .. } => DeviceKind::BoardV21,
+            Self::External { kind, .. } => *kind,
         }
     }
 }
@@ -160,7 +169,7 @@ static STATE: OnceLock<BridgeState> = OnceLock::new();
 static VERSION: &str = concat!(
     "card_bridge/",
     env!("CARGO_PKG_VERSION"),
-    " card-v2/0.0.8 dyj-v1/0.1 board-v21/0.3"
+    " card-v2/0.0.8 dyj-v1/0.1 board-v21/0.3 getseed/0.1 omi/0.1"
 );
 
 fn state() -> &'static BridgeState {
@@ -204,6 +213,15 @@ impl From<CardSdkError> for BridgeError {
 
 impl From<reai_dyj_sdk::SdkError> for BridgeError {
     fn from(e: reai_dyj_sdk::SdkError) -> Self {
+        Self {
+            message: e.to_string(),
+            detail: None,
+        }
+    }
+}
+
+impl From<reai_ext_sdk::SdkError> for BridgeError {
+    fn from(e: reai_ext_sdk::SdkError) -> Self {
         Self {
             message: e.to_string(),
             detail: None,
@@ -479,8 +497,39 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
                 .await
                 .map(|b| b.into_iter().take(16).collect::<Vec<u8>>())
                 .unwrap_or_default();
+            let lower = src_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_default();
             if amr_transcode::is_amr_wb_file(src_path, &head) {
                 let result = amr_transcode::amr_wb_to_wav(src_path, wav_path).await?;
+                out.ok(json!({
+                    "path": wav,
+                    "samples": result.samples,
+                    "durationSecs": result.duration_secs,
+                }));
+            } else if lower == "ogg" || lower == "opus" || head.starts_with(b"OggS") {
+                let src_owned = src_path.to_path_buf();
+                let wav_owned = wav_path.to_path_buf();
+                let result = tokio::task::spawn_blocking(move || {
+                    reai_ext_sdk::audio::ogg_opus_to_wav_16k_mono(&src_owned, &wav_owned)
+                })
+                .await
+                .map_err(|e| BridgeError::from(format!("音频解码任务失败: {e}")))??;
+                out.ok(json!({
+                    "path": wav,
+                    "samples": result.samples,
+                    "durationSecs": result.duration_secs,
+                }));
+            } else if lower == "wav" || head.starts_with(b"RIFF") {
+                let src_owned = src_path.to_path_buf();
+                let wav_owned = wav_path.to_path_buf();
+                let result = tokio::task::spawn_blocking(move || {
+                    reai_ext_sdk::audio::wav_to_16k_mono(&src_owned, &wav_owned)
+                })
+                .await
+                .map_err(|e| BridgeError::from(format!("音频重采样任务失败: {e}")))??;
                 out.ok(json!({
                     "path": wav,
                     "samples": result.samples,
@@ -564,11 +613,12 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         let Ok(Some(props)) = p.properties().await else {
             continue;
         };
-        let Some(raw_name) = props.local_name else {
-            continue;
-        };
-        let name = raw_name.trim().to_string();
-        let Some((kind, caps)) = classify_ble_name(&name) else {
+        let Some((name, kind, caps)) = classify_ble_advertisement(
+            &p.id().to_string(),
+            props.local_name.as_deref(),
+            &props.services,
+            &props.manufacturer_data,
+        ) else {
             continue;
         };
         // CoreBluetooth 本地缓存但未广播的旧外设通常无 RSSI；若已系统连接则仍展示
@@ -654,6 +704,9 @@ async fn connect_device(payload: Value) -> Result<Value, BridgeError> {
                 BridgeError::from(format!("语音 AI 键盘连接需要设备广播名称（id={id}）"))
             })?;
             connect_board_v21(&id, &name).await?
+        }
+        DeviceKind::GetSeedGsc10 | DeviceKind::OmiCv1 => {
+            connect_external_sdk(&id, target_name.as_deref(), target_kind).await?
         }
     };
     if let Ok(active) = active_device().await {
@@ -829,6 +882,98 @@ async fn connect_board_v21(id: &str, name: &str) -> Result<Value, BridgeError> {
     }))
 }
 
+async fn connect_external_sdk(
+    id: &str,
+    name_hint: Option<&str>,
+    kind: DeviceKind,
+) -> Result<Value, BridgeError> {
+    use btleplug::api::{Central as _, Peripheral as _, ScanFilter};
+
+    let driver: &dyn RecorderSdkDriver = match kind {
+        DeviceKind::GetSeedGsc10 => &GetSeedSdkDriver,
+        DeviceKind::OmiCv1 => &OmiSdkDriver,
+        _ => {
+            return Err(BridgeError::from(format!(
+                "非第三方 SDK 设备类型: {}",
+                kind.as_str()
+            )))
+        }
+    };
+
+    let adapter = scan_adapter().await?;
+    let mut found: Option<(btleplug::platform::Peripheral, String)> = None;
+    for window in [Duration::from_secs(3), Duration::from_secs(5)] {
+        adapter
+            .start_scan(ScanFilter::default())
+            .await
+            .map_err(|e| BridgeError::from(format!("BLE 扫描启动失败: {e}")))?;
+        tokio::time::sleep(window).await;
+        let _ = adapter.stop_scan().await;
+        let peripherals = adapter
+            .peripherals()
+            .await
+            .map_err(|e| BridgeError::from(format!("读取 BLE 外设列表失败: {e}")))?;
+        for p in peripherals {
+            let pid = p.id().to_string();
+            let props = p.properties().await.ok().flatten();
+            let local_name = props
+                .as_ref()
+                .and_then(|pr| pr.local_name.as_deref())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let id_match = !id.is_empty() && pid == id;
+            let name_match = name_hint
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .is_some_and(|nh| local_name == Some(nh));
+            let adv_match = props.as_ref().is_some_and(|pr| {
+                driver.matches_advertisement(
+                    local_name,
+                    &pr.services,
+                    &pr.manufacturer_data,
+                )
+            });
+            if id_match || (name_match && adv_match) {
+                let display_name = local_name
+                    .map(str::to_owned)
+                    .or_else(|| name_hint.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+                    .unwrap_or_else(|| driver.fallback_ble_name(&pid));
+                found = Some((p, display_name));
+                break;
+            }
+        }
+        if found.is_some() {
+            break;
+        }
+    }
+
+    let (peripheral, ble_name) = found.ok_or_else(|| {
+        BridgeError::from(format!(
+            "未扫描到设备 {}（id={id}），请确认设备已开机且在蓝牙范围内",
+            kind.display_model()
+        ))
+    })?;
+
+    let device = driver.connect(peripheral, ble_name.clone()).await?;
+    let connected_name = device.device_name().to_string();
+    let caps = capabilities::HardwareCapabilities::from_sdk(device.capabilities());
+    let pump = spawn_external_event_pump(&device);
+    *state().event_pump.lock().await = Some(pump);
+    *state().last_device_id.lock().expect("device id lock") = Some(id.to_string());
+    *state().device.lock().await = Some(ActiveDevice::External {
+        kind,
+        device,
+        name: connected_name.clone(),
+    });
+    Ok(json!({
+        "connected": true,
+        "name": connected_name,
+        "deviceKind": kind.as_str(),
+        "displayModel": kind.display_model(),
+        "capabilities": caps,
+    }))
+}
+
 async fn active_device() -> Result<ActiveDevice, BridgeError> {
     let guard = state().device.lock().await;
     guard.as_ref().cloned().ok_or_else(BridgeError::disconnected)
@@ -870,6 +1015,13 @@ async fn release_device() -> Value {
             };
             board.shutdown();
             res
+        }
+        Some(ActiveDevice::External { device, .. }) => {
+            match tokio::time::timeout(Duration::from_secs(6), device.disconnect()).await {
+                Ok(Ok(())) => json!("ok"),
+                Ok(Err(error)) => json!(format!("error: {error}")),
+                Err(_) => json!("timeout"),
+            }
         }
         None => Value::Null,
     };
@@ -1023,9 +1175,83 @@ fn spawn_board_event_pump(
 
 // ── 状态快照与录音控制 ──────────────────────────────────────────
 
+fn spawn_external_event_pump(device: &Arc<dyn RecorderDevice>) -> tokio::task::JoinHandle<()> {
+    let mut events = device.subscribe_events();
+    tokio::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok(event) => {
+                    let value = match event {
+                        SdkDeviceEvent::RecordStatus(status) => serde_json::to_value(&status)
+                            .map(|v| json!({"kind": "record", "status": v}))
+                            .unwrap_or(Value::Null),
+                        SdkDeviceEvent::Power(batt) => json!({
+                            "kind": "power",
+                            "battery": {
+                                "level": batt.level,
+                                "isCharging": batt.is_charging,
+                            },
+                        }),
+                        SdkDeviceEvent::VoiceKey { pressed } => json!({
+                            "kind": "voice_key",
+                            "pressed": pressed,
+                        }),
+                        SdkDeviceEvent::Button { gesture } => json!({
+                            "kind": "button",
+                            "gesture": gesture,
+                        }),
+                        SdkDeviceEvent::Disconnected => json!({
+                            "kind": "disconnected",
+                        }),
+                    };
+                    if !value.is_null() {
+                        state().events.lock().expect("events lock").push(value);
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    })
+}
+
 async fn snapshot_device(active: &ActiveDevice) -> Result<Value, BridgeError> {
     let kind = active.kind();
     match active {
+        ActiveDevice::External { device, .. } => {
+            let snap = device.snapshot().await?;
+            let caps = capabilities::HardwareCapabilities::from_sdk(snap.capabilities);
+            let storage = snap.storage.map(|st| {
+                json!({
+                    "total": st.total_mb,
+                    "used": st.used_mb,
+                })
+            });
+            Ok(json!({
+                "battery": {
+                    "level": snap.battery.level,
+                    "isCharging": snap.battery.is_charging,
+                },
+                "state": {
+                    "wifiOpen": false,
+                    "recording": snap.record.is_recording,
+                },
+                "info": {
+                    "version": snap.fw_version,
+                    "versionCode": 0,
+                    "deviceName": snap.device_name,
+                    "deviceId": snap.device_id,
+                    "wifiVersion": "",
+                    "wifiVersionCode": 0,
+                },
+                "storage": storage,
+                "record": snap.record,
+                "deviceKind": kind.as_str(),
+                "displayModel": kind.display_model(),
+                "deviceName": snap.device_name,
+                "capabilities": caps,
+            }))
+        }
         ActiveDevice::CardV2 { device, name } => {
             let battery_res = match device.battery().await {
                 Ok(v) if v.level > 0 => Ok(v),
@@ -1263,6 +1489,14 @@ async fn record_action(active: &ActiveDevice, action: &str) -> Result<Value, Bri
                     record_start(active, None).await
                 }
             }
+            ActiveDevice::External { device, .. } => {
+                let snap = device.snapshot().await?;
+                if snap.record.is_recording {
+                    record_stop(active).await
+                } else {
+                    record_start(active, None).await
+                }
+            }
         },
     }
 }
@@ -1303,6 +1537,10 @@ async fn record_start(
             recording.store(true, Ordering::SeqCst);
             Ok(json!({"recording": true, "mode": "stream_only"}))
         }
+        ActiveDevice::External { device, .. } => {
+            let st = device.start_record(duration_secs).await?;
+            Ok(serde_json::to_value(&st).unwrap_or(json!({"recording": true})))
+        }
     }
 }
 
@@ -1317,12 +1555,25 @@ async fn record_stop(active: &ActiveDevice) -> Result<Value, BridgeError> {
             board.stop_local_audio_reader();
             Ok(json!({"recording": false, "mode": "stream_only"}))
         }
+        ActiveDevice::External { device, .. } => {
+            let st = device.stop_record().await?;
+            Ok(serde_json::to_value(&st).unwrap_or(json!({"recording": false})))
+        }
     }
 }
 
 async fn record_mark(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => Ok(device.raw_command("RECORD_MARK", None).await?),
+        ActiveDevice::External { device, kind, .. } => {
+            if !device.capabilities().has_mark_button {
+                return Err(BridgeError::from(format!(
+                    "{} 不支持语音重点打标",
+                    kind.display_model()
+                )));
+            }
+            Ok(device.mark().await?)
+        }
         ActiveDevice::DyjV1 { .. } | ActiveDevice::BoardV21 { .. } => {
             Ok(json!({"marked": true, "localOnly": true}))
         }
@@ -1342,7 +1593,65 @@ async fn realtime_open(out: Emitter) -> Result<(), BridgeError> {
             recording,
             ..
         } => realtime_open_board_v21(board, audio_tx, recording, out).await,
+        ActiveDevice::External { kind, device, .. } => {
+            realtime_open_external(kind, device, out).await
+        }
     }
+}
+
+async fn realtime_open_external(
+    kind: DeviceKind,
+    device: Arc<dyn RecorderDevice>,
+    out: Emitter,
+) -> Result<(), BridgeError> {
+    let mut audio = device.subscribe_audio();
+    device.set_realtime_enabled(true).await?;
+    let mut stop_rx = install_realtime_stop();
+    out.progress(json!({
+        "state": "open",
+        "deviceKind": kind.as_str(),
+    }));
+
+    tokio::spawn(async move {
+        let mut blocks: u64 = 0;
+        let mut samples: u64 = 0;
+        let mut gaps: u64 = 0;
+        loop {
+            tokio::select! {
+                _ = &mut stop_rx => break,
+                received = audio.recv() => match received {
+                    Ok(chunk) => emit_pcm_chunk(
+                        &out,
+                        &chunk.samples,
+                        chunk.sample_rate,
+                        chunk.channels,
+                        chunk.discontinuous,
+                        &mut blocks,
+                        &mut samples,
+                        &mut gaps,
+                    ),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        gaps += 1;
+                        out.progress(json!({
+                            "state": "gap",
+                            "gapIndex": gaps,
+                            "skipped": skipped,
+                            "receivedSamples": samples,
+                        }));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+        let _ = device.set_realtime_enabled(false).await;
+        out.ok(json!({
+            "stopped": true,
+            "blocks": blocks,
+            "samples": samples,
+            "gaps": gaps,
+        }));
+    });
+    Ok(())
 }
 
 fn install_realtime_stop() -> tokio::sync::oneshot::Receiver<()> {
@@ -1603,6 +1912,10 @@ async fn realtime_open_board_v21(
 
 async fn list_device_files(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
+        ActiveDevice::External { device, .. } => {
+            let files = device.list_files().await?;
+            Ok(serde_json::to_value(&files).unwrap_or_else(|_| Value::Array(Vec::new())))
+        }
         ActiveDevice::CardV2 { device, .. } => {
             ensure_sd_on_nrf(device).await;
             Ok(device.list_files(None).await.and_then(to_value)?)
@@ -1697,6 +2010,15 @@ async fn download_device_file(
         ActiveDevice::BoardV21 { .. } => Err(BridgeError::from(
             "语音 AI 键盘无板载录音存储，仅支持实时音频流".to_string(),
         )),
+        ActiveDevice::External { device, name: dev_name, .. } => {
+            let saved = device.download_file(name, dir).await?;
+            Ok(json!({
+                "path": saved.path.to_string_lossy(),
+                "bytesWritten": saved.bytes_written,
+                "originalName": saved.original_name,
+                "deviceName": saved.device_name.or_else(|| Some(dev_name.clone())),
+            }))
+        }
     }
 }
 
@@ -1718,11 +2040,29 @@ async fn take_oldest_device_file(active: &ActiveDevice, dir: &str) -> Result<Val
         ActiveDevice::BoardV21 { .. } => Err(BridgeError::from(
             "语音 AI 键盘无板载录音存储，仅支持实时音频流".to_string(),
         )),
+        ActiveDevice::External { device, name: dev_name, .. } => {
+            let files = device.list_files().await?;
+            let first = files.into_iter().next().ok_or_else(|| {
+                BridgeError::from("设备存储中暂无待取回的录音文件".to_string())
+            })?;
+            let saved = device.download_file(&first.name, dir).await?;
+            let _ = device.delete_file(&first.name).await;
+            Ok(json!({
+                "path": saved.path.to_string_lossy(),
+                "bytesWritten": saved.bytes_written,
+                "originalName": saved.original_name,
+                "deviceName": saved.device_name.or_else(|| Some(dev_name.clone())),
+            }))
+        }
     }
 }
 
 async fn delete_device_file(active: &ActiveDevice, name: &str) -> Result<Value, BridgeError> {
     match active {
+        ActiveDevice::External { device, .. } => {
+            device.delete_file(name).await?;
+            Ok(json!({"deleted": name}))
+        }
         ActiveDevice::CardV2 { device, .. } => {
             Ok(device.delete_file(name).await.and_then(to_value)?)
         }
@@ -1902,7 +2242,9 @@ async fn wifi_scan(active: &ActiveDevice) -> Result<Value, BridgeError> {
                 .collect();
             Ok(Value::Array(networks))
         }
-        ActiveDevice::BoardV21 { .. } => Ok(Value::Array(Vec::new())),
+        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
+            Ok(Value::Array(Vec::new()))
+        }
     }
 }
 
@@ -1999,6 +2341,10 @@ async fn wifi_connect(
         ActiveDevice::BoardV21 { .. } => {
             Err(BridgeError::from("语音 AI 键盘不支持设备端 Wi-Fi 配置".to_string()))
         }
+        ActiveDevice::External { kind, .. } => Err(BridgeError::from(format!(
+            "{} 不支持设备端 Wi-Fi 配置",
+            kind.display_model()
+        ))),
     }
 }
 
@@ -2006,14 +2352,18 @@ async fn wifi_open(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => Ok(device.open_wifi().await.and_then(to_value)?),
         ActiveDevice::DyjV1 { device, .. } => Ok(device.wifi_status().await?),
-        ActiveDevice::BoardV21 { .. } => Ok(json!({"enabled": false})),
+        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
+            Ok(json!({"enabled": false}))
+        }
     }
 }
 
 async fn wifi_close(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => Ok(device.close_wifi().await.and_then(to_value)?),
-        ActiveDevice::DyjV1 { .. } | ActiveDevice::BoardV21 { .. } => Ok(json!({"closed": true})),
+        ActiveDevice::DyjV1 { .. }
+        | ActiveDevice::BoardV21 { .. }
+        | ActiveDevice::External { .. } => Ok(json!({"closed": true})),
     }
 }
 
@@ -2067,7 +2417,9 @@ async fn wifi_credentials(active: &ActiveDevice, passive: bool) -> Result<Value,
             }
             Ok(Value::Array(creds))
         }
-        ActiveDevice::BoardV21 { .. } => Ok(Value::Array(Vec::new())),
+        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
+            Ok(Value::Array(Vec::new()))
+        }
     }
 }
 
@@ -2106,7 +2458,9 @@ async fn wifi_forget(active: &ActiveDevice, ssid: &str) -> Result<Value, BridgeE
             Ok(res.and_then(to_value)?)
         }
         ActiveDevice::DyjV1 { device, .. } => Ok(device.wifi_forget(Some(ssid)).await?),
-        ActiveDevice::BoardV21 { .. } => Ok(json!({"removed": 0})),
+        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
+            Ok(json!({"removed": 0}))
+        }
     }
 }
 
@@ -2114,7 +2468,7 @@ async fn sync_start(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => Ok(device.start_sync().await.and_then(to_value)?),
         ActiveDevice::DyjV1 { device, .. } => Ok(device.upload_start(None).await?),
-        ActiveDevice::BoardV21 { .. } => Ok(json!({"queued": 0})),
+        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => Ok(json!({"queued": 0})),
     }
 }
 
@@ -2122,7 +2476,9 @@ async fn sync_status(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => Ok(device.sync_status().await.and_then(to_value)?),
         ActiveDevice::DyjV1 { device, .. } => Ok(device.upload_status().await?),
-        ActiveDevice::BoardV21 { .. } => Ok(json!({"uploading": false})),
+        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
+            Ok(json!({"uploading": false}))
+        }
     }
 }
 
@@ -2132,7 +2488,7 @@ async fn upload_set_url(active: &ActiveDevice, url: &str) -> Result<Value, Bridg
             Ok(device.set_wifi_upload_url(url).await.and_then(to_value)?)
         }
         ActiveDevice::DyjV1 { device, .. } => Ok(device.upload_config_set(Some(url), None).await?),
-        ActiveDevice::BoardV21 { .. } => Ok(json!({"url": url})),
+        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => Ok(json!({"url": url})),
     }
 }
 
@@ -2150,6 +2506,10 @@ async fn ap_start(
         ActiveDevice::BoardV21 { .. } => {
             Err(BridgeError::from("语音 AI 键盘不支持热点模式".to_string()))
         }
+        ActiveDevice::External { kind, .. } => Err(BridgeError::from(format!(
+            "{} 不支持热点模式",
+            kind.display_model()
+        ))),
     }
 }
 
@@ -2159,7 +2519,9 @@ async fn ap_stop(active: &ActiveDevice) -> Result<Value, BridgeError> {
             Ok(device.stop_access_point().await.and_then(to_value)?)
         }
         ActiveDevice::DyjV1 { device, .. } => Ok(device.ap_stop().await?),
-        ActiveDevice::BoardV21 { .. } => Ok(json!({"active": false})),
+        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
+            Ok(json!({"active": false}))
+        }
     }
 }
 
@@ -2177,6 +2539,7 @@ async fn time_sync(active: &ActiveDevice) -> Result<Value, BridgeError> {
                 .unwrap_or_else(|_| json!({"epoch_ms": now_ms})))
         }
         ActiveDevice::BoardV21 { .. } => Ok(json!({"synced": true, "hostClock": true})),
+        ActiveDevice::External { device, .. } => Ok(device.sync_time().await?),
     }
 }
 

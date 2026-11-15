@@ -189,9 +189,55 @@ class DeviceStore extends ChangeNotifier {
   /// - `REAI_VB_*`：语音 AI 键盘 V2.1
   static const deviceNamePrefix = 'DYJ';
 
-  static bool isOurDevice(CardDevice device) =>
-      device.kind == DeviceKind.appleWatch ||
-      DeviceKind.fromBleName(device.name) != null;
+  bool _getSeedLinkEnabled = false;
+  bool _omiLinkEnabled = false;
+
+  bool get getSeedLinkEnabled => _getSeedLinkEnabled;
+  bool get omiLinkEnabled => _omiLinkEnabled;
+
+  /// 只展示我们自己的录音卡/点一机/键盘（按需含已开启的 Apple Watch 与第三方硬件）。
+  static bool isOurDevice(
+    CardDevice device, {
+    bool allowWatch = true,
+    bool allowGetSeed = false,
+    bool allowOmi = false,
+  }) {
+    final kind = device.kind ?? DeviceKind.fromBleName(device.name);
+    if (kind == null) return false;
+    return switch (kind) {
+      DeviceKind.cardV2 || DeviceKind.dyjV1 || DeviceKind.boardV21 => true,
+      DeviceKind.appleWatch => allowWatch,
+      DeviceKind.getSeedGsc10 => allowGetSeed,
+      DeviceKind.omiCv1 => allowOmi,
+    };
+  }
+
+  Future<void> setExtHardwareEnabled({bool? getSeed, bool? omi}) async {
+    final nextGetSeed = getSeed ?? _getSeedLinkEnabled;
+    final nextOmi = omi ?? _omiLinkEnabled;
+    if (nextGetSeed == _getSeedLinkEnabled && nextOmi == _omiLinkEnabled) {
+      return;
+    }
+    _getSeedLinkEnabled = nextGetSeed;
+    _omiLinkEnabled = nextOmi;
+    if ((!nextGetSeed && isConnected && activeKind == DeviceKind.getSeedGsc10) ||
+        (!nextOmi && isConnected && activeKind == DeviceKind.omiCv1)) {
+      await disconnectSafely();
+    }
+    if (discovered.isNotEmpty) {
+      discovered = discovered
+          .where(
+            (d) => isOurDevice(
+              d,
+              allowWatch: watchHardware.linkEnabled,
+              allowGetSeed: _getSeedLinkEnabled,
+              allowOmi: _omiLinkEnabled,
+            ),
+          )
+          .toList(growable: false);
+    }
+    notifyListeners();
+  }
 
   /// RSSI → 1~3 格信号（与 Wi-Fi 列表同一套阈值，UI 直接复用）。
   static int signalOf(int? rssi) => _signalOf(rssi ?? -100);
@@ -257,7 +303,13 @@ class DeviceStore extends ChangeNotifier {
       // 近的设备排前面：RSSI 越大信号越强（-50 比 -80 近）。无 RSSI 的排最后。
       discovered = [
         for (final device in list)
-          if (isOurDevice(device)) device,
+          if (isOurDevice(
+            device,
+            allowWatch: watchHardware.linkEnabled,
+            allowGetSeed: _getSeedLinkEnabled,
+            allowOmi: _omiLinkEnabled,
+          ))
+            device,
       ]..sort((a, b) => (b.rssi ?? -100).compareTo(a.rssi ?? -100));
       linkState = LinkState.disconnected;
       linkError = discovered.isEmpty
@@ -768,6 +820,10 @@ class DeviceStore extends ChangeNotifier {
           ? '$_fwVersion · 本地直连'
           : 'WCSession · 本地直连';
     }
+    if (!activeCapabilities.hasRemoteRecordControl) {
+      final base = _fwVersion.isNotEmpty ? '固件 $_fwVersion · ' : '';
+      return '$base机身按键控录 · 靠近自动传';
+    }
     if (_fwVersion.isEmpty) return '';
     return '固件 $_fwVersion';
   }
@@ -938,6 +994,11 @@ class DeviceStore extends ChangeNotifier {
   /// 「未录音」；开启硬件录音后同步点亮灵动岛/锁屏实况，并将手机本机录音挂入零功耗待命保底。
   Future<String?> toggleRecording() async {
     if (!isConnected) return '录音卡未连接';
+    if (!activeCapabilities.hasRemoteRecordControl) {
+      recordingError = '该硬件仅支持通过机身物理按键启停录音';
+      notifyListeners();
+      return recordingError;
+    }
     if (recordingBusy) {
       // 上一条命令还没回来：不静默丢弃点击，明确告诉用户在等什么。
       recordingError = '正在执行上一条命令，请稍候';

@@ -1,7 +1,7 @@
 # 多硬件录音设备解耦与无缝多源切换架构设计
 
-> 状态：Phase 1（统一抽象层 + 自研三款设备单连接落地）已实施；Phase 2（多设备并发连接、RSSI/链路质量无缝切换、第三方开源协议插件化）架构定稿
-> 更新日期：2026-11-11
+> 状态：Phase 1（统一抽象层 + 自研三款设备单连接落地）已实施；Round 1 第三方独立 SDK 包装层（`reai-ext-sdk` + `reai-getseed-sdk` + `reai-omi-sdk`）已落地；Priority 2（飞书录音豆）与 Priority 3（Plaud Note / Pro）待独立分支推进；Phase 2（多设备并发连接与无缝切源）架构定稿
+> 更新日期：2026-11-15
 
 ---
 
@@ -72,9 +72,10 @@ UI 与同步调度器**严禁写 `if (deviceKind == 'board_v21')` 之类的型�
 | `hasOnboardStorage`（板载落盘） | ✅ SD 卡 `.APM` | ✅ `/data` 分区 `.amr` | ❌ 无存储（纯流式麦克风） | 视具体型号声明 `true/false` | `false` 时隐藏「剩余可录空间估算」与离线补传提示 |
 | `hasFileSync`（离线文件回补） | ✅ BLE 分块下载 | ✅ SoftAP 8788 / Server 回拉 | ❌ 不支持 | ✅ BLE / Wi-Fi 快传 | `false` 时设备弹层隐藏「同步」行，停止录音不触发文件拉取 |
 | `hasCameraMedia`（硬件拍照/媒体） | ❌ | ✅ 物理键抓拍 `img_*.jpg` | ❌ | 部分支持 | `true` 时监听相机事件并拉取照片按时间戳归入当前对话 |
-| `hasPhysicalRecordToggle` | ✅ 拨杆 + 按键打点 | ✅ 单击/双击/长按手势事件 | ✅ 物理 AI 语音键 (`AiVoiceKey`) | ✅ 物理按键事件 | 硬件侧操作经 `events.pull` 1s 内同步翻转 App 录音开关 |
-| `hasWifiConfig`（设备配网） | ✅ 2.4GHz Wi-Fi 配置 | ✅ Wi-Fi 扫描/连接/忘记 | ❌ 不需要 | 视型号声明 | `false` 时设备弹层隐藏「Wi-Fi 网络」行 |
-| `otaMode`（固件升级形态） | `dual_chip`（主控 DFU + ESP32） | `single_ota`（清单检查/安装） | `usb_only`（移动端隐藏） | `ble_dfu` / `none` | `none`/`usb_only` 时移动端设备弹层隐藏「固件更新」行 |
+| `hasPhysicalRecordToggle` | ✅ 拨杆 + 按键打点 | ✅ 单击/双击/长按手势事件 | ✅ 物理 AI 语音键 (`AiVoiceKey`) | Get笔记卡 ✅ / Omi ✅ / 其他视型号 | 硬件侧操作经 `events.pull` 1s 内同步翻转 App 录音开关 |
+| `hasRemoteRecordControl` | ✅ 远程启停 | ✅ 远程启停 | ✅ 远程启停 | Get笔记卡 ❌（仅机身控录）/ Omi ✅ | `false` 时 `StatusSheet` 隐藏 `rec-toggle`，展示「机身按键控录」 |
+| `hasWifiConfig`（设备配网） | ✅ 2.4GHz Wi-Fi 配置 | ✅ Wi-Fi 扫描/连接/忘记 | ❌ 不需要 | ❌（Round 1 经 BLE 同步） | `false` 时设备弹层隐藏「Wi-Fi 网络」行 |
+| `otaMode`（固件升级形态） | `dual_chip`（主控 DFU + ESP32） | `single_ota`（清单检查/安装） | `usb_only`（移动端隐藏） | `none`（官方 App 升级） | `none`/`usb_only` 时移动端设备弹层隐藏「固件更新」行 |
 
 ### 3.1 统一实时音频流契约（Rust → Dart）
 
@@ -96,18 +97,25 @@ UI 与同步调度器**严禁写 `if (deviceKind == 'board_v21')` 之类的型�
 
 ---
 
-## 4. 第三方开源蓝牙录音设备接入规范（飞书 / 钉钉 / 得到 Get 笔记）
+## 4. 第三方蓝牙录音设备 ReAI 风格独立 SDK 包装规范
 
-市面上主流 AI 录音配件（飞书录音豆、钉钉录音卡、得到 Get 笔记录音卡）在 BLE 协议层高度同构，均由「控制命令特征（Write/Notify）+ 压缩音频流特征（Notify）+ 可选文件块/Wi-Fi 快传」组成。接入任意新设备的标准四步：
+为避免上层 `card_bridge` / Flutter `DeviceStore` 与具体厂商私有字节协议耦合，所有第三方设备均采用 **Per-Device ReAI SDK Crate + 统一契约 Crate** 的分层方案，位于 `app/rust/sdks/`：
+
+- **`app/rust/sdks/reai-ext-sdk`（公共契约层）**：定义 `RecorderDriver` / `RecorderDevice` 异步 trait、`HardwareCapabilities`（含 `hasRemoteRecordControl`）、`DeviceSnapshot`、`DeviceFile`、`RealtimePcmChunk`、`DeviceEvent` 以及统一 Ogg Opus / Raw Opus / LC3 / WAV → `16kHz / i16 / Mono PCM` 纯 Rust 转码（`opus-pure` + `lc3-codec`，无 C/CMake 依赖，确保 iOS `aarch64-apple-ios` 静态库零障碍编译）。
+- **Round 1 已落地（默认关闭，需在 Setting →「硬件设备联动 → 第三方硬件联动」按需启用，保持默认 3 款自研扫描基线不变）**：
+  - **`app/rust/sdks/reai-getseed-sdk`**（得到 Get 笔记录音卡 / GetSeed GSC10，`deviceKind: "getseed_gsc10"`）：厂商广播过滤（Company ID `0x544A` / `Get-*`）、GATT `0xFF00` TLV 命令帧、Ogg Opus / WAV 离线文件拉取、只删单文件（`0x0044`；严禁调用 `0x0041` 全盘擦除）、`hasRemoteRecordControl = false`（UI 裁剪为「机身按键控录」）。
+  - **`app/rust/sdks/reai-omi-sdk`**（Omi 量产版 CV1 / Friend Pendant，`deviceKind: "omi_cv1"`）：UUID-only / `Omi-*` / `Friend_*` 广播识别、Opus / PCM / μ-law / LC3 实时分片重组（`19B10000` 服务）、按键手势特征（`23BA7924` → `voice_key` / `mark`）、StorageRing（`30295780`）离线文件下载与单文件清理、标准 BAS（`0x2A19`）电量读取。
+- **后续独立分支规划**：
+  - Priority 2：飞书录音豆（D3200 / `reai-feishu-sdk`）
+  - Priority 3：Plaud Note / Pro（`reai-plaud-sdk`）
 
 1. **广播指纹注册（`ScanMatcher`）**：
    - 支持按 `local_name` 前缀、Manufacturer Data（Company ID）或 16/128-bit Service UUID 匹配，不污染其他设备的扫描过滤。
-2. **音频解码器适配（`CodecAdapter`）**：
-   - 录音卡 V2 使用 `IMA-ADPCM`，点一机 V1 使用 `AMR-WB`，键盘 V2.1 使用 `mSBC`。
-   - 飞书录音豆 / 钉钉卡 / Get 笔记卡常见编码为 **Opus（16kHz CBR/VBR 16~32kbps）** 或 **IMA-ADPCM / AAC-LC**。在 `card_bridge` 新增纯 Rust/FFI `OpusDecoderAdapter`（输出 `Vec<i16>` @ 16kHz），即可零改动接入现有 1 分钟实时切片与 SenseVoice 转写管线。
-3. **控制面最小子集实现（`HardwareDriver`）**：
-   - 必选：`connect`、`disconnect`、`battery_snapshot`、`open_realtime_stream`、`close_realtime_stream`。
-   - 可选（按 `HardwareCapabilities` 声明）：`start_onboard_record`、`list_files`、`download_file`、`wifi_config`。
+2. **纯 Rust 音频解码器适配（`reai-ext-sdk::audio`）**：
+   - 自研硬件使用 `IMA-ADPCM` / `AMR-WB` / `mSBC`；第三方 SDK 在包内或 `reai-ext-sdk` 完成 **Ogg Opus / Raw Opus / LC3 / μ-law → 16kHz Mono PCM / WAV** 解码，零改动接入现有 1 分钟本地切片与 SenseVoice 转写管线。
+3. **控制面最小子集实现（`RecorderDriver` / `RecorderDevice`）**：
+   - 必选：`connect`、`disconnect`、`snapshot`、`battery_snapshot`、`open_realtime`、`close_realtime`。
+   - 可选（按 `HardwareCapabilities` 声明）：`start_record`/`stop_record`（仅 `hasRemoteRecordControl == true` 暴露远程开关）、`list_files`、`download_file`、`delete_file`、`sync_time`。
 4. **离线切片与实时切片对账（`TimeWindowReconciler`）**：
    - 统一按 `[recordingStartEpochMs, recordingEndEpochMs]` 时间区间对账：若某段录音期间实时流 `gaps == 0` 且已落盘完整 16kHz WAV，离线同步自动跳过该文件，避免重复蓝牙拉取耗电；若实时流期间发生断连或高丢包（`gaps > threshold`），才回补对应时间窗的板载录音文件。
 

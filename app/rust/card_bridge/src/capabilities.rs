@@ -1,6 +1,12 @@
 //! 硬件类型识别与统一能力矩阵（对齐 `docs/MULTI-DEVICE-ARCHITECTURE.md`）。
 
+use std::collections::HashMap;
+
+use reai_ext_sdk::{RecorderSdkDriver, SdkCapabilities};
+use reai_getseed_sdk::GetSeedSdkDriver;
+use reai_omi_sdk::OmiSdkDriver;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// 支持的硬件设备家族。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -12,6 +18,10 @@ pub enum DeviceKind {
     DyjV1,
     /// 语音 AI 键盘 V2.1（`reai-board-sdk`，广播前缀 `REAI_VB_`）
     BoardV21,
+    /// 得到 Get 笔记录音卡 GSC10（`reai-getseed-sdk`）
+    GetSeedGsc10,
+    /// Omi 量产版 / Friend Pendant（`reai-omi-sdk`）
+    OmiCv1,
 }
 
 impl DeviceKind {
@@ -20,6 +30,8 @@ impl DeviceKind {
             Self::CardV2 => "card_v2",
             Self::DyjV1 => "dyj_v1",
             Self::BoardV21 => "board_v21",
+            Self::GetSeedGsc10 => "getseed_gsc10",
+            Self::OmiCv1 => "omi_cv1",
         }
     }
 
@@ -28,6 +40,8 @@ impl DeviceKind {
             Self::CardV2 => "录音卡 V2",
             Self::DyjV1 => "点一机 V1",
             Self::BoardV21 => "语音AI键盘 V2.1",
+            Self::GetSeedGsc10 => "Get笔记卡",
+            Self::OmiCv1 => "Omi 录音器",
         }
     }
 
@@ -36,6 +50,8 @@ impl DeviceKind {
             Some("card_v2") => return Some(Self::CardV2),
             Some("dyj_v1") => return Some(Self::DyjV1),
             Some("board_v21") => return Some(Self::BoardV21),
+            Some("getseed_gsc10") => return Some(Self::GetSeedGsc10),
+            Some("omi_cv1") => return Some(Self::OmiCv1),
             _ => {}
         }
         name_hint.and_then(|n| classify_ble_name(n).map(|(k, _)| k))
@@ -50,6 +66,7 @@ impl DeviceKind {
                 has_wifi_config: true,
                 has_camera_media: false,
                 has_physical_record_toggle: true,
+                has_remote_record_control: true,
                 has_mark_button: true,
                 ota_mode: "dual_chip",
             },
@@ -60,6 +77,7 @@ impl DeviceKind {
                 has_wifi_config: true,
                 has_camera_media: true,
                 has_physical_record_toggle: true,
+                has_remote_record_control: true,
                 has_mark_button: false,
                 ota_mode: "single_ota",
             },
@@ -70,9 +88,14 @@ impl DeviceKind {
                 has_wifi_config: false,
                 has_camera_media: false,
                 has_physical_record_toggle: true,
+                has_remote_record_control: true,
                 has_mark_button: false,
                 ota_mode: "none",
             },
+            Self::GetSeedGsc10 => {
+                HardwareCapabilities::from_sdk(GetSeedSdkDriver.default_capabilities())
+            }
+            Self::OmiCv1 => HardwareCapabilities::from_sdk(OmiSdkDriver.default_capabilities()),
         }
     }
 }
@@ -87,16 +110,29 @@ pub struct HardwareCapabilities {
     pub has_wifi_config: bool,
     pub has_camera_media: bool,
     pub has_physical_record_toggle: bool,
+    pub has_remote_record_control: bool,
     pub has_mark_button: bool,
     /// `"dual_chip"` | `"single_ota"` | `"none"`
     pub ota_mode: &'static str,
 }
 
-/// 根据 BLE 广播名称识别支持的录音硬件。
-///
-/// 注意顺序：`DYJV2_` 必须在 `DYJ_` 之前判断，避免把二代录音卡误判成一代点一机。
-pub fn classify_ble_name(name: &str) -> Option<(DeviceKind, HardwareCapabilities)> {
-    let trimmed = name.trim();
+impl HardwareCapabilities {
+    pub fn from_sdk(caps: SdkCapabilities) -> Self {
+        Self {
+            realtime_audio: caps.realtime_audio,
+            has_onboard_storage: caps.has_onboard_storage,
+            has_file_sync: caps.has_file_sync,
+            has_wifi_config: caps.has_wifi_config,
+            has_camera_media: caps.has_camera_media,
+            has_physical_record_toggle: caps.has_physical_record_toggle,
+            has_remote_record_control: caps.has_remote_record_control,
+            has_mark_button: caps.has_mark_button,
+            ota_mode: caps.ota_mode,
+        }
+    }
+}
+
+fn classify_proprietary_name(trimmed: &str) -> Option<(DeviceKind, HardwareCapabilities)> {
     if trimmed.starts_with("DYJV2_") {
         Some((DeviceKind::CardV2, DeviceKind::CardV2.capabilities()))
     } else if trimmed.starts_with("DYJ_") {
@@ -108,29 +144,123 @@ pub fn classify_ble_name(name: &str) -> Option<(DeviceKind, HardwareCapabilities
     }
 }
 
+fn external_drivers() -> [&'static dyn RecorderSdkDriver; 2] {
+    [&GetSeedSdkDriver, &OmiSdkDriver]
+}
+
+/// 根据 BLE 广播名称识别支持的录音硬件。
+///
+/// 注意顺序：`DYJV2_` 必须在 `DYJ_` 之前判断，避免把二代录音卡误判成一代点一机。
+pub fn classify_ble_name(name: &str) -> Option<(DeviceKind, HardwareCapabilities)> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(hit) = classify_proprietary_name(trimmed) {
+        return Some(hit);
+    }
+    let empty_mfd = HashMap::new();
+    for drv in external_drivers() {
+        if drv.matches_advertisement(Some(trimmed), &[], &empty_mfd) {
+            if let Some(kind) = DeviceKind::from_hint(Some(drv.device_kind()), None) {
+                return Some((kind, HardwareCapabilities::from_sdk(drv.default_capabilities())));
+            }
+        }
+    }
+    None
+}
+
+/// 综合广播本地名、128-bit 服务 UUID 与厂商广播数据识别支持的硬件（支持纯 UUID 广播的 Omi）。
+pub fn classify_ble_advertisement(
+    peripheral_id: &str,
+    local_name: Option<&str>,
+    services: &[Uuid],
+    manufacturer_data: &HashMap<u16, Vec<u8>>,
+) -> Option<(String, DeviceKind, HardwareCapabilities)> {
+    let clean_name = local_name.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(name) = clean_name {
+        if let Some((kind, caps)) = classify_proprietary_name(name) {
+            return Some((name.to_string(), kind, caps));
+        }
+    }
+    for drv in external_drivers() {
+        if drv.matches_advertisement(clean_name, services, manufacturer_data) {
+            let kind = DeviceKind::from_hint(Some(drv.device_kind()), None)?;
+            let display_name = clean_name
+                .map(str::to_owned)
+                .unwrap_or_else(|| drv.fallback_ble_name(peripheral_id));
+            return Some((
+                display_name,
+                kind,
+                HardwareCapabilities::from_sdk(drv.default_capabilities()),
+            ));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reai_getseed_sdk::protocol::MFG_ID_GETSEED;
+    use reai_omi_sdk::protocol::{SVC_FRIEND_PENDANT_UUID, SVC_OMI_AUDIO_UUID};
 
     #[test]
     fn classifies_all_three_hardware_families_without_prefix_collision() {
         let (k2, c2) = classify_ble_name("DYJV2_T4W25T").expect("card v2");
         assert_eq!(k2, DeviceKind::CardV2);
         assert!(c2.has_onboard_storage && c2.has_file_sync && !c2.has_camera_media);
+        assert!(c2.has_remote_record_control);
         assert_eq!(c2.ota_mode, "dual_chip");
 
         let (k1, c1) = classify_ble_name("DYJ_RA6BO5").expect("dyj v1");
         assert_eq!(k1, DeviceKind::DyjV1);
         assert!(c1.has_onboard_storage && c1.has_camera_media);
+        assert!(c1.has_remote_record_control);
         assert_eq!(c1.ota_mode, "single_ota");
 
         let (kb, cb) = classify_ble_name("REAI_VB_A91C").expect("board v2.1");
         assert_eq!(kb, DeviceKind::BoardV21);
-        assert!(cb.realtime_audio);
+        assert!(cb.realtime_audio && cb.has_remote_record_control);
         assert!(!cb.has_onboard_storage && !cb.has_file_sync && !cb.has_wifi_config);
         assert_eq!(cb.ota_mode, "none");
 
         assert!(classify_ble_name("JBL Flip 6").is_none());
         assert!(classify_ble_name("").is_none());
+    }
+
+    #[test]
+    fn classifies_getseed_and_omi_by_name_uuid_and_manufacturer_data() {
+        let empty = HashMap::new();
+
+        let (kg, cg) = classify_ble_name("Get-A102").expect("getseed name");
+        assert_eq!(kg, DeviceKind::GetSeedGsc10);
+        assert!(!cg.realtime_audio && cg.has_onboard_storage && cg.has_file_sync);
+        assert!(!cg.has_remote_record_control && !cg.has_wifi_config);
+        assert_eq!(cg.ota_mode, "none");
+
+        let mut mfd = HashMap::new();
+        mfd.insert(MFG_ID_GETSEED, vec![0x01, 0x02]);
+        let (name_mfd, kmfd, _) =
+            classify_ble_advertisement("uuid-1234", None, &[], &mfd).expect("getseed mfd");
+        assert_eq!(kmfd, DeviceKind::GetSeedGsc10);
+        assert!(name_mfd.contains("1234"));
+
+        let (name_omi, ko, co) =
+            classify_ble_advertisement("dead-beef-5678", None, &[SVC_OMI_AUDIO_UUID], &empty)
+                .expect("omi uuid only");
+        assert_eq!(ko, DeviceKind::OmiCv1);
+        assert!(co.realtime_audio && co.has_file_sync && co.has_remote_record_control);
+        assert!(co.has_mark_button && !co.has_wifi_config);
+        assert!(name_omi.starts_with("Omi-"));
+
+        let (_, kf, _) = classify_ble_advertisement(
+            "cafe-9999",
+            Some("Friend_9999"),
+            &[SVC_FRIEND_PENDANT_UUID],
+            &empty,
+        )
+        .expect("friend pendant");
+        assert_eq!(kf, DeviceKind::OmiCv1);
     }
 }

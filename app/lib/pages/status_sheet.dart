@@ -766,25 +766,46 @@ class _MainView extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              Semantics(
-                label: '录音开关',
-                toggled: store.isRecording,
-                button: true,
-                // 自绘开关必须自己声明启用状态：不声明的话系统（读屏/自动化）
-                // 会把它当成"不可用"，与它实际可点的事实矛盾。
-                enabled: !store.recordingBusy,
-                child: GestureDetector(
-                  key: const Key('rec-toggle'),
-                  behavior: HitTestBehavior.opaque,
-                  // 忙时也保留手势：点击由 store 给出「请稍候」的可见反馈，
-                  // 而不是把点击静默吞掉。
-                  onTap: store.toggleRecording,
-                  child: RCSwitch(
-                    on: store.isRecording,
-                    busy: store.recordingBusy,
+              if (store.activeCapabilities.hasRemoteRecordControl)
+                Semantics(
+                  label: '录音开关',
+                  toggled: store.isRecording,
+                  button: true,
+                  // 自绘开关必须自己声明启用状态：不声明的话系统（读屏/自动化）
+                  // 会把它当成"不可用"，与它实际可点的事实矛盾。
+                  enabled: !store.recordingBusy,
+                  child: GestureDetector(
+                    key: const Key('rec-toggle'),
+                    behavior: HitTestBehavior.opaque,
+                    // 忙时也保留手势：点击由 store 给出「请稍候」的可见反馈，
+                    // 而不是把点击静默吞掉。
+                    onTap: store.toggleRecording,
+                    child: RCSwitch(
+                      on: store.isRecording,
+                      busy: store.recordingBusy,
+                    ),
+                  ),
+                )
+              else
+                Container(
+                  key: const Key('rec-physical-only'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0F0EC),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Text(
+                    '机身按键控录',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: RCColors.sec,
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         ),

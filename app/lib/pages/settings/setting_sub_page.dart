@@ -12,6 +12,7 @@ import '../../core/device/card_gateway.dart';
 import '../../core/store/agent_config_store.dart';
 import '../../core/store/device_store.dart';
 import '../../core/store/voiceprint_library_store.dart';
+import '../../core/theme/rc_icons.dart';
 import '../../core/theme/tokens.dart';
 import '../../services/audio/voice_sample_capture.dart';
 import '../../services/auth/oauth_config.dart';
@@ -34,7 +35,7 @@ class SettingSubPage extends StatelessWidget {
     this.standalone = false,
   });
 
-  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'island' | 'watch'
+  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'island' | 'watch' | 'exthw'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
@@ -51,6 +52,7 @@ class SettingSubPage extends StatelessWidget {
     'ext' => '扩展能力（Skills · Tools · MCP）',
     'island' => '灵动岛与操作按钮',
     'watch' => 'Apple Watch 联动',
+    'exthw' => '第三方硬件联动',
     _ => '设置详情',
   };
 
@@ -139,6 +141,10 @@ class SettingSubPage extends StatelessWidget {
                     'ext' => _AgentExtensionsBody(config: agentConfig),
                     'island' => _DynamicIslandBody(config: agentConfig),
                     'watch' => _AppleWatchLinkBody(
+                      config: agentConfig,
+                      device: device,
+                    ),
+                    'exthw' => _ExtHardwareLinkBody(
                       config: agentConfig,
                       device: device,
                     ),
@@ -2808,6 +2814,197 @@ class _WatchKvRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── 8) 第三方硬件联动（ReAI 独立 SDK 包裹层） ───────────────────────
+
+class _ExtHardwareLinkBody extends StatefulWidget {
+  const _ExtHardwareLinkBody({required this.config, required this.device});
+
+  final AgentConfigStore config;
+  final DeviceStore? device;
+
+  @override
+  State<_ExtHardwareLinkBody> createState() => _ExtHardwareLinkBodyState();
+}
+
+class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
+  String? _hint;
+
+  Future<void> _toggleGetSeed(bool next) async {
+    await widget.config.setGetSeedLinkEnabled(next);
+    await widget.device?.setExtHardwareEnabled(getSeed: next);
+    if (!mounted) return;
+    setState(() {
+      _hint = next ? '已开启 Get 笔记录音卡扫描联动' : '已关闭 Get 笔记录音卡联动';
+    });
+  }
+
+  Future<void> _toggleOmi(bool next) async {
+    await widget.config.setOmiLinkEnabled(next);
+    await widget.device?.setExtHardwareEnabled(omi: next);
+    if (!mounted) return;
+    setState(() {
+      _hint = next ? '已开启 Omi 量产版录音器扫描联动' : '已关闭 Omi 量产版录音器联动';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final dev = widget.device;
+    final listenable = dev == null
+        ? widget.config
+        : Listenable.merge([widget.config, dev]);
+    return ListenableBuilder(
+      listenable: listenable,
+      builder: (context, _) {
+        final getSeedOn = widget.config.getSeedLinkEnabled;
+        final omiOn = widget.config.omiLinkEnabled;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              '默认蓝牙扫描仅保留 ReAI 三款自研硬件；按需开启以下经 ReAI SDK 协议层封装的第三方硬件后，设备可出现在扫描列表并按实际能力裁剪状态卡。',
+              style: TextStyle(fontSize: 13, height: 1.5, color: c.sec),
+            ),
+            const SizedBox(height: 14),
+            _extDeviceCard(
+              context,
+              cardKey: const Key('ext-getseed-card'),
+              switchKey: const Key('ext-getseed-switch'),
+              kind: DeviceKind.getSeedGsc10,
+              title: '得到 Get 笔记录音卡（GSC10）',
+              sdkCrate: 'reai-getseed-sdk · 广播 Get-* / MFG 0x544A',
+              capabilityDesc:
+                  '离线 Ogg Opus 存储同步 · 机身按键控录 · 单文件安全清理（不调全盘格式化指令），本地解码为 16kHz 单声道 WAV 转写。',
+              enabled: getSeedOn,
+              connected: dev?.isConnected == true &&
+                  dev?.activeKind == DeviceKind.getSeedGsc10,
+              onChanged: () => unawaited(_toggleGetSeed(!getSeedOn)),
+            ),
+            const SizedBox(height: 12),
+            _extDeviceCard(
+              context,
+              cardKey: const Key('ext-omi-card'),
+              switchKey: const Key('ext-omi-switch'),
+              kind: DeviceKind.omiCv1,
+              title: 'Omi 量产版录音器（CV1 / Friend）',
+              sdkCrate: 'reai-omi-sdk · 服务 UUID 19B1 / 1A3F',
+              capabilityDesc:
+                  'BLE 实时音频流（Opus / PCM / μ-law / LC3 纯 Rust 解码）+ 板载 Ring/SD 离线同步 + 物理按键手势打标，无 App 端 Wi-Fi 配网/OTA。',
+              enabled: omiOn,
+              connected:
+                  dev?.isConnected == true && dev?.activeKind == DeviceKind.omiCv1,
+              onChanged: () => unawaited(_toggleOmi(!omiOn)),
+            ),
+            if (_hint != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                _hint!,
+                key: const Key('ext-hw-hint'),
+                style: TextStyle(fontSize: 12, color: c.sec),
+              ),
+            ],
+            const SizedBox(height: 16),
+            const _SubSectionLabel('ReAI SDK 分层边界说明'),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Text(
+                '1. 每款第三方硬件均独立封装为一个 Rust SDK crate（实现 RecorderSdkDriver 与 RecorderDevice 契约），后续新增固件修订或更多品牌设备仅需更新对应 SDK 包，无需改动 Flutter 业务层。\n'
+                '2. 所有设备实时帧与离线文件均在本地转换为标准 16kHz / 16bit / 单声道 PCM/WAV，继续走端侧 SenseVoice + Silero VAD + CAM++ 声纹流程，原始音频默认留存本机。',
+                style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _extDeviceCard(
+    BuildContext context, {
+    required Key cardKey,
+    required Key switchKey,
+    required DeviceKind kind,
+    required String title,
+    required String sdkCrate,
+    required String capabilityDesc,
+    required bool enabled,
+    required bool connected,
+    required VoidCallback onChanged,
+  }) {
+    final c = context.rc;
+    return Container(
+      key: cardKey,
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: c.sep),
+      ),
+      child: InkWell(
+        key: switchKey,
+        borderRadius: BorderRadius.circular(12),
+        onTap: onChanged,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  DeviceKindBadge(kind: kind),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                        color: c.label,
+                      ),
+                    ),
+                  ),
+                  if (connected) ...[
+                    Text(
+                      '已连接',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: RCColors.okInk,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  RCSwitch(on: enabled),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                sdkCrate,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: c.sec,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                capabilityDesc,
+                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
