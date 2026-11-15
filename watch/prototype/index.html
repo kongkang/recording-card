@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>录音卡 · Apple Watch 独立硬件与手机 1:1 联调原型</title>
+<title>录音卡 · iPhone × Apple Watch 硬件联动设计稿</title>
 <style>
 :root{
   --bg:#FAFAF8;
@@ -46,7 +46,7 @@ button:disabled{opacity:.38;cursor:not-allowed}
   gap:10px;
   flex-wrap:wrap;
   padding:10px 18px;
-  background:rgba(250,250,248,.95);
+  background:rgba(250,250,248,.96);
   backdrop-filter:blur(12px);
   -webkit-backdrop-filter:blur(12px);
   border-bottom:1px solid var(--sep);
@@ -54,11 +54,11 @@ button:disabled{opacity:.38;cursor:not-allowed}
 .proto-title{
   display:flex;
   align-items:center;
-  gap:9px;
+  gap:8px;
   min-width:0;
 }
 .proto-title h1{
-  font-size:15px;
+  font-size:14.5px;
   font-weight:700;
   letter-spacing:-.2px;
   white-space:nowrap;
@@ -96,6 +96,7 @@ button:disabled{opacity:.38;cursor:not-allowed}
   padding:4px 10px;
   font-size:11.5px;
   font-weight:600;
+  white-space:nowrap;
 }
 .seg button.on{
   background:var(--card);
@@ -121,14 +122,14 @@ button:disabled{opacity:.38;cursor:not-allowed}
 .tb-dot{width:7px;height:7px;border-radius:50%;background:var(--ok)}
 .tb-btn.warn .tb-dot{background:var(--warn)}
 
-/* 主舞台：左 iPhone 390x844 + 右 Apple Watch Series 10 */
+/* 主舞台：左 iPhone 真源设计稿 iframe + 右 Apple Watch */
 .stage{
   flex:1;
   display:flex;
   align-items:flex-start;
   justify-content:center;
-  gap:28px;
-  padding:22px 20px 44px;
+  gap:32px;
+  padding:20px 20px var(--page-pad-b);
   flex-wrap:wrap;
 }
 .stage.mode-phone .watch-col{display:none}
@@ -146,19 +147,22 @@ button:disabled{opacity:.38;cursor:not-allowed}
   display:flex;
   align-items:center;
   gap:7px;
+  flex-wrap:wrap;
+  justify-content:center;
 }
 .dev-subcap{
   font-size:11px;
   color:var(--sec);
+  font-weight:500;
 }
 
-/* ============ 左侧：1:1 录音卡 iPhone App ============ */
+/* ============ 左侧：iPhone 16 Pro 外壳 + 真源设计稿 iframe ============ */
 .iphone-shell{
-  width:390px;
-  height:844px;
+  width:412px;
+  height:866px;
   max-width:calc(100vw - 24px);
   background:#111113;
-  border-radius:48px;
+  border-radius:50px;
   padding:11px;
   box-shadow:0 24px 60px rgba(0,0,0,.22), inset 0 0 0 2px rgba(255,255,255,.12);
   position:relative;
@@ -168,16 +172,16 @@ button:disabled{opacity:.38;cursor:not-allowed}
   width:100%;
   height:100%;
   background:var(--bg);
-  border-radius:38px;
+  border-radius:39px;
   overflow:hidden;
   position:relative;
   display:flex;
   flex-direction:column;
 }
 .ios-statusbar{
-  height:48px;
+  height:50px;
   flex:none;
-  padding:12px 24px 0;
+  padding:13px 24px 0;
   display:flex;
   align-items:center;
   justify-content:space-between;
@@ -188,576 +192,182 @@ button:disabled{opacity:.38;cursor:not-allowed}
   background:var(--bg);
   z-index:25;
 }
-/* 灵动岛 */
+.ios-sys-icons{
+  display:flex;
+  align-items:center;
+  gap:5px;
+  font-size:11px;
+  font-weight:700;
+}
+
+/* 灵动岛（对齐 RecordingCardLiveActivityWidget.swift Compact / Minimal） */
 .dyn-island{
   position:absolute;
   top:9px;
   left:50%;
   transform:translateX(-50%);
-  width:118px;
-  height:32px;
+  width:120px;
+  height:33px;
   background:#09090B;
   color:#FFFFFF;
   border-radius:999px;
+  border:0;
   display:flex;
   align-items:center;
   justify-content:center;
-  gap:7px;
   padding:0 11px;
-  transition:all .24s cubic-bezier(.2,.9,.3,1);
+  transition:width .24s cubic-bezier(.2,.9,.3,1),height .24s cubic-bezier(.2,.9,.3,1);
   z-index:45;
   overflow:hidden;
   box-shadow:0 6px 18px rgba(0,0,0,.22);
 }
 .dyn-island.show{
+  width:214px;
+  height:35px;
+  justify-content:space-between;
+  padding:0 10px;
+}
+.dyn-island.agent{
   width:348px;
-  height:44px;
+  height:42px;
   justify-content:space-between;
   padding:0 13px;
 }
 .di-idle-pill{
-  display:flex;
-  align-items:center;
-  gap:5px;
-  font-size:10.5px;
-  font-weight:600;
-  color:rgba(255,255,255,.78);
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  background:radial-gradient(circle at 35% 35%,#1F2937,#050507 72%);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);
 }
-.dyn-island.show .di-idle-pill{display:none}
-.di-active{
+.dyn-island.show .di-idle-pill,
+.dyn-island.agent .di-idle-pill{display:none}
+.di-compact{
+  display:none;
+  width:100%;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.dyn-island.show .di-compact{display:flex}
+.dyn-island.agent .di-compact{display:none}
+.di-logo{
+  width:20px;
+  height:20px;
+  border-radius:5.5px;
+  background:#18181B;
+  color:#EDEFEA;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex:none;
+}
+.di-badge-hint{
+  font-size:10px;
+  font-weight:600;
+  color:rgba(237,240,235,.72);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.di-lcd{
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:2px 6px;
+  border-radius:5px;
+  background:#111114;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-variant-numeric:tabular-nums;
+  font-size:11.5px;
+  font-weight:700;
+  color:#EDEFEA;
+  letter-spacing:.3px;
+  flex:none;
+}
+.di-agent{
   display:none;
   width:100%;
   align-items:center;
   gap:8px;
   min-width:0;
 }
-.dyn-island.show .di-active{display:flex}
-.di-logo{
-  width:20px;
-  height:20px;
-  border-radius:6px;
-  background:#FFFFFF;
-  color:#1D1D1F;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  flex:none;
-}
-.di-txt{flex:1;min-width:0}
-.di-txt b{
-  display:block;
-  font-size:11px;
-  font-weight:600;
-  color:#FFFFFF;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-.di-txt span{
-  display:block;
-  font-size:10px;
-  color:rgba(255,255,255,.74);
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-.di-lcd{
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-  font-variant-numeric:tabular-nums;
-  font-size:11.5px;
-  font-weight:700;
-  color:#FF9F0A;
-  flex:none;
-}
-
-/* 录音卡 App 顶栏 */
-header.app{
-  position:sticky;
-  top:0;
-  z-index:20;
-  flex:none;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:8px;
-  height:52px;
-  padding:0 16px 0 20px;
-  background:rgba(250,250,248,.94);
-  backdrop-filter:blur(10px);
-  border-bottom:1px solid rgba(228,228,224,.6);
-}
-header.app h2{
-  font-size:20px;
-  font-weight:700;
-  letter-spacing:-.2px;
-}
-body.sub header.app #app-title{display:none}
-.crumb{
-  background:none;
-  border:none;
-  color:var(--label);
-  font-size:16px;
-  font-weight:600;
-  padding:0 4px 0 0;
-  display:inline-flex;
-  align-items:center;
-  gap:2px;
-  min-height:36px;
-}
-.crumb .chev{font-size:22px;font-weight:400;line-height:1;transform:translateY(-1px)}
-
-/* HwCapsule */
-.capsule{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  background:transparent;
-  border:1px solid var(--sep);
-  border-radius:999px;
-  padding:5px 11px;
-  font-size:12px;
-  color:var(--ink);
-  min-height:30px;
-  flex:none;
-}
-.dot{
+.dyn-island.agent .di-agent{display:flex}
+.di-agent-dot{
   width:8px;
   height:8px;
   border-radius:50%;
-  background:var(--ok);
+  background:#BF5AF2;
   flex:none;
-  animation:pulse 2.2s ease-in-out infinite;
+  animation:pulse 1s infinite;
 }
-.dot.big{width:10px;height:10px}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
-.capsule.off .dot{background:var(--ax);animation:none}
-.capsule.idle .dot{background:var(--warn);animation:none}
-.capsule.phonerec .dot{background:var(--ok)}
-.capsule.off .batt,.capsule.phonerec .batt{display:none}
-.capsule-none,.capsule-phonerec{font-size:12px;white-space:nowrap}
-.capsule-none{color:var(--sec)}
-.capsule-phonerec{color:var(--label);font-weight:600;display:none}
-.capsule:not(.off) .capsule-none{display:none}
-.capsule.phonerec .capsule-phonerec{display:inline}
-.batt{display:inline-flex;color:var(--ok);vertical-align:-2px}
-.batt svg{display:block}
-.batt-fill{fill:currentColor}
-.batt .batt-bolt{display:none}
-.batt.charging .batt-bolt{display:block}
-.batt.lv-mid{color:var(--warn)}
-.batt.lv-low{color:var(--danger)}
+.di-agent-txt{flex:1;min-width:0;text-align:left}
+.di-agent-txt b{display:block;font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.di-agent-txt span{display:block;font-size:9.5px;color:rgba(255,255,255,.7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-/* 滚动主区：遵守 --page-pad-b:48px 留白规范 */
-.phone-scroll{
+/* 锁屏实况 / 灵动岛展开卡片（对齐 RecordingCardLockScreenView） */
+.live-pop{
+  position:absolute;
+  top:52px;
+  left:12px;
+  right:12px;
+  z-index:48;
+  background:#141417;
+  color:#FFFFFF;
+  border-radius:22px;
+  padding:13px 16px;
+  box-shadow:0 16px 36px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.12);
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.lp-logo{
+  width:36px;
+  height:36px;
+  border-radius:10.5px;
+  background:#1D1D22;
+  color:#EDEFEA;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex:none;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.1);
+}
+.lp-mid{flex:1;min-width:0}
+.lp-title{font-size:13.5px;font-weight:700;color:#FFFFFF;line-height:1.25}
+.lp-sub{font-size:11.5px;color:rgba(255,255,255,.72);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lp-lcd{
+  padding:4px 8px;
+  border-radius:7px;
+  background:#09090B;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-variant-numeric:tabular-nums;
+  font-size:13px;
+  font-weight:700;
+  color:#EDEFEA;
+  flex:none;
+  border:1px solid rgba(255,255,255,.1);
+}
+
+.phone-frame{
+  width:100%;
   flex:1;
   min-height:0;
-  overflow-y:auto;
-  padding:0 20px calc(var(--page-pad-b) + 72px);
-}
-body.sub .phone-scroll{
-  padding-bottom:var(--page-pad-b);
-}
-.panel{display:none}
-.panel.show{display:block}
-
-/* Timeline 页 */
-.tl-bar{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  border-bottom:1px solid var(--sep);
-  margin:8px 0 12px;
-  gap:8px;
-}
-.tabs{display:flex;gap:16px}
-.tabs button{
-  background:none;
-  border:none;
-  font-size:13px;
-  color:var(--sec);
-  padding:7px 0 10px;
-  border-bottom:2px solid transparent;
-}
-.tabs button.on{
-  color:var(--label);
-  border-bottom-color:var(--label);
-  font-weight:600;
-}
-.mini-refresh{
-  border:1px solid var(--sep);
-  background:var(--card);
-  color:var(--ink);
-  border-radius:999px;
-  padding:4px 10px;
-  font-size:11.5px;
-  font-weight:600;
-  margin-bottom:5px;
-}
-.live{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  background:var(--card);
-  border:1px solid var(--sep);
-  border-radius:12px;
-  padding:10px 12px;
-  margin:0 0 14px;
-}
-.live .ldot{
-  width:7px;
-  height:7px;
-  border-radius:50%;
-  background:var(--ok);
-  flex:none;
-}
-.live.rec .ldot{
-  background:var(--danger);
-  animation:pulse 1s ease-in-out infinite alternate;
-}
-.live b{font-size:13px;font-weight:600;white-space:nowrap}
-.live .lsub{
-  font-size:11.5px;
-  color:var(--sec);
-  margin-left:auto;
-  text-align:right;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-.tl-date{font-size:14.5px;font-weight:700;margin:8px 0 12px}
-.tl-item{position:relative;padding-left:22px;display:flow-root}
-.tl-item::before{
-  content:"";
-  position:absolute;
-  left:4.5px;
-  top:0;
-  bottom:0;
-  width:1px;
-  background:var(--sep);
-}
-.tl-item.first::before{top:9px}
-.tl-item.last::before{bottom:auto;height:9px}
-.tl-item.only::before{display:none}
-.tl-node{
-  position:absolute;
-  left:0;
-  top:8px;
-  width:10px;
-  height:10px;
-  border-radius:50%;
+  border:0;
   background:var(--bg);
-  border:1.5px solid var(--ax);
+  display:block;
 }
-.card{margin-bottom:24px;cursor:pointer;position:relative}
-.card h3{
-  font-size:16px;
-  font-weight:600;
-  margin-bottom:3px;
-  letter-spacing:-.1px;
-  display:flex;
-  align-items:center;
-  gap:6px;
-}
-.when{font-size:12px;color:var(--sec)}
-.src-pill{
-  font-size:10px;
-  font-weight:600;
-  padding:1px 6px;
-  border-radius:999px;
-  background:#EAF7EE;
-  color:#186A3B;
-  border:1px solid #B7E1C4;
-  flex:none;
-}
-.src-pill.cleared{background:var(--fill);color:var(--sec);border-color:var(--sep)}
-.exp{display:none;margin-top:8px;font-size:13.5px;line-height:1.65;color:var(--ink)}
-.card.open .exp{display:block}
-.btn-line{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
-.btn{
-  background:var(--label);
-  color:#FFFFFF;
-  border:none;
-  border-radius:9px;
-  padding:8px 14px;
-  font-size:12.5px;
-  font-weight:600;
-  min-height:34px;
-}
-.btn.ghost{background:transparent;color:var(--label);border:1px solid var(--sep)}
-.btn.sm{padding:5px 10px;font-size:11.5px;min-height:28px;border-radius:7px}
-.btn.danger{background:var(--danger);color:#FFFFFF}
-
-/* Detail 页 */
-.ph{padding:12px 0 0}
-.ph h2{font-size:20px;font-weight:700;margin-bottom:5px}
-.pmeta{font-size:12px;color:var(--sec);margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px 12px}
-.rawaudio{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  background:var(--card);
-  border:1px solid var(--sep);
-  border-radius:12px;
-  padding:8px 12px;
-  margin-bottom:14px;
-}
-.rawaudio.cleared{color:var(--sec);font-size:12.5px}
-.turn{display:flex;gap:10px;margin-bottom:14px}
-.ava{
-  width:26px;
-  height:26px;
-  border-radius:50%;
-  flex:none;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-size:12px;
-  font-weight:600;
-  color:#FFFFFF;
-  background:var(--label);
-}
-.txt{
-  font-size:14px;
-  line-height:1.65;
-  color:var(--label);
-  background:var(--card);
-  border:1px solid var(--sep);
-  border-radius:4px 12px 12px 12px;
-  padding:9px 12px;
-}
-
-/* Setting 与 Apple Watch 联动二级页 */
-.set-title{font-size:12px;color:var(--sec);margin:16px 0 7px}
-.set-group{
-  background:var(--card);
-  border:1px solid var(--sep);
-  border-radius:12px;
-  padding:2px 14px;
-  margin-bottom:10px;
-}
-.navrow,.switchrow{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  gap:10px;
-  padding:12px 0;
-  border-bottom:1px solid var(--sep);
-  font-size:13.5px;
-}
-.navrow:last-child,.switchrow:last-child{border-bottom:none}
-.navrow{cursor:pointer}
-.navval{
-  display:inline-flex;
-  align-items:center;
-  gap:5px;
-  font-size:12.5px;
-  color:var(--sec);
-  flex:none;
-}
-.rowchev{color:var(--ax);font-size:15px}
-.sw{
-  width:46px;
-  height:28px;
-  border-radius:999px;
-  background:rgba(120,120,128,.32);
-  position:relative;
-  transition:.2s;
-  flex:none;
-  cursor:pointer;
-}
-.sw.on{background:var(--label)}
-.sw::after{
-  content:"";
+.phone-local-notice{
   position:absolute;
-  top:2px;
-  left:2px;
-  width:24px;
-  height:24px;
-  border-radius:50%;
-  background:#FFFFFF;
-  transition:.2s;
-}
-.sw.on::after{left:20px}
-.subcard{
-  background:var(--card);
-  border:1px solid var(--sep);
-  border-radius:12px;
-  padding:12px 14px;
-  margin:10px 0 12px;
-}
-.subcard h4{
-  font-size:13.5px;
-  font-weight:600;
-  margin-bottom:6px;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:8px;
-}
-.subcard p{font-size:12px;color:var(--sec);line-height:1.6}
-.ext-tag{
-  font-size:10.5px;
-  font-weight:600;
-  padding:2px 7px;
-  border-radius:6px;
-  background:var(--fill);
-  color:var(--ink);
-}
-.wbtns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
-.wbtns .btn{min-width:0}
-
-/* 底栏 */
-nav.bottom{
-  position:absolute;
-  left:0;
-  right:0;
-  bottom:0;
-  height:62px;
-  background:rgba(250,250,248,.94);
-  backdrop-filter:blur(10px);
-  border-top:1px solid var(--sep);
-  display:flex;
-  padding-bottom:6px;
-  z-index:25;
-}
-body.sub nav.bottom{display:none}
-nav.bottom button{
-  flex:1;
-  background:none;
-  border:none;
-  font-size:11px;
-  color:var(--sec);
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:center;
-  gap:2px;
-}
-nav.bottom button.on{color:var(--label);font-weight:600}
-
-/* StatusSheet 弹层（在 iPhone 屏幕内定位） */
-.sheet-wrap{position:absolute;inset:0;z-index:60;display:none}
-.sheet-wrap.show{display:block}
-.backdrop{position:absolute;inset:0;background:rgba(0,0,0,.4)}
-.sheet{
-  position:absolute;
-  bottom:0;
-  left:0;
-  right:0;
-  max-height:84%;
-  overflow-y:auto;
-  background:var(--card);
-  border-radius:18px 18px 0 0;
-  padding:16px 18px 24px;
-}
-.devhead{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  padding-bottom:11px;
-  border-bottom:1px solid var(--sep);
-}
-.devhead h2{font-size:15.5px;display:flex;align-items:center;gap:5px;min-width:0}
-.devsub{font-size:11.5px;color:var(--sec);margin-top:2px}
-.cbadge{
-  font-size:10.5px;
-  color:var(--ink);
-  background:var(--fill);
-  border:1px solid transparent;
-  border-radius:999px;
-  padding:2px 7px;
-  font-weight:600;
-  white-space:nowrap;
-  flex:none;
-}
-.cbadge.k-v1{background:#FFFFFF;color:#1D1D1F;border-color:#D2D2CE}
-.cbadge.k-v2{background:#1D1D1F;color:#FFFFFF;border-color:#1D1D1F}
-.cbadge.k-kb{background:#E8F2FF;color:#1456B8;border-color:#BBD8FF}
-.cbadge.k-watch{background:#EAF7EE;color:#186A3B;border-color:#B7E1C4}
-.disc-btn{
-  background:none;
-  border:none;
-  width:30px;
-  height:30px;
-  border-radius:8px;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  color:var(--sec);
-  margin-left:auto;
-}
-.sheet .row{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
+  inset:50px 0 0 0;
+  background:var(--bg);
+  padding:24px 20px;
   font-size:13px;
-  padding:13px 0;
-  border-bottom:1px solid var(--sep);
-}
-.sheet .row>span:first-child{color:var(--sec);flex:none}
-.sheet .row>span:last-child{
-  flex:1;
-  min-width:0;
-  display:inline-flex;
-  align-items:center;
-  justify-content:flex-end;
-  gap:8px;
-  text-align:right;
-  white-space:nowrap;
-}
-.row.act-row{cursor:pointer}
-.recdot{
-  display:inline-block;
-  width:7px;
-  height:7px;
-  border-radius:50%;
-  background:var(--danger);
-  animation:pulse 1.1s ease-in-out infinite;
-}
-.clock{
-  font-family:ui-monospace,Menlo,monospace;
-  font-variant-numeric:tabular-nums;
-  font-size:12px;
+  line-height:1.65;
   color:var(--ink);
+  z-index:30;
 }
-.conn-item{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  border:1px solid var(--sep);
-  border-radius:10px;
-  padding:9px 11px;
-  margin:7px 0;
-  cursor:pointer;
-}
-.conn-item:hover{border-color:var(--ax)}
-.conn-item .cn{font-size:13.5px;font-weight:600;flex:1}
-.conn-item .cm{font-size:11.5px;color:var(--ok-ink)}
-.disc-box{
-  background:#FFF8F7;
-  border:1px solid #FFD2CE;
-  border-radius:10px;
-  padding:10px 12px;
-  margin:10px 0 2px;
-  font-size:12px;
-}
-.toast{
-  position:absolute;
-  left:50%;
-  bottom:76px;
-  transform:translateX(-50%) translateY(6px);
-  background:var(--label);
-  color:#FFFFFF;
-  border-radius:999px;
-  padding:7px 14px;
-  font-size:11.5px;
-  z-index:85;
-  opacity:0;
-  pointer-events:none;
-  transition:.2s;
-  white-space:nowrap;
-}
-.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 /* ============ 右侧：Apple Watch Series 10（46mm） ============ */
 .watch-panel{
@@ -811,6 +421,10 @@ nav.bottom button.on{color:var(--label);font-weight:600}
   padding:15px;
   box-shadow:0 22px 48px rgba(0,0,0,.28), inset 0 0 0 2px rgba(255,255,255,.12);
   position:relative;
+  transition:transform .12s cubic-bezier(.2,.9,.3,1);
+}
+.watch-case.knock-hit{
+  transform:translateY(-2px) scale(.985);
 }
 .watch-crown{
   position:absolute;
@@ -840,7 +454,7 @@ nav.bottom button.on{color:var(--label);font-weight:600}
   color:#FFFFFF;
   border-radius:44px;
   overflow:hidden;
-  padding:14px 14px 16px;
+  padding:13px 13px 13px;
   display:flex;
   flex-direction:column;
   position:relative;
@@ -854,216 +468,696 @@ nav.bottom button.on{color:var(--label);font-weight:600}
   display:flex;
   align-items:center;
   justify-content:space-between;
-  font-size:10.5px;
+  font-size:11px;
   color:rgba(255,255,255,.68);
-  margin-bottom:6px;
+  margin-bottom:2px;
+  padding:0 3px;
+  height:18px;
+  flex:none;
 }
-.w-dot-live{
-  display:inline-block;
-  width:6px;
-  height:6px;
-  border-radius:50%;
-  background:var(--danger);
-  margin-right:4px;
-  animation:pulse 1s infinite;
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes wfWavePulse{0%,100%{transform:scaleY(.55);opacity:.65}50%{transform:scaleY(1);opacity:1}}
+@keyframes knockRipple{0%{opacity:.85;transform:scale(.76)}100%{opacity:0;transform:scale(1.03)}}
+
+/* 机身轻敲两下体感反馈光环（非按钮，严格约束在表盘内不撑开 scrollHeight） */
+.w-knock-ripple{
+  position:absolute;
+  inset:22px;
+  border-radius:28px;
+  border:2px solid #FF9F0A;
+  pointer-events:none;
+  opacity:0;
+  z-index:20;
+}
+.w-knock-ripple.active{
+  animation:knockRipple .46s cubic-bezier(.16,1,.3,1) forwards;
 }
 
-/* 表盘复杂功能页 */
+/* 表盘组件页：watchOS 11 Modular 高质感重设计 */
 .w-face{
   flex:1;
   display:flex;
   flex-direction:column;
   justify-content:space-between;
+  min-height:0;
+  position:relative;
+  padding:6px 3px 2px;
+}
+.wf-ticks{
+  position:absolute;
+  inset:-5px;
+  width:calc(100% + 10px);
+  height:calc(100% + 10px);
+  pointer-events:none;
+  z-index:0;
+}
+.w-face > :not(.wf-ticks){
+  position:relative;
+  z-index:1;
+}
+.wf-header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:10px;
+}
+.comp-corner{
+  position:relative;
+  width:46px;
+  height:46px;
+  border-radius:50%;
+  background:#161619;
+  border:1px solid rgba(255,255,255,.08);
+  color:#FF9F0A;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:1px;
+  font-size:8.5px;
+  font-weight:700;
+  padding:0;
+  flex:none;
+}
+.comp-corner svg.wf-corner-ring{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  pointer-events:none;
+}
+.comp-corner.rec{
+  background:rgba(255,59,48,.16);
+  border-color:rgba(255,59,48,.42);
+  color:#FF453A;
+}
+.wf-time-stack{
+  flex:1;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  padding-top:1px;
 }
 .comp-inline{
-  background:rgba(255,255,255,.1);
-  border:1px solid rgba(255,255,255,.14);
-  border-radius:999px;
-  padding:4px 10px;
+  background:transparent;
+  border:0;
+  padding:0;
+  margin-bottom:2px;
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
   font-size:10.5px;
   color:#FF9F0A;
   font-weight:600;
-  text-align:center;
-  width:100%;
+  white-space:nowrap;
 }
-.w-face-center{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:8px;
-  padding:2px 0;
-}
-.comp-corner{
-  width:56px;
-  height:56px;
-  border-radius:18px;
-  background:rgba(255,159,10,.16);
-  border:1px solid rgba(255,159,10,.45);
-  color:#FF9F0A;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:center;
-  gap:2px;
-  font-size:9.5px;
-  font-weight:700;
-  flex:none;
-}
-.w-face-clock{
-  text-align:center;
-  flex:1;
-}
-.w-face-clock b{
-  display:block;
-  font-size:34px;
-  font-weight:700;
-  line-height:1;
-  letter-spacing:-1px;
-  font-variant-numeric:tabular-nums;
-}
-.w-face-clock span{
-  font-size:10px;
-  color:rgba(255,255,255,.62);
-}
-.comp-circular{
-  width:56px;
-  height:56px;
+.comp-inline .ci-dot{
+  width:5px;
+  height:5px;
   border-radius:50%;
-  background:rgba(52,199,89,.16);
-  border:2px solid #34C759;
-  color:#FFFFFF;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:center;
-  font-size:9.5px;
-  font-weight:700;
+  background:currentColor;
   flex:none;
 }
-.comp-circular.rec{
-  background:rgba(255,59,48,.22);
-  border-color:#FF3B30;
+.comp-inline.rec{color:#FF453A}
+.comp-inline.rec .ci-dot{animation:pulse 1s infinite}
+.w-face-time{
+  font-size:42px;
+  font-weight:600;
+  line-height:.94;
+  letter-spacing:-1.8px;
+  font-variant-numeric:tabular-nums;
+  color:#FFFFFF;
 }
 .comp-rectangular{
-  background:rgba(255,255,255,.11);
-  border:1px solid rgba(255,255,255,.18);
-  border-radius:14px;
+  background:rgba(255,255,255,.085);
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:16px;
   padding:9px 11px;
   text-align:left;
   color:#FFFFFF;
   width:100%;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.comp-rectangular.rec{
+  background:rgba(255,59,48,.14);
+  border-color:rgba(255,59,48,.34);
 }
 .comp-rectangular .cr-top{
   display:flex;
   justify-content:space-between;
   align-items:center;
-  font-size:11px;
+  font-size:10.5px;
   font-weight:700;
   color:#FF9F0A;
 }
+.comp-rectangular.rec .cr-top{color:#FF453A}
+.cr-badge{
+  font-size:9px;
+  font-weight:700;
+  padding:1px 6px;
+  border-radius:999px;
+  background:rgba(255,159,10,.16);
+  color:#FFB340;
+}
+.comp-rectangular.rec .cr-badge{
+  background:rgba(255,59,48,.22);
+  color:#FF6961;
+}
+.cr-mid-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
 .comp-rectangular .cr-mid{
   font-size:13px;
-  font-weight:700;
-  margin:3px 0 2px;
+  font-weight:600;
   font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.wf-wave{
+  display:inline-flex;
+  align-items:center;
+  gap:2px;
+  height:14px;
+  flex:none;
+}
+.wf-wave i{
+  display:block;
+  width:2px;
+  border-radius:2px;
+  background:rgba(255,255,255,.28);
+  transform-origin:center;
+}
+.comp-rectangular.rec .wf-wave i{
+  background:#FF453A;
+  animation:wfWavePulse 1.1s ease-in-out infinite;
 }
 .comp-rectangular .cr-sub{
   font-size:10px;
-  color:rgba(255,255,255,.66);
+  color:rgba(255,255,255,.56);
+}
+.wf-subrow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 4px 2px;
+}
+.comp-circular,
+.wf-subdial{
+  position:relative;
+  width:52px;
+  height:52px;
+  border-radius:50%;
+  background:#151518;
+  border:0;
+  padding:0;
+  color:#FFFFFF;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  flex:none;
+}
+.wf-ring{
+  position:absolute;
+  inset:0;
+  width:52px;
+  height:52px;
+  pointer-events:none;
+}
+.wf-ring-bg{
+  fill:none;
+  stroke:rgba(255,255,255,.12);
+  stroke-width:2.5;
+}
+.wf-ring-fg{
+  fill:none;
+  stroke:#FF9F0A;
+  stroke-width:2.5;
+  stroke-linecap:round;
+  transition:stroke-dashoffset .25s linear;
+}
+.comp-circular.rec .wf-ring-fg{stroke:#FF453A}
+.cc-state{
+  font-size:8.5px;
+  font-weight:700;
+  color:#FF9F0A;
+  line-height:1.1;
+}
+.comp-circular.rec .cc-state{color:#FF6961}
+.cc-sec{
+  font-size:11px;
+  font-weight:700;
+  font-variant-numeric:tabular-nums;
+  color:#FFFFFF;
+  line-height:1.15;
+}
+.wf-cal-wd{
+  font-size:9px;
+  font-weight:700;
+  color:#FF453A;
+  line-height:1.1;
+}
+.wf-cal-day{
+  font-size:18px;
+  font-weight:600;
+  color:#FFFFFF;
+  line-height:1.05;
+  font-variant-numeric:tabular-nums;
+}
+.wf-batt-short{
+  font-size:12.5px;
+  font-weight:700;
+  color:#30D158;
+  line-height:1.05;
+}
+.wf-batt-lbl{
+  font-size:8px;
+  color:rgba(255,255,255,.52);
+  margin-top:1px;
 }
 
-/* 手表端极简录音卡 App（1:1 对齐 WatchMainView.swift） */
+/* 手表主视图 · watchOS 11 极简平涂表盘风 */
 .w-app{
   flex:1;
   display:flex;
   flex-direction:column;
-  justify-content:flex-start;
-  gap:10px;
   min-height:0;
 }
-.w-status-hd{
-  display:flex;
+.w-conn{
+  display:inline-flex;
   align-items:center;
-  gap:6px;
-  font-size:11px;
-  color:rgba(255,255,255,.68);
+  gap:5px;
+  font-size:10.5px;
+  font-weight:600;
+  color:rgba(255,255,255,.85);
+  min-width:0;
+  white-space:nowrap;
 }
-.w-status-dot{
-  width:8px;
-  height:8px;
+.w-conn .w-dot{
+  width:7px;
+  height:7px;
   border-radius:50%;
   background:#34C759;
   flex:none;
 }
-.w-status-dot.warn{background:#FF9500}
-.w-batt-txt{
-  margin-left:auto;
+.w-conn.off .w-dot{background:#FF9500}
+.w-conn.chg .w-dot{background:#34C759}
+.w-dot-live{
+  display:inline-block;
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:#FF3B30;
+  animation:pulse 1s infinite;
+  flex:none;
+}
+.w-batt-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  font-size:10.5px;
   font-variant-numeric:tabular-nums;
-  color:rgba(255,255,255,.62);
+  color:rgba(255,255,255,.72);
+  white-space:nowrap;
 }
-.w-timer{
-  text-align:center;
-  padding:4px 0;
-}
-.w-timer b{
-  display:block;
-  font-size:29px;
+.w-batt-pill .batt{display:inline-flex;color:var(--ok);vertical-align:-1px}
+.w-batt-pill.lv-mid .batt{color:var(--warn)}
+.w-batt-pill.lv-low .batt{color:var(--danger)}
+.w-batt-pill.chg{color:#63E686}
+.w-sysclock{
+  font-size:12px;
   font-weight:600;
+  color:rgba(255,255,255,.92);
+  font-variant-numeric:tabular-nums;
+  letter-spacing:.3px;
+}
+.w-hero{
+  flex:1;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:0 2px;
+  -webkit-user-select:none;
+  user-select:none;
+  cursor:default;
+}
+.w-date{
+  display:block;
+  font-size:11px;
+  font-weight:600;
+  color:#FF9F0A;
+  letter-spacing:.2px;
+}
+.w-bigclock{
+  display:block;
+  font-size:46px;
+  font-weight:500;
+  line-height:1;
+  letter-spacing:-1.5px;
+  font-variant-numeric:tabular-nums;
+  color:#FFFFFF;
+  margin-top:4px;
+}
+.w-idle-sub{
+  display:block;
+  font-size:9.5px;
+  color:rgba(255,255,255,.42);
+  margin-top:6px;
+}
+.w-recline{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  font-size:10.5px;
+  font-weight:600;
+  color:rgba(255,255,255,.78);
+  letter-spacing:.4px;
+}
+.w-rec-tag{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+}
+.w-mark-pill{
+  display:inline-flex;
+  align-items:center;
+  padding:1px 6px;
+  border-radius:999px;
+  background:rgba(255,159,10,.2);
+  color:#FFB340;
+  font-size:9.5px;
+  font-weight:700;
+  font-variant-numeric:tabular-nums;
+}
+.w-bighero{
+  display:block;
+  font-size:35px;
+  font-weight:600;
+  line-height:1.06;
+  letter-spacing:-1px;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   font-variant-numeric:tabular-nums;
   color:#FFFFFF;
+  margin-top:3px;
 }
-.w-timer b.rec{color:#FF3B30}
-.w-timer span{
+.w-remain{
   display:block;
   font-size:10.5px;
-  color:rgba(255,255,255,.65);
-  margin-top:2px;
+  color:rgba(255,255,255,.6);
+  margin-top:3px;
+  font-variant-numeric:tabular-nums;
 }
-.w-controls{
+.w-knock-hint{
+  display:block;
+  font-size:9.5px;
+  color:rgba(255,255,255,.42);
+  margin-top:5px;
+  pointer-events:none;
+}
+/* 底部紧凑栈：紧挨排列——操作控制（开始录音 / 纯色扁平滑动停止）在上，单圈倒计时段+待传条压在最底 */
+.w-bottom{
+  flex:none;
+  width:100%;
   display:flex;
   flex-direction:column;
-  gap:8px;
+  gap:6px;
 }
 .w-rec-btn{
   width:100%;
+  height:38px;
   border:0;
   border-radius:999px;
-  padding:11px 10px;
+  padding:0 12px;
   font-size:13px;
   font-weight:600;
-  background:#34C759;
+  background:#30D158;
   color:#FFFFFF;
+  box-shadow:none;
 }
-.w-rec-btn.on{background:#FF3B30;color:#FFFFFF}
-.w-mark-btn{
-  width:100%;
-  border:1px solid rgba(255,255,255,.22);
+.w-rec-btn:hover{background:#2CC452}
+/* 纯色扁平防误触滑动条（老式 iPhone 滑块式 · 无金属反光或拟物渐变） */
+.w-stop{
+  position:relative;
+  height:38px;
   border-radius:999px;
-  padding:8px 10px;
-  font-size:12px;
+  overflow:hidden;
+  background:rgba(255,59,48,.16);
+  border:1px solid rgba(255,59,48,.36);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#FF6B5E;
+  font-size:11px;
   font-weight:600;
-  background:rgba(255,255,255,.12);
-  color:#FFFFFF;
+  letter-spacing:.6px;
+  padding-left:16px;
+  -webkit-user-select:none;
+  user-select:none;
+  touch-action:none;
+  cursor:pointer;
 }
-.w-footer-row{
-  margin-top:auto;
+.w-stop.aod-locked{
+  padding-left:0;
+  color:rgba(255,255,255,.68);
+  border-color:rgba(255,255,255,.22);
+  background:rgba(255,255,255,.08);
+}
+.w-stop-knob{
+  position:absolute;
+  left:3px;
+  top:3px;
+  width:30px;
+  height:30px;
+  border-radius:50%;
+  border:0;
+  padding:0;
+  background:#FF3B30;
+  background-image:none;
+  box-shadow:none;
+  color:#FFFFFF;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:grab;
+  z-index:2;
+  touch-action:none;
+  transition:transform .2s ease;
+  will-change:transform;
+  -webkit-user-select:none;
+  user-select:none;
+}
+.w-stop.armed .w-stop-knob{transition:none;cursor:grabbing}
+.w-stop.aod-locked .w-stop-knob{display:none}
+/* 最底部：60 秒单圈倒计时段 + 待传切片队列入口（无 GPS/心率 标签） */
+.w-slice-bar{
+  position:relative;
+  width:100%;
+  height:30px;
+  border:0;
+  border-radius:12px;
+  padding:0 10px;
+  background:rgba(255,255,255,.09);
+  color:#FFFFFF;
+  font-size:10.5px;
   display:flex;
   align-items:center;
   justify-content:space-between;
   gap:6px;
-  padding:5px 2px 0;
-  font-size:11px;
-  color:rgba(255,255,255,.78);
+  overflow:hidden;
 }
-.w-flush-btn{
+.w-slice-bar:hover{background:rgba(255,255,255,.14)}
+.w-slice-bar.pend{background:rgba(255,159,10,.15)}
+.w-slice-lap{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  min-width:0;
+  white-space:nowrap;
+}
+.w-lap-txt{
+  font-size:10px;
+  font-weight:600;
+  font-variant-numeric:tabular-nums;
+  color:rgba(255,255,255,.88);
+}
+.w-slice-right{
+  display:inline-flex;
+  align-items:center;
+  gap:3px;
+  font-size:10.5px;
+  font-weight:600;
+  color:rgba(255,255,255,.72);
+  white-space:nowrap;
+  flex:none;
+}
+.w-slice-bar.pend .w-slice-right{color:#FFB340}
+.w-slice-bar.synced .w-slice-right{color:#30D158}
+.w-lap-progress{
+  position:absolute;
+  left:0;
+  bottom:0;
+  height:2px;
+  width:0%;
+  background:#FF453A;
+  transition:width .25s linear;
+  pointer-events:none;
+}
+/* NC 标记（Need Confirm · 与根原型 current.html 同规范） */
+.nc-badge{
+  display:inline-flex;
+  align-items:center;
+  padding:1px 5px;
+  border-radius:4px;
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:.2px;
+  background:#E8F1FF;
+  color:#0F4C81;
+  border:1px solid #C2DBFF;
+  flex:none;
+  line-height:1.4;
+  vertical-align:middle;
+}
+.nc-pill{
+  display:inline-flex;
+  align-items:center;
+  border:1px solid #C2DBFF;
+  background:#EEF5FF;
+  color:#0F4C81;
+  border-radius:999px;
+  padding:3px 9px;
+  font-size:11px;
+  font-weight:700;
+  cursor:pointer;
+  font-family:inherit;
+  white-space:nowrap;
+  line-height:1.25;
+  min-height:24px;
+}
+.nc-pill:hover{background:#E2EEFF}
+.nc-pop{
+  position:absolute;
+  top:46px;
+  right:18px;
+  z-index:120;
+  width:320px;
+  max-width:calc(100vw - 36px);
+  background:var(--card);
+  border:1px solid #C2DBFF;
+  border-radius:12px;
+  box-shadow:0 10px 28px rgba(0,0,0,.14);
+  padding:10px 12px 12px;
+}
+.nc-pop-hd{font-size:11.5px;font-weight:700;color:#0F4C81;margin-bottom:2px}
+.nc-pop-item{
+  display:block;
+  width:100%;
+  text-align:left;
+  border:0;
+  background:var(--fill);
+  border-radius:8px;
+  padding:8px 10px;
+  font-size:11.5px;
+  line-height:1.5;
+  color:var(--ink);
+  cursor:pointer;
+  font-family:inherit;
+  margin-top:6px;
+}
+.nc-pop-item:hover{background:#EEF5FF}
+
+/* 手表本地队列 WatchQueueView */
+.w-queue{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  min-height:0;
+}
+.w-qhead{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex:none;
+}
+.w-qback{
+  border:0;
+  background:rgba(255,255,255,.14);
+  color:#FFFFFF;
+  border-radius:999px;
+  padding:3px 9px;
+  font-size:11px;
+  font-weight:600;
+}
+.w-qtitle{
+  font-size:12.5px;
+  font-weight:700;
+  color:#FFFFFF;
+}
+.w-qflush{
+  width:100%;
   border:0;
   border-radius:999px;
-  background:#34C759;
-  color:#082410;
-  font-size:10.5px;
-  font-weight:700;
-  padding:3px 9px;
+  background:rgba(52,199,89,.24);
+  color:#63E686;
+  font-size:11.5px;
+  font-weight:600;
+  padding:8px 10px;
+  flex:none;
+}
+.w-qlist{
+  flex:1;
+  overflow-y:auto;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  padding-bottom:var(--page-pad-b);
+}
+.w-qitem{
+  background:rgba(255,255,255,.09);
+  border-radius:11px;
+  padding:8px 10px;
+}
+.w-qitem-top{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:6px;
+  font-size:11.5px;
+  font-weight:600;
+}
+.w-qbadge{font-size:10px;font-weight:700}
+.w-qbadge.q{color:#FF9F0A}
+.w-qbadge.s{color:#34C759}
+.w-qitem-sub{
+  font-size:10px;
+  color:rgba(255,255,255,.64);
+  margin-top:2px;
+}
+.w-qempty{
+  font-size:11px;
+  color:rgba(255,255,255,.55);
+  text-align:center;
+  padding:28px 8px;
+}
+
+.watch-hints{
+  font-size:11px;
+  color:var(--sec);
+  text-align:center;
+  line-height:1.5;
+  max-width:270px;
 }
 </style>
 </head>
@@ -1071,10 +1165,14 @@ nav.bottom button.on{color:var(--label);font-weight:600}
 
 <div class="proto-bar">
   <div class="proto-title">
-    <h1>录音卡 · Apple Watch 第 4 硬件联调原型</h1>
+    <h1>录音卡 · iPhone × Apple Watch 联调设计稿</h1>
     <span class="proto-badge">同一套件 · com.reai.recordingcard</span>
   </div>
   <div class="proto-actions">
+    <div class="seg" data-testid="phone-version-seg" role="group" aria-label="主端设计稿版本">
+      <button type="button" class="on" data-pver="current" onclick="setPhoneVersion('current')">当前版（App 已实现）</button>
+      <button type="button" data-pver="target" onclick="setPhoneVersion('target')">目标版·9</button>
+    </div>
     <div class="seg" data-testid="view-mode-seg" role="group" aria-label="视图模式">
       <button type="button" class="on" data-mode="both" onclick="setViewMode('both')">双端同屏</button>
       <button type="button" data-mode="phone" onclick="setViewMode('phone')">仅看手机</button>
@@ -1090,6 +1188,9 @@ nav.bottom button.on{color:var(--label);font-weight:600}
     <button type="button" class="tb-btn" data-testid="tb-cut-slice" onclick="cutWatchSlice()">
       生成 60s 手表切片
     </button>
+    <button type="button" class="tb-btn" data-testid="tb-knock-mark" onclick="triggerWatchMark()">
+      敲两下表壳打点
+    </button>
     <button type="button" class="tb-btn" data-testid="proto-reset" onclick="resetPrototype()">
       重置状态
     </button>
@@ -1097,226 +1198,72 @@ nav.bottom button.on{color:var(--label);font-weight:600}
 </div>
 
 <main class="stage" id="stage">
-  <!-- 左侧：1:1 录音卡 iPhone App -->
-  <section class="dev-col phone-col" aria-label="iPhone 录音卡 App">
+  <!-- 左侧：真源手机 App（直接复用 ../../prototype/current.html 与 ../../prototype/index.html） -->
+  <section class="dev-col phone-col" aria-label="iPhone 录音卡主端">
     <div class="dev-caption">
-      <span>iPhone「录音卡」App（1:1 对齐当前版）</span>
-      <span class="dev-subcap">本地 .m4a → 16kHz WAV 转码 + 零功耗待命保底</span>
+      <span id="phone-ver-caption">iPhone「录音卡」真源设计稿（当前版）</span>
+      <span class="dev-subcap">直接加载 prototype/current.html &amp; index.html</span>
     </div>
+
     <div class="iphone-shell">
-      <div class="iphone-screen" id="iphone-screen">
+      <div class="iphone-screen">
         <div class="ios-statusbar">
           <span id="ios-clock">14:38</span>
-          <span>5G · Wi-Fi</span>
-        </div>
+          <div class="ios-sys-icons" aria-hidden="true"><span>5G</span><span>Wi-Fi</span></div>
 
-        <div class="dyn-island" id="phone-dyn-island" data-testid="phone-dyn-island" role="status" aria-live="polite">
-          <div class="di-idle-pill"><span>●</span><span>录音卡</span></div>
-          <div class="di-active">
-            <span class="di-logo" aria-hidden="true">
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
-                <rect x="2.5" y="1.8" width="11" height="12.4" rx="2.6"/><path d="M5.6 6.4v3.2M8 5v6M10.4 6.8v2.4"/>
-              </svg>
+          <button type="button" class="dyn-island" id="phone-dyn-island" data-testid="phone-dyn-island" aria-label="灵动岛实况" onclick="toggleLiveCardPopover()">
+            <span class="di-idle-pill"></span>
+            <span class="di-compact">
+              <span class="di-logo" aria-hidden="true">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                  <rect x="2.5" y="1.8" width="11" height="12.4" rx="2.6"/><path d="M5.6 6.4v3.2M8 5v6M10.4 6.8v2.4"/>
+                </svg>
+              </span>
+              <span class="di-badge-hint" id="di-compact-hint">Apple Watch</span>
+              <span class="di-lcd" id="di-lcd">00:00</span>
             </span>
-            <div class="di-txt">
-              <b id="di-title">录音卡 · Apple Watch 录音中（锁屏实况已开启）</b>
-              <span id="di-sub">我的手表 · 本机保底待命中</span>
-            </div>
-            <span class="di-lcd" id="di-lcd">0:00:00</span>
-          </div>
-        </div>
-
-        <header class="app">
-          <h2 id="app-title">录音卡</h2>
-          <button type="button" class="crumb" id="crumb-back" data-testid="crumb-back" onclick="goBack()" hidden>
-            <span class="chev">‹</span><span id="crumb-dest">Setting</span>
-          </button>
-          <button type="button" class="capsule off" data-testid="hw-capsule" aria-label="录音卡状态：无设备" onclick="openSheet()">
-            <span class="dot"></span>
-            <span class="capsule-none" data-testid="capsule-nodata">无设备</span>
-            <span class="capsule-phonerec" data-testid="capsule-phone-rec">本机录音</span>
-            <span class="batt lv-hi" aria-hidden="true">
-              <svg width="23" height="11" viewBox="0 0 23 11">
-                <rect x="0.75" y="0.75" width="18.5" height="9.5" rx="2.75" fill="none" stroke="currentColor" stroke-width="1.5"/>
-                <rect id="cap-fill" class="batt-fill" x="3" y="3" width="12.3" height="5" rx="1.25" fill="currentColor"/>
-                <rect x="20.75" y="3.25" width="1.5" height="4.5" rx="0.75" fill="currentColor"/>
-                <path class="batt-bolt" d="M11.2 1.2L7.8 5.7h2.5l-.7 4.1 3.8-4.6h-2.5z" fill="#fff" stroke="currentColor" stroke-width="0.7"/>
-              </svg>
+            <span class="di-agent">
+              <span class="di-agent-dot"></span>
+              <span class="di-agent-txt">
+                <b id="di-agent-title">灵动岛收听中</b>
+                <span id="di-agent-sub">正在接收录音卡语音指令…</span>
+              </span>
             </span>
           </button>
-        </header>
-
-        <div class="phone-scroll" id="phone-scroll">
-          <!-- Timeline 根页 -->
-          <section id="p-timeline" class="panel show">
-            <div class="tl-bar">
-              <div class="tabs" role="tablist">
-                <button type="button" class="on" data-f="all" onclick="setFilter(this)">全部</button>
-                <button type="button" data-f="event" onclick="setFilter(this)">记录</button>
-                <button type="button" data-f="summary" onclick="setFilter(this)">总结</button>
-              </div>
-              <button type="button" class="mini-refresh" data-testid="phone-refresh-btn" onclick="refreshFromTimeline()">下拉切分同步</button>
-            </div>
-            <div id="live-status-wrap"></div>
-            <div id="feed"></div>
-          </section>
-
-          <!-- Setting 根页 -->
-          <section id="p-setting" class="panel">
-            <div class="set-title">账号与云端鉴权</div>
-            <div class="set-group">
-              <div class="navrow">
-                <span>云端账号授权</span>
-                <span class="navval"><span>owner@wainao.chat</span><span class="rowchev">›</span></span>
-              </div>
-            </div>
-            <div class="set-title">模型与智能体</div>
-            <div class="set-group">
-              <div class="navrow"><span>本地语音引擎</span><span class="navval"><span>已就绪 3/3</span><span class="rowchev">›</span></span></div>
-              <div class="navrow"><span>云端模型设置</span><span class="navval"><span>已开启</span><span class="rowchev">›</span></span></div>
-              <div class="navrow"><span>灵动岛与操作按钮</span><span class="navval"><span>已开启</span><span class="rowchev">›</span></span></div>
-            </div>
-            <div class="set-title">硬件设备联动</div>
-            <div class="set-group">
-              <div class="navrow" data-testid="set-apple-watch" onclick="openSetSub('watch')">
-                <span>Apple Watch 联动</span>
-                <span class="navval"><span id="sv-watch">未开启</span><span class="rowchev">›</span></span>
-              </div>
-            </div>
-            <div class="set-title">录音</div>
-            <div class="set-group">
-              <div class="switchrow"><span>持续录音</span><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
-              <div class="switchrow"><span>标记重要对话</span><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
-            </div>
-            <div class="set-title">转录与清洗</div>
-            <div class="set-group">
-              <div class="switchrow"><span>自动转录</span><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
-              <div class="switchrow"><span>自动清洗口语</span><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
-            </div>
-          </section>
-
-          <!-- 记录详情二级页 -->
-          <section id="p-detail" class="panel">
-            <div class="ph">
-              <h2 id="dt-h3">记录详情</h2>
-              <div class="pmeta" id="dt-meta"></div>
-            </div>
-            <div id="dt-body"></div>
-          </section>
-
-          <!-- Setting → Apple Watch 联动二级页 -->
-          <section id="p-setsub" class="panel">
-            <div class="ph" style="margin-bottom:10px">
-              <h2 id="setsub-title">Apple Watch 联动</h2>
-            </div>
-            <div id="setsub-body"></div>
-          </section>
         </div>
 
-        <nav class="bottom">
-          <button type="button" class="on" id="nt" data-testid="nav-timeline" onclick="go('timeline')">
-            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="8"/><path d="M10 5v5l3 2"/></svg>
-            <span>Timeline</span>
-          </button>
-          <button type="button" id="ns" data-testid="nav-setting" onclick="go('setting')">
-            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="2.5"/><path d="M10 2v3M10 15v3M2 10h3M15 10h3M4.3 4.3l2.1 2.1M13.6 13.6l2.1 2.1M15.7 4.3l-2.1 2.1M6.4 13.6l-2.1 2.1"/></svg>
-            <span>Setting</span>
-          </button>
-        </nav>
-
-        <!-- HwCapsule StatusSheet -->
-        <div class="sheet-wrap" id="sheet">
-          <div class="backdrop" onclick="closeSheet()"></div>
-          <div class="sheet" role="dialog" aria-label="硬件状态">
-            <div id="dev-main" data-testid="dev-main" hidden>
-              <div class="devhead">
-                <span class="dot big" id="dev-dot"></span>
-                <div style="flex:1;min-width:0">
-                  <h2>
-                    <span class="cbadge k-watch" id="dev-kind-badge">Apple Watch</span>
-                    <span id="dev-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">我的手表</span>
-                  </h2>
-                  <div class="devsub" id="dev-sub">watchOS 11.1 · WCSession</div>
-                </div>
-                <button type="button" class="disc-btn" data-testid="dev-disconnect" aria-label="断开连接" onclick="askDisconnect()">✕</button>
-              </div>
-
-              <div class="disc-box" id="disc-box" hidden>
-                <div><b>断开与当前硬件的连接？</b><div style="color:var(--sec);margin-top:2px">断开后停止硬件采集与实时流。</div></div>
-                <div class="wbtns">
-                  <button type="button" class="btn ghost" data-testid="disconnect-cancel" onclick="cancelDisconnect()">取消</button>
-                  <button type="button" class="btn danger" data-testid="disconnect-confirm" onclick="confirmDisconnect()">断开连接</button>
-                </div>
-              </div>
-
-              <div class="row" id="row-rec">
-                <span>录音状态</span>
-                <span style="gap:10px">
-                  <span id="sheet-rec-label" style="display:inline-flex;align-items:center;gap:6px">
-                    <span id="sheet-rec-off">未录音</span>
-                  </span>
-                  <span class="sw" id="rec-sw" data-testid="phone-record-toggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleHwRec()"></span>
-                </span>
-              </div>
-              <div class="row" id="row-batt">
-                <span>电量</span>
-                <span id="batt-text">电量高 · 可录至 今天 21:30</span>
-              </div>
-              <div class="row act-row" id="row-sync" data-testid="sync-now" onclick="syncNow()">
-                <span>同步</span>
-                <span id="sync-txt">自动同步 · 刚刚</span>
-              </div>
-              <div class="row act-row" id="row-wifi" data-testid="wifi-row">
-                <span>Wi-Fi</span>
-                <span>已配置 · 2 个网络 ›</span>
-              </div>
-              <div class="row act-row" id="row-fw" data-testid="fw-update">
-                <span>固件</span>
-                <span>有可用更新 ›</span>
-              </div>
-              <div class="wbtns" style="margin-top:12px">
-                <button type="button" class="btn ghost sm" data-testid="phone-mark-btn" onclick="triggerMarkFromPhone()">打重点 Mark</button>
-                <button type="button" class="btn sm" onclick="closeSheet()">关闭</button>
-              </div>
-            </div>
-
-            <div id="dev-connect">
-              <div class="devhead">
-                <span class="dot big" style="background:var(--ax);animation:none"></span>
-                <div style="flex:1;min-width:0">
-                  <h2>连接硬件设备</h2>
-                  <div class="devsub">未连接硬件时可使用手机本机录音</div>
-                </div>
-              </div>
-              <div class="row" data-testid="phone-rec-row">
-                <span>本机录音</span>
-                <span style="gap:10px">
-                  <span id="prec-label">未开启 · 手机麦克风</span>
-                  <span class="sw" id="prec-sw" data-testid="phone-rec-toggle" role="switch" aria-checked="false" tabindex="0" onclick="togglePhoneRec()"></span>
-                </span>
-              </div>
-              <div style="font-size:13px;font-weight:600;margin:12px 0 6px">可连接采集硬件</div>
-              <div id="conn-list"></div>
-              <button type="button" class="btn ghost" style="width:100%;margin-top:10px" onclick="closeSheet()">关闭</button>
-            </div>
+        <div class="live-pop" id="ios-live-activity-card" data-testid="ios-live-activity-card" role="status" hidden>
+          <span class="lp-logo" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+              <rect x="2.5" y="1.8" width="11" height="12.4" rx="2.6"/><path d="M5.6 6.4v3.2M8 5v6M10.4 6.8v2.4"/>
+            </svg>
+          </span>
+          <div class="lp-mid">
+            <div class="lp-title" id="lp-title">录音卡</div>
+            <div class="lp-sub" id="lp-sub">Apple Watch · 蓝牙录音中</div>
           </div>
+          <div class="lp-lcd" id="lp-lcd">00:00:00</div>
         </div>
 
-        <div class="toast" id="toast" role="status"></div>
+        <iframe class="phone-frame" id="phone-frame" data-testid="phone-frame" title="录音卡 iPhone 主端" src="../../prototype/current.html"></iframe>
+
+        <div class="phone-local-notice" id="phone-local-notice" hidden>
+          当前以本地文件路径访问，跨文件联动受浏览器同源限制；请通过本地 HTTP 服务打开本页以加载主端设计稿交互。
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- 右侧：Apple Watch 表盘与手表录音卡 App -->
-  <section class="dev-col watch-col" aria-label="Apple Watch 客户端">
+  <!-- 右侧：Apple Watch Series 10（46mm）1:1 对齐 WatchMainView.swift & RecordingCardComplication.swift -->
+  <section class="dev-col watch-col" aria-label="Apple Watch 端">
     <div class="dev-caption">
-      <span>Apple Watch 硬件端（表盘常驻 + 轻便采集）</span>
-      <span class="dev-subcap">AAC 32kbps · 16kHz Mono 本地直采</span>
+      <span>Apple Watch 客户端（1:1 对齐 WatchMainView）</span>
+      <span class="dev-subcap">AAC 32kbps · 16kHz Mono 每 60s 本地切片</span>
     </div>
 
     <div class="watch-panel">
       <div class="watch-tabs" data-testid="watch-screen-tabs">
-        <button type="button" class="on" data-wtab="app" onclick="setWatchTab('app')">录音卡（表端）</button>
+        <button type="button" class="on" data-wtab="app" onclick="setWatchTab('app')">手表应用</button>
         <button type="button" data-wtab="face" onclick="setWatchTab('face')">表盘组件</button>
         <button type="button" data-testid="watch-aod-toggle" onclick="toggleWatchAOD()">息屏预览</button>
       </div>
@@ -1325,76 +1272,139 @@ nav.bottom button.on{color:var(--label);font-weight:600}
       <div class="watch-case-wrap">
         <div class="watch-case">
           <div class="watch-screen" id="watch-screen">
-            <div class="watch-top">
-              <span id="w-status-mini" style="font-weight:600;color:#FFFFFF">录音卡</span>
-              <span id="w-top-clock">14:38</span>
+            <span class="w-knock-ripple" id="w-knock-ripple" aria-hidden="true"></span>
+            <div class="watch-top" id="w-top-bar">
+              <span id="w-conn-status" class="w-conn" data-testid="watch-conn-status"><i class="w-dot"></i><span id="w-conn-pill">已连手机</span></span>
+              <span style="display:inline-flex;align-items:center;gap:7px;flex:none">
+                <span id="w-batt-pill" data-testid="watch-batt-pill" class="lv-hi"><span class="batt" aria-hidden="true"><svg width="19" height="10" viewBox="0 0 23 11"><rect x="0.75" y="0.75" width="18.5" height="9.5" rx="2.75" fill="none" stroke="currentColor" stroke-width="1.5"/><rect class="batt-fill" x="3" y="3" width="12.3" height="5" rx="1.25" fill="currentColor"/></svg></span><span id="w-batt-txt">电量高</span></span>
+                <span id="w-top-clock" class="w-sysclock">14:38</span>
+              </span>
             </div>
 
-            <!-- Watch Face 4 Complications -->
+            <!-- 表盘 4 家族复杂功能 · watchOS 11 Modular 高质感表盘 -->
             <div class="w-face" id="w-face" hidden>
-              <button type="button" class="comp-inline" data-testid="comp-inline" onclick="launchFromComplication('inline')">
-                <span id="comp-inline-txt">录音卡 · 轻触开启表盘录音</span>
-              </button>
+              <svg class="wf-ticks" viewBox="0 0 228 284" aria-hidden="true">
+                <rect x="6" y="6" width="216" height="272" rx="38" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="2" stroke-dasharray="1 10.6"/>
+                <rect x="6" y="6" width="216" height="272" rx="38" fill="none" stroke="rgba(255,255,255,.26)" stroke-width="3.5" stroke-dasharray="1.5 21.7"/>
+              </svg>
 
-              <div class="w-face-center">
-                <button type="button" class="comp-corner" data-testid="comp-corner" onclick="launchFromComplication('corner')">
-                  <span>●</span>
-                  <span>录音卡</span>
+              <div class="wf-header">
+                <button type="button" class="comp-corner" id="comp-corner" data-testid="comp-corner" onclick="launchFromComplication('corner')">
+                  <svg class="wf-corner-ring" viewBox="0 0 46 46" aria-hidden="true">
+                    <circle cx="23" cy="23" r="20.5" fill="none" stroke="currentColor" stroke-opacity="0.38" stroke-width="2" stroke-dasharray="96 36" transform="rotate(-140 23 23)"/>
+                  </svg>
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                    <rect x="5.5" y="2" width="5" height="8" rx="2.5"/><path d="M3.5 7.8a4.5 4.5 0 0 0 9 0M8 12.3V14.5"/>
+                  </svg>
+                  <span id="comp-corner-lbl">录音卡</span>
                 </button>
-                <div class="w-face-clock">
-                  <b id="w-face-time">14:38</b>
-                  <span>11月15日 周日</span>
+                <div class="wf-time-stack">
+                  <button type="button" class="comp-inline" id="comp-inline" data-testid="comp-inline" onclick="launchFromComplication('inline')">
+                    <span class="ci-dot" aria-hidden="true"></span>
+                    <span id="comp-inline-txt">录音卡 · 点击开录</span>
+                  </button>
+                  <b class="w-face-time" id="w-face-time">14:38</b>
                 </div>
-                <button type="button" class="comp-circular" id="comp-circular" data-testid="comp-circular" onclick="launchFromComplication('circular')">
-                  <span id="comp-circ-state">待机</span>
-                  <span id="comp-circ-sec">0:00</span>
-                </button>
               </div>
 
-              <button type="button" class="comp-rectangular" data-testid="comp-rectangular" onclick="launchFromComplication('rectangular')">
+              <button type="button" class="comp-rectangular" id="comp-rectangular" data-testid="comp-rectangular" onclick="launchFromComplication('rectangular')">
                 <div class="cr-top">
-                  <span>录音卡 · 表端采集</span>
-                  <span id="comp-rect-badge">就绪</span>
+                  <span style="display:inline-flex;align-items:center;gap:5px">
+                    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="2.5" y="2" width="11" height="12" rx="2.5"/><path d="M5.5 6.5v3M8 5v6M10.5 6.8v2.4"/></svg>
+                    <span>录音卡</span>
+                  </span>
+                  <span class="cr-badge" id="comp-rect-badge">就绪</span>
                 </div>
-                <div class="cr-mid" id="comp-rect-mid">轻触立即开始持续录音</div>
-                <div class="cr-sub" id="comp-rect-sub">待传队列 0 段 · 电量 高</div>
+                <div class="cr-mid-row">
+                  <div class="cr-mid" id="comp-rect-mid">轻点开始持续录音</div>
+                  <span class="wf-wave" aria-hidden="true">
+                    <i style="height:5px;animation-delay:0s"></i><i style="height:10px;animation-delay:.12s"></i><i style="height:13px;animation-delay:.24s"></i><i style="height:7px;animation-delay:.36s"></i><i style="height:12px;animation-delay:.18s"></i><i style="height:8px;animation-delay:.3s"></i><i style="height:14px;animation-delay:.08s"></i><i style="height:6px;animation-delay:.28s"></i><i style="height:10px;animation-delay:.15s"></i><i style="height:5px;animation-delay:.22s"></i>
+                  </span>
+                </div>
+                <div class="cr-sub" id="comp-rect-sub">已连手机 · 电量高</div>
               </button>
+
+              <div class="wf-subrow">
+                <button type="button" class="comp-circular" id="comp-circular" data-testid="comp-circular" onclick="launchFromComplication('circular')">
+                  <svg class="wf-ring" viewBox="0 0 52 52" aria-hidden="true">
+                    <circle class="wf-ring-bg" cx="26" cy="26" r="23"/>
+                    <circle class="wf-ring-fg" id="comp-circ-ring" cx="26" cy="26" r="23" stroke-dasharray="144.51" stroke-dashoffset="0" transform="rotate(-90 26 26)"/>
+                  </svg>
+                  <span class="cc-state" id="comp-circ-state">待机</span>
+                  <span class="cc-sec" id="comp-circ-sec">0:00</span>
+                </button>
+                <div class="wf-subdial" aria-hidden="true">
+                  <span class="wf-cal-wd" id="wf-cal-wd">周一</span>
+                  <b class="wf-cal-day" id="wf-cal-day">16</b>
+                </div>
+                <div class="wf-subdial" aria-hidden="true">
+                  <svg class="wf-ring" viewBox="0 0 52 52">
+                    <circle cx="26" cy="26" r="23" fill="none" stroke="rgba(48,209,88,.22)" stroke-width="2.5"/>
+                    <circle id="wf-batt-ring" cx="26" cy="26" r="23" fill="none" stroke="#30D158" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="144.51" stroke-dashoffset="24" transform="rotate(-90 26 26)"/>
+                  </svg>
+                  <span class="wf-batt-short" id="wf-batt-short">高</span>
+                  <span class="wf-batt-lbl">电量</span>
+                </div>
+              </div>
             </div>
 
-            <!-- Watch Collector App (1:1 WatchMainView.swift) -->
+            <!-- WatchMainView · watchOS 11 极简平涂录音主界面（非按钮敲击打点 + 底部单圈倒计时段） -->
             <div class="w-app" id="w-app">
-              <div class="w-status-hd">
-                <span class="w-status-dot" id="w-conn-dot"></span>
-                <span id="w-conn-pill">已连手机</span>
-                <span class="w-batt-txt" id="w-batt-pill">电量高</span>
-              </div>
+              <div class="w-hero" id="w-hero" data-testid="watch-hero"></div>
 
-              <div class="w-timer">
-                <b id="w-clock">00:00:00</b>
-                <span id="w-keepalive">每 60s 本地切片</span>
-              </div>
-
-              <div class="w-controls">
+              <div class="w-bottom" id="w-bottom">
                 <button type="button" class="w-rec-btn" id="w-rec-btn" data-testid="watch-record-toggle" onclick="toggleWatchRec()">
                   开始录音
                 </button>
-                <button type="button" class="w-mark-btn" id="w-mark-btn" data-testid="watch-mark-btn" onclick="triggerWatchMark()" hidden>
-                  打重点
+                <div class="w-stop" id="w-stop-slider" data-testid="watch-stop-slider" hidden>
+                  <button type="button" class="w-stop-knob" id="w-stop-knob" data-testid="watch-stop-knob" aria-label="按住并向右滑动到底停止录音">
+                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M5 3l4 4-4 4"/>
+                    </svg>
+                  </button>
+                  <span class="w-stop-label" id="w-stop-label">滑动停止录音</span>
+                </div>
+                <button type="button" class="w-slice-bar" id="w-queue-entry" data-testid="watch-queue-entry" onclick="openWatchQueue()">
+                  <span class="w-slice-lap" data-testid="watch-slice-lap">
+                    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+                      <circle cx="7" cy="7" r="5" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="1.8"/>
+                      <circle id="w-lap-ring" cx="7" cy="7" r="5" fill="none" stroke="#30D158" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="31.42" stroke-dashoffset="0" transform="rotate(-90 7 7)"/>
+                    </svg>
+                    <span class="w-lap-txt" id="w-lap-txt">单圈 60s</span>
+                  </span>
+                  <span class="w-slice-right">
+                    <span id="w-q-summary">队列 0</span>
+                    <span>›</span>
+                  </span>
+                  <span id="w-q-cnt" hidden>0</span>
+                  <i class="w-lap-progress" id="w-lap-progress"></i>
                 </button>
               </div>
+            </div>
 
-              <div class="w-footer-row" id="w-footer-row" data-testid="watch-queue-entry">
-                <span id="w-q-summary">已传 1 段</span>
-                <span id="w-q-cnt" hidden>0</span>
-                <button type="button" class="w-flush-btn" id="w-flush-btn" data-testid="watch-flush-btn" onclick="flushWatchQueue()" hidden>立即同步</button>
+            <!-- WatchQueueView（由底部单圈与待传条点入） -->
+            <div class="w-queue" id="w-queue-view" hidden>
+              <div class="w-qhead">
+                <button type="button" class="w-qback" data-testid="watch-queue-back" onclick="closeWatchQueue()">‹ 返回</button>
+                <span class="w-qtitle">本地队列</span>
+              </div>
+              <button type="button" class="w-qflush" id="w-flush-btn" data-testid="watch-flush-btn" onclick="flushWatchQueue()">立即同步到手机</button>
+              <div class="w-qlist" id="w-qlist">
+                <div class="w-qempty">暂无缓存音频片段</div>
               </div>
             </div>
           </div>
+
           <button type="button" class="watch-crown" title="Digital Crown：返回表盘" onclick="setWatchTab('face')" aria-label="数码表冠返回表盘"></button>
-          <button type="button" class="watch-sidebtn" title="侧边按钮：快捷打点" onclick="triggerWatchMark()" aria-label="侧边按钮打点"></button>
+          <button type="button" class="watch-sidebtn" title="侧边按钮：点亮屏幕" onclick="wakeWatchScreen()" aria-label="侧边按钮点亮屏幕"></button>
         </div>
       </div>
       <div class="watch-band-bot" aria-hidden="true"></div>
+
+      <p class="watch-hints">
+        轻敲两下表盘/表壳打点 · 底部紧贴单圈 60s 倒计时与待传队列<br>
+        先点亮屏幕再右滑停止防误触 · 表盘任一组件轻点开录
+      </p>
     </div>
   </section>
 </main>
@@ -1404,102 +1414,45 @@ nav.bottom button.on{color:var(--label);font-weight:600}
 
 var STORAGE_KEY = "rc-watch-proto-v2";
 
-var DEVICES = [
-  { id: "APPLE_WATCH_S10", name: "我的手表", badge: "Apple Watch", kind: "watch", fw: "watchOS 11.1", rssi: -38 },
-  { id: "DYJV2_T4W25T", name: "DYJV2_T4W25T", badge: "录音卡 V2", kind: "v2", fw: "2.1.0", rssi: -48 },
-  { id: "DYJ_B7K9Q2", name: "DYJ_B7K9Q2", badge: "点一机 V1", kind: "v1", fw: "1.3.4", rssi: -67 },
-  { id: "REAI_VB_L3M8N1", name: "REAI_VB_L3M8N1", badge: "语音AI键盘 V2.1", kind: "kb", fw: "2.1.0", rssi: -83 }
-];
-
 function defaultState() {
   return {
-    tab: "timeline",
-    subPage: null, // null | { t:"setsub", id:"watch" } | { t:"detail", id:"..." }
-    filter: "all",
-    viewMode: "both",
-    sheetOpen: false,
-    discConfirm: false,
-    watchTab: "app",
-    watchAOD: false,
-
-    watchLinkEnabled: false,
-    watchPaired: true,
-    watchInstalled: true,
-    wcsReachable: true,
-    connectedDevId: null, // null | DEVICE.id
-
-    hwRecOn: false,
-    hwRecSec: 0,
-    phoneRecOn: false,
-    phoneRecSec: 0,
-    phoneStandby: false,
-    phoneFailover: false,
-
-    watchBattTier: "高",
-    watchMarks: 0,
-    sliceSeq: 2,
-    watchQueue: [],
-    openCards: {},
-    items: [
-      {
-        id: "w-seed-1",
-        kind: "event",
-        day: "今天",
-        time: "14:15",
-        dur: "1分00秒",
-        title: "手表便携采音片段 #1",
-        source: "Apple Watch",
-        sampleRate: "16kHz / 16-bit PCM WAV",
-        hasAudio: true,
-        playing: false,
-        cleared: false,
-        transcript: "已在手表侧以 32kbps .m4a 采集并回传，iPhone 本机实时转码为 16kHz 单声道 WAV 送入端侧语音识别。",
-        brief: "手表端纯采音回传后在手机端完成本地 WAV 转码与语音识别。"
-      },
-      {
-        id: "e-card-1",
-        kind: "event",
-        day: "今天",
-        time: "13:05",
-        dur: "9分12秒",
-        title: "客户回访要点",
-        source: "录音卡 V2",
-        sampleRate: "16kHz / 16-bit PCM WAV",
-        hasAudio: true,
-        playing: false,
-        cleared: false,
-        transcript: "确认列表页首屏加载优化与筛选记忆条件，纳入下版本排期。",
-        brief: "电话回访客户，确认列表页加载速度优化建议。"
-      },
-      {
-        id: "sum-1",
-        kind: "summary",
-        day: "今天",
-        time: "13:20",
-        dur: "总结",
-        title: "今日沟通总结",
-        source: "总结",
-        hasAudio: false,
-        cleared: false,
-        brief: "包含客户回访核心行动项与分工跟进。",
-        transcript: "汇总今日已入库记录的核心结论与待办清单。"
-      }
-    ]
+    phoneVersion: "current", // "current" | "target"
+    viewMode: "both",        // "both" | "phone" | "watch"
+    watchTab: "app",         // "app" | "face"
+    watchRoute: "main",      // "main" | "queue"
+    watchAod: false,
+    reachable: true,
+    watchRec: false,
+    watchSec: 0,
+    sessionId: 1,
+    nextSeq: 1,
+    curMarks: 0,
+    battTier: "高",          // "高" | "中" | "低"
+    watchCharging: false,
+    livePopoverOpen: false,
+    queue: []                // { seq, durationSec, sizeBytes, marks, state:"queued"|"synced", sessionId, timeLabel }
   };
 }
 
-var S = defaultState();
+function cloneState(o) {
+  return JSON.parse(JSON.stringify(o));
+}
 
 function loadState() {
   try {
     var raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    var parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") {
-      S = Object.assign(defaultState(), parsed);
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      return Object.assign(defaultState(), parsed || {});
     }
   } catch (e) {}
+  return defaultState();
 }
+
+var S = loadState();
+var phoneWin = null;
+var bridgeBoundWin = null;
+var activeWatchEventMap = {}; // sessionId -> event id for <30s slice merge
 
 function saveState() {
   try {
@@ -1507,763 +1460,1158 @@ function saveState() {
   } catch (e) {}
 }
 
-function clockHMS(sec) {
-  var s = Math.max(0, sec | 0);
-  var h = Math.floor(s / 3600);
-  var m = Math.floor((s % 3600) / 60);
-  var r = s % 60;
-  return h + ":" + String(m).padStart(2, "0") + ":" + String(r).padStart(2, "0");
+function safePhoneWin() {
+  var frame = document.getElementById("phone-frame");
+  if (!frame) return null;
+  try {
+    var w = frame.contentWindow;
+    if (w && w.document && w.document.body) return w;
+  } catch (e) {
+    return null;
+  }
+  return null;
 }
 
-function clockMS(sec) {
-  var s = Math.max(0, sec | 0);
-  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+function nowHM() {
+  var d = new Date();
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
 }
 
-var toastTimer = null;
-function toast(msg) {
-  var el = document.getElementById("toast");
-  if (!el) return;
-  el.textContent = msg;
-  el.classList.add("show");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(function() { el.classList.remove("show"); }, 1800);
+function nowDateCN() {
+  var d = new Date();
+  var wd = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getDay()];
+  return (d.getMonth() + 1) + "月" + d.getDate() + "日 " + wd;
 }
 
-function curDevice() {
-  if (!S.connectedDevId) return null;
-  return DEVICES.find(function(d) { return d.id === S.connectedDevId; }) || null;
+/* 可录余量（表端按三档电量保守估算，充电中可持续录音） */
+function remainText() {
+  if (S.watchCharging) return "充电取电 · 可持续录音";
+  if (S.battTier === "低") return "还可录 · 约 40 分钟";
+  if (S.battTier === "中") return "还可录 · 约 1.5 小时";
+  return "还可录 · 约 3.5 小时";
 }
 
-function isWatchConnected() {
-  var d = curDevice();
-  return !!(d && d.kind === "watch");
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function clockHMS(s) {
+  var sec = Math.max(0, Math.floor(s || 0));
+  return pad2(Math.floor(sec / 3600)) + ":" + pad2(Math.floor((sec % 3600) / 60)) + ":" + pad2(sec % 60);
+}
+
+function clockMS(s) {
+  var sec = Math.max(0, Math.floor(s || 0));
+  if (sec >= 3600) {
+    return pad2(Math.floor(sec / 3600)) + ":" + pad2(Math.floor((sec % 3600) / 60));
+  }
+  return pad2(Math.floor(sec / 60)) + ":" + pad2(sec % 60);
+}
+
+function shortClockM(s) {
+  var sec = Math.max(0, Math.floor(s || 0));
+  return Math.floor(sec / 60) + ":" + pad2(sec % 60);
+}
+
+function pendingCount() {
+  return (S.queue || []).filter(function (x) { return x.state !== "synced"; }).length;
 }
 
 function esc(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/* ===== 视图与导航 ===== */
-function setViewMode(m) {
-  S.viewMode = m;
-  var st = document.getElementById("stage");
-  st.classList.toggle("mode-phone", m === "phone");
-  st.classList.toggle("mode-watch", m === "watch");
-  document.querySelectorAll('[data-testid="view-mode-seg"] button').forEach(function(b) {
-    b.classList.toggle("on", b.dataset.mode === m);
-  });
-  saveState();
+function toastPhone(msg) {
+  var pw = safePhoneWin();
+  if (pw && typeof pw.toast === "function") {
+    try { pw.toast(msg); } catch (e) {}
+  }
 }
 
-function go(tab) {
-  S.tab = tab;
-  S.subPage = null;
-  renderAll();
+/* ================= 手机端真源 iframe 联调桥 ================= */
+
+function isPhoneWatchConnected(pw) {
+  return !!(pw && pw.conn && pw.conn.connected && pw.conn.curDev && pw.conn.curDev.kind === "watch");
 }
 
-function openSetSub(id) {
-  S.tab = "setting";
-  S.subPage = { t: "setsub", id: id };
-  renderAll();
+function syncPhoneWatchCounters(pw) {
+  if (!pw || !pw.agCfg) return;
+  pw.agCfg.watchPending = pendingCount();
+  pw.agCfg.watchCharging = !!S.watchCharging;
+  pw.agCfg.watchPaired = true;
+  pw.agCfg.watchInstalled = true;
 }
 
-function openDetail(id) {
-  S.subPage = { t: "detail", id: id };
-  renderAll();
+function connectWatchDirectInPhone(pw, silent) {
+  if (!pw || !pw.SCAN_DEVICES) return false;
+  var d = pw.SCAN_DEVICES.find(function (x) { return x.kind === "watch"; });
+  if (!d) return false;
+  if (!pw.agCfg.watchLinkEnabled) pw.agCfg.watchLinkEnabled = true;
+  pw.conn.connected = true;
+  pw.conn.connecting = false;
+  pw.conn.retrying = false;
+  pw.conn.curDev = d;
+  if (pw.phoneRec && pw.phoneRec.on && !pw.phoneRec.handover) {
+    pw.phoneRec.on = false;
+    pw.phoneRec.failover = false;
+    pw.phoneRec.standby = true;
+  }
+  if (S.watchRec) {
+    pw.rec.on = true;
+    pw.rec.sec = S.watchSec;
+    pw.phoneRec.standby = true;
+    pw.liveState = "recording";
+  }
+  syncPhoneWatchCounters(pw);
+  if (typeof pw.applyDeviceCapabilities === "function") pw.applyDeviceCapabilities();
+  if (typeof pw.syncCapsule === "function") pw.syncCapsule();
+  if (typeof pw.battEstimate === "function") pw.battEstimate();
+  if (typeof pw.updateRecUI === "function") pw.updateRecUI();
+  if (typeof pw.syncPhoneRecUI === "function") pw.syncPhoneRecUI();
+  if (typeof pw.syncSetSummary === "function") pw.syncSetSummary();
+  if (typeof pw.render === "function") pw.render();
+  if (!silent) toastPhone("Apple Watch 已连接");
+  return true;
 }
 
-function goBack() {
-  S.subPage = null;
-  renderAll();
-}
+function ingestWatchSliceToPhone(slice) {
+  var pw = safePhoneWin();
+  if (!pw || !Array.isArray(pw.EVENTS)) return false;
 
-function setFilter(btn) {
-  S.filter = btn.dataset.f || "all";
-  document.querySelectorAll("#p-timeline .tabs button").forEach(function(b) {
-    b.classList.toggle("on", b.dataset.f === S.filter);
-  });
-  renderTimeline();
-  saveState();
-}
+  var existingId = activeWatchEventMap[slice.sessionId];
+  var existing = existingId ? pw.EVENTS.find(function (e) { return e.id === existingId; }) : null;
 
-function setWatchTab(tab) {
-  S.watchTab = tab;
-  renderWatch();
-  saveState();
-}
+  var markSuffix = slice.marks > 0 ? "（含 " + slice.marks + " 处手表打重点）" : "";
+  var lineText = "手表端第 " + slice.seq + " 片（60s · 16kHz WAV）已完成本地音频接收" + markSuffix + "。";
 
-function toggleWatchAOD() {
-  S.watchAOD = !S.watchAOD;
-  renderWatch();
-  saveState();
-}
+  if (existing) {
+    var prevSlices = (existing.mergeMeta && existing.mergeMeta.slices) || 1;
+    var nextSlices = prevSlices + 1;
+    var baseOffset = nextSlices * 60 - 60;
+    existing.dur = nextSlices + "分00秒";
+    existing.brief = "Apple Watch 连续采集已累计合并 " + nextSlices + " 个 60 秒本地音频分片。";
+    existing.long = existing.long + " 第 " + slice.seq + " 片（60s）紧邻间隔 < 30 秒，已自动并入同一条记录" + markSuffix + "。";
+    if (slice.marks > 0) {
+      existing.mark = slice.timeLabel + " Watch 打重点";
+    }
+    if (Array.isArray(existing.dlg)) {
+      existing.dlg.push(["1", lineText, "来源 " + (slice.timeLabel || nowHM()) + " · Watch 第 " + slice.seq + " 片"]);
+    }
+    if (Array.isArray(existing.raw)) {
+      existing.raw.push(["说话人 1（推测）", lineText, "来源 " + (slice.timeLabel || nowHM()) + " Watch 第 " + slice.seq + " 片 ｜ 本地 16kHz WAV", baseOffset]);
+    }
+    existing.mergeMeta = {
+      slices: nextSlices,
+      maxGapSec: 0,
+      silenceStopMin: 1,
+      agentDone: true,
+      watermark: "watch-sess-" + slice.sessionId + "-s" + slice.seq
+    };
+    if (pw.RAW_AUDIO && pw.RAW_AUDIO[existing.id]) {
+      pw.RAW_AUDIO[existing.id].dur = nextSlices * 60;
+    }
+    if (typeof pw.render === "function") pw.render();
+    if (pw.currentEventId === existing.id && typeof pw.fillDetail === "function") pw.fillDetail(existing.id);
+    return true;
+  }
 
-/* ===== StatusSheet & 4 硬件能力裁剪 ===== */
-function openSheet() {
-  S.sheetOpen = true;
-  S.discConfirm = false;
-  renderSheet();
-  saveState();
-}
-
-function closeSheet() {
-  S.sheetOpen = false;
-  S.discConfirm = false;
-  renderSheet();
-  saveState();
-}
-
-function availableScanDevices() {
-  return DEVICES.filter(function(d) {
-    return d.kind !== "watch" || (S.watchLinkEnabled && S.watchPaired);
-  }).sort(function(a, b) { return b.rssi - a.rssi; });
-}
-
-function connectDevice(id) {
-  var d = DEVICES.find(function(x) { return x.id === id; });
-  if (!d) return;
-  if (d.kind === "watch") {
-    S.watchLinkEnabled = true;
-    S.wcsReachable = true;
-    if (S.phoneRecOn && S.phoneFailover) {
-      S.phoneRecOn = false;
-      S.phoneFailover = false;
-      if (S.hwRecOn) S.phoneStandby = true;
+  var eid = "watch-slice-" + slice.seq;
+  activeWatchEventMap[slice.sessionId] = eid;
+  var newEv = {
+    id: eid,
+    kind: "event",
+    off: 0,
+    title: "手表录音 · 第 " + slice.seq + " 片起",
+    brief: "Apple Watch 本地 AAC 切片回传并已解码为 16kHz Mono PCM WAV" + markSuffix + "。",
+    long: "来自 Apple Watch 的第 " + slice.seq + " 片本地录音（60 秒，32kbps AAC → 本机 16kHz Mono PCM WAV），通过 WCSession 传入本机并交由 SenseVoice 本地转写" + markSuffix + "。",
+    time: slice.timeLabel || nowHM(),
+    dur: "1分00秒",
+    spk: "1（推测）",
+    mark: slice.marks > 0 ? slice.timeLabel + " Watch 打重点" : "",
+    map: "来源 · Watch 第 " + slice.seq + " 片",
+    mergeMeta: {
+      slices: 1,
+      maxGapSec: 0,
+      silenceStopMin: 1,
+      agentDone: true,
+      watermark: "watch-sess-" + slice.sessionId + "-s" + slice.seq
+    },
+    dlg: [
+      ["1", lineText, "来源 " + (slice.timeLabel || nowHM()) + " · Watch 第 " + slice.seq + " 片"]
+    ],
+    raw: [
+      ["说话人 1（推测）", lineText, "来源 " + (slice.timeLabel || nowHM()) + " Watch 第 " + slice.seq + " 片 ｜ 本地 16kHz WAV", 0]
+    ]
+  };
+  pw.EVENTS.unshift(newEv);
+  if (Array.isArray(pw.HEALTH_RECORDS) && pw.agCfg && pw.agCfg.healthSignalEnabled) {
+    pw.HEALTH_RECORDS.unshift({
+      time: slice.timeLabel || nowHM(),
+      kind: "录音中",
+      metric: "78 bpm · 血氧 98%",
+      meta: "Watch 第 " + slice.seq + " 片"
+    });
+    if (typeof pw.syncSetSummary === "function") pw.syncSetSummary();
+    var pSub = pw.document.getElementById("p-setsub");
+    var pTitle = pw.document.getElementById("setsub-title");
+    if (pSub && pSub.classList.contains("show") && pTitle && pTitle.textContent.indexOf("行为与健康信号") !== -1 && typeof pw.renderSetSub === "function") {
+      pw.renderSetSub("health");
     }
   }
-  S.connectedDevId = d.id;
-  S.discConfirm = false;
-  toast("已连接 " + d.badge);
-  renderAll();
+  if (typeof pw.render === "function") pw.render();
+  return true;
 }
 
-function askDisconnect() {
-  S.discConfirm = true;
-  renderSheet();
-}
-
-function cancelDisconnect() {
-  S.discConfirm = false;
-  renderSheet();
-}
-
-function confirmDisconnect() {
-  S.connectedDevId = null;
-  S.discConfirm = false;
-  S.hwRecOn = false;
-  S.phoneStandby = false;
-  toast("已安全断开硬件连接");
-  renderAll();
-}
-
-function toggleHwRec() {
-  if (!curDevice()) return;
-  if (isWatchConnected() && !S.wcsReachable) {
-    toast("手表离线暂存中，已保留本机队列待连通");
+function attachPhoneBridge() {
+  var pw = safePhoneWin();
+  var notice = document.getElementById("phone-local-notice");
+  if (!pw) {
+    if (notice) notice.hidden = false;
     return;
   }
-  S.hwRecOn = !S.hwRecOn;
-  if (S.hwRecOn) {
-    S.hwRecSec = 0;
-    S.phoneStandby = true;
-    S.phoneRecOn = false;
-    S.phoneFailover = false;
-    if (isWatchConnected()) S.watchTab = "app";
+  if (notice) notice.hidden = true;
+  phoneWin = pw;
+
+  // 反向同步版本切换选中态
+  try {
+    var pathname = pw.location.pathname || "";
+    var isTarget = /\/index\.html$/.test(pathname);
+    S.phoneVersion = isTarget ? "target" : "current";
+    renderToolbar();
+  } catch (e) {}
+
+  if (bridgeBoundWin === pw) return;
+  bridgeBoundWin = pw;
+
+  // 隐藏 iframe 内部冗余浮动灵动岛（改由外层 iPhone 16 Pro 状态栏内灵动岛统一呈现）
+  try {
+    if (!pw.document.getElementById("watch-bridge-style")) {
+      var st = pw.document.createElement("style");
+      st.id = "watch-bridge-style";
+      st.textContent = "#dyn-island{display:none!important}";
+      pw.document.head.appendChild(st);
+    }
+  } catch (e) {}
+
+  syncPhoneWatchCounters(pw);
+
+  // 包裹 Setting -> toggleWatchLink
+  if (typeof pw.toggleWatchLink === "function") {
+    var origToggleWatchLink = pw.toggleWatchLink;
+    pw.toggleWatchLink = function () {
+      var res = origToggleWatchLink.apply(this, arguments);
+      if (!pw.agCfg.watchLinkEnabled && S.watchRec && isPhoneWatchConnected(pw)) {
+        S.watchRec = false;
+      }
+      renderAll();
+      return res;
+    };
+  }
+
+  // 包裹 Setting -> connectWatchFromSetting
+  if (typeof pw.connectWatchFromSetting === "function") {
+    var origConnectWatchFromSetting = pw.connectWatchFromSetting;
+    pw.connectWatchFromSetting = function () {
+      var res = origConnectWatchFromSetting.apply(this, arguments);
+      if (isPhoneWatchConnected(pw)) {
+        S.reachable = true;
+        reconcilePhoneAndWatchOnConnect(pw);
+      }
+      renderAll();
+      return res;
+    };
+  }
+
+  // 包裹 Setting -> flushWatchFromSetting 与胶囊 syncNow
+  if (typeof pw.flushWatchFromSetting === "function") {
+    var origFlushWatchFromSetting = pw.flushWatchFromSetting;
+    pw.flushWatchFromSetting = function () {
+      var synced = flushPendingOnWatch(true);
+      var res = origFlushWatchFromSetting.apply(this, arguments);
+      syncPhoneWatchCounters(pw);
+      if (typeof pw.renderSetSub === "function" && pw.document.getElementById("p-setsub").classList.contains("show")) {
+        pw.watchSubHint = synced > 0 ? ("已同步 " + synced + " 段手表录音") : "暂无待传录音";
+        pw.renderSetSub("watch");
+      }
+      renderAll();
+      return res;
+    };
+  }
+
+  if (typeof pw.syncNow === "function") {
+    var origSyncNow = pw.syncNow;
+    pw.syncNow = function () {
+      if (isPhoneWatchConnected(pw) && S.reachable) {
+        flushPendingOnWatch(true);
+      }
+      return origSyncNow.apply(this, arguments);
+    };
+  }
+
+  // 包裹蓝牙/设备列表连接 connectDevice
+  if (typeof pw.connectDevice === "function") {
+    var origConnectDevice = pw.connectDevice;
+    pw.connectDevice = function (id) {
+      var res = origConnectDevice.apply(this, arguments);
+      if (id === "APPLE_WATCH_S10") {
+        setTimeout(function () {
+          if (isPhoneWatchConnected(pw)) {
+            S.reachable = true;
+            reconcilePhoneAndWatchOnConnect(pw);
+            renderAll();
+          }
+        }, 950);
+      } else {
+        setTimeout(renderLiveActivity, 950);
+      }
+      return res;
+    };
+  }
+
+  // 包裹主动断开 confirmDisconnect
+  if (typeof pw.confirmDisconnect === "function") {
+    var origConfirmDisconnect = pw.confirmDisconnect;
+    pw.confirmDisconnect = function () {
+      var wasWatch = isPhoneWatchConnected(pw);
+      var res = origConfirmDisconnect.apply(this, arguments);
+      if (wasWatch) {
+        S.watchRec = false;
+      }
+      renderAll();
+      return res;
+    };
+  }
+
+  // 包裹硬件意外断连 triggerUnexpectedDrop
+  if (typeof pw.triggerUnexpectedDrop === "function") {
+    var origUnexpectedDrop = pw.triggerUnexpectedDrop;
+    pw.triggerUnexpectedDrop = function () {
+      var wasWatch = isPhoneWatchConnected(pw);
+      var res = origUnexpectedDrop.apply(this, arguments);
+      if (wasWatch) {
+        S.reachable = false;
+      }
+      renderAll();
+      return res;
+    };
+  }
+
+  // 包裹录音开关 toggleRec
+  if (typeof pw.toggleRec === "function") {
+    var origToggleRec = pw.toggleRec;
+    pw.toggleRec = function () {
+      var wasWatch = isPhoneWatchConnected(pw);
+      var res = origToggleRec.apply(this, arguments);
+      if (wasWatch) {
+        if (pw.rec.on) {
+          S.watchRec = true;
+          S.watchSec = 0;
+          S.sessionId++;
+          S.curMarks = 0;
+          S.watchTab = "app";
+          S.watchRoute = "main";
+        } else {
+          S.watchRec = false;
+          if (S.watchSec > 0) {
+            finalizeCurrentSlice(true);
+          }
+          S.watchSec = 0;
+        }
+      }
+      renderAll();
+      return res;
+    };
+  }
+
+  // 包裹 syncPhoneRecUI 与 updateRecUI 以实时同步灵动岛计时与状态
+  if (typeof pw.syncPhoneRecUI === "function") {
+    var origSyncPhoneRecUI = pw.syncPhoneRecUI;
+    pw.syncPhoneRecUI = function () {
+      var res = origSyncPhoneRecUI.apply(this, arguments);
+      if (isPhoneWatchConnected(pw) && pw.rec && pw.rec.on && S.watchRec) {
+        S.watchSec = pw.rec.sec;
+        renderWatchClock();
+      }
+      renderLiveActivity();
+      return res;
+    };
+  }
+
+  if (typeof pw.updateRecUI === "function") {
+    var origUpdateRecUI = pw.updateRecUI;
+    pw.updateRecUI = function () {
+      var res = origUpdateRecUI.apply(this, arguments);
+      if (isPhoneWatchConnected(pw) && pw.rec && pw.rec.on && S.watchRec) {
+        S.watchSec = pw.rec.sec;
+        renderWatchClock();
+      }
+      renderLiveActivity();
+      return res;
+    };
+  }
+
+  if (typeof pw.toggleIslandHardware === "function") {
+    var origToggleIslandHw = pw.toggleIslandHardware;
+    pw.toggleIslandHardware = function () {
+      var res = origToggleIslandHw.apply(this, arguments);
+      renderLiveActivity();
+      return res;
+    };
+  }
+
+  // 在状态同步完后，根据当前 Watch 状态回写 iframe
+  syncPhoneWatchCounters(pw);
+  if (typeof pw.syncSetSummary === "function") pw.syncSetSummary();
+  renderAll();
+}
+
+function reconcilePhoneAndWatchOnConnect(pw) {
+  if (!pw) return;
+  // 若手表已提前在录音中，手机停止本机麦退回零功耗待命保底，并接管时钟与灵动岛
+  if (S.watchRec) {
+    if (pw.phoneRec) {
+      pw.phoneRec.on = false;
+      pw.phoneRec.failover = false;
+      pw.phoneRec.handover = false;
+      pw.phoneRec.standby = true;
+    }
+    pw.rec.on = true;
+    pw.rec.sec = S.watchSec;
+    pw.liveState = "recording";
+  } else if (pw.phoneRec && pw.phoneRec.on && !pw.phoneRec.handover) {
+    // 若手机原本在进行本机录音，切换由手表采集
+    S.watchRec = true;
+    S.watchSec = pw.phoneRec.sec || 0;
+    S.sessionId++;
+    pw.phoneRec.on = false;
+    pw.phoneRec.failover = false;
+    pw.phoneRec.standby = true;
+    pw.rec.on = true;
+    pw.rec.sec = S.watchSec;
+    pw.liveState = "recording";
+  }
+  if (S.reachable && pendingCount() > 0) {
+    flushPendingOnWatch(true);
+  }
+  syncPhoneWatchCounters(pw);
+  if (typeof pw.applyDeviceCapabilities === "function") pw.applyDeviceCapabilities();
+  if (typeof pw.syncCapsule === "function") pw.syncCapsule();
+  if (typeof pw.updateRecUI === "function") pw.updateRecUI();
+  if (typeof pw.syncPhoneRecUI === "function") pw.syncPhoneRecUI();
+  if (typeof pw.syncSetSummary === "function") pw.syncSetSummary();
+  if (typeof pw.render === "function") pw.render();
+}
+
+/* ================= 手表动作与离线队列引擎 ================= */
+
+function finalizeCurrentSlice(autoFlushIfReachable) {
+  var seq = S.nextSeq++;
+  var slice = {
+    seq: seq,
+    durationSec: 60,
+    sizeBytes: 491520,
+    marks: S.curMarks || 0,
+    state: "queued",
+    sessionId: S.sessionId,
+    timeLabel: nowHM()
+  };
+  S.curMarks = 0;
+  S.queue.unshift(slice);
+
+  var pw = safePhoneWin();
+  if (autoFlushIfReachable && S.reachable && pw && pw.agCfg && pw.agCfg.watchLinkEnabled) {
+    flushPendingOnWatch(true);
   } else {
-    S.phoneStandby = false;
+    syncPhoneWatchCounters(pw);
+    if (pw && typeof pw.applyDeviceCapabilities === "function" && isPhoneWatchConnected(pw)) {
+      pw.applyDeviceCapabilities();
+    }
+    if (pw && typeof pw.renderSetSub === "function" && pw.document.getElementById("p-setsub").classList.contains("show")) {
+      pw.renderSetSub("watch");
+    }
   }
+  saveState();
   renderAll();
+  return slice;
 }
 
-function togglePhoneRec() {
-  if (curDevice()) return;
-  S.phoneRecOn = !S.phoneRecOn;
-  if (S.phoneRecOn) {
-    S.phoneRecSec = 0;
-    S.phoneFailover = false;
+function flushPendingOnWatch(silent) {
+  if (!S.reachable) {
+    if (!silent) toastPhone("手表当前未连手机，切片留在本地队列");
+    return 0;
   }
-  renderAll();
-}
+  var pw = safePhoneWin();
+  var pending = (S.queue || []).filter(function (x) { return x.state !== "synced"; });
+  if (!pending.length) return 0;
 
-function toggleWatchLink() {
-  S.watchLinkEnabled = !S.watchLinkEnabled;
-  if (!S.watchLinkEnabled && isWatchConnected()) {
-    S.connectedDevId = null;
-    S.hwRecOn = false;
-    S.phoneStandby = false;
-  }
-  toast(S.watchLinkEnabled ? "已开启 Apple Watch 硬件联动" : "已关闭 Apple Watch 硬件联动");
-  renderAll();
-}
+  // 按序号正序交付手机端 .m4a -> 16kHz WAV 转码入 Timeline
+  pending.slice().reverse().forEach(function (sl) {
+    sl.state = "synced";
+    ingestWatchSliceToPhone(sl);
+  });
 
-function connectWatchFromSetting() {
-  if (isWatchConnected()) {
-    confirmDisconnect();
-    return;
+  if (pw) {
+    syncPhoneWatchCounters(pw);
+    if (isPhoneWatchConnected(pw) && typeof pw.applyDeviceCapabilities === "function") {
+      pw.applyDeviceCapabilities();
+    }
+    if (typeof pw.syncSetSummary === "function") pw.syncSetSummary();
+    if (!silent) toastPhone("已从手表同步 " + pending.length + " 段音频至 Timeline");
   }
-  S.watchLinkEnabled = true;
-  S.wcsReachable = true;
-  S.connectedDevId = "APPLE_WATCH_S10";
-  if (S.phoneFailover && S.phoneRecOn) {
-    S.phoneRecOn = false;
-    S.phoneFailover = false;
-    if (S.hwRecOn) S.phoneStandby = true;
-  }
-  toast("已将 Apple Watch 设为当前采集硬件");
+  saveState();
   renderAll();
-}
-
-/* ===== Apple Watch 交互与 WCSession 切片流转 ===== */
-function launchFromComplication(slot) {
-  S.watchTab = "app";
-  if (!S.hwRecOn) {
-    S.hwRecOn = true;
-    S.hwRecSec = 0;
-  }
-  if (S.watchLinkEnabled && S.wcsReachable) {
-    if (!S.connectedDevId) S.connectedDevId = "APPLE_WATCH_S10";
-    S.phoneStandby = true;
-    S.phoneRecOn = false;
-    S.phoneFailover = false;
-  }
-  toast("已通过表盘（" + slot + "）开启手表持续录音");
-  renderAll();
+  return pending.length;
 }
 
 function toggleWatchRec() {
-  S.hwRecOn = !S.hwRecOn;
-  if (S.hwRecOn) {
-    S.hwRecSec = 0;
-    if (S.watchLinkEnabled && S.wcsReachable) {
-      if (!S.connectedDevId) S.connectedDevId = "APPLE_WATCH_S10";
-      S.phoneStandby = true;
-      S.phoneRecOn = false;
-      S.phoneFailover = false;
+  var pw = safePhoneWin();
+  var linked = !!(pw && pw.agCfg && pw.agCfg.watchLinkEnabled);
+
+  S.watchRec = !S.watchRec;
+  if (S.watchRec) {
+    S.watchSec = 0;
+    S.curMarks = 0;
+    S.sessionId++;
+    if (linked && S.reachable && pw) {
+      if (!isPhoneWatchConnected(pw)) {
+        connectWatchDirectInPhone(pw, true);
+      } else {
+        if (pw.phoneRec) {
+          pw.phoneRec.on = false;
+          pw.phoneRec.failover = false;
+          pw.phoneRec.standby = true;
+        }
+        pw.rec.on = true;
+        pw.rec.sec = 0;
+        pw.liveState = "recording";
+      }
     }
   } else {
-    S.phoneStandby = false;
+    if (S.watchSec > 0) {
+      finalizeCurrentSlice(true);
+    }
+    S.watchSec = 0;
+    if (isPhoneWatchConnected(pw)) {
+      pw.rec.on = false;
+      pw.phoneRec.standby = false;
+      if (!pw.phoneRec.on) {
+        pw.liveState = S.reachable ? "syncing" : "idle";
+        if (pw.liveState === "syncing") {
+          setTimeout(function () {
+            if (pw.liveState === "syncing" && !pw.rec.on && !pw.phoneRec.on) {
+              pw.liveState = "idle";
+              if (typeof pw.render === "function") pw.render();
+            }
+          }, 1200);
+        }
+      }
+    }
   }
+
+  if (pw) {
+    syncPhoneWatchCounters(pw);
+    if (typeof pw.syncCapsule === "function") pw.syncCapsule();
+    if (typeof pw.updateRecUI === "function") pw.updateRecUI();
+    if (typeof pw.syncPhoneRecUI === "function") pw.syncPhoneRecUI();
+    if (typeof pw.syncSetSummary === "function") pw.syncSetSummary();
+    if (typeof pw.render === "function") pw.render();
+  }
+  saveState();
   renderAll();
+}
+
+function launchFromComplication() {
+  setWatchTab("app");
+  S.watchRoute = "main";
+  if (!S.watchRec) {
+    toggleWatchRec();
+  } else {
+    saveState();
+    renderAll();
+  }
 }
 
 function triggerWatchMark() {
-  S.watchMarks += 1;
-  if (S.watchLinkEnabled && S.wcsReachable && S.items.length) {
-    toast("手表打点 Mark #" + S.watchMarks + " 已同步至 iPhone");
-  } else {
-    toast("手表打点 Mark #" + S.watchMarks + " 已写入分片头");
+  if (!S.watchRec) {
+    toastPhone("请先开启手表录音，再轻敲两下机身打点");
+    return;
   }
+  S.curMarks = (S.curMarks || 0) + 1;
+  saveState();
   renderAll();
+  var wCase = document.querySelector(".watch-case");
+  if (wCase) {
+    wCase.classList.remove("knock-hit");
+    void wCase.offsetWidth;
+    wCase.classList.add("knock-hit");
+    setTimeout(function () { wCase.classList.remove("knock-hit"); }, 160);
+  }
+  var ripple = document.getElementById("w-knock-ripple");
+  if (ripple) {
+    ripple.classList.remove("active");
+    void ripple.offsetWidth;
+    ripple.classList.add("active");
+    setTimeout(function () { ripple.classList.remove("active"); }, 500);
+  }
+  toastPhone("手表侧已打重点（" + clockHMS(S.watchSec) + " · 第 " + S.curMarks + " 处）");
 }
 
-function triggerMarkFromPhone() {
-  triggerWatchMark();
+function openWatchQueue() {
+  S.watchRoute = "queue";
+  saveState();
+  renderWatchUI();
+}
+
+function closeWatchQueue() {
+  S.watchRoute = "main";
+  saveState();
+  renderWatchUI();
+}
+
+function flushWatchQueue() {
+  flushPendingOnWatch(false);
+}
+
+/* ================= 顶部联调控制栏 ================= */
+
+function setPhoneVersion(ver) {
+  var next = ver === "target" ? "target" : "current";
+  if (S.phoneVersion === next) return;
+  S.phoneVersion = next;
+  saveState();
+  renderToolbar();
+  var frame = document.getElementById("phone-frame");
+  if (frame) {
+    bridgeBoundWin = null;
+    frame.src = next === "target" ? "../../prototype/index.html" : "../../prototype/current.html";
+  }
+}
+
+function setViewMode(mode) {
+  S.viewMode = mode;
+  saveState();
+  renderToolbar();
+  var st = document.getElementById("stage");
+  if (st) {
+    st.classList.toggle("mode-phone", mode === "phone");
+    st.classList.toggle("mode-watch", mode === "watch");
+  }
 }
 
 function toggleReachability() {
-  S.wcsReachable = !S.wcsReachable;
-  if (S.wcsReachable && S.watchLinkEnabled) {
-    toast("WCSession 已恢复连通，可同步待传分片");
-  } else {
-    toast("WCSession 已切至离线暂存，手表继续本地录 .m4a");
+  S.reachable = !S.reachable;
+  var pw = safePhoneWin();
+  if (S.reachable && pw && pw.agCfg && pw.agCfg.watchLinkEnabled) {
+    if (!isPhoneWatchConnected(pw)) {
+      connectWatchDirectInPhone(pw, true);
+    }
+  } else if (!S.reachable && pw && isPhoneWatchConnected(pw)) {
+    pw.triggerUnexpectedDrop();
   }
+  saveState();
   renderAll();
 }
 
 function triggerWatchUnexpectedDrop() {
-  if (!S.hwRecOn && !isWatchConnected()) {
-    S.watchLinkEnabled = true;
-    S.connectedDevId = "APPLE_WATCH_S10";
-    S.hwRecOn = true;
-    S.phoneStandby = true;
+  S.reachable = false;
+  var pw = safePhoneWin();
+  if (pw && isPhoneWatchConnected(pw) && typeof pw.triggerUnexpectedDrop === "function") {
+    pw.triggerUnexpectedDrop();
   }
-  S.wcsReachable = false;
-  if (isWatchConnected()) S.connectedDevId = null;
-  if (S.phoneStandby || S.hwRecOn) {
-    S.phoneStandby = false;
-    S.phoneRecOn = true;
-    S.phoneFailover = true;
-    S.phoneRecSec = 0;
-  }
-  toast("手表连接意外断开，本机保底录音已自动接力");
+  saveState();
   renderAll();
-}
-
-function ingestWatchSlice(sliceObj) {
-  var id = sliceObj.id;
-  S.items.unshift({
-    id: id,
-    kind: "event",
-    day: "今天",
-    time: sliceObj.time,
-    dur: "1分00秒",
-    title: "手表采音切片 #" + sliceObj.seq + (sliceObj.marks ? "（含 " + sliceObj.marks + " 处重点）" : ""),
-    source: "Apple Watch",
-    sampleRate: "16kHz / 16-bit PCM WAV",
-    hasAudio: true,
-    playing: false,
-    cleared: false,
-    transcript: "收到手表直传 32kbps .m4a 分片（" + sliceObj.fileName + "），iPhone 本机已完成 16kHz/16-bit/Mono WAV 转码与语音识别入库。",
-    brief: "由 Apple Watch " + sliceObj.fileName + " 本地转码为 16kHz WAV 并入库。"
-  });
 }
 
 function cutWatchSlice() {
-  var seq = S.sliceSeq++;
-  var now = new Date();
-  var hm = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
-  var slice = {
-    id: "watch-slice-" + seq,
-    seq: seq,
-    fileName: "W_" + String(seq).padStart(4, "0") + ".m4a",
-    time: hm,
-    durSec: 60,
-    marks: S.watchMarks
-  };
-  S.watchMarks = 0;
-  if (S.watchLinkEnabled && S.wcsReachable) {
-    ingestWatchSlice(slice);
-    toast("手表分片已直传手机并本地转 16kHz WAV 入库");
-  } else {
-    S.watchQueue.push(slice);
-    toast("当前离线/未联动，分片已暂存手表队列（共 " + S.watchQueue.length + " 段）");
+  // 创建新分段时若与先前断开，使用新 sessionId 确保入库为新卡片
+  if (!S.reachable) {
+    S.sessionId++;
   }
-  renderAll();
+  finalizeCurrentSlice(true);
 }
 
-function flushWatchQueue() {
-  if (!S.watchQueue.length) {
-    toast("手表本地队列暂无待传分片");
-    return;
+function setWatchTab(tab) {
+  S.watchTab = tab === "face" ? "face" : "app";
+  if (S.watchTab === "app") {
+    S.watchRoute = S.watchRoute || "main";
   }
-  if (!S.watchLinkEnabled || !S.wcsReachable) {
-    toast("请先开启联动并保持 WCSession 连通再回传");
-    return;
-  }
-  var count = S.watchQueue.length;
-  var pending = S.watchQueue.slice();
-  S.watchQueue = [];
-  pending.forEach(ingestWatchSlice);
-  toast("已回传 " + count + " 段 .m4a 并全部本地转为 16kHz WAV");
-  renderAll();
-}
-
-function syncNow() {
-  flushWatchQueue();
-}
-
-function refreshFromTimeline() {
-  if (S.hwRecOn || S.phoneRecOn) {
-    cutWatchSlice();
-  } else {
-    flushWatchQueue();
-  }
-}
-
-function toggleSlicePlay(id, ev) {
-  if (ev) ev.stopPropagation();
-  var item = S.items.find(function(x) { return x.id === id; });
-  if (!item || item.cleared || !item.hasAudio) return;
-  S.items.forEach(function(x) { if (x.id !== id) x.playing = false; });
-  item.playing = !item.playing;
-  renderTimeline();
-  if (S.subPage && S.subPage.t === "detail") renderDetail(S.subPage.id);
   saveState();
+  renderWatchUI();
 }
 
-function deleteSliceAudio(id, ev) {
-  if (ev) ev.stopPropagation();
-  var item = S.items.find(function(x) { return x.id === id; });
-  if (!item) return;
-  item.hasAudio = false;
-  item.playing = false;
-  item.cleared = true;
-  toast("已清理该段原始 WAV 音频");
-  renderTimeline();
-  if (S.subPage && S.subPage.t === "detail") renderDetail(S.subPage.id);
+function toggleWatchAOD() {
+  S.watchAod = !S.watchAod;
   saveState();
+  renderWatchUI();
 }
 
-function toggleCardOpen(id) {
-  S.openCards[id] = !S.openCards[id];
-  renderTimeline();
-  saveState();
+function toggleLiveCardPopover() {
+  var di = document.getElementById("phone-dyn-island");
+  if (!di || (!di.classList.contains("show") && !di.classList.contains("agent"))) return;
+  S.livePopoverOpen = !S.livePopoverOpen;
+  renderLiveActivity();
 }
 
 function resetPrototype() {
   try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  var pw = safePhoneWin();
+  if (pw) {
+    try {
+      pw.sessionStorage.removeItem("rc-route-cur-v1");
+      pw.sessionStorage.removeItem("rc-route-v1");
+      pw.localStorage.removeItem("rc-vp-cur-v1");
+    } catch (e) {}
+  }
   S = defaultState();
+  activeWatchEventMap = {};
+  bridgeBoundWin = null;
+  var rip = document.getElementById("w-knock-ripple");
+  if (rip) rip.classList.remove("active");
+  var frame = document.getElementById("phone-frame");
+  if (frame) {
+    frame.src = "../../prototype/current.html?reset=" + Date.now();
+  }
   renderAll();
-  toast("原型状态已重置");
 }
 
-/* ===== 渲染函数 ===== */
-function renderHeaderAndNav() {
-  var isSub = !!S.subPage;
-  document.body.classList.toggle("sub", isSub);
-  var crumb = document.getElementById("crumb-back");
-  var dest = document.getElementById("crumb-dest");
-  if (crumb && dest) {
-    crumb.hidden = !isSub;
-    dest.textContent = S.subPage && S.subPage.t === "setsub" ? "Setting" : "Timeline";
+/* ================= 渲染函数 ================= */
+
+function renderToolbar() {
+  document.querySelectorAll('[data-testid="phone-version-seg"] button').forEach(function (b) {
+    b.classList.toggle("on", b.dataset.pver === S.phoneVersion);
+  });
+  document.querySelectorAll('[data-testid="view-mode-seg"] button').forEach(function (b) {
+    b.classList.toggle("on", b.dataset.mode === S.viewMode);
+  });
+  var cap = document.getElementById("phone-ver-caption");
+  if (cap) {
+    cap.textContent = S.phoneVersion === "target"
+      ? "iPhone「录音卡」真源设计稿（目标版·9）"
+      : "iPhone「录音卡」真源设计稿（当前版）";
   }
+  var rb = document.getElementById("tb-reach-btn");
+  var rt = document.getElementById("tb-reach-txt");
+  if (rb) {
+    rb.classList.toggle("ok", !!S.reachable);
+    rb.classList.toggle("warn", !S.reachable);
+  }
+  if (rt) {
+    rt.textContent = S.reachable ? "WCSession 已连通" : "WCSession 离线暂存";
+  }
+  var st = document.getElementById("stage");
+  if (st) {
+    st.classList.toggle("mode-phone", S.viewMode === "phone");
+    st.classList.toggle("mode-watch", S.viewMode === "watch");
+  }
+}
 
-  document.getElementById("p-timeline").classList.toggle("show", !isSub && S.tab === "timeline");
-  document.getElementById("p-setting").classList.toggle("show", !isSub && S.tab === "setting");
-  document.getElementById("p-detail").classList.toggle("show", isSub && S.subPage.t === "detail");
-  document.getElementById("p-setsub").classList.toggle("show", isSub && S.subPage.t === "setsub");
-
-  document.getElementById("nt").classList.toggle("on", S.tab === "timeline");
-  document.getElementById("ns").classList.toggle("on", S.tab === "setting");
-
-  // 胶囊
-  var cap = document.querySelector('[data-testid="hw-capsule"]');
-  var dev = curDevice();
-  var phoneOnly = !dev && S.phoneRecOn;
-  var hwRecording = !!(dev && S.hwRecOn);
-  cap.classList.toggle("off", !dev && !phoneOnly);
-  cap.classList.toggle("phonerec", phoneOnly);
-  cap.classList.toggle("idle", !!(dev && !hwRecording));
-  cap.setAttribute("aria-label", phoneOnly ? "录音卡状态：本机录音" : !dev ? "录音卡状态：无设备" : hwRecording ? "录音卡状态：录音中" : "录音卡状态：已连接");
-
-  // 灵动岛
+function renderLiveActivity() {
+  var pw = safePhoneWin();
   var di = document.getElementById("phone-dyn-island");
-  var watchIslandActive = !!(S.watchLinkEnabled && S.wcsReachable && S.hwRecOn);
-  var phoneIslandActive = !!S.phoneRecOn;
-  var showDI = watchIslandActive || phoneIslandActive;
-  di.classList.toggle("show", showDI);
-  if (showDI) {
-    var titleEl = document.getElementById("di-title");
-    var subEl = document.getElementById("di-sub");
-    var lcdEl = document.getElementById("di-lcd");
-    if (watchIslandActive && !phoneIslandActive) {
-      titleEl.textContent = "录音卡 · Apple Watch 录音中（锁屏实况已开启）";
-      subEl.textContent = "我的手表 · " + (S.phoneStandby ? "本机保底待命中" : "本地直采");
-      lcdEl.textContent = clockHMS(S.hwRecSec);
+  var card = document.getElementById("ios-live-activity-card");
+  var lcd = document.getElementById("di-lcd");
+  var hint = document.getElementById("di-compact-hint");
+  var lpTitle = document.getElementById("lp-title");
+  var lpSub = document.getElementById("lp-sub");
+  var lpLcd = document.getElementById("lp-lcd");
+  var agentTitle = document.getElementById("di-agent-title");
+  var agentSub = document.getElementById("di-agent-sub");
+  if (!di) return;
+
+  var hasDi = pw && pw.agCfg ? (pw.agCfg.hasDynamicIsland && pw.agCfg.islandEnabled) : true;
+  var activeHw = !!(pw && pw.conn && pw.conn.connected && pw.rec && pw.rec.on);
+  var activePhone = !!(pw && pw.phoneRec && pw.phoneRec.on);
+  var pwDi = pw ? pw.document.getElementById("dyn-island") : null;
+  var pwLogo = pw ? pw.document.getElementById("di-logo") : null;
+  var isAgentListen = !!(pwDi && pwDi.classList.contains("show") && (!pwLogo || pwLogo.hidden));
+
+  if (isAgentListen && hasDi) {
+    var pt = pw.document.getElementById("di-title");
+    var ps = pw.document.getElementById("di-sub");
+    if (agentTitle) agentTitle.textContent = pt ? pt.textContent : "灵动岛收听中";
+    if (agentSub) agentSub.textContent = ps ? ps.textContent : "正在接收录音卡语音指令…";
+    di.classList.remove("show");
+    di.classList.add("agent");
+    if (card) card.hidden = true;
+    return;
+  }
+
+  di.classList.remove("agent");
+  var isLive = hasDi && (activeHw || activePhone);
+  di.classList.toggle("show", isLive);
+  if (!isLive) {
+    S.livePopoverOpen = false;
+    if (card) card.hidden = true;
+    return;
+  }
+
+  var sec = activeHw ? pw.rec.sec : pw.phoneRec.sec;
+  if (lcd) lcd.textContent = clockMS(sec);
+  if (lpLcd) lpLcd.textContent = clockHMS(sec);
+  if (lpTitle) lpTitle.textContent = "录音卡";
+
+  var sub = "本机录音运行中";
+  var compactTag = "本机录音";
+  if (activeHw && pw.conn.curDev) {
+    var dev = pw.conn.curDev;
+    if (dev.kind === "watch") {
+      sub = "Apple Watch · 蓝牙录音中";
+      compactTag = "Apple Watch";
     } else {
-      titleEl.textContent = "录音卡 · " + (S.phoneFailover ? "本机保底录音中" : "本机录音中") + "（锁屏实况已开启）";
-      subEl.textContent = (S.phoneFailover ? "蓝牙断连自动接力 · " : "手机麦克风 · ") + clockHMS(S.phoneRecSec);
-      lcdEl.textContent = clockHMS(S.phoneRecSec);
+      var shortN = typeof pw.bleShortId === "function" ? pw.bleShortId(dev.name) : dev.name;
+      sub = dev.badge + " " + shortN + " · 蓝牙录音中";
+      compactTag = dev.badge;
     }
+  } else if (pw && pw.phoneRec && pw.phoneRec.failover) {
+    sub = "蓝牙断连 · 本机保底录音中";
+    compactTag = "保底录音";
   }
 
-  // Setting 摘要与顶栏联调按钮
-  var svWatch = document.getElementById("sv-watch");
-  if (svWatch) {
-    svWatch.textContent = !S.watchLinkEnabled ? "未开启" : isWatchConnected() ? "已连接" : "已配对";
+  if (hint) hint.textContent = compactTag;
+  if (lpSub) lpSub.textContent = sub;
+  if (card) card.hidden = !S.livePopoverOpen;
+}
+
+function renderWatchClock() {
+  var wc = document.getElementById("w-rec-clock");
+  if (wc) {
+    wc.textContent = clockHMS(S.watchSec);
+  }
+  var lap = S.watchRec ? (S.watchSec % 60) : 0;
+  var rem = 60 - lap;
+  var lapTxt = document.getElementById("w-lap-txt");
+  if (lapTxt) {
+    lapTxt.textContent = S.watchRec ? ("单圈 " + rem + "s") : "单圈 60s";
+  }
+  var lapRing = document.getElementById("w-lap-ring");
+  if (lapRing) {
+    var lapCirc = 31.42;
+    lapRing.style.stroke = S.watchRec ? "#FF453A" : "#30D158";
+    lapRing.setAttribute("stroke-dashoffset", S.watchRec ? String((lapCirc * (lap / 60)).toFixed(2)) : "0");
+  }
+  var lapProg = document.getElementById("w-lap-progress");
+  if (lapProg) {
+    lapProg.style.width = S.watchRec ? ((lap / 60) * 100).toFixed(1) + "%" : "0%";
   }
 
-  var rBtn = document.getElementById("tb-reach-btn");
-  var rTxt = document.getElementById("tb-reach-txt");
-  if (rBtn && rTxt) {
-    rBtn.classList.toggle("ok", S.wcsReachable);
-    rBtn.classList.toggle("warn", !S.wcsReachable);
-    rTxt.textContent = S.wcsReachable ? "WCSession 已连通" : "WCSession 离线暂存";
+  var circRing = document.getElementById("comp-circ-ring");
+  if (circRing) {
+    var ringCirc = 144.51;
+    circRing.setAttribute("stroke-dashoffset", S.watchRec ? String((ringCirc * (1 - (lap || 1) / 60)).toFixed(2)) : "0");
   }
-}
-
-function renderTimeline() {
-  var wrap = document.getElementById("live-status-wrap");
-  var watchRecVisible = !!(S.hwRecOn && (isWatchConnected() || (S.watchLinkEnabled && S.wcsReachable)));
-  if (S.phoneRecOn || watchRecVisible) {
-    var label = S.phoneRecOn ? (S.phoneFailover ? "正在本机保底录音" : "正在本机录音") : "Apple Watch 正在录音";
-    var sec = S.phoneRecOn ? S.phoneRecSec : S.hwRecSec;
-    wrap.innerHTML = '<div class="live rec" id="live-status"><span class="ldot"></span><b>' + label + '</b><span class="lsub">已录 <span id="live-clock">' + clockHMS(sec) + '</span> · 待切片转码</span></div>';
-  } else if (S.watchQueue.length) {
-    wrap.innerHTML = '<div class="live" id="live-status"><span class="ldot" style="background:var(--warn)"></span><b>手表待回传分片</b><span class="lsub">' + S.watchQueue.length + ' 段 .m4a 待传</span></div>';
-  } else {
-    wrap.innerHTML = "";
-  }
-
-  var rows = S.items.filter(function(it) {
-    if (S.filter === "all") return true;
-    return it.kind === S.filter;
-  });
-
-  var groups = [];
-  var byDay = {};
-  rows.forEach(function(it) {
-    if (!byDay[it.day]) {
-      byDay[it.day] = [];
-      groups.push({ day: it.day, list: byDay[it.day] });
-    }
-    byDay[it.day].push(it);
-  });
-
-  var html = groups.map(function(g) {
-    var cards = g.list.map(function(it, idx) {
-      var cls = g.list.length === 1 ? "only" : idx === 0 ? "first" : idx === g.list.length - 1 ? "last" : "";
-      var isOpen = !!S.openCards[it.id];
-      var isWatchItem = it.source === "Apple Watch";
-      var pill = it.cleared
-        ? '<span class="src-pill cleared">原始录音已清理</span>'
-        : '<span class="src-pill">' + esc(it.source) + '</span>';
-      var playBtn = (isWatchItem || it.hasAudio)
-        ? (it.cleared
-            ? '<span style="font-size:11.5px;color:var(--sec)">原始录音已清理</span>'
-            : '<button type="button" class="btn ghost sm" data-testid="play-slice-' + esc(it.id) + '" onclick="toggleSlicePlay(\'' + esc(it.id) + '\',event)">' + (it.playing ? "暂停播放" : "播放 WAV") + '</button>'
-              + '<button type="button" class="btn ghost sm" data-testid="delete-slice-' + esc(it.id) + '" onclick="deleteSliceAudio(\'' + esc(it.id) + '\',event)">清理音频</button>')
-        : "";
-
-      return '<div class="tl-item ' + cls + '" data-testid="received-slice-' + esc(it.id) + '">'
-        + '<span class="tl-node"></span>'
-        + '<div class="card' + (isOpen ? " open" : "") + '" onclick="toggleCardOpen(\'' + esc(it.id) + '\')">'
-        + '<h3><span>' + esc(it.title) + '</span>' + pill + '</h3>'
-        + '<div class="when">' + esc(it.time) + ' · ' + esc(it.dur) + (it.playing ? " · 正在播放 WAV" : "") + '</div>'
-        + '<div class="exp">'
-        + '<div>' + esc(it.brief) + '</div>'
-        + '<div class="btn-line">'
-        + '<button type="button" class="btn sm" onclick="event.stopPropagation();openDetail(\'' + esc(it.id) + '\')">详情 ›</button>'
-        + playBtn
-        + '</div></div></div></div>';
-    }).join("");
-    return '<div class="tl-date">' + esc(g.day) + '</div>' + cards;
-  }).join("");
-
-  document.getElementById("feed").innerHTML = html || '<div class="when" style="padding:20px 0">暂无记录</div>';
-}
-
-function renderSetSubWatch() {
-  var body = document.getElementById("setsub-body");
-  if (!body) return;
-  var wConn = isWatchConnected();
-  var qCount = S.watchQueue.length;
-  var linkTxt = wConn ? "已连接" : (S.wcsReachable ? "在线" : "离线");
-  body.innerHTML =
-    '<div class="set-group"><div class="switchrow" data-testid="watch-link-toggle-row" style="cursor:pointer" onclick="toggleWatchLink()">'
-    + '<div><div style="font-size:14px;font-weight:600">启用 Apple Watch 录音</div>'
-    + '<div style="font-size:12px;color:var(--sec);margin-top:2px;line-height:1.45">开启后可在右上角设备列表中选择手表录音</div></div>'
-    + '<div class="sw' + (S.watchLinkEnabled ? " on" : "") + '" data-testid="watch-link-switch" role="switch" aria-checked="' + S.watchLinkEnabled + '" tabindex="0" onclick="event.stopPropagation();toggleWatchLink()"></div>'
-    + '</div></div>'
-    + '<div class="set-title">配对与协同状态</div>'
-    + '<div class="subcard" data-testid="watch-link-status-card" style="margin-top:0;padding:2px 14px 14px">'
-    + '<div class="navrow" style="cursor:default"><span>配对状态</span><span class="navval"><b style="color:var(--label)">' + (S.watchPaired ? "已配对" : "未配对") + '</b></span></div>'
-    + '<div class="navrow" style="cursor:default"><span>手表应用</span><span class="navval"><b style="color:var(--label)">' + (S.watchInstalled ? "已安装" : "未安装") + '</b></span></div>'
-    + '<div class="navrow" style="cursor:default"><span>连接状态</span><span class="navval"><b style="color:var(--label)">' + linkTxt + '</b></span></div>'
-    + '<div class="navrow" style="cursor:default"><span>手表电量</span><span class="navval"><b style="color:var(--label)">电量' + esc(S.watchBattTier) + '</b></span></div>'
-    + '<div class="navrow" style="cursor:default;border-bottom:none"><span>待传录音</span><span class="navval"><b style="color:var(--label)">' + qCount + ' 段</b></span></div>'
-    + '<div class="wbtns">'
-    + '<button type="button" class="btn" data-testid="watch-connect-btn" onclick="connectWatchFromSetting()">' + (wConn ? "断开连接" : "连接手表") + '</button>'
-    + '<button type="button" class="btn ghost" data-testid="phone-flush-btn" ' + (S.watchLinkEnabled ? "" : "disabled ") + 'onclick="flushWatchQueue()">同步待传录音</button>'
-    + '</div></div>'
-    + '<div class="set-title">表盘快捷录音</div>'
-    + '<div class="subcard" data-testid="watch-complication-guide" style="margin-top:0">'
-    + '<p style="color:var(--label);margin-bottom:6px">1. 长按表盘点击「编辑」，添加「录音卡」组件；</p>'
-    + '<p style="color:var(--label);margin-bottom:6px">2. 抬腕轻点组件即可开始录音；</p>'
-    + '<p>3. 脱离手机也可独立录音，靠近手机自动同步。</p></div>';
-}
-
-function renderDetail(id) {
-  var item = S.items.find(function(x) { return x.id === id; });
-  if (!item) return;
-  document.getElementById("dt-h3").textContent = item.title;
-  document.getElementById("dt-meta").textContent = item.day + " " + item.time + " · " + item.dur + " · " + item.source;
-  var audioBox = item.cleared
-    ? '<div class="rawaudio cleared">原始录音已清理（仅保留本地转写与纪要）</div>'
-    : '<div class="rawaudio">'
-      + '<button type="button" class="btn sm" onclick="toggleSlicePlay(\'' + esc(item.id) + '\')">' + (item.playing ? "暂停" : "播放 WAV") + '</button>'
-      + '<div style="flex:1;min-width:0;font-size:12px">'
-      + '<div>' + esc(item.sampleRate || "16kHz / 16-bit PCM WAV") + '</div>'
-      + '<div style="color:var(--sec);font-size:11px">' + (item.playing ? "正在回放本地 WAV" : "本机落盘可离线回听") + '</div>'
-      + '</div>'
-      + '<button type="button" class="btn ghost sm" onclick="deleteSliceAudio(\'' + esc(item.id) + '\')">清理</button>'
-      + '</div>';
-  document.getElementById("dt-body").innerHTML = audioBox
-    + '<div class="turn"><div class="ava">1</div><div>'
-    + '<div style="font-size:11.5px;color:var(--sec);margin-bottom:3px">说话人 1（推测）</div>'
-    + '<div class="txt">' + esc(item.transcript) + '</div>'
-    + '</div></div>';
-}
-
-function renderSheet() {
-  var wrap = document.getElementById("sheet");
-  wrap.classList.toggle("show", S.sheetOpen);
-  if (!S.sheetOpen) return;
-
-  var dev = curDevice();
-  var mainEl = document.getElementById("dev-main");
-  var connEl = document.getElementById("dev-connect");
-
-  if (dev) {
-    mainEl.hidden = false;
-    connEl.hidden = true;
-    var isW = dev.kind === "watch";
-    var badge = document.getElementById("dev-kind-badge");
-    badge.textContent = dev.badge;
-    badge.className = "cbadge " + (isW ? "k-watch" : dev.kind === "v1" ? "k-v1" : dev.kind === "kb" ? "k-kb" : "k-v2");
-    document.getElementById("dev-name").textContent = dev.name;
-    document.getElementById("dev-sub").textContent = (isW ? "WCSession · " : "蓝牙 · 固件 ") + dev.fw;
-    document.getElementById("dev-dot").style.background = S.hwRecOn ? "var(--ok)" : "var(--warn)";
-    document.getElementById("disc-box").hidden = !S.discConfirm;
-
-    var recSw = document.getElementById("rec-sw");
-    recSw.classList.toggle("on", S.hwRecOn);
-    recSw.setAttribute("aria-checked", String(S.hwRecOn));
-    document.getElementById("sheet-rec-label").innerHTML = S.hwRecOn
-      ? '<i class="recdot"></i><span>录音中</span><span class="clock" id="sheet-rec-clock">' + clockHMS(S.hwRecSec) + '</span>'
-      : '<span>未录音</span>';
-
-    document.getElementById("batt-text").textContent = "电量" + S.watchBattTier + " · 可录至 今天 21:30";
-    document.getElementById("sync-txt").textContent = S.watchQueue.length
-      ? "点击回传（待传 " + S.watchQueue.length + " 段）"
-      : "自动同步 · 刚刚";
-    document.getElementById("row-sync").hidden = dev.kind === "kb";
-    document.getElementById("row-wifi").hidden = isW || dev.kind === "kb";
-    document.getElementById("row-fw").hidden = isW;
-  } else {
-    mainEl.hidden = true;
-    connEl.hidden = false;
-    var pSw = document.getElementById("prec-sw");
-    pSw.classList.toggle("on", S.phoneRecOn);
-    pSw.setAttribute("aria-checked", String(S.phoneRecOn));
-    document.getElementById("prec-label").innerHTML = S.phoneRecOn
-      ? '<i class="recdot"></i> <span>本机录音中 · <span class="clock" id="prec-clock">' + clockHMS(S.phoneRecSec) + '</span></span>'
-      : '<span>未开启 · 手机麦克风</span>';
-
-    var list = availableScanDevices();
-    document.getElementById("conn-list").innerHTML = list.map(function(d) {
-      var cls = d.kind === "watch" ? "k-watch" : d.kind === "v1" ? "k-v1" : d.kind === "kb" ? "k-kb" : "k-v2";
-      return '<div class="conn-item" data-testid="dev-item-' + esc(d.id) + '" onclick="connectDevice(\'' + esc(d.id) + '\')">'
-        + '<span class="cbadge ' + cls + '">' + esc(d.badge) + '</span>'
-        + '<span class="cn">' + esc(d.name) + '</span>'
-        + '<span class="cm">' + d.rssi + ' dBm</span>'
-        + '</div>';
-    }).join("");
+  var ccs = document.getElementById("comp-circ-sec");
+  if (ccs) ccs.textContent = shortClockM(S.watchSec);
+  var crm = document.getElementById("comp-rect-mid");
+  if (crm) {
+    var pend = pendingCount();
+    crm.textContent = S.watchRec
+      ? ("录音中 " + shortClockM(S.watchSec))
+      : pend > 0
+        ? ("轻点开录 · 待传 " + pend + " 段")
+        : "轻点开始持续录音";
   }
 }
 
-function renderWatch() {
+function renderWatchUI() {
   var screen = document.getElementById("watch-screen");
-  screen.classList.toggle("aod", !!S.watchAOD);
-  document.querySelectorAll('[data-testid="watch-screen-tabs"] button[data-wtab]').forEach(function(b) {
+  if (screen) screen.classList.toggle("aod", !!S.watchAod);
+
+  var isFace = S.watchTab === "face";
+  var isQueue = !isFace && S.watchRoute === "queue";
+
+  document.querySelectorAll('[data-testid="watch-screen-tabs"] button[data-wtab]').forEach(function (b) {
     b.classList.toggle("on", b.dataset.wtab === S.watchTab);
   });
+  var aodBtn = document.querySelector('[data-testid="watch-aod-toggle"]');
+  if (aodBtn) aodBtn.classList.toggle("on", !!S.watchAod);
 
-  var isApp = S.watchTab === "app";
-  document.getElementById("w-face").hidden = isApp;
-  document.getElementById("w-app").hidden = !isApp;
-  document.getElementById("w-status-mini").innerHTML = isApp
-    ? "录音卡"
-    : (S.hwRecOn ? '<span class="w-dot-live"></span>正在采音' : "表盘组件");
+  var topBar = document.getElementById("w-top-bar");
+  if (topBar) topBar.hidden = isFace;
 
-  // 表盘复杂功能实时刷新
-  var inlineEl = document.getElementById("comp-inline-txt");
-  var circBtn = document.getElementById("comp-circular");
-  var circState = document.getElementById("comp-circ-state");
-  var circSec = document.getElementById("comp-circ-sec");
-  var rectBadge = document.getElementById("comp-rect-badge");
-  var rectMid = document.getElementById("comp-rect-mid");
-  var rectSub = document.getElementById("comp-rect-sub");
+  document.getElementById("w-face").hidden = !isFace;
+  document.getElementById("w-app").hidden = isFace || isQueue;
+  document.getElementById("w-queue-view").hidden = isFace || !isQueue;
 
-  if (S.hwRecOn) {
-    inlineEl.textContent = "REC " + clockHMS(S.hwRecSec) + " · 点击查看";
-    circBtn.classList.add("rec");
-    circState.textContent = "录音中";
-    circSec.textContent = clockMS(S.hwRecSec);
-    rectBadge.textContent = "正在采音";
-    rectMid.textContent = clockHMS(S.hwRecSec) + " · 本地直采";
-  } else {
-    inlineEl.textContent = "录音卡 · 轻触开启表盘录音";
-    circBtn.classList.remove("rec");
-    circState.textContent = "待机";
-    circSec.textContent = "开录";
-    rectBadge.textContent = S.watchQueue.length ? ("待传 " + S.watchQueue.length + " 段") : "就绪";
-    rectMid.textContent = "轻触立即开始持续录音";
+  // 顶栏：左 = 连接状态（不展示 App 名）；右 = 电量 + 系统时间（watchOS 10+ 应用不可隐藏系统时钟）
+  var connEl = document.getElementById("w-conn-status");
+  var pill = document.getElementById("w-conn-pill");
+  if (connEl) connEl.className = "w-conn" + (!S.reachable ? " off" : "");
+  if (pill) pill.textContent = S.reachable ? "已连手机" : "离线暂存";
+
+  var battText = S.watchCharging ? "充电中" : ("电量" + (S.battTier || "高"));
+  var battEl = document.getElementById("w-batt-pill");
+  if (battEl) {
+    battEl.className = "w-batt-pill " + (S.watchCharging
+      ? "chg"
+      : (S.battTier === "低" ? "lv-low" : S.battTier === "中" ? "lv-mid" : "lv-hi"));
   }
-  rectSub.textContent = "待传队列 " + S.watchQueue.length + " 段 · 电量 " + S.watchBattTier;
+  var battTxtEl = document.getElementById("w-batt-txt");
+  if (battTxtEl) battTxtEl.textContent = battText;
 
-  // 手表应用页刷新（1:1 WatchMainView.swift）
-  var connDot = document.getElementById("w-conn-dot");
-  var connPill = document.getElementById("w-conn-pill");
-  if (S.wcsReachable) {
-    connDot.className = "w-status-dot";
-    connPill.textContent = "已连手机";
-  } else {
-    connDot.className = "w-status-dot warn";
-    connPill.textContent = "离线暂存";
+  // 核心区：待机 = 表盘大时钟；录音 = 已录时长 + 可录余量 + 非按钮轻敲两下提示
+  var hero = document.getElementById("w-hero");
+  if (hero && !isFace && !isQueue) {
+    if (S.watchRec) {
+      var markPill = S.curMarks > 0
+        ? '<span class="w-mark-pill" data-testid="watch-mark-count">已打点 ' + S.curMarks + '</span>'
+        : "";
+      hero.innerHTML =
+        '<div class="w-recline"><span class="w-rec-tag"><i class="w-dot-live"></i>录音中</span>' + markPill + '</div>'
+        + '<b class="w-bighero" id="w-rec-clock">' + clockHMS(S.watchSec) + '</b>'
+        + '<span class="w-remain" id="w-remain">' + remainText() + '</span>'
+        + '<span class="w-knock-hint" data-testid="watch-knock-hint">轻敲两下机身打点</span>';
+    } else {
+      hero.innerHTML =
+        '<span class="w-date" id="w-idle-date">' + nowDateCN() + '</span>'
+        + '<b class="w-bigclock" id="w-idle-clock">' + nowHM() + '</b>'
+        + '<span class="w-idle-sub">表盘组件亦可一键开录</span>';
+    }
   }
-  document.getElementById("w-batt-pill").textContent = "电量" + S.watchBattTier;
-  var wClock = document.getElementById("w-clock");
-  wClock.textContent = clockHMS(S.hwRecSec);
-  wClock.classList.toggle("rec", S.hwRecOn);
-  var sliceIdx = Math.floor(S.hwRecSec / 60) + 1;
-  document.getElementById("w-keepalive").textContent = S.hwRecOn
-    ? ("录音中 · 运动保活 · 第" + sliceIdx + "片")
-    : "每 60s 本地切片";
 
+  // 底部紧凑栈：开始录音 / 纯色扁平滑动停止 在上，最底部紧挨 60s 单圈倒计时段与待传队列
   var recBtn = document.getElementById("w-rec-btn");
-  recBtn.classList.toggle("on", S.hwRecOn);
-  recBtn.textContent = S.hwRecOn ? "停止录音" : "开始录音";
-  var markBtn = document.getElementById("w-mark-btn");
-  if (markBtn) {
-    markBtn.hidden = !S.hwRecOn;
-    markBtn.textContent = S.watchMarks > 0 ? ("打重点 · " + S.watchMarks) : "打重点";
+  if (recBtn) {
+    recBtn.hidden = S.watchRec || S.watchAod;
+    recBtn.classList.toggle("on", !!S.watchRec);
+  }
+  var stop = document.getElementById("w-stop-slider");
+  if (stop) {
+    stop.hidden = !(S.watchRec || S.watchAod);
+    stop.classList.toggle("aod-locked", !!S.watchAod);
+    var stopLbl = document.getElementById("w-stop-label");
+    if (stopLbl) {
+      stopLbl.textContent = S.watchAod
+        ? (S.watchRec ? "先点亮屏幕 · 再滑动停止" : "轻点点亮屏幕")
+        : "滑动停止录音";
+    }
   }
 
-  var qCnt = S.watchQueue.length;
-  document.getElementById("w-q-cnt").textContent = String(qCnt);
-  var syncedCnt = S.items.filter(function(x) { return x.source === "Apple Watch"; }).length;
-  var footerRow = document.getElementById("w-footer-row");
+  var pend = pendingCount();
+  var total = (S.queue || []).length;
+  var appVisible = !isFace && !isQueue;
+  var qEntry = document.getElementById("w-queue-entry");
   var qSummary = document.getElementById("w-q-summary");
-  var flushBtn = document.getElementById("w-flush-btn");
-  footerRow.hidden = (qCnt === 0 && syncedCnt === 0);
-  if (qCnt > 0) {
-    qSummary.textContent = "待传 " + qCnt + " 段";
-    flushBtn.hidden = false;
-  } else {
-    qSummary.textContent = "已传 " + syncedCnt + " 段";
-    flushBtn.hidden = true;
+  var qCnt = document.getElementById("w-q-cnt");
+  if (qEntry) {
+    qEntry.hidden = !appVisible;
+    qEntry.classList.toggle("pend", pend > 0);
+    qEntry.classList.toggle("synced", pend === 0 && total > 0);
   }
+  if (qSummary) {
+    if (pend > 0) {
+      qSummary.textContent = "待传 " + pend + " 段";
+    } else if (total > 0) {
+      qSummary.textContent = "已同步 " + total + " 段";
+    } else if (S.watchRec) {
+      qSummary.textContent = "第 " + S.nextSeq + " 段";
+    } else {
+      qSummary.textContent = "队列 0";
+    }
+  }
+  if (qCnt) qCnt.textContent = String(pend);
+
+  // WatchQueueView
+  var flushBtn = document.getElementById("w-flush-btn");
+  if (flushBtn) flushBtn.disabled = total === 0 || !S.reachable;
+  var qList = document.getElementById("w-qlist");
+  if (qList) {
+    if (!total) {
+      qList.innerHTML = '<div class="w-qempty">暂无缓存音频片段</div>';
+    } else {
+      qList.innerHTML = S.queue.map(function (sl) {
+        var stTxt = sl.state === "synced" ? "已同步" : "等待手机";
+        var stCls = sl.state === "synced" ? "s" : "q";
+        var kb = Math.round((sl.sizeBytes || 491520) / 1024);
+        var mk = sl.marks > 0 ? (" · " + sl.marks + " 打点") : "";
+        return '<div class="w-qitem" data-testid="watch-slice-row-' + sl.seq + '">'
+          + '<div class="w-qitem-top"><span>第 ' + sl.seq + ' 片</span><span class="w-qbadge ' + stCls + '">' + stTxt + '</span></div>'
+          + '<div class="w-qitem-sub">' + sl.durationSec + 's · ' + kb + ' KB' + mk + '</div>'
+          + '</div>';
+      }).join("");
+    }
+  }
+
+  // Complications（1:1 对齐 RecordingCardComplication.swift + watchOS Modular Subdials）
+  var cInl = document.getElementById("comp-inline");
+  var cit = document.getElementById("comp-inline-txt");
+  if (cInl) cInl.classList.toggle("rec", !!S.watchRec);
+  if (cit) cit.textContent = S.watchRec ? "录音卡 · 录音中" : "录音卡 · 点击开录";
+
+  var cCorner = document.getElementById("comp-corner");
+  var cCornerLbl = document.getElementById("comp-corner-lbl");
+  if (cCorner) cCorner.classList.toggle("rec", !!S.watchRec);
+  if (cCornerLbl) cCornerLbl.textContent = S.watchRec ? "录音中" : (pend > 0 ? ("待传" + pend) : "录音卡");
+
+  var circ = document.getElementById("comp-circular");
+  var ccs = document.getElementById("comp-circ-state");
+  if (circ) circ.classList.toggle("rec", !!S.watchRec);
+  if (ccs) ccs.textContent = S.watchRec ? "录音" : (pend > 0 ? (pend + "待") : "待机");
+
+  var rect = document.getElementById("comp-rectangular");
+  var crb = document.getElementById("comp-rect-badge");
+  var crs = document.getElementById("comp-rect-sub");
+  if (rect) rect.classList.toggle("rec", !!S.watchRec);
+  if (crb) crb.textContent = S.watchRec ? "录音中" : (pend > 0 ? ("待传 " + pend) : "就绪");
+  if (crs) crs.textContent = (S.reachable ? "已连手机" : "离线暂存") + " · " + battText;
+
+  var wdEl = document.getElementById("wf-cal-wd");
+  var dayEl = document.getElementById("wf-cal-day");
+  if (wdEl || dayEl) {
+    var nowD = new Date();
+    var wds = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+    if (wdEl) wdEl.textContent = wds[nowD.getDay()];
+    if (dayEl) dayEl.textContent = String(nowD.getDate());
+  }
+  var bShort = document.getElementById("wf-batt-short");
+  if (bShort) bShort.textContent = S.watchCharging ? "充" : (S.battTier || "高");
+  var bRing = document.getElementById("wf-batt-ring");
+  if (bRing) {
+    var offset = S.watchCharging ? "14" : (S.battTier === "低" ? "115" : (S.battTier === "中" ? "66" : "24"));
+    bRing.setAttribute("stroke-dashoffset", offset);
+    bRing.setAttribute("stroke", S.battTier === "低" && !S.watchCharging ? "#FF453A" : (S.battTier === "中" && !S.watchCharging ? "#FF9F0A" : "#30D158"));
+  }
+
+  renderWatchClock();
 }
 
 function renderAll() {
-  setViewMode(S.viewMode);
-  renderHeaderAndNav();
-  renderTimeline();
-  if (S.subPage && S.subPage.t === "setsub" && S.subPage.id === "watch") renderSetSubWatch();
-  if (S.subPage && S.subPage.t === "detail") renderDetail(S.subPage.id);
-  renderSheet();
-  renderWatch();
-  saveState();
+  renderToolbar();
+  renderWatchUI();
+  renderLiveActivity();
 }
 
-function updateLiveClocks() {
-  var hwTxt = clockHMS(S.hwRecSec);
-  var phTxt = clockHMS(S.phoneRecSec);
-  var diLcd = document.getElementById("di-lcd");
-  if (diLcd) diLcd.textContent = S.phoneRecOn ? phTxt : hwTxt;
-  var diSub = document.getElementById("di-sub");
-  if (diSub && S.phoneRecOn) {
-    diSub.textContent = (S.phoneFailover ? "蓝牙断连自动接力 · " : "手机麦克风 · ") + phTxt;
-  }
-  var lc = document.getElementById("live-clock");
-  if (lc) lc.textContent = S.phoneRecOn ? phTxt : hwTxt;
-  var sc = document.getElementById("sheet-rec-clock");
-  if (sc) sc.textContent = hwTxt;
-  var pc = document.getElementById("prec-clock");
-  if (pc) pc.textContent = phTxt;
-  var wc = document.getElementById("w-clock");
-  if (wc) wc.textContent = hwTxt;
-  if (S.hwRecOn) {
-    var ci = document.getElementById("comp-inline-txt");
-    if (ci) ci.textContent = "REC " + hwTxt + " · 点击查看";
-    var cs = document.getElementById("comp-circ-sec");
-    if (cs) cs.textContent = clockMS(S.hwRecSec);
-    var rm = document.getElementById("comp-rect-mid");
-    if (rm) rm.textContent = hwTxt + " · 本地直采";
-  }
+function tickClocks() {
+  var hm = nowHM();
+  ["ios-clock", "w-top-clock", "w-face-time", "w-idle-clock"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = hm;
+  });
+  var fd = document.getElementById("w-idle-date");
+  if (fd) fd.textContent = nowDateCN();
 }
 
-setInterval(function() {
-  var changed = false;
-  if (S.hwRecOn) { S.hwRecSec += 1; changed = true; }
-  if (S.phoneRecOn) { S.phoneRecSec += 1; changed = true; }
-  if (changed) updateLiveClocks();
+// 1 秒心跳：Watch 独立离线录音时自增秒数并到 60s 自动切分；与手机直连时对齐手机 rec.sec 防止双倍计时
+setInterval(function () {
+  var pw = safePhoneWin();
+  var phoneTickingWatch = !!(pw && isPhoneWatchConnected(pw) && pw.rec && pw.rec.on);
+  if (S.watchRec && !phoneTickingWatch) {
+    S.watchSec++;
+    if (S.watchSec > 0 && S.watchSec % 60 === 0) {
+      finalizeCurrentSlice(false);
+    } else {
+      renderWatchClock();
+    }
+  } else if (S.watchRec && phoneTickingWatch) {
+    S.watchSec = pw.rec.sec;
+    renderWatchClock();
+  }
+  renderLiveActivity();
 }, 1000);
 
-loadState();
-renderAll();
+setInterval(tickClocks, 15000);
+
+/* ================= 防误触滑动停止 & 敲两下打重点手势 ================= */
+
+function stopWatchRecording() {
+  if (!S.watchRec) return;
+  toggleWatchRec(); // 复用引擎：封口当前切片、按可达状态回传手机、联动灵动岛
+}
+
+function wakeWatchScreen() {
+  if (!S.watchAod) return false;
+  S.watchAod = false;
+  saveState();
+  renderWatchUI();
+  toastPhone(S.watchRec ? "屏幕已点亮 · 再滑动停止录音" : "屏幕已点亮");
+  return true;
+}
+
+(function bindWatchGestures() {
+  var stop = document.getElementById("w-stop-slider");
+  var knob = document.getElementById("w-stop-knob");
+  var wCase = document.querySelector(".watch-case");
+
+  // 机身/表盘快速轻敲两下体感打点（非按钮手势）
+  if (wCase) {
+    var lastKnockTs = 0;
+    wCase.addEventListener("pointerdown", function (e) {
+      if (e.target && e.target.closest && e.target.closest("button, #w-stop-slider, #w-queue-entry")) return;
+      if (S.watchTab !== "app" || S.watchRoute !== "main" || !S.watchRec || S.watchAod) return;
+      var now = Date.now();
+      if (lastKnockTs > 0 && now - lastKnockTs <= 380) {
+        lastKnockTs = 0;
+        triggerWatchMark();
+      } else {
+        lastKnockTs = now;
+      }
+    });
+  }
+
+  if (!stop || !knob) return;
+
+  var dragging = false, startX = 0, maxDx = 1, dragMoved = false;
+
+  function resetKnob() {
+    knob.style.transform = "";
+    stop.classList.remove("armed");
+  }
+
+  knob.addEventListener("pointerdown", function (e) {
+    if (!S.watchRec) return;
+    if (wakeWatchScreen()) return;
+    dragging = true;
+    dragMoved = false;
+    startX = e.clientX;
+    maxDx = Math.max(1, stop.clientWidth - knob.offsetWidth - 6);
+    stop.classList.add("armed");
+    try { knob.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  knob.addEventListener("pointermove", function (e) {
+    if (!dragging) return;
+    var dx = Math.min(Math.max(0, e.clientX - startX), maxDx);
+    if (dx > 6) dragMoved = true;
+    knob.style.transform = "translateX(" + dx + "px)";
+    if (dx >= maxDx * 0.92) {
+      dragging = false;
+      resetKnob();
+      stopWatchRecording();
+    }
+  });
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    resetKnob();
+  }
+  knob.addEventListener("pointerup", endDrag);
+  knob.addEventListener("pointercancel", endDrag);
+  stop.addEventListener("click", function () {
+    if (dragMoved) { dragMoved = false; return; }
+    if (!S.watchRec) {
+      wakeWatchScreen();
+      return;
+    }
+    if (wakeWatchScreen()) return;
+    toastPhone("防误触 · 请按住圆点向右滑动到底停止录音");
+  });
+})();
+
+window.addEventListener("DOMContentLoaded", function () {
+  var frame = document.getElementById("phone-frame");
+  if (frame) {
+    var targetSrc = S.phoneVersion === "target" ? "../../prototype/index.html" : "../../prototype/current.html";
+    if (!frame.getAttribute("src") || frame.getAttribute("src").indexOf(targetSrc) !== 0) {
+      frame.src = targetSrc;
+    }
+    frame.addEventListener("load", function () {
+      attachPhoneBridge();
+    });
+    if (safePhoneWin()) {
+      attachPhoneBridge();
+    }
+  }
+  tickClocks();
+  renderAll();
+});
 </script>
 </body>
 </html>

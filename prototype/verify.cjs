@@ -111,8 +111,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('[data-testid="card-daily-1"]', x => x.innerText.includes('昨日睡前日记') && x.innerText.includes('已标注')));
   assert.equal(await p.$eval('[data-testid="tbc-daily"]', x => x.innerText.trim()), 'TBC');
   assert.equal(await p.$('[data-testid="tbc-slice-merge"]'), null);
-  assert.equal(await p.$('[data-testid="nc-btn"]'), null, 'NC 已全部落地，index.html 顶栏不再展示 NC 胶囊');
-  assert.equal(await p.$$eval('.nc-badge', x => x.length), 0, 'index.html 不应残留 NC 徽标');
+  assert.equal(await p.$eval('[data-testid="nc-btn"]', x => x.innerText.trim()), 'NC·1', 'index.html 同步当前版待确认 NC 清单（健康与位置信号）');
+  assert((await p.$$eval('.nc-badge', x => x.length)) >= 1, 'index.html 同步 NC 徽标（行为与健康信号）');
+  assert(await p.$('[data-testid="set-health-location"]'), 'index.html 应包含定位与健康采集 NC 行');
   assert.equal(await p.$('[data-testid="nc-merge-panel"]'), null);
   assert(await p.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
   const sumTop = await p.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
@@ -611,7 +612,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$('#parity-tabs'), null, '清理后不再保留 App 超前对比分页');
   assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 9);
   await p.evaluate(() => closeParity());
-  assert.equal(await p.$('[data-testid="nc-btn"]'), null);
+  assert(await p.$('[data-testid="nc-btn"]'), 'NC 待确认清单胶囊保持展示');
   await p.click('[data-testid="hw-capsule"]');
   assert(await p.$eval('#sheet', x => x.classList.contains('show')));
   // 默认未连接：弹层先给连接引导，自动扫描三款自有硬件（DYJ* / REAI_VB_*），按 RSSI 从强到弱
@@ -881,8 +882,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.getAttribute('href')), 'index.html');
   assert.equal(await p.$eval('[data-testid="ver-switch-current"]', x => x.getAttribute('href')), 'current.html');
   assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0, 'current.html 不应出现 TBC 标记');
-  assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, 'current.html 不应出现 NC 胶囊');
-  assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0, 'current.html 不应出现 NC 标记');
+  assert.equal(await pCur.$eval('[data-testid="nc-btn"]', x => x.innerText.trim()), 'NC·1', 'current.html 顶栏展示 NC·1 待确认清单');
+  assert((await pCur.$$eval('.nc-badge', x => x.length)) >= 1, 'current.html 展示 NC 徽标（行为与健康信号）');
   assert.equal(await pCur.$$eval('.card[data-kind="daily"], .card[data-kind="dream"]', x => x.length), 0);
   assert(!(await pCur.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
   // 验证当前版同样具备：总结卡左下图片数、未归类双列正方形详情页与「不归类」按钮、总结正文自然穿插配图
@@ -934,7 +935,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="crumb-back"]');
   // 验证「当前版」已落地清单、合并分片徽标及声纹管理（5 常用槽位含我的声音+单独录音 / 不限人数人物库）
   assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·9');
-  assert.equal(await pCur.$('[data-testid="nc-btn"]'), null);
+  assert(await pCur.$('[data-testid="nc-btn"]'), 'NC 待确认清单胶囊保持展示');
   await pCur.click('[data-testid="parity-btn"]');
   assert(await pCur.$eval('#parity-wrap', x => x.classList.contains('show')));
   assert((await pCur.$$eval('#parity-list .p-item', x => x.length)) >= 9);
