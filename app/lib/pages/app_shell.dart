@@ -176,6 +176,15 @@ class _AppShellState extends State<AppShell> {
     if (_agentConfig.watchLinkEnabled != _device.watchHardware.linkEnabled) {
       unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
     }
+    if (_agentConfig.getSeedLinkEnabled != _device.getSeedLinkEnabled ||
+        _agentConfig.omiLinkEnabled != _device.omiLinkEnabled) {
+      unawaited(
+        _device.setExtHardwareEnabled(
+          getSeed: _agentConfig.getSeedLinkEnabled,
+          omi: _agentConfig.omiLinkEnabled,
+        ),
+      );
+    }
   }
 
   /// 设备录音态 / 本机录音态 → 实时音频流切片 + Timeline 顶部状态块。

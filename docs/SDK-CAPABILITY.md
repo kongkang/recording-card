@@ -31,6 +31,21 @@ Flutter DeviceStore ──CardGateway(FFI)──> card_bridge(staticlib) ──>
 |声纹 / LLM 归整|SDK 无该能力；分析服务未接|说话人 A/B，标注推测归整；不推断真实身份|
 |手动总结 / Markdown / 交互 HTML|SDK 无总结；分析服务未接|可选片段生成本地预制结果卡，不调用模型；安全预置 DOM，无动态执行|
 
+## 多硬件 SDK 包装矩阵（2026-11-15 更新）
+
+`app/rust/card_bridge` 作为 C ABI 统一桥接层，聚合了自研 SDK 与 `app/rust/sdks/` 下的第三方 ReAI 风格包装层：
+
+| SDK Crate | 对应硬件 (`deviceKind`) | 广播识别 / 开关门控 | 核心能力 |
+|---|---|---|---|
+| `reai-card-sdk` (v0.0.6) | 录音卡 V2 (`card_v2`) | `DYJV2_*`（默认开启） | ADPCM 实时流、`.APM` BLE 同步、2.4GHz Wi-Fi 配网、双芯 OTA |
+| `reai-dyj-sdk` (v0.1.14) | 点一机 V1 (`dyj_v1`) | `DYJ_*`（默认开启） | AMR-WB 实时流、`.amr` 同步、硬件按键拍照（`files/camera`）、Wi-Fi 配网 |
+| `reai-board-sdk` (v0.3.5) | 语音 AI 键盘 V2.1 (`board_v21`) | `REAI_VB_*`（默认开启） | Vendor GATT `0xFE60` mSBC 实时流、`AiVoiceKey` 物理语音键 |
+| `reai-ext-sdk` | 第三方统一契约层 | — | `RecorderDriver` / `RecorderDevice` trait、纯 Rust Ogg Opus / Raw Opus / LC3 → 16kHz Mono PCM 解码 |
+| `reai-getseed-sdk` | 得到 Get 笔记录音卡 (`getseed_gsc10`) | `Get-*` / `0x544A`（Setting 按需开启） | `hasRemoteRecordControl=false`（机身按键控录）、GATT `0xFF00` `.ogg`/`.wav` 下载与单文件删除（禁用 `0x0041` 全盘清除） |
+| `reai-omi-sdk` | Omi 量产版 / Friend Pendant (`omi_cv1`) | UUID / `Omi-*` / `Friend_*`（Setting 按需开启） | BLE 实时流（Opus/PCM/μ-law/LC3）、按键手势事件、StorageRing 离线文件同步、BAS 电量 |
+
+> Priority 2（飞书录音豆 D3200 / `reai-feishu-sdk`）与 Priority 3（Plaud Note / Pro / `reai-plaud-sdk`）将在后续独立分支沿同一 `reai-ext-sdk` 契约接入。
+
 ## 清洗需求与数据边界
 持续源录音默认不分段；偶尔手动 mark，后续分析结合标记推测意图。大段无意义/空白作为阶段边界；清洗内容优先，原始脏数据完整保留、低权重，含口误。声纹近似或偏差时由 LLM 推测归整，必须保留原始映射，不能断言身份。这是产品需求，不代表演示已实现 ASR、声纹、LLM 或完整原始音频存储。
 

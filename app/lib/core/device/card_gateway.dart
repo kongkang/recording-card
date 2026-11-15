@@ -28,6 +28,8 @@ enum DeviceKind {
   cardV2('card_v2', '录音卡 V2'),
   dyjV1('dyj_v1', '点一机 V1'),
   boardV21('board_v21', '语音AI键盘 V2.1'),
+  getSeedGsc10('getseed_gsc10', 'Get笔记卡'),
+  omiCv1('omi_cv1', 'Omi 录音器'),
   appleWatch('apple_watch', 'Apple Watch');
 
   const DeviceKind(this.code, this.displayModel);
@@ -48,16 +50,38 @@ enum DeviceKind {
     if (trimmed.startsWith('REAI_VB_')) {
       return DeviceKind.boardV21;
     }
+    if (trimmed.startsWith('GET-') || trimmed.startsWith('GETSEED')) {
+      return DeviceKind.getSeedGsc10;
+    }
+    if (trimmed == 'OMI' ||
+        trimmed.startsWith('OMI-') ||
+        trimmed.startsWith('OMI_') ||
+        trimmed.startsWith('OMI ') ||
+        trimmed == 'FRIEND' ||
+        trimmed.startsWith('FRIEND_') ||
+        trimmed.startsWith('FRIEND ')) {
+      return DeviceKind.omiCv1;
+    }
     return null;
   }
 
-  /// 剥离已知代际广播前缀（`DYJV2_`、`REAI_VB_`、`DYJ_`），仅保留下划线后的蓝牙编号。
+  /// 剥离已知代际广播前缀（`DYJV2_`、`REAI_VB_`、`DYJ_`、`GET-`、`OMI-`/`OMI_`、`FRIEND_`），仅保留编号。
   /// 若剥离后为空或无已知前缀，则回退原名称（去除首尾空白）。
   static String bleShortId(String name) {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return trimmed;
     final upper = trimmed.toUpperCase();
-    for (final prefix in const ['DYJV2_', 'REAI_VB_', 'DYJ_']) {
+    for (final prefix in const [
+      'DYJV2_',
+      'REAI_VB_',
+      'DYJ_',
+      'GET-',
+      'OMI-',
+      'OMI_',
+      'OMI ',
+      'FRIEND_',
+      'FRIEND ',
+    ]) {
       if (upper.startsWith(prefix)) {
         final suffix = trimmed.substring(prefix.length).trim();
         return suffix.isNotEmpty ? suffix : trimmed;
@@ -74,6 +98,10 @@ enum DeviceKind {
         return DeviceKind.dyjV1;
       case 'board_v21':
         return DeviceKind.boardV21;
+      case 'getseed_gsc10':
+        return DeviceKind.getSeedGsc10;
+      case 'omi_cv1':
+        return DeviceKind.omiCv1;
       case 'apple_watch':
         return DeviceKind.appleWatch;
       default:
@@ -92,6 +120,7 @@ class HardwareCapabilities {
     required this.hasWifiConfig,
     required this.hasCameraMedia,
     required this.hasPhysicalRecordToggle,
+    this.hasRemoteRecordControl = true,
     required this.hasMarkButton,
     required this.otaMode,
   });
@@ -102,6 +131,7 @@ class HardwareCapabilities {
   final bool hasWifiConfig;
   final bool hasCameraMedia;
   final bool hasPhysicalRecordToggle;
+  final bool hasRemoteRecordControl;
   final bool hasMarkButton;
   final String otaMode; // 'dual_chip' | 'none'
 
@@ -114,6 +144,7 @@ class HardwareCapabilities {
     hasWifiConfig: true,
     hasCameraMedia: false,
     hasPhysicalRecordToggle: true,
+    hasRemoteRecordControl: true,
     hasMarkButton: true,
     otaMode: 'dual_chip',
   );
@@ -125,6 +156,7 @@ class HardwareCapabilities {
     hasWifiConfig: true,
     hasCameraMedia: true,
     hasPhysicalRecordToggle: true,
+    hasRemoteRecordControl: true,
     hasMarkButton: false,
     otaMode: 'none',
   );
@@ -136,7 +168,34 @@ class HardwareCapabilities {
     hasWifiConfig: false,
     hasCameraMedia: false,
     hasPhysicalRecordToggle: true,
+    hasRemoteRecordControl: true,
     hasMarkButton: false,
+    otaMode: 'none',
+  );
+
+  /// 得到 Get 笔记录音卡（GetSeed GSC10）：机身物理按键控录 + BLE Ogg Opus 文件同步。
+  static const getSeedGsc10 = HardwareCapabilities(
+    realtimeAudio: false,
+    hasOnboardStorage: true,
+    hasFileSync: true,
+    hasWifiConfig: false,
+    hasCameraMedia: false,
+    hasPhysicalRecordToggle: true,
+    hasRemoteRecordControl: false,
+    hasMarkButton: false,
+    otaMode: 'none',
+  );
+
+  /// Omi 量产版 / Friend Pendant：BLE 实时 Opus/PCM/uLaw/LC3 流 + 按键手势 + 板载存储同步。
+  static const omiCv1 = HardwareCapabilities(
+    realtimeAudio: true,
+    hasOnboardStorage: true,
+    hasFileSync: true,
+    hasWifiConfig: false,
+    hasCameraMedia: false,
+    hasPhysicalRecordToggle: true,
+    hasRemoteRecordControl: true,
+    hasMarkButton: true,
     otaMode: 'none',
   );
 
@@ -148,6 +207,7 @@ class HardwareCapabilities {
     hasWifiConfig: false,
     hasCameraMedia: false,
     hasPhysicalRecordToggle: true,
+    hasRemoteRecordControl: true,
     hasMarkButton: true,
     otaMode: 'none',
   );
@@ -156,6 +216,8 @@ class HardwareCapabilities {
     DeviceKind.cardV2 => cardV2,
     DeviceKind.dyjV1 => dyjV1,
     DeviceKind.boardV21 => boardV21,
+    DeviceKind.getSeedGsc10 => getSeedGsc10,
+    DeviceKind.omiCv1 => omiCv1,
     DeviceKind.appleWatch => appleWatch,
   };
 
@@ -175,6 +237,10 @@ class HardwareCapabilities {
       hasPhysicalRecordToggle: flag(
         'hasPhysicalRecordToggle',
         fallback.hasPhysicalRecordToggle,
+      ),
+      hasRemoteRecordControl: flag(
+        'hasRemoteRecordControl',
+        fallback.hasRemoteRecordControl,
       ),
       hasMarkButton: flag('hasMarkButton', fallback.hasMarkButton),
       otaMode: (json['otaMode'] as String?) ?? fallback.otaMode,
@@ -463,7 +529,14 @@ class CardFile {
   bool get isAmr => name.toUpperCase().endsWith('.AMR');
 
   /// 兼容 `.APM`（录音卡 V2）与 `.AMR`（点一机 V1）。
-  bool get isAudioRecording => isApm || isAmr;
+  bool get isOgg {
+    final lower = name.toLowerCase();
+    return lower.endsWith('.ogg') || lower.endsWith('.opus');
+  }
+
+  bool get isWav => name.toLowerCase().endsWith('.wav');
+
+  bool get isAudioRecording => isApm || isAmr || isOgg || isWav;
 
   bool get isTxt => name.toUpperCase().endsWith('.TXT');
 

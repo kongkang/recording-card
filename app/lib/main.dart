@@ -176,6 +176,12 @@ class _HomeGateState extends State<_HomeGate> {
     _store.deviceGateway = () => _device.gateway;
     _device.onManualBleSync = () => _store.syncRecordings();
     unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
+    unawaited(
+      _device.setExtHardwareEnabled(
+        getSeed: _agentConfig.getSeedLinkEnabled,
+        omi: _agentConfig.omiLinkEnabled,
+      ),
+    );
     unawaited(_boot());
     if (dev != null) {
       dev!

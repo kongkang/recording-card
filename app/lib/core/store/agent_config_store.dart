@@ -223,6 +223,11 @@ class AgentConfigStore extends ChangeNotifier {
   bool photoLinkEnabled = true;
   bool islandEnabled = true;
   bool watchLinkEnabled = false;
+  bool getSeedLinkEnabled = false;
+  bool omiLinkEnabled = false;
+
+  int get enabledExtHardwareCount =>
+      (getSeedLinkEnabled ? 1 : 0) + (omiLinkEnabled ? 1 : 0);
 
   String cloudModel = 'deepseek-v3';
   bool userPickedCloudModel = false;
@@ -334,6 +339,12 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['watchLinkEnabled'] is bool) {
       watchLinkEnabled = data['watchLinkEnabled'] as bool;
     }
+    if (data['getSeedLinkEnabled'] is bool) {
+      getSeedLinkEnabled = data['getSeedLinkEnabled'] as bool;
+    }
+    if (data['omiLinkEnabled'] is bool) {
+      omiLinkEnabled = data['omiLinkEnabled'] as bool;
+    }
     if (data['model'] is String && (data['model'] as String).isNotEmpty) {
       cloudModel = data['model'] as String;
     }
@@ -409,6 +420,18 @@ class AgentConfigStore extends ChangeNotifier {
 
   Future<void> setWatchLinkEnabled(bool value) async {
     watchLinkEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setGetSeedLinkEnabled(bool value) async {
+    getSeedLinkEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setOmiLinkEnabled(bool value) async {
+    omiLinkEnabled = value;
     notifyListeners();
     await _save();
   }
@@ -513,6 +536,8 @@ class AgentConfigStore extends ChangeNotifier {
       'photoLinkEnabled': photoLinkEnabled,
       'islandEnabled': islandEnabled,
       'watchLinkEnabled': watchLinkEnabled,
+      'getSeedLinkEnabled': getSeedLinkEnabled,
+      'omiLinkEnabled': omiLinkEnabled,
       'model': cloudModel,
       'pickedModel': userPickedCloudModel,
       'ctx': contextMode,
