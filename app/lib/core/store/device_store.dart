@@ -196,12 +196,17 @@ class DeviceStore extends ChangeNotifier {
   bool get omiLinkEnabled => _omiLinkEnabled;
 
   /// 只展示我们自己的录音卡/点一机/键盘（按需含已开启的 Apple Watch 与第三方硬件）。
+  ///
+  /// [listAll] 仅供临时排障直通（2026-11-16 Omi 联调用过一次）：扫描列表无过滤列出全部
+  /// BLE 设备，识别与开关过滤后置恢复——连接阶段仍按设备 kind 走对应驱动。
   static bool isOurDevice(
     CardDevice device, {
     bool allowWatch = true,
     bool allowGetSeed = false,
     bool allowOmi = false,
+    bool listAll = false,
   }) {
+    if (listAll) return true;
     final kind = device.kind ?? DeviceKind.fromBleName(device.name);
     if (kind == null) return false;
     return switch (kind) {

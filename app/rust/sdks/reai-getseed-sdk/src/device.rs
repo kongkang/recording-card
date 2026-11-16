@@ -77,7 +77,11 @@ impl RecorderSdkDriver for GetSeedSdkDriver {
         }
         if let Some(name) = local_name {
             let t = name.trim();
-            return t.len() >= 4 && t[..4].eq_ignore_ascii_case("Get-");
+            // 广播名可能是任意 UTF-8（真机实测遇到中文前缀名「讯飞录音笔…」），
+            // 字节切片会 panic 在非字符边界；get(..4) 越界/断点返回 None。
+            return t
+                .get(..4)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Get-"));
         }
         false
     }

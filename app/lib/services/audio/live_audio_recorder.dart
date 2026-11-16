@@ -295,8 +295,22 @@ class LiveAudioRecorder extends ChangeNotifier {
   }
 
   /// 开始一次实时接收。已存在会话时先收尾旧的，避免两个写入器抢同一个文件。
+  ///
+  /// `_pendingStart` 同步置位防重入：`start()` 内部首个 `await` 前有窗口，
+  /// 录音状态连续两次 notify 会并发穿过 `isRunning` 守卫造成双 `realtime.open`
+  /// （2026-11-16 Jelly Star 真机实测：双开随后被 close 整体退订，会话 0 字节）。
+  bool _pendingStart = false;
   Future<void> start() async {
-    if (isRunning) return;
+    if (isRunning || _pendingStart) return;
+    _pendingStart = true;
+    try {
+      await _startInner();
+    } finally {
+      _pendingStart = false;
+    }
+  }
+
+  Future<void> _startInner() async {
     final now = DateTime.now();
     final id = 'live-${now.millisecondsSinceEpoch}';
     Directory dir;
