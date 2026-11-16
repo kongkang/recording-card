@@ -2614,7 +2614,11 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
             : (status.watchAppInstalled ? '已安装' : '未安装');
         final linkText = isWatchConnected
             ? '已连接'
-            : (status?.reachable == true ? '在线' : '离线');
+            : (status?.reachable == true
+                ? '在线'
+                : (status?.paired == true && status?.watchAppInstalled == true
+                    ? '待机就绪'
+                    : '离线'));
         final battText = status == null ? '未知' : _batteryTierText(status);
         final pendingText = '${status?.pendingCount ?? 0} 段';
 

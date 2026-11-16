@@ -331,16 +331,43 @@ void main() {
     expect(env.store.ingestedSlices.first.sliceKeyOverride, 'watch_slice-w1');
     expect(env.watchBackend.ackedSliceIds, contains('slice-w1'));
 
-    // 3) 录音期间模拟手表意外失去通信连接 -> 立即切换至手机本机零功耗待命保底录音
+    // 3) 录音期间模拟翻腕息屏（reachable=false）-> 保持手表已连接与录音中，绝不误切手机保底
     env.watchBackend.simulateReachable(false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(env.device.isConnected, isTrue);
+    expect(env.device.isRecording, isTrue);
+    expect(env.device.isFailoverPhoneRecording, isFalse);
+    expect(env.phoneMic.startCalls, 0);
+
+    // 4) 真正蓝牙失联（linkLost=true）-> 立即切换至手机本机零功耗待命保底录音
+    env.watchBackend.simulateUnexpectedDisconnect();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(env.device.isFailoverPhoneRecording, isTrue);
     expect(env.phoneMic.startCalls, 1);
 
-    // 停掉保底录音以免留下周期定时器影响测试退出
-    await env.device.stopPhoneRecording();
+    // 5) 手表携录音恢复通信 -> 自动接回 Apple Watch 并关闭手机保底麦克风
+    env.watchBackend.emitStatus(
+      env.watchBackend.currentStatus.copyWith(
+        reachable: true,
+        linkLost: false,
+        isRecording: true,
+        sessionId: 'watch-sess-1',
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(env.device.isConnected, isTrue);
+    expect(env.device.activeKind, DeviceKind.appleWatch);
+    expect(env.device.isFailoverPhoneRecording, isFalse);
+    expect(env.phoneMic.stopCalls, greaterThanOrEqualTo(1));
+
+    // 停掉手表录音以免留下周期定时器影响测试退出
+    await env.device.toggleRecording();
     await tester.pump();
   });
 
@@ -403,5 +430,58 @@ void main() {
     await tester.pump();
     expect(env.device.isConnected, isFalse);
     expect(find.text('连接手表'), findsOneWidget);
+  });
+
+  testWidgets('息屏态（reachable=false）支持直接连接与控录，Setting 状态显示待机就绪而非离线', (
+    tester,
+  ) async {
+    final env = await _pumpWatchShell(
+      tester,
+      initialWatchLinkEnabled: true,
+    );
+    env.watchBackend.simulateReachable(false);
+
+    await tester.tap(find.byKey(const Key('nav-setting')));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('set-apple-watch')),
+      220,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('setting-list')),
+        matching: find.byType(Scrollable),
+      ).first,
+    );
+    await tester.tap(find.byKey(const Key('set-apple-watch')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('待机就绪'), findsOneWidget);
+    expect(find.text('离线'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('watch-connect-btn')));
+    await tester.pump();
+    await tester.pump();
+    expect(env.device.isConnected, isTrue);
+    expect(env.device.activeKind, DeviceKind.appleWatch);
+
+    await env.device.toggleRecording();
+    await tester.pump();
+    expect(env.device.isRecording, isTrue);
+    expect(env.device.isFailoverPhoneRecording, isFalse);
+
+    // 模拟手表因空间不足报错停录 -> 立即触发手机保底接力
+    env.watchBackend.emitStatus(
+      env.watchBackend.currentStatus.copyWith(
+        isRecording: false,
+        clearSessionId: true,
+        lastError: '手表存储空间低于 20 MB，已自动封口并停止录音',
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(env.device.isRecording, isFalse);
+    expect(env.device.isFailoverPhoneRecording, isTrue);
+
+    await env.device.stopPhoneRecording();
+    await tester.pump();
   });
 }

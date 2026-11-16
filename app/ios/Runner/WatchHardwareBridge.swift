@@ -20,6 +20,7 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
 
     private var latestSnapshot: WatchStatusSnapshot?
     private var pendingSlices: [PendingWatchSlice] = []
+    private var lastWatchContactAtMs: Int64 = 0
 
     private struct PendingWatchSlice: Codable, Equatable {
         let sliceId: String
@@ -70,9 +71,15 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         if session.activationState != .activated {
             session.activate()
         }
+        if WCSession.isSupported() && WCSession.default.isReachable {
+            noteWatchContact()
+        }
         if let cached = WatchStatusSnapshot.fromDictionary(session.receivedApplicationContext) {
             stateLock.lock()
             latestSnapshot = cached
+            if lastWatchContactAtMs == 0 && cached.updatedAtMs > 0 {
+                lastWatchContactAtMs = cached.updatedAtMs
+            }
             stateLock.unlock()
         }
     }
@@ -82,6 +89,7 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         switch call.method {
         case "status":
             if WCSession.isSupported() && WCSession.default.isReachable {
+                noteWatchContact()
                 sendCommandToWatch(WatchControlCommand(action: .requestStatus), pushContext: false)
             }
             result(currentStatusDictionary())
@@ -94,6 +102,7 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         case "stopRecording":
             let cmd = WatchControlCommand(action: .stopRecording)
             sendCommandToWatch(cmd, pushContext: true)
+            applyOptimisticStopRecording()
             result(currentStatusDictionary())
 
         case "addMark":
@@ -105,7 +114,7 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
             let cmd = WatchControlCommand(action: .flushPending)
             sendCommandToWatch(cmd, pushContext: false)
             emitPendingSlicesToDart()
-            result(true)
+            result(currentStatusDictionary())
 
         case "drainPendingSlices":
             result(snapshotPendingDictionaries())
@@ -135,23 +144,31 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
             return
         }
 
-        let cmd = WatchControlCommand(action: .startRecording, sessionId: sessionId)
+        let trimmedSid = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedSessionId = (trimmedSid?.isEmpty == false) ? trimmedSid! : Self.makeSessionId()
+        let cmd = WatchControlCommand(action: .startRecording, sessionId: resolvedSessionId)
         sendCommandToWatch(cmd, pushContext: true)
+        applyOptimisticStartRecording(sessionId: resolvedSessionId)
 
         if session.isReachable {
+            noteWatchContact()
             result(currentStatusDictionary())
             return
         }
 
-        // 手表处于后台/息屏不可直连态时，尝试通过 HealthKit 运动会话冷唤醒手表 App。
+        // 手表处于后台/息屏不可直连态时，尝试通过 HealthKit 运动会话冷唤醒手表 App（带 2.5s 超时保护）。
         guard HKHealthStore.isHealthDataAvailable() else {
             result(currentStatusDictionary())
             return
         }
-        let config = HKWorkoutConfiguration()
-        config.activityType = .mindAndBody
-        config.locationType = .indoor
-        healthStore.startWatchApp(with: config) { [weak self] _, _ in
+        let finishLock = NSLock()
+        var didFinish = false
+        let finishOnce: () -> Void = { [weak self] in
+            finishLock.lock()
+            let already = didFinish
+            didFinish = true
+            finishLock.unlock()
+            guard !already else { return }
             DispatchQueue.main.async {
                 guard let self else {
                     result([:])
@@ -159,6 +176,16 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
                 }
                 result(self.currentStatusDictionary())
             }
+        }
+
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 2.5) {
+            finishOnce()
+        }
+        let config = HKWorkoutConfiguration()
+        config.activityType = .mindAndBody
+        config.locationType = .indoor
+        healthStore.startWatchApp(with: config) { _, _ in
+            finishOnce()
         }
     }
 
@@ -174,11 +201,83 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
             session.sendMessage(
                 payload,
                 replyHandler: { [weak self] reply in
+                    self?.noteWatchContact()
                     self?.ingestStatusDictionary(reply)
                 },
-                errorHandler: nil
+                errorHandler: { _ in
+                    guard command.action != .requestStatus,
+                          WCSession.isSupported(),
+                          WCSession.default.activationState == .activated else { return }
+                    WCSession.default.transferUserInfo(payload)
+                }
+            )
+        } else if command.action != .requestStatus {
+            session.transferUserInfo(payload)
+        }
+    }
+
+    private func noteWatchContact() {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        stateLock.lock()
+        if nowMs > lastWatchContactAtMs {
+            lastWatchContactAtMs = nowMs
+        }
+        stateLock.unlock()
+    }
+
+    private func applyOptimisticStartRecording(sessionId: String) {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        stateLock.lock()
+        let prev = latestSnapshot
+        if !(prev?.isRecording ?? false) {
+            latestSnapshot = WatchStatusSnapshot(
+                isRecording: true,
+                activeSessionId: sessionId,
+                recordingStartedAtMs: nowMs,
+                elapsedSec: 0,
+                currentSliceIndex: 0,
+                sessionMarkCount: 0,
+                pendingSliceCount: prev?.pendingSliceCount ?? 0,
+                syncedSliceCount: prev?.syncedSliceCount ?? 0,
+                batteryPercent: prev?.batteryPercent ?? -1,
+                isCharging: prev?.isCharging ?? false,
+                freeDiskBytes: prev?.freeDiskBytes ?? 0,
+                keepAliveMode: prev?.keepAliveMode ?? .idle,
+                updatedAtMs: nowMs,
+                lastError: nil
             )
         }
+        stateLock.unlock()
+    }
+
+    private func applyOptimisticStopRecording() {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        stateLock.lock()
+        let prev = latestSnapshot
+        latestSnapshot = WatchStatusSnapshot(
+            isRecording: false,
+            activeSessionId: nil,
+            recordingStartedAtMs: nil,
+            elapsedSec: 0,
+            currentSliceIndex: 0,
+            sessionMarkCount: 0,
+            pendingSliceCount: prev?.pendingSliceCount ?? 0,
+            syncedSliceCount: prev?.syncedSliceCount ?? 0,
+            batteryPercent: prev?.batteryPercent ?? -1,
+            isCharging: prev?.isCharging ?? false,
+            freeDiskBytes: prev?.freeDiskBytes ?? 0,
+            keepAliveMode: .idle,
+            updatedAtMs: nowMs,
+            lastError: prev?.lastError
+        )
+        stateLock.unlock()
+    }
+
+    private static func makeSessionId() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMddHHmmss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return "watch-\(formatter.string(from: Date()))"
     }
 
     private func sendSliceAckToWatch(sliceId: String, sessionId: String) {
@@ -199,6 +298,7 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         stateLock.lock()
         let snap = latestSnapshot
         let localPending = pendingSlices.count
+        let contactMs = lastWatchContactAtMs
         stateLock.unlock()
 
         var out: [String: Any] = [
@@ -209,11 +309,15 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
             "isRecording": snap?.isRecording ?? false,
             "elapsedSec": snap?.elapsedSec ?? 0,
             "currentSliceIndex": snap?.currentSliceIndex ?? 0,
+            "sessionMarkCount": snap?.sessionMarkCount ?? 0,
             "pendingSliceCount": (snap?.pendingSliceCount ?? 0) + localPending,
             "syncedSliceCount": snap?.syncedSliceCount ?? 0,
             "batteryPercent": snap?.batteryPercent ?? -1,
             "isCharging": snap?.isCharging ?? false,
             "freeDiskBytes": NSNumber(value: snap?.freeDiskBytes ?? 0),
+            "keepAliveMode": snap?.keepAliveMode.rawValue ?? WatchKeepAliveMode.idle.rawValue,
+            "snapshotUpdatedAtMs": NSNumber(value: snap?.updatedAtMs ?? 0),
+            "lastWatchContactAtMs": NSNumber(value: contactMs),
         ]
         if let activeSessionId = snap?.activeSessionId {
             out["activeSessionId"] = activeSessionId
@@ -337,6 +441,9 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: (any Error)?
     ) {
+        if session.isReachable {
+            noteWatchContact()
+        }
         if let snap = WatchStatusSnapshot.fromDictionary(session.receivedApplicationContext) {
             ingestStatusDictionary(snap.toDictionary())
         } else {
@@ -359,12 +466,14 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
 
     func sessionReachabilityDidChange(_ session: WCSession) {
         if session.isReachable {
+            noteWatchContact()
             sendCommandToWatch(WatchControlCommand(action: .requestStatus), pushContext: false)
         }
         emitStatusChanged()
     }
 
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        noteWatchContact()
         ingestStatusDictionary(message)
     }
 
@@ -373,15 +482,23 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         didReceiveMessage message: [String: Any],
         replyHandler: @escaping ([String: Any]) -> Void
     ) {
+        noteWatchContact()
         ingestStatusDictionary(message)
         replyHandler(currentStatusDictionary())
     }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        noteWatchContact()
         ingestStatusDictionary(applicationContext)
     }
 
+    func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        noteWatchContact()
+        ingestStatusDictionary(userInfo)
+    }
+
     func session(_ session: WCSession, didReceive file: WCSessionFile) {
+        noteWatchContact()
         let fm = FileManager.default
         let rootDir = Self.slicesDirectoryURL()
         let stagingDir = rootDir.appendingPathComponent("staging", isDirectory: true)
