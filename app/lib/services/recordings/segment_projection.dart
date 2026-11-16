@@ -302,7 +302,7 @@ class SegmentProjection {
     final anchor = group.first;
     final startAtMs = anchor.segment.startAtMs;
     final endAtMs = _endMsOf(group.last);
-    final rollingRun = topicState?.rollingByAnchor[anchor.segment.id];
+    final rollingRun = topicState?.displayRunForAnchor(anchor.segment.id);
     final runKey = FastTopicSegmentAgent.buildRunKey(
       anchor.segment.id,
       startAtMs,

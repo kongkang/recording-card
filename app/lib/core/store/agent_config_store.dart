@@ -48,6 +48,10 @@ class AgentExtensionItem {
   final String? promptRule;
   final bool custom;
 
+  /// `live` 已进入当前清洗或总结；`partial` 只接到旁路；`placeholder` 只是占位。
+  final String wiring;
+  final String wiringNote;
+
   const AgentExtensionItem({
     required this.id,
     required this.kind,
@@ -55,7 +59,15 @@ class AgentExtensionItem {
     required this.subtitle,
     this.promptRule,
     this.custom = false,
+    this.wiring = 'placeholder',
+    this.wiringNote = '未接入：当前清洗和总结都不会调用这项。',
   });
+
+  String get wiringLabel => switch (wiring) {
+    'live' => '已接入',
+    'partial' => '部分接入',
+    _ => '未接入',
+  };
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -64,6 +76,8 @@ class AgentExtensionItem {
     'subtitle': subtitle,
     if (promptRule != null) 'rule': promptRule,
     if (custom) 'custom': true,
+    'wiring': wiring,
+    if (wiringNote.isNotEmpty) 'wiringNote': wiringNote,
   };
 
   factory AgentExtensionItem.fromJson(Map<String, dynamic> j) =>
@@ -74,6 +88,10 @@ class AgentExtensionItem {
         subtitle: '${j['subtitle'] ?? ''}',
         promptRule: j['rule'] as String?,
         custom: j['custom'] == true,
+        wiring: j['wiring'] == 'live' || j['wiring'] == 'partial'
+            ? j['wiring'] as String
+            : 'placeholder',
+        wiringNote: '${j['wiringNote'] ?? '未接入：添加后只保存在本机列表，清洗和总结不会调用。'}',
       );
 }
 
@@ -88,7 +106,7 @@ class AgentConfigStore extends ChangeNotifier {
     CloudModelOption(
       id: 'deepseek-v3',
       name: 'deepseek-v3',
-      desc: '中文长文本提炼均衡，适合日常全天录音与通用总结（推荐）',
+      desc: '目录里的候选，不是当前默认。未手动指定时以网关实际返回的模型为准',
     ),
     CloudModelOption(
       id: 'qwen-max',
@@ -117,23 +135,17 @@ class AgentConfigStore extends ChangeNotifier {
       id: 'general',
       label: '通用纪要',
       desc: '兼顾概览、逻辑结构、带溯源信息点与可执行待办',
-      summaryPrompt:
-          '你是录音整理助手。请基于所给录音转写整理结构化纪要：先给 2-3 句概览，再按讨论脉络归纳逻辑结构，提炼关键信息点并严格标注来源记录 ID，最后提取明确的行动项；不编造原文没有的事实。',
-      polishPrompt:
-          '清理口头禅、重复词与语气助词，合并同一说话人被打断的连续短句，保留专业术语、数字、人名与原始语义，不改写观点倾向。',
-      dreamPrompt:
-          '日终复盘全天对话脉络，清洗碎片化口语记忆，归档值得长期保留的知识条目，并提炼可复用的个人沟通与决策洞察。',
+      summaryPrompt: '你是录音整理助手。请基于所给录音转写整理结构化纪要：先给 2-3 句概览，再按讨论脉络归纳逻辑结构，提炼关键信息点并严格标注来源记录 ID，最后提取明确的行动项；不编造原文没有的事实。',
+      polishPrompt: '清理口头禅、重复词与语气助词，合并同一说话人被打断的连续短句，保留专业术语、数字、人名与原始语义，不改写观点倾向。',
+      dreamPrompt: '日终复盘全天对话脉络，清洗碎片化口语记忆，归档值得长期保留的知识条目，并提炼可复用的个人沟通与决策洞察。',
     ),
     AgentPresetSpec(
       id: 'meeting',
       label: '深度会议',
       desc: '聚焦会议决策、分歧拉齐、责任人与截止时间',
-      summaryPrompt:
-          '你是高管会议纪要专家。请聚焦会议决策、核心争议与达成共识的条件，按议题拆解逻辑分支，将所有结论与承诺关联到来源记录 ID，并在行动项中明确事项与时间节点。',
-      polishPrompt:
-          '按会议发言轮次清洗口语冗余，突出方案对比、指标口径与排期表态，完整保留原话中的条件限定词。',
-      dreamPrompt:
-          '汇总当日多场会议之间的跨议题关联、未闭环阻塞项与次日优先跟进清单。',
+      summaryPrompt: '你是高管会议纪要专家。请聚焦会议决策、核心争议与达成共识的条件，按议题拆解逻辑分支，将所有结论与承诺关联到来源记录 ID，并在行动项中明确事项与时间节点。',
+      polishPrompt: '按会议发言轮次清洗口语冗余，突出方案对比、指标口径与排期表态，完整保留原话中的条件限定词。',
+      dreamPrompt: '汇总当日多场会议之间的跨议题关联、未闭环阻塞项与次日优先跟进清单。',
     ),
     AgentPresetSpec(
       id: 'interview',
@@ -141,10 +153,8 @@ class AgentConfigStore extends ChangeNotifier {
       desc: '保留受访者核心洞察、真实案例与代表性原话',
       summaryPrompt:
           '你是用户研究与深度访谈分析师。请提炼受访者的核心痛点、使用场景、决策动机与反直觉洞察，在信息点中保留最具代表性的细节与来源溯源。',
-      polishPrompt:
-          '温和去噪，保留受访者的情绪转折、程度副词与具体故事细节，不把鲜活表达压缩成空洞套话。',
-      dreamPrompt:
-          '将当日访谈所得归档为结构化洞察卡片，关联既有研究假设并标记新发现的反例。',
+      polishPrompt: '温和去噪，保留受访者的情绪转折、程度副词与具体故事细节，不把鲜活表达压缩成空洞套话。',
+      dreamPrompt: '将当日访谈所得归档为结构化洞察卡片，关联既有研究假设并标记新发现的反例。',
     ),
     AgentPresetSpec(
       id: 'todo',
@@ -152,10 +162,8 @@ class AgentConfigStore extends ChangeNotifier {
       desc: '压缩背景叙述，优先输出结论与可执行清单',
       summaryPrompt:
           '你是极简行动派助手。概览控制在两句话以内，逻辑结构只列最终结论，信息点只保留硬数字与硬约束，重点输出可直接勾选执行的行动项列表。',
-      polishPrompt:
-          '精简寒暄与发散闲聊，高密度保留指令、承诺、数字与时间点。',
-      dreamPrompt:
-          '仅归档今日已完成闭环与明日必做三件事，保持零噪音。',
+      polishPrompt: '精简寒暄与发散闲聊，高密度保留指令、承诺、数字与时间点。',
+      dreamPrompt: '仅归档今日已完成闭环与明日必做三件事，保持零噪音。',
     ),
   ];
 
@@ -166,6 +174,8 @@ class AgentConfigStore extends ChangeNotifier {
       title: '术语统一与实体对齐',
       subtitle: '自动对齐同音异写的产品名、技术缩写与项目代号',
       promptRule: '对同音误识的专业术语、缩写与项目代号结合上下文做一致性对齐，不确定时保留原词。',
+      wiring: 'live',
+      wiringNote: '已接入：打开后，这条规则会追加进滚动清洗和总结的提示词。没有单独的技能运行时。',
     ),
     AgentExtensionItem(
       id: 'sk-brief',
@@ -173,6 +183,8 @@ class AgentConfigStore extends ChangeNotifier {
       title: '结论前置与纪要精简',
       subtitle: '每个分支与信息点先给结论，再补充支撑细节',
       promptRule: '概览与每个信息点均采用「结论前置」写法，避免冗长铺垫。',
+      wiring: 'live',
+      wiringNote: '已接入：打开后，这条规则会追加进滚动清洗和总结的提示词。没有单独的技能运行时。',
     ),
     AgentExtensionItem(
       id: 'sk-risk',
@@ -180,30 +192,40 @@ class AgentConfigStore extends ChangeNotifier {
       title: '风险与待决阻塞提炼',
       subtitle: '单独识别对话中提到的风险、依赖阻塞与未决问题',
       promptRule: '专门检查并标注对话中暴露的排期风险、外部依赖阻塞与尚未拍板的待决项。',
+      wiring: 'live',
+      wiringNote: '已接入：打开后，这条规则会追加进滚动清洗和总结的提示词。没有单独的技能运行时。',
     ),
     AgentExtensionItem(
       id: 'tl-photo',
       kind: 'tool',
       title: '关联录音时段照片',
       subtitle: '总结时感知录音窗口内的点一机抓拍与系统相册照片数量',
+      wiring: 'partial',
+      wiringNote: '部分接入：这个开关会同步相册自动对齐。清洗和总结不会把它当成工具去调用。',
     ),
     AgentExtensionItem(
       id: 'tl-hist',
       kind: 'tool',
       title: '同日连续上下文感知',
       subtitle: '结合同日早些时候的录音片段理解代词与省略背景',
+      wiring: 'placeholder',
+      wiringNote: '未接入：清洗和总结都不会读取这个开关，也不会因此附带同日更早的录音。',
     ),
     AgentExtensionItem(
       id: 'tl-todo',
       kind: 'tool',
       title: '结构化行动项提取',
       subtitle: '从承诺与排期语句中提取可勾选待办事项',
+      wiring: 'placeholder',
+      wiringNote: '未接入：总结里的行动项来自总结提示词，不看这个开关。',
     ),
     AgentExtensionItem(
       id: 'mcp-kb',
       kind: 'mcp',
       title: '个人知识库 MCP',
       subtitle: 'local://knowledge-vault · 日报与做梦归档接口（规划接入）',
+      wiring: 'placeholder',
+      wiringNote: '未接入：没有 MCP 客户端。打开后也不会连接外部服务。',
     ),
   ];
 
@@ -229,8 +251,12 @@ class AgentConfigStore extends ChangeNotifier {
   int get enabledExtHardwareCount =>
       (getSeedLinkEnabled ? 1 : 0) + (omiLinkEnabled ? 1 : 0);
 
-  String cloudModel = 'deepseek-v3';
+  /// 用户手动指定的模型。空字符串表示没有指定，不能把目录里的 deepseek-v3 当成已选。
+  String cloudModel = '';
   bool userPickedCloudModel = false;
+
+  /// 网关最近一次探测到的文本模型。只用于展示和未指定时的实际调用，不是用户选择。
+  String gatewayModel = '';
   String contextMode = 'full_day'; // 'full_day' | 'scoped'
   double temperature = 0.2;
 
@@ -251,11 +277,15 @@ class AgentConfigStore extends ChangeNotifier {
   int cleanOverlapMinutes = 3;
 
   static String formatCleanCycle(int minutes) {
-    final clamped = minutes.clamp(1, 180);
+    final clamped = minutes < 1 ? 1 : minutes;
     if (clamped < 60) return '$clamped 分钟';
     final h = clamped ~/ 60;
     final m = clamped % 60;
-    return m == 0 ? '$h 小时' : '$h 小时 $m 分钟';
+    if (h < 24) return m == 0 ? '$h 小时' : '$h 小时 $m 分钟';
+    final days = h ~/ 24;
+    final rh = h % 24;
+    if (rh == 0 && m == 0) return '$days 天';
+    return m == 0 ? '$days 天 $rh 小时' : '$days 天 $rh 小时 $m 分钟';
   }
 
   String get developerCleanSummary {
@@ -268,14 +298,37 @@ class AgentConfigStore extends ChangeNotifier {
     return '每 $cycleText · $overlapText';
   }
 
-  String get cloudStatusSummary {
-    if (!cloudEnabled) return '已关闭';
-    if (developerMode) return cloudModel;
-    if (customApiBase.trim().isNotEmpty) return '已开启 · 自定义接口';
-    return '已开启';
+  String get effectiveModelId {
+    if (userPickedCloudModel && cloudModel.trim().isNotEmpty) {
+      return cloudModel.trim();
+    }
+    return gatewayModel.trim();
   }
 
-  String presetId = 'general'; // 'general' | 'meeting' | 'interview' | 'todo' | 'custom'
+  String get modelSourceLabel {
+    if (userPickedCloudModel && cloudModel.trim().isNotEmpty) return '用户指定';
+    if (gatewayModel.trim().isNotEmpty) return '网关默认';
+    return '未指定';
+  }
+
+  String get effectiveModelLabel {
+    final id = effectiveModelId;
+    return id.isEmpty ? '等待网关模型' : id;
+  }
+
+  String get cloudStatusSummary {
+    if (!cloudEnabled) return '已关闭';
+    final custom = customApiBase.trim().isNotEmpty;
+    final model = effectiveModelId;
+    if (model.isEmpty) {
+      return custom ? '已开启 · 自定义接口 · 等待网关模型' : '已开启 · 等待网关模型';
+    }
+    final source = modelSourceLabel;
+    return custom ? '$model · $source · 自定义接口' : '$model · $source';
+  }
+
+  String presetId =
+      'general'; // 'general' | 'meeting' | 'interview' | 'todo' | 'custom'
   late Map<String, String> prompts = _promptsFromPreset(presets.first);
 
   Map<String, bool> extensionStates = Map<String, bool>.of(
@@ -291,14 +344,11 @@ class AgentConfigStore extends ChangeNotifier {
     'dream': p.dreamPrompt,
   };
 
-  /// 同步网关探测到的真实可用文本模型列表；若用户尚未手动指定，默认对齐到网关首选模型。
+  /// 同步网关探测到的真实可用文本模型。未手动指定时不把网关模型写进用户选择。
   void syncGatewayModels(List<String> models, {String? primaryTextModel}) {
     _gatewayModels = List<String>.unmodifiable(models);
-    if (!userPickedCloudModel &&
-        primaryTextModel != null &&
-        primaryTextModel.trim().isNotEmpty) {
-      cloudModel = primaryTextModel.trim();
-    }
+    final primary = primaryTextModel?.trim() ?? '';
+    if (primary.isNotEmpty) gatewayModel = primary;
     notifyListeners();
   }
 
@@ -331,8 +381,7 @@ class AgentConfigStore extends ChangeNotifier {
     return presets.where((p) => p.id == presetId).firstOrNull?.label ?? '通用纪要';
   }
 
-  String promptFor(String kind) =>
-      prompts[kind] ?? presets.first.summaryPrompt;
+  String promptFor(String kind) => prompts[kind] ?? presets.first.summaryPrompt;
 
   List<AgentExtensionItem> get allExtensions => [
     ...builtinExtensions,
@@ -379,10 +428,24 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['omiLinkEnabled'] is bool) {
       omiLinkEnabled = data['omiLinkEnabled'] as bool;
     }
-    if (data['model'] is String && (data['model'] as String).isNotEmpty) {
-      cloudModel = data['model'] as String;
+    final storedModel = data['model'] is String
+        ? (data['model'] as String).trim()
+        : '';
+    final pickedFlag = data['pickedModel'];
+    final legacyExplicitPick =
+        pickedFlag == null &&
+        storedModel.isNotEmpty &&
+        storedModel != 'deepseek-v3';
+    if ((pickedFlag == true || legacyExplicitPick) && storedModel.isNotEmpty) {
+      cloudModel = storedModel;
+      userPickedCloudModel = true;
+    } else {
+      cloudModel = '';
+      userPickedCloudModel = false;
     }
-    userPickedCloudModel = data['pickedModel'] == true;
+    if (data['gatewayModel'] is String) {
+      gatewayModel = (data['gatewayModel'] as String).trim();
+    }
     if (data['ctx'] == 'scoped' || data['ctx'] == 'full_day') {
       contextMode = data['ctx'] as String;
     }
@@ -390,7 +453,10 @@ class AgentConfigStore extends ChangeNotifier {
       temperature = (data['temp'] as num).toDouble().clamp(0.0, 1.0);
     }
     if (data['cleanCycleMinutes'] is num) {
-      cleanCycleMinutes = (data['cleanCycleMinutes'] as num).toInt().clamp(1, 180);
+      cleanCycleMinutes = (data['cleanCycleMinutes'] as num).toInt().clamp(
+        1,
+        10080,
+      );
     }
     if (data['cleanOnSilenceGap'] is bool) {
       cleanOnSilenceGap = data['cleanOnSilenceGap'] as bool;
@@ -405,9 +471,10 @@ class AgentConfigStore extends ChangeNotifier {
           .clamp(0, 10);
     }
     if (data['cleanOverlapMinutes'] is num) {
-      cleanOverlapMinutes = (data['cleanOverlapMinutes'] as num)
-          .toInt()
-          .clamp(1, 30);
+      cleanOverlapMinutes = (data['cleanOverlapMinutes'] as num).toInt().clamp(
+        1,
+        30,
+      );
     }
     if (data['preset'] is String && (data['preset'] as String).isNotEmpty) {
       presetId = data['preset'] as String;
@@ -491,8 +558,20 @@ class AgentConfigStore extends ChangeNotifier {
   }
 
   Future<void> setCloudModel(String id) async {
-    cloudModel = id.trim();
+    final next = id.trim();
+    if (next.isEmpty) {
+      await clearCloudModelPick();
+      return;
+    }
+    cloudModel = next;
     userPickedCloudModel = true;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> clearCloudModelPick() async {
+    cloudModel = '';
+    userPickedCloudModel = false;
     notifyListeners();
     await _save();
   }
@@ -511,7 +590,9 @@ class AgentConfigStore extends ChangeNotifier {
   }
 
   Future<void> setCleanCycleMinutes(int minutes) async {
-    cleanCycleMinutes = minutes.clamp(1, 180);
+    final next = minutes.clamp(1, 10080);
+    if (next == cleanCycleMinutes) return;
+    cleanCycleMinutes = next;
     notifyListeners();
     await _save();
   }
@@ -598,6 +679,8 @@ class AgentConfigStore extends ChangeNotifier {
       title: cleanName,
       subtitle: cleanEndpoint,
       custom: true,
+      wiring: 'placeholder',
+      wiringNote: '未接入：只保存在本机列表，当前清洗和总结不会调用这个服务。',
     );
     customMcps = [...customMcps, item];
     extensionStates = {...extensionStates, id: true};
@@ -623,8 +706,10 @@ class AgentConfigStore extends ChangeNotifier {
       'watchLinkEnabled': watchLinkEnabled,
       'getSeedLinkEnabled': getSeedLinkEnabled,
       'omiLinkEnabled': omiLinkEnabled,
-      'model': cloudModel,
+      if (userPickedCloudModel && cloudModel.trim().isNotEmpty)
+        'model': cloudModel,
       'pickedModel': userPickedCloudModel,
+      if (gatewayModel.trim().isNotEmpty) 'gatewayModel': gatewayModel,
       'ctx': contextMode,
       'temp': temperature,
       'cleanCycleMinutes': cleanCycleMinutes,

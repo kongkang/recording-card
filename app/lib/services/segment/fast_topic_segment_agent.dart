@@ -191,13 +191,18 @@ class TopicSegmentationState {
     this.lockedRunKeys = const {},
     this.runsByKey = const {},
     this.rollingByAnchor = const {},
+    this.stageByTask = const {},
   });
 
   const TopicSegmentationState.empty()
     : watermarkEndAtMs = 0,
       lockedRunKeys = const {},
       runsByKey = const {},
-      rollingByAnchor = const {};
+      rollingByAnchor = const {},
+      stageByTask = const {};
+
+  /// 更高轮次覆盖短轮的顺序。只在该轮时间不早于短轮时，时间轴才改用它。
+  static const List<String> higherStageOrder = ['clean.long', 'clean.medium'];
 
   /// 单调水位：endAtMs <= watermarkEndAtMs 的历史连续说话簇已结算锁定，不重跑。
   final int watermarkEndAtMs;
@@ -206,6 +211,29 @@ class TopicSegmentationState {
 
   /// 滚动语义+声纹联合清洗分段结果（key 为连续说话组 anchorSegmentId）。
   final Map<String, TopicRunSegmentation> rollingByAnchor;
+
+  /// 中轮 / 长轮再合并结果。外层 key 是任务 id，内层 key 是 anchorSegmentId。
+  final Map<String, Map<String, TopicRunSegmentation>> stageByTask;
+
+  /// 时间轴采用的整理结果：更高轮次只有不旧于短轮时才盖住短轮。
+  TopicRunSegmentation? displayRunForAnchor(String anchorId) {
+    final rolling = rollingByAnchor[anchorId];
+    TopicRunSegmentation? best;
+    var bestAt = -1;
+    if (rolling != null && rolling.sections.isNotEmpty) {
+      best = rolling;
+      bestAt = rolling.evaluatedAtMs;
+    }
+    for (final taskId in higherStageOrder) {
+      final run = stageByTask[taskId]?[anchorId];
+      if (run == null || run.sections.isEmpty) continue;
+      if (best == null || run.evaluatedAtMs >= bestAt) {
+        best = run;
+        bestAt = run.evaluatedAtMs;
+      }
+    }
+    return best;
+  }
 
   bool isLocked(String runKey, int endAtMs) =>
       lockedRunKeys.contains(runKey) ||
@@ -220,6 +248,7 @@ class TopicSegmentationState {
       lockedRunKeys: {...lockedRunKeys, run.runKey},
       runsByKey: {...runsByKey, run.runKey: run},
       rollingByAnchor: rollingByAnchor,
+      stageByTask: stageByTask,
     );
   }
 
@@ -229,14 +258,25 @@ class TopicSegmentationState {
         lockedRunKeys: lockedRunKeys,
         runsByKey: runsByKey,
         rollingByAnchor: {...rollingByAnchor, run.runKey: run},
+        stageByTask: stageByTask,
       );
 
-  TopicSegmentationState withoutRollingRuns() => TopicSegmentationState(
-    watermarkEndAtMs: 0,
-    lockedRunKeys: const {},
-    runsByKey: const {},
-    rollingByAnchor: const {},
-  );
+  TopicSegmentationState withStageRun(String taskId, TopicRunSegmentation run) {
+    final current =
+        stageByTask[taskId] ?? const <String, TopicRunSegmentation>{};
+    return TopicSegmentationState(
+      watermarkEndAtMs: watermarkEndAtMs,
+      lockedRunKeys: lockedRunKeys,
+      runsByKey: runsByKey,
+      rollingByAnchor: rollingByAnchor,
+      stageByTask: {
+        ...stageByTask,
+        taskId: {...current, run.runKey: run},
+      },
+    );
+  }
+
+  TopicSegmentationState withoutRollingRuns() => const TopicSegmentationState();
 
   Map<String, dynamic> toJson() => {
     'v': 2,
@@ -246,6 +286,13 @@ class TopicSegmentationState {
     if (rollingByAnchor.isNotEmpty)
       'rolling': {
         for (final e in rollingByAnchor.entries) e.key: e.value.toJson(),
+      },
+    if (stageByTask.isNotEmpty)
+      'stages': {
+        for (final task in stageByTask.entries)
+          task.key: {
+            for (final run in task.value.entries) run.key: run.value.toJson(),
+          },
       },
   };
 
@@ -269,7 +316,30 @@ class TopicSegmentationState {
               entry.value as Map<String, dynamic>,
             ),
       },
+      stageByTask: _parseStageMap(j['stages']),
     );
+  }
+
+  static Map<String, Map<String, TopicRunSegmentation>> _parseStageMap(
+    Object? raw,
+  ) {
+    if (raw is! Map) return const {};
+    final stages = <String, Map<String, TopicRunSegmentation>>{};
+    for (final taskEntry in raw.entries) {
+      if (taskEntry.value is! Map) continue;
+      final runs = <String, TopicRunSegmentation>{};
+      for (final runEntry in (taskEntry.value as Map).entries) {
+        final value = runEntry.value;
+        if (value is! Map) continue;
+        runs['${runEntry.key}'] = TopicRunSegmentation.fromJson(
+          value is Map<String, dynamic>
+              ? value
+              : Map<String, dynamic>.from(value),
+        );
+      }
+      stages['${taskEntry.key}'] = runs;
+    }
+    return stages;
   }
 }
 
@@ -418,8 +488,11 @@ class FastTopicSegmentAgent {
   bool get isReady => effectiveModel.isNotEmpty && (_ready?.call() ?? true);
 
   /// 提取全局连续说话簇（同一天内相邻语音间隔 `< speechMergeGap` 合并）。
-  static String buildRunKey(String anchorSegmentId, int startAtMs, int endAtMs) =>
-      '$anchorSegmentId@$startAtMs..$endAtMs';
+  static String buildRunKey(
+    String anchorSegmentId,
+    int startAtMs,
+    int endAtMs,
+  ) => '$anchorSegmentId@$startAtMs..$endAtMs';
 
   /// 检查是否有连续说话簇在之后出现了 `>= blankThreshold`（默认 1 分钟）空白；
   /// 若有且未落入幂等水位锁，则调用快速云端模型做话题切片并持久化锁定。
@@ -502,10 +575,9 @@ class FastTopicSegmentAgent {
     final silences = <({int startAtMs, int endAtMs})>[];
 
     for (final f in sortedFiles) {
-      final closedSegs = f.segments
-          .where((s) => s.status == SegmentStatus.closed)
-          .toList()
-        ..sort((a, b) => a.startAtMs.compareTo(b.startAtMs));
+      final closedSegs =
+          f.segments.where((s) => s.status == SegmentStatus.closed).toList()
+            ..sort((a, b) => a.startAtMs.compareTo(b.startAtMs));
 
       if (closedSegs.isEmpty) {
         final hasSpeech = f.turns.isNotEmpty || f.utterances.isNotEmpty;
@@ -676,8 +748,7 @@ class FastTopicSegmentAgent {
         ),
         ChatMessage(
           role: 'user',
-          content:
-              '对话条数：${run.turns.length}\n\n${buf.toString()}',
+          content: '对话条数：${run.turns.length}\n\n${buf.toString()}',
         ),
       ],
       model: effectiveModel,
@@ -687,10 +758,7 @@ class FastTopicSegmentAgent {
     return _parseSections(raw, run.turns.length);
   }
 
-  static List<TopicSectionOverride> _parseSections(
-    String raw,
-    int turnCount,
-  ) {
+  static List<TopicSectionOverride> _parseSections(String raw, int turnCount) {
     if (turnCount <= 0) return const [];
     final jsonText = _extractJsonObject(raw);
     if (jsonText == null) return const [];

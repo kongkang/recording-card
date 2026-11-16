@@ -130,7 +130,10 @@ class RollingCleanSegmentService {
 
   bool get isReady => effectiveModel.isNotEmpty && (_ready?.call() ?? true);
 
-  int get _cycleMinutes => (_agentConfig?.cleanCycleMinutes ?? 10).clamp(1, 180);
+  /// 与短轮定时任务的间隔对齐。上限 7 天，避免开发者把间隔改长后被 180 分钟静默截断。
+  /// `< 30s` 合并、`30–59s` 声学拆段、`≥ 1 分钟` 静音触发不在这里改。
+  int get _cycleMinutes =>
+      (_agentConfig?.cleanCycleMinutes ?? 10).clamp(1, 10080);
   bool get _cleanOnSilenceGap => _agentConfig?.cleanOnSilenceGap ?? true;
   String get _overlapMode =>
       _agentConfig?.cleanOverlapMode == 'minutes' ? 'minutes' : 'paragraphs';

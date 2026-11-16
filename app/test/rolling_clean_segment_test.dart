@@ -39,7 +39,8 @@ class _CapturingChat implements ChatCompletion {
     int callIndex,
     Map<String, dynamic> userJson,
     String model,
-  ) responder;
+  )
+  responder;
 
   final List<({String model, Map<String, dynamic> userJson, String system})>
   calls = [];
@@ -93,12 +94,8 @@ class _NoopEngine implements SpeechEngine {
   Future<AsrResult> transcribe(
     Float32List samples, {
     int sampleRate = 16000,
-  }) async => const AsrResult(
-    text: '',
-    tokens: [],
-    timestampsMs: [],
-    audioMs: 0,
-  );
+  }) async =>
+      const AsrResult(text: '', tokens: [], timestampsMs: [], audioMs: 0);
 }
 
 class _NoopModels implements SpeechModelProvider {
@@ -130,7 +127,13 @@ void main() {
       timeSynced: true,
       stage: RecordingStage.ready,
       slices: const [
-        AudioSlice(id: '0001', index: 0, startMs: 0, endMs: 120000, wavPath: ''),
+        AudioSlice(
+          id: '0001',
+          index: 0,
+          startMs: 0,
+          endMs: 120000,
+          wavPath: '',
+        ),
       ],
       utterances: const [
         RawUtterance(
@@ -178,7 +181,13 @@ void main() {
       timeSynced: true,
       stage: RecordingStage.ready,
       slices: const [
-        AudioSlice(id: '0002', index: 0, startMs: 0, endMs: 120000, wavPath: ''),
+        AudioSlice(
+          id: '0002',
+          index: 0,
+          startMs: 0,
+          endMs: 120000,
+          wavPath: '',
+        ),
       ],
       utterances: const [
         RawUtterance(
@@ -253,7 +262,11 @@ void main() {
         session: 'SES_ROLL',
         profiles: [
           SpeakerProfile(index: 0, centroid: [1.0, 0.0, 0.0], speechMs: 24000),
-          SpeakerProfile(index: 1, centroid: [0.85, 0.526, 0.0], speechMs: 8000),
+          SpeakerProfile(
+            index: 1,
+            centroid: [0.85, 0.526, 0.0],
+            speechMs: 8000,
+          ),
         ],
       ),
     );
@@ -278,7 +291,13 @@ void main() {
       timeSynced: true,
       stage: RecordingStage.ready,
       slices: const [
-        AudioSlice(id: '0001', index: 0, startMs: 0, endMs: 360000, wavPath: ''),
+        AudioSlice(
+          id: '0001',
+          index: 0,
+          startMs: 0,
+          endMs: 360000,
+          wavPath: '',
+        ),
         AudioSlice(
           id: '0002',
           index: 1,
@@ -394,7 +413,8 @@ void main() {
             'mergesPreviousParagraph': true,
             'title': '联调压测排期与回归分工确认',
             'brief': '周三完成压测与回归补充，周四复核监控指标。',
-            'overview': '在确认周三联调与压测deadline基础上，补充压测脚本与回归用例准备安排，并约定周四下午共同核验监控指标。',
+            'overview':
+                '在确认周三联调与压测deadline基础上，补充压测脚本与回归用例准备安排，并约定周四下午共同核验监控指标。',
             'tags': ['联调', '压测', '监控'],
             'paragraphs': [
               {
@@ -557,15 +577,10 @@ void main() {
     expect(find.byKey(const Key('turn-spk-0')), findsOneWidget);
     expect(find.byKey(const Key('turn-spk-1')), findsNothing);
     expect(find.byKey(const Key('turn-spk-2')), findsOneWidget);
-    expect(
-      find.textContaining('先把核心流程走通，再补齐异常分支。'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('先把核心流程走通，再补齐异常分支。'), findsOneWidget);
   });
 
-  testWidgets('设置页「开发者设置」：可调清洗周期、重叠策略并触发存量重洗', (
-    tester,
-  ) async {
+  testWidgets('设置页「开发者设置」：可调清洗周期、重叠策略并触发存量重洗', (tester) async {
     late Directory tmp;
     late RecordingStore rStore;
     late AgentConfigStore cfg;
@@ -609,10 +624,7 @@ void main() {
               builder: (_, _) {
                 final top = store.stackTop;
                 if (top?.type == 'setsub') {
-                  return SettingSubPage(
-                    subId: top!.id,
-                    agentConfig: cfg,
-                  );
+                  return SettingSubPage(subId: top!.id, agentConfig: cfg);
                 }
                 return SettingPage(
                   settings: SettingsStore(store: InMemoryStore()),
@@ -633,10 +645,20 @@ void main() {
 
     expect(store.stackTop?.type, 'setsub');
     expect(store.stackTop?.id, 'dev');
+    expect(find.byKey(const Key('dev-effective-model')), findsOneWidget);
+    expect(find.text('短轮清洗'), findsNothing);
+    final devScroll = find
+        .descendant(
+          of: find.byKey(const Key('setsub-scroll-dev')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    final cycle = find.byKey(const Key('dev-cycle-preset-30'));
+    await tester.scrollUntilVisible(cycle, 200, scrollable: devScroll);
     expect(find.byKey(const Key('dev-cycle-value')), findsOneWidget);
     expect(find.text('10 分钟'), findsWidgets);
 
-    await tester.tap(find.byKey(const Key('dev-cycle-preset-30')));
+    await tester.tap(cycle);
     await tester.pump();
     expect(cfg.cleanCycleMinutes, 30);
     expect(find.text('30 分钟'), findsWidgets);
@@ -646,7 +668,7 @@ void main() {
     expect(cfg.cleanOverlapMode, 'minutes');
 
     final recleanBtn = find.byKey(const Key('dev-reclean-btn'));
-    await tester.scrollUntilVisible(recleanBtn, 200);
+    await tester.scrollUntilVisible(recleanBtn, 200, scrollable: devScroll);
     await tester.ensureVisible(recleanBtn);
     await tester.pumpAndSettle();
     await tester.tap(recleanBtn);

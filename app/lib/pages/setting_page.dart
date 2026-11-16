@@ -414,7 +414,7 @@ class _SettingPageState extends State<SettingPage> {
                   context,
                   keyName: 'set-extensions',
                   label: '扩展能力',
-                  value: '已启用 ${_agent.enabledExtensionCount} 项',
+                  value: '已勾选 ${_agent.enabledExtensionCount} 项',
                   valueKey: const Key('sv-ext'),
                   onTap: () => _openSub(context, 'ext'),
                 ),
