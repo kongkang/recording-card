@@ -1,6 +1,7 @@
 /// 应用外壳 —— 窄屏（顶栏面包屑 + 底栏导航，子页隐藏底栏）与
 /// 宽屏 ≥720px 双栏（左栏 Timeline 常显 + 右栏详情/空态，面包屑停用、面板内返回）。
 library;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -16,6 +17,7 @@ import '../core/theme/tokens.dart';
 import '../services/audio/live_audio_recorder.dart';
 import '../services/audio/recording_status.dart';
 import '../services/auth_service.dart';
+import '../services/health/health_signal_controller.dart';
 import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/model_manager_controller.dart';
 import '../widgets/store_scope.dart';
@@ -39,6 +41,7 @@ class AppShell extends StatefulWidget {
     this.liveAudio,
     this.authService,
     this.photoLibrary,
+    this.healthSignals,
     this.supportsDynamicIslandOverride,
     this.onDeviceCreated,
   });
@@ -52,6 +55,7 @@ class AppShell extends StatefulWidget {
   final LiveAudioRecorder? liveAudio;
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
+  final HealthSignalController? healthSignals;
   final bool? supportsDynamicIslandOverride;
   final void Function(DeviceStore)? onDeviceCreated;
 
@@ -87,8 +91,8 @@ class _AppShellState extends State<AppShell> {
     // 让 store 知道设备在不在：没连卡时下拉不要去取回录音，更不该报"整理中断"。
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
     widget.store.deviceConnected ??= () => _device.isConnected;
-    widget.store.deviceRecording ??=
-        () => _device.isRecording || _device.isPhoneRecording;
+    widget.store.deviceRecording ??= () =>
+        _device.isRecording || _device.isPhoneRecording;
     widget.store.flushActiveRecordingSlice ??= () async {
       if (_liveAudio.isRunning) {
         return _liveAudio.flushActiveSlice();
@@ -101,8 +105,8 @@ class _AppShellState extends State<AppShell> {
       }
       return false;
     };
-    widget.store.deviceHasCameraMedia ??=
-        () => _device.activeCapabilities.hasCameraMedia;
+    widget.store.deviceHasCameraMedia ??= () =>
+        _device.activeCapabilities.hasCameraMedia;
     widget.store.photoLibrary = _photoLib;
     widget.store.photoSyncEnabled ??= () => _agentConfig.photoLinkEnabled;
     widget.store.deviceGateway ??= () => _device.gateway;
@@ -294,6 +298,7 @@ class _AppShellState extends State<AppShell> {
                         agentConfig: _agentConfig,
                         authService: widget.authService,
                         photoLibrary: _photoLib,
+                        healthSignals: widget.healthSignals,
                         supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                       )
                     else
@@ -305,6 +310,7 @@ class _AppShellState extends State<AppShell> {
                         agentConfig: _agentConfig,
                         authService: widget.authService,
                         photoLibrary: _photoLib,
+                        healthSignals: widget.healthSignals,
                         supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                       ),
                     ListenableBuilder(
@@ -394,12 +400,19 @@ class _Header extends StatelessWidget {
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              child: Row(children: [
-                const Icon(Icons.chevron_left, size: 18),
-                Text(store.crumbDest,
+              child: Row(
+                children: [
+                  const Icon(Icons.chevron_left, size: 18),
+                  Text(
+                    store.crumbDest,
                     key: const Key('crumb-dest'),
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-              ]),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
             Expanded(
               child: GestureDetector(
@@ -417,10 +430,11 @@ class _Header extends StatelessWidget {
                 onTap: () => _scrollActiveToTop(context),
                 child: const Align(
                   alignment: Alignment.centerLeft,
-                  child: Text('录音卡',
-                      key: Key('app-title'),
-                      style:
-                          TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                  child: Text(
+                    '录音卡',
+                    key: Key('app-title'),
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                  ),
                 ),
               ),
             ),
@@ -464,13 +478,15 @@ class _BottomNav extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon,
-                    size: 20, color: on ? RCColors.label : RCColors.sec),
+                Icon(icon, size: 20, color: on ? RCColors.label : RCColors.sec),
                 const SizedBox(height: 3),
-                Text(label,
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: on ? RCColors.label : RCColors.sec)),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: on ? RCColors.label : RCColors.sec,
+                  ),
+                ),
               ],
             ),
           ),
@@ -487,10 +503,17 @@ class _BottomNav extends StatelessWidget {
         border: Border(top: BorderSide(color: RCColors.sep)),
       ),
       alignment: Alignment.topCenter,
-      child: Row(children: [
-        item('Timeline', RootTab.timeline, 'nav-timeline', Icons.schedule),
-        item('Setting', RootTab.setting, 'nav-setting', Icons.settings_outlined),
-      ]),
+      child: Row(
+        children: [
+          item('Timeline', RootTab.timeline, 'nav-timeline', Icons.schedule),
+          item(
+            'Setting',
+            RootTab.setting,
+            'nav-setting',
+            Icons.settings_outlined,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -503,6 +526,7 @@ Widget _stackTopPage(
   DeviceStore? device,
   ModelManagerController? modelManager,
   AuthService? authService,
+  HealthSignalController? healthSignals,
 }) {
   final top = store.stackTop;
   if (top == null) return const SizedBox.shrink();
@@ -525,6 +549,7 @@ Widget _stackTopPage(
       device: device,
       modelManager: modelManager,
       authService: authService,
+      healthSignals: healthSignals,
       showPaneBack: wide && store.showPaneBackSetSub,
     );
   }
@@ -544,6 +569,7 @@ class _NarrowLayout extends StatelessWidget {
     this.settings,
     this.authService,
     this.photoLibrary,
+    this.healthSignals,
     this.supportsDynamicIsland = false,
   });
   final DeviceStore device;
@@ -553,6 +579,7 @@ class _NarrowLayout extends StatelessWidget {
   final AgentConfigStore agentConfig;
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
+  final HealthSignalController? healthSignals;
   final bool supportsDynamicIsland;
 
   @override
@@ -584,8 +611,9 @@ class _NarrowLayout extends StatelessWidget {
                   child: Offstage(
                     offstage: store.subStack.isNotEmpty,
                     child: switch (store.rootTab) {
-                      RootTab.timeline =>
-                        TimelinePage(recordingStatus: recordingStatus),
+                      RootTab.timeline => TimelinePage(
+                        recordingStatus: recordingStatus,
+                      ),
                       RootTab.setting => SettingPage(
                         device: device,
                         modelManager: modelManager,
@@ -593,6 +621,7 @@ class _NarrowLayout extends StatelessWidget {
                         agentConfig: agentConfig,
                         authService: authService,
                         photoLibrary: photoLibrary,
+                        healthSignals: healthSignals,
                         supportsDynamicIsland: supportsDynamicIsland,
                       ),
                     },
@@ -613,6 +642,7 @@ class _NarrowLayout extends StatelessWidget {
                         device,
                         modelManager,
                         authService,
+                        healthSignals,
                       ),
                     ),
                   ),
@@ -624,7 +654,8 @@ class _NarrowLayout extends StatelessWidget {
               final key = page.key;
               if (key is ValueKey<String>) {
                 final last = store.subStack.lastOrNull;
-                if (last != null && 'sub-${last.type}-${last.id}' == key.value) {
+                if (last != null &&
+                    'sub-${last.type}-${last.id}' == key.value) {
                   store.onSubPopped();
                 }
               }
@@ -647,6 +678,7 @@ class _NarrowLayout extends StatelessWidget {
     DeviceStore device,
     ModelManagerController? modelManager,
     AuthService? authService,
+    HealthSignalController? healthSignals,
   ) {
     if (e.type == 'sum') {
       return SummaryResultPage(summaryId: e.id, showPaneBack: false);
@@ -664,6 +696,7 @@ class _NarrowLayout extends StatelessWidget {
         device: device,
         modelManager: modelManager,
         authService: authService,
+        healthSignals: healthSignals,
         showPaneBack: false,
       );
     }
@@ -680,6 +713,7 @@ class _WideLayout extends StatelessWidget {
     this.settings,
     this.authService,
     this.photoLibrary,
+    this.healthSignals,
     this.supportsDynamicIsland = false,
   });
   final DeviceStore device;
@@ -689,6 +723,7 @@ class _WideLayout extends StatelessWidget {
   final AgentConfigStore agentConfig;
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
+  final HealthSignalController? healthSignals;
   final bool supportsDynamicIsland;
 
   @override
@@ -720,6 +755,7 @@ class _WideLayout extends StatelessWidget {
                       agentConfig: agentConfig,
                       authService: authService,
                       photoLibrary: photoLibrary,
+                      healthSignals: healthSignals,
                       supportsDynamicIsland: supportsDynamicIsland,
                     ),
                   },
@@ -740,6 +776,7 @@ class _WideLayout extends StatelessWidget {
                             device: device,
                             modelManager: modelManager,
                             authService: authService,
+                            healthSignals: healthSignals,
                           ),
                         )
                       : const _EmptyPane(),
@@ -766,8 +803,10 @@ class _EmptyPane extends StatelessWidget {
         children: [
           Icon(Icons.schedule, size: 40, color: RCColors.ax),
           SizedBox(height: 10),
-          Text('选择左侧记录查看详情',
-              style: TextStyle(fontSize: 13, color: RCColors.sec)),
+          Text(
+            '选择左侧记录查看详情',
+            style: TextStyle(fontSize: 13, color: RCColors.sec),
+          ),
         ],
       ),
     );
