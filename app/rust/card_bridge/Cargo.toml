@@ -12,6 +12,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # 三款自研硬件 + 第三方外设 SDK 均基于 btleplug 0.12 + tokio 1，Cargo 自动复用同一平台蓝牙底座。
 btleplug = "0.12"
 uuid = "1"
+# unified_scan 泵 btleplug CentralEvent 事件流用（btleplug 本身依赖 futures 0.3，lock 不新增版本）。
+futures = "0.3"
 reai-card-sdk = { git = "https://github.com/ReAI-com/reai-card-sdk.git", rev = "3b7a5c59dcaf31ca531fc1cd7de33ffebd7a1bcb" }
 reai-dyj-sdk = { git = "https://github.com/ReAI-com/dyj-v1-sdk.git" }
 reai-board-sdk = { git = "https://github.com/ReAI-com/reai-board-sdk.git", default-features = false, features = ["ble"] }
@@ -22,6 +24,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+# 日志门面：全平台可用（unified_scan 等处的错误落盘）；Android 侧由 android_logger 接到 logcat。
+log = "0.4"
 
 [dev-dependencies]
 uuid = "1"
@@ -29,3 +33,5 @@ uuid = "1"
 # Android：btleplug 的 droidplug 后端需要一个 JavaVM 才能调用系统蓝牙 API。
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.19"
+# 把 Rust log! 输出到 logcat：btleplug/jni 的内部错误（如 JniCall 细节）才能在真机看到。
+android_logger = "0.14"

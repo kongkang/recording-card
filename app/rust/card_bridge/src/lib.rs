@@ -8,7 +8,7 @@
 pub mod amr_transcode;
 pub mod capabilities;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -17,7 +17,8 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
-use btleplug::api::{Central as _, Manager as _, Peripheral as _, ScanFilter};
+use btleplug::api::{Central as _, CentralEvent, Manager as _, Peripheral as _, ScanFilter};
+use futures::StreamExt;
 use capabilities::{classify_ble_advertisement, DeviceKind};
 use reai_ext_sdk::{RecorderDevice, RecorderSdkDriver, SdkDeviceEvent};
 use reai_getseed_sdk::GetSeedSdkDriver;
@@ -172,10 +173,41 @@ static VERSION: &str = concat!(
     " card-v2/0.0.8 dyj-v1/0.1 board-v21/0.3 getseed/0.1 omi/0.1"
 );
 
+/// Android 直连 logcat 的零依赖检查点输出（不经 log crate，绕开 logger 初始化问题）。
+#[cfg(target_os = "android")]
+mod alog {
+    use std::ffi::{c_char, CString};
+
+    #[link(name = "log")]
+    extern "C" {
+        fn __android_log_print(
+            prio: i32,
+            tag: *const c_char,
+            fmt: *const c_char,
+            ...
+        ) -> i32;
+    }
+
+    pub fn info(msg: &str) {
+        let tag = CString::new("card_bridge").unwrap_or_default();
+        let fmt = CString::new("%s").unwrap_or_default();
+        let msg = CString::new(msg.replace('\0', " ")).unwrap_or_default();
+        unsafe {
+            __android_log_print(4, tag.as_ptr(), fmt.as_ptr(), msg.as_ptr());
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+mod alog {
+    pub fn info(_msg: &str) {}
+}
+
 fn state() -> &'static BridgeState {
     STATE.get_or_init(|| BridgeState {
         runtime: tokio::runtime::Builder::new_multi_thread()
             .worker_threads(3)
+            .on_thread_start(ensure_jvm_thread_attached)
             .enable_all()
             .build()
             .expect("tokio runtime"),
@@ -593,26 +625,84 @@ async fn dyj_v1_manager() -> Result<&'static DyjV1Manager, BridgeError> {
 
 /// 单次 BLE 扫描同时发现录音卡 V2 (`DYJV2_`)、点一机 V1 (`DYJ_`) 与语音 AI 键盘 V2.1 (`REAI_VB_`)。
 async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
+    alog::info("unified_scan: begin");
     let adapter = scan_adapter().await?;
+    alog::info("unified_scan: adapter ready");
+    // btleplug 的 CoreBluetooth 后端只在「厂商数据 / 服务数据 / 服务 UUID」三类广播
+    // 事件里回填 properties.rssi（初始 None）；只带本地名的广播（如点一机 V1 `DYJ_*`）
+    // 永远拿不到 RSSI，曾被下方 `None => continue` 误丢——安卓后端无此问题，故出现
+    // 「安卓五类硬件全出、iPhone 只剩 V2」（真机对照实测 2026-11-16）。
+    // 这里订阅扫描窗口内的事件流，记录「本窗口确实广播过」的设备，作为无 RSSI 时的展示依据。
+    let mut scan_events = adapter
+        .events()
+        .await
+        .map_err(|e| BridgeError::from(format!("BLE events failed: {e}")))?;
+    let mut seen_this_scan: HashSet<String> = HashSet::new();
     adapter
         .start_scan(ScanFilter::default())
         .await
-        .map_err(|e| BridgeError::from(format!("BLE start_scan failed: {e}")))?;
-    tokio::time::sleep(duration).await;
+        .map_err(|e| {
+            alog::info(&format!("unified_scan: start_scan 失败 {e:?}"));
+            log::warn!("unified_scan start_scan 失败: {e:?}");
+            BridgeError::from(format!("BLE start_scan failed: {e:?}"))
+        })?;
+    alog::info("unified_scan: scanning…");
+    let pump = async {
+        while let Some(ev) = scan_events.next().await {
+            let id = match ev {
+                CentralEvent::DeviceDiscovered(id)
+                | CentralEvent::DeviceUpdated(id)
+                | CentralEvent::ManufacturerDataAdvertisement { id, .. }
+                | CentralEvent::ServiceDataAdvertisement { id, .. }
+                | CentralEvent::ServicesAdvertisement { id, .. } => id,
+                _ => continue,
+            };
+            seen_this_scan.insert(id.to_string());
+        }
+    };
+    let _ = tokio::time::timeout(duration, pump).await;
+    alog::info(&format!(
+        "unified_scan: sleep done, {} advertised this window",
+        seen_this_scan.len()
+    ));
     let _ = adapter.stop_scan().await;
+    alog::info("unified_scan: stopped");
 
     let peripherals = adapter
         .peripherals()
         .await
         .map_err(|e| BridgeError::from(format!("BLE peripherals failed: {e}")))?;
+    alog::info(&format!("unified_scan: {} peripherals", peripherals.len()));
 
     let mut discovered: Vec<(i16, String, Value)> = Vec::new();
     let mut cache_updates: Vec<(String, CachedScanEntry)> = Vec::new();
 
-    for p in peripherals {
-        let Ok(Some(props)) = p.properties().await else {
-            continue;
+    for (idx, p) in peripherals.into_iter().enumerate() {
+        if idx % 10 == 0 {
+            alog::info(&format!("unified_scan: loop[{idx}] begin"));
+        }
+        // droidplug 的 properties() 是同步 Mutex 锁（真机实测会被 Java 回调线程卡死，
+        // 直接 await 会把 tokio worker 整个挂住）。丢进 blocking 池 + 有界超时，
+        // 单台卡死只损失一个 blocking 线程，扫描列表照常产出。
+        let props = {
+            let p = p.clone();
+            match tokio::time::timeout(
+                Duration::from_millis(400),
+                tokio::task::spawn_blocking(move || {
+                    tokio::runtime::Handle::current().block_on(p.properties())
+                }),
+            )
+            .await
+            {
+                Ok(Ok(Ok(Some(props)))) => props,
+                _ => {
+                    alog::info(&format!("unified_scan: loop[{idx}] properties 卡死/失败，跳过"));
+                    continue;
+                }
+            }
         };
+        // 2026-11-16 调试直连结束，恢复过滤基线：未识别设备直接跳过
+        // （classify 覆盖自有 3 款硬件 + 开启联动的 Get/Omi/Watch）。
         let Some((name, kind, caps)) = classify_ble_advertisement(
             &p.id().to_string(),
             props.local_name.as_deref(),
@@ -621,14 +711,40 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         ) else {
             continue;
         };
-        // CoreBluetooth 本地缓存但未广播的旧外设通常无 RSSI；若已系统连接则仍展示
-        let is_conn = p.is_connected().await.unwrap_or(false);
-        let rssi = match props.rssi {
-            Some(r) => r,
-            None if is_conn => -58,
-            None => continue,
-        };
+        let kind_str = kind.as_str();
+        let display_model = kind.display_model();
+        let caps_json = serde_json::to_value(&caps).unwrap_or(serde_json::Value::Null);
+        // CoreBluetooth 本地缓存但未广播的旧外设通常无 RSSI；若已系统连接则仍展示。
+        // RSSI 0/127 为无效值（CoreBluetooth 偶发上报 127），一并走兜底。
         let id = p.id().to_string();
+        let advertised_now = seen_this_scan.contains(&id);
+        let props_rssi = props.rssi.filter(|r| *r > 0 && *r != 127);
+        let rssi = match props_rssi {
+            Some(r) => r,
+            None if advertised_now => {
+                // 本窗口广播过但无 RSSI 载体事件（纯名称广播）：设备必然在附近，按近距离兜底展示
+                -60
+            }
+            None => {
+                let p = p.clone();
+                let is_conn = match tokio::time::timeout(
+                    Duration::from_millis(400),
+                    tokio::task::spawn_blocking(move || {
+                        tokio::runtime::Handle::current().block_on(p.is_connected())
+                    }),
+                )
+                .await
+                {
+                    Ok(Ok(Ok(v))) => v,
+                    _ => false,
+                };
+                if is_conn {
+                    -58
+                } else {
+                    continue;
+                }
+            }
+        };
         cache_updates.push((
             id.clone(),
             CachedScanEntry {
@@ -643,9 +759,9 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
                 "id": id,
                 "name": name,
                 "rssi": rssi,
-                "deviceKind": kind.as_str(),
-                "displayModel": kind.display_model(),
-                "capabilities": caps,
+                "deviceKind": kind_str,
+                "displayModel": display_model,
+                "capabilities": caps_json,
             }),
         ));
     }
@@ -661,11 +777,13 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
     discovered.sort_by(|a, b| b.0.cmp(&a.0));
     let mut seen_ids = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(discovered.len());
+    alog::info(&format!("unified_scan: classified {} devices", discovered.len()));
     for (_, id, val) in discovered {
         if seen_ids.insert(id) {
             out.push(val);
         }
     }
+    alog::info(&format!("unified_scan: done, {} entries out", out.len()));
     Ok(out)
 }
 
@@ -1604,6 +1722,17 @@ async fn realtime_open_external(
     device: Arc<dyn RecorderDevice>,
     out: Emitter,
 ) -> Result<(), BridgeError> {
+    // 单例语义：已在推流时不再重复订阅/重置停止槽（Dart 侧偶发双开竞态，
+    // 第二个 open 若重装停止槽会让第一个任务失去停止句柄、随后一次 close 整体退订）。
+    if state()
+        .realtime_stop
+        .lock()
+        .expect("realtime lock")
+        .is_some()
+    {
+        out.progress(json!({ "state": "open", "deviceKind": kind.as_str(), "alreadyOpen": true }));
+        return Ok(());
+    }
     let mut audio = device.subscribe_audio();
     device.set_realtime_enabled(true).await?;
     let mut stop_rx = install_realtime_stop();
@@ -2901,21 +3030,59 @@ unsafe fn cstr(ptr: *const c_char) -> String {
 }
 
 #[cfg(target_os = "android")]
+static ANDROID_VM: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// tokio 运行时线程启动钩子：把线程永久附加到 JavaVM。
+/// droidplug 从任意线程调 `global_jvm().get_env()`，未附加线程会 `JniCall(ThreadDetached)`
+/// （Jelly Star 2026-11-16 实测扫描挂此）。任务可在 worker 间迁移，必须按线程附加。
+#[cfg(target_os = "android")]
+fn ensure_jvm_thread_attached() {
+    use std::sync::atomic::Ordering;
+    let raw = ANDROID_VM.load(Ordering::SeqCst) as *mut jni::sys::JavaVM;
+    if raw.is_null() {
+        return;
+    }
+    if let Ok(vm) = unsafe { jni::JavaVM::from_raw(raw) } {
+        let _ = vm.attach_current_thread_permanently();
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn ensure_jvm_thread_attached() {}
+
+#[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn JNI_OnLoad(
     vm: *mut jni::sys::JavaVM,
     _reserved: *mut core::ffi::c_void,
 ) -> jni::sys::jint {
+    // Rust log! → logcat（tag "card_bridge"），btleplug/jni 内部错误由此落盘可见。
+    // 必须显式 with_max_level，否则默认过滤吞掉 info（2026-11-16 Jelly Star 实测）。
+    static LOGGER: std::sync::Once = std::sync::Once::new();
+    LOGGER.call_once(|| {
+        let _ = android_logger::init_once(
+            android_logger::Config::default()
+                .with_tag("card_bridge")
+                .with_max_level(log::LevelFilter::Info),
+        );
+        // panic 默认输出到 /dev/null，真机上等于静默死亡——直通 logcat 才能排障。
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            alog::info(&format!("PANIC: {info}"));
+            default_hook(info);
+        }));
+    });
     let result = std::panic::catch_unwind(|| {
+        ANDROID_VM.store(vm as usize, std::sync::atomic::Ordering::SeqCst);
         let vm = unsafe { jni::JavaVM::from_raw(vm)? };
         let env = vm.attach_current_thread()?;
         btleplug::platform::init(&env)?;
         Ok::<(), Box<dyn std::error::Error>>(())
     });
     match result {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => eprintln!("card_bridge: Android BLE 初始化失败: {error}"),
-        Err(_) => eprintln!("card_bridge: Android BLE 初始化 panic"),
+        Ok(Ok(())) => log::info!("Android BLE 平台初始化成功"),
+        Ok(Err(error)) => log::error!("Android BLE 初始化失败: {error}"),
+        Err(_) => log::error!("Android BLE 初始化 panic"),
     }
     jni::sys::JNI_VERSION_1_6
 }
