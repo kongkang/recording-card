@@ -610,7 +610,13 @@ void main() {
     await tester.tap(find.byKey(const Key('set-photo-import')));
     await tester.pumpAndSettle();
     expect(agentConfig.photoLinkEnabled, isFalse);
-    expect(find.text('已关闭'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('set-photo-import')),
+        matching: find.text('已关闭'),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const Key('set-photo-import')));
     await tester.pumpAndSettle();

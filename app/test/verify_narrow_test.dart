@@ -490,6 +490,8 @@ void main() {
       return (w.decoration! as BoxDecoration).color!;
     }
 
+    await tester.ensureVisible(find.byKey(const Key('sw-0')));
+    await tester.pump();
     final before = trackColor(const Key('sw-0'));
     await tester.tap(find.byKey(const Key('sw-0')));
     await tester.pump(const Duration(milliseconds: 200));

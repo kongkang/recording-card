@@ -9,6 +9,10 @@
 	<array>
 		<string>applinks:app.cn.reai.com</string>
 	</array>
+	<!-- 已有 HealthKit。临床病历需要 com.apple.developer.healthkit.access，
+	     当前描述文件没有这项，不要在这里补。后台静默唤醒还需要门户里的
+	     HealthKit Background Delivery（com.apple.developer.healthkit.background-delivery）；
+	     门户未开通前不要写入该键，否则现有签名会失败。 -->
 	<key>com.apple.developer.healthkit</key>
 	<true/>
 	<key>com.apple.security.application-groups</key>

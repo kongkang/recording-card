@@ -20,6 +20,10 @@ import 'services/ai/summary_generator.dart';
 import 'services/analysis/chat_completion.dart';
 import 'services/audio/recording_status.dart';
 import 'services/auth_service.dart';
+import 'services/health/health_signal_collector.dart';
+import 'services/health/health_signal_controller.dart';
+import 'services/health/health_signal_models.dart';
+import 'services/health/health_signal_store.dart';
 import 'services/net/model_gateway.dart';
 import 'services/polish/slice_polish_service.dart';
 import 'services/recordings/recording_pipeline.dart';
@@ -52,11 +56,7 @@ Future<void> main() async {
 }
 
 class RecordingCardApp extends StatelessWidget {
-  const RecordingCardApp({
-    super.key,
-    required this.settings,
-    this.agentConfig,
-  });
+  const RecordingCardApp({super.key, required this.settings, this.agentConfig});
 
   final SettingsStore settings;
   final AgentConfigStore? agentConfig;
@@ -114,6 +114,7 @@ class _HomeGateState extends State<_HomeGate> {
   late final InstalledSpeechModelProvider _models;
   late final LocalAsrService _asr;
   late final RecordingStore _recordingStore;
+  late final HealthSignalController _healthSignals;
   late final RecordingPipeline _pipeline;
   late final ModelManagerController _modelManager;
   late final SummaryGenerator _summaries;
@@ -143,6 +144,24 @@ class _HomeGateState extends State<_HomeGate> {
     );
     _asr = LocalAsrService();
     _recordingStore = RecordingStore();
+    _healthSignals = HealthSignalController(
+      store: HealthSignalStore(),
+      collector: createPlatformHealthCollector(),
+      config: _agentConfig,
+      recordingSpans: () async {
+        final files = await _recordingStore.loadAll();
+        return [
+          for (final file in files)
+            if (file.startAtMs > 0 && file.durationMs > 0)
+              RecordingSpan(
+                id: file.id,
+                startMs: file.startAtMs,
+                endMs: file.startAtMs + file.durationMs,
+              ),
+        ];
+      },
+    );
+    unawaited(_healthSignals.start());
     final chat = ModelGatewayChatCompletion(_modelGateway);
     _pipeline = RecordingPipeline(
       gateway: _device.gateway,
@@ -248,7 +267,10 @@ class _HomeGateState extends State<_HomeGate> {
 
   Future<void> _continuePendingAfterModels(Future<void>? discoverFuture) async {
     if (discoverFuture != null) {
-      await discoverFuture.timeout(const Duration(seconds: 6), onTimeout: () {});
+      await discoverFuture.timeout(
+        const Duration(seconds: 6),
+        onTimeout: () {},
+      );
     }
     await _store.processPendingRecordings();
   }
@@ -273,6 +295,7 @@ class _HomeGateState extends State<_HomeGate> {
     _device.dispose();
     _store.dispose();
     _recordingStatus.dispose();
+    _healthSignals.dispose();
     _modelManager.dispose();
     if (widget.agentConfig == null) _agentConfig.dispose();
     unawaited(_asr.dispose());
@@ -298,6 +321,7 @@ class _HomeGateState extends State<_HomeGate> {
               settings: _settings,
               agentConfig: _agentConfig,
               authService: _auth,
+              healthSignals: _healthSignals,
             );
           }
           return LoginPage(
