@@ -116,13 +116,35 @@ void main() {
     final e = result.events.single;
     expect(e.dialog, isNotEmpty);
     expect(e.dialog.first.text, '原始一');
-    expect(e.note, '部分内容未润色');
+    expect(e.note, isNull);
   });
 
-  test('时间未校准：事件 note 显示时间未校准', () {
+  test('时间未校准：用户可见事件不再展示错误徽标', () {
     final file = _file();
     file.timeSynced = false;
     final e = SegmentProjection.build([file]).events.single;
-    expect(e.note, '时间未校准');
+    expect(e.note, isNull);
+    expect(e.title, '项目讨论');
+    expect(e.brief, '讨论了排期');
+  });
+
+  test('fallback 清洗未完成：不展示总结未完成，仍给出标题与摘要', () {
+    final file = _file();
+    file.segments.first.fallback = true;
+    final e = SegmentProjection.build([file]).events.single;
+    expect(e.note, isNull);
+    expect(e.note, isNot(equals('总结未完成')));
+    expect(e.title, '项目讨论');
+    expect(e.brief, '讨论了排期');
+    expect(e.brief.contains('总结未完成'), isFalse);
+    expect(e.brief.contains('清洗未完成'), isFalse);
+  });
+
+  test('summary 优先映射到事件卡摘要', () {
+    final file = _file();
+    file.segments.first.brief = '';
+    file.segments.first.summary = '和同事确认了今晚的测试安排。';
+    final e = SegmentProjection.build([file]).events.single;
+    expect(e.brief, '和同事确认了今晚的测试安排。');
   });
 }

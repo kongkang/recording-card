@@ -442,17 +442,19 @@ class SegmentProjection {
                   u.speakerLabel != '未区分')
                 u.speakerLabel!,
         }.toList();
-        final previewTexts = subTurns.isNotEmpty
-            ? subTurns.map((t) => '${t.speakerLabel}: ${t.text}')
-            : subUtterances.map(
-                (u) => '${u.speakerLabel ?? '未区分'}: ${u.text}',
-              );
         final briefSource = subTurns.isNotEmpty
             ? subTurns.map((t) => t.text).take(2).join('；')
             : subUtterances.map((u) => u.text).take(2).join('；');
+        final resolvedBrief = sec.brief.trim().isNotEmpty
+            ? sec.brief.trim()
+            : (sec.summary.trim().isNotEmpty ? sec.summary.trim() : briefSource);
+        final resolvedLong = sec.overview.trim().isNotEmpty
+            ? sec.overview.trim()
+            : (sec.summary.trim().isNotEmpty ? sec.summary.trim() : resolvedBrief);
         final eventId = si == 0
             ? anchor.segment.id
             : '${anchor.segment.id}#t$si';
+        final sliceIds = {for (final u in subUtterances) u.sliceId}.toList();
         final secSeg = SegmentRecord(
           id: eventId,
           sessionId: anchor.segment.sessionId,
@@ -464,19 +466,23 @@ class SegmentProjection {
               : (si == 0 && anchor.segment.title.trim().isNotEmpty
                     ? anchor.segment.title
                     : '话题 ${si + 1}'),
-          brief: sec.brief.trim().isNotEmpty ? sec.brief.trim() : briefSource,
-          longText: previewTexts.join('\n'),
+          brief: resolvedBrief,
+          longText: resolvedLong,
           speakerLabels: speakers,
           speakerCount: speakers.length,
           tags: sec.tags.isNotEmpty ? sec.tags : anchor.segment.tags,
           status: anchor.segment.status,
-          sliceIds: {for (final u in subUtterances) u.sliceId}.toList(),
+          sliceIds: sliceIds,
           turnIds: [for (final t in subTurns) t.id],
           mark: si == 0 ? anchor.segment.mark : null,
           polishStale: effectiveChildren.any(
             (c) => c.segment.polishStale || c.file.polishStale,
           ),
           fallback: effectiveChildren.any((c) => c.segment.fallback),
+          summary: sec.summary.trim().isNotEmpty ? sec.summary.trim() : resolvedBrief,
+          evidenceSliceIds: sec.evidenceSliceIds.isNotEmpty
+              ? sec.evidenceSliceIds
+              : sliceIds,
         );
         final secView = SegmentView(
           segment: secSeg,
@@ -641,6 +647,8 @@ class SegmentProjection {
       required int secEndMs,
       required bool cleanedByCloud,
       String? explicitId,
+      String summary = '',
+      List<String> evidenceSliceIds = const [],
     }) {
       if (turns.isEmpty && utterances.isEmpty) return;
       final subChildren = [
@@ -668,15 +676,22 @@ class SegmentProjection {
               isMeaningfulSpeechText(title))
           ? title.trim()
           : buildReadableFallbackTitle(seedText, fallback: '阶段话题');
+      final preferredBrief = brief.trim().isNotEmpty ? brief.trim() : summary.trim();
       final resolvedBrief =
-          (brief.trim().isNotEmpty &&
-              isMeaningfulSpeechText(brief) &&
-              !_legacyRawTitlePattern.hasMatch(brief.trim()))
-          ? brief.trim()
+          (preferredBrief.isNotEmpty &&
+              isMeaningfulSpeechText(preferredBrief) &&
+              !_legacyRawTitlePattern.hasMatch(preferredBrief))
+          ? preferredBrief
           : _truncateClean(seedText, 68);
-      final resolvedLong =
-          (overview.trim().isNotEmpty && isMeaningfulSpeechText(overview))
+      final preferredOverview = overview.trim().isNotEmpty
           ? overview.trim()
+          : (summary.trim().isNotEmpty ? summary.trim() : resolvedBrief);
+      final resolvedLong =
+          (preferredOverview.isNotEmpty && isMeaningfulSpeechText(preferredOverview))
+          ? preferredOverview
+          : resolvedBrief;
+      final resolvedSummary = summary.trim().isNotEmpty
+          ? summary.trim()
           : resolvedBrief;
 
       final eventId =
@@ -708,6 +723,10 @@ class SegmentProjection {
         fallback: cleanedByCloud
             ? false
             : effectiveChildren.any((c) => c.segment.fallback),
+        summary: resolvedSummary,
+        evidenceSliceIds: evidenceSliceIds.isNotEmpty
+            ? evidenceSliceIds
+            : {for (final u in utterances) u.sliceId}.toList(),
       );
       final secView = SegmentView(
         segment: secSeg,
@@ -788,6 +807,8 @@ class SegmentProjection {
         secStartMs: rawSecStart,
         secEndMs: rawSecEnd,
         cleanedByCloud: sec.cleanedByCloud,
+        summary: sec.summary,
+        evidenceSliceIds: sec.evidenceSliceIds,
       );
     }
 
@@ -810,7 +831,8 @@ class SegmentProjection {
           sectionIndex: rollingRun.sections.length,
           title: buildReadableFallbackTitle(combined, fallback: '最新片段'),
           brief: _truncateClean(combined, 68),
-          overview: '本地实时转写已完成，将在当前清洗周期或停录后与上文一并由云端整理。',
+          overview: _truncateClean(combined, 120),
+          summary: _truncateClean(combined, 68),
           tags: const [],
           turns: tailTurns,
           utterances: trailingUtterances,
@@ -861,7 +883,9 @@ class SegmentProjection {
       final spk = (u.speakerLabel ?? '').trim().isEmpty
           ? '未区分'
           : u.speakerLabel!.trim();
-      if (turns.isNotEmpty && turns.last.speakerLabel == spk) {
+      if (turns.isNotEmpty &&
+          turns.last.speakerLabel == spk &&
+          (u.startMs - turns.last.endMs) < 30 * 1000) {
         final prev = turns.last;
         turns[turns.length - 1] = PolishedTurn(
           id: prev.id,
@@ -938,12 +962,10 @@ class SegmentProjection {
 
     var sumDurationMs = 0;
     var totalGaps = 0;
-    var allTimeSynced = true;
     for (final c in children) {
       final s = c.segment.startAtMs;
       final e = _endMsOf(c);
       if (e > s) sumDurationMs += (e - s);
-      if (!c.file.timeSynced) allTimeSynced = false;
       final mk = (c.segment.mark ?? '').trim();
       final m = _gapMarkPattern.firstMatch(mk);
       if (m != null) {
@@ -961,19 +983,19 @@ class SegmentProjection {
     return RecordEvent(
       id: mergedView.segment.id,
       dayOffset: _dayOffset(earliestStartMs),
-      title: '未识别到语音（已合并 $count 段）',
-      brief: '连续 $count 个切片未检测到有效人声，已自动折叠合并。',
-      longText:
-          '$startHm—$endHm 连续 $count 个录音切片（共 $durStr）均未检测到有效人声，已自动折叠合并；全部原始音频均完整保留，可在详情「原始数据」逐片回听或清理。',
+      title: '未识别到语音',
+      brief: '这段时间没有识别到人声，原始录音仍保留在本机。',
+      longText: '这段时间没有识别到人声，原始录音仍保留在本机，可在详情「原始数据」回听。',
       time: startHm,
       dur: durStr,
       speakers: '无语音',
       mark: totalGaps > 0 ? '流中断 $totalGaps 次' : '',
-      srcMap: '来源 $startHm—$endHm · $count 个切片',
+      srcMap: '来源 $startHm—$endHm',
       dialog: const [],
       raw: const [],
       live: false,
-      note: allTimeSynced ? null : '时间未校准',
+      note: null,
+      mergedSliceCount: count,
     );
   }
 
@@ -1077,15 +1099,9 @@ class SegmentProjection {
         ? '${segment.speakerLabels.join(' / ')}（推测）'
         : (isReadySilent ? '无语音' : '未区分');
 
-    final note = segment.status == SegmentStatus.live
-        ? '正在整理这段录音'
-        : (segment.polishStale || file.polishStale)
-            ? '部分内容未润色'
-            : segment.fallback
-                ? '总结未完成'
-                : !file.timeSynced
-                    ? '时间未校准'
-                    : null;
+    // 用户可见路径不展示「总结未完成 / 清洗未完成 / 时间未校准 / 部分内容未润色」等错误徽标。
+    // 清洗未完成时仍展示已有标题、摘要或原文；成功清洗后 fallback 会被清掉。
+    final note = segment.status == SegmentStatus.live ? '正在整理这段录音' : null;
 
     final rawTitle = segment.title.trim();
     final isSilentOrLegacyTitle =
@@ -1108,12 +1124,14 @@ class SegmentProjection {
                 )
               : rawTitle);
     final rawBrief = segment.brief.trim();
+    final rawSummary = segment.summary.trim();
+    final preferredBrief = rawBrief.isNotEmpty ? rawBrief : rawSummary;
     final brief = isReadySilent
-        ? '本段未检测到有效人声，原始录音已保存在本机。'
-        : (rawBrief.isNotEmpty &&
-                  isMeaningfulSpeechText(rawBrief) &&
-                  !_legacyRawTitlePattern.hasMatch(rawBrief))
-            ? rawBrief
+        ? '这段时间没有识别到人声，原始录音仍保留在本机。'
+        : (preferredBrief.isNotEmpty &&
+                  isMeaningfulSpeechText(preferredBrief) &&
+                  !_legacyRawTitlePattern.hasMatch(preferredBrief))
+            ? preferredBrief
             : segment.status == SegmentStatus.live
                 ? '正在整理这段对话…'
                 : (fallbackSeedText.trim().isNotEmpty
@@ -1121,7 +1139,7 @@ class SegmentProjection {
                       : '尚无摘要');
     final rawLong = segment.longText.trim();
     final longText = isReadySilent
-        ? '本段未检测到有效人声，原始录音已保存在本机，可在详情「原始数据」回听。'
+        ? '这段时间没有识别到人声，原始录音仍保留在本机，可在详情「原始数据」回听。'
         : (rawLong.isNotEmpty &&
                   isMeaningfulSpeechText(rawLong) &&
                   !_legacyRawTitlePattern.hasMatch(rawLong))

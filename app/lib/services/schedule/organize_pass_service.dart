@@ -8,6 +8,7 @@ import 'dart:convert';
 
 import '../analysis/chat_completion.dart';
 import '../segment/fast_topic_segment_agent.dart';
+import '../segment/section_copy.dart';
 
 class OrganizedParagraph {
   const OrganizedParagraph({
@@ -63,6 +64,8 @@ class OrganizedSection {
     required this.endAtMs,
     this.tags = const [],
     this.paragraphs = const [],
+    this.summary = '',
+    this.evidenceSliceIds = const [],
   });
 
   final String anchorId;
@@ -73,6 +76,8 @@ class OrganizedSection {
   final int endAtMs;
   final List<String> tags;
   final List<OrganizedParagraph> paragraphs;
+  final String summary;
+  final List<String> evidenceSliceIds;
 
   Map<String, dynamic> toJson() => {
     'anchorId': anchorId,
@@ -83,30 +88,37 @@ class OrganizedSection {
     'endAtMs': endAtMs,
     if (tags.isNotEmpty) 'tags': tags,
     'paragraphs': [for (final p in paragraphs) p.toJson()],
+    if (summary.isNotEmpty) 'summary': summary,
+    if (evidenceSliceIds.isNotEmpty) 'evidenceSliceIds': evidenceSliceIds,
   };
 
-  factory OrganizedSection.fromJson(Map<String, dynamic> json) =>
-      OrganizedSection(
-        anchorId: '${json['anchorId'] ?? ''}',
-        title: '${json['title'] ?? ''}',
-        brief: '${json['brief'] ?? ''}',
-        overview: '${json['overview'] ?? ''}',
-        startAtMs: (json['startAtMs'] as num?)?.toInt() ?? 0,
-        endAtMs: (json['endAtMs'] as num?)?.toInt() ?? 0,
-        tags: [for (final tag in (json['tags'] as List? ?? const [])) '$tag'],
-        paragraphs: [
-          for (final item in (json['paragraphs'] as List? ?? const []))
-            if (item is Map<String, dynamic>)
-              OrganizedParagraph.fromJson(item)
-            else if (item is Map)
-              OrganizedParagraph.fromJson(Map<String, dynamic>.from(item)),
-        ],
-      );
+  factory OrganizedSection.fromJson(Map<String, dynamic> json) {
+    final copy = SectionCopy.fromModel(json);
+    return OrganizedSection(
+      anchorId: '${json['anchorId'] ?? ''}',
+      title: copy.title.isNotEmpty ? copy.title : '${json['title'] ?? ''}',
+      brief: copy.brief,
+      overview: copy.overview,
+      startAtMs: (json['startAtMs'] as num?)?.toInt() ?? 0,
+      endAtMs: (json['endAtMs'] as num?)?.toInt() ?? 0,
+      tags: [for (final tag in (json['tags'] as List? ?? const [])) '$tag'],
+      paragraphs: [
+        for (final item in (json['paragraphs'] as List? ?? const []))
+          if (item is Map<String, dynamic>)
+            OrganizedParagraph.fromJson(item)
+          else if (item is Map)
+            OrganizedParagraph.fromJson(Map<String, dynamic>.from(item)),
+      ],
+      summary: copy.summary,
+      evidenceSliceIds: SectionCopy.evidenceSliceIds(json),
+    );
+  }
 
   TopicSectionOverride toTopicSection() => TopicSectionOverride(
     title: title,
     brief: brief,
     overview: overview,
+    summary: summary.isNotEmpty ? summary : brief,
     tags: tags,
     startTurnIndex: 0,
     endTurnIndex: paragraphs.isEmpty ? 0 : paragraphs.length - 1,
@@ -114,6 +126,7 @@ class OrganizedSection {
     cleanedByCloud: true,
     startAtMs: startAtMs,
     endAtMs: endAtMs,
+    evidenceSliceIds: evidenceSliceIds,
   );
 }
 
@@ -171,8 +184,10 @@ class OrganizedPayload {
         OrganizedSection(
           anchorId: run.runKey,
           title: section.title,
-          brief: section.brief,
-          overview: section.overview,
+          brief: section.brief.isNotEmpty ? section.brief : section.summary,
+          overview: section.overview.isNotEmpty
+              ? section.overview
+              : (section.summary.isNotEmpty ? section.summary : section.brief),
           tags: section.tags,
           startAtMs: section.startAtMs > 0 ? section.startAtMs : run.startAtMs,
           endAtMs: section.endAtMs > 0 ? section.endAtMs : run.endAtMs,
@@ -186,6 +201,8 @@ class OrganizedPayload {
                 srcUtteranceIds: paragraph.srcUtteranceIds,
               ),
           ],
+          summary: section.summary.isNotEmpty ? section.summary : section.brief,
+          evidenceSliceIds: section.evidenceSliceIds,
         ),
     ];
   }
@@ -328,9 +345,11 @@ $style
 
 你收到的是上一轮已经整理好的阶段，不是原始逐句转写。只依据这些阶段里的事实，不要编造新的事件、人名或结论。
 overlapContext 只用来衔接，不要原样重复输出。
+按内容或时间事件合并阶段，不要按逐词逐句或原始短切片切碎。
 只输出一个 JSON 对象，不要 Markdown：
-{"sections":[{"title":"","brief":"","overview":"","sourceIndexes":[0],"paragraphs":[{"speaker":"","text":""}]}]}
+{"sections":[{"title":"","brief":"","summary":"","overview":"","sourceIndexes":[0],"paragraphs":[{"speaker":"","text":""}]}]}
 sourceIndexes 指向本次 sections 数组的下标。能合并的阶段放进同一个 sourceIndexes。
+若只返回 summary，将同时用作 brief 与 overview。不要把情绪或其他工程标记写进标题、摘要或段落。
 '''
         .trim();
   }
@@ -340,6 +359,7 @@ sourceIndexes 指向本次 sections 数组的下标。能合并的阶段放进�
     'title': section.title,
     'brief': section.brief,
     'overview': section.overview,
+    if (section.summary.isNotEmpty) 'summary': section.summary,
     'paragraphs': [
       for (final paragraph in section.paragraphs)
         {'speaker': paragraph.speaker, 'text': paragraph.text},
@@ -448,10 +468,15 @@ sourceIndexes 指向本次 sections 数组的下标。能合并的阶段放进�
                   if (paragraph.text.trim().isNotEmpty) paragraph,
             ]
           : paragraphs;
-      final title = '${map['title'] ?? ''}'.trim();
-      final brief = '${map['brief'] ?? ''}'.trim();
-      final overview = '${map['overview'] ?? ''}'.trim();
+      final copy = SectionCopy.fromModel(map);
+      final title = copy.title;
+      final brief = copy.brief;
+      final overview = copy.overview;
+      final summary = copy.summary;
       if (title.isEmpty && fallbackParagraphs.isEmpty) continue;
+      final inheritedEvidence = <String>[
+        for (final source in sources) ...source.evidenceSliceIds,
+      ];
       parsed.add(
         OrganizedSection(
           anchorId: anchorId,
@@ -462,6 +487,13 @@ sourceIndexes 指向本次 sections 数组的下标。能合并的阶段放进�
           startAtMs: startAt,
           endAtMs: endAt,
           paragraphs: fallbackParagraphs,
+          summary: summary.isEmpty
+              ? (brief.isEmpty ? sources.first.summary : brief)
+              : summary,
+          evidenceSliceIds: SectionCopy.evidenceSliceIds(
+            map,
+            fallback: inheritedEvidence,
+          ),
         ),
       );
     }

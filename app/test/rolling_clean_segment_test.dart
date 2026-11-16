@@ -217,7 +217,7 @@ void main() {
     // 投影层无需等磁盘重写即刻把两片纯句号幻觉折叠成无语音汇总卡
     final immediateProj = SegmentProjection.build([dirtySilent1, dirtySilent2]);
     expect(immediateProj.events.length, 1);
-    expect(immediateProj.events.single.title, '未识别到语音（已合并 2 段）');
+    expect(immediateProj.events.single.title, '未识别到语音');
 
     await store.save(dirtySilent1);
     await store.save(dirtySilent2);
@@ -681,5 +681,135 @@ void main() {
     expect(store.isRecleaning, isFalse);
     await tester.pump();
     expect(find.byKey(const Key('dev-reclean-status')), findsOneWidget);
+  });
+  test('短轮 payload 透传 emotion，且模型只回 summary 时映射到 brief/overview', () async {
+    final tmp = await Directory.systemTemp.createTemp('rc-emotion-summary-');
+    addTearDown(() => tmp.delete(recursive: true));
+    final store = RecordingStore(
+      root: tmp,
+      jsonStore: JsonStore(store: InMemoryStore()),
+    );
+    final topicStore = TopicSegmentationStore(resolveRoot: store.root);
+    final start = DateTime.now()
+        .subtract(const Duration(minutes: 20))
+        .millisecondsSinceEpoch;
+    final recFile = RecordingFile(
+      deviceName: 'REC_EM.APM',
+      session: 'SES_EM',
+      seq: 1,
+      startAtMs: start,
+      apmPath: '\${tmp.path}/em.apm',
+      createdAtMs: start,
+      durationMs: 8 * 60 * 1000,
+      timeSynced: true,
+      stage: RecordingStage.ready,
+      slices: const [
+        AudioSlice(id: 's1', index: 0, startMs: 0, endMs: 480000, wavPath: ''),
+      ],
+      utterances: const [
+        RawUtterance(
+          id: 's1u0',
+          sliceId: 's1',
+          startMs: 1000,
+          endMs: 8000,
+          text: '今晚测试环境到底能不能用，我有点担心。',
+          emotion: 'SAD',
+          speakerLabel: '说话人 1',
+          speakerCluster: 0,
+          spkConfidence: 0.9,
+        ),
+        RawUtterance(
+          id: 's1u1',
+          sliceId: 's1',
+          startMs: 9000,
+          endMs: 16000,
+          text: '应该可以，先跑登录和支付。',
+          emotion: 'NEUTRAL',
+          speakerLabel: '说话人 2',
+          speakerCluster: 1,
+          spkConfidence: 0.86,
+        ),
+      ],
+      segments: [
+        SegmentRecord(
+          id: 'seg-em-0',
+          sessionId: 'SES_EM',
+          index: 0,
+          startAtMs: start,
+          endAtMs: start + 8 * 60 * 1000,
+          title: '实时切片 #1',
+          brief: '',
+          status: SegmentStatus.closed,
+          sliceIds: const ['s1'],
+        ),
+      ],
+    );
+
+    final chat = _CapturingChat((_, payload, _) {
+      return jsonEncode({
+        'sections': [
+          {
+            'continuesPrevious': false,
+            'title': '下班前同步测试环境',
+            'summary': '和同事确认测试环境今晚可用，用例先跑登录和支付。',
+            'tags': ['测试'],
+            'paragraphs': [
+              {
+                'uStart': 0,
+                'uEnd': 0,
+                'speaker': '说话人 1',
+                'text': '今晚测试环境能不能用，有些担心。',
+              },
+              {
+                'uStart': 1,
+                'uEnd': 1,
+                'speaker': '说话人 2',
+                'text': '应该可以，先跑登录和支付。',
+              },
+            ],
+          },
+        ],
+      });
+    });
+    final cleaner = RollingCleanSegmentService(
+      chat: chat,
+      modelResolver: () => 'qwen-plus',
+      ready: () => true,
+      resolveRoot: store.root,
+    );
+    final res = await cleaner.run([recFile], topicStore: topicStore);
+    expect(res.evaluatedBatches, greaterThan(0));
+    expect(chat.calls, isNotEmpty);
+
+    final utterances = chat.calls.first.userJson['utterances'] as List;
+    expect(utterances, isNotEmpty);
+    expect(utterances.first['emotion'], 'SAD');
+    expect(utterances.first['id'], 's1u0');
+    expect(utterances.first['sliceId'], 's1');
+    expect(utterances[1]['emotion'], 'NEUTRAL');
+    expect(jsonEncode(chat.calls.first.userJson).contains('0.526'), isFalse);
+    expect(chat.calls.first.system, contains('情绪仅供理解'));
+    expect(chat.calls.first.system, contains('按内容/时间事件切卡'));
+
+    // 原始记录仍保留情绪，不被清洗覆盖删除
+    expect(recFile.utterances.first.emotion, 'SAD');
+    expect(recFile.utterances.last.emotion, 'NEUTRAL');
+
+    final proj = SegmentProjection.build([recFile], topicState: res.state);
+    final ev = proj.events.single;
+    expect(ev.title, '下班前同步测试环境');
+    expect(ev.brief, '和同事确认测试环境今晚可用，用例先跑登录和支付。');
+    expect(ev.longText, contains('和同事确认测试环境今晚可用'));
+    expect(ev.brief.contains('SAD'), isFalse);
+    expect(ev.longText.contains('SAD'), isFalse);
+    expect(ev.dialog.any((t) => t.text.contains('SAD') || t.text.contains('情绪')), isFalse);
+    expect(ev.note, isNull);
+    expect(ev.note, isNot(equals('总结未完成')));
+
+    final section = res.state.rollingByAnchor.values.single.sections.single;
+    expect(section.summary, contains('测试环境今晚可用'));
+    expect(section.brief, contains('测试环境今晚可用'));
+    expect(section.overview, contains('测试环境今晚可用'));
+    expect(section.evidenceSliceIds, contains('s1'));
   });
 }

@@ -138,6 +138,7 @@ class TimelinePage extends StatelessWidget {
                         ],
                       )
                     : ListView(
+                        key: const Key('timeline-list'),
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.fromLTRB(
                           22,
@@ -435,7 +436,7 @@ class _TimelineRail extends StatelessWidget {
   }
 }
 
-/// 两行折叠事件卡：标题 / 时间·时长；点开显示 long 摘要 + 说话人 + 详情按钮。
+/// 事件卡：标题、时间、2–3 行生活摘要；点开显示更完整概述与详情按钮。
 class _EventCardView extends StatelessWidget {
   const _EventCardView({required this.event, required this.store});
   final RecordEvent event;
@@ -504,59 +505,38 @@ class _EventCardView extends StatelessWidget {
                                     letterSpacing: -0.1,
                                   ),
                                 ),
-                                if (event.live ||
-                                    (event.note != null &&
-                                        event.note!.isNotEmpty)) ...[
+                                if (event.live) ...[
                                   const SizedBox(height: 6),
-                                  _EventNoteBadge(
-                                    text: event.live ? '整理中' : event.note!,
-                                    live: event.live,
+                                  const _EventNoteBadge(
+                                    text: '整理中',
+                                    live: true,
                                   ),
                                 ],
                                 const SizedBox(height: 4),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 4,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: [
-                                    Text(
-                                      '${event.time} · ${event.dur}',
-                                      key: Key('when-${event.id}'),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: RCColors.sec,
-                                      ),
-                                    ),
-                                    if (event.mergedSliceCount > 1 &&
-                                        event.speakers != '无语音')
-                                      Container(
-                                        key: Key('ev-merge-badge-${event.id}'),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 1.5,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: context.rc.bg,
-                                          borderRadius: BorderRadius.circular(
-                                            999,
-                                          ),
-                                          border: Border.all(
-                                            color: context.rc.sep,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '已合并 ${event.mergedSliceCount} 分片',
-                                          style: TextStyle(
-                                            fontSize: 10.5,
-                                            fontWeight: FontWeight.w500,
-                                            color: context.rc.sec,
-                                          ),
-                                        ),
-                                      ),
-                                  ],
+                                Text(
+                                  '${event.time} · ${event.dur}',
+                                  key: Key('when-${event.id}'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: RCColors.sec,
+                                  ),
                                 ),
+                                if (event.brief.trim().isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    event.brief.trim(),
+                                    key: Key('card-summary-${event.id}'),
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      height: 1.6,
+                                      color: RCColors.ink,
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -570,52 +550,16 @@ class _EventCardView extends StatelessWidget {
                         ],
                       ),
                       if (open) ...[
-                        const SizedBox(height: 10),
-                        Text(
-                          event.longText,
-                          maxLines: 4,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 14, height: 1.55),
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 6,
-                          children: [
-                            Text(
-                              store.displaySpeakersSummary(event),
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: RCColors.sec,
-                              ),
-                            ),
-                            if (event.mark.isNotEmpty)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF0F0EC),
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text(
-                                  event.mark,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: RCColors.ink,
-                                  ),
-                                ),
-                              ),
-                            Text(
-                              event.srcMap,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: RCColors.sec,
-                              ),
-                            ),
-                          ],
-                        ),
+                        if (event.longText.trim().isNotEmpty &&
+                            event.longText.trim() != event.brief.trim()) ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            event.longText,
+                            maxLines: 4,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 14, height: 1.55),
+                          ),
+                        ],
                         if (!event.live) ...[
                           const SizedBox(height: 12),
                           Align(
@@ -872,7 +816,7 @@ class _SyncBanner extends StatelessWidget {
   }
 }
 
-/// 分段状态小徽标：整理中 / 部分未润色 / 时间未校准。
+/// 分段状态小徽标：仅用于正在整理的直播段。
 class _EventNoteBadge extends StatelessWidget {
   const _EventNoteBadge({required this.text, required this.live});
 

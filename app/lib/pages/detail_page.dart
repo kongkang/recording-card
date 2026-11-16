@@ -13,9 +13,9 @@ import 'package:flutter/material.dart';
 
 import '../core/models/record.dart';
 import '../core/models/segment_view.dart';
-import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
+import '../services/recordings/cleaned_dialogue.dart';
 import '../services/transcribe/utterance_builder.dart';
 import '../widgets/photo_preview_sheet.dart';
 import '../widgets/quick_speaker_sheet.dart';
@@ -143,7 +143,7 @@ class _DetailPageState extends State<DetailPage> {
     }
     final refs = store.doneSummariesReferencing(e.id);
     final view = store.segmentViewFor(e.id);
-    final speakerText = store.displaySpeakersSummary(e);
+    final speakerText = lifeSpeakerLabel(store.displaySpeakersSummary(e));
     final dialogOrRaw = e.dialog.isNotEmpty ? e.dialog : e.raw;
     final hasAnyTurns =
         dialogOrRaw.any((t) => t.spk.trim() != '无语音');
@@ -265,15 +265,6 @@ class _DetailPageState extends State<DetailPage> {
             ],
           ),
         ),
-        // 诚实边界：说话人来自推测归类，不能当成已验证身份展示
-        Padding(
-          padding: const EdgeInsets.fromLTRB(22, 10, 22, 0),
-          child: Text(
-            '说话人为推测归类，非已验证身份；长静音已在清洗版中省略。',
-            key: const Key('detail-pnote'),
-            style: TextStyle(fontSize: 11.5, height: 1.5, color: context.rc.sec),
-          ),
-        ),
         if (_tab == 'raw')
           Builder(
             builder: (context) {
@@ -318,26 +309,6 @@ class _DetailPageState extends State<DetailPage> {
               RCDims.pageBottomPad,
             ),
             children: [
-              if (view != null &&
-                  ((e.note != null && e.note!.isNotEmpty) ||
-                      (view.turns.isEmpty && view.utterances.isNotEmpty)))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: Text(
-                    e.note ??
-                        (view.file.polishStale
-                            ? '部分内容未润色，以下为本地原始转写。'
-                            : (view.file.deviceName.startsWith('LIVE_')
-                                  ? '本地实时转写已完成，将在当前清洗周期或停录后自动由云端整理。'
-                                  : '云端润色未完成，以下为本地原始转写。')),
-                    key: const Key('detail-note'),
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: RCColors.sec,
-                      height: 1.5,
-                    ),
-                  ),
-                ),
               ..._buildTab(store, e, refs, view),
             ],
           ),
@@ -483,36 +454,47 @@ class _DetailPageState extends State<DetailPage> {
     RecordEvent e,
     SegmentView? view,
   ) {
-    final lines = <({String spk, String text, String clock, int sortSec})>[];
+    final lines = <({String spk, String text, String clock, int startSec, int endSec})>[];
     if (view != null && view.turns.isNotEmpty) {
       for (final t in view.turns) {
         final ts = view.file.startAtMs + t.startMs;
+        final te = view.file.startAtMs + t.endMs;
         lines.add((
           spk: t.speakerLabel,
           text: t.text,
-          clock: '${_hms(ts)}—${_hms(view.file.startAtMs + t.endMs)}',
-          sortSec: _secOfDayFromEpoch(ts),
+          clock: '${_hms(ts)}—${_hms(te)}',
+          startSec: _secOfDayFromEpoch(ts),
+          endSec: _secOfDayFromEpoch(te),
         ));
       }
     } else if (view != null && view.utterances.isNotEmpty) {
       for (final u in view.utterances) {
         final label = u.speakerLabel ?? '未区分';
         final ts = view.file.startAtMs + u.startMs;
+        final te = view.file.startAtMs + u.endMs;
         lines.add((
           spk: label,
           text: u.text,
-          clock: '${_hms(ts)}—${_hms(view.file.startAtMs + u.endMs)}',
-          sortSec: _secOfDayFromEpoch(ts),
+          clock: '${_hms(ts)}—${_hms(te)}',
+          startSec: _secOfDayFromEpoch(ts),
+          endSec: _secOfDayFromEpoch(te),
         ));
       }
     } else {
       for (final l in e.dialog) {
         final rawClock = l.src.replaceFirst('来源 ', '');
+        final startSec =
+            _secOfDayFromClock(rawClock) ?? _secOfDayFromClock(e.time) ?? 0;
+        final tail = rawClock.contains('—')
+            ? rawClock.split('—').last.trim()
+            : rawClock;
+        final endSec = _secOfDayFromClock(tail) ?? startSec;
         lines.add((
           spk: l.spk,
           text: l.text,
           clock: rawClock,
-          sortSec: _secOfDayFromClock(rawClock) ?? _secOfDayFromClock(e.time) ?? 0,
+          startSec: startSec,
+          endSec: endSec,
         ));
       }
     }
@@ -525,102 +507,88 @@ class _DetailPageState extends State<DetailPage> {
             : (_secOfDayFromClock(p.time) ?? _secOfDayFromClock(e.time) ?? 0),
     ];
 
-    bool hasPhotoBetween(int prevSec, int nextSec) {
-      if (nextSec <= prevSec) return false;
-      for (final pSec in photoSecs) {
-        if (pSec > prevSec && pSec < nextSec) return true;
-      }
-      return false;
-    }
-
     String extractClockHead(String clock) {
       final parts = clock.split('—');
       return parts.first.trim();
     }
 
-    String extractClockTail(String clock) {
-      final parts = clock.split('—');
-      return parts.length > 1 ? parts.last.trim() : parts.first.trim();
+    // 同一说话人连续发言留在同一个气泡；短间隔拼成一段，停顿 >= 30 秒只在气泡内换段。
+    final meaningful = <({String spk, String text, String clock, int startSec, int endSec, int turnIndex})>[];
+    for (var turnIdx = 0; turnIdx < lines.length; turnIdx++) {
+      final l = lines[turnIdx];
+      if (!isMeaningfulSpeechText(l.text)) continue;
+      meaningful.add((
+        spk: l.spk,
+        text: l.text,
+        clock: l.clock,
+        startSec: l.startSec,
+        endSec: l.endSec,
+        turnIndex: turnIdx,
+      ));
     }
+    final bubbles = mergedDlgParagraphs(
+      [
+        for (final l in meaningful)
+          CleanDialogueLine(
+            speakerKey: store.displayTurnSpeaker(
+              e,
+              l.turnIndex,
+              l.spk,
+              includeGuessSuffix: false,
+            ),
+            text: l.text,
+            startSec: l.startSec,
+            endSec: l.endSec,
+            turnIndex: l.turnIndex,
+          ),
+      ],
+      photoSecs: photoSecs,
+    );
+    final lineByIndex = {for (final l in meaningful) l.turnIndex: l};
 
-    // 同一说话人相邻发言在语义展示层自动合并成连贯自然段（不因短切片时间戳切碎），
-    // 若两句之间穿插了现场照片则按时间先后保留分隔。
     final groups = <({
       int firstTurnIndex,
       String rawSpk,
       String displaySpk,
       String avatarSpk,
       bool canQuickName,
-      String text,
+      List<String> paragraphs,
       String startClock,
-      String endClock,
       int sortSec,
-      int lastSortSec,
     })>[];
-
-    for (var turnIdx = 0; turnIdx < lines.length; turnIdx++) {
-      final l = lines[turnIdx];
-      if (!isMeaningfulSpeechText(l.text)) continue;
-      final displaySpk = store.displayTurnSpeaker(e, turnIdx, l.spk);
-      final avatarSpk = store.displayTurnSpeaker(
-        e,
-        turnIdx,
-        l.spk,
-        includeGuessSuffix: false,
+    for (final bubble in bubbles) {
+      final src = lineByIndex[bubble.firstTurnIndex];
+      if (src == null) continue;
+      final displaySpk = lifeSpeakerLabel(
+        store.displayTurnSpeaker(
+          e,
+          bubble.firstTurnIndex,
+          src.spk,
+          includeGuessSuffix: false,
+        ),
       );
-      final canQuickName = l.spk.trim() != '无语音';
-      final startClock = extractClockHead(l.clock);
-      final endClock = extractClockTail(l.clock);
-      final prev = groups.isNotEmpty ? groups.last : null;
-      final canMerge =
-          prev != null &&
-          prev.displaySpk == displaySpk &&
-          !hasPhotoBetween(prev.lastSortSec, l.sortSec);
-      if (canMerge) {
-        groups[groups.length - 1] = (
-          firstTurnIndex: prev.firstTurnIndex,
-          rawSpk: prev.rawSpk,
-          displaySpk: prev.displaySpk,
-          avatarSpk: prev.avatarSpk,
-          canQuickName: prev.canQuickName,
-          text: joinPolishedUtterances(prev.text, l.text.trim()),
-          startClock: prev.startClock,
-          endClock: endClock.isNotEmpty ? endClock : prev.endClock,
-          sortSec: prev.sortSec,
-          lastSortSec: l.sortSec > prev.lastSortSec
-              ? l.sortSec
-              : prev.lastSortSec,
-        );
-      } else {
-        groups.add((
-          firstTurnIndex: turnIdx,
-          rawSpk: l.spk,
-          displaySpk: displaySpk,
-          avatarSpk: avatarSpk,
-          canQuickName: canQuickName,
-          text: l.text.trim(),
-          startClock: startClock,
-          endClock: endClock,
-          sortSec: l.sortSec,
-          lastSortSec: l.sortSec,
-        ));
-      }
+      groups.add((
+        firstTurnIndex: bubble.firstTurnIndex,
+        rawSpk: src.spk,
+        displaySpk: displaySpk,
+        avatarSpk: displaySpk,
+        canQuickName: src.spk.trim() != '无语音',
+        paragraphs: bubble.paragraphs,
+        startClock: extractClockHead(src.clock),
+        sortSec: bubble.startSec,
+      ));
     }
 
     final entries = <({int sortSec, int order, Widget widget})>[];
     var order = 0;
     for (final g in groups) {
-      final clockRange =
-          (g.endClock.isNotEmpty && g.endClock != g.startClock)
-              ? '${g.startClock}—${g.endClock}'
-              : g.startClock;
       void openQuickSheet() => showQuickSpeakerSheet(
         context,
         store: store,
         event: e,
         turnIndex: g.firstTurnIndex,
         rawSpeaker: g.rawSpk,
-        sampleQuote: g.text,
+        sampleQuote: g.paragraphs.join('\n'),
       );
       entries.add((
         sortSec: g.sortSec,
@@ -664,7 +632,7 @@ class _DetailPageState extends State<DetailPage> {
                         children: [
                           Flexible(
                             child: Text(
-                              '${g.displaySpk} · $clockRange',
+                              '${g.displaySpk} · ${g.startClock}',
                               style: TextStyle(
                                 fontSize: 11,
                                 color: g.canQuickName
@@ -689,15 +657,27 @@ class _DetailPageState extends State<DetailPage> {
                     ),
                     const SizedBox(height: 3),
                     Container(
+                      key: Key('turn-para-${e.id}-${g.firstTurnIndex}'),
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: RCColors.card,
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: RCColors.sep),
                       ),
-                      child: Text(
-                        g.text,
-                        style: const TextStyle(fontSize: 14, height: 1.5),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (var i = 0; i < g.paragraphs.length; i++) ...[
+                            if (i > 0) const SizedBox(height: 8),
+                            Text(
+                              g.paragraphs[i],
+                              key: Key(
+                                'turn-para-body-${e.id}-${g.firstTurnIndex}-$i',
+                              ),
+                              style: const TextStyle(fontSize: 14, height: 1.5),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ],
@@ -715,10 +695,10 @@ class _DetailPageState extends State<DetailPage> {
       String? nearestQuote;
       int? bestDelta;
       for (final l in lines) {
-        final d = (l.sortSec - sortSec).abs();
+        final d = (l.startSec - sortSec).abs();
         if (bestDelta == null || d < bestDelta) {
           bestDelta = d;
-          nearestQuote = '${store.displaySpeaker(e, l.spk)}：${l.text}';
+          nearestQuote = '${lifeSpeakerLabel(store.displaySpeaker(e, l.spk, includeGuessSuffix: false))}：${l.text}';
         }
       }
       entries.add((
@@ -734,12 +714,14 @@ class _DetailPageState extends State<DetailPage> {
     });
 
     final overviewText = e.longText.trim();
+    final joinedFirst = groups.isNotEmpty ? groups.first.paragraphs.join('\n') : '';
     final showOverviewCard =
         groups.isNotEmpty &&
         isMeaningfulSpeechText(overviewText) &&
         !overviewText.contains('未检测到有效人声') &&
+        !overviewText.contains('没有识别到人声') &&
         !overviewText.startsWith('已保存本地原始转写') &&
-        !(groups.length == 1 && overviewText == groups.single.text.trim());
+        !(groups.length == 1 && overviewText == joinedFirst.trim());
 
     return [
       if (groups.isEmpty)
@@ -754,9 +736,7 @@ class _DetailPageState extends State<DetailPage> {
               border: Border.all(color: RCColors.sep),
             ),
             child: Text(
-              view != null && view.isMergedSilent
-                  ? '本时段连续 ${view.mergedChildren.length} 个切片未检测到有效人声，原始音频均已保留，可在「原始数据」逐片回听。'
-                  : '本段未检测到有效人声，可在「原始数据」回听原始录音。',
+              '这段时间没有识别到人声，可在「原始数据」回听原始录音。',
               style: const TextStyle(
                 fontSize: 13,
                 height: 1.55,
@@ -950,17 +930,7 @@ class _DetailPageState extends State<DetailPage> {
 
   List<Widget> _rawWidgets(AppStore store, RecordEvent e, SegmentView? view) {
     // 播放器已置顶吸顶在「原始数据」tab 顶部（raw-sticky-player），此处只滚句子流。
-    final widgets = <Widget>[
-      if (view != null && !view.file.timeSynced)
-        const Padding(
-          padding: EdgeInsets.only(bottom: 12),
-          child: Text(
-            '时间未校准：录音时设备时钟未同步，时间为推算值。',
-            key: Key('raw-time-unsynced'),
-            style: TextStyle(fontSize: 12, color: RCColors.danger),
-          ),
-        ),
-    ];
+    final widgets = <Widget>[];
 
     if (view == null) {
       for (var i = 0; i < e.raw.length; i++) {

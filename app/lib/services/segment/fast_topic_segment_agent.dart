@@ -12,6 +12,7 @@ import 'dart:io';
 
 import '../../core/models/recording.dart';
 import '../analysis/chat_completion.dart';
+import 'section_copy.dart';
 
 class TopicParagraph {
   const TopicParagraph({
@@ -67,10 +68,12 @@ class TopicSectionOverride {
     required this.endTurnIndex,
     this.tags = const [],
     this.overview = '',
+    this.summary = '',
     this.paragraphs = const [],
     this.cleanedByCloud = false,
     this.startAtMs = 0,
     this.endAtMs = 0,
+    this.evidenceSliceIds = const [],
   });
 
   final String title;
@@ -79,10 +82,12 @@ class TopicSectionOverride {
   final int endTurnIndex;
   final List<String> tags;
   final String overview;
+  final String summary;
   final List<TopicParagraph> paragraphs;
   final bool cleanedByCloud;
   final int startAtMs;
   final int endAtMs;
+  final List<String> evidenceSliceIds;
 
   TopicSectionOverride copyWith({
     String? title,
@@ -91,10 +96,12 @@ class TopicSectionOverride {
     int? endTurnIndex,
     List<String>? tags,
     String? overview,
+    String? summary,
     List<TopicParagraph>? paragraphs,
     bool? cleanedByCloud,
     int? startAtMs,
     int? endAtMs,
+    List<String>? evidenceSliceIds,
   }) => TopicSectionOverride(
     title: title ?? this.title,
     brief: brief ?? this.brief,
@@ -102,10 +109,12 @@ class TopicSectionOverride {
     endTurnIndex: endTurnIndex ?? this.endTurnIndex,
     tags: tags ?? this.tags,
     overview: overview ?? this.overview,
+    summary: summary ?? this.summary,
     paragraphs: paragraphs ?? this.paragraphs,
     cleanedByCloud: cleanedByCloud ?? this.cleanedByCloud,
     startAtMs: startAtMs ?? this.startAtMs,
     endAtMs: endAtMs ?? this.endAtMs,
+    evidenceSliceIds: evidenceSliceIds ?? this.evidenceSliceIds,
   );
 
   Map<String, dynamic> toJson() => {
@@ -115,10 +124,12 @@ class TopicSectionOverride {
     'e': endTurnIndex,
     if (tags.isNotEmpty) 'tg': tags,
     if (overview.isNotEmpty) 'ov': overview,
+    if (summary.isNotEmpty) 'su': summary,
     if (paragraphs.isNotEmpty) 'p': [for (final p in paragraphs) p.toJson()],
     if (cleanedByCloud) 'cl': true,
     if (startAtMs > 0) 'sa': startAtMs,
     if (endAtMs > 0) 'ea': endAtMs,
+    if (evidenceSliceIds.isNotEmpty) 'ev': evidenceSliceIds,
   };
 
   factory TopicSectionOverride.fromJson(Map<String, dynamic> j) =>
@@ -129,6 +140,7 @@ class TopicSectionOverride {
         endTurnIndex: (j['e'] as num?)?.toInt() ?? 0,
         tags: [for (final t in (j['tg'] as List? ?? const [])) '$t'],
         overview: '${j['ov'] ?? ''}',
+        summary: '${j['su'] ?? j['summary'] ?? ''}',
         paragraphs: [
           for (final p in (j['p'] as List? ?? const []))
             if (p is Map<String, dynamic>) TopicParagraph.fromJson(p),
@@ -136,6 +148,9 @@ class TopicSectionOverride {
         cleanedByCloud: j['cl'] == true,
         startAtMs: (j['sa'] as num?)?.toInt() ?? 0,
         endAtMs: (j['ea'] as num?)?.toInt() ?? 0,
+        evidenceSliceIds: [
+          for (final s in (j['ev'] as List? ?? const [])) '$s',
+        ],
       );
 }
 
@@ -742,8 +757,10 @@ class FastTopicSegmentAgent {
           content:
               '你是录音话题分段助手。给定一段按时间编号 [0..N-1] 的连续对话，'
               '按语义话题切分成 1 到多个连续不重叠的话题段。'
+              '按内容或时间事件切段，不要按逐词逐句或原始短切片切碎。'
               '严格输出 JSON：{"sections":[{"title":"简短标题","brief":"一两句概述",'
-              '"startTurn":0,"endTurn":2,"tags":["关键词"]}]}。'
+              '"summary":"卡片摘要","startTurn":0,"endTurn":2,"tags":["关键词"]}]}。'
+              'summary 可与 brief 相同；若只给 summary，将用作 brief。'
               '所有下标必须连续覆盖 0 到最后一条，不遗漏也不越界，不编造对话中不存在的事实。',
         ),
         ChatMessage(
@@ -770,8 +787,9 @@ class FastTopicSegmentAgent {
     final parsed = <TopicSectionOverride>[];
     for (final item in list) {
       if (item is! Map<String, dynamic>) continue;
-      final title = '${item['title'] ?? ''}'.trim();
-      final brief = '${item['brief'] ?? ''}'.trim();
+      final copy = SectionCopy.fromModel(item);
+      final title = copy.title;
+      final brief = copy.brief;
       final s = ((item['startTurn'] as num?)?.toInt() ?? 0).clamp(
         0,
         turnCount - 1,
@@ -788,6 +806,8 @@ class FastTopicSegmentAgent {
         TopicSectionOverride(
           title: title.isEmpty ? '话题 ${parsed.length + 1}' : title,
           brief: brief,
+          overview: copy.overview,
+          summary: copy.summary,
           startTurnIndex: s,
           endTurnIndex: e,
           tags: tags,
@@ -812,9 +832,12 @@ class FastTopicSegmentAgent {
         TopicSectionOverride(
           title: cur.title,
           brief: cur.brief,
+          overview: cur.overview,
+          summary: cur.summary,
           startTurnIndex: start,
           endTurnIndex: end,
           tags: cur.tags,
+          evidenceSliceIds: cur.evidenceSliceIds,
         ),
       );
       cursor = end + 1;

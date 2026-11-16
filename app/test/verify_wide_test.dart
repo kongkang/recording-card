@@ -85,9 +85,22 @@ void main() {
     expect(find.byKey(const Key('pb-sum')), findsNothing);
 
     // 直接点左侧列表（根级新选择）→ 栈重置单层，无「返回记录」
-    await tester.tap(find.byKey(const Key('card-e4')));
+    final tlScroll = find.descendant(
+      of: find.byKey(const Key('timeline-list')),
+      matching: find.byType(Scrollable),
+    );
+    final cardE4 = find.byKey(const Key('card-e4'));
+    await tester.scrollUntilVisible(cardE4, 300, scrollable: tlScroll);
+    // 底部导航会挡住刚滚进视口底部的卡片中心，再上移一段再点。
+    await tester.drag(tlScroll, const Offset(0, -120));
+    await tester.pumpAndSettle();
+    await tester.tap(cardE4);
     await tester.pump();
-    await tester.tap(find.byKey(const Key('detail-e4')));
+    final detailE4 = find.byKey(const Key('detail-e4'));
+    await tester.scrollUntilVisible(detailE4, 200, scrollable: tlScroll);
+    await tester.drag(tlScroll, const Offset(0, -80));
+    await tester.pumpAndSettle();
+    await tester.tap(detailE4);
     await tester.pump();
     expect(find.text('与运维确认发布窗口'), findsWidgets); // 左栏卡片 + 右栏详情同名
     expect(find.byKey(const Key('pb-detail')), findsNothing);
@@ -115,9 +128,22 @@ void main() {
     );
 
     // 选中 e4 进详情
-    await tester.tap(find.byKey(const Key('card-e4')));
+    final tlScroll = find.descendant(
+      of: find.byKey(const Key('timeline-list')),
+      matching: find.byType(Scrollable),
+    );
+    final cardE4 = find.byKey(const Key('card-e4'));
+    await tester.scrollUntilVisible(cardE4, 300, scrollable: tlScroll);
+    // 底部导航会挡住刚滚进视口底部的卡片中心，再上移一段再点。
+    await tester.drag(tlScroll, const Offset(0, -120));
+    await tester.pumpAndSettle();
+    await tester.tap(cardE4);
     await tester.pump();
-    await tester.tap(find.byKey(const Key('detail-e4')));
+    final detailE4 = find.byKey(const Key('detail-e4'));
+    await tester.scrollUntilVisible(detailE4, 200, scrollable: tlScroll);
+    await tester.drag(tlScroll, const Offset(0, -80));
+    await tester.pumpAndSettle();
+    await tester.tap(detailE4);
     await tester.pump();
     expect(find.text('与运维确认发布窗口'), findsWidgets);
 

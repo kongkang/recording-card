@@ -180,15 +180,15 @@ void main() {
     final earliestMerged = res.events[2];
 
     expect(latestMerged.id, 'seg-LIVE_SES_TODAY_0004.WAV-0');
-    expect(latestMerged.title, '未识别到语音（已合并 2 段）');
+    expect(latestMerged.title, '未识别到语音');
     expect(latestMerged.dur, '2分');
     expect(latestMerged.speakers, '无语音');
-    expect(latestMerged.srcMap, contains('2 个切片'));
+    expect(latestMerged.mergedSliceCount, 2);
 
     expect(middleSpeech.title, '下午三点同步接口联调进展');
 
     expect(earliestMerged.id, 'seg-LIVE_SES_TODAY_0001.WAV-0');
-    expect(earliestMerged.title, '未识别到语音（已合并 2 段）');
+    expect(earliestMerged.title, '未识别到语音');
     expect(earliestMerged.mark, '流中断 3 次', reason: '子切片流断档次数如实累加');
   });
 
@@ -200,11 +200,11 @@ void main() {
 
     final two = SegmentProjection.build([s1, s2]);
     expect(two.events.single.id, 'seg-LIVE_SES_TODAY_0001.WAV-0');
-    expect(two.events.single.title, '未识别到语音（已合并 2 段）');
+    expect(two.events.single.title, '未识别到语音');
 
     final three = SegmentProjection.build([s1, s2, s3]);
     expect(three.events.single.id, 'seg-LIVE_SES_TODAY_0001.WAV-0');
-    expect(three.events.single.title, '未识别到语音（已合并 3 段）');
+    expect(three.events.single.title, '未识别到语音');
     expect(three.events.single.dur, '3分');
     expect(three.mergedIdRedirects['seg-LIVE_SES_TODAY_0002.WAV-0'],
         'seg-LIVE_SES_TODAY_0001.WAV-0');
@@ -307,11 +307,11 @@ void main() {
 
     expect(store.events.length, 1);
     final mergedEvent = store.events.single;
-    expect(mergedEvent.title, '未识别到语音（已合并 2 段）');
+    expect(mergedEvent.title, '未识别到语音');
     expect(store.activePhotosForEvent(mergedEvent).single.id, 'p_child_2');
 
     await pumpShell(tester, store: store);
-    expect(find.text('未识别到语音（已合并 2 段）'), findsOneWidget);
+    expect(find.text('未识别到语音'), findsOneWidget);
 
     // 展开卡片进入详情页
     await tester.tap(find.byKey(Key('card-${mergedEvent.id}')));
