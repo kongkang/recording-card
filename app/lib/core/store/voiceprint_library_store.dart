@@ -19,6 +19,7 @@ class VoiceSampleRecord {
     required this.deviceLabel,
     required this.sceneLabel,
     required this.recordedAtMs,
+    this.audioPath,
   });
 
   final String id;
@@ -27,12 +28,16 @@ class VoiceSampleRecord {
   final String sceneLabel;
   final int recordedAtMs;
 
+  /// 本机可回放的 WAV 路径（单独录音写入；旧数据可能为空）。
+  final String? audioPath;
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'v': [for (final x in embedding) double.parse(x.toStringAsFixed(6))],
     'dev': deviceLabel,
     'scn': sceneLabel,
     'at': recordedAtMs,
+    if (audioPath != null && audioPath!.isNotEmpty) 'wav': audioPath,
   };
 
   factory VoiceSampleRecord.fromJson(Map<String, dynamic> j) =>
@@ -45,6 +50,9 @@ class VoiceSampleRecord {
         deviceLabel: '${j['dev'] ?? '录音卡'}',
         sceneLabel: '${j['scn'] ?? '默认场景'}',
         recordedAtMs: (j['at'] as num?)?.toInt() ?? 0,
+        audioPath: (j['wav'] as String?)?.trim().isEmpty == true
+            ? null
+            : j['wav'] as String?,
       );
 }
 
@@ -251,6 +259,7 @@ class VoiceprintLibraryStore extends ChangeNotifier {
     List<double>? embedding,
     String deviceLabel = '本机麦克风',
     String sceneLabel = '默认场景',
+    String? audioPath,
     int? explicitSlot,
     bool preferFrequentSlot = false,
   }) {
@@ -269,6 +278,7 @@ class VoiceprintLibraryStore extends ChangeNotifier {
         embedding: embedding ?? const [],
         deviceLabel: deviceLabel,
         sceneLabel: sceneLabel,
+        audioPath: audioPath,
       );
     }
 
@@ -281,6 +291,7 @@ class VoiceprintLibraryStore extends ChangeNotifier {
             deviceLabel: deviceLabel,
             sceneLabel: sceneLabel,
             recordedAtMs: nowMs,
+            audioPath: audioPath,
           )
         : null;
 
@@ -339,6 +350,7 @@ class VoiceprintLibraryStore extends ChangeNotifier {
     required List<double> embedding,
     String deviceLabel = '本机麦克风',
     String sceneLabel = '近场本人录入',
+    String? audioPath,
   }) {
     ensureSelfProfile(notify: false);
     final nowMs = _now().millisecondsSinceEpoch;
@@ -353,6 +365,7 @@ class VoiceprintLibraryStore extends ChangeNotifier {
           deviceLabel: deviceLabel,
           sceneLabel: sceneLabel,
           recordedAtMs: nowMs,
+          audioPath: audioPath,
         ),
     ];
     final updated = cur.copyWith(
@@ -364,6 +377,32 @@ class VoiceprintLibraryStore extends ChangeNotifier {
     _persons[idx] = updated;
     notifyListeners();
     return updated;
+  }
+
+  /// 删除某人物下的单条声纹样本；返回被删样本（便于调用方清理本地 WAV）。
+  VoiceSampleRecord? removeSample({
+    required String personId,
+    required String sampleId,
+  }) {
+    final idx = _persons.indexWhere((p) => p.id == personId);
+    if (idx < 0) return null;
+    final cur = _persons[idx];
+    VoiceSampleRecord? removed;
+    final next = <VoiceSampleRecord>[];
+    for (final s in cur.samples) {
+      if (s.id == sampleId) {
+        removed = s;
+      } else {
+        next.add(s);
+      }
+    }
+    if (removed == null) return null;
+    _persons[idx] = cur.copyWith(
+      samples: next,
+      updatedAtMs: _now().millisecondsSinceEpoch,
+    );
+    notifyListeners();
+    return removed;
   }
 
   void _vacateSlot(int slot) {

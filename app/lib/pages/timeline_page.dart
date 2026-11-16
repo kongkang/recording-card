@@ -538,20 +538,21 @@ class _EventCardView extends StatelessWidget {
                                           vertical: 1.5,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: context.rc.bg,
+                                          // 对齐 prototype `.merge-chip`：浅蓝底 + 蓝字
+                                          color: const Color(0xFFEEF5FF),
                                           borderRadius: BorderRadius.circular(
                                             999,
                                           ),
                                           border: Border.all(
-                                            color: context.rc.sep,
+                                            color: const Color(0xFFC2DBFF),
                                           ),
                                         ),
                                         child: Text(
                                           '已合并 ${event.mergedSliceCount} 分片',
-                                          style: TextStyle(
+                                          style: const TextStyle(
                                             fontSize: 10.5,
-                                            fontWeight: FontWeight.w500,
-                                            color: context.rc.sec,
+                                            fontWeight: FontWeight.w600,
+                                            color: Color(0xFF0F4C81),
                                           ),
                                         ),
                                       ),

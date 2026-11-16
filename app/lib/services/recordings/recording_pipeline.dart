@@ -105,6 +105,25 @@ class PipelineException implements Exception {
   String toString() => message;
 }
 
+
+/// 顶部同步状态用的人类可读时间标签（不暴露设备文件名）。
+String pipelineTimeLabel(RecordingFile file) {
+  final ms = file.startAtMs;
+  if (ms > 0) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
+  }
+  // watch_watch-202611161430… 等长文件名兜底：抽出 YYYYMMDDHHmm
+  final m = RegExp(r'(20\d{10,12})').firstMatch(file.deviceName);
+  final raw = m?.group(1);
+  if (raw != null && raw.length >= 12) {
+    return '${raw.substring(8, 10)}:${raw.substring(10, 12)}';
+  }
+  return '这段录音';
+}
+
 class RecordingPipeline {
   RecordingPipeline({
     required this.gateway,
@@ -1203,7 +1222,7 @@ class RecordingPipeline {
       }
       report(
         PipelineStage.downloading,
-        text: '正在取回 ${file.deviceName}（${fileIndex + 1}/$fileTotal）',
+        text: '正在取回 ${pipelineTimeLabel(file)} 这段（${fileIndex + 1}/$fileTotal）',
       );
       file
         ..stage = RecordingStage.downloading
@@ -1220,7 +1239,7 @@ class RecordingPipeline {
     // 2) 转码（16k/16bit/mono）
     final wavPath = file.wavPath ?? '${file.apmPath}.wav';
     if (!await File(wavPath).exists()) {
-      report(PipelineStage.transcoding, text: '正在转换 ${file.deviceName}');
+      report(PipelineStage.transcoding, text: '正在转换 ${pipelineTimeLabel(file)} 这段');
       file
         ..stage = RecordingStage.transcoding
         ..error = null
@@ -1269,7 +1288,7 @@ class RecordingPipeline {
 
     // 4) VAD 切片
     if (file.slices.isEmpty) {
-      report(PipelineStage.slicing, text: '正在切分 ${file.deviceName}');
+      report(PipelineStage.slicing, text: '正在切分 ${pipelineTimeLabel(file)} 这段');
       await engine.loadVad(paths.vadPath);
       final spans = await engine.detectSpeech(wav.toSpeechFloat32());
       final planned = slicePlanner.plan(
@@ -1320,7 +1339,7 @@ class RecordingPipeline {
       await store.save(file);
       report(
         PipelineStage.transcribing,
-        text: '${file.deviceName} 已取回；自动转录已关闭',
+        text: '${pipelineTimeLabel(file)} 这段已取回；自动转录已关闭',
       );
       return didDownload;
     }
@@ -1342,7 +1361,7 @@ class RecordingPipeline {
         PipelineStage.transcribing,
         sliceIndex: i,
         sliceTotal: total,
-        text: '正在转写 ${file.deviceName}（${i + 1}/$total）',
+        text: '正在转写 ${pipelineTimeLabel(file)} 这段（${i + 1}/$total）',
       );
       try {
         final sliceWav = readWavFile(slice.wavPath);
@@ -1378,7 +1397,7 @@ class RecordingPipeline {
 
     // 6) 声纹聚类（关闭开关或模型缺失则统一「未区分」）
     if (file.utterances.isNotEmpty) {
-      report(PipelineStage.labeling, text: '正在整理说话人 ${file.deviceName}');
+      report(PipelineStage.labeling, text: '正在整理 ${pipelineTimeLabel(file)} 说话人');
       if (_speakerLabel && paths.canLabelSpeakers) {
         await _labelSpeakers(file, paths.speakerEmbeddingPath!);
       } else {
@@ -1396,7 +1415,7 @@ class RecordingPipeline {
         polisher != null &&
         polisher.configured &&
         file.utterances.isNotEmpty) {
-      report(PipelineStage.polishing, text: '正在润色 ${file.deviceName}');
+      report(PipelineStage.polishing, text: '正在润色 ${pipelineTimeLabel(file)} 这段');
       file
         ..stage = RecordingStage.polishing
         ..error = null;
@@ -1419,7 +1438,7 @@ class RecordingPipeline {
     // 8) 阶段总结/话题分段：云端失败时由协调器用原文兜底，不丢段
     final segmenter = segments;
     if (segmenter != null && file.segments.isEmpty) {
-      report(PipelineStage.summarizing, text: '正在整理分段 ${file.deviceName}');
+      report(PipelineStage.summarizing, text: '正在整理 ${pipelineTimeLabel(file)} 分段');
       file
         ..stage = RecordingStage.summarizing
         ..error = null;
@@ -1441,7 +1460,7 @@ class RecordingPipeline {
       ..stage = RecordingStage.ready
       ..error = null;
     await store.save(file);
-    report(PipelineStage.done, text: '${file.deviceName} 处理完成');
+    report(PipelineStage.done, text: '${pipelineTimeLabel(file)} 这段处理完成');
     return didDownload;
   }
 

@@ -672,10 +672,14 @@ void main() {
       findsOneWidget,
     );
 
-    // 槽位 1 单独录音增加个人声纹样本
+    // 槽位 1 单独录音增加个人声纹样本（含倒计时弹层）
     await tester.tap(find.byKey(const Key('vp-record-self-btn')));
+    await tester.pump(); // 弹出倒计时
+    expect(find.byKey(const Key('vp-record-countdown-dialog')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
     expect(vp.selfProfile?.samples.length, 1);
+    expect(find.byKey(Key('vp-sample-${vp.selfProfile!.samples.first.id}')), findsOneWidget);
     expect(
       find.descendant(
         of: find.byKey(const Key('vp-slot-1')),
