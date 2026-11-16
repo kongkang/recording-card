@@ -51,6 +51,8 @@ dependencies:
   fluwx: 5.7.7                    # 微信原生登录 OpenSDK 封装（锁 5.7.x：与 reai_mobile_app 已验证版本一致）
   sherpa_onnx: 1.13.3             # 本地语音转写/声纹聚类（离线 SenseVoice + Silero VAD + pyannote）
   audioplayers: ^6.8.1
+  sqflite: ^2.4.2                 # 本机健康与位置样本库（不上传）
+  path: ^1.9.1
 
 # 微信 OpenSDK iOS 侧锁死配置：
 # - no_pay：链接 OpenWeChatSDKNoPay，本 App 无支付业务，不引入微信支付符号（审核与包体）
@@ -83,6 +85,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  sqflite_common_ffi: ^2.3.6      # 单元测试里用 FFI 打开内存/临时 SQLite
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
