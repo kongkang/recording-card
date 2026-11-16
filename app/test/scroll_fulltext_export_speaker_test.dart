@@ -72,6 +72,8 @@ void main() {
       // 打开长记录详情，再次验证子页滚动条与点击顶栏空白回顶、且不会抛出多 Position 断言
       await tester.tap(find.byKey(const Key('card-e1')));
       await tester.pump();
+      await tester.ensureVisible(find.byKey(const Key('detail-e1')));
+      await tester.pump();
       await tester.tap(find.byKey(const Key('detail-e1')));
       await tester.pump();
       final dtScrollable = tester.state<ScrollableState>(
