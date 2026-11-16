@@ -23,6 +23,8 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // 后台被 HealthKit 唤醒时，先挂上观察者，不等 Flutter 引擎。
+    HealthSignalBridge.shared.bootstrap()
     // UIScene 迁移：插件注册移至 didInitializeImplicitFlutterEngine
     //（scene 生命周期下 didFinishLaunching 早于隐式引擎初始化，直接注册失效）
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
@@ -63,6 +65,9 @@ import UIKit
     }
     if let watchRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCWatchHardware") {
       WatchHardwareBridge.shared.register(with: watchRegistrar.messenger())
+    }
+    if let healthRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCHealthSignal") {
+      HealthSignalBridge.shared.register(messenger: healthRegistrar.messenger())
     }
   }
 

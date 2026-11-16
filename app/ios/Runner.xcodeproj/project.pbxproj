@@ -39,6 +39,7 @@
 		EFF522EEECFBB043C44CF98C /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FA1C2EDD4B2BFC7263509CEF /* Pods_RunnerTests.framework */; };
 		F59F8B47EA35E277F8C46242 /* BackgroundAssets.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D10D3EFC92FF071495784E60 /* BackgroundAssets.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
 		WC1122330003000000000001 /* WatchHardwareBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000001 /* WatchHardwareBridge.swift */; };
+		HS1122330003000000000001 /* HealthSignalBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = HS1122330001000000000001 /* HealthSignalBridge.swift */; };
 		WC1122330003000000000002 /* WatchRecorderCore in Frameworks */ = {isa = PBXBuildFile; productRef = WC1122330002000000000011 /* WatchRecorderCore */; };
 		WC1122330003000000000003 /* RecordingCardWatchMainApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000005 /* RecordingCardWatchMainApp.swift */; };
 		WC1122330003000000000004 /* WatchAudioCaptureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000006 /* WatchAudioCaptureEngine.swift */; };
@@ -195,6 +196,7 @@
 		FA1C2EDD4B2BFC7263509CEF /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		FE5C4E913EA6AC2821AD21A9 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		WC1122330001000000000001 /* WatchHardwareBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchHardwareBridge.swift; sourceTree = "<group>"; };
+		HS1122330001000000000001 /* HealthSignalBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HealthSignalBridge.swift; sourceTree = "<group>"; };
 		WC1122330001000000000002 /* Shared.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = Config/Shared.xcconfig; sourceTree = "<group>"; };
 		WC1122330001000000000003 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		WC1122330001000000000004 /* WatchApp.entitlements */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.entitlements; path = WatchApp.entitlements; sourceTree = "<group>"; };
@@ -348,6 +350,7 @@
 				CC01EE02DD33FF44AA55BB66 /* Runner.entitlements */,
 				B00DA80CA6233BE9B872D8BC /* AppleAssetPackBridge.swift */,
 				WC1122330001000000000001 /* WatchHardwareBridge.swift */,
+				HS1122330001000000000001 /* HealthSignalBridge.swift */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
@@ -818,6 +821,7 @@
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				CD9FCA54448E50F54EB23CF7 /* AppleAssetPackBridge.swift in Sources */,
 				WC1122330003000000000001 /* WatchHardwareBridge.swift in Sources */,
+				HS1122330003000000000001 /* HealthSignalBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

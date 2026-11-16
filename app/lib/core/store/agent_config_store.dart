@@ -226,6 +226,9 @@ class AgentConfigStore extends ChangeNotifier {
   bool getSeedLinkEnabled = false;
   bool omiLinkEnabled = false;
 
+  /// 行为与健康信号总开关。默认关闭；打开后才申请系统权限并在本机采集。
+  bool healthSignalEnabled = false;
+
   int get enabledExtHardwareCount =>
       (getSeedLinkEnabled ? 1 : 0) + (omiLinkEnabled ? 1 : 0);
 
@@ -249,6 +252,25 @@ class AgentConfigStore extends ChangeNotifier {
 
   /// 按时间重叠时，回溯包含上一轮末尾的分钟数（1..30）。
   int cleanOverlapMinutes = 3;
+
+  /// 录音切片长度（秒）。只保存配置，不改变现有实时切片、合并或分段。
+  /// 当前流水线仍按代码里的 1 分钟窗口运行。
+  int recordingSliceSeconds = 60;
+
+  /// 健康与位置采样间隔（秒）。默认 60，可在开发者设置调到 300（5 分钟）。
+  int healthSampleIntervalSeconds = 60;
+
+  /// 采样窗口内的相位（秒）。默认 30，让取样落在每分钟后半段。
+  int healthSamplePhaseSeconds = 30;
+
+  int get healthSampleIntervalMs => healthSampleIntervalSeconds * 1000;
+
+  int get healthSamplePhaseMs => healthSamplePhaseSeconds * 1000;
+
+  static String formatSampleWindow(int seconds) {
+    if (seconds > 0 && seconds % 60 == 0) return '${seconds ~/ 60} 分钟';
+    return '$seconds 秒';
+  }
 
   static String formatCleanCycle(int minutes) {
     final clamped = minutes.clamp(1, 180);
@@ -379,6 +401,9 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['omiLinkEnabled'] is bool) {
       omiLinkEnabled = data['omiLinkEnabled'] as bool;
     }
+    if (data['healthSignalEnabled'] is bool) {
+      healthSignalEnabled = data['healthSignalEnabled'] as bool;
+    }
     if (data['model'] is String && (data['model'] as String).isNotEmpty) {
       cloudModel = data['model'] as String;
     }
@@ -408,6 +433,21 @@ class AgentConfigStore extends ChangeNotifier {
       cleanOverlapMinutes = (data['cleanOverlapMinutes'] as num)
           .toInt()
           .clamp(1, 30);
+    }
+    if (data['recordingSliceSeconds'] is num) {
+      recordingSliceSeconds = (data['recordingSliceSeconds'] as num)
+          .toInt()
+          .clamp(60, 600);
+    }
+    if (data['healthSampleIntervalSeconds'] is num) {
+      healthSampleIntervalSeconds = (data['healthSampleIntervalSeconds'] as num)
+          .toInt()
+          .clamp(60, 600);
+    }
+    if (data['healthSamplePhaseSeconds'] is num) {
+      healthSamplePhaseSeconds = (data['healthSamplePhaseSeconds'] as num)
+          .toInt()
+          .clamp(0, healthSampleIntervalSeconds - 1);
     }
     if (data['preset'] is String && (data['preset'] as String).isNotEmpty) {
       presetId = data['preset'] as String;
@@ -486,6 +526,34 @@ class AgentConfigStore extends ChangeNotifier {
 
   Future<void> setOmiLinkEnabled(bool value) async {
     omiLinkEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setHealthSignalEnabled(bool value) async {
+    healthSignalEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setRecordingSliceSeconds(int seconds) async {
+    recordingSliceSeconds = seconds.clamp(60, 600);
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setHealthSampleIntervalSeconds(int seconds) async {
+    healthSampleIntervalSeconds = seconds.clamp(60, 600);
+    if (healthSamplePhaseSeconds >= healthSampleIntervalSeconds) {
+      healthSamplePhaseSeconds = healthSampleIntervalSeconds - 1;
+    }
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setHealthSamplePhaseSeconds(int seconds) async {
+    final maxPhase = healthSampleIntervalSeconds - 1;
+    healthSamplePhaseSeconds = seconds.clamp(0, maxPhase);
     notifyListeners();
     await _save();
   }
@@ -623,6 +691,10 @@ class AgentConfigStore extends ChangeNotifier {
       'watchLinkEnabled': watchLinkEnabled,
       'getSeedLinkEnabled': getSeedLinkEnabled,
       'omiLinkEnabled': omiLinkEnabled,
+      'healthSignalEnabled': healthSignalEnabled,
+      'recordingSliceSeconds': recordingSliceSeconds,
+      'healthSampleIntervalSeconds': healthSampleIntervalSeconds,
+      'healthSamplePhaseSeconds': healthSamplePhaseSeconds,
       'model': cloudModel,
       'pickedModel': userPickedCloudModel,
       'ctx': contextMode,
