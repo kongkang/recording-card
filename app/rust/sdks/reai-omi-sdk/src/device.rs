@@ -330,24 +330,45 @@ impl OmiDevice {
             let mut reassembler = OmiPacketReassembler::default();
             let mut decoder = OmiFrameDecoder::for_codec(codec)
                 .unwrap_or_else(|_| OmiFrameDecoder::Pcm16);
+            let (mut audio_notifs, mut frames_ok, mut decode_err, mut gated) =
+                (0u64, 0u64, 0u64, 0u64);
 
             while let Some(notif) = stream.next().await {
                 let Some(dev) = weak.upgrade() else {
                     break;
                 };
                 if notif.uuid == CHR_OMI_AUDIO_DATA_UUID {
+                    audio_notifs += 1;
+                    if audio_notifs == 1 || audio_notifs % 100 == 0 {
+                        log::info!(
+                            "omi audio: notif#{audio_notifs} len={} ok={frames_ok} err={decode_err} gated={gated}",
+                            notif.value.len()
+                        );
+                    }
                     if !dev.realtime_enabled.load(Ordering::SeqCst) {
+                        gated += 1;
                         continue;
                     }
                     if let Some(frame) = reassembler.push_packet(&notif.value) {
-                        if let Ok(samples) = decoder.decode_frame(&frame.data) {
-                            if !samples.is_empty() {
+                        match decoder.decode_frame(&frame.data) {
+                            Ok(samples) if !samples.is_empty() => {
+                                frames_ok += 1;
                                 let _ = dev.audio_tx.send(SdkAudioChunk {
                                     samples,
                                     sample_rate: 16_000,
                                     channels: 1,
                                     discontinuous: frame.discontinuous,
                                 });
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                decode_err += 1;
+                                if decode_err <= 3 {
+                                    log::info!(
+                                        "omi audio: decode err#{decode_err}: {e} frame_len={}",
+                                        frame.data.len()
+                                    );
+                                }
                             }
                         }
                     }
@@ -620,9 +641,14 @@ impl RecorderDevice for OmiDevice {
             self.peripheral
                 .subscribe(&self.audio_data_char)
                 .await
-                .map_err(|e| SdkError::Ble(format!("订阅 Omi 音频流失败: {e}")))?;
+                .map_err(|e| {
+                    log::info!("omi audio: subscribe 失败: {e}");
+                    SdkError::Ble(format!("订阅 Omi 音频流失败: {e}"))
+                })?;
+            log::info!("omi audio: subscribe OK（等待通知…）");
         } else {
             let _ = self.peripheral.unsubscribe(&self.audio_data_char).await;
+            log::info!("omi audio: unsubscribe");
         }
         self.realtime_enabled.store(enabled, Ordering::SeqCst);
         Ok(())

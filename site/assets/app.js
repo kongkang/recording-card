@@ -88,21 +88,21 @@
       s2Eyebrow: 'IN THE APP',
       s2Title: '不用翻几小时录音，打开就是结论。',
       s2Desc: '点选场景，看看每天说的话怎么变成好用的记录。',
-      t1Title: '按天排好，图文对轨',
-      t1Desc: '一天聊了几场、每场讲了什么，两行看清；当时拍的照片就在对话旁。',
+      t1Title: '按天排好，一眼看清',
+      t1Desc: '一天聊了几场、每场讲了什么，点开两行就看清；未归类的照片随时分拣。',
       t1Cap: '每天的对话按时间清晰排列',
-      t2Title: '结论与待办，一键发给同事',
-      t2Desc: '选几段记录就能汇总要点和行动项，点一下核对原话，直接导出 PDF、Word 或长图。',
-      t2Cap: '重点、待办与原话随时核对',
-      t3Title: '睡前五分钟，轻松回顾今天',
-      t3Desc: '晚上把一天的忙碌写成好读的日记；拿不准的人名问你一句，点一下就记住。',
-      t3Cap: '像读日记一样回顾一天',
-      t4Title: '聊过的人和事，越用越熟',
-      t4Desc: '新声音先标「推测」等你确认；认熟之后，自动帮你串起每个人的偏好与约定。',
-      t4Cap: '人名与过往约定自动串联',
-      t5Title: '睡着时归档，常做的事顺手代劳',
-      t5Desc: '夜里自动把记忆整理归档，偶尔画成几格小漫画；重复两三次的琐事还会提醒你下次交办。',
-      t5Cap: '一觉醒来，记忆已整理归档',
+      t2Title: '谁说了什么，照片就在旁边',
+      t2Desc: '按人分好自然段，人名未确认前标「推测」；当时拍的画面自动贴进那一刻的对话里。',
+      t2Cap: '对话与现场画面按时刻自动对齐',
+      t3Title: '结论、脉络与待办，一键发走',
+      t3Desc: '勾选几段就能汇总概览、逻辑脉络与行动项，随时点回原话核对，支持导出 PDF、Word 或长图。',
+      t3Cap: '概览、逻辑脉络与待办随时核对',
+      t4Title: '原声完整保留，点哪句听哪句',
+      t4Desc: '平时看去掉口头禅的清爽文本；拿不准细节时切到原始记录，点任意一句直接回听当时原声。',
+      t4Cap: '点任意一句，直接回听当时原声',
+      t5Title: '连上就录，锁屏也能看状态',
+      t5Desc: '打开开关即刻省电记录，灵动岛与锁屏实况随时可见；万一断连，手机自动无缝接上。',
+      t5Cap: '硬件状态同步锁屏实况卡片',
       s3Eyebrow: 'BUILT AROUND YOU',
       s3Title: '顺着你的习惯，守住你的隐私。',
       s3Desc: '好的工具不抢戏——需要时稳稳接住，平时几乎感觉不到它的存在。',
@@ -116,8 +116,8 @@
       v3Title: '看的是清爽重点，留的是完整原话',
       v3Desc: '默认展示去掉口头禅的干净记录，同时完整保留原始录音与原词，随时点开重听或删除。',
       v4Tag: 'FLEXIBLE',
-      v4Title: '录音卡、手机、手表都能记',
-      v4Desc: '随身戴卡最无感；没带卡时用手机或抬起 Apple Watch 也能录，自动归进同一条时间轴。',
+      v4Title: '多设备随手记，不锁定硬件',
+      v4Desc: '戴着录音卡最无感；没带卡时用手机、Apple Watch，或手头已有的 Get 笔记卡、Omi 也能连上录，统一归进一条时间轴。',
       s4Eyebrow: 'FAQ',
       s4Title: '常见问题',
       fq1: '整天开着录音，手机会跟着耗电发热吗？',
@@ -127,7 +127,7 @@
       fq3: '飞机上、地下室这种没网的地方能用吗？',
       fa3: '能。录音和转文字都不依赖网络；等回到有网的地方，再自动帮你生成总结。',
       fq4: '还没有实体录音卡，能先用起来吗？',
-      fa4: '可以。App 支持直接用手机录音，也能配合 Apple Watch 抬腕记录；以后拿到录音卡，连上就能接着用。',
+      fa4: '可以。App 支持直接用手机或 Apple Watch 录音（手表轻敲两下就能随手记重点），也兼容 Get 笔记录音卡与 Omi；以后拿到 AI Card 连上就能接着用。',
       fq5: '早鸟登记收费吗？有什么福利？',
       fa5: '完全免费。正式上线后，所有早鸟登记用户都会获赠至少 1 个月会员，并自动参与抽取实体录音卡（价值 ¥1,000）。',
       wlTitle: '抢先预约体验',
@@ -213,21 +213,21 @@
       s2Eyebrow: 'IN THE APP',
       s2Title: 'Skip hours of playback. Open straight to the point.',
       s2Desc: 'Pick a view to see how everyday conversations turn into notes you actually use.',
-      t1Title: 'Organized by day, photos inline',
-      t1Desc: 'See every conversation at a glance in two clean lines, with photos tucked right beside what was said.',
-      t1Cap: 'Your days, cleanly sorted with photos inline',
-      t2Title: 'Takeaways & to-dos, ready to share',
-      t2Desc: 'Select any conversations to pull out key points and next steps, check exact quotes in one tap, or export as PDF, Word, or image.',
-      t2Cap: 'Key points, to-dos, and quotes linked together',
-      t3Title: 'Five minutes at night to wrap up the day',
-      t3Desc: 'Read your day like a story instead of dry minutes. Confirm an unfamiliar name in one tap so it sticks next time.',
-      t3Cap: 'A quick, readable recap before bed',
-      t4Title: 'People and promises, remembered over time',
-      t4Desc: 'New voices stay labeled "Inferred" until you confirm them. Once confirmed, preferences and past agreements stay connected.',
-      t4Cap: 'People, context, and past promises connected',
-      t5Title: 'Sorted overnight, chores handled next time',
-      t5Desc: 'Quietly organizes your day while you sleep — sometimes into a short comic — and spots repeat errands it can help handle.',
-      t5Cap: 'Sorted while you sleep, ready by morning',
+      t1Title: 'Organized by day, clear in two lines',
+      t1Desc: 'See every conversation of the day at a glance, with unsorted photos ready to file anytime.',
+      t1Cap: 'Daily conversations sorted cleanly',
+      t2Title: 'Grouped by speaker, photos right inline',
+      t2Desc: 'Turns are grouped naturally (labeled "Inferred" until confirmed), with photos placed right beside what was said.',
+      t2Cap: 'Dialogue and photos aligned by moment',
+      t3Title: 'Takeaways, structure & to-dos, ready to share',
+      t3Desc: 'Combine any recordings into an overview, logic map, and action items — check source quotes or export PDF, Word, and image.',
+      t3Cap: 'Overview, logic flow, and action items',
+      t4Title: 'Original audio kept, tap any line to replay',
+      t4Desc: 'Read clean notes first, and tap any sentence in the raw view whenever you want to hear the exact recording.',
+      t4Cap: 'Tap any sentence to replay original audio',
+      t5Title: 'Flip to record, visible right on Lock Screen',
+      t5Desc: 'Start low-power capture in one tap with Live Activity on your Lock Screen — and automatic phone failover if disconnected.',
+      t5Cap: 'Card status synced with Lock Screen Live Activity',
       s3Eyebrow: 'BUILT AROUND YOU',
       s3Title: 'Follows your habits. Keeps your privacy.',
       s3Desc: 'Good tools stay out of your way — ready when you need them, invisible when you don\'t.',
@@ -241,8 +241,8 @@
       v3Title: 'Clean takeaways, original words intact',
       v3Desc: 'Read tidy summaries without filler words first, while keeping the raw transcript and original audio whenever you want to double-check or delete.',
       v4Tag: 'FLEXIBLE',
-      v4Title: 'Card, phone, or watch — all one timeline',
-      v4Desc: 'Wear the card for hands-free capture, or record with your phone or Apple Watch anytime. Everything lands in the same place.',
+      v4Title: 'Card, phone, watch, or your own gear',
+      v4Desc: 'Wear the AI Card all day, or record with your phone, Apple Watch, Get Note card, or Omi — everything lands in one timeline.',
       s4Eyebrow: 'FAQ',
       s4Title: 'Frequently asked questions',
       fq1: 'Will recording all day drain or heat up my phone?',
@@ -252,7 +252,7 @@
       fq3: 'Does it work offline, like on a flight or in a basement?',
       fa3: 'Yes. Recording and transcription work completely offline. Once you\'re back online, summaries generate automatically.',
       fq4: 'Can I start using the app before getting the physical card?',
-      fa4: 'Yes. You can record directly with your phone or Apple Watch right away, and connect the AI Card whenever it arrives.',
+      fa4: 'Yes. Record right away with your phone or Apple Watch (double-tap to mark key moments), or connect an existing Get Note card or Omi. Pair your AI Card anytime later.',
       fq5: 'Is the early-bird waitlist free? What do I get?',
       fa5: 'Completely free. Every early-bird signup gets at least 1 month of full membership at launch and enters the giveaway for a physical AI Card (worth ¥1,000).',
       wlTitle: 'Reserve early access',
@@ -553,7 +553,7 @@
   document.getElementById('lang-zh').addEventListener('click', function () { applyLang('zh'); });
   document.getElementById('lang-en').addEventListener('click', function () { applyLang('en'); });
 
-  // 8. Demo Videos（悬停看封面 · 点击播放；同时只播一个）
+  // 8. Scene Videos（悬停看封面 · 点击播放；同时只播一个）
   var demoCards = document.querySelectorAll('.demo-video');
   demoCards.forEach(function (card) {
     var video = card.querySelector('video');
@@ -564,7 +564,10 @@
           var v = other.querySelector('video');
           if (other !== card && v && !v.paused) v.pause();
         });
-        video.play();
+        var playPromise = video.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(function () {});
+        }
       } else {
         video.pause();
       }

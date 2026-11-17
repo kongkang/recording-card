@@ -18,11 +18,13 @@ import '../../core/theme/tokens.dart';
 import '../../services/audio/voice_sample_capture.dart';
 import '../../services/auth/oauth_config.dart';
 import '../../services/auth_service.dart';
+import '../../services/health/health_signal_controller.dart';
 import '../../services/transcribe/asr_models.dart';
 import '../../services/transcribe/model_manager_controller.dart';
 import '../../services/watch/watch_hardware_service.dart';
 import '../../widgets/rc_switch.dart';
 import '../../widgets/store_scope.dart';
+import 'health_signal_body.dart';
 
 class SettingSubPage extends StatelessWidget {
   const SettingSubPage({
@@ -32,6 +34,7 @@ class SettingSubPage extends StatelessWidget {
     this.device,
     this.modelManager,
     this.authService,
+    this.healthSignals,
     this.showPaneBack = false,
     this.standalone = false,
   });
@@ -41,6 +44,7 @@ class SettingSubPage extends StatelessWidget {
   final DeviceStore? device;
   final ModelManagerController? modelManager;
   final AuthService? authService;
+  final HealthSignalController? healthSignals;
   final bool showPaneBack;
   final bool standalone;
 
@@ -54,6 +58,7 @@ class SettingSubPage extends StatelessWidget {
     'island' => '灵动岛与操作按钮',
     'watch' => 'Apple Watch 联动',
     'exthw' => '第三方硬件联动',
+    'health' => '行为与健康信号',
     'dev' => '开发者设置',
     _ => '设置详情',
   };
@@ -150,6 +155,9 @@ class SettingSubPage extends StatelessWidget {
                       config: agentConfig,
                       device: device,
                     ),
+                    'health' => healthSignals == null
+                        ? const Text('采集服务未装载')
+                        : HealthSignalSettingsBody(controller: healthSignals!),
                     'dev' => _DeveloperCleanBody(config: agentConfig),
                     _ => const SizedBox.shrink(),
                   },
@@ -3762,6 +3770,10 @@ class _DeveloperCleanBody extends StatelessWidget {
             ],
           ),
         ),
+        if (config.developerMode) ...[
+          const SizedBox(height: 16),
+          HealthSamplingDevSection(config: config),
+        ],
       ],
       ),
     );

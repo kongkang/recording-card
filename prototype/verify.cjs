@@ -117,9 +117,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('[data-testid="card-daily-1"]', x => x.innerText.includes('昨日睡前日记') && x.innerText.includes('已标注')));
   assert.equal(await p.$eval('[data-testid="tbc-daily"]', x => x.innerText.trim()), 'TBC');
   assert.equal(await p.$('[data-testid="tbc-slice-merge"]'), null);
-  assert.equal(await p.$eval('[data-testid="nc-btn"]', x => x.innerText.trim()), 'NC·1', 'index.html 同步当前版待确认 NC 清单（健康与位置信号）');
-  assert((await p.$$eval('.nc-badge', x => x.length)) >= 1, 'index.html 同步 NC 徽标（行为与健康信号）');
-  assert(await p.$('[data-testid="set-health-location"]'), 'index.html 应包含定位与健康采集 NC 行');
+  assert.equal(await p.$('[data-testid="nc-btn"]'), null, '行为与健康信号已落地，index.html 不再展示 NC 胶囊');
+  assert.equal(await p.$$eval('.nc-badge', x => x.length), 0, 'index.html 不再展示行为与健康信号 NC 徽标');
+  assert(await p.$('[data-testid="set-health-location"]'), 'index.html 应包含定位与健康采集行');
   assert.equal(await p.$('[data-testid="nc-merge-panel"]'), null);
   assert(await p.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
   const sumTop = await p.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
@@ -618,7 +618,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$('#parity-tabs'), null, '清理后不再保留 App 超前对比分页');
   assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 12);
   await p.evaluate(() => closeParity());
-  assert(await p.$('[data-testid="nc-btn"]'), 'NC 待确认清单胶囊保持展示');
+  assert.equal(await p.$('[data-testid="nc-btn"]'), null, '行为与健康信号落地后不再保留 NC 胶囊');
   await p.click('[data-testid="hw-capsule"]');
   assert(await p.$eval('#sheet', x => x.classList.contains('show')));
   // 默认未连接：弹层先给连接引导，自动扫描三款自有硬件（DYJ* / REAI_VB_*），按 RSSI 从强到弱
@@ -938,6 +938,16 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="ai-space-close"]');
   assert(!(await p.$eval('#ai-space', x => x.classList.contains('show'))));
 
+  // 行为与健康信号已从 NC 落地；目标版仍保留圈地与生理信号的 TBC 入口
+  await p.click('[data-testid="nav-setting"]');
+  assert(await p.$('[data-testid="set-health-location"]'));
+  await p.click('[data-testid="set-health-location"]');
+  assert(await p.$('[data-testid="health-sync-switch"]'));
+  assert.equal(await p.$$eval('#p-setsub .nc-badge', x => x.length), 0);
+  assert(await p.$('[data-testid="health-to-territory"]'), '目标版保留 GPS 圈地 TBC');
+  assert(await p.$('[data-testid="health-to-bio-detail"]'), '目标版保留生理信号 TBC');
+  await p.click('[data-testid="crumb-back"]');
+
   // 当前版本基线（current.html · App 已有功能）：零 TBC 标记、保持两栏底栏、无日出 AI 与目标版新项
   const pCur = await b.newPage();
   await pCur.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 });
@@ -951,8 +961,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0, 'current.html 不应出现 TBC 标记');
   assert.deepEqual(await pCur.$$eval('nav.bottom button', e => e.map(x => x.innerText.trim())), ['Timeline', 'Setting'], 'current.html 保持两枚底部 Tab，不含目标版 OS1 入口');
   assert.equal(await pCur.$('[data-testid="nav-ai-sunrise"]'), null);
-  assert.equal(await pCur.$eval('[data-testid="nc-btn"]', x => x.innerText.trim()), 'NC·1', 'current.html 顶栏展示 NC·1 待确认清单');
-  assert((await pCur.$$eval('.nc-badge', x => x.length)) >= 1, 'current.html 展示 NC 徽标（行为与健康信号）');
+  assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, 'current.html 行为与健康信号已落地，不再展示 NC 胶囊');
+  assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0, 'current.html 不再展示 NC 徽标');
   assert.equal(await pCur.$$eval('.card[data-kind="daily"], .card[data-kind="dream"]', x => x.length), 0);
   assert(!(await pCur.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
   // 验证当前版同样具备：总结卡左下图片数、未归类双列正方形详情页与「不归类」按钮、总结正文自然穿插配图
@@ -1004,7 +1014,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="crumb-back"]');
   // 验证「当前版」已落地清单、合并分片徽标及声纹管理（5 常用槽位含我的声音+单独录音 / 不限人数人物库）
   assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·12');
-  assert(await pCur.$('[data-testid="nc-btn"]'), 'NC 待确认清单胶囊保持展示');
+  assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, 'current.html 不再保留 NC 待确认胶囊');
   await pCur.click('[data-testid="parity-btn"]');
   assert(await pCur.$eval('#parity-wrap', x => x.classList.contains('show')));
   assert((await pCur.$$eval('#parity-list .p-item', x => x.length)) >= 9);
@@ -1141,6 +1151,20 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
   await pCur.evaluate(() => { closeSheet(); agCfg.getSeedLinkEnabled = false; agCfg.omiLinkEnabled = false; syncSetSummary(); });
   assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '未开启');
+  // 当前版：定位与健康采集读设计列表，开关可关，且没有目标版的信号联动预览
+  assert.equal(await pCur.$eval('#sv-health', x => x.innerText.trim()), '已开启 · 6 条');
+  await pCur.$eval('[data-testid="set-health-location"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-health-location"]');
+  assert(await pCur.$('[data-testid="health-sync-switch"]'));
+  assert.equal(await pCur.$$eval('[data-testid^="health-item-"]', x => x.length), 6);
+  assert.equal(await pCur.$$eval('#p-setsub .nc-badge', x => x.length), 0);
+  assert.equal(await pCur.$('[data-testid="health-to-territory"]'), null);
+  assert.equal(await pCur.$('[data-testid="health-to-bio-detail"]'), null);
+  await pCur.click('[data-testid="health-sync-switch"]');
+  assert.equal(await pCur.$eval('#sv-health', x => x.innerText.trim()), '已关闭');
+  assert.equal(await pCur.$$eval('[data-testid^="health-item-"]', x => x.length), 6, '关闭开关不清空已展示的设计列表');
+  await pCur.evaluate(() => { agCfg.healthSignalEnabled = true; syncSetSummary(); });
+  await pCur.click('[data-testid="crumb-back"]');
   // 当前版宽屏全页面滚动到底部留白验证（Timeline / Setting / 总结详情 / 记录详情）
   await pCur.setViewport({ width: 900, height: 680, deviceScaleFactor: 2 });
   await pCur.click('[data-testid="nav-timeline"]');

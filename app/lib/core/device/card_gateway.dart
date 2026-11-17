@@ -883,22 +883,24 @@ class RealCardGateway implements CardGateway {
 
   static RealCardGateway? maybe() {
     if (_instance != null) return _instance;
-    ffi.DynamicLibrary lib;
-    try {
-      lib = ffi.DynamicLibrary.process();
-    } catch (_) {
+    // 依次整体尝试「打开 + 符号查找」：
+    // ① 进程符号表——iOS 静态链接直连；
+    // ② libcard_bridge.dylib——iOS 动态库兜底；
+    // ③ libcard_bridge.so——Android jniLibs。注意 System.loadLibrary 走 RTLD_LOCAL，
+    //    dlopen(NULL)(=process()) 看不到它的符号，必须显式 dlopen 拿到库自身句柄。
+    final openers = <ffi.DynamicLibrary Function()>[
+      ffi.DynamicLibrary.process,
+      () => ffi.DynamicLibrary.open('libcard_bridge.dylib'),
+      () => ffi.DynamicLibrary.open('libcard_bridge.so'),
+    ];
+    for (final open in openers) {
       try {
-        lib = ffi.DynamicLibrary.open('libcard_bridge.dylib');
-      } catch (_) {
-        return null;
-      }
+        final lib = open();
+        _instance = RealCardGateway._(lib); // 构造器内完成全部符号查找
+        return _instance;
+      } catch (_) {}
     }
-    try {
-      _instance = RealCardGateway._(lib);
-      return _instance;
-    } catch (_) {
-      return null;
-    }
+    return null;
   }
 
   final _CommandDart _command;
@@ -924,7 +926,11 @@ class RealCardGateway implements CardGateway {
     final completer = Completer<T>();
     final previous = _queue;
     _queue = () async {
-      await previous;
+      // 前一命令的失败不能楔死整条串行链：吸收其结果后再执行当前命令，
+      // 否则一次超时/异常会让后续所有桥命令（含扫描）永久排队（真机 2026-11-16 实测挂死形状）。
+      try {
+        await previous;
+      } catch (_) {}
       try {
         completer.complete(await action());
       } catch (e, st) {
@@ -1109,10 +1115,13 @@ class RealCardGateway implements CardGateway {
         .whereType<Map<String, dynamic>>()
         .map((d) {
           final name = (d['name'] as String?) ?? '录音卡';
-          final kind = DeviceKind.fromCode(
-            d['deviceKind'] as String?,
-            fallbackName: name,
-          );
+          // 调试直连模式：桥对未识别设备上报 deviceKind=unknown，这里按名字兜底、
+          // 兜不上则保持 null（列表无过滤直通展示，连接前再由驱动按需识别）。
+          final rawKind = d['deviceKind'] as String?;
+          final kind =
+              rawKind == 'unknown'
+              ? DeviceKind.fromBleName(name)
+              : DeviceKind.fromCode(rawKind, fallbackName: name);
           final capsMap = d['capabilities'] is Map<String, dynamic>
               ? d['capabilities'] as Map<String, dynamic>
               : null;
@@ -1121,10 +1130,11 @@ class RealCardGateway implements CardGateway {
             name: name,
             rssi: (d['rssi'] as num?)?.toInt(),
             kind: kind,
-            displayModel: (d['displayModel'] as String?) ?? kind.displayModel,
+            displayModel:
+                (d['displayModel'] as String?) ?? kind?.displayModel ?? 'BLE 设备',
             capabilities: HardwareCapabilities.fromJson(
               capsMap,
-              fallbackKind: kind,
+              fallbackKind: kind ?? DeviceKind.cardV2,
             ),
           );
         })
@@ -1158,7 +1168,7 @@ class RealCardGateway implements CardGateway {
 
   @override
   Future<CardDisconnectReport> disconnect() async {
-    final json = await _once('disconnect');
+    final json = await _once('disconnect', null, const Duration(seconds: 15));
     final data = json['data'];
     return CardDisconnectReport.fromJson(
       data is Map<String, dynamic> ? data : const {},
@@ -1167,14 +1177,15 @@ class RealCardGateway implements CardGateway {
 
   @override
   Future<CardSnapshot> snapshot() async {
-    final json = await _once('snapshot');
+    final json = await _once('snapshot', null, const Duration(seconds: 25));
     return CardSnapshot.fromJson(
       (json['data'] as Map<String, dynamic>?) ?? const {},
     );
   }
 
   @override
-  Future<void> record(String action) => _once('record', {'action': action});
+  Future<void> record(String action) =>
+      _once('record', {'action': action}, const Duration(seconds: 20));
 
   @override
   Future<void> startRecording({int? durationSecs}) => _once(
@@ -1182,12 +1193,13 @@ class RealCardGateway implements CardGateway {
     durationSecs != null && durationSecs > 0
         ? {'durationSecs': durationSecs}
         : null,
+    const Duration(seconds: 20),
   );
 
   @override
   Future<void> stopRecording() async {
     try {
-      await _once('record.stop');
+      await _once('record.stop', null, const Duration(seconds: 20));
     } on CardException catch (e) {
       if (e.message.contains('没有录音')) return;
       rethrow;
@@ -1286,7 +1298,7 @@ class RealCardGateway implements CardGateway {
   }
 
   @override
-  Future<void> mark() => _once('mark');
+  Future<void> mark() => _once('mark', null, const Duration(seconds: 15));
 
   @override
   Future<List<CardFile>> files() async {
@@ -1320,7 +1332,8 @@ class RealCardGateway implements CardGateway {
   }
 
   @override
-  Future<void> deleteFile(String name) => _once('deleteFile', {'name': name});
+  Future<void> deleteFile(String name) =>
+      _once('deleteFile', {'name': name}, const Duration(seconds: 20));
 
   @override
   Future<CardAudio> transcode(String apmPath, String wavPath) async {
@@ -1387,7 +1400,7 @@ class RealCardGateway implements CardGateway {
       _once('wifi.open', null, const Duration(seconds: 45));
 
   @override
-  Future<void> closeWifi() => _once('wifi.close');
+  Future<void> closeWifi() => _once('wifi.close', null, const Duration(seconds: 15));
 
   @override
   Future<List<CardWifiCredential>> wifiCredentials({bool passive = false}) async {
@@ -1403,14 +1416,16 @@ class RealCardGateway implements CardGateway {
   }
 
   @override
-  Future<void> forgetWifi(String ssid) => _once('wifi.forget', {'ssid': ssid});
+  Future<void> forgetWifi(String ssid) =>
+      _once('wifi.forget', {'ssid': ssid}, const Duration(seconds: 15));
 
   @override
-  Future<void> startSync() => _once('sync.start');
+  Future<void> startSync() =>
+      _once('sync.start', null, const Duration(seconds: 30));
 
   @override
   Future<CardSyncStatus> syncStatus() async {
-    final json = await _once('sync.status');
+    final json = await _once('sync.status', null, const Duration(seconds: 15));
     return CardSyncStatus.fromJson(
       (json['data'] as Map<String, dynamic>?) ?? const {},
     );
@@ -1440,7 +1455,7 @@ class RealCardGateway implements CardGateway {
   );
 
   @override
-  Future<void> syncTime() => _once('time.sync');
+  Future<void> syncTime() => _once('time.sync', null, const Duration(seconds: 15));
 
   @override
   Future<void> dispose() async {

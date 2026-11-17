@@ -25,6 +25,7 @@ import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/auth_service.dart';
+import '../services/health/health_signal_controller.dart';
 import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/asr_models.dart';
 import '../services/transcribe/model_manager_controller.dart';
@@ -46,6 +47,7 @@ class SettingPage extends StatefulWidget {
     this.agentConfig,
     this.authService,
     this.photoLibrary,
+    this.healthSignals,
     this.supportsDynamicIsland = false,
   });
 
@@ -65,6 +67,9 @@ class SettingPage extends StatefulWidget {
 
   /// 系统相册权限与对齐导入服务（默认走 PhotoKit 通道）。
   final PhotoLibraryService? photoLibrary;
+
+  /// 本机健康与位置采集。未注入时设置行仍可进入，子页提示服务未装载。
+  final HealthSignalController? healthSignals;
 
   /// 是否显示「灵动岛与操作按钮」（仅支持灵动岛机型显示）。
   final bool supportsDynamicIsland;
@@ -120,6 +125,7 @@ class _SettingPageState extends State<SettingPage> {
     }
     widget.authService?.addListener(_onStoreChanged);
     widget.device?.addListener(_onStoreChanged);
+    widget.healthSignals?.addListener(_onStoreChanged);
   }
 
   @override
@@ -128,6 +134,10 @@ class _SettingPageState extends State<SettingPage> {
     if (oldWidget.device != widget.device) {
       oldWidget.device?.removeListener(_onStoreChanged);
       widget.device?.addListener(_onStoreChanged);
+    }
+    if (oldWidget.healthSignals != widget.healthSignals) {
+      oldWidget.healthSignals?.removeListener(_onStoreChanged);
+      widget.healthSignals?.addListener(_onStoreChanged);
     }
   }
 
@@ -187,6 +197,7 @@ class _SettingPageState extends State<SettingPage> {
 
   @override
   void dispose() {
+    widget.healthSignals?.removeListener(_onStoreChanged);
     widget.device?.removeListener(_onStoreChanged);
     widget.authService?.removeListener(_onStoreChanged);
     widget.modelManager?.removeListener(_onStoreChanged);
@@ -224,6 +235,12 @@ class _SettingPageState extends State<SettingPage> {
     return '已开启 $count 款';
   }
 
+  String _healthSummaryText() {
+    final signals = widget.healthSignals;
+    if (signals == null || !_agent.healthSignalEnabled) return '已关闭';
+    return '已开启 · ${signals.sampleCount} 条';
+  }
+
   void _toggle(String key) => unawaited(_store.toggle(key));
 
   void _openSub(BuildContext context, String subId) {
@@ -240,6 +257,7 @@ class _SettingPageState extends State<SettingPage> {
           device: widget.device,
           modelManager: widget.modelManager,
           authService: widget.authService,
+          healthSignals: widget.healthSignals,
           standalone: true,
         ),
       ),
@@ -462,6 +480,19 @@ class _SettingPageState extends State<SettingPage> {
                 ),
               ],
             ),
+            const _GroupTitle(text: '行为与健康信号'),
+            _GroupCard(
+              children: <Widget>[
+                _navRow(
+                  context,
+                  keyName: 'set-health-location',
+                  label: '定位与健康采集',
+                  value: _healthSummaryText(),
+                  valueKey: const Key('sv-health'),
+                  onTap: () => _openSub(context, 'health'),
+                ),
+              ],
+            ),
             for (final group in SettingsStore.groups) ...<Widget>[
               _GroupTitle(text: group.title),
               _GroupCard(
@@ -552,8 +583,7 @@ class _SettingPageState extends State<SettingPage> {
   Widget _photoAutoSyncRow(BuildContext context) {
     final c = context.rc;
     final on = _agent.photoLinkEnabled;
-    final subtitle =
-        _photoImportHint ?? (on ? '已开启 · 每分钟随切片自动对齐' : '已关闭');
+    final subtitle = _photoImportHint ?? (on ? '已开启 · 每分钟随切片自动对齐' : '已关闭');
     return Semantics(
       container: true,
       button: true,
@@ -868,4 +898,3 @@ class _PrivacyEntry extends StatelessWidget {
     );
   }
 }
-
