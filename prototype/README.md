@@ -12,17 +12,25 @@
 | `snapshot-release.mjs` | 发版归档脚本（`node prototype/snapshot-release.mjs vX.Y.Z`） | — | — |
 | `verify.cjs` | Playwright 双版本自动化验收脚本 | — | — |
 
-## 进度标记体系：`NC` vs `TBC`
+## 进度标记体系：`NC` / `TBC` / `F`（2026-11-17）
 
-1. **`NC`（Need Confirm · 当前版本待确认立即开发）**
-   - **含义**：属于本版本范围、已在设计稿完成交互更新，等待 owner 验收确认后**立即安排 `app/` 开发**的功能。
-   - **展示**：在对应控件旁标注 `NC` 徽章（`.nc-badge`），并在顶栏提供 `NC·N` 胶囊（`[data-testid="nc-btn"]`）汇总清单，方便按条点跳核验。
-   - **生命周期**：设计修改期间先更新 `prototype/current.html` 并同步 `prototype/index.html` → owner 在侧边栏确认设计 → 在 Flutter `app/` 开发与测试对齐 → 摘除 `NC` 徽章并从清单移除。**未确认前不提前动 `app/` 对应需求代码**。
+> 完整工作流见仓库根 `AGENTS.md`。**日常设计入口**改为 `../watch/prototype/index.html`（手机 iframe + Watch 同屏，顶栏切当前/目标）。本目录 `current.html`/`index.html` 仅内部真源；手机壳内不再放版本切换；Watch 同用 `NC`/`TBC`/`F`。
 
-2. **`TBC`（To Be Confirmed · 目标版未来规划）**
-   - **含义**：面向未来迭代的演进设计，目前尚未排入当前版本开发。
-   - **展示**：仅允许出现在 `prototype/index.html`（`.tbc-badge`），由顶栏 `目标版·M` 清单统一索引；`prototype/current.html` 严格保持 **0 个 `TBC`**。
-   - **晋升流转**：仅当 owner 明确确认将某项 `TBC` 纳入当前版本时，才从 `index.html` 的 `TBC` 清单移除并同步合入 `current.html`（开发前标为 `NC`，开发完去标）。
+1. **`NC`（Need Confirm / Need to Complete · 当前版本待确认立即开发）**
+   - **含义**：属于本版本范围、已在设计稿完成交互更新，等待 owner 验收确认后**立即安排真机开发**的功能。
+   - **展示**：控件旁 `NC` 徽章（`.nc-badge`）+ 顶栏 `NC·N` 清单（`[data-testid="nc-btn"]`）。
+   - **生命周期**：改 `current.html` 并同步目标版 → owner 确认 → `app/`/`watch/` 开发对齐 → 摘除 `NC`。**未确认前不提前动对应需求代码**。
+
+2. **`TBC`（To Be Continued · 目标版未来规划）**
+   - **含义**：目标版相对当前版的未来差异；尚未排入当前版开发。
+   - **展示**：仅目标版（`.tbc-badge`）+ 顶栏 `目标版·M`；`current.html` 严格 **0 个 `TBC`**。
+   - **晋升**：owner 确认纳入当前版 → 移出 `TBC` → 合入当前版标 `NC` → 开发完去标。
+
+3. **`F`（Fake · 真实 App 不可用 / mock / 假功能）**
+   - 相对真机重评（旧评估作废）：不能用、错误、或仅 mock 的能力必须标 `F`。
+   - **橙 `F`**：入口可点但内部有 fake 子集 → 二级页对应处标 **红 `F`**。
+   - **红 `F`**：整项/整块都是 fake，入口直接红标。
+   - 设计阶段消掉或改成真需求后再转 `NC`；禁止把仍标 `F` 的当已交付。
 
 ## 协作约束
 

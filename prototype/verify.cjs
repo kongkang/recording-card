@@ -559,11 +559,10 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-testid="sw-photo-sync"]', x => x.getAttribute('aria-checked')), 'true');
   assert(await p.$eval('#sv-photo-imp', x => x.innerText.includes('每分钟随切片自动对齐')));
   assert(await p.$eval('[data-testid="set-dynamic-island"]', x => !x.hidden));
-  await p.$eval('[data-testid="toggle-island-hw"]', x => x.scrollIntoView({ block: 'center' }));
-  await p.click('[data-testid="toggle-island-hw"]');
+  // 机型能力预览条已从 Setting 移除（非真机 UI）；改用内部 API 验证灵动岛项显隐
+  await p.evaluate(() => toggleIslandHardware());
   assert(await p.$eval('[data-testid="set-dynamic-island"]', x => x.hidden));
-  await p.$eval('[data-testid="toggle-island-hw"]', x => x.scrollIntoView({ block: 'center' }));
-  await p.click('[data-testid="toggle-island-hw"]');
+  await p.evaluate(() => toggleIslandHardware());
   assert(await p.$eval('[data-testid="set-dynamic-island"]', x => !x.hidden));
   await p.click('[data-testid="set-prompts"]');
   await p.click('[data-testid="preset-meeting"]');
@@ -613,7 +612,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(!(await p.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$$eval('.app-badge', x => x.length), 0, '已对齐项不应再展示不同步/已同步对比徽标');
-  await p.click('[data-testid="parity-btn"]');
+  // 版本切换已迁到 watch 宿主顶栏；手机页内无 ver-seg / parity-btn
+  assert.equal(await p.$('.ver-seg'), null, '手机顶栏不应再出现当前版|目标版切换');
+  await p.evaluate(() => openParity());
   assert(await p.$eval('#parity-wrap', x => x.classList.contains('show')));
   assert.equal(await p.$('#parity-tabs'), null, '清理后不再保留 App 超前对比分页');
   assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 12);
@@ -955,9 +956,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   pCur.on('request', r => { if (!r.url().startsWith('file:') && !r.url().startsWith('data:')) net.push(r.url()) });
   await pCur.goto(pathToFileURL(path.join(__dirname, 'current.html')).href);
   assert.equal(await pCur.title(), '当前版本 · 录音卡（App 已有功能）');
-  assert.equal(await pCur.$eval('[data-testid="parity-btn"]', x => x.innerText.trim()), '当前版');
-  assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.getAttribute('href')), 'index.html');
-  assert.equal(await p.$eval('[data-testid="ver-switch-current"]', x => x.getAttribute('href')), 'current.html');
+  assert.equal(await pCur.$('.ver-seg'), null, 'current.html 顶栏不应再出现版本切换（改由 watch 宿主）');
+  assert.equal(await p.$('.ver-seg'), null, 'index.html 顶栏不应再出现版本切换');
   assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0, 'current.html 不应出现 TBC 标记');
   assert.deepEqual(await pCur.$$eval('nav.bottom button', e => e.map(x => x.innerText.trim())), ['Timeline', 'Setting'], 'current.html 保持两枚底部 Tab，不含目标版 OS1 入口');
   assert.equal(await pCur.$('[data-testid="nav-ai-sunrise"]'), null);
@@ -1013,9 +1013,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.evaluate(() => diClockHTML(3660).includes('di-colon') && diClockHTML(3661).includes('dim')));
   await pCur.click('[data-testid="crumb-back"]');
   // 验证「当前版」已落地清单、合并分片徽标及声纹管理（5 常用槽位含我的声音+单独录音 / 不限人数人物库）
-  assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·12');
   assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, 'current.html 不再保留 NC 待确认胶囊');
-  await pCur.click('[data-testid="parity-btn"]');
+  await pCur.evaluate(() => openParity());
   assert(await pCur.$eval('#parity-wrap', x => x.classList.contains('show')));
   assert((await pCur.$$eval('#parity-list .p-item', x => x.length)) >= 9);
   await pCur.evaluate(() => closeParity());

@@ -10,7 +10,7 @@ PR #7 已把正式版基线（真实 BLE 桥 + OAuth + 模型网关 + 真实总�
 
 - `app/` 是 Flutter 工程（主交付物）。分层参考 reai_mobile_app：`lib/core`（config/models/theme/store）、`lib/services`、`lib/pages`、`lib/widgets`；测试在 `app/test/`。
 - **验收基准 = `prototype/verify.cjs`**（以脚本最新 checks 为准）：Flutter 侧在 `app/test/` 建等价 widget/集成测试逐项对齐，命名与检查项一一对应。
-- `prototype/` 采用**双版本单服务设计真源 + 发版快照**机制（`current.html` 当前版本 + `index.html` 目标版本 + `releases/vX.Y.Z.html` 发版快照）：严格遵循下方「设计稿双版本、进度标记（`NC`/`TBC`）与发版快照开发规范」节。
+- `prototype/` 采用**双版本单服务设计真源 + 发版快照**机制（当前版 / 目标版 + 快照）；正推进手机·Watch·iPad 合一宿主。严格遵循下方「设计稿双版本、多端合一、进度标记（`NC`/`TBC`/`F`）」节。
 - 本阶段硬约束：
   - **本地转写优先**（SenseVoice + Silero VAD）；云端只做润色与分段总结。模型缺失时音频入库排队，**不上传音频、不编造文本**。
   - 说话人由声纹聚类推测，展示「说话人 1 / 2（推测）」；低置信度「未区分」，**不断言真实身份**。
@@ -33,16 +33,49 @@ PR #7 已把正式版基线（真实 BLE 桥 + OAuth + 模型网关 + 真实总�
 - `docs/gen-evidence/`——原型生成证据链（Flash prompt/output 留存、核验结果、旧版验收脚本）。**只读**。
 - `archive/`——旧版原型与截图。**只读**，不作为当前结构的依据。
 
-## 设计稿双版本、进度标记（NC / TBC）与发版快照开发规范（2026-11-15 更新）
+## 设计稿双版本、多端合一、进度标记（NC / TBC / F）与发版快照开发规范（2026-11-17 更新）
 
-1. **同一服务、两页隔离存储**：同一本地 HTTP 服务运行 `prototype/`，顶栏 `[ 当前版 | 目标版 ]` 互跳（有快照时显示 `▾`）；存储键严格隔离（`current.html`: `rc-*-cur-v1`，`index.html`: `rc-*-v1`，快照按版本隔离）。
-2. **双进度标签语义（`NC` vs `TBC`）**：
-   - **`NC`（Need Confirm · 当前版待确认开发）**：当前版本已完成原型设计、待 owner 确认后立即在 `app/` 开发的功能；先改 `current.html` 并同步 `index.html`，标注 `NC` 与顶栏 `NC·N` 清单，获确认前不提前改 `app/`，开发对齐测试后摘除 `NC`。
-   - **`TBC`（To Be Confirmed · 目标版未来规划）**：仅存在于 `index.html` 的未来演进能力，标注 `TBC` 并列入顶栏 `目标版·M` 清单；`current.html` 严格保持零 `TBC`。
-3. **归属与同步流程**：
-   - **默认归属当前版**：owner 未明示仅改目标版时，默认改 `current.html` 并同步 `index.html`（若与既有 `TBC` 冲突先确认方案）；推进 PR 合并确认设计后开发 `app/`、对齐 `app/test/`、去标 `NC`、跑 `verify.cjs` 与 `flutter analyze && flutter test` 后合并。
-   - **仅改目标版 / 功能晋升**：明确仅规划未来时只改 `index.html` 与 `TBC` 清单；owner 确认晋升某 `TBC` 后，移出 `TBC` 清单并合入 `current.html`（开发前标 `NC`，落地后去标）。
-4. **发版快照（`prototype/releases/vX.Y.Z.html`）**：对外发版打 Tag 时运行 `node prototype/snapshot-release.mjs vX.Y.Z` 归档只读快照并写入 `RELEASE_SNAPSHOTS`（日常 PR 不生成）。
+### 目标形态（2026-11-17 owner 定稿）
+
+- **唯一对外设计宿主**：`watch/prototype/index.html`（`http://127.0.0.1:18924/watch/prototype/index.html`）。日常评审/打标只看这一页：**手机 + Apple Watch 同屏**（后续再加 iPad）；宿主顶栏 Tab 切换 **当前版 / 目标版**。
+- **手机双 HTML 降为内部真源**：`prototype/current.html` / `prototype/index.html` 仅作 iframe 内部引用与自动化验收，**不作为日常设计入口**；手机壳内顶栏**禁止**再放「当前版|目标版」切换（那不属于真实 App UI）。
+- **Watch 与手机同一套进度标记**：`NC` / `TBC` / `F`（橙入口 / 红子项）同样打在手表界面控件旁；宿主顶栏汇总清单。
+- **双版本语义不变**：
+  - **当前版**：与真实 App **界面 1:1**；下一步开发挂 **`NC`**。
+  - **目标版**：= 当前全集 + 未来差异挂 **`TBC`**；当前更新则目标同步（`目标 ⊇ 当前`）。
+- **原型调试控件不属于真机**：如 Setting「机型能力预览」切换条等，应从设计展示中移除（或仅留开发后门，不进 1:1 界面）。
+
+### 标记语义
+
+1. **`NC`（Need Confirm / Need to Complete · 当前版待确认后立即开发）**
+   - 当前版本已完成原型、待 owner 确认后马上在 `app/` / `watch/` 落地的功能。
+   - 展示：控件旁 `NC` 徽章 + 顶栏 `NC·N` 清单；**未确认前不提前改真实 App 对应需求代码**。
+   - 生命周期：改设计 → owner 确认 → 开发并对齐测试 → **摘除 `NC`**。
+
+2. **`TBC`（To Be Continued · 目标版未来规划）**
+   - 仅允许出现在目标版；与当前版不一样的地方才标 `TBC`。
+   - `current` **严格零 `TBC`**。
+   - 晋升：owner 确认纳入当前版 → 移出 `TBC` → 合入当前版并标 `NC` → 开发完去标。
+
+3. **`F`（Fake · 设计稿有、真实 App 不可用 / mock / 假功能）**
+   - 重新评估时，凡真实 App 里不能用、错误、或仅 mock/假数据的能力，必须在设计稿标 `F`（旧评估过期后需重评，不以历史结论为准）。
+   - **橙色 `F`**：入口整体尚可点，但内部有子集是 fake；进入二级页后，在对应子项处标 **红色 `F`**。
+   - **红色 `F`**：整个选项 / 整块能力都是 fake，入口处直接红标。
+   - 工作目标：设计阶段就把 `F` **改成真设计或删除**，再转为 `NC`；**禁止**把仍标 `F` 的能力当已交付。
+
+### 工作流（设计确认 → 开发）
+
+1. 对照真实 App，把设计稿界面拉到 **与真机一致**；能力真假重评并打好 `NC` / `TBC` / `F`。
+2. owner 确认设计稿后：只把已确认的 **`NC` 开发到真机**；`F` 先在设计稿消掉或改成真需求再转 `NC`。
+3. 逐步把目标版 **`TBC` → `NC` → 真机实现**；当前版有更新则目标版同步更新。
+4. 验收：`prototype/verify.cjs`（及合并后的多端验收）+ `flutter analyze && flutter test`；真机与设计不一致视为未完成。
+
+### 双页与存储
+
+1. **预览入口**：优先打开 `watch/prototype/index.html`；仓库根 `python3 -m http.server 18924 --bind 127.0.0.1`。当前/目标切换只在宿主顶栏，不在手机 iframe 内顶栏。
+2. **存储隔离**：`current` 键 `rc-*-cur-v1`，目标 `rc-*-v1`，快照按版本隔离（宿主切换 iframe src 时沿用）。
+3. **归属**：owner 未明示仅改目标版时，默认改 `current.html` 并同步 `index.html`（与既有 `TBC` 冲突先确认）；仅规划未来时只改目标版与 `TBC` 清单；Watch UI 改动写在 `watch/prototype/index.html`，并保持标记体系一致。
+4. **发版快照**：对外发版打 Tag 时运行 `node prototype/snapshot-release.mjs vX.Y.Z`（日常 PR 不生成）。
 
 ## 设计基线（2026-11-07 v3 打磨）
 
