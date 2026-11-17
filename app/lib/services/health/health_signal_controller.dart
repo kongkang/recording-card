@@ -275,12 +275,17 @@ class HealthSignalController extends ChangeNotifier
     }
   }
 
-  Future<void> _pushActive(bool active) {
-    return collector.setCollectionActive(
-      active: active,
-      intervalMs: config.healthSampleIntervalMs,
-      phaseMs: config.healthSamplePhaseMs,
-    );
+  Future<void> _pushActive(bool active) async {
+    try {
+      await collector.setCollectionActive(
+        active: active,
+        intervalMs: config.healthSampleIntervalMs,
+        phaseMs: config.healthSamplePhaseMs,
+      );
+    } on Object catch (error) {
+      statusMessage = '健康采集通道不可用：$error';
+      _notify();
+    }
   }
 
   Future<HealthPlatformInfo> _guardInfo() async {

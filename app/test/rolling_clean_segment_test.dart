@@ -205,10 +205,9 @@ void main() {
       ],
     );
 
-    // 投影层无需等磁盘重写即刻把两片纯句号幻觉折叠成无语音汇总卡
+    // 投影层：纯句号幻觉视为无语音，Timeline 不展示
     final immediateProj = SegmentProjection.build([dirtySilent1, dirtySilent2]);
-    expect(immediateProj.events.length, 1);
-    expect(immediateProj.events.single.title, '未识别到语音（已合并 2 段）');
+    expect(immediateProj.events, isEmpty);
 
     await store.save(dirtySilent1);
     await store.save(dirtySilent2);

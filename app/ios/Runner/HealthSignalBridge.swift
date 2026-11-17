@@ -308,9 +308,13 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
     let status = locationManager.authorizationStatus
     guard status == .authorizedAlways || status == .authorizedWhenInUse else { return }
     if status == .authorizedAlways {
-      locationManager.allowsBackgroundLocationUpdates = true
-      locationManager.pausesLocationUpdatesAutomatically = false
-      locationManager.startMonitoringSignificantLocationChanges()
+      // 缺 UIBackgroundModes=location 时写 allowsBackgroundLocationUpdates 会直接闪退。
+      let modes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? []
+      if modes.contains("location") {
+        locationManager.allowsBackgroundLocationUpdates = true
+        locationManager.pausesLocationUpdatesAutomatically = false
+        locationManager.startMonitoringSignificantLocationChanges()
+      }
     }
     if phaseTimer == nil {
       startPhaseTimer(intervalMs: storedIntervalMs(), phaseMs: storedPhaseMs())

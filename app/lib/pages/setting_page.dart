@@ -504,7 +504,7 @@ class _SettingPageState extends State<SettingPage> {
                       const _RowDivider(),
                       _switchRow(context, index++, group.items[i]),
                     ],
-                  if (group.title == '录音') ...<Widget>[
+                  if (group.title == '同步') ...<Widget>[
                     const _RowDivider(),
                     _photoAutoSyncRow(context),
                   ],

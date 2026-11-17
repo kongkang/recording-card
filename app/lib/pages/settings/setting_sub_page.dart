@@ -707,35 +707,6 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
                 ),
               ),
               const SizedBox(height: 20),
-              const _SubSectionLabel('上下文组织策略'),
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: c.card,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: c.sep),
-                ),
-                child: Column(
-                  children: [
-                    _ctxRow(
-                      context,
-                      keyName: 'ctx-full-day',
-                      mode: 'full_day',
-                      title: '全天连续单上下文（推荐）',
-                      subtitle: '同一天录音共享上下文线程，增量追加新切片。',
-                    ),
-                    Divider(height: 1, thickness: 1, color: c.sep),
-                    _ctxRow(
-                      context,
-                      keyName: 'ctx-scoped',
-                      mode: 'scoped',
-                      title: '仅所选记录独立上下文',
-                      subtitle: '每次仅发送当前勾选记录文本。',
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
               const _SubSectionLabel('输出采样温度（Temperature）'),
               const SizedBox(height: 8),
               Row(
@@ -807,61 +778,6 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
                   const SizedBox(height: 3),
                   Text(
                     m.desc,
-                    style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 10),
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Icon(
-                selected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_off,
-                size: 20,
-                color: selected ? RCColors.ok : c.ax,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _ctxRow(
-    BuildContext context, {
-    required String keyName,
-    required String mode,
-    required String title,
-    required String subtitle,
-  }) {
-    final c = context.rc;
-    final selected = config.contextMode == mode;
-    return InkWell(
-      key: Key(keyName),
-      onTap: () => unawaited(config.setContextMode(mode)),
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600,
-                      color: c.label,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
                     style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
                   ),
                 ],
@@ -1162,8 +1078,6 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
                 _stageTab(context, 'summary', '总结生成'),
                 const SizedBox(width: 8),
                 _stageTab(context, 'polish', '口语清洗与分段'),
-                const SizedBox(width: 8),
-                _stageTab(context, 'dream', '日报与做梦'),
               ],
             ),
             const SizedBox(height: 10),
@@ -1192,7 +1106,7 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
             Text(
               _tab == 'summary'
                   ? '注：JSON 结构化字段契约由客户端自动追加在末尾，无需手动编写 JSON 格式说明。'
-                  : '注：本环节提示词已持久化保存，将在全天自动合并与日报/做梦管线启用时生效。',
+                  : '注：口语清洗提示词已接入本机清洗管线，保存后立即生效。',
               style: TextStyle(fontSize: 11.5, color: c.sec),
             ),
             if (_savedToast) ...[
@@ -1313,18 +1227,6 @@ class _AgentExtensionsBody extends StatelessWidget {
 
   final AgentConfigStore config;
 
-  Future<void> _showAddMcpDialog(BuildContext context) async {
-    final result = await showDialog<({String name, String endpoint})>(
-      context: context,
-      builder: (_) => const _AddMcpDialog(),
-    );
-    if (result != null) {
-      await config.addCustomMcp(
-        name: result.name,
-        endpoint: result.endpoint,
-      );
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1338,15 +1240,12 @@ class _AgentExtensionsBody extends StatelessWidget {
         final tools = config.allExtensions
             .where((e) => e.kind == 'tool')
             .toList();
-        final mcps = config.allExtensions
-            .where((e) => e.kind == 'mcp')
-            .toList();
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '为录音 Agent 按需挂载整理技能（Skills）、本地上下文工具（Tools）与外部协议连接器（MCP）。已启用的 Skills 会自动注入总结生成指令。',
+              '为录音 Agent 按需挂载整理技能（Skills）与本地上下文工具（Tools）。已启用的 Skills 会自动注入总结生成指令。',
               style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
             ),
             const SizedBox(height: 16),
@@ -1357,33 +1256,6 @@ class _AgentExtensionsBody extends StatelessWidget {
             const _SubSectionLabel('Tools · 本地工具能力'),
             const SizedBox(height: 8),
             _extGroupCard(context, tools),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                const Expanded(child: _SubSectionLabel('MCP · 外部上下文服务')),
-                TextButton.icon(
-                  key: const Key('mcp-add-btn'),
-                  onPressed: () => _showAddMcpDialog(context),
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('添加服务'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: c.label,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    textStyle: const TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            _extGroupCard(context, mcps),
           ],
         );
       },
@@ -1456,67 +1328,6 @@ class _AgentExtensionsBody extends StatelessWidget {
   }
 }
 
-class _AddMcpDialog extends StatefulWidget {
-  const _AddMcpDialog();
-
-  @override
-  State<_AddMcpDialog> createState() => _AddMcpDialogState();
-}
-
-class _AddMcpDialogState extends State<_AddMcpDialog> {
-  final TextEditingController _nameCtrl = TextEditingController();
-  final TextEditingController _urlCtrl = TextEditingController();
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _urlCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('添加 MCP 服务'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            key: const Key('mcp-name-input'),
-            controller: _nameCtrl,
-            decoration: const InputDecoration(
-              labelText: '服务名称',
-              hintText: '例如：Notion 团队空间',
-            ),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            key: const Key('mcp-url-input'),
-            controller: _urlCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Endpoint / URI',
-              hintText: 'https://mcp.example.com/sse',
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          key: const Key('mcp-confirm-add'),
-          onPressed: () => Navigator.of(context).pop((
-            name: _nameCtrl.text,
-            endpoint: _urlCtrl.text,
-          )),
-          child: const Text('添加'),
-        ),
-      ],
-    );
-  }
-}
 
 class _SubSectionLabel extends StatelessWidget {
   const _SubSectionLabel(this.text);

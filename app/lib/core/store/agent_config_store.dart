@@ -227,24 +227,6 @@ class AgentConfigStore extends ChangeNotifier {
       title: '关联录音时段照片',
       subtitle: '总结时感知录音窗口内的点一机抓拍与系统相册照片数量',
     ),
-    AgentExtensionItem(
-      id: 'tl-hist',
-      kind: 'tool',
-      title: '同日连续上下文感知',
-      subtitle: '结合同日早些时候的录音片段理解代词与省略背景',
-    ),
-    AgentExtensionItem(
-      id: 'tl-todo',
-      kind: 'tool',
-      title: '结构化行动项提取',
-      subtitle: '从承诺与排期语句中提取可勾选待办事项',
-    ),
-    AgentExtensionItem(
-      id: 'mcp-kb',
-      kind: 'mcp',
-      title: '个人知识库 MCP',
-      subtitle: 'local://knowledge-vault · 日报与做梦归档接口（规划接入）',
-    ),
   ];
 
   static const Map<String, bool> _defaultExtensionStates = {
@@ -252,9 +234,6 @@ class AgentConfigStore extends ChangeNotifier {
     'sk-brief': true,
     'sk-risk': false,
     'tl-photo': true,
-    'tl-hist': true,
-    'tl-todo': true,
-    'mcp-kb': false,
   };
 
   bool cloudEnabled = true;

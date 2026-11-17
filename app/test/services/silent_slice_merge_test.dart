@@ -1,17 +1,16 @@
 // 连续无语音切片自动折叠合并验收（M6）。
 //
-// 核心契约：
-// 1. 仅在投影层（SegmentProjection）折叠同日连续无语音切片，绝不删除磁盘原始 .WAV；
-// 2. [静音1, 静音2, 人声3, 静音4, 静音5] 投影为倒序 3 张卡：[合并(4~5), 人声3, 合并(1~2)]；
-// 3. 锚定最早第一片 segment.id，新静音切片继续追加时主键恒定不跳变；
-// 4. 物理打点 mark（如「单击重点 · 14:26」）受保护不被吞并，「流中断 N 次」自动累加；
-// 5. 跨大时段（非同会话且间隔 > 5 分钟）不拼成虚假超长跨度；
-// 6. 子切片关联照片自动聚合保留，详情页「原始数据」支持逐片点选切换回听。
+// 核心契约（2026-11-17）：
+// 1. 无有效人声切片不进 Timeline/总结来源（磁盘 .WAV 仍保留）；
+// 2. [静音1, 静音2, 人声3, 静音4, 静音5] 投影仅保留人声卡；
+// 3. 连续静音仍在投影层折叠到锚点 ID，供照片等归属重定向；
+// 4. 物理打点 mark（如「单击重点 · 14:26」）受保护仍可展示；
+// 5. 跨大时段静音不拼成虚假超长跨度，且同样不展示；
+// 6. 详情若从其它入口打开，仍可查看折叠后的原始分片。
 library;
 
 import 'dart:io';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/models/record.dart';
 import 'package:recording_card/core/models/recording.dart';
@@ -161,7 +160,7 @@ void main() {
         .millisecondsSinceEpoch;
   }
 
-  test('[静音1, 静音2, 人声3, 静音4, 静音5] 被中间人声自然截断为前后两张合并卡 + 中间人声卡', () {
+  test('[静音1, 静音2, 人声3, 静音4, 静音5] 仅展示中间人声卡，静音不进 Timeline', () {
     final t0 = todayEpochMs(9, 0);
     final files = [
       _silentSliceFile(seq: 1, startAtMs: t0, mark: '流中断 1 次'),
@@ -172,47 +171,35 @@ void main() {
     ];
 
     final res = SegmentProjection.build(files);
-    expect(res.events.length, 3, reason: '前后两段连续静音分别折叠，绝不跨越中间人声合并');
-
-    // Timeline 倒序：最新在前 -> [合并(4~5), 人声3, 合并(1~2)]
-    final latestMerged = res.events[0];
-    final middleSpeech = res.events[1];
-    final earliestMerged = res.events[2];
-
-    expect(latestMerged.id, 'seg-LIVE_SES_TODAY_0004.WAV-0');
-    expect(latestMerged.title, '未识别到语音（已合并 2 段）');
-    expect(latestMerged.dur, '2分');
-    expect(latestMerged.speakers, '无语音');
-    expect(latestMerged.srcMap, contains('2 个切片'));
-
-    expect(middleSpeech.title, '下午三点同步接口联调进展');
-
-    expect(earliestMerged.id, 'seg-LIVE_SES_TODAY_0001.WAV-0');
-    expect(earliestMerged.title, '未识别到语音（已合并 2 段）');
-    expect(earliestMerged.mark, '流中断 3 次', reason: '子切片流断档次数如实累加');
+    expect(res.events.length, 1, reason: '无语音切片不展示，只留有内容的人声卡');
+    expect(res.events.single.title, '下午三点同步接口联调进展');
+    expect(res.mergedIdRedirects['seg-LIVE_SES_TODAY_0002.WAV-0'],
+        'seg-LIVE_SES_TODAY_0001.WAV-0');
+    expect(res.mergedIdRedirects['seg-LIVE_SES_TODAY_0005.WAV-0'],
+        'seg-LIVE_SES_TODAY_0004.WAV-0');
   });
 
-  test('锚点 ID 稳定性：第 3 片无语音追加时，合并卡主键保持第一片 ID 不跳变', () {
+  test('锚点 ID 稳定性：连续静音不进 feed，但 redirects 锚定第一片', () {
     final t0 = todayEpochMs(8, 10);
     final s1 = _silentSliceFile(seq: 1, startAtMs: t0);
     final s2 = _silentSliceFile(seq: 2, startAtMs: t0 + 60000);
     final s3 = _silentSliceFile(seq: 3, startAtMs: t0 + 120000);
 
     final two = SegmentProjection.build([s1, s2]);
-    expect(two.events.single.id, 'seg-LIVE_SES_TODAY_0001.WAV-0');
-    expect(two.events.single.title, '未识别到语音（已合并 2 段）');
+    expect(two.events, isEmpty);
+    expect(two.views.containsKey('seg-LIVE_SES_TODAY_0001.WAV-0'), isTrue);
+    expect(two.mergedIdRedirects['seg-LIVE_SES_TODAY_0002.WAV-0'],
+        'seg-LIVE_SES_TODAY_0001.WAV-0');
 
     final three = SegmentProjection.build([s1, s2, s3]);
-    expect(three.events.single.id, 'seg-LIVE_SES_TODAY_0001.WAV-0');
-    expect(three.events.single.title, '未识别到语音（已合并 3 段）');
-    expect(three.events.single.dur, '3分');
+    expect(three.events, isEmpty);
     expect(three.mergedIdRedirects['seg-LIVE_SES_TODAY_0002.WAV-0'],
         'seg-LIVE_SES_TODAY_0001.WAV-0');
     expect(three.mergedIdRedirects['seg-LIVE_SES_TODAY_0003.WAV-0'],
         'seg-LIVE_SES_TODAY_0001.WAV-0');
   });
 
-  test('物理打点保护与跨大时段隔离：带硬件重点标记或早晚跨会话大间隔切片绝不误合并', () {
+  test('物理打点保护与跨大时段隔离：带硬件重点标记仍可展示；纯静音不展示', () {
     final tMorning = todayEpochMs(8, 0);
     final tNight = todayEpochMs(11, 30);
 
@@ -226,19 +213,17 @@ void main() {
       marked,
       _silentSliceFile(seq: 3, startAtMs: tMorning + 120000),
     ]);
-    expect(resMarked.events.length, 3, reason: '中间带物理键重点打点的切片不得被吞并');
-    expect(resMarked.events[1].mark, '单击重点 · 08:01');
+    expect(resMarked.events.length, 1, reason: '仅保留带物理键重点打点的切片');
+    expect(resMarked.events.single.mark, '单击重点 · 08:01');
 
-    // 不同会话且相隔数小时的两片静音：各自独立展示为「未识别到语音」
     final resGap = SegmentProjection.build([
       _silentSliceFile(seq: 1, startAtMs: tMorning, session: 'MORNING'),
       _silentSliceFile(seq: 1, startAtMs: tNight, session: 'LATE_MORNING'),
     ]);
-    expect(resGap.events.length, 2, reason: '相隔数小时的不同会话静音绝不拼成超长假跨度');
-    expect(resGap.events.first.title, '未识别到语音');
+    expect(resGap.events, isEmpty, reason: '纯静音跨会话也不展示');
   });
 
-  testWidgets('合并卡保留全部子切片关联照片，且详情「原始数据」可逐片点选切换原始 WAV 音频', (
+  testWidgets('无语音不进 Timeline，但照片归属 redirects 与原始 WAV 仍保留', (
     tester,
   ) async {
     late Directory root;
@@ -305,36 +290,12 @@ void main() {
       ],
     };
 
-    expect(store.events.length, 1);
-    final mergedEvent = store.events.single;
-    expect(mergedEvent.title, '未识别到语音（已合并 2 段）');
-    expect(store.activePhotosForEvent(mergedEvent).single.id, 'p_child_2');
-
-    await pumpShell(tester, store: store);
-    expect(find.text('未识别到语音（已合并 2 段）'), findsOneWidget);
-
-    // 展开卡片进入详情页
-    await tester.tap(find.byKey(Key('card-${mergedEvent.id}')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.tap(find.byKey(Key('detail-${mergedEvent.id}')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-
-    expect(find.byKey(const Key('detail-silent-empty')), findsOneWidget);
-    expect(find.byKey(Key('dphoto-${mergedEvent.id}-0')), findsOneWidget);
-
-    // 切到「原始数据」Tab：两个子切片均列出且可点选切换播放器音频源
-    await tester.tap(find.byKey(const Key('det-tab-raw')));
-    await tester.pump();
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    });
-    await tester.pump();
-
-    expect(find.byKey(const Key('raw-sticky-player')), findsOneWidget);
-    expect(find.byKey(const Key('raw-merged-slice-0')), findsOneWidget);
-    expect(find.byKey(const Key('raw-merged-slice-1')), findsOneWidget);
+    // 无语音切片不进 Timeline，但 redirects / 照片归属仍锚定第一片。
+    expect(store.events, isEmpty);
+    final proj = SegmentProjection.build([f1, f2]);
+    expect(proj.events, isEmpty);
+    expect(proj.mergedIdRedirects['seg-${f2.deviceName}-0'], 'seg-${f1.deviceName}-0');
+    expect(proj.views['seg-${f1.deviceName}-0']?.isMergedSilent, isTrue);
 
     var wav1Exists = false;
     var wav2Exists = false;
@@ -345,12 +306,7 @@ void main() {
     expect(wav1Exists, isTrue, reason: '原始音频文件完整保留绝不物理删除');
     expect(wav2Exists, isTrue);
 
-    await tester.tap(find.byKey(const Key('raw-merged-slice-1')));
-    await tester.pump();
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    });
-    await tester.pump();
-    expect(find.text(f2.deviceName), findsWidgets);
+    await pumpShell(tester, store: store);
+    expect(find.textContaining('未识别到语音'), findsNothing);
   });
 }

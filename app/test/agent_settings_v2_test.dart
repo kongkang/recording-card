@@ -187,35 +187,19 @@ void main() {
     await tester.pump();
     expect(tester.widget<Text>(find.byKey(const Key('sv-preset'))).data, '自定义');
 
-    // 3) 扩展能力二级页：添加自定义 MCP 服务并验证计数增加
+    // 3) 扩展能力二级页：仅保留真实 Skills/Tools，切换风险技能后摘要计数变化
     await tester.tap(find.byKey(const Key('set-extensions')));
     await tester.pump();
-    await tester.ensureVisible(find.byKey(const Key('mcp-add-btn')));
-    await tester.tap(find.byKey(const Key('mcp-add-btn')));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.byKey(const Key('mcp-name-input')),
-      'Linear Issues',
-    );
-    await tester.enterText(
-      find.byKey(const Key('mcp-url-input')),
-      'https://mcp.linear.app/sse',
-    );
-    await tester.tap(find.byKey(const Key('mcp-confirm-add')));
-    await tester.pumpAndSettle();
-
-    await tester.scrollUntilVisible(
-      find.text('Linear Issues'),
-      120,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.text('Linear Issues'), findsOneWidget);
+    expect(find.byKey(const Key('mcp-add-btn')), findsNothing);
+    expect(find.text('个人知识库 MCP'), findsNothing);
+    await tester.ensureVisible(find.byKey(const Key('sw-sk-risk')));
+    await tester.tap(find.byKey(const Key('sw-sk-risk')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('crumb-back')));
     await tester.pump();
     expect(
       tester.widget<Text>(find.byKey(const Key('sv-ext'))).data,
-      contains('6 项'),
+      contains('4 项'),
     );
   });
 

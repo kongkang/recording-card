@@ -473,8 +473,8 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const Key('setting-list')), findsOneWidget);
-    // 6 个开关锚点仍在
-    for (var i = 0; i < 6; i++) {
+    // 4 个开关锚点（去掉未接线的持续录音/标记重要）
+    for (var i = 0; i < 4; i++) {
       expect(find.byKey(Key('sw-$i')), findsOneWidget, reason: 'sw-$i');
     }
 

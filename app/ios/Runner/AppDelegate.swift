@@ -66,9 +66,9 @@ import UIKit
     if let watchRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCWatchHardware") {
       WatchHardwareBridge.shared.register(with: watchRegistrar.messenger())
     }
-    if let healthRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCHealthSignal") {
-      HealthSignalBridge.shared.register(messenger: healthRegistrar.messenger())
-    }
+    // 健康通道与蓝牙共用同一 messenger：勿依赖可能为空的
+    // registrar(forPlugin: "RCHealthSignal")，否则设置页一点开就 MissingPlugin 闪退。
+    HealthSignalBridge.shared.register(messenger: registrar.messenger())
   }
 
   private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {

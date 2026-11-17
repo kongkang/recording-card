@@ -141,6 +141,7 @@ class SegmentProjection {
     while (i < rawViews.length) {
       final head = rawViews[i];
       if (_isMergeableSilent(head)) {
+        // 无有效人声的切片：磁盘保留，Timeline / 总结来源不展示（没说话就不占一行）。
         final group = <SegmentView>[head];
         var j = i + 1;
         while (j < rawViews.length) {
@@ -150,15 +151,10 @@ class SegmentProjection {
           group.add(next);
           j++;
         }
-
+        final anchor = group.first;
         if (group.length == 1) {
-          views[head.segment.id] = head;
-          final event = _eventFor(head);
-          events.add(event);
-          startMsByEventId[event.id] = head.segment.startAtMs;
+          views[anchor.segment.id] = head;
         } else {
-          // 锚定最早第一片的 segment.id：随着后续新静音片不断追加，主键保持稳定不跳变
-          final anchor = group.first;
           final mergedView = SegmentView(
             segment: anchor.segment,
             file: anchor.file,
@@ -171,9 +167,6 @@ class SegmentProjection {
           for (var k = 1; k < group.length; k++) {
             redirects[group[k].segment.id] = anchor.segment.id;
           }
-          final event = _mergedSilentEventFor(mergedView);
-          events.add(event);
-          startMsByEventId[event.id] = anchor.segment.startAtMs;
         }
         i = j;
         continue;
@@ -928,53 +921,6 @@ class SegmentProjection {
         (view.turns.isNotEmpty
             ? file.startAtMs + view.turns.last.endMs
             : startMs + (file.durationMs > 0 ? file.durationMs : 1000));
-  }
-
-  static RecordEvent _mergedSilentEventFor(SegmentView mergedView) {
-    final children = mergedView.mergedChildren;
-    final count = children.length;
-    final earliestStartMs = children.first.segment.startAtMs;
-    final latestEndMs = _endMsOf(children.last);
-
-    var sumDurationMs = 0;
-    var totalGaps = 0;
-    var allTimeSynced = true;
-    for (final c in children) {
-      final s = c.segment.startAtMs;
-      final e = _endMsOf(c);
-      if (e > s) sumDurationMs += (e - s);
-      if (!c.file.timeSynced) allTimeSynced = false;
-      final mk = (c.segment.mark ?? '').trim();
-      final m = _gapMarkPattern.firstMatch(mk);
-      if (m != null) {
-        totalGaps += int.tryParse(m.group(1) ?? '0') ?? 0;
-      }
-    }
-    if (sumDurationMs <= 0) {
-      sumDurationMs = (latestEndMs - earliestStartMs).clamp(1000, 1 << 30);
-    }
-
-    final startHm = _hm(earliestStartMs);
-    final endHm = _hm(latestEndMs);
-    final durStr = _duration(sumDurationMs);
-
-    return RecordEvent(
-      id: mergedView.segment.id,
-      dayOffset: _dayOffset(earliestStartMs),
-      title: '未识别到语音（已合并 $count 段）',
-      brief: '连续 $count 个切片未检测到有效人声，已自动折叠合并。',
-      longText:
-          '$startHm—$endHm 连续 $count 个录音切片（共 $durStr）均未检测到有效人声，已自动折叠合并；全部原始音频均完整保留，可在详情「原始数据」逐片回听或清理。',
-      time: startHm,
-      dur: durStr,
-      speakers: '无语音',
-      mark: totalGaps > 0 ? '流中断 $totalGaps 次' : '',
-      srcMap: '来源 $startHm—$endHm · $count 个切片',
-      dialog: const [],
-      raw: const [],
-      live: false,
-      note: allTimeSynced ? null : '时间未校准',
-    );
   }
 
   static SegmentView _viewFor(RecordingFile file, SegmentRecord segment) {
