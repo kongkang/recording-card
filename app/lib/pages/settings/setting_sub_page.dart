@@ -1909,7 +1909,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
           key: const Key('vp-record-countdown-dialog'),
           content: ValueListenableBuilder<int>(
             valueListenable: countdown,
-            builder: (_, remain, __) {
+            builder: (_, remain, _) {
               final label = remain > 0 ? '$remain' : '处理中…';
               return Column(
                 mainAxisSize: MainAxisSize.min,

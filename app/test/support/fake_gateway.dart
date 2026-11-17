@@ -132,6 +132,16 @@ class FakeCardGateway implements CardGateway {
   /// 配网连接耗时：> 0 时能在测试里断言「正在连接…」这一帧。
   Duration wifiConnectDelay;
 
+  /// 扩展桥命令/流可注入桩（供独立旧固件引导升级等测试使用）。
+  Future<Map<String, dynamic>> Function(String kind, Map<String, dynamic>? payload)?
+  onBridgeCommand;
+  Stream<CardProgress> Function(
+    String kind,
+    Map<String, dynamic>? payload,
+    void Function(Map<String, dynamic>)? onFinal,
+  )?
+  onBridgeStream;
+
   /// syncStatus() 的回报（默认立即 running=false → 同步一次轮询即完成）。
   CardSyncStatus syncStatusResult;
 
@@ -663,6 +673,34 @@ class FakeCardGateway implements CardGateway {
 
   @override
   Future<void> syncTime() async {}
+
+  @override
+  Future<Map<String, dynamic>> invokeBridgeCommand(
+    String kind, [
+    Map<String, dynamic>? payload,
+    Duration timeout = const Duration(seconds: 30),
+  ]) async {
+    callLog.add(kind);
+    final handler = onBridgeCommand;
+    if (handler == null) {
+      throw UnimplementedError('FakeCardGateway.$kind not configured');
+    }
+    return handler(kind, payload);
+  }
+
+  @override
+  Stream<CardProgress> invokeBridgeStream(
+    String kind, [
+    Map<String, dynamic>? payload,
+    void Function(Map<String, dynamic>)? onFinal,
+  ]) async* {
+    callLog.add(kind);
+    final handler = onBridgeStream;
+    if (handler == null) {
+      throw UnimplementedError('FakeCardGateway.$kind stream not configured');
+    }
+    yield* handler(kind, payload, onFinal);
+  }
 
   @override
   Future<void> dispose() async {}
