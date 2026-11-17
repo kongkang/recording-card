@@ -42,7 +42,11 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
 
   func bootstrap() {
     guard UserDefaults.standard.bool(forKey: enabledKey) else { return }
-    startCollection(intervalMs: storedIntervalMs(), phaseMs: storedPhaseMs())
+    // 启动期采集失败必须清开关，否则会卡在「一点图标就崩」。
+    let ok = startCollection(intervalMs: storedIntervalMs(), phaseMs: storedPhaseMs())
+    if !ok {
+      UserDefaults.standard.set(false, forKey: enabledKey)
+    }
   }
 
   func register(messenger: FlutterBinaryMessenger) {
@@ -71,7 +75,18 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
       UserDefaults.standard.set(interval, forKey: intervalKey)
       UserDefaults.standard.set(phase, forKey: phaseKey)
       if active {
-        startCollection(intervalMs: interval, phaseMs: phase)
+        let ok = startCollection(intervalMs: interval, phaseMs: phase)
+        if !ok {
+          UserDefaults.standard.set(false, forKey: enabledKey)
+          result(
+            FlutterError(
+              code: "health_collection_failed",
+              message: "健康观察查询未能启动，已关闭采集开关，避免反复闪退",
+              details: nil
+            )
+          )
+          return
+        }
       } else {
         stopCollection()
       }
@@ -287,30 +302,40 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
     notifySpool()
   }
 
-  private func startCollection(intervalMs: Int, phaseMs: Int) {
-    guard HKHealthStore.isHealthDataAvailable() else { return }
+  @discardableResult
+  private func startCollection(intervalMs: Int, phaseMs: Int) -> Bool {
+    guard HKHealthStore.isHealthDataAvailable() else { return false }
     ensureSpecs()
     deliveryGeneration += 1
     stopObserverQueries()
+    // 授权弹窗已过滤的类型，观察查询也必须同样跳过：HKObserverQuery 对 ECG/
+    // 心理状态/系列样本等会在 init 时直接 NSException（启动期 bootstrap 会连环崩）。
+    var startedAny = false
     for spec in specs {
       guard let sampleType = spec.sampleType else { continue }
+      guard Self.isSafeAuthorizationType(spec.objectType) else { continue }
       let typeId = spec.typeId
-      let query = HKObserverQuery(sampleType: sampleType, predicate: nil) {
-        [weak self] _, completion, _ in
-        self?.enqueueCatchUp(
-          args: [:],
-          quick: true,
-          trigger: typeId,
-          completion: completion
-        )
+      let exception = RCObjCCatchException {
+        let query = HKObserverQuery(sampleType: sampleType, predicate: nil) {
+          [weak self] _, completion, _ in
+          self?.enqueueCatchUp(
+            args: [:],
+            quick: true,
+            trigger: typeId,
+            completion: completion
+          )
+        }
+        self.observers.append(query)
+        self.healthStore.execute(query)
       }
-      observers.append(query)
-      healthStore.execute(query)
-      // 未开通 healthkit.background-delivery 时不要 enable；失败虽多半只回调 error，
-      // 部分系统版本会对无 entitlement 的调用更激进。
+      if exception == nil {
+        startedAny = true
+      }
     }
     startPhaseTimer(intervalMs: intervalMs, phaseMs: phaseMs)
     startLocationUpdates()
+    // 即使个别类型观察失败，定位相位与已成功的观察仍可继续。
+    return true
   }
 
   private func stopCollection() {
