@@ -1,0 +1,1029 @@
+//! 点一机 V1（`DYJ_*`）共享适配器直连会话：
+//! - 复用统一扫描的 `btleplug::platform::Adapter`，优先从已缓存外设零重扫直连；
+//! - 订阅 `FF12` 前检查 `CharPropFlags::NOTIFY`，避免 `< 0.8.0` 旧固件（`FF12` 无 Notify）导致 `btleplug` 永久挂死；
+//! - 检测 `< 0.8.0` 旧固件时主动探测版本号并显式 `disconnect()` 释放单连接广播，返回可操作升级提示；
+//! - 通过 `cmd_lock` 严格串行化 `FF11` 命令请求（遵循 `PROTOCOL.md §4` 并发约定）。
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use btleplug::api::{Central as _, CharPropFlags, Characteristic, Peripheral as _, ScanFilter, WriteType};
+use btleplug::platform::{Adapter, Peripheral};
+use futures::stream::StreamExt;
+use reai_dyj_sdk::audio::{self, AdpcmDecoder, AmrWbDecoder, PcmChunk};
+use reai_dyj_sdk::error::{Result as SdkResult, SdkError};
+use reai_dyj_sdk::protocol::{BinaryFrame, BinaryFrameAssembler, Frame, FrameAssembler, ProtocolInfo};
+use reai_dyj_sdk::DeviceEvent;
+use serde_json::{json, Value};
+use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
+
+pub const COMMAND_UUID: &str = "0000ff11-0000-1000-8000-00805f9b34fb";
+pub const DATA_UUID: &str = "0000ff12-0000-1000-8000-00805f9b34fb";
+const NOTIFY_SETTLE: Duration = Duration::from_millis(1600);
+const GATT_OP_TIMEOUT: Duration = Duration::from_secs(6);
+
+struct PendingMap(Mutex<HashMap<u64, mpsc::Sender<Frame>>>);
+
+fn response_done(data: &Value) -> bool {
+    data.get("more").and_then(Value::as_bool) != Some(true)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedAudioFilename {
+    pub year: u32,
+    pub month: u32,
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+    pub session: Option<String>,
+    pub seq: Option<u32>,
+}
+
+/// 解析点一机 V1 录音文件名：`audio_YYYYMMDD-HHMMSS_<SESSION8>_<SEQ>.amr`（或旧命名 `audio_YYYYMMDD-HHMMSS.amr`）。
+pub fn parse_dyj_audio_filename(name: &str) -> Option<ParsedAudioFilename> {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let stem = base
+        .strip_suffix(".amr")
+        .or_else(|| base.strip_suffix(".AMR"))?;
+    let rest = stem.strip_prefix("audio_")?;
+    let mut parts = rest.split('_');
+    let dt = parts.next()?;
+    let (date_str, time_str) = dt.split_once('-')?;
+    if date_str.len() != 8 || time_str.len() != 6 {
+        return None;
+    }
+    let year = date_str[0..4].parse::<u32>().ok()?;
+    let month = date_str[4..6].parse::<u32>().ok()?;
+    let day = date_str[6..8].parse::<u32>().ok()?;
+    let hour = time_str[0..2].parse::<u32>().ok()?;
+    let minute = time_str[2..4].parse::<u32>().ok()?;
+    let second = time_str[4..6].parse::<u32>().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    let session = parts
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    let seq = parts.next().and_then(|s| s.parse::<u32>().ok());
+    Some(ParsedAudioFilename {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        session,
+        seq,
+    })
+}
+
+/// 解析旧版固件（`< 0.8.0`）对 `BASE_INFO:{}` 的响应行中的版本号。
+pub fn parse_legacy_version_from_line(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let json_part = trimmed
+        .strip_prefix("BASE_INFO:")
+        .or_else(|| trimmed.strip_prefix("CMD:"))
+        .or_else(|| trimmed.strip_prefix("RSP:"))
+        .unwrap_or(trimmed);
+    let val: Value = serde_json::from_str(json_part).ok()?;
+    let ver = val
+        .get("version")
+        .or_else(|| val.get("app_version"))
+        .or_else(|| val.get("firmwareVersion"))
+        .or_else(|| val.get("data").and_then(|d| d.get("version")))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    Some(ver.to_string())
+}
+
+/// 判断收到的非标准帧是否为旧版固件（`< 0.8.0`）拒绝 `CMD:{...}` 的错误回包。
+pub fn is_legacy_unknown_cmd_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if let Some(rest) = trimmed.strip_prefix("CMD:") {
+        if let Ok(v) = serde_json::from_str::<Value>(rest) {
+            if v.get("code").and_then(Value::as_i64) == Some(-1001) {
+                return true;
+            }
+            if v.get("message")
+                .and_then(Value::as_str)
+                .is_some_and(|m| m.contains("未知命令"))
+            {
+                return true;
+            }
+        }
+    }
+    trimmed.contains("未知命令")
+}
+
+/// 从语义版本号（如 `0.8.15`、`v0.7.2`）推导整数版本码（如 `815`、`702`）。
+pub fn version_code_from_semver(version: &str) -> u64 {
+    let clean = version.trim().trim_start_matches('v').trim_start_matches('V');
+    let core = clean.split(['-', '+', ' ']).next().unwrap_or("");
+    let nums: Vec<u64> = core
+        .split('.')
+        .filter_map(|p| p.parse::<u64>().ok())
+        .collect();
+    match nums.as_slice() {
+        [maj, min, pat, ..] => maj * 10_000 + min * 100 + pat,
+        [maj, min] => maj * 10_000 + min * 100,
+        [maj] => *maj,
+        _ => 0,
+    }
+}
+
+pub fn legacy_firmware_error(version: Option<&str>) -> String {
+    match version.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(ver) => format!(
+            "LEGACY_UPGRADE_REQUIRED|dyj_v1|{ver}|0.8.12|检测到点一机固件版本不兼容（当前 v{ver}），请配置 Wi-Fi 完成自动升级"
+        ),
+        None => "LEGACY_UPGRADE_REQUIRED|dyj_v1||0.8.12|检测到点一机旧版固件（低于 v0.8.0），请配置 Wi-Fi 完成自动升级"
+            .to_string(),
+    }
+}
+
+pub struct DyjV1Session {
+    name: String,
+    peripheral: Peripheral,
+    cmd_char: Characteristic,
+    pending: Arc<PendingMap>,
+    next_id: AtomicU64,
+    cmd_lock: AsyncMutex<()>,
+    event_tx: broadcast::Sender<DeviceEvent>,
+    audio_tx: broadcast::Sender<PcmChunk>,
+    disconnected: Arc<AtomicBool>,
+    _keepalive: mpsc::Sender<()>,
+}
+
+impl DyjV1Session {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn subscribe_events(&self) -> broadcast::Receiver<DeviceEvent> {
+        self.event_tx.subscribe()
+    }
+
+    pub fn subscribe_audio(&self) -> broadcast::Receiver<PcmChunk> {
+        self.audio_tx.subscribe()
+    }
+
+    pub async fn is_connected(&self) -> SdkResult<bool> {
+        if self.disconnected.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
+        self.peripheral
+            .is_connected()
+            .await
+            .map_err(|e| SdkError::Ble(e.to_string()))
+    }
+
+    pub async fn disconnect(&self) -> SdkResult<()> {
+        self.disconnected.store(true, Ordering::SeqCst);
+        let _ = self.event_tx.send(DeviceEvent::Disconnected);
+        tokio::time::timeout(Duration::from_secs(4), self.peripheral.disconnect())
+            .await
+            .map_err(|_| SdkError::Timeout {
+                command: "disconnect".into(),
+                seconds: 4,
+            })?
+            .map_err(|e| SdkError::Ble(e.to_string()))
+    }
+
+    /// 连接点一机 V1（复用统一扫描适配器），自动规避 `< 0.8.0` FF12 无 Notify 死锁并完成 `proto.hello`。
+    pub async fn connect(
+        adapter: &Adapter,
+        id_hint: &str,
+        name: &str,
+    ) -> std::result::Result<(Arc<Self>, Value), String> {
+        let peripheral = Self::resolve_peripheral(adapter, id_hint, name).await?;
+
+        let connect_res = tokio::time::timeout(Duration::from_secs(12), peripheral.connect()).await;
+        match connect_res {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(format!("连接点一机 V1 {name} 失败: {e}")),
+            Err(_) => {
+                let _ = tokio::time::timeout(Duration::from_secs(2), peripheral.disconnect()).await;
+                return Err(format!("连接点一机 V1 {name} 超时，请确认设备在附近并已开机"));
+            }
+        }
+
+        let discover_res =
+            tokio::time::timeout(Duration::from_secs(8), peripheral.discover_services()).await;
+        if !matches!(discover_res, Ok(Ok(()))) {
+            let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+            return Err("点一机 V1 服务发现失败，请重试连接".to_string());
+        }
+
+        let chars = peripheral.characteristics();
+        let find_char = |uuid: &str| {
+            chars
+                .iter()
+                .find(|c| c.uuid.to_string().eq_ignore_ascii_case(uuid))
+                .cloned()
+        };
+
+        let Some(cmd_char) = find_char(COMMAND_UUID) else {
+            let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+            return Err("未找到点一机控制特征 (FF11)，请确认设备状态".to_string());
+        };
+        if !cmd_char.properties.contains(CharPropFlags::NOTIFY) {
+            let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+            return Err("点一机控制特征 (FF11) 不支持通知".to_string());
+        }
+
+        match tokio::time::timeout(GATT_OP_TIMEOUT, peripheral.subscribe(&cmd_char)).await {
+            Ok(Ok(())) => {}
+            _ => {
+                let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+                return Err("订阅点一机控制通道 (FF11) 失败，请重试".to_string());
+            }
+        }
+
+        let data_char = find_char(DATA_UUID);
+        let has_ff12_notify = match data_char {
+            Some(ref dc) if dc.properties.contains(CharPropFlags::NOTIFY) => {
+                match tokio::time::timeout(GATT_OP_TIMEOUT, peripheral.subscribe(dc)).await {
+                    Ok(Ok(())) => true,
+                    _ => {
+                        let _ =
+                            tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect())
+                                .await;
+                        return Err("订阅点一机音频数据通道 (FF12) 失败，请重试".to_string());
+                    }
+                }
+            }
+            Some(_) => {
+                log::info!("dyj_v1_session: {name} FF12 无 Notify 属性，判定为旧版固件 (<0.8.0)");
+                false
+            }
+            None => false,
+        };
+
+        tokio::time::sleep(NOTIFY_SETTLE).await;
+
+        let notifications = match tokio::time::timeout(
+            Duration::from_secs(5),
+            peripheral.notifications(),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => stream,
+            _ => {
+                let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+                return Err("建立点一机通知监听失败，请重试".to_string());
+            }
+        };
+
+        let (frame_tx, mut frame_rx) = mpsc::channel::<String>(64);
+        let (binary_tx, mut binary_rx) = mpsc::channel::<BinaryFrame>(256);
+        let (legacy_tx, mut legacy_rx) = mpsc::channel::<String>(16);
+        let (event_tx, _) = broadcast::channel(64);
+        let (audio_tx, _) = broadcast::channel::<PcmChunk>(256);
+        let pending: Arc<PendingMap> = Arc::new(PendingMap(Mutex::new(HashMap::new())));
+        let (keep_tx, mut keep_rx) = mpsc::channel::<()>(1);
+        let disconnected = Arc::new(AtomicBool::new(false));
+
+        // 1) BLE notify 原始字节拆包任务（FF11 文本帧 / FF12 二进制帧）
+        tokio::spawn(async move {
+            let mut stream = notifications;
+            let mut text_asm = FrameAssembler::default();
+            let mut bin_asm = BinaryFrameAssembler::default();
+            while let Some(note) = stream.next().await {
+                let uuid = note.uuid.to_string().to_lowercase();
+                if uuid == DATA_UUID {
+                    for bf in bin_asm.feed(&note.value) {
+                        if binary_tx.send(bf).await.is_err() {
+                            return;
+                        }
+                    }
+                } else {
+                    let chunk = String::from_utf8_lossy(&note.value);
+                    for line in text_asm.feed(&chunk) {
+                        if frame_tx.send(line).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
+        // 2) 文本帧路由任务（RSP → pending，EVT → broadcast，非标准行 → legacy_tx）
+        {
+            let pending_reader = pending.clone();
+            let event_tx_reader = event_tx.clone();
+            let disconnected_reader = disconnected.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        line = frame_rx.recv() => {
+                            match line {
+                                Some(line) => match Frame::decode(&line) {
+                                    Some(Frame::Response { id, code, msg, data }) => {
+                                        let done = response_done(&data);
+                                        let sender = {
+                                            let mut map = pending_reader.0.lock().unwrap();
+                                            if done {
+                                                map.remove(&id)
+                                            } else {
+                                                map.get(&id).cloned()
+                                            }
+                                        };
+                                        if let Some(tx) = sender {
+                                            let _ = tx.send(Frame::Response { id, code, msg, data }).await;
+                                        }
+                                    }
+                                    Some(Frame::Event { evt, ts, data }) => {
+                                        let _ = event_tx_reader.send(DeviceEvent::Event { evt, ts, data });
+                                    }
+                                    Some(Frame::Request { .. }) | None => {
+                                        let _ = legacy_tx.try_send(line);
+                                    }
+                                },
+                                None => {
+                                    disconnected_reader.store(true, Ordering::SeqCst);
+                                    pending_reader.0.lock().unwrap().clear();
+                                    let _ = event_tx_reader.send(DeviceEvent::Disconnected);
+                                    break;
+                                }
+                            }
+                        }
+                        _ = keep_rx.recv() => break,
+                    }
+                }
+            });
+        }
+
+        // 3) 实时音频解码任务（AMR-WB 16kHz / ADPCM → 16kHz 单声道 PcmChunk）
+        {
+            let audio_tx_task = audio_tx.clone();
+            tokio::spawn(async move {
+                let mut amr = AmrWbDecoder::new();
+                let mut adpcm = AdpcmDecoder::new();
+                let mut last_seq: Option<u16> = None;
+                while let Some(frame) = binary_rx.recv().await {
+                    match frame.frame_type {
+                        BinaryFrame::TYPE_REALTIME_AUDIO_AMR | BinaryFrame::TYPE_REALTIME_AUDIO => {}
+                        _ => continue,
+                    }
+                    let discontinuous = match last_seq {
+                        Some(last) => frame.seq != last.wrapping_add(1),
+                        None => false,
+                    };
+                    last_seq = Some(frame.seq);
+                    let mut samples = Vec::new();
+                    if frame.frame_type == BinaryFrame::TYPE_REALTIME_AUDIO_AMR {
+                        if discontinuous {
+                            amr.reset();
+                        }
+                        let mut rest = frame.payload.as_slice();
+                        while !rest.is_empty() {
+                            let mode = (rest[0] >> 3) as usize & 0x0F;
+                            if mode > 8 || rest.len() < 1 + audio::WB_PAYLOAD_BYTES[mode] {
+                                break;
+                            }
+                            let (one, remainder) =
+                                rest.split_at(1 + audio::WB_PAYLOAD_BYTES[mode]);
+                            if let Some(pcm) = amr.decode(one) {
+                                samples.extend(pcm);
+                            }
+                            rest = remainder;
+                        }
+                    } else {
+                        if discontinuous {
+                            adpcm.reset();
+                        }
+                        adpcm.decode_chunk(&frame.payload, &mut samples);
+                    }
+                    if samples.is_empty() && !discontinuous {
+                        continue;
+                    }
+                    let _ = audio_tx_task.send(PcmChunk {
+                        samples,
+                        sample_rate: audio::SAMPLE_RATE_HZ,
+                        channels: audio::CHANNELS,
+                        discontinuous,
+                    });
+                }
+            });
+        }
+
+        let session = Arc::new(Self {
+            name: name.to_string(),
+            peripheral: peripheral.clone(),
+            cmd_char,
+            pending,
+            next_id: AtomicU64::new(0),
+            cmd_lock: AsyncMutex::new(()),
+            event_tx,
+            audio_tx,
+            disconnected,
+            _keepalive: keep_tx,
+        });
+
+        // 4) 旧版固件 fast-fail：FF12 无 Notify 时直接探测 BASE_INFO 并在 2s 内返回明确提示与断开连接
+        if !has_ff12_notify {
+            let ver = Self::probe_legacy_version(&session, &mut legacy_rx).await;
+            let _ = tokio::time::timeout(Duration::from_secs(3), session.disconnect()).await;
+            return Err(legacy_firmware_error(ver.as_deref()));
+        }
+
+        // 5) proto.hello 握手（含一次首包丢失重试；同时监听旧版 `-1001 未知命令` 快速识别）
+        let hello_res = Self::perform_hello(&session, &mut legacy_rx).await;
+        let hello_data = match hello_res {
+            Ok(data) => data,
+            Err(err_msg) => {
+                let _ = tokio::time::timeout(Duration::from_secs(3), session.disconnect()).await;
+                return Err(err_msg);
+            }
+        };
+
+        // 6) 3 秒连接态看门狗：链路静默断开时主动广播 Disconnected
+        {
+            let weak = Arc::downgrade(&session);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    let Some(sess) = weak.upgrade() else {
+                        break;
+                    };
+                    if sess.disconnected.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    match sess.peripheral.is_connected().await {
+                        Ok(true) => continue,
+                        Ok(false) => {
+                            sess.disconnected.store(true, Ordering::SeqCst);
+                            let _ = sess.event_tx.send(DeviceEvent::Disconnected);
+                            break;
+                        }
+                        Err(_) => continue,
+                    }
+                }
+            });
+        }
+
+        Ok((session, hello_data))
+    }
+
+    async fn resolve_peripheral(
+        adapter: &Adapter,
+        id_hint: &str,
+        name: &str,
+    ) -> std::result::Result<Peripheral, String> {
+        let trimmed_name = name.trim();
+        if let Some(p) = Self::find_in_adapter(adapter, id_hint, trimmed_name).await {
+            return Ok(p);
+        }
+
+        // 缓存未命中（如冷重连）才在共享 adapter 上启扫描，适配 V1 间歇广播周期
+        let _ = adapter.start_scan(ScanFilter::default()).await;
+        let mut found = None;
+        for _ in 0..14 {
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            if let Some(p) = Self::find_in_adapter(adapter, id_hint, trimmed_name).await {
+                found = Some(p);
+                break;
+            }
+        }
+        let _ = adapter.stop_scan().await;
+        found.ok_or_else(|| {
+            format!("未在附近找到点一机 V1（{name}），请确认设备已开机且未被其他手机连接")
+        })
+    }
+
+    async fn find_in_adapter(
+        adapter: &Adapter,
+        id_hint: &str,
+        trimmed_name: &str,
+    ) -> Option<Peripheral> {
+        let peripherals = adapter.peripherals().await.ok()?;
+        if !id_hint.is_empty() {
+            if let Some(exact) = peripherals
+                .iter()
+                .find(|p| p.id().to_string() == id_hint)
+                .cloned()
+            {
+                return Some(exact);
+            }
+        }
+        if trimmed_name.is_empty() {
+            return None;
+        }
+        for p in peripherals {
+            let props = tokio::time::timeout(Duration::from_millis(400), p.properties())
+                .await
+                .ok()
+                .and_then(std::result::Result::ok)
+                .flatten();
+            if let Some(props) = props {
+                if props.local_name.as_deref().map(str::trim) == Some(trimmed_name) {
+                    return Some(p);
+                }
+            }
+        }
+        None
+    }
+
+    async fn write_bytes(&self, bytes: &[u8]) -> SdkResult<()> {
+        let write_type = if self.cmd_char.properties.contains(CharPropFlags::WRITE) {
+            WriteType::WithResponse
+        } else {
+            WriteType::WithoutResponse
+        };
+        tokio::time::timeout(
+            Duration::from_secs(4),
+            self.peripheral.write(&self.cmd_char, bytes, write_type),
+        )
+        .await
+        .map_err(|_| SdkError::Timeout {
+            command: "ble.write".into(),
+            seconds: 4,
+        })?
+        .map_err(|e| SdkError::Ble(format!("write FF11: {e}")))
+    }
+
+    async fn probe_legacy_version(
+        session: &DyjV1Session,
+        legacy_rx: &mut mpsc::Receiver<String>,
+    ) -> Option<String> {
+        while let Ok(line) = legacy_rx.try_recv() {
+            if let Some(ver) = parse_legacy_version_from_line(&line) {
+                return Some(ver);
+            }
+        }
+        if session.write_bytes(b"BASE_INFO:{}\r\n").await.is_err() {
+            return None;
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(1400);
+        loop {
+            let rem = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if rem.is_zero() {
+                return None;
+            }
+            match tokio::time::timeout(rem, legacy_rx.recv()).await {
+                Ok(Some(line)) => {
+                    if let Some(ver) = parse_legacy_version_from_line(&line) {
+                        return Some(ver);
+                    }
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    async fn wait_legacy_unknown_cmd(legacy_rx: &mut mpsc::Receiver<String>) -> bool {
+        while let Some(line) = legacy_rx.recv().await {
+            if is_legacy_unknown_cmd_line(&line) {
+                return true;
+            }
+        }
+        false
+    }
+
+    async fn perform_hello(
+        session: &DyjV1Session,
+        legacy_rx: &mut mpsc::Receiver<String>,
+    ) -> std::result::Result<Value, String> {
+        for attempt in 0..2 {
+            let params = json!({
+                "name": "recording-card",
+                "feature_bits": ProtocolInfo::FEATURE_HELLO
+                    | ProtocolInfo::FEATURE_BINARY_TYPED_FRAMES
+                    | ProtocolInfo::FEATURE_REALTIME_AUDIO,
+                "auto_audio": false,
+            });
+            let req_fut = session.request("proto.hello", params, Duration::from_secs(4));
+            let legacy_fut = Self::wait_legacy_unknown_cmd(legacy_rx);
+            let outcome = tokio::select! {
+                res = req_fut => Some(res),
+                is_legacy = legacy_fut => {
+                    if is_legacy {
+                        let ver = Self::probe_legacy_version(session, legacy_rx).await;
+                        return Err(legacy_firmware_error(ver.as_deref()));
+                    }
+                    None
+                }
+            };
+            match outcome {
+                Some(Ok(data)) => return Ok(data),
+                Some(Err(SdkError::Timeout { .. })) if attempt == 0 => {
+                    continue;
+                }
+                Some(Err(SdkError::Device { code: 1001, .. })) => {
+                    let ver = Self::probe_legacy_version(session, legacy_rx).await;
+                    return Err(legacy_firmware_error(ver.as_deref()));
+                }
+                Some(Err(e)) => return Err(format!("点一机握手失败: {e}")),
+                None => {
+                    return Err("点一机连接已断开，请重试连接".to_string());
+                }
+            }
+        }
+        Err("点一机握手超时，请确认固件版本（需 v0.8.12+）并重试连接".to_string())
+    }
+
+    /// 严格串行化 `FF11` 命令请求（协议规则 §4）：等待前一条单帧或流式响应结束后才发下一条。
+    pub async fn request(&self, cmd: &str, params: Value, timeout: Duration) -> SdkResult<Value> {
+        if self.disconnected.load(Ordering::SeqCst) {
+            return Err(SdkError::Disconnected {
+                command: cmd.to_string(),
+            });
+        }
+        let _guard = self.cmd_lock.lock().await;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let (tx, mut rx) = mpsc::channel::<Frame>(32);
+        self.pending.0.lock().unwrap().insert(id, tx);
+
+        let frame = Frame::Request {
+            id,
+            cmd: cmd.to_string(),
+            params,
+        };
+        let encoded = frame.encode();
+        if let Err(e) = self.write_bytes(encoded.as_bytes()).await {
+            self.pending.0.lock().unwrap().remove(&id);
+            return Err(e);
+        }
+
+        let t0 = std::time::Instant::now();
+        let mut items: Vec<Value> = Vec::new();
+        loop {
+            let wait = if items.is_empty() {
+                timeout.saturating_sub(t0.elapsed())
+            } else {
+                timeout
+            };
+            let reply = match tokio::time::timeout(wait, rx.recv()).await {
+                Ok(Some(f)) => f,
+                Ok(None) => {
+                    self.pending.0.lock().unwrap().remove(&id);
+                    return Err(SdkError::Disconnected {
+                        command: cmd.to_string(),
+                    });
+                }
+                Err(_) => {
+                    self.pending.0.lock().unwrap().remove(&id);
+                    return Err(SdkError::Timeout {
+                        command: cmd.to_string(),
+                        seconds: timeout.as_secs(),
+                    });
+                }
+            };
+            let Frame::Response { code, msg, data, .. } = reply else {
+                self.pending.0.lock().unwrap().remove(&id);
+                return Err(SdkError::InvalidFrame("unexpected frame type for id".into()));
+            };
+            if code != 0 {
+                self.pending.0.lock().unwrap().remove(&id);
+                return Err(SdkError::Device { code, msg });
+            }
+            if data.get("index").is_none() {
+                self.pending.0.lock().unwrap().remove(&id);
+                return Ok(data);
+            }
+            if let Some(entry) = data.get("entry") {
+                items.push(entry.clone());
+            }
+            if response_done(&data) {
+                self.pending.0.lock().unwrap().remove(&id);
+                let total = data
+                    .get("total")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(items.len() as u64);
+                return Ok(json!({ "total": total, "items": items }));
+            }
+        }
+    }
+
+    pub async fn request_idem(
+        &self,
+        cmd: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> SdkResult<Value> {
+        match self.request(cmd, params.clone(), timeout).await {
+            Err(SdkError::Timeout { seconds, .. }) => {
+                self.request(cmd, params, Duration::from_secs(seconds)).await
+            }
+            other => other,
+        }
+    }
+
+    pub async fn device_info(&self, verbose: bool) -> SdkResult<Value> {
+        self.request_idem(
+            "device.info",
+            json!({ "verbose": verbose }),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    pub async fn battery(&self) -> SdkResult<Value> {
+        self.request_idem("device.battery", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn storage(&self) -> SdkResult<Value> {
+        self.request_idem("device.storage", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn record_status(&self) -> SdkResult<Value> {
+        self.request_idem("record.status", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn record_start(
+        &self,
+        segment_min: Option<u64>,
+        session: Option<&str>,
+    ) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        if let Some(m) = segment_min {
+            params.insert("segment_min".into(), json!(m));
+        }
+        if let Some(s) = session {
+            params.insert("session".into(), json!(s));
+        }
+        self.request("record.start", Value::Object(params), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn record_stop(&self) -> SdkResult<Value> {
+        self.request("record.stop", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn record_list(&self) -> SdkResult<Value> {
+        self.request_idem("record.list", json!({}), Duration::from_secs(10))
+            .await
+    }
+
+    pub async fn record_delete(&self, name: &str) -> SdkResult<Value> {
+        self.request(
+            "record.delete",
+            json!({ "name": name }),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    pub async fn audio_capture_start(&self) -> SdkResult<Value> {
+        self.request("audio.capture.start", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn audio_capture_stop(&self) -> SdkResult<Value> {
+        self.request("audio.capture.stop", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn audio_stream_start(&self) -> SdkResult<Value> {
+        self.request("audio.stream.start", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn audio_stream_stop(&self) -> SdkResult<Value> {
+        self.request("audio.stream.stop", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn camera_status(&self) -> SdkResult<Value> {
+        self.request_idem("camera.status", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn camera_list(&self) -> SdkResult<Value> {
+        self.request_idem("camera.list", json!({}), Duration::from_secs(10))
+            .await
+    }
+
+    pub async fn camera_capture(&self) -> SdkResult<Value> {
+        self.request("camera.capture", json!({}), Duration::from_secs(10))
+            .await
+    }
+
+    pub async fn camera_delete(&self, name: &str) -> SdkResult<Value> {
+        self.request(
+            "camera.delete",
+            json!({ "name": name }),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    pub async fn wifi_status(&self) -> SdkResult<Value> {
+        self.request_idem("wifi.status", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn wifi_scan(&self) -> SdkResult<Value> {
+        self.request_idem("wifi.scan", json!({}), Duration::from_secs(35))
+            .await
+    }
+
+    pub async fn wifi_connect(
+        &self,
+        ssid: &str,
+        password: Option<&str>,
+        bssid: Option<&str>,
+    ) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        params.insert("ssid".into(), json!(ssid));
+        if let Some(p) = password {
+            params.insert("password".into(), json!(p));
+        }
+        if let Some(b) = bssid {
+            params.insert("bssid".into(), json!(b));
+        }
+        self.request("wifi.connect", Value::Object(params), Duration::from_secs(35))
+            .await
+    }
+
+    pub async fn wifi_forget(&self, ssid: Option<&str>) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        if let Some(s) = ssid {
+            params.insert("ssid".into(), json!(s));
+        }
+        self.request("wifi.forget", Value::Object(params), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn upload_config_get(&self) -> SdkResult<Value> {
+        self.request_idem("upload.config.get", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn upload_config_set(
+        &self,
+        url: Option<&str>,
+        token: Option<&str>,
+    ) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        if let Some(u) = url {
+            params.insert("url".into(), json!(u));
+        }
+        if let Some(t) = token {
+            params.insert("token".into(), json!(t));
+        }
+        self.request(
+            "upload.config.set",
+            Value::Object(params),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    pub async fn upload_start(&self, name: Option<&str>) -> SdkResult<Value> {
+        let params = match name {
+            Some(n) => json!({ "name": n }),
+            None => json!({}),
+        };
+        self.request("upload.start", params, Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn upload_status(&self) -> SdkResult<Value> {
+        self.request_idem("upload.status", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn ap_start(
+        &self,
+        ssid: Option<&str>,
+        password: Option<&str>,
+        allow_sta_drop: bool,
+    ) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        if let Some(s) = ssid {
+            params.insert("ssid".into(), json!(s));
+        }
+        if let Some(p) = password {
+            params.insert("password".into(), json!(p));
+        }
+        if allow_sta_drop {
+            params.insert("allow_sta_drop".into(), json!(true));
+        }
+        self.request_idem("ap.start", Value::Object(params), Duration::from_secs(35))
+            .await
+    }
+
+    pub async fn ap_stop(&self) -> SdkResult<Value> {
+        self.request_idem("ap.stop", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn ap_status(&self) -> SdkResult<Value> {
+        self.request_idem("ap.status", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn ota_check(&self) -> SdkResult<Value> {
+        self.request_idem("ota.check", json!({}), Duration::from_secs(12))
+            .await
+    }
+
+    pub async fn ota_config_set(&self, url: &str) -> SdkResult<Value> {
+        self.request("ota.config.set", json!({ "url": url }), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn ota_install(&self, confirm: bool) -> SdkResult<Value> {
+        self.request(
+            "ota.install",
+            json!({ "confirm": confirm }),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    pub async fn ota_status(&self) -> SdkResult<Value> {
+        self.request_idem("ota.status", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn device_time(&self, epoch_ms: Option<i64>) -> SdkResult<Value> {
+        let params = epoch_ms
+            .map(|t| json!({ "epoch_ms": t }))
+            .unwrap_or_else(|| json!({}));
+        self.request("device.time", params, Duration::from_secs(5))
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_legacy_unknown_cmd_and_version_lines() {
+        let err_line = r#"CMD:{"code":-1001,"message":"未知命令: CMD"}"#;
+        assert!(is_legacy_unknown_cmd_line(err_line));
+        assert!(!is_legacy_unknown_cmd_line(r#"RSP:{"id":1,"code":0,"msg":"ok","data":{}}"#));
+
+        let info_line =
+            r#"BASE_INFO:{"version":"0.7.2","versionCode":702,"deviceId":"C5F96AD5895ADF02"}"#;
+        assert_eq!(parse_legacy_version_from_line(info_line), Some("0.7.2".to_string()));
+        let msg = legacy_firmware_error(Some("0.7.2"));
+        assert!(msg.starts_with("LEGACY_UPGRADE_REQUIRED|dyj_v1|0.7.2|0.8.12|"));
+        assert!(msg.contains("v0.7.2"));
+    }
+
+    #[test]
+    fn parses_dyj_v1_audio_filenames() {
+        let full = parse_dyj_audio_filename("audio_20261026-153000_A1B2C3D4_02.amr").unwrap();
+        assert_eq!(full.year, 2026);
+        assert_eq!(full.month, 10);
+        assert_eq!(full.day, 26);
+        assert_eq!(full.hour, 15);
+        assert_eq!(full.minute, 30);
+        assert_eq!(full.second, 0);
+        assert_eq!(full.session.as_deref(), Some("A1B2C3D4"));
+        assert_eq!(full.seq, Some(2));
+
+        let legacy = parse_dyj_audio_filename("files/audio/audio_20261116-091530.amr").unwrap();
+        assert_eq!(legacy.session, None);
+        assert_eq!(legacy.seq, None);
+        assert_eq!(legacy.hour, 9);
+
+        assert!(parse_dyj_audio_filename("AUDIO_001.APM").is_none());
+    }
+
+    #[test]
+    fn converts_semver_to_version_code() {
+        assert_eq!(version_code_from_semver("0.8.15"), 815);
+        assert_eq!(version_code_from_semver("v0.7.2"), 702);
+        assert_eq!(version_code_from_semver("1.2.3"), 10203);
+        assert_eq!(version_code_from_semver(""), 0);
+    }
+
+    #[test]
+    fn decodes_proto_v1_frames_and_chunks() {
+        let mut asm = FrameAssembler::default();
+        assert!(asm.feed(r#"EVT:{"evt":"camera.capture","ts":170000,"data":{"name":"img.jpg"}}"#).is_empty());
+        let lines = asm.feed("\r\nRSP:{\"id\":7,\"code\":0,\"msg\":\"ok\",\"data\":{\"level\":88}}\r\n");
+        assert_eq!(lines.len(), 2);
+        match Frame::decode(&lines[0]).unwrap() {
+            Frame::Event { evt, ts, data } => {
+                assert_eq!(evt, "camera.capture");
+                assert_eq!(ts, 170000);
+                assert_eq!(data["name"], "img.jpg");
+            }
+            _ => panic!("expected event"),
+        }
+        match Frame::decode(&lines[1]).unwrap() {
+            Frame::Response { id, code, data, .. } => {
+                assert_eq!(id, 7);
+                assert_eq!(code, 0);
+                assert_eq!(data["level"], 88);
+            }
+            _ => panic!("expected response"),
+        }
+    }
+}

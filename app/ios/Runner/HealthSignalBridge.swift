@@ -663,7 +663,7 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
     let calendar = Calendar.current
     let startParts = calendar.dateComponents([.year, .month, .day], from: since)
     let endParts = calendar.dateComponents([.year, .month, .day], from: until.addingTimeInterval(86_400))
-    let predicate = HKQuery.predicateForActivitySummaries(betweenStart: startParts, end: endParts)
+    let predicate = HKQuery.predicate(forActivitySummariesBetweenStart: startParts, end: endParts)
     let query = HKActivitySummaryQuery(predicate: predicate) { [weak self] _, summaries, _ in
       guard let self else {
         done([])
@@ -771,8 +771,15 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
       return [profileDraft(typeId: typeId, text: use == .yes ? "使用轮椅" : "不使用轮椅")]
     case "activity_move_mode":
       if #available(iOS 14.0, *) {
-        guard let mode = try? healthStore.activityMoveMode().activityMoveMode, mode != .notSet else { return [] }
-        return [profileDraft(typeId: typeId, text: mode == .activeEnergy ? "活动能量" : "移动时间")]
+        guard let mode = try? healthStore.activityMoveMode().activityMoveMode else { return [] }
+        switch mode {
+        case .activeEnergy:
+          return [profileDraft(typeId: typeId, text: "活动能量")]
+        case .appleMoveTime:
+          return [profileDraft(typeId: typeId, text: "移动时间")]
+        @unknown default:
+          return []
+        }
       }
       return []
     default:
@@ -1389,7 +1396,7 @@ private final class ImportJob {
   let quick: Bool
   let trigger: String?
   let done: (() -> Void)?
-  private let completion: (() -> Void)?
+  fileprivate let completion: (() -> Void)?
   private let lock = NSLock()
   private var completed = false
 

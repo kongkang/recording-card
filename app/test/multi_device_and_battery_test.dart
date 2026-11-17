@@ -106,9 +106,19 @@ void main() {
 
     expect(device.activeCapabilities.hasCameraMedia, isTrue);
     expect(device.activeCapabilities.hasWifiConfig, isTrue);
+    expect(device.activeCapabilities.hasSingleOta, isTrue);
+    expect(device.activeCapabilities.hasDualChipOta, isFalse);
     expect(find.textContaining('可录至'), findsOneWidget);
     expect(find.byKey(const Key('sync-now')), findsOneWidget);
-    expect(find.byKey(const Key('fw-update')), findsNothing, reason: '点一机不支持双芯片OTA');
+    expect(find.byKey(const Key('fw-update')), findsOneWidget, reason: '点一机支持单芯片OTA');
+
+    await tester.tap(find.byKey(const Key('fw-update')));
+    await tester.pump();
+    expect(find.text('系统固件'), findsOneWidget);
+    expect(find.byKey(const Key('fw-main-ver')), findsOneWidget);
+    expect(find.byKey(const Key('fw-wifi-ver')), findsNothing, reason: '单芯片OTA不展示Wi-Fi芯片行');
+    await tester.tap(find.byKey(const Key('upg-back')));
+    await tester.pump();
 
     await tester.tap(find.byKey(const Key('sheet-close')));
     await tester.pump();
