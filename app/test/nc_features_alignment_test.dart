@@ -386,8 +386,8 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.byKey(Key('ev-merge-badge-${mergedEv.id}')), findsNothing);
-    expect(find.textContaining('已合并 2 分片'), findsNothing);
+    expect(find.byKey(Key('ev-merge-badge-${mergedEv.id}')), findsOneWidget);
+    expect(find.textContaining('已合并 2 分片'), findsOneWidget);
 
     await tester.tap(find.byKey(Key('card-${mergedEv.id}')));
     await tester.pump();
