@@ -923,11 +923,16 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
   late final TextEditingController _ctrl = TextEditingController(
     text: widget.config.promptFor(_tab),
   );
+  late final TextEditingController _agentPromptCtrl = TextEditingController(
+    text: widget.config.agentPrompt,
+  );
   bool _savedToast = false;
+  bool _agentSavedToast = false;
 
   @override
   void dispose() {
     _ctrl.dispose();
+    _agentPromptCtrl.dispose();
     super.dispose();
   }
 
@@ -1247,6 +1252,84 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
               ),
               child: Text(isUser ? '写回当前预设' : '另存为新预设'),
             ),
+            const SizedBox(height: 22),
+            const _SubSectionLabel('OS1 对话助手提示词'),
+            const SizedBox(height: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              padding: const EdgeInsets.all(12),
+              child: TextField(
+                key: const Key('agent-prompt-editor'),
+                controller: _agentPromptCtrl,
+                minLines: 4,
+                maxLines: 7,
+                style: TextStyle(fontSize: 13.5, height: 1.55, color: c.label),
+                decoration: InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  hintText: '输入 OS1 语音与轻聊对话的性格、语气和约束…',
+                  hintStyle: TextStyle(color: c.ax, fontSize: 13),
+                ),
+              ),
+            ),
+            if (_agentSavedToast) ...[
+              const SizedBox(height: 6),
+              const Text(
+                'OS1 助手提示词已保存并生效',
+                key: Key('agent-prompt-saved-hint'),
+                style: TextStyle(fontSize: 12, color: RCColors.okInk),
+              ),
+            ],
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    key: const Key('agent-prompt-reset'),
+                    onPressed: () async {
+                      await widget.config.resetAgentPrompt();
+                      if (!mounted) return;
+                      setState(() {
+                        _agentPromptCtrl.text = widget.config.agentPrompt;
+                        _agentSavedToast = false;
+                      });
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: c.ink,
+                      side: BorderSide(color: c.ax),
+                      shape: const StadiumBorder(),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                    child: const Text('恢复助手默认'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    key: const Key('agent-prompt-save'),
+                    onPressed: () async {
+                      await widget.config.setAgentPrompt(_agentPromptCtrl.text);
+                      if (!mounted) return;
+                      setState(() {
+                        _agentPromptCtrl.text = widget.config.agentPrompt;
+                        _agentSavedToast = true;
+                      });
+                    },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: c.label,
+                      foregroundColor: Colors.white,
+                      shape: const StadiumBorder(),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                    child: const Text('保存助手提示词'),
+                  ),
+                ),
+              ],
+            ),
           ],
         );
       },
@@ -1308,10 +1391,32 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
 
 // ── 4) 扩展能力（Skills · Tools · MCP）────────────────────────
 
-class _AgentExtensionsBody extends StatelessWidget {
+class _AgentExtensionsBody extends StatefulWidget {
   const _AgentExtensionsBody({required this.config});
 
   final AgentConfigStore config;
+
+  @override
+  State<_AgentExtensionsBody> createState() => _AgentExtensionsBodyState();
+}
+
+class _AgentExtensionsBodyState extends State<_AgentExtensionsBody> {
+  late final TextEditingController _searchUrlCtrl = TextEditingController(
+    text: widget.config.customSearchApiUrl,
+  );
+  late final TextEditingController _searchKeyCtrl = TextEditingController(
+    text: widget.config.customSearchApiKey,
+  );
+  bool _searchSaved = false;
+
+  AgentConfigStore get config => widget.config;
+
+  @override
+  void dispose() {
+    _searchUrlCtrl.dispose();
+    _searchKeyCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _showAddMcpDialog(BuildContext context) async {
     final result = await showDialog<({String name, String endpoint})>(
@@ -1384,9 +1489,206 @@ class _AgentExtensionsBody extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             _extGroupCard(context, mcps),
+            const SizedBox(height: 18),
+            const _SubSectionLabel('OS1 对话工具权限'),
+            const SizedBox(height: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                children: [
+                  _permRow(
+                    context,
+                    keyName: 'sw-agent-web',
+                    title: '联网搜索与网页抓取',
+                    subtitle: '默认内置免 Key 双路搜索，可选配自定义搜索 API',
+                    value: config.agentWebSearchEnabled,
+                    onTap: () => unawaited(
+                      config.setAgentWebSearchEnabled(
+                        !config.agentWebSearchEnabled,
+                      ),
+                    ),
+                  ),
+                  Divider(height: 1, thickness: 1, color: c.sep),
+                  _permRow(
+                    context,
+                    keyName: 'sw-agent-records',
+                    title: '历史录音与总结检索',
+                    subtitle: '允许在后台索引并查阅历史转写、说话人与总结卡',
+                    value: config.agentRecordSearchEnabled,
+                    onTap: () => unawaited(
+                      config.setAgentRecordSearchEnabled(
+                        !config.agentRecordSearchEnabled,
+                      ),
+                    ),
+                  ),
+                  Divider(height: 1, thickness: 1, color: c.sep),
+                  _permRow(
+                    context,
+                    keyName: 'sw-agent-health',
+                    title: '本机健康与位置查询',
+                    subtitle: '仅读取本机已采集样本（受总开关门控，不上传无关数据）',
+                    value: config.agentHealthAccessEnabled,
+                    onTap: () => unawaited(
+                      config.setAgentHealthAccessEnabled(
+                        !config.agentHealthAccessEnabled,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    '自定义联网搜索接口（可选）',
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                      color: c.label,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '留空默认使用内置免 Key 搜索；填 HTTPS 地址后将 POST {query, limit}。',
+                    style: TextStyle(fontSize: 12, color: c.sec),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    key: const Key('agent-search-url-input'),
+                    controller: _searchUrlCtrl,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                      hintText: 'https://api.tavily.com/search（留空走内置）',
+                    ),
+                    style: TextStyle(fontSize: 13, color: c.label),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    key: const Key('agent-search-key-input'),
+                    controller: _searchKeyCtrl,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                      hintText: 'Bearer API Key（可选）',
+                    ),
+                    style: TextStyle(fontSize: 13, color: c.label),
+                  ),
+                  if (_searchSaved) ...[
+                    const SizedBox(height: 6),
+                    const Text(
+                      '搜索接口配置已保存',
+                      key: Key('agent-search-saved-hint'),
+                      style: TextStyle(fontSize: 12, color: RCColors.okInk),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            _searchUrlCtrl.clear();
+                            _searchKeyCtrl.clear();
+                            await config.setCustomSearchApi(url: '', apiKey: '');
+                            if (!mounted) return;
+                            setState(() => _searchSaved = false);
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: c.ink,
+                            side: BorderSide(color: c.ax),
+                            shape: const StadiumBorder(),
+                          ),
+                          child: const Text('恢复内置'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton(
+                          key: const Key('agent-search-save'),
+                          onPressed: () async {
+                            await config.setCustomSearchApi(
+                              url: _searchUrlCtrl.text,
+                              apiKey: _searchKeyCtrl.text,
+                            );
+                            if (!mounted) return;
+                            setState(() => _searchSaved = true);
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: c.label,
+                            foregroundColor: Colors.white,
+                            shape: const StadiumBorder(),
+                          ),
+                          child: const Text('保存搜索配置'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ],
         );
       },
+    );
+  }
+
+  Widget _permRow(
+    BuildContext context, {
+    required String keyName,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required VoidCallback onTap,
+  }) {
+    final c = context.rc;
+    return InkWell(
+      key: Key(keyName),
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                      color: c.label,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 12, height: 1.4, color: c.sec),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            RCSwitch(on: value),
+          ],
+        ),
+      ),
     );
   }
 

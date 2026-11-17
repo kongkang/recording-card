@@ -16,6 +16,7 @@ import 'core/store/settings_store.dart';
 import 'core/theme/tokens.dart';
 import 'pages/app_shell.dart';
 import 'pages/login_page.dart';
+import 'services/agent/agent_chat_controller.dart';
 import 'services/ai/summary_generator.dart';
 import 'services/analysis/chat_completion.dart';
 import 'services/audio/recording_status.dart';
@@ -118,6 +119,7 @@ class _HomeGateState extends State<_HomeGate> {
   late final RecordingPipeline _pipeline;
   late final ModelManagerController _modelManager;
   late final SummaryGenerator _summaries;
+  late final AgentChatController _agentChat;
   bool _booted = false;
   bool _wasSignedIn = false;
 
@@ -200,6 +202,12 @@ class _HomeGateState extends State<_HomeGate> {
       store: _recordingStore,
       generator: _summaries,
       status: _recordingStatus,
+    );
+    _agentChat = AgentChatController(
+      appStore: _store,
+      agentConfig: _agentConfig,
+      gateway: _modelGateway,
+      healthStore: _healthSignals.store,
     );
     _store.photoSyncEnabled = () => _agentConfig.photoLinkEnabled;
     _store.deviceGateway = () => _device.gateway;
@@ -295,6 +303,7 @@ class _HomeGateState extends State<_HomeGate> {
     _device.dispose();
     _store.dispose();
     _recordingStatus.dispose();
+    _agentChat.dispose();
     _healthSignals.dispose();
     _modelManager.dispose();
     if (widget.agentConfig == null) _agentConfig.dispose();
@@ -322,6 +331,7 @@ class _HomeGateState extends State<_HomeGate> {
               agentConfig: _agentConfig,
               authService: _auth,
               healthSignals: _healthSignals,
+              agentChat: _agentChat,
             );
           }
           return LoginPage(
