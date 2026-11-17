@@ -71,8 +71,11 @@ import UIKit
     if let healthRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCHealthSignal") {
       HealthSignalBridge.shared.register(messenger: healthRegistrar.messenger())
     }
-    if let speechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCAgentSpeech") {
-      RCAgentSpeechBridge.shared.register(with: speechRegistrar.messenger())
+    if let speechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCSystemSpeech") {
+      SystemSpeechBridge.shared.register(with: speechRegistrar.messenger())
+    }
+    if let agentSpeechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCAgentSpeech") {
+      RCAgentSpeechBridge.shared.register(with: agentSpeechRegistrar.messenger())
     }
   }
 
