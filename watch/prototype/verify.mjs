@@ -117,8 +117,11 @@ check(
   phoneCurHtml.includes('set-health-location') && phoneCurHtml.includes('行为与健康信号')
 );
 check(
-  'Phone current.html has NC confirm pill (nc-btn) with health item',
-  phoneCurHtml.includes('data-testid="nc-btn"') && phoneCurHtml.includes('nc-item-health')
+  'Phone current.html marks unfinished Setting items as NC (not Fake)',
+  phoneCurHtml.includes('data-testid="nc-sw-continuous"') &&
+    phoneCurHtml.includes('data-testid="nc-outer-prompts"') &&
+    phoneCurHtml.includes('data-testid="nc-outer-ext"') &&
+    !phoneCurHtml.includes('data-testid="fake-')
 );
 check('Phone target index.html synced with health NC block', phoneTargetHtml.includes('set-health-location'));
 
@@ -297,15 +300,23 @@ if (pp && chromePath) {
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
     );
 
-    // Flow 1: Version switch 当前版 <-> 目标版·12 inside shared phone iframe
-    assert.equal(await pf.$eval('[data-testid="parity-btn"]', (el) => el.innerText.trim()), '当前版', 'Current version parity-btn must say 当前版');
+    // Flow 1: 版本切换只在宿主顶栏（phone-version-seg），手机 iframe 内不再放当前版|目标版
+    assert.equal(
+      await page.$eval('[data-testid="phone-version-seg"] button[data-pver="current"]', (el) => el.classList.contains('on')),
+      true,
+      'Host version seg defaults to current'
+    );
     assert.equal(await pf.$$eval('.tbc-badge', (els) => els.length), 0, 'Current version must have zero TBC badges');
     await Promise.all([
       page.waitForFunction(() => S.phoneVersion === 'target' && window.bridgeBoundWin === document.getElementById('phone-frame').contentWindow),
       page.click('[data-testid="phone-version-seg"] button[data-pver="target"]'),
     ]);
     pf = await getPhoneFrame(page);
-    assert.equal(await pf.$eval('[data-testid="parity-btn"]', (el) => el.innerText.trim()), '目标版·12', 'Target version parity-btn must say 目标版·12');
+    assert.equal(
+      await page.$eval('[data-testid="phone-version-seg"] button[data-pver="target"]', (el) => el.classList.contains('on')),
+      true,
+      'Host version seg switches to target'
+    );
     assert((await pf.$$eval('.tbc-badge', (els) => els.length)) > 0, 'Target version must contain TBC badges');
 
     await Promise.all([
@@ -313,7 +324,10 @@ if (pp && chromePath) {
       page.click('[data-testid="phone-version-seg"] button[data-pver="current"]'),
     ]);
     pf = await getPhoneFrame(page);
-    assert.equal(await pf.$eval('[data-testid="parity-btn"]', (el) => el.innerText.trim()), '当前版');
+    assert.equal(
+      await page.$eval('[data-testid="phone-version-seg"] button[data-pver="current"]', (el) => el.classList.contains('on')),
+      true
+    );
     check('E2E: Dual-version switch (当前版 <-> 目标版·12) syncs real phone iframe', true);
 
     // Flow 2: Real Setting -> Apple Watch link -> 4-device scan -> capability gating
@@ -516,16 +530,15 @@ if (pp && chromePath) {
       page.click('[data-testid="proto-reset"]'),
     ]);
 
-    // Flow 5: Phone NC confirm list -> health item-by-item data + redesigned clean exthw subpage
+    // Flow 5: 行为与健康信号已落地（非 NC）→ Setting 直达明细 + 精简第三方硬件二级页
     pf = await getPhoneFrame(page);
     await pf.click('[data-testid="nav-setting"]');
-    await pf.click('[data-testid="nc-btn"]');
-    assert.equal(await pf.$eval('#nc-pop', (el) => !el.hidden), true, 'NC pill should open confirm list');
-    await pf.click('[data-testid="nc-item-health"]');
+    await pf.$eval('[data-testid="set-health-location"]', (el) => el.scrollIntoView({ block: 'center' }));
+    await pf.click('[data-testid="set-health-location"]');
     assert.equal(
       await pf.$eval('#setsub-title', (el) => el.innerText.includes('行为与健康信号')),
       true,
-      'NC item should jump to health sub page'
+      'Health setting should open health sub page'
     );
     assert(await pf.$('[data-testid="health-location-card"]'), 'Health NC card should render');
     assert.equal(
