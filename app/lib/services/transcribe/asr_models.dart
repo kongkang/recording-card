@@ -417,28 +417,25 @@ class ModelInstaller {
 }
 
 /// 用已安装的模型解析管线所需路径；ASR/VAD 缺失返回 null。
+/// 当 `useSystemAsr` 返回 true 时，即使 SenseVoice 未下载，仍直接返回以系统哨兵路径
+/// 装配好的路径集合（VAD + 可选声纹仍走本地文件）。
 class InstalledSpeechModelProvider implements SpeechModelProvider {
-  InstalledSpeechModelProvider(this.installer);
+  InstalledSpeechModelProvider(
+    this.installer, {
+    Future<bool> Function()? useSystemAsr,
+  }) : _useSystemAsr = useSystemAsr;
 
   final ModelInstaller installer;
+  final Future<bool> Function()? _useSystemAsr;
 
   @override
   Future<SpeechModelPaths?> resolve() async {
     // VAD 随包：首次调用时复制到模型目录
     await installer.ensureBundled(sileroVadSpec);
-    final asr = await installer.status(senseVoiceSpec);
     final vad = await installer.status(sileroVadSpec);
-    if (!asr.installed || !vad.installed) return null;
-
-    final modelPath = await installer.resolve(
-      senseVoiceSpec,
-      'model.int8.onnx',
-    );
-    final tokensPath = await installer.resolve(senseVoiceSpec, 'tokens.txt');
+    if (!vad.installed) return null;
     final vadPath = await installer.resolve(sileroVadSpec, 'silero_vad.onnx');
-    if (modelPath == null || tokensPath == null || vadPath == null) {
-      return null;
-    }
+    if (vadPath == null) return null;
 
     final emb = await installer.status(campplusEmbeddingSpec);
     final embPath = emb.installed
@@ -447,6 +444,27 @@ class InstalledSpeechModelProvider implements SpeechModelProvider {
             campplusEmbeddingSpec.files.first.relPath,
           )
         : null;
+
+    if (await (_useSystemAsr?.call() ?? Future.value(false))) {
+      return SpeechModelPaths(
+        asrModelPath: kSystemSpeechSentinelModelPath,
+        tokensPath: '',
+        vadPath: vadPath,
+        speakerEmbeddingPath: embPath,
+      );
+    }
+
+    final asr = await installer.status(senseVoiceSpec);
+    if (!asr.installed) return null;
+
+    final modelPath = await installer.resolve(
+      senseVoiceSpec,
+      'model.int8.onnx',
+    );
+    final tokensPath = await installer.resolve(senseVoiceSpec, 'tokens.txt');
+    if (modelPath == null || tokensPath == null) {
+      return null;
+    }
 
     return SpeechModelPaths(
       asrModelPath: modelPath,

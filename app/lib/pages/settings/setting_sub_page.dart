@@ -21,6 +21,7 @@ import '../../services/auth_service.dart';
 import '../../services/health/health_signal_controller.dart';
 import '../../services/transcribe/asr_models.dart';
 import '../../services/transcribe/model_manager_controller.dart';
+import '../../services/transcribe/system_speech_client.dart';
 import '../../services/watch/watch_hardware_service.dart';
 import '../../widgets/rc_switch.dart';
 import '../../widgets/store_scope.dart';
@@ -141,7 +142,10 @@ class SettingSubPage extends StatelessWidget {
                       authService: authService,
                       device: device,
                     ),
-                    'local' => _LocalEngineBody(controller: modelManager),
+                    'local' => _LocalEngineBody(
+                      controller: modelManager,
+                      config: agentConfig,
+                    ),
                     'cloud' => _CloudModelBody(config: agentConfig),
                     'prompts' => _AgentPromptsBody(config: agentConfig),
                     'voiceprint' => _VoiceprintBody(controller: modelManager),
@@ -174,9 +178,10 @@ class SettingSubPage extends StatelessWidget {
 // ── 1) 本地语音引擎 ──────────────────────────────────────────
 
 class _LocalEngineBody extends StatefulWidget {
-  const _LocalEngineBody({required this.controller});
+  const _LocalEngineBody({required this.controller, this.config});
 
   final ModelManagerController? controller;
+  final AgentConfigStore? config;
 
   @override
   State<_LocalEngineBody> createState() => _LocalEngineBodyState();
@@ -192,19 +197,57 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     }
   }
 
+  void _showHint(BuildContext context, String message) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  ({String title, String content}) _deleteDialogCopy(
+    ModelManagerController ctrl,
+    ModelSpec spec,
+  ) {
+    if (spec.id == senseVoiceSpec.id) {
+      if (ctrl.supportsSystemAsr) {
+        return (
+          title: '确认删除 SenseVoice 增强模型？',
+          content:
+              '删除后将释放约 228 MB 本机存储空间，并自动回退为「系统默认模型（iOS 26+ 内置）」继续免费离线转写，隐私同样全程留在本机。后续需要方言或中英混杂增强效果时可随时重新下载。',
+        );
+      }
+      return (
+        title: '确认删除本地语音模型？',
+        content:
+            '删除后将无法自动离线语音转文字，仅能切换到付费云端模式；原享有的终身本地转写服务也会失效，且语音上行云端存在隐私泄露风险。',
+      );
+    }
+    if (spec.id == campplusEmbeddingSpec.id) {
+      return (
+        title: '确认删除 CAM++ 声纹模型？',
+        content:
+            '删除后可释放约 27 MB 空间，语音转写不受影响；之后的新录音说话人将暂标为「未区分」，可在本地语音引擎页随时重新下载恢复。',
+      );
+    }
+    return (
+      title: '确认删除${spec.displayName}？',
+      content: '删除后可释放本机存储空间，后续可随时在本页重新下载。',
+    );
+  }
+
   Future<void> _confirmDeleteModel(
     BuildContext context,
     ModelManagerController ctrl,
     ModelSpec spec,
   ) async {
+    final copy = _deleteDialogCopy(ctrl, spec);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         key: const Key('model-delete-confirm-dialog'),
-        title: const Text('确认删除本地语音模型？'),
-        content: const Text(
-          '删除后将无法自动离线语音转文字，仅能切换到付费云端模式；原享有的终身本地转写服务也会失效，且语音上行云端存在隐私泄露风险。',
-        ),
+        title: Text(copy.title),
+        content: Text(copy.content),
         actions: [
           TextButton(
             key: const Key('model-delete-cancel-btn'),
@@ -230,130 +273,371 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.rc;
+    final ctrl = widget.controller;
+    final config = widget.config;
+    final listenables = <Listenable>[?ctrl, ?config];
+    if (listenables.isEmpty) {
+      return _buildContent(context);
+    }
+    return ListenableBuilder(
+      listenable: Listenable.merge(listenables),
+      builder: (ctx, _) => _buildContent(ctx),
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
     final ctrl = widget.controller;
     final specs =
         ctrl?.specs ??
         const [senseVoiceSpec, sileroVadSpec, campplusEmbeddingSpec];
+    final effectiveMode = ctrl?.effectiveAsrMode ?? 'pending';
 
-    Widget content() {
-      final allReady = ctrl?.allReady ?? false;
-      final showDownloadBtn =
-          ctrl != null && (!allReady || ctrl.hasRemoteUpdates);
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildStatusCard(context, ctrl, effectiveMode),
+        const SizedBox(height: 18),
+        const _SubSectionLabel('语音转写模型'),
+        const SizedBox(height: 8),
+        _buildEngineSelectorCard(context, ctrl, effectiveMode),
+        const SizedBox(height: 18),
+        _SubSectionLabel('本地模型文件与存储（共 ${specs.length} 项）'),
+        for (final spec in specs) ...[
+          const SizedBox(height: 10),
+          _buildSpecCard(context, spec, ctrl),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildStatusCard(
+    BuildContext context,
+    ModelManagerController? ctrl,
+    String effectiveMode,
+  ) {
+    final c = context.rc;
+    final sysCaps =
+        ctrl?.systemCapabilities ?? SystemSpeechCapabilities.unsupported;
+    final speakerReady = ctrl?.speakerReady ?? false;
+    final configured = ctrl?.configured ?? false;
+
+    final String title;
+    final String pillText;
+    final Color pillBg;
+    final Color pillFg;
+    final String desc;
+    final bool isReady =
+        effectiveMode == 'system' || effectiveMode == 'sensevoice';
+
+    if (effectiveMode == 'system') {
+      title = '本地转写已就绪';
+      pillText = '系统内置生效中';
+      pillBg = const Color(0xFFEDF7F0);
+      pillFg = const Color(0xFF1F7A34);
+      desc = speakerReady
+          ? '默认使用 iOS 26+ 原生端侧引擎（SpeechAnalyzer），安装后免下载 228 MB 语音包即可立即离线转写；27 MB 声纹模型已在后台自动就绪。'
+          : '默认使用 iOS 26+ 原生端侧引擎（SpeechAnalyzer）离线转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。';
+    } else if (effectiveMode == 'sensevoice') {
+      title = '本地转写已就绪';
+      pillText = 'SenseVoice 生效中';
+      pillBg = const Color(0xFFEDF7F0);
+      pillFg = const Color(0xFF1F7A34);
+      desc = speakerReady
+          ? '当前使用 SenseVoice 增强离线模型，针对中英混杂、粤语方言与多人对话深度优化，全程在本机离线处理。'
+          : '当前使用 SenseVoice 增强离线模型转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。';
+    } else {
+      title = (ctrl != null && !configured) ? '模型下载服务未配置' : '待启用本地转写';
+      pillText = (ctrl != null && !configured) ? '未配置' : '待手动下载';
+      pillBg = const Color(0xFFFFF4E0);
+      pillFg = const Color(0xFF8A4300);
+      if (ctrl != null && !configured) {
+        desc = '未配置模型下载地址（RC_MODEL_BASE）；音频与声纹均不上传云端，配置后可下载 SenseVoice 增强模型。';
+      } else if (sysCaps.platform == 'android') {
+        desc =
+            'Android 各厂商内置离线接口仍在兼容性评估中；默认不自动消耗流量下载，请手动下载 SenseVoice 增强离线模型（~228 MB）。';
+      } else {
+        desc =
+            '当前系统低于 iOS 26，不支持新一代纯端侧内置引擎；默认不自动消耗流量下载，请手动下载 SenseVoice 增强离线模型（~228 MB）。';
+      }
+    }
+
+    final showActionBtn =
+        ctrl != null &&
+        (effectiveMode == 'pending' || !speakerReady || ctrl.hasRemoteUpdates);
+    final String btnLabel;
+    if (ctrl != null && ctrl.busy) {
+      btnLabel = '下载中…';
+    } else if (ctrl != null && ctrl.hasRemoteUpdates && speakerReady && isReady) {
+      btnLabel = '更新至新版模型';
+    } else if (isReady && !speakerReady) {
+      btnLabel = '恢复声纹模型（~27 MB）';
+    } else {
+      btnLabel = '下载增强模型（~228 MB）';
+    }
+
+    return Container(
+      key: const Key('local-status-card'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: c.sep),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: c.card,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: c.sep),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: allReady ? RCColors.ok : RCColors.warn,
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isReady ? RCColors.ok : RCColors.warn,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w700,
+                    color: c.label,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    allReady
-                        ? '本地语音引擎已就绪，切片与转写全程留在本机。'
-                        : '本地语音引擎待补齐，音频与声纹均不上传云端。',
-                    style: TextStyle(fontSize: 12.5, height: 1.45, color: c.sec),
-                  ),
-                ),
-              ],
-            ),
+              ),
+              _tagPill(pillText, bg: pillBg, fg: pillFg),
+            ],
           ),
-          const SizedBox(height: 16),
-          _SubSectionLabel('本地语音三引擎（共 ${specs.length} 项）'),
-          for (final spec in specs) ...[
+          const SizedBox(height: 8),
+          Text(desc, style: TextStyle(fontSize: 12.5, height: 1.45, color: c.sec)),
+          if (showActionBtn) ...[
             const SizedBox(height: 10),
-            _buildSpecCard(context, spec, ctrl),
+            OutlinedButton(
+              key: const Key('model-install-all'),
+              onPressed: ctrl.busy || !configured
+                  ? null
+                  : () => unawaited(
+                      effectiveMode == 'pending' || ctrl.hasRemoteUpdates
+                          ? ctrl.installAll()
+                          : ctrl.installSpec(campplusEmbeddingSpec),
+                    ),
+              child: Text(btnLabel),
+            ),
           ],
-          if (ctrl != null) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: c.card,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: c.sep),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          ctrl.allReady
-                              ? '本地转写已就绪'
-                              : (ctrl.configured
-                                    ? '本地模型待下载补齐'
-                                    : '模型下载服务未配置'),
-                          style: TextStyle(
-                            fontSize: 13,
-                            height: 1.4,
-                            color: c.sec,
-                          ),
-                        ),
-                      ),
-                      if (showDownloadBtn)
-                        OutlinedButton(
-                          key: const Key('model-install-all'),
-                          onPressed: ctrl.busy || !ctrl.configured
-                              ? null
-                              : () => unawaited(ctrl.installAll()),
-                          child: Text(ctrl.hasRemoteUpdates ? '更新' : '下载'),
-                        ),
-                    ],
-                  ),
-                  if (ctrl.busy) ...[
-                    const SizedBox(height: 10),
-                    LinearProgressIndicator(
-                      value: ctrl.progress > 0 ? ctrl.progress : null,
-                      minHeight: 4,
-                      backgroundColor: c.sep,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      ctrl.text,
-                      key: const Key('model-progress-text'),
-                      style: TextStyle(fontSize: 12, color: c.sec),
-                    ),
-                  ],
-                  if (ctrl.error != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      ctrl.error!,
-                      key: const Key('model-error'),
-                      style: TextStyle(
-                        fontSize: 12,
-                        height: 1.4,
-                        color: c.danger,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+          if (ctrl != null && ctrl.busy) ...[
+            const SizedBox(height: 10),
+            LinearProgressIndicator(
+              value: ctrl.progress > 0 ? ctrl.progress : null,
+              minHeight: 4,
+              backgroundColor: c.sep,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              ctrl.text,
+              key: const Key('model-progress-text'),
+              style: TextStyle(fontSize: 12, color: c.sec),
+            ),
+          ],
+          if (ctrl != null && ctrl.error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              ctrl.error!,
+              key: const Key('model-error'),
+              style: TextStyle(fontSize: 12, height: 1.4, color: c.danger),
             ),
           ],
         ],
-      );
-    }
+      ),
+    );
+  }
 
-    if (ctrl == null) return content();
-    return ListenableBuilder(
-      listenable: ctrl,
-      builder: (context, _) => content(),
+  Widget _buildEngineSelectorCard(
+    BuildContext context,
+    ModelManagerController? ctrl,
+    String effectiveMode,
+  ) {
+    final c = context.rc;
+    final sysCaps =
+        ctrl?.systemCapabilities ?? SystemSpeechCapabilities.unsupported;
+    final sysOk = ctrl?.supportsSystemAsr ?? false;
+    final senseInstalled =
+        ctrl?.statusFor(senseVoiceSpec)?.installed ?? false;
+    final configured = ctrl?.configured ?? false;
+
+    final sysDesc = sysOk
+        ? '调用 iOS 26+ 原生 SpeechAnalyzer 纯端侧引擎（未预置长音频资产时自动以系统听写包垫底），刚装好软件即可立即离线使用，音频不出本机。'
+        : (sysCaps.platform == 'android'
+              ? '各手机厂商内置离线接口尚在评估适配中，现阶段请先使用下方 SenseVoice 增强模型。'
+              : '需 iOS 26 及以上系统支持；当前设备推荐使用下方 SenseVoice 增强模型。');
+
+    final senseStateLabel = senseInstalled
+        ? '~228 MB · 已下载'
+        : (ctrl?.busy == true &&
+                  ctrl?.selectedEngine != LocalAsrEngineMode.system
+              ? '~228 MB · 下载中…'
+              : '~228 MB · 按需下载');
+    final senseDesc =
+        '外脑调优多语种离线模型，在中英混杂、粤语/口音与情绪识别场景下效果更佳。'
+        '${senseInstalled ? '' : '默认不随安装自动下载，点此即可下载并启用。'}';
+
+    return Container(
+      key: const Key('asr-engine-group'),
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: c.sep),
+      ),
+      child: Column(
+        children: [
+          Opacity(
+            opacity: sysOk ? 1.0 : 0.52,
+            child: _buildEngineOptionRow(
+              context,
+              key: const Key('asr-opt-system'),
+              title: '系统默认模型（iOS 26+ 内置）',
+              tags: [
+                _tagPill('免下载 · 0 MB', bg: const Color(0xFFF0F0EC), fg: c.sec),
+                _tagPill(
+                  sysOk ? '默认推荐' : '当前环境不可用',
+                  bg: sysOk
+                      ? const Color(0xFFEDF7F0)
+                      : const Color(0xFFF0F0EC),
+                  fg: sysOk ? const Color(0xFF1F7A34) : c.sec,
+                ),
+              ],
+              subtitle: sysDesc,
+              selected: effectiveMode == 'system',
+              onTap: ctrl == null
+                  ? null
+                  : () {
+                      if (!sysOk) {
+                        _showHint(
+                          context,
+                          sysCaps.platform == 'android'
+                              ? 'Android 各厂商内置离线接口评估适配中，请使用下方 SenseVoice'
+                              : '需升级至 iOS 26+ 才支持新一代纯端侧内置引擎',
+                        );
+                        return;
+                      }
+                      if (!ctrl.busy) {
+                        unawaited(
+                          ctrl.selectAsrEngine(LocalAsrEngineMode.system),
+                        );
+                      }
+                    },
+            ),
+          ),
+          Divider(height: 1, thickness: 1, color: c.sep),
+          _buildEngineOptionRow(
+            context,
+            key: const Key('asr-opt-sensevoice'),
+            title: 'SenseVoice 增强模型',
+            tags: [
+              _tagPill(senseStateLabel, bg: const Color(0xFFF0F0EC), fg: c.sec),
+              if (!sysOk)
+                _tagPill(
+                  '推荐方案',
+                  bg: const Color(0xFFEEF5FF),
+                  fg: const Color(0xFF0F4C81),
+                ),
+            ],
+            subtitle: senseDesc,
+            selected: effectiveMode == 'sensevoice',
+            onTap: ctrl == null || ctrl.busy
+                ? null
+                : () {
+                    if (!senseInstalled && !configured) {
+                      _showHint(context, '未配置模型下载地址（RC_MODEL_BASE）');
+                      return;
+                    }
+                    unawaited(
+                      ctrl.selectAsrEngine(LocalAsrEngineMode.sensevoice),
+                    );
+                  },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEngineOptionRow(
+    BuildContext context, {
+    required Key key,
+    required String title,
+    required List<Widget> tags,
+    required String subtitle,
+    required bool selected,
+    required VoidCallback? onTap,
+  }) {
+    final c = context.rc;
+    return InkWell(
+      key: key,
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: c.label,
+                        ),
+                      ),
+                      ...tags,
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(
+                selected
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_off,
+                size: 20,
+                color: selected ? RCColors.ok : c.ax,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tagPill(
+    String label, {
+    required Color bg,
+    required Color fg,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(label, style: TextStyle(fontSize: 10.5, color: fg)),
     );
   }
 
@@ -369,6 +653,17 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     final sizeText = installed
         ? _formatBytes(status?.presentBytes ?? 0)
         : meta.expectedSize;
+    final pillLabel = installed
+        ? '已就绪'
+        : (spec.bundled
+              ? '随包内置'
+              : (spec.id == senseVoiceSpec.id ? '未下载（按需）' : '未安装'));
+    final dlBtnKey = Key(
+      spec.id == senseVoiceSpec.id ? 'model-dl-asr' : 'model-dl-spk',
+    );
+    final dlBtnLabel = spec.id == senseVoiceSpec.id
+        ? '下载并启用（~228 MB）'
+        : '下载模型（~27 MB）';
 
     return Container(
       key: Key('model-row-${spec.id}'),
@@ -393,21 +688,12 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                   ),
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: installed
-                      ? const Color(0xFFE8F5EA)
-                      : const Color(0xFFF0F0EC),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  installed ? '已就绪' : (spec.bundled ? '随包内置' : '未安装'),
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: installed ? RCColors.okInk : c.sec,
-                  ),
-                ),
+              _tagPill(
+                pillLabel,
+                bg: installed
+                    ? const Color(0xFFE8F5EA)
+                    : const Color(0xFFF0F0EC),
+                fg: installed ? RCColors.okInk : c.sec,
               ),
               if (ctrl != null && !installed && !spec.bundled) ...[
                 const SizedBox(width: 4),
@@ -453,10 +739,20 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
           const SizedBox(height: 6),
           Text(
             meta.explanation,
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: 12.5, height: 1.4, color: c.ink),
           ),
+          if (ctrl != null && !installed && !spec.bundled) ...[
+            const SizedBox(height: 10),
+            OutlinedButton(
+              key: dlBtnKey,
+              onPressed: ctrl.busy || !ctrl.configured
+                  ? null
+                  : () => unawaited(ctrl.installSpec(spec)),
+              child: Text(ctrl.busy ? '下载中…' : dlBtnLabel),
+            ),
+          ],
         ],
       ),
     );
@@ -468,16 +764,16 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
       return (
         title: 'SenseVoice 离线转写',
         stageTag: '离线语音转文字',
-        expectedSize: '约 230MB',
-        explanation: '在本机将切片语音转写为中英文文本。',
+        expectedSize: '约 228MB',
+        explanation: '离线增强模型，按需下载，随时可删并释放空间。',
       );
     }
     if (spec.id == sileroVadSpec.id) {
       return (
         title: 'Silero VAD 人声检测',
         stageTag: '人声静音切分',
-        expectedSize: '约 1.8MB',
-        explanation: '过滤长静音片段并精准切分单句边界。',
+        expectedSize: '约 644KB',
+        explanation: '随包内置免下载，识别人声起止并跳过空白静音。',
       );
     }
     if (spec.id == campplusEmbeddingSpec.id) {
@@ -485,7 +781,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
         title: 'CAM++ 声纹识别',
         stageTag: '说话人聚类推测',
         expectedSize: '约 27MB',
-        explanation: '提取说话人声纹特征进行聚类推测。',
+        explanation: '体积小默认后台自动就绪，配合系统内置或增强转写均可区分说话人。',
       );
     }
     return (
@@ -498,6 +794,8 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
 
   static String _formatBytes(int bytes) {
     if (bytes <= 0) return '—';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(0)}KB';
     final mb = bytes / (1024 * 1024);
     return mb >= 100
         ? '${mb.toStringAsFixed(0)}MB'

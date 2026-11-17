@@ -513,18 +513,40 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     }
   });
   await p.click('[data-testid="crumb-back"]');
-  // 本地语音三引擎：移除校验、就绪隐藏下载、右上角垃圾桶删除前必弹风险确认框
+  // 本地语音引擎：iOS 26+ 默认系统内置免下载即用，SenseVoice 按需下载，删除回退，旧系统风险确认框
+  assert.equal(await p.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
+  await p.$eval('[data-testid="set-local-model"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="set-local-model"]');
-  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('本地转写已就绪') && x.innerText.includes('SenseVoice')));
+  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('本地转写已就绪') && x.innerText.includes('系统内置生效中') && x.innerText.includes('SenseVoice')));
   assert.equal(await p.$('[data-testid="local-verify-btn"]'), null);
   assert.equal(await p.$('[data-testid="model-install-all"]'), null);
+  assert.equal(await p.$('[data-testid="model-delete-sensevoice-small-int8"]'), null);
+  assert(await p.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on')));
+  await p.$eval('[data-testid="model-dl-asr"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="model-dl-asr"]');
+  await p.waitForSelector('[data-testid="model-delete-sensevoice-small-int8"]', { timeout: 3000 });
+  assert(await p.$eval('[data-testid="asr-opt-sensevoice"]', x => x.classList.contains('on')));
+  await p.$eval('[data-testid="model-delete-sensevoice-small-int8"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="model-delete-sensevoice-small-int8"]');
   assert(await p.$eval('#mdl-del-wrap', x => x.classList.contains('show')));
+  assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('228 MB') && x.innerText.includes('系统默认模型')));
+  await p.click('[data-testid="model-delete-confirm-btn"]');
+  assert.equal(await p.$('[data-testid="model-install-all"]'), null);
+  assert(await p.$eval('#p-setsub', x => x.innerText.includes('系统内置生效中')));
+  await p.$eval('[data-testid="plat-chip-ios-old"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-ios-old"]');
+  await p.waitForSelector('[data-testid="model-install-all"]', { timeout: 3000 });
+  await p.$eval('[data-testid="model-install-all"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="model-install-all"]');
+  await p.waitForFunction(() => document.getElementById('p-setsub').innerText.includes('SenseVoice 生效中'), { timeout: 4000 });
+  await p.$eval('[data-testid="model-delete-sensevoice-small-int8"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="model-delete-sensevoice-small-int8"]');
   assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('付费云端模式') && x.innerText.includes('隐私')));
   await p.click('[data-testid="model-delete-confirm-btn"]');
   await p.waitForSelector('[data-testid="model-install-all"]', { timeout: 3000 });
-  await p.click('[data-testid="model-install-all"]');
-  await p.waitForFunction(() => document.getElementById('p-setsub').innerText.includes('本地转写已就绪'), { timeout: 4000 });
+  await p.$eval('[data-testid="plat-chip-ios26"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-ios26"]');
+  assert(await p.$eval('#p-setsub', x => x.innerText.includes('本地转写已就绪') && x.innerText.includes('系统内置生效中')));
   await p.click('[data-testid="crumb-back"]');
   assert(await p.$eval('#p-setting', x => x.classList.contains('show')));
   // 云端模型极简模式 + 连击版本号 7 次解锁开发者模式
@@ -1055,6 +1077,15 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.evaluate(() => closeParity());
   assert(await pCur.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
   await pCur.click('[data-testid="nav-setting"]');
+  assert.equal(await pCur.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
+  await pCur.$eval('[data-testid="set-local-model"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-local-model"]');
+  assert(await pCur.$('[data-testid="asr-engine-group"]'));
+  assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on')));
+  assert(await pCur.$('[data-testid="model-dl-asr"]'));
+  assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0);
+  assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0);
+  await pCur.click('[data-testid="crumb-back"]');
   await pCur.evaluate(() => { agCfg.local.spk = 'none'; syncSetSummary(); });
   await pCur.$eval('[data-testid="set-voiceprint"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="set-voiceprint"]');

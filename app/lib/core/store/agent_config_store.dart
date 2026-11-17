@@ -274,6 +274,9 @@ class AgentConfigStore extends ChangeNotifier {
   /// 行为与健康信号总开关。默认关闭；打开后才申请系统权限并在本机采集。
   bool healthSignalEnabled = false;
 
+  /// 用户手动选中的端侧语音转写引擎（null=跟随平台默认，'system'=系统内置，'sensevoice'=增强模型）。
+  String? preferredAsrEngine;
+
   /// OS1 对话 Agent 默认挂载的基础能力权限（保持开放可扩展，均可在设置或由 Agent 自身调整）。
   bool agentWebSearchEnabled = true;
   bool agentRecordSearchEnabled = true;
@@ -472,6 +475,9 @@ class AgentConfigStore extends ChangeNotifier {
     }
     if (data['healthSignalEnabled'] is bool) {
       healthSignalEnabled = data['healthSignalEnabled'] as bool;
+    }
+    if (data['asrEngine'] == 'system' || data['asrEngine'] == 'sensevoice') {
+      preferredAsrEngine = data['asrEngine'] as String;
     }
     if (data['agentWebSearchEnabled'] is bool) {
       agentWebSearchEnabled = data['agentWebSearchEnabled'] as bool;
@@ -922,6 +928,14 @@ class AgentConfigStore extends ChangeNotifier {
     await _save();
   }
 
+  Future<void> setPreferredAsrEngine(String? mode) async {
+    final normalized = (mode == 'system' || mode == 'sensevoice') ? mode : null;
+    if (preferredAsrEngine == normalized) return;
+    preferredAsrEngine = normalized;
+    notifyListeners();
+    await _save();
+  }
+
   Future<void> _save() async {
     await _json.write(_storageKey, {
       'cloudEnabled': cloudEnabled,
@@ -933,6 +947,7 @@ class AgentConfigStore extends ChangeNotifier {
       'getSeedLinkEnabled': getSeedLinkEnabled,
       'omiLinkEnabled': omiLinkEnabled,
       'healthSignalEnabled': healthSignalEnabled,
+      if (preferredAsrEngine != null) 'asrEngine': preferredAsrEngine,
       'agentWebSearchEnabled': agentWebSearchEnabled,
       'agentRecordSearchEnabled': agentRecordSearchEnabled,
       'agentHealthAccessEnabled': agentHealthAccessEnabled,

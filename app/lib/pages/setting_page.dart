@@ -352,8 +352,8 @@ class _SettingPageState extends State<SettingPage> {
     var index = 0; // 开关的全局序号：测试锚点 sw-0 … sw-5
     final mm = widget.modelManager;
     final localVal = mm == null
-        ? '3 个端侧模型'
-        : (mm.allReady ? '已就绪 · 3 项' : '待补齐');
+        ? '本地离线'
+        : mm.settingSummaryLabel;
     final voiceVal = mm == null
         ? '本地聚类'
         : (mm.statusFor(campplusEmbeddingSpec)?.installed == true

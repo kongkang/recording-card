@@ -35,6 +35,7 @@ import 'services/segment/segment_build_service.dart';
 import 'services/transcribe/model_manager_controller.dart';
 import 'services/transcribe/asr_models.dart';
 import 'services/transcribe/local_asr_service.dart';
+import 'services/transcribe/system_speech_client.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -112,8 +113,9 @@ class _HomeGateState extends State<_HomeGate> {
 
   late final ModelGateway _modelGateway;
   late final ModelInstaller _installer;
+  late final SystemSpeechClient _systemSpeech;
   late final InstalledSpeechModelProvider _models;
-  late final LocalAsrService _asr;
+  late final RoutingSpeechEngine _asr;
   late final RecordingStore _recordingStore;
   late final HealthSignalController _healthSignals;
   late final RecordingPipeline _pipeline;
@@ -137,14 +139,28 @@ class _HomeGateState extends State<_HomeGate> {
       agentConfig: _agentConfig,
     );
 
-    // 本地转写/润色/分段流水线（离线优先；云端未配置/未登录时自动降级）
+    // 本地转写/润色/分段流水线（离线优先；iOS 26+ 默认系统内置免下载，按需可切 SenseVoice）
     _installer = ModelInstaller();
-    _models = InstalledSpeechModelProvider(_installer);
+    _systemSpeech = SystemSpeechClient();
     _modelManager = ModelManagerController(
       installer: _installer,
+      systemSpeech: _systemSpeech,
+      agentConfig: _agentConfig,
       onInstalled: () => _store.processPendingRecordings(),
     );
-    _asr = LocalAsrService();
+    _models = InstalledSpeechModelProvider(
+      _installer,
+      useSystemAsr: () async {
+        if (!_modelManager.hasStatuses) {
+          await _modelManager.refresh();
+        }
+        return _modelManager.effectiveAsrMode == 'system';
+      },
+    );
+    _asr = RoutingSpeechEngine(
+      localEngine: LocalAsrService(),
+      systemSpeech: _systemSpeech,
+    );
     _recordingStore = RecordingStore();
     _healthSignals = HealthSignalController(
       store: HealthSignalStore(),
