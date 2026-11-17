@@ -20,8 +20,8 @@
 
   var I18N = {
     zh: {
-      pageTitle: 'AI Card · 录音卡 — 专心聊，它替你记住',
-      brandName: 'AI Card · 录音卡',
+      pageTitle: '录音卡',
+      brandName: '录音卡',
       navWhat: '能帮你做什么',
       navApp: 'App 界面',
       navDetails: '省心细节',
@@ -52,7 +52,7 @@
       d10Desc: '自动扫描连接、按下开关就录；第一段文字稿很快出现在手机上。',
       demoHint: '点击播放 · 有声音',
       navCta: '早鸟登记',
-      heroKicker: 'AI Card · 早鸟预约开放',
+      heroKicker: '录音卡 · 早鸟预约开放',
       heroLead: '开会、见客户、上课、陪家人看诊——随身戴着不用管，聊完就有清晰的重点、待办和每日小结。',
       heroCtaPrimary: '免费加入早鸟 →',
       heroCtaSecondary: '看 App 界面',
@@ -127,7 +127,7 @@
       fq3: '飞机上、地下室这种没网的地方能用吗？',
       fa3: '能。录音和转文字都不依赖网络；等回到有网的地方，再自动帮你生成总结。',
       fq4: '还没有实体录音卡，能先用起来吗？',
-      fa4: '可以。App 支持直接用手机或 Apple Watch 录音（手表轻敲两下就能随手记重点），也兼容 Get 笔记录音卡与 Omi；以后拿到 AI Card 连上就能接着用。',
+      fa4: '可以。App 支持直接用手机或 Apple Watch 录音（手表轻敲两下就能随手记重点），也兼容 Get 笔记录音卡与 Omi；以后拿到录音卡连上就能接着用。',
       fq5: '早鸟登记收费吗？有什么福利？',
       fa5: '完全免费。正式上线后，所有早鸟登记用户都会获赠至少 1 个月会员，并自动参与抽取实体录音卡（价值 ¥1,000）。',
       wlTitle: '抢先预约体验',
@@ -142,7 +142,8 @@
       wlReset: '更换邮箱重新登记',
       modalTitle: '早鸟免费登记',
       modalLead: '留下常用邮箱，上线第一时间通知你：赠送至少 1 个月会员，并自动参与抽取实体录音卡（价值 ¥1,000）。',
-      footCopy: '© 2026 ReAI · AI Card 录音卡'
+      footCopy: '© 2026 ReAI · 录音卡',
+      hwName: '录音卡'
     },
     en: {
       pageTitle: 'AI Card — Just talk, it remembers',
@@ -267,7 +268,8 @@
       wlReset: 'Use a different email',
       modalTitle: 'Join the Early-Bird Waitlist',
       modalLead: 'Leave your email for launch access: get at least 1 month of membership and a chance to win a physical AI Card (worth ¥1,000).',
-      footCopy: '© 2026 ReAI · AI Card'
+      footCopy: '© 2026 ReAI · AI Card',
+      hwName: 'AI CARD'
     }
   };
 
@@ -350,6 +352,9 @@
       var k = el.getAttribute('data-i18n');
       el.textContent = t(k);
     });
+
+    var brandLogo = document.getElementById('brand-logo');
+    if (brandLogo) brandLogo.setAttribute('alt', t('brandName'));
 
     document.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
       var k = el.getAttribute('data-i18n-placeholder');
