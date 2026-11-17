@@ -1,0 +1,662 @@
+/// OS1 AI 空间统一控制器 —— 协调 UI 双模式（沉浸通话 / 轻聊）、后台 Worker Isolate、
+/// 语料实时同步、系统 STT/TTS 与配置热更新。
+library;
+
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+import '../../core/models/summary.dart';
+import '../../core/store/agent_config_store.dart';
+import '../../core/store/app_store.dart';
+import '../analysis/chat_completion.dart';
+import '../health/health_signal_models.dart';
+import '../health/health_signal_rows.dart';
+import '../health/health_signal_store.dart';
+import '../net/model_gateway.dart';
+import 'agent_harness_worker.dart';
+import 'agent_models.dart';
+import 'agent_speech_service.dart';
+
+enum Os1Mode { her, chat }
+
+class AgentChatController extends ChangeNotifier {
+  AgentChatController({
+    required AppStore appStore,
+    required AgentConfigStore agentConfig,
+    ModelGateway? gateway,
+    ChatCompletion? completion,
+    HealthSignalStore? healthStore,
+    AgentSpeechBackend? speech,
+    AgentHarnessWorker? worker,
+    Future<String> Function()? agentDirResolver,
+    DateTime Function()? clock,
+  }) : _appStore = appStore,
+       _agentConfig = agentConfig,
+       _gateway = gateway,
+       _completion = completion,
+       _healthStore = healthStore,
+       _speech = speech ?? PlatformAgentSpeechBackend(),
+       _ownsSpeech = speech == null,
+       _agentDirResolver = agentDirResolver,
+       _clock = clock ?? DateTime.now {
+    _worker = worker ??
+        AgentHarnessWorker(
+          complete: _completeOnHost,
+          queryHealth: _queryHealthOnHost,
+          patchConfig: _patchConfigOnHost,
+        );
+    _ownsWorker = worker == null;
+    _speechSub = _speech.events.listen(_handleSpeechEvent);
+    _appStore.addListener(_scheduleCorpusSync);
+    _agentConfig.addListener(_onConfigChanged);
+  }
+
+  final AppStore _appStore;
+  final AgentConfigStore _agentConfig;
+  final ModelGateway? _gateway;
+  final ChatCompletion? _completion;
+  final HealthSignalStore? _healthStore;
+  final AgentSpeechBackend _speech;
+  final bool _ownsSpeech;
+  final Future<String> Function()? _agentDirResolver;
+  final DateTime Function() _clock;
+  late final AgentHarnessWorker _worker;
+  late final bool _ownsWorker;
+
+  StreamSubscription<AgentSpeechEvent>? _speechSub;
+  Timer? _corpusDebounce;
+  bool _disposed = false;
+  bool _initialized = false;
+  String _agentDirPath = '';
+  String _lastCorpusDigest = '';
+
+  bool isOpen = false;
+  Os1Mode mode = Os1Mode.her;
+  bool isBusy = false;
+  bool isListening = false;
+  bool isSpeaking = false;
+  double voiceEnergy = 0.28;
+  String partialSpeech = '';
+  String? errorMessage;
+
+  List<AgentChatMessage> messages = const [];
+  String herHeadline = '我听着呢，随时按下方麦克风说话，或切到「轻聊」打字问我。';
+  String herSubline = '可查历史录音总结、本机健康状态，也能联网帮你查最新信息';
+
+  Future<void> ensureInitialized() async {
+    if (_disposed) return;
+    if (!_initialized) {
+      _initialized = true;
+      _agentDirPath = await _resolveAgentDir();
+      try {
+        final loaded = await _worker.loadSession(_agentDirPath);
+        if (_disposed) return;
+        if (loaded.isNotEmpty && messages.isEmpty) {
+          messages = loaded;
+          final lastHer = loaded.where((m) => m.role == 'assistant').lastOrNull;
+          if (lastHer != null && lastHer.text.isNotEmpty) {
+            herHeadline = lastHer.text;
+          }
+        }
+      } on Object {
+        // 读取旧会话失败不阻断打开界面
+      }
+    }
+    await _syncCorpusNow();
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<String> _resolveAgentDir() async {
+    final custom = _agentDirResolver;
+    if (custom != null) return custom();
+    try {
+      final dir = await getApplicationSupportDirectory();
+      return '${dir.path}/agent';
+    } on Object {
+      return '';
+    }
+  }
+
+  void open({Os1Mode? initialMode}) {
+    if (initialMode != null) mode = initialMode;
+    isOpen = true;
+    errorMessage = null;
+    notifyListeners();
+    unawaited(ensureInitialized());
+  }
+
+  void close() {
+    isOpen = false;
+    if (isListening) {
+      unawaited(_speech.stopListening());
+      isListening = false;
+    }
+    if (isSpeaking) {
+      unawaited(_speech.stopSpeaking());
+      isSpeaking = false;
+    }
+    partialSpeech = '';
+    voiceEnergy = 0.28;
+    notifyListeners();
+  }
+
+  void setMode(Os1Mode next) {
+    if (mode == next) return;
+    if (next == Os1Mode.chat && isListening) {
+      unawaited(_speech.stopListening());
+      isListening = false;
+    }
+    mode = next;
+    errorMessage = null;
+    notifyListeners();
+  }
+
+  Future<void> clearHistory() async {
+    messages = const [];
+    errorMessage = null;
+    herHeadline = '会话已清空，我们可以重新聊起。';
+    notifyListeners();
+    if (_agentDirPath.isNotEmpty) {
+      await _worker.clearSession(_agentDirPath);
+    }
+  }
+
+  Future<void> toggleListening() async {
+    if (isBusy) return;
+    if (isSpeaking) {
+      await _speech.stopSpeaking();
+      isSpeaking = false;
+    }
+    if (isListening) {
+      await _speech.stopListening();
+      isListening = false;
+      final pending = partialSpeech.trim();
+      partialSpeech = '';
+      voiceEnergy = 0.35;
+      notifyListeners();
+      if (pending.isNotEmpty) {
+        await sendMessage(
+          pending,
+          viaVoice: true,
+          speakReply: mode == Os1Mode.her,
+        );
+      }
+      return;
+    }
+
+    errorMessage = null;
+    partialSpeech = '';
+    final ok = await _speech.startListening(locale: 'zh-CN');
+    if (_disposed) return;
+    isListening = ok;
+    if (ok) {
+      voiceEnergy = 0.72;
+      if (mode == Os1Mode.her) {
+        herHeadline = '我在听，说完轻点麦克风发给我…';
+      }
+    }
+    notifyListeners();
+  }
+
+  Future<void> speakText(String text) async {
+    final clean = text.trim();
+    if (clean.isEmpty) return;
+    await _speech.stopSpeaking();
+    isSpeaking = true;
+    voiceEnergy = 0.85;
+    notifyListeners();
+    await _speech.speak(clean, locale: 'zh-CN');
+  }
+
+  Future<void> interruptSpeech() async {
+    if (!isSpeaking) return;
+    await _speech.stopSpeaking();
+    isSpeaking = false;
+    voiceEnergy = 0.30;
+    notifyListeners();
+  }
+
+  void _handleSpeechEvent(AgentSpeechEvent ev) {
+    if (_disposed) return;
+    switch (ev.kind) {
+      case 'transcript':
+        partialSpeech = ev.text;
+        if (mode == Os1Mode.her && ev.text.trim().isNotEmpty) {
+          herHeadline = ev.text.trim();
+        }
+        if (ev.isFinal && isListening) {
+          isListening = false;
+          final finalText = ev.text.trim();
+          partialSpeech = '';
+          notifyListeners();
+          if (finalText.isNotEmpty) {
+            unawaited(
+              sendMessage(
+                finalText,
+                viaVoice: true,
+                speakReply: mode == Os1Mode.her,
+              ),
+            );
+          }
+          return;
+        }
+        notifyListeners();
+      case 'level':
+        voiceEnergy = (0.35 + ev.level * 0.65).clamp(0.28, 1.0);
+        notifyListeners();
+      case 'listening':
+        isListening = ev.active;
+        if (!ev.active) voiceEnergy = 0.32;
+        notifyListeners();
+      case 'speaking':
+        isSpeaking = ev.active;
+        voiceEnergy = ev.active ? 0.82 : 0.30;
+        notifyListeners();
+      case 'error':
+        isListening = false;
+        errorMessage = ev.error;
+        if (mode == Os1Mode.her && ev.error != null) {
+          herHeadline = ev.error!;
+        }
+        notifyListeners();
+    }
+  }
+
+  Future<void> sendMessage(
+    String rawText, {
+    bool viaVoice = false,
+    bool speakReply = false,
+  }) async {
+    final text = rawText.trim();
+    if (text.isEmpty || isBusy || _disposed) return;
+
+    final gateError = _preflightCheck();
+    if (gateError != null) {
+      errorMessage = gateError;
+      if (mode == Os1Mode.her) herHeadline = gateError;
+      notifyListeners();
+      return;
+    }
+
+    await ensureInitialized();
+    if (_disposed) return;
+
+    final nowMs = _clock().millisecondsSinceEpoch;
+    final userMsgId = 'u-$nowMs-${messages.length}';
+    final userMsg = AgentChatMessage(
+      id: userMsgId,
+      role: 'user',
+      text: text,
+      createdAtMs: nowMs,
+      viaVoice: viaVoice,
+    );
+    final prevHistory = List<AgentChatMessage>.of(messages);
+    messages = [...messages, userMsg];
+    isBusy = true;
+    errorMessage = null;
+    if (mode == Os1Mode.her) {
+      herHeadline = '让我想想，顺手帮你翻一下记录…';
+      voiceEnergy = 0.62;
+    }
+    notifyListeners();
+
+    try {
+      final result = await _worker.runTurn(
+        userText: text,
+        history: prevHistory,
+        config: _buildConfigSnapshot(),
+        viaVoice: viaVoice,
+        onReaction: (react) {
+          if (_disposed) return;
+          messages = [
+            for (final m in messages)
+              if (m.id == userMsgId) m.copyWith(reaction: react) else m,
+          ];
+          notifyListeners();
+        },
+      );
+      if (_disposed) return;
+
+      if (result.error != null) {
+        errorMessage = _friendlyError(result.error!);
+        if (mode == Os1Mode.her) {
+          herHeadline = errorMessage!;
+          voiceEnergy = 0.30;
+        }
+      } else {
+        final reply = result.reply.trim();
+        final react = result.reaction;
+        if (react != null && react.isNotEmpty) {
+          messages = [
+            for (final m in messages)
+              if (m.id == userMsgId) m.copyWith(reaction: react) else m,
+          ];
+        }
+        final assistantMsg = AgentChatMessage(
+          id: 'a-${_clock().millisecondsSinceEpoch}-${messages.length}',
+          role: 'assistant',
+          text: reply,
+          createdAtMs: _clock().millisecondsSinceEpoch,
+        );
+        messages = [...messages, assistantMsg];
+        if (mode == Os1Mode.her) {
+          herHeadline = reply;
+        }
+        if (speakReply && reply.isNotEmpty) {
+          unawaited(speakText(reply));
+        }
+      }
+    } on Object catch (e) {
+      if (_disposed) return;
+      errorMessage = _friendlyError('$e');
+      if (mode == Os1Mode.her) herHeadline = errorMessage!;
+    } finally {
+      if (!_disposed) {
+        isBusy = false;
+        if (!isSpeaking && !isListening) voiceEnergy = 0.30;
+        notifyListeners();
+      }
+    }
+  }
+
+  String? _preflightCheck() {
+    if (_completion != null) return null;
+    final gw = _gateway;
+    if (gw == null) return '对话服务尚未初始化，请稍后再试';
+    if (!_agentConfig.cloudEnabled || !gw.isCloudEnabled) {
+      return '云端模型已在设置中关闭，开启后即可发起对话';
+    }
+    if (!gw.chatAvailable) {
+      return '尚未配置对话模型端点，请检查模型设置或后端配置';
+    }
+    if (!gw.ready) {
+      return '尚未登录云端账号，请前往「Setting → 云端账号授权」登录后再试';
+    }
+    return null;
+  }
+
+  String _friendlyError(String raw) {
+    final lower = raw.toLowerCase();
+    if (lower.contains('401') || lower.contains('未登录')) {
+      return '云端登录已失效，请前往「Setting → 云端账号授权」重新登录';
+    }
+    return raw.replaceFirst(RegExp(r'^Bad state:\s*'), '');
+  }
+
+  AgentConfigSnapshot _buildConfigSnapshot() {
+    final resolvedModel = _resolveModel();
+    final vpNames = _appStore.voiceprintStore.allPersons
+        .where((p) => p.name.trim().isNotEmpty)
+        .map((p) => p.isSelf ? '${p.name}（机主本人）' : p.name)
+        .toList();
+    final mcps = [
+      for (final item in _agentConfig.customMcps)
+        if (_agentConfig.isExtensionOn(item.id) &&
+            item.subtitle.trim().isNotEmpty)
+          AgentMcpEndpoint(
+            id: item.id,
+            name: item.title,
+            url: item.subtitle.trim(),
+          ),
+    ];
+    return AgentConfigSnapshot(
+      model: resolvedModel,
+      temperature: _agentConfig.developerMode ? _agentConfig.temperature : 0.35,
+      agentPrompt: _agentConfig.agentPrompt,
+      enabledSkillRules: _agentConfig.enabledSkillRules,
+      webSearchEnabled: _agentConfig.agentWebSearchEnabled,
+      recordSearchEnabled: _agentConfig.agentRecordSearchEnabled,
+      healthAccessEnabled: _agentConfig.agentHealthAccessEnabled,
+      customSearchApiUrl: _agentConfig.customSearchApiUrl,
+      customSearchApiKey: _agentConfig.customSearchApiKey,
+      activeMcps: mcps,
+      agentDirPath: _agentDirPath,
+      speakerLibrarySummary: vpNames.join('、'),
+    );
+  }
+
+  String _resolveModel() {
+    if (_agentConfig.developerMode &&
+        _agentConfig.userPickedCloudModel &&
+        _agentConfig.cloudModel.trim().isNotEmpty) {
+      return _agentConfig.cloudModel.trim();
+    }
+    final gwModel = _gateway?.textModel.trim() ?? '';
+    if (gwModel.isNotEmpty) return gwModel;
+    return _agentConfig.cloudModel.trim();
+  }
+
+  Future<String> _completeOnHost(
+    List<ChatMessage> messages, {
+    required String model,
+    double temperature = 0.3,
+    int maxTokens = 2048,
+  }) async {
+    final comp = _completion;
+    if (comp != null) {
+      return comp.complete(
+        messages,
+        model: model,
+        temperature: temperature,
+        maxTokens: maxTokens,
+      );
+    }
+    final gw = _gateway;
+    if (gw == null) throw StateError('未配置模型网关');
+    return gw.chat(
+      messages,
+      model: model.trim().isEmpty ? null : model.trim(),
+      temperature: temperature,
+      maxTokens: maxTokens,
+      timeout: const Duration(seconds: 60),
+    );
+  }
+
+  Future<String> _queryHealthOnHost(Map<String, dynamic> args) async {
+    if (!_agentConfig.healthSignalEnabled) {
+      return jsonEncode({
+        'ok': false,
+        'enabled': false,
+        'reason': '本机「定位与健康信号」开关当前未开启，暂时没有采集健康与位置数据',
+      });
+    }
+    final hs = _healthStore;
+    if (hs == null) {
+      return jsonEncode({'ok': false, 'reason': '本机健康库尚未就绪'});
+    }
+    final hours = ((args['since_hours'] as num?)?.toDouble() ?? 24).clamp(
+      1.0,
+      720.0,
+    );
+    final limit = ((args['limit'] as num?)?.toInt() ?? 40).clamp(1, 200);
+    final type = (args['type'] as String?)?.trim();
+    final nowMs = _clock().millisecondsSinceEpoch;
+    final startMs = nowMs - (hours * 3600 * 1000).round();
+
+    final samples = await hs.query(
+      HealthSignalQuery(
+        startMs: startMs,
+        endMs: nowMs + 1,
+        type: (type == null || type.isEmpty) ? null : type,
+        limit: limit,
+        ascending: false,
+      ),
+    );
+    if (samples.isEmpty) {
+      return jsonEncode({
+        'ok': true,
+        'enabled': true,
+        'count': 0,
+        'summary': '最近 ${hours.round()} 小时暂无匹配的本机健康或位置样本',
+      });
+    }
+    final rows = buildHealthSignalRows(samples).take(24).toList();
+    return jsonEncode({
+      'ok': true,
+      'enabled': true,
+      'count': samples.length,
+      'rows': [
+        for (final r in rows)
+          {
+            'time': r.timeLabel,
+            'kind': r.kind,
+            'metric': r.metric,
+            'meta': r.meta,
+          },
+      ],
+      'samples': [
+        for (final s in samples.take(20))
+          {
+            'type': s.type,
+            'label': healthTypeLabel(s.type),
+            'startMs': s.startMs,
+            'valueNum': s.valueNum,
+            'valueText': s.valueText,
+            'unit': s.unit,
+          },
+      ],
+    });
+  }
+
+  Future<String> _patchConfigOnHost(Map<String, dynamic> patch) async {
+    final updated = <String>[];
+    if (patch['temperature'] is num) {
+      await _agentConfig.setTemperature(
+        (patch['temperature'] as num).toDouble(),
+      );
+      updated.add('temperature');
+    }
+    if (patch['agentPrompt'] is String &&
+        (patch['agentPrompt'] as String).trim().isNotEmpty) {
+      await _agentConfig.setAgentPrompt(patch['agentPrompt'] as String);
+      updated.add('agentPrompt');
+    }
+    if (patch['webSearchEnabled'] is bool) {
+      await _agentConfig.setAgentWebSearchEnabled(
+        patch['webSearchEnabled'] as bool,
+      );
+      updated.add('webSearchEnabled');
+    }
+    if (patch['recordSearchEnabled'] is bool) {
+      await _agentConfig.setAgentRecordSearchEnabled(
+        patch['recordSearchEnabled'] as bool,
+      );
+      updated.add('recordSearchEnabled');
+    }
+    if (patch['healthAccessEnabled'] is bool) {
+      await _agentConfig.setAgentHealthAccessEnabled(
+        patch['healthAccessEnabled'] as bool,
+      );
+      updated.add('healthAccessEnabled');
+    }
+    final rawMcp = patch['customMcp'];
+    if (rawMcp is Map) {
+      final name = '${rawMcp['name'] ?? ''}'.trim();
+      final endpoint = '${rawMcp['endpoint'] ?? rawMcp['url'] ?? ''}'.trim();
+      if (name.isNotEmpty && endpoint.isNotEmpty) {
+        await _agentConfig.addCustomMcp(name: name, endpoint: endpoint);
+        updated.add('customMcp($name)');
+      }
+    }
+    return jsonEncode({'ok': true, 'updated': updated});
+  }
+
+  void _onConfigChanged() {
+    if (_disposed) return;
+    notifyListeners();
+  }
+
+  void _scheduleCorpusSync() {
+    if (_disposed || !_initialized) return;
+    _corpusDebounce?.cancel();
+    _corpusDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (!_disposed) unawaited(_syncCorpusNow());
+    });
+  }
+
+  Future<void> _syncCorpusNow() async {
+    final docs = _collectDocuments();
+    final digest =
+        '${docs.length}|${docs.map((d) => '${d.id}:${d.body.length}:${d.summary.length}').join(',')}';
+    if (digest == _lastCorpusDigest) return;
+    _lastCorpusDigest = digest;
+    try {
+      await _worker.syncCorpus(docs);
+    } on Object {
+      // 忽略释放竞态
+    }
+  }
+
+  List<AgentDocument> _collectDocuments() {
+    final out = <AgentDocument>[];
+    for (final e in _appStore.events) {
+      final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
+      final body = turns.isNotEmpty
+          ? [
+              for (var i = 0; i < turns.length; i++)
+                '${_appStore.displayTurnSpeaker(e, i, turns[i].spk)}：${turns[i].text}',
+            ].join('\n')
+          : e.longText;
+      final spks = _appStore.displaySpeakersSummary(e);
+      out.add(
+        AgentDocument(
+          id: e.id,
+          kind: 'record',
+          title: e.title,
+          timeLabel: '${_dayText(e.dayOffset)} ${e.time}'.trim(),
+          dayOffset: e.dayOffset,
+          timestampMs: e.dayOffset == 0 ? 1 : 0,
+          speakers: spks,
+          summary: e.brief,
+          body: body,
+        ),
+      );
+    }
+    for (final s in _appStore.summaries) {
+      if (s.state != SummaryState.done) continue;
+      final pts = [
+        for (final p in s.points) '${p.title}：${p.detail}',
+      ].join('\n');
+      out.add(
+        AgentDocument(
+          id: s.id,
+          kind: 'summary',
+          title: s.title ?? '要点总结',
+          timeLabel: s.time,
+          dayOffset: 0,
+          timestampMs: 2,
+          summary: s.overview ?? '',
+          body: [
+            if ((s.overview ?? '').isNotEmpty) s.overview!,
+            if (pts.isNotEmpty) pts,
+            if (s.fullText.trim().isNotEmpty) s.fullText.trim(),
+          ].join('\n\n'),
+          todos: s.todos,
+        ),
+      );
+    }
+    return out;
+  }
+
+  static String _dayText(int offset) => switch (offset) {
+    0 => '今天',
+    1 => '昨天',
+    2 => '前天',
+    _ => '$offset天前',
+  };
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _corpusDebounce?.cancel();
+    _appStore.removeListener(_scheduleCorpusSync);
+    _agentConfig.removeListener(_onConfigChanged);
+    unawaited(_speechSub?.cancel());
+    if (_ownsSpeech) _speech.dispose();
+    if (_ownsWorker) unawaited(_worker.dispose());
+    super.dispose();
+  }
+}

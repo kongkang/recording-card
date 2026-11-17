@@ -566,12 +566,18 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="toggle-island-hw"]');
   assert(await p.$eval('[data-testid="set-dynamic-island"]', x => !x.hidden));
   await p.click('[data-testid="set-prompts"]');
+  assert(await p.$('[data-testid="agent-prompt-editor"]'));
   await p.click('[data-testid="preset-meeting"]');
   await p.click('[data-testid="prompt-save"]');
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$eval('#sv-preset', x => x.innerText.trim()), '深度会议');
   await p.click('[data-testid="set-extensions"]');
   assert.equal(await p.$eval('[data-testid="tbc-mcp"]', x => x.innerText.trim()), 'TBC');
+  assert(await p.$('[data-testid="mcp-add-btn"]'));
+  assert(await p.$('[data-testid="sw-agent-web"]'));
+  assert(await p.$('[data-testid="sw-agent-records"]'));
+  assert(await p.$('[data-testid="sw-agent-health"]'));
+  assert(await p.$('[data-testid="agent-search-url-input"]'));
   await p.click('[data-testid="sw-sk-risk"]');
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$eval('#sv-ext', x => x.innerText.trim()), '已启用 6 项');
@@ -616,7 +622,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="parity-btn"]');
   assert(await p.$eval('#parity-wrap', x => x.classList.contains('show')));
   assert.equal(await p.$('#parity-tabs'), null, '清理后不再保留 App 超前对比分页');
-  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 12);
+  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 11);
   await p.evaluate(() => closeParity());
   assert.equal(await p.$('[data-testid="nc-btn"]'), null, '行为与健康信号落地后不再保留 NC 胶囊');
   await p.click('[data-testid="hw-capsule"]');
@@ -959,8 +965,36 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.getAttribute('href')), 'index.html');
   assert.equal(await p.$eval('[data-testid="ver-switch-current"]', x => x.getAttribute('href')), 'current.html');
   assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0, 'current.html 不应出现 TBC 标记');
-  assert.deepEqual(await pCur.$$eval('nav.bottom button', e => e.map(x => x.innerText.trim())), ['Timeline', 'Setting'], 'current.html 保持两枚底部 Tab，不含目标版 OS1 入口');
-  assert.equal(await pCur.$('[data-testid="nav-ai-sunrise"]'), null);
+  assert.deepEqual(await pCur.$$eval('nav.bottom button', e => e.map(x => x.innerText.trim())), ['Timeline', 'OS1', 'Setting'], 'current.html 底栏已晋升接入 OS1 入口');
+  const curSunriseRise = await pCur.evaluate(() => {
+    const navTop = document.querySelector('nav.bottom').getBoundingClientRect().top;
+    const orbTop = document.querySelector('[data-testid="nav-ai-sunrise"] .ai-sunrise-orb').getBoundingClientRect().top;
+    return navTop - orbTop;
+  });
+  assert(curSunriseRise >= 14, 'current.html 底部日出圆钮应高于底栏顶部 >=14px，实际 ' + curSunriseRise);
+  await pCur.click('[data-testid="nav-ai-sunrise"]');
+  assert(await pCur.$eval('#ai-space', x => x.classList.contains('show')));
+  assert.equal(await pCur.$$eval('#ai-space .tbc-badge', x => x.length), 0);
+  await pCur.click('[data-testid="ai-her-prompt-mood"]');
+  await new Promise(r => setTimeout(r, 360));
+  const curHerPixels = await pCur.$eval('[data-testid="ai-her-canvas"]', cv => {
+    const ctx = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let cnt = 0; for (let i = 3; i < ctx.length; i += 16) if (ctx[i] > 20) cnt++;
+    return cnt;
+  });
+  assert(curHerPixels > 50, 'current.html 《Her》OS1 声波圆环应正常绘制');
+  await pCur.click('[data-testid="ai-mode-chat"]');
+  assert(await pCur.$eval('#ai-chat-pane', x => !x.hidden));
+  await pCur.click('[data-testid="ai-quick-1"]');
+  await new Promise(r => setTimeout(r, 220));
+  assert(await pCur.$('[data-testid="ai-typing-bubble"]'), 'current.html 轻聊等待态应显示极简 typing 点');
+  const curBusyTxt = await pCur.$eval('#ai-chat-pane', x => x.innerText);
+  assert(!curBusyTxt.includes('思考过程') && !curBusyTxt.includes('调用工具'));
+  await new Promise(r => setTimeout(r, 600));
+  assert.equal(await pCur.$('[data-testid="ai-typing-bubble"]'), null);
+  assert(await pCur.$('[data-testid="ai-chat-clear"]'));
+  await pCur.click('[data-testid="ai-space-close"]');
+  assert(!(await pCur.$eval('#ai-space', x => x.classList.contains('show'))));
   assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, 'current.html 行为与健康信号已落地，不再展示 NC 胶囊');
   assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0, 'current.html 不再展示 NC 徽标');
   assert.equal(await pCur.$$eval('.card[data-kind="daily"], .card[data-kind="dream"]', x => x.length), 0);
@@ -1013,7 +1047,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.evaluate(() => diClockHTML(3660).includes('di-colon') && diClockHTML(3661).includes('dim')));
   await pCur.click('[data-testid="crumb-back"]');
   // 验证「当前版」已落地清单、合并分片徽标及声纹管理（5 常用槽位含我的声音+单独录音 / 不限人数人物库）
-  assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·12');
+  assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·11');
   assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, 'current.html 不再保留 NC 待确认胶囊');
   await pCur.click('[data-testid="parity-btn"]');
   assert(await pCur.$eval('#parity-wrap', x => x.classList.contains('show')));

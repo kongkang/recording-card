@@ -5,6 +5,7 @@
 library;
 
 import 'dart:async';
+import 'dart:isolate';
 
 import 'package:flutter/widgets.dart';
 
@@ -177,8 +178,10 @@ class HealthSignalController extends ChangeNotifier
           for (final entry in cursors.entries)
             if (entry.value > interval) entry.key: entry.value - interval,
         };
+        final initialDone = await store.flag(_importFlag);
         // 没有水位的类型回到 30 天；已有水位的类型由 sinceByType 收窄。
         final defaultSince = now - historyLookback.inMilliseconds;
+        ({int minStartMs, int maxEndMs})? ingestedRange;
         try {
           await collector.catchUp(
             defaultSinceMs: defaultSince,
@@ -188,10 +191,17 @@ class HealthSignalController extends ChangeNotifier
             phaseMs: config.healthSamplePhaseMs,
           );
         } finally {
-          await _drain();
+          ingestedRange = await _drain();
         }
         await store.setFlag(_importFlag, true);
-        await _relink();
+        if (!initialDone) {
+          await _relink();
+        } else if (ingestedRange != null) {
+          await _relink(
+            fromMs: ingestedRange.minStartMs,
+            toMs: ingestedRange.maxEndMs,
+          );
+        }
       } while (_syncAgain && _active && !_disposed);
     } on Object catch (error) {
       statusMessage = '同步没有完成：$error';
@@ -227,42 +237,58 @@ class HealthSignalController extends ChangeNotifier
     });
   }
 
-  Future<void> _drain() async {
+  Future<({int minStartMs, int maxEndMs})?> _drain() async {
     final drafts = await collector.drainSpool();
-    if (drafts.isEmpty) return;
-    await _ingest(drafts);
+    if (drafts.isEmpty) return null;
+    return _ingest(drafts);
   }
 
-  Future<void> _ingest(List<HealthSignalDraft> drafts) async {
-    final normalized = bucketHealthDrafts(
-      drafts,
-      intervalMs: config.healthSampleIntervalMs,
-      phaseMs: config.healthSamplePhaseMs,
-    );
-    if (normalized.isEmpty) return;
+  Future<({int minStartMs, int maxEndMs})?> _ingest(
+    List<HealthSignalDraft> drafts,
+  ) async {
+    final intervalMs = config.healthSampleIntervalMs;
+    final phaseMs = config.healthSamplePhaseMs;
     final spans = await _loadSpans();
     final now = _clock().millisecondsSinceEpoch;
-    final samples = [
-      for (final draft in normalized)
-        draft.toSample(
-          recordingId: linkRecordingId(draft.startMs, draft.endMs, spans),
-          ingestedAtMs: now,
-        ),
-    ];
+    final samples = drafts.length >= 64
+        ? await Isolate.run(
+            () => _normalizeAndLinkSamples(
+              drafts: drafts,
+              spans: spans,
+              intervalMs: intervalMs,
+              phaseMs: phaseMs,
+              ingestedAtMs: now,
+            ),
+          )
+        : _normalizeAndLinkSamples(
+            drafts: drafts,
+            spans: spans,
+            intervalMs: intervalMs,
+            phaseMs: phaseMs,
+            ingestedAtMs: now,
+          );
+    if (samples.isEmpty) return null;
     await store.upsertAll(samples);
     final cursors = await store.readCursors();
     final next = Map<String, int>.of(cursors);
+    var minStart = samples.first.startMs;
+    var maxEnd = samples.first.endMs < samples.first.startMs
+        ? samples.first.startMs
+        : samples.first.endMs;
     for (final sample in samples) {
+      if (sample.startMs < minStart) minStart = sample.startMs;
       final end = sample.endMs < sample.startMs ? sample.startMs : sample.endMs;
+      if (end > maxEnd) maxEnd = end;
       final prev = next[sample.type] ?? 0;
       if (end > prev) next[sample.type] = end;
     }
     await store.writeCursors(next);
+    return (minStartMs: minStart, maxEndMs: maxEnd + 1);
   }
 
-  Future<void> _relink() async {
+  Future<void> _relink({int? fromMs, int? toMs}) async {
     final spans = await _loadSpans();
-    await store.relink(spans);
+    await store.relink(spans, fromMs: fromMs, toMs: toMs);
   }
 
   Future<List<RecordingSpan>> _loadSpans() async {
@@ -324,4 +350,26 @@ class HealthSignalController extends ChangeNotifier
     unawaited(_updatesSub?.cancel());
     super.dispose();
   }
+}
+
+List<HealthSignalSample> _normalizeAndLinkSamples({
+  required List<HealthSignalDraft> drafts,
+  required List<RecordingSpan> spans,
+  required int intervalMs,
+  required int phaseMs,
+  required int ingestedAtMs,
+}) {
+  final normalized = bucketHealthDrafts(
+    drafts,
+    intervalMs: intervalMs,
+    phaseMs: phaseMs,
+  );
+  if (normalized.isEmpty) return const [];
+  return [
+    for (final draft in normalized)
+      draft.toSample(
+        recordingId: linkRecordingId(draft.startMs, draft.endMs, spans),
+        ingestedAtMs: ingestedAtMs,
+      ),
+  ];
 }
