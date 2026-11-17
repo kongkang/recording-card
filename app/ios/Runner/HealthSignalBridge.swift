@@ -109,17 +109,45 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
       ])
       return
     }
+    // 只向系统申请「第三方 App 可读」的类型。把 ECG/心理状态/用药/视力处方等
+    // 一并塞进 requestAuthorization 会触发 HealthKit 的 NSException
+    // (_throwIfAuthorizationDisallowedForSharing) 直接 SIGABRT。
     let types = authorizationTypes()
-    healthStore.requestAuthorization(toShare: [], read: types) { [weak self] success, error in
-      DispatchQueue.main.async {
-        guard let self else { return }
-        self.finishHealthThenLocation(
-          success: success,
-          error: error,
-          requested: types.count,
-          result: result
-        )
+    let share = Set<HKSampleType>()
+    var launched = false
+    let exception = RCObjCCatchException {
+      self.healthStore.requestAuthorization(toShare: share, read: types) { [weak self] success, error in
+        DispatchQueue.main.async {
+          guard let self else { return }
+          self.finishHealthThenLocation(
+            success: success,
+            error: error,
+            requested: types.count,
+            result: result
+          )
+        }
       }
+      launched = true
+    }
+    if let exception {
+      result([
+        "available": false,
+        "requested": types.count,
+        "location": locationStatusText(),
+        "clinicalSkipped": true,
+        "error": exception.reason
+          ?? "系统拒绝了本次健康授权请求（\(exception.name.rawValue)）",
+      ])
+      return
+    }
+    if !launched {
+      result([
+        "available": false,
+        "requested": types.count,
+        "location": locationStatusText(),
+        "clinicalSkipped": true,
+        "error": "健康授权未能发起",
+      ])
     }
   }
 
@@ -278,7 +306,8 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
       }
       observers.append(query)
       healthStore.execute(query)
-      healthStore.enableBackgroundDelivery(for: sampleType, frequency: .immediate) { _, _ in }
+      // 未开通 healthkit.background-delivery 时不要 enable；失败虽多半只回调 error，
+      // 部分系统版本会对无 entitlement 的调用更激进。
     }
     startPhaseTimer(intervalMs: intervalMs, phaseMs: phaseMs)
     startLocationUpdates()
@@ -1036,13 +1065,42 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
   private func authorizationTypes() -> Set<HKObjectType> {
     ensureSpecs()
     var types = Set<HKObjectType>()
-    for spec in specs {
+    for spec in specs where Self.isSafeAuthorizationType(spec.objectType) {
       types.insert(spec.objectType)
     }
-    if let pressure = HKCorrelationType.correlationType(forIdentifier: .bloodPressure) {
-      types.insert(pressure)
-    }
     return types
+  }
+
+  /// 过滤会让 requestAuthorization 直接抛 NSException 的类型。
+  /// 这些类型仍可在用户已有权限时尝试读取；只是不要塞进授权弹窗请求。
+  private static func isSafeAuthorizationType(_ type: HKObjectType) -> Bool {
+    if type is HKCharacteristicType { return true }
+    if type is HKQuantityType { return true }
+    if type is HKCategoryType { return true }
+    if type is HKWorkoutType { return true }
+    if type is HKCorrelationType { return false }
+    // 活动摘要 / 系列 / ECG / 听力图 / 视力处方 / 心理状态 / 用药：部分系统上会直接 abort
+    let id = type.identifier
+    let blocked: Set<String> = [
+      HKObjectType.activitySummaryType().identifier,
+      HKSeriesType.heartbeat().identifier,
+      HKSeriesType.workoutRoute().identifier,
+      HKObjectType.audiogramSampleType().identifier,
+    ]
+    if blocked.contains(id) { return false }
+    if #available(iOS 14.0, *) {
+      if id == HKObjectType.electrocardiogramType().identifier { return false }
+    }
+    if #available(iOS 16.0, *) {
+      if id == HKObjectType.visionPrescriptionType().identifier { return false }
+    }
+    if #available(iOS 18.0, *) {
+      if id == HKObjectType.stateOfMindType().identifier { return false }
+    }
+    if #available(iOS 26.0, *) {
+      if id == HKObjectType.userAnnotatedMedicationType().identifier { return false }
+    }
+    return type is HKSampleType
   }
 
   private static let quickTypeIds: Set<String> = [
@@ -1097,7 +1155,6 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
       "HKQuantityTypeIdentifierBasalEnergyBurned",
       "HKQuantityTypeIdentifierActiveEnergyBurned",
       "HKQuantityTypeIdentifierFlightsClimbed",
-      "HKQuantityTypeIdentifierNikeFuel",
       "HKQuantityTypeIdentifierAppleExerciseTime",
       "HKQuantityTypeIdentifierAppleMoveTime",
       "HKQuantityTypeIdentifierAppleStandTime",
