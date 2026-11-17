@@ -41,12 +41,9 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
   }
 
   func bootstrap() {
-    guard UserDefaults.standard.bool(forKey: enabledKey) else { return }
-    // 启动期采集失败必须清开关，否则会卡在「一点图标就崩」。
-    let ok = startCollection(intervalMs: storedIntervalMs(), phaseMs: storedPhaseMs())
-    if !ok {
-      UserDefaults.standard.set(false, forKey: enabledKey)
-    }
+    // 启动期不做任何 HealthKit 查询/观察：catchUp 里单位换算、活动摘要谓词等
+    // 都会抛 NSException，且发生在 Flutter 起来之前，表现为「完全打不开」。
+    // 开关仍由 Flutter 前台就绪后再 _pushActive 恢复。
   }
 
   func register(messenger: FlutterBinaryMessenger) {
@@ -483,9 +480,10 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
       return
     }
     ensureSpecs()
-    let selected = job.quick
+    let selected = (job.quick
       ? specs.filter { Self.quickTypeIds.contains($0.typeId) || $0.typeId == job.trigger }
       : specs
+    ).filter { Self.isSafeAuthorizationType($0.objectType) }
     if selected.isEmpty {
       finished()
       return
@@ -718,39 +716,63 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
   }
 
   private func queryActivity(since: Date, until: Date, done: @escaping ([[String: Any]]) -> Void) {
+    // 活动摘要谓词在部分系统/日期组件组合下会直接 NSException；整段兜底。
     let calendar = Calendar.current
     let startParts = calendar.dateComponents([.year, .month, .day], from: since)
     let endParts = calendar.dateComponents([.year, .month, .day], from: until.addingTimeInterval(86_400))
-    let predicate = HKQuery.predicate(forActivitySummariesBetweenStart: startParts, end: endParts)
-    let query = HKActivitySummaryQuery(predicate: predicate) { [weak self] _, summaries, _ in
-      guard let self else {
-        done([])
-        return
-      }
-      var rows: [[String: Any]] = []
-      for summary in summaries ?? [] {
-        guard let day = calendar.date(from: summary.dateComponents(for: calendar)) else { continue }
-        let move = (try? summary.activeEnergyBurned.doubleValue(for: .kilocalorie())) ?? 0
-        let exercise = (try? summary.appleExerciseTime.doubleValue(for: .minute())) ?? 0
-        let stand = (try? summary.appleStandHours.doubleValue(for: .count())) ?? 0
-        if move == 0 && exercise == 0 && stand == 0 { continue }
-        let end = calendar.date(byAdding: .day, value: 1, to: day) ?? day
-        rows.append(self.draft(
-          typeId: "activity_summary",
-          start: day,
-          end: end,
-          value: move,
-          text: "活动 \(Int(move.rounded())) 千卡 · 锻炼 \(Int(exercise.rounded())) 分 · 站立 \(Int(stand.rounded()))",
-          unit: "kcal",
-          sourceName: "健康",
-          sourceBundle: "healthkit.activity",
-          aggregation: "span",
-          metadata: ["exerciseMin": exercise, "standHours": stand]
-        ))
-      }
-      done(rows)
+    guard startParts.year != nil, startParts.month != nil, startParts.day != nil,
+          endParts.year != nil, endParts.month != nil, endParts.day != nil else {
+      done([])
+      return
     }
-    healthStore.execute(query)
+    var query: HKActivitySummaryQuery?
+    let exception = RCObjCCatchException {
+      let predicate = HKQuery.predicate(forActivitySummariesBetweenStart: startParts, end: endParts)
+      query = HKActivitySummaryQuery(predicate: predicate) { [weak self] _, summaries, _ in
+        guard let self else {
+          done([])
+          return
+        }
+        var rows: [[String: Any]] = []
+        for summary in summaries ?? [] {
+          guard let day = calendar.date(from: summary.dateComponents(for: calendar)) else { continue }
+          let move = self.safeDouble(summary.activeEnergyBurned, unit: .kilocalorie()) ?? 0
+          let exercise = self.safeDouble(summary.appleExerciseTime, unit: .minute()) ?? 0
+          let stand = self.safeDouble(summary.appleStandHours, unit: .count()) ?? 0
+          if move == 0 && exercise == 0 && stand == 0 { continue }
+          let end = calendar.date(byAdding: .day, value: 1, to: day) ?? day
+          rows.append(self.draft(
+            typeId: "activity_summary",
+            start: day,
+            end: end,
+            value: move,
+            text: "活动 \(Int(move.rounded())) 千卡 · 锻炼 \(Int(exercise.rounded())) 分 · 站立 \(Int(stand.rounded()))",
+            unit: "kcal",
+            sourceName: "健康",
+            sourceBundle: "healthkit.activity",
+            aggregation: "span",
+            metadata: ["exerciseMin": exercise, "standHours": stand]
+          ))
+        }
+        done(rows)
+      }
+      if let query {
+        self.healthStore.execute(query)
+      }
+    }
+    if exception != nil || query == nil {
+      done([])
+    }
+  }
+
+  private func safeDouble(_ quantity: HKQuantity, unit: HKUnit) -> Double? {
+    guard quantity.is(compatibleWith: unit) else { return nil }
+    var value = Double.nan
+    let exception = RCObjCCatchException {
+      value = quantity.doubleValue(for: unit)
+    }
+    if exception != nil || !value.isFinite { return nil }
+    return value
   }
 
   private func queryGenericSample(
@@ -775,7 +797,7 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
         var text = label
         if #available(iOS 14.0, *), let ecg = sample as? HKElectrocardiogram {
           if let rate = ecg.averageHeartRate {
-            value = try? rate.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
+            value = self.safeDouble(rate, unit: HKUnit.count().unitDivided(by: .minute()))
           }
           text = self.ecgText(ecg.classification)
         } else if #available(iOS 18.0, *), let mind = sample as? HKStateOfMind {
@@ -890,10 +912,15 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
 
   private func doubleValue(_ quantity: HKQuantity, typeId: String) -> (value: Double, unit: String)? {
     for candidate in unitCandidates(typeId) {
-      if let value = try? quantity.doubleValue(for: candidate.unit), value.isFinite {
-        let scaled = candidate.percent ? value * 100 : value
-        return (scaled, candidate.label)
+      guard quantity.is(compatibleWith: candidate.unit) else { continue }
+      var value = Double.nan
+      let exception = RCObjCCatchException {
+        value = quantity.doubleValue(for: candidate.unit)
       }
+      if exception != nil { continue }
+      guard value.isFinite else { continue }
+      let scaled = candidate.percent ? value * 100 : value
+      return (scaled, candidate.label)
     }
     return nil
   }
