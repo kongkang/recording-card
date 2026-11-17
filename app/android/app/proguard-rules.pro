@@ -20,6 +20,12 @@
     native <methods>;
 }
 
+# ── btleplug Android Java 垫片（src/main/java vendored）──────
+# 只被 Rust droidplug 侧 JNI 反射调用，Java 静态分析视为死代码；
+# 裁掉后 JNI_OnLoad 直接 ClassNotFoundException 崩溃（Jelly Star 2026-11-16 实测）
+-keep class com.nonpolynomial.btleplug.android.** { *; }
+-keep class io.github.gedgygedgy.rust.** { *; }
+
 # ── 安全存储（flutter_secure_storage → AndroidX Security + Tink + protobuf）──
 -keep class androidx.security.crypto.** { *; }
 -keep class com.google.crypto.tink.** { *; }

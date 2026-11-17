@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+2026111505
+version: 1.0.0+2026111701
 
 environment:
   sdk: ^3.10.4
@@ -135,3 +135,9 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# 使用系统内置 SQLite，避免离线/无代理环境 flutter test 在 Native Assets 阶段拉取 GitHub Release 失败
+hooks:
+  user_defines:
+    sqlite3:
+      source: system

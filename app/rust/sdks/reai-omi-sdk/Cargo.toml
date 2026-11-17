@@ -8,6 +8,7 @@ description = "ReAI-style BLE SDK wrapper for mass-produced Omi (CV1 / Friend Pe
 async-trait = "0.1"
 btleplug = "0.12"
 futures = "0.3"
+log = "0.4"
 reai-ext-sdk = { path = "../reai-ext-sdk" }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "time", "rt", "macros", "fs"] }

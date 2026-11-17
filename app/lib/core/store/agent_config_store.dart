@@ -29,6 +29,7 @@ class AgentPresetSpec {
   final String summaryPrompt;
   final String polishPrompt;
   final String dreamPrompt;
+  final bool builtin;
 
   const AgentPresetSpec({
     required this.id,
@@ -37,7 +38,43 @@ class AgentPresetSpec {
     required this.summaryPrompt,
     required this.polishPrompt,
     required this.dreamPrompt,
+    this.builtin = true,
   });
+
+  AgentPresetSpec copyWith({
+    String? label,
+    String? desc,
+    String? summaryPrompt,
+    String? polishPrompt,
+    String? dreamPrompt,
+  }) => AgentPresetSpec(
+    id: id,
+    label: label ?? this.label,
+    desc: desc ?? this.desc,
+    summaryPrompt: summaryPrompt ?? this.summaryPrompt,
+    polishPrompt: polishPrompt ?? this.polishPrompt,
+    dreamPrompt: dreamPrompt ?? this.dreamPrompt,
+    builtin: builtin,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'label': label,
+    'desc': desc,
+    'summary': summaryPrompt,
+    'polish': polishPrompt,
+    'dream': dreamPrompt,
+  };
+
+  factory AgentPresetSpec.fromJson(Map<String, dynamic> j) => AgentPresetSpec(
+    id: '${j['id'] ?? ''}',
+    label: '${j['label'] ?? '未命名'}',
+    desc: '${j['desc'] ?? ''}',
+    summaryPrompt: '${j['summary'] ?? ''}',
+    polishPrompt: '${j['polish'] ?? ''}',
+    dreamPrompt: '${j['dream'] ?? ''}',
+    builtin: false,
+  );
 }
 
 class AgentExtensionItem {
@@ -130,7 +167,7 @@ class AgentConfigStore extends ChangeNotifier {
     ),
   ];
 
-  static const List<AgentPresetSpec> presets = [
+  static const List<AgentPresetSpec> builtinPresets = [
     AgentPresetSpec(
       id: 'general',
       label: '通用纪要',
@@ -166,6 +203,9 @@ class AgentConfigStore extends ChangeNotifier {
       dreamPrompt: '仅归档今日已完成闭环与明日必做三件事，保持零噪音。',
     ),
   ];
+
+  /// 兼容旧调用点：仅内置预设（不含用户增改）。
+  static List<AgentPresetSpec> get presets => builtinPresets;
 
   static const List<AgentExtensionItem> builtinExtensions = [
     AgentExtensionItem(
@@ -349,14 +389,14 @@ class AgentConfigStore extends ChangeNotifier {
     return custom ? '$model · $source · 自定义接口' : '$model · $source';
   }
 
-  String presetId =
-      'general'; // 'general' | 'meeting' | 'interview' | 'todo' | 'custom'
-  late Map<String, String> prompts = _promptsFromPreset(presets.first);
+  String presetId = 'general'; // builtin id | user-* | 'custom'
+  late Map<String, String> prompts = _promptsFromPreset(builtinPresets.first);
 
   Map<String, bool> extensionStates = Map<String, bool>.of(
     _defaultExtensionStates,
   );
   List<AgentExtensionItem> customMcps = const [];
+  List<AgentPresetSpec> userPresets = const [];
 
   List<String> _gatewayModels = const [];
 
@@ -365,6 +405,18 @@ class AgentConfigStore extends ChangeNotifier {
     'polish': p.polishPrompt,
     'dream': p.dreamPrompt,
   };
+
+  List<AgentPresetSpec> get allPresets => [
+    ...builtinPresets,
+    ...userPresets,
+  ];
+
+  AgentPresetSpec? presetById(String id) {
+    for (final p in allPresets) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
 
   /// 同步网关探测到的真实可用文本模型。未手动指定时不把网关模型写进用户选择。
   void syncGatewayModels(List<String> models, {String? primaryTextModel}) {
@@ -400,10 +452,14 @@ class AgentConfigStore extends ChangeNotifier {
 
   String get presetLabel {
     if (presetId == 'custom') return '自定义';
-    return presets.where((p) => p.id == presetId).firstOrNull?.label ?? '通用纪要';
+    return presetById(presetId)?.label ?? '通用纪要';
   }
 
-  String promptFor(String kind) => prompts[kind] ?? presets.first.summaryPrompt;
+  bool get isUserPresetSelected =>
+      presetById(presetId)?.builtin == false;
+
+  String promptFor(String kind) =>
+      prompts[kind] ?? builtinPresets.first.summaryPrompt;
 
   List<AgentExtensionItem> get allExtensions => [
     ...builtinExtensions,
@@ -518,6 +574,13 @@ class AgentConfigStore extends ChangeNotifier {
     }
     if (data['preset'] is String && (data['preset'] as String).isNotEmpty) {
       presetId = data['preset'] as String;
+    }
+    final rawUserPresets = data['userPresets'];
+    if (rawUserPresets is List) {
+      userPresets = [
+        for (final item in rawUserPresets)
+          if (item is Map<String, dynamic>) AgentPresetSpec.fromJson(item),
+      ].where((p) => p.id.isNotEmpty && p.label.trim().isNotEmpty).toList();
     }
     final rawPrompts = data['prompts'];
     if (rawPrompts is Map) {
@@ -691,7 +754,7 @@ class AgentConfigStore extends ChangeNotifier {
   }
 
   Future<void> selectPreset(String id) async {
-    final spec = presets.where((p) => p.id == id).firstOrNull;
+    final spec = presetById(id);
     if (spec == null) return;
     presetId = spec.id;
     prompts = _promptsFromPreset(spec);
@@ -703,24 +766,128 @@ class AgentConfigStore extends ChangeNotifier {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
     prompts = {...prompts, kind: trimmed};
-    final activeSpec = presets.where((p) => p.id == presetId).firstOrNull;
-    if (activeSpec != null) {
+    final activeSpec = presetById(presetId);
+    if (activeSpec != null && !activeSpec.builtin) {
+      // 用户自定义预设：就地回写，支持「改」
+      final idx = userPresets.indexWhere((p) => p.id == activeSpec.id);
+      if (idx >= 0) {
+        final cur = userPresets[idx];
+        userPresets = [
+          for (var i = 0; i < userPresets.length; i++)
+            if (i == idx)
+              cur.copyWith(
+                summaryPrompt: kind == 'summary' ? trimmed : cur.summaryPrompt,
+                polishPrompt: kind == 'polish' ? trimmed : cur.polishPrompt,
+                dreamPrompt: kind == 'dream' ? trimmed : cur.dreamPrompt,
+              )
+            else
+              userPresets[i],
+        ];
+      }
+    } else if (activeSpec != null) {
       final expected = _promptsFromPreset(activeSpec)[kind];
       if (expected != trimmed) {
         presetId = 'custom';
       }
+    } else {
+      presetId = 'custom';
     }
     notifyListeners();
     await _save();
   }
 
   Future<void> resetPromptsToActivePreset() async {
-    final spec =
-        presets.where((p) => p.id == presetId).firstOrNull ?? presets.first;
+    final spec = presetById(presetId) ?? builtinPresets.first;
     presetId = spec.id;
     prompts = _promptsFromPreset(spec);
     notifyListeners();
     await _save();
+  }
+
+  /// 新增用户预设（可基于当前提示词，也可空白拷贝通用纪要）。
+  Future<AgentPresetSpec?> addUserPreset({
+    required String label,
+    String? summaryPrompt,
+    String? polishPrompt,
+    String? dreamPrompt,
+  }) async {
+    final clean = label.trim();
+    if (clean.isEmpty) return null;
+    final id = 'user-${DateTime.now().millisecondsSinceEpoch}';
+    final base = builtinPresets.first;
+    final created = AgentPresetSpec(
+      id: id,
+      label: clean,
+      desc: '用户自定义风格',
+      summaryPrompt: (summaryPrompt ?? prompts['summary'] ?? base.summaryPrompt)
+          .trim(),
+      polishPrompt: (polishPrompt ?? prompts['polish'] ?? base.polishPrompt)
+          .trim(),
+      dreamPrompt: (dreamPrompt ?? prompts['dream'] ?? base.dreamPrompt).trim(),
+      builtin: false,
+    );
+    userPresets = [...userPresets, created];
+    presetId = created.id;
+    prompts = _promptsFromPreset(created);
+    notifyListeners();
+    await _save();
+    return created;
+  }
+
+  Future<bool> renameUserPreset(String id, String label) async {
+    final clean = label.trim();
+    if (clean.isEmpty) return false;
+    final idx = userPresets.indexWhere((p) => p.id == id);
+    if (idx < 0) return false;
+    userPresets = [
+      for (var i = 0; i < userPresets.length; i++)
+        if (i == idx) userPresets[i].copyWith(label: clean) else userPresets[i],
+    ];
+    notifyListeners();
+    await _save();
+    return true;
+  }
+
+  Future<bool> deleteUserPreset(String id) async {
+    final before = userPresets.length;
+    userPresets = userPresets.where((p) => p.id != id).toList();
+    if (userPresets.length == before) return false;
+    if (presetId == id) {
+      final fallback = builtinPresets.first;
+      presetId = fallback.id;
+      prompts = _promptsFromPreset(fallback);
+    }
+    notifyListeners();
+    await _save();
+    return true;
+  }
+
+  /// 将当前提示词写回已选用户预设；若当前是内置/匿名自定义，则另存为新预设。
+  Future<AgentPresetSpec?> saveCurrentAsPreset({String? newLabel}) async {
+    final active = presetById(presetId);
+    if (active != null && !active.builtin) {
+      final idx = userPresets.indexWhere((p) => p.id == active.id);
+      if (idx >= 0) {
+        final cur = userPresets[idx];
+        userPresets = [
+          for (var i = 0; i < userPresets.length; i++)
+            if (i == idx)
+              cur.copyWith(
+                summaryPrompt: prompts['summary'] ?? cur.summaryPrompt,
+                polishPrompt: prompts['polish'] ?? cur.polishPrompt,
+                dreamPrompt: prompts['dream'] ?? cur.dreamPrompt,
+              )
+            else
+              userPresets[i],
+        ];
+        notifyListeners();
+        await _save();
+        return userPresets[idx];
+      }
+    }
+    final label =
+        (newLabel ?? (active == null ? '自定义风格' : '${active.label} 改')).trim();
+    return addUserPreset(label: label.isEmpty ? '自定义风格' : label);
   }
 
   Future<void> toggleExtension(String id) async {
@@ -791,6 +958,8 @@ class AgentConfigStore extends ChangeNotifier {
       'cleanOverlapMinutes': cleanOverlapMinutes,
       'preset': presetId,
       'prompts': prompts,
+      if (userPresets.isNotEmpty)
+        'userPresets': [for (final p in userPresets) p.toJson()],
       'ext': extensionStates,
       if (customMcps.isNotEmpty)
         'customMcps': [for (final m in customMcps) m.toJson()],

@@ -68,7 +68,45 @@ void main() {
     },
   );
 
-  testWidgets('Setting 四个模型与智能体二级页：导航/修改/返回面包屑与父级摘要实时同步', (tester) async {
+  test('AgentConfigStore 用户预设支持增改删并冷启动恢复', () async {
+    final backing = InMemoryStore();
+    final first = AgentConfigStore(store: backing);
+    addTearDown(first.dispose);
+    await first.load();
+
+    final created = await first.addUserPreset(
+      label: '产品评审',
+      summaryPrompt: '聚焦需求边界与验收口径。',
+      polishPrompt: '保留数字与负责人。',
+      dreamPrompt: '归档待确认假设。',
+    );
+    expect(created, isNotNull);
+    expect(first.presetId, created!.id);
+    expect(first.presetLabel, '产品评审');
+    expect(first.isUserPresetSelected, isTrue);
+
+    await first.savePrompt('summary', '聚焦阻塞与验收。');
+    expect(first.presetById(created.id)?.summaryPrompt, '聚焦阻塞与验收。');
+
+    await first.renameUserPreset(created.id, '评审纪要');
+    expect(first.presetLabel, '评审纪要');
+
+    final reopened = AgentConfigStore(store: backing);
+    addTearDown(reopened.dispose);
+    await reopened.load();
+    expect(reopened.userPresets.length, 1);
+    expect(reopened.presetId, created.id);
+    expect(reopened.presetLabel, '评审纪要');
+    expect(reopened.promptFor('summary'), '聚焦阻塞与验收。');
+
+    await reopened.deleteUserPreset(created.id);
+    expect(reopened.userPresets, isEmpty);
+    expect(reopened.presetId, 'general');
+  });
+
+  testWidgets('Setting 四个模型与智能体二级页：导航/修改/返回面包屑与父级摘要实时同步', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);

@@ -1270,5 +1270,19 @@ class WatchCompositeCardGateway implements CardGateway {
       _watchActive ? Future<void>.value() : bleGateway.syncTime();
 
   @override
+  Future<Map<String, dynamic>> invokeBridgeCommand(
+    String kind, [
+    Map<String, dynamic>? payload,
+    Duration timeout = const Duration(seconds: 30),
+  ]) => bleGateway.invokeBridgeCommand(kind, payload, timeout);
+
+  @override
+  Stream<CardProgress> invokeBridgeStream(
+    String kind, [
+    Map<String, dynamic>? payload,
+    void Function(Map<String, dynamic>)? onFinal,
+  ]) => bleGateway.invokeBridgeStream(kind, payload, onFinal);
+
+  @override
   Future<void> dispose() => bleGateway.dispose();
 }

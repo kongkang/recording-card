@@ -20,6 +20,7 @@ import '../services/auth_service.dart';
 import '../services/health/health_signal_controller.dart';
 import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/model_manager_controller.dart';
+import '../widgets/legacy_upgrade_sheet.dart';
 import '../widgets/store_scope.dart';
 import 'detail_page.dart';
 import 'setting_page.dart';
@@ -319,6 +320,9 @@ class _AppShellState extends State<AppShell> {
                         store: _device,
                         islandEnabled: _agentConfig.islandEnabled,
                       ),
+                    ),
+                    LegacyUpgradeSheetOverlay(
+                      controller: _device.legacyUpgrade,
                     ),
                   ],
                 ),

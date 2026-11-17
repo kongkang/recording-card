@@ -1031,7 +1031,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$$eval('[data-testid="vp-frequent-section"] .vp-slot', e => e.length), 5);
   assert(await pCur.$eval('[data-testid="vp-slot-1"]', x => x.innerText.includes('我的声音') && x.innerText.includes('3 组样本')));
   await pCur.click('[data-testid="vp-record-self-btn"]');
-  await pCur.waitForFunction(() => document.querySelector('[data-testid="vp-slot-1"]').innerText.includes('4 组样本'), { timeout: 3000 });
+  await pCur.waitForFunction(() => document.querySelector('[data-testid="vp-record-countdown-dialog"]'), { timeout: 2000 });
+  await pCur.waitForFunction(() => document.querySelector('[data-testid="vp-slot-1"]').innerText.includes('4 组样本'), { timeout: 6000 });
+  assert(await pCur.$('[data-testid^="vp-sample-"]'), '录音样本应为可点胶囊条');
   assert((await pCur.$$eval('[data-testid="vp-library-section"] [data-testid^="vp-lib-person-"]', e => e.length)) >= 7, '人物库人数应大于 5（无上限）');
   await pCur.click('[data-testid="crumb-back"]');
   await pCur.$eval('[data-testid="set-developer"]', x => x.scrollIntoView({ block: 'center' }));

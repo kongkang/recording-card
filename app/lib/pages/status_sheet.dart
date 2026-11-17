@@ -898,7 +898,7 @@ class _MainView extends StatelessWidget {
               ],
             ),
           ),
-        if (store.activeCapabilities.hasDualChipOta)
+        if (store.activeCapabilities.hasOta)
           _Row(
             keyName: 'fw-update',
             label: '固件',
@@ -1327,21 +1327,22 @@ class _FirmwareView extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         _Row(
-          label: '主控芯片',
+          label: store.activeCapabilities.hasSingleOta ? '系统固件' : '主控芯片',
           child: Text(
             store.mainVersionCompare,
             key: const Key('fw-main-ver'),
             style: const TextStyle(fontSize: 13),
           ),
         ),
-        _Row(
-          label: 'Wi-Fi 芯片',
-          child: Text(
-            store.wifiVersionCompare,
-            key: const Key('fw-wifi-ver'),
-            style: const TextStyle(fontSize: 13),
+        if (store.activeCapabilities.hasDualChipOta)
+          _Row(
+            label: 'Wi-Fi 芯片',
+            child: Text(
+              store.wifiVersionCompare,
+              key: const Key('fw-wifi-ver'),
+              style: const TextStyle(fontSize: 13),
+            ),
           ),
-        ),
         if (store.fwError != null)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),

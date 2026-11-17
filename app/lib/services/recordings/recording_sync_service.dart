@@ -66,6 +66,16 @@ class RecordingSyncService {
     return dir;
   }
 
+  /// 同步进度文案只用时间，不暴露 watch_… 长文件名。
+  String _timeLabel(String deviceName) {
+    final m = RegExp(r'(20\d{10,12})').firstMatch(deviceName);
+    final raw = m?.group(1);
+    if (raw != null && raw.length >= 12) {
+      return '${raw.substring(8, 10)}:${raw.substring(10, 12)}';
+    }
+    return '这段录音';
+  }
+
   /// 读取本地已有记录（按时间倒序：今天的在前）。
   Future<List<RecordEvent>> loadEvents() async {
     final items = await _manifest.load();
@@ -115,7 +125,7 @@ class RecordingSyncService {
       onProgress?.call(
         SyncStage.downloading,
         base + step * 0.1,
-        '正在取回 ${file.name}（${i + 1}/$total）',
+        '正在取回 ${_timeLabel(file.name)} 这段（${i + 1}/$total）',
       );
 
       String apmPath;
@@ -136,7 +146,7 @@ class RecordingSyncService {
       onProgress?.call(
         SyncStage.transcoding,
         base + step * 0.35,
-        '正在转换 ${file.name}',
+        '正在转换 ${_timeLabel(file.name)} 这段',
       );
       final wavPath = '$apmPath.wav';
       var durationSecs = 0.0;
@@ -168,7 +178,7 @@ class RecordingSyncService {
       onProgress?.call(
         SyncStage.transcribing,
         base + step * 0.6,
-        '正在转写 ${file.name}',
+        '正在转写 ${_timeLabel(file.name)} 这段',
       );
       var transcript = '';
       String? transcribeError;
@@ -226,7 +236,7 @@ class RecordingSyncService {
     var done = 0;
     for (var i = 0; i < pending.length; i++) {
       final item = pending[i];
-      onProgress?.call(i / pending.length, '正在补转写 ${item.deviceName}');
+      onProgress?.call(i / pending.length, '正在补转写第 ${i + 1} 段');
       try {
         final bytes = await File(item.wavPath!).readAsBytes();
         final result = await _model.transcribe(

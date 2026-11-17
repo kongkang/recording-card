@@ -5,7 +5,9 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/device/card_gateway.dart';
@@ -968,17 +970,141 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
     });
   }
 
+  Future<String?> _askPresetName({
+    required String title,
+    String initial = '',
+    String confirmLabel = '确定',
+  }) async {
+    final textCtrl = TextEditingController(text: initial);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          key: const Key('preset-name-input'),
+          controller: textCtrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: '例如：产品评审 / 客户回访',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('preset-name-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(textCtrl.text.trim()),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    textCtrl.dispose();
+    if (result == null || result.isEmpty) return null;
+    return result;
+  }
+
+  Future<void> _addPreset() async {
+    // 先把当前编辑框内容写入内存，再另存
+    await widget.config.savePrompt(_tab, _ctrl.text);
+    final name = await _askPresetName(
+      title: '新增预设风格',
+      confirmLabel: '新增',
+    );
+    if (name == null || !mounted) return;
+    await widget.config.addUserPreset(label: name);
+    if (!mounted) return;
+    setState(() {
+      _savedToast = true;
+      _ctrl.text = widget.config.promptFor(_tab);
+    });
+  }
+
+  Future<void> _renameSelectedPreset() async {
+    final id = widget.config.presetId;
+    final cur = widget.config.presetById(id);
+    if (cur == null || cur.builtin) return;
+    final name = await _askPresetName(
+      title: '修改预设名称',
+      initial: cur.label,
+      confirmLabel: '保存',
+    );
+    if (name == null || !mounted) return;
+    await widget.config.renameUserPreset(id, name);
+    if (!mounted) return;
+    setState(() => _savedToast = true);
+  }
+
+  Future<void> _deleteSelectedPreset() async {
+    final id = widget.config.presetId;
+    final cur = widget.config.presetById(id);
+    if (cur == null || cur.builtin) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除该预设？'),
+        content: Text('将删除「${cur.label}」，提示词不会再出现在预设列表中。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('preset-delete-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await widget.config.deleteUserPreset(id);
+    if (!mounted) return;
+    setState(() {
+      _savedToast = false;
+      _ctrl.text = widget.config.promptFor(_tab);
+    });
+  }
+
+  Future<void> _saveAsNamedPreset() async {
+    await widget.config.savePrompt(_tab, _ctrl.text);
+    final active = widget.config.presetById(widget.config.presetId);
+    if (active != null && !active.builtin) {
+      await widget.config.saveCurrentAsPreset();
+      if (!mounted) return;
+      setState(() => _savedToast = true);
+      return;
+    }
+    final name = await _askPresetName(
+      title: '另存为新预设',
+      initial: active == null ? '自定义风格' : '${active.label} 改',
+      confirmLabel: '另存',
+    );
+    if (name == null || !mounted) return;
+    await widget.config.saveCurrentAsPreset(newLabel: name);
+    if (!mounted) return;
+    setState(() {
+      _savedToast = true;
+      _ctrl.text = widget.config.promptFor(_tab);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
     return ListenableBuilder(
       listenable: widget.config,
       builder: (context, _) {
+        final selected = widget.config.presetById(widget.config.presetId);
+        final isUser = selected != null && !selected.builtin;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '选择预设风格即可一键切换整理口径；也可以针对「总结生成 / 口语清洗与分段 / 日报与做梦」分别微调提示词。总结生成提示词已实时接入生成链路。',
+              '预设风格可新增与修改：选中后编辑下方提示词并保存；内置风格改动可另存为你的命名预设。总结生成提示词已实时接入生成链路。',
               style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
             ),
             const SizedBox(height: 16),
@@ -988,12 +1114,53 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                for (final p in AgentConfigStore.presets)
+                for (final p in widget.config.allPresets)
                   _presetPill(context, p.id, p.label),
                 if (widget.config.presetId == 'custom')
                   _presetPill(context, 'custom', '自定义', interactive: false),
+                OutlinedButton(
+                  key: const Key('preset-add-btn'),
+                  onPressed: _addPreset,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: c.label,
+                    side: BorderSide(color: c.sep),
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    textStyle: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  child: const Text('+ 新增'),
+                ),
               ],
             ),
+            if (isUser) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton(
+                    key: const Key('preset-rename-btn'),
+                    onPressed: _renameSelectedPreset,
+                    style: _rcMiniChipBtnStyle(c),
+                    child: const Text('修改名称'),
+                  ),
+                  OutlinedButton(
+                    key: const Key('preset-delete-btn'),
+                    onPressed: _deleteSelectedPreset,
+                    style: _rcMiniChipBtnStyle(c, foreground: c.danger),
+                    child: const Text('删除预设'),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 18),
             const _SubSectionLabel('分环节系统提示词（System Prompt）'),
             const SizedBox(height: 8),
@@ -1074,6 +1241,18 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton(
+              key: const Key('preset-save-as-btn'),
+              onPressed: _saveAsNamedPreset,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: c.label,
+                side: BorderSide(color: c.sep),
+                shape: const StadiumBorder(),
+                padding: const EdgeInsets.symmetric(vertical: 11),
+              ),
+              child: Text(isUser ? '写回当前预设' : '另存为新预设'),
             ),
           ],
         );
@@ -1694,6 +1873,8 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
   String? _recordingTargetKey;
   String? _vpHint;
   bool _vpError = false;
+  String? _playingSampleId;
+  AudioPlayer? _samplePlayer;
 
   @override
   void initState() {
@@ -1706,6 +1887,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
 
   @override
   void dispose() {
+    unawaited(_samplePlayer?.dispose() ?? Future<void>.value());
     _fallbackStore?.dispose();
     super.dispose();
   }
@@ -1729,9 +1911,59 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
       _vpHint = null;
       _vpError = false;
     });
+
+    final countdown = ValueNotifier<int>(3);
+    final dialogOpen = showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          key: const Key('vp-record-countdown-dialog'),
+          content: ValueListenableBuilder<int>(
+            valueListenable: countdown,
+            builder: (_, remain, _) {
+              final label = remain > 0 ? '$remain' : '处理中…';
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    remain > 0 ? '正在录音' : '正在提取声纹',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '请对着麦克风清晰朗读一句话',
+                    style: TextStyle(fontSize: 12.5, color: context.rc.sec),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    key: const Key('vp-record-countdown-num'),
+                    label,
+                    style: TextStyle(
+                      fontSize: remain > 0 ? 48 : 22,
+                      fontWeight: FontWeight.w800,
+                      color: context.rc.label,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
     try {
       final driver = VoiceSampleCaptureDriver(
         installer: widget.controller?.installer,
+        onTick: (remain) {
+          countdown.value = remain;
+        },
       );
       final res = await driver.captureAndEmbed(
         targetName: targetName,
@@ -1751,6 +1983,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
           embedding: res.embedding,
           deviceLabel: '本机麦克风',
           sceneLabel: '单独录音',
+          audioPath: res.audioPath,
         );
       } else {
         vpStore.upsertPersonAndSample(
@@ -1758,18 +1991,114 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
           embedding: res.embedding,
           deviceLabel: '本机麦克风',
           sceneLabel: '补充录音',
+          audioPath: res.audioPath,
           explicitSlot: slot,
         );
       }
       setState(() {
         _vpError = false;
-        _vpHint = '已为「$targetName」录入 1 组声纹样本（${res.embedding.length} 维）';
+        _vpHint = '已为「$targetName」录入 1 组声纹样本';
       });
     } finally {
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      await dialogOpen;
+      countdown.dispose();
       if (mounted) {
         setState(() => _recordingTargetKey = null);
       }
     }
+  }
+
+  Future<void> _playSample(VoiceSampleRecord sample) async {
+    final path = sample.audioPath;
+    if (path == null || path.isEmpty) {
+      setState(() {
+        _vpError = true;
+        _vpHint = '该样本没有可回放的录音文件（可能是旧版本录入）';
+      });
+      return;
+    }
+    final file = File(path);
+    if (!file.existsSync()) {
+      setState(() {
+        _vpError = true;
+        _vpHint = '录音文件已丢失，请重新录制样本';
+      });
+      return;
+    }
+    try {
+      final player = _samplePlayer ??= AudioPlayer();
+      if (_playingSampleId == sample.id) {
+        await player.stop();
+        setState(() => _playingSampleId = null);
+        return;
+      }
+      await player.stop();
+      await player.play(DeviceFileSource(path));
+      setState(() => _playingSampleId = sample.id);
+      player.onPlayerComplete.first.then((_) {
+        if (mounted && _playingSampleId == sample.id) {
+          setState(() => _playingSampleId = null);
+        }
+      });
+    } on Object catch (e) {
+      setState(() {
+        _vpError = true;
+        _vpHint = '播放失败：$e';
+      });
+    }
+  }
+
+  Future<void> _confirmDeleteSample(
+    VoiceprintLibraryStore vpStore, {
+    required String personId,
+    required VoiceSampleRecord sample,
+  }) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const Key('vp-sample-delete-confirm'),
+        title: const Text('删除声纹样本？'),
+        content: Text(
+          '将删除「${sample.deviceLabel} · ${sample.sceneLabel}」这条录音与声纹特征，此操作不可恢复。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('vp-sample-delete-confirm-btn'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    if (_playingSampleId == sample.id) {
+      await _samplePlayer?.stop();
+      _playingSampleId = null;
+    }
+    final removed = vpStore.removeSample(
+      personId: personId,
+      sampleId: sample.id,
+    );
+    final path = removed?.audioPath;
+    if (path != null && path.isNotEmpty) {
+      try {
+        final f = File(path);
+        if (f.existsSync()) await f.delete();
+      } on Object {
+        // 文件清理失败不影响库状态
+      }
+    }
+    setState(() {
+      _vpError = false;
+      _vpHint = '已删除 1 组声纹样本';
+    });
   }
 
   Future<void> _showAddPersonDialog(
@@ -1814,37 +2143,92 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
 
   Widget _buildSampleChips(
     RCColorScheme c,
+    VoiceprintLibraryStore vpStore,
+    String personId,
     List<VoiceSampleRecord> samples, {
     String emptyLabel = '暂无音频样本，仅名称记录',
   }) {
     if (samples.isEmpty) {
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: c.bg,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(999),
           border: Border.all(color: c.sep),
         ),
         child: Text(emptyLabel, style: TextStyle(fontSize: 11, color: c.sec)),
       );
     }
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final s in samples)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: c.bg,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: c.sep),
-            ),
-            child: Text(
-              '${s.deviceLabel} · ${s.sceneLabel}',
-              style: TextStyle(fontSize: 11, color: c.sec),
+        for (final s in samples) ...[
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              key: Key('vp-sample-${s.id}'),
+              borderRadius: BorderRadius.circular(999),
+              onTap: () => unawaited(_playSample(s)),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+                decoration: BoxDecoration(
+                  color: c.card,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: c.sep),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _playingSampleId == s.id
+                          ? Icons.pause_circle_filled_rounded
+                          : Icons.play_circle_fill_rounded,
+                      size: 22,
+                      color: s.audioPath == null || s.audioPath!.isEmpty
+                          ? c.ax
+                          : c.label,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${s.deviceLabel} · ${s.sceneLabel}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: c.ink,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      key: Key('vp-sample-del-${s.id}'),
+                      tooltip: '删除样本',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 36,
+                        minHeight: 36,
+                      ),
+                      onPressed: () => unawaited(
+                        _confirmDeleteSample(
+                          vpStore,
+                          personId: personId,
+                          sample: s,
+                        ),
+                      ),
+                      icon: Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: c.sec,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
+          const SizedBox(height: 6),
+        ],
       ],
     );
   }
@@ -1952,6 +2336,8 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
           const SizedBox(height: 8),
           _buildSampleChips(
             c,
+            vpStore,
+            p.id,
             p.samples,
             emptyLabel: isSelfSlot ? '尚未单独录制我的声音样本，建议点击下方按钮录入' : '暂无音频样本',
           ),
@@ -2057,7 +2443,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
             ],
           ),
           const SizedBox(height: 8),
-          _buildSampleChips(c, p.samples),
+          _buildSampleChips(c, vpStore, p.id, p.samples),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,

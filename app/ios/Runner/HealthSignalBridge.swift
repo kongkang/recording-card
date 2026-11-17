@@ -772,16 +772,14 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
     case "activity_move_mode":
       if #available(iOS 14.0, *) {
         guard let mode = try? healthStore.activityMoveMode().activityMoveMode else { return [] }
-        let text: String
         switch mode {
         case .activeEnergy:
-          text = "活动能量"
+          return [profileDraft(typeId: typeId, text: "活动能量")]
         case .appleMoveTime:
-          text = "移动时间"
+          return [profileDraft(typeId: typeId, text: "移动时间")]
         @unknown default:
           return []
         }
-        return [profileDraft(typeId: typeId, text: text)]
       }
       return []
     default:
@@ -1398,7 +1396,7 @@ private final class ImportJob {
   let quick: Bool
   let trigger: String?
   let done: (() -> Void)?
-  private let completion: (() -> Void)?
+  fileprivate let completion: (() -> Void)?
   private let lock = NSLock()
   private var completed = false
 

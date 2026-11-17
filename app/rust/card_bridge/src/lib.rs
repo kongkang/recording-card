@@ -7,8 +7,10 @@
 
 pub mod amr_transcode;
 pub mod capabilities;
+pub mod dyj_v1_session;
+pub mod legacy_upgrade;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -17,8 +19,10 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
-use btleplug::api::{Central as _, Manager as _, Peripheral as _, ScanFilter};
+use btleplug::api::{Central as _, CentralEvent, Manager as _, Peripheral as _, ScanFilter};
+use futures::StreamExt;
 use capabilities::{classify_ble_advertisement, DeviceKind};
+use dyj_v1_session::{parse_dyj_audio_filename, version_code_from_semver, DyjV1Session};
 use reai_ext_sdk::{RecorderDevice, RecorderSdkDriver, SdkDeviceEvent};
 use reai_getseed_sdk::GetSeedSdkDriver;
 use reai_omi_sdk::OmiSdkDriver;
@@ -32,8 +36,8 @@ use reai_card_sdk::{
     DyjDevice as CardV2Device, OtaInfo, OtaModule, SdkError as CardSdkError,
 };
 use reai_dyj_sdk::{
-    ApClient as DyjV1ApClient, DeviceEvent as DyjV1Event, DeviceManager as DyjV1Manager,
-    DyjDevice as DyjV1Device, ServerClient as DyjV1ServerClient,
+    ApClient as DyjV1ApClient, DeviceEvent as DyjV1Event, SdkError as DyjV1SdkError,
+    ServerClient as DyjV1ServerClient,
 };
 use serde_json::{json, Value};
 
@@ -77,6 +81,32 @@ impl AudioFrameSink for BoardAudioForwarder {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct DyjV1CachedMeta {
+    device_id: Option<String>,
+    fw_version: String,
+    fw_version_code: u64,
+    model: String,
+    saved_ssids: Vec<String>,
+}
+
+impl DyjV1CachedMeta {
+    fn record_saved_ssid(&mut self, ssid: &str) {
+        let trimmed = ssid.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        if !self.saved_ssids.iter().any(|s| s == trimmed) {
+            self.saved_ssids.push(trimmed.to_string());
+        }
+    }
+
+    fn remove_saved_ssid(&mut self, ssid: &str) {
+        let trimmed = ssid.trim();
+        self.saved_ssids.retain(|s| s != trimmed);
+    }
+}
+
 #[derive(Clone)]
 enum ActiveDevice {
     CardV2 {
@@ -84,9 +114,10 @@ enum ActiveDevice {
         name: String,
     },
     DyjV1 {
-        device: DyjV1Device,
+        device: Arc<DyjV1Session>,
         name: String,
-        device_id_meta: Arc<Mutex<Option<String>>>,
+        meta: Arc<Mutex<DyjV1CachedMeta>>,
+        realtime_active: Arc<AtomicBool>,
     },
     BoardV21 {
         board: Arc<BoardDevice>,
@@ -118,7 +149,6 @@ struct BridgeState {
     device: tokio::sync::Mutex<Option<ActiveDevice>>,
     scan_adapter: tokio::sync::OnceCell<btleplug::platform::Adapter>,
     card_v2_manager: tokio::sync::OnceCell<CardV2Manager>,
-    dyj_v1_manager: tokio::sync::OnceCell<DyjV1Manager>,
     scan_cache: Mutex<HashMap<String, CachedScanEntry>>,
     event_pump: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     last_device_id: Mutex<Option<String>>,
@@ -172,17 +202,47 @@ static VERSION: &str = concat!(
     " card-v2/0.0.8 dyj-v1/0.1 board-v21/0.3 getseed/0.1 omi/0.1"
 );
 
+/// Android 直连 logcat 的零依赖检查点输出（不经 log crate，绕开 logger 初始化问题）。
+#[cfg(target_os = "android")]
+mod alog {
+    use std::ffi::{c_char, CString};
+
+    #[link(name = "log")]
+    extern "C" {
+        fn __android_log_print(
+            prio: i32,
+            tag: *const c_char,
+            fmt: *const c_char,
+            ...
+        ) -> i32;
+    }
+
+    pub fn info(msg: &str) {
+        let tag = CString::new("card_bridge").unwrap_or_default();
+        let fmt = CString::new("%s").unwrap_or_default();
+        let msg = CString::new(msg.replace('\0', " ")).unwrap_or_default();
+        unsafe {
+            __android_log_print(4, tag.as_ptr(), fmt.as_ptr(), msg.as_ptr());
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+mod alog {
+    pub fn info(_msg: &str) {}
+}
+
 fn state() -> &'static BridgeState {
     STATE.get_or_init(|| BridgeState {
         runtime: tokio::runtime::Builder::new_multi_thread()
             .worker_threads(3)
+            .on_thread_start(ensure_jvm_thread_attached)
             .enable_all()
             .build()
             .expect("tokio runtime"),
         device: tokio::sync::Mutex::new(None),
         scan_adapter: tokio::sync::OnceCell::new(),
         card_v2_manager: tokio::sync::OnceCell::new(),
-        dyj_v1_manager: tokio::sync::OnceCell::new(),
         scan_cache: Mutex::new(HashMap::new()),
         event_pump: tokio::sync::Mutex::new(None),
         last_device_id: Mutex::new(None),
@@ -197,6 +257,7 @@ fn emit_raw(cb: Callback, user_data: usize, value: Value) {
     cb(user_data as *mut c_void, json.into_raw());
 }
 
+#[derive(Debug)]
 struct BridgeError {
     message: String,
     detail: Option<Value>,
@@ -211,10 +272,23 @@ impl From<CardSdkError> for BridgeError {
     }
 }
 
-impl From<reai_dyj_sdk::SdkError> for BridgeError {
-    fn from(e: reai_dyj_sdk::SdkError) -> Self {
+impl From<DyjV1SdkError> for BridgeError {
+    fn from(e: DyjV1SdkError) -> Self {
+        let message = match &e {
+            DyjV1SdkError::Disconnected { .. } => CardSdkError::Disconnected.to_string(),
+            DyjV1SdkError::Device { code: 3001, msg } => {
+                format!("点一机忙碌或存储空间不足（3001）：{msg}")
+            }
+            DyjV1SdkError::Device { code: 3003, msg } => {
+                format!("点一机尚未连接 Wi-Fi（3003）：{msg}")
+            }
+            DyjV1SdkError::Device { code: 3401, msg } => {
+                format!("点一机需要开启系统定位开关后才能扫描 Wi-Fi（3401）：{msg}")
+            }
+            _ => e.to_string(),
+        };
         Self {
-            message: e.to_string(),
+            message,
             detail: None,
         }
     }
@@ -547,6 +621,20 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
         "ota.info" => out.ok(ota_info(&payload).await?),
         "ota.main" => ota_main(payload, out).await?,
         "ota.wifi" => ota_wifi(payload, out).await?,
+        "legacy_upgrade_open" => {
+            let adapter = scan_adapter().await?;
+            out.ok(legacy_upgrade::open_session(adapter, &payload).await?);
+        }
+        "legacy_upgrade_scan_wifi" => out.ok(legacy_upgrade::scan_wifi().await?),
+        "legacy_upgrade_connect_wifi" => out.ok(legacy_upgrade::connect_wifi(&payload).await?),
+        "legacy_upgrade_run_ota" => {
+            let stream_out = out;
+            match legacy_upgrade::run_ota(&|p| stream_out.progress(p)).await {
+                Ok(data) => out.ok(data),
+                Err(err) => out.fail(err.message),
+            }
+        }
+        "legacy_upgrade_close" => out.ok(legacy_upgrade::close_session().await),
         other => {
             return Err(BridgeError::from(format!("unknown command: {other}")));
         }
@@ -583,36 +671,86 @@ async fn card_v2_manager() -> Result<&'static CardV2Manager, BridgeError> {
         .map_err(BridgeError::from)
 }
 
-async fn dyj_v1_manager() -> Result<&'static DyjV1Manager, BridgeError> {
-    state()
-        .dyj_v1_manager
-        .get_or_try_init(DyjV1Manager::new)
-        .await
-        .map_err(BridgeError::from)
-}
-
 /// 单次 BLE 扫描同时发现录音卡 V2 (`DYJV2_`)、点一机 V1 (`DYJ_`) 与语音 AI 键盘 V2.1 (`REAI_VB_`)。
 async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
+    alog::info("unified_scan: begin");
     let adapter = scan_adapter().await?;
+    alog::info("unified_scan: adapter ready");
+    // btleplug 的 CoreBluetooth 后端只在「厂商数据 / 服务数据 / 服务 UUID」三类广播
+    // 事件里回填 properties.rssi（初始 None）；只带本地名的广播（如点一机 V1 `DYJ_*`）
+    // 永远拿不到 RSSI，曾被下方 `None => continue` 误丢——安卓后端无此问题，故出现
+    // 「安卓五类硬件全出、iPhone 只剩 V2」（真机对照实测 2026-11-16）。
+    // 这里订阅扫描窗口内的事件流，记录「本窗口确实广播过」的设备，作为无 RSSI 时的展示依据。
+    let mut scan_events = adapter
+        .events()
+        .await
+        .map_err(|e| BridgeError::from(format!("BLE events failed: {e}")))?;
+    let mut seen_this_scan: HashSet<String> = HashSet::new();
     adapter
         .start_scan(ScanFilter::default())
         .await
-        .map_err(|e| BridgeError::from(format!("BLE start_scan failed: {e}")))?;
-    tokio::time::sleep(duration).await;
+        .map_err(|e| {
+            alog::info(&format!("unified_scan: start_scan 失败 {e:?}"));
+            log::warn!("unified_scan start_scan 失败: {e:?}");
+            BridgeError::from(format!("BLE start_scan failed: {e:?}"))
+        })?;
+    alog::info("unified_scan: scanning…");
+    let pump = async {
+        while let Some(ev) = scan_events.next().await {
+            let id = match ev {
+                CentralEvent::DeviceDiscovered(id)
+                | CentralEvent::DeviceUpdated(id)
+                | CentralEvent::ManufacturerDataAdvertisement { id, .. }
+                | CentralEvent::ServiceDataAdvertisement { id, .. }
+                | CentralEvent::ServicesAdvertisement { id, .. } => id,
+                _ => continue,
+            };
+            seen_this_scan.insert(id.to_string());
+        }
+    };
+    let _ = tokio::time::timeout(duration, pump).await;
+    alog::info(&format!(
+        "unified_scan: sleep done, {} advertised this window",
+        seen_this_scan.len()
+    ));
     let _ = adapter.stop_scan().await;
+    alog::info("unified_scan: stopped");
 
     let peripherals = adapter
         .peripherals()
         .await
         .map_err(|e| BridgeError::from(format!("BLE peripherals failed: {e}")))?;
+    alog::info(&format!("unified_scan: {} peripherals", peripherals.len()));
 
     let mut discovered: Vec<(i16, String, Value)> = Vec::new();
     let mut cache_updates: Vec<(String, CachedScanEntry)> = Vec::new();
 
-    for p in peripherals {
-        let Ok(Some(props)) = p.properties().await else {
-            continue;
+    for (idx, p) in peripherals.into_iter().enumerate() {
+        if idx % 10 == 0 {
+            alog::info(&format!("unified_scan: loop[{idx}] begin"));
+        }
+        // droidplug 的 properties() 是同步 Mutex 锁（真机实测会被 Java 回调线程卡死，
+        // 直接 await 会把 tokio worker 整个挂住）。丢进 blocking 池 + 有界超时，
+        // 单台卡死只损失一个 blocking 线程，扫描列表照常产出。
+        let props = {
+            let p = p.clone();
+            match tokio::time::timeout(
+                Duration::from_millis(400),
+                tokio::task::spawn_blocking(move || {
+                    tokio::runtime::Handle::current().block_on(p.properties())
+                }),
+            )
+            .await
+            {
+                Ok(Ok(Ok(Some(props)))) => props,
+                _ => {
+                    alog::info(&format!("unified_scan: loop[{idx}] properties 卡死/失败，跳过"));
+                    continue;
+                }
+            }
         };
+        // 2026-11-16 调试直连结束，恢复过滤基线：未识别设备直接跳过
+        // （classify 覆盖自有 3 款硬件 + 开启联动的 Get/Omi/Watch）。
         let Some((name, kind, caps)) = classify_ble_advertisement(
             &p.id().to_string(),
             props.local_name.as_deref(),
@@ -621,14 +759,40 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         ) else {
             continue;
         };
-        // CoreBluetooth 本地缓存但未广播的旧外设通常无 RSSI；若已系统连接则仍展示
-        let is_conn = p.is_connected().await.unwrap_or(false);
-        let rssi = match props.rssi {
-            Some(r) => r,
-            None if is_conn => -58,
-            None => continue,
-        };
+        let kind_str = kind.as_str();
+        let display_model = kind.display_model();
+        let caps_json = serde_json::to_value(&caps).unwrap_or(serde_json::Value::Null);
+        // CoreBluetooth 本地缓存但未广播的旧外设通常无 RSSI；若已系统连接则仍展示。
+        // RSSI 0/127 为无效值（CoreBluetooth 偶发上报 127），一并走兜底。
         let id = p.id().to_string();
+        let advertised_now = seen_this_scan.contains(&id);
+        let props_rssi = props.rssi.filter(|r| *r < 0);
+        let rssi = match props_rssi {
+            Some(r) => r,
+            None if advertised_now => {
+                // 本窗口广播过但无 RSSI 载体事件（纯名称广播）：设备必然在附近，按近距离兜底展示
+                -60
+            }
+            None => {
+                let p = p.clone();
+                let is_conn = match tokio::time::timeout(
+                    Duration::from_millis(400),
+                    tokio::task::spawn_blocking(move || {
+                        tokio::runtime::Handle::current().block_on(p.is_connected())
+                    }),
+                )
+                .await
+                {
+                    Ok(Ok(Ok(v))) => v,
+                    _ => false,
+                };
+                if is_conn {
+                    -58
+                } else {
+                    continue;
+                }
+            }
+        };
         cache_updates.push((
             id.clone(),
             CachedScanEntry {
@@ -643,9 +807,9 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
                 "id": id,
                 "name": name,
                 "rssi": rssi,
-                "deviceKind": kind.as_str(),
-                "displayModel": kind.display_model(),
-                "capabilities": caps,
+                "deviceKind": kind_str,
+                "displayModel": display_model,
+                "capabilities": caps_json,
             }),
         ));
     }
@@ -661,11 +825,13 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
     discovered.sort_by(|a, b| b.0.cmp(&a.0));
     let mut seen_ids = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(discovered.len());
+    alog::info(&format!("unified_scan: classified {} devices", discovered.len()));
     for (_, id, val) in discovered {
         if seen_ids.insert(id) {
             out.push(val);
         }
     }
+    alog::info(&format!("unified_scan: done, {} entries out", out.len()));
     Ok(out)
 }
 
@@ -777,19 +943,68 @@ async fn connect_card_v2(id: &str, name_hint: Option<&str>) -> Result<Value, Bri
     }))
 }
 
-async fn connect_dyj_v1(id: &str, name: &str) -> Result<Value, BridgeError> {
-    let manager = dyj_v1_manager().await?;
-    let device = match manager.connect_by_name(name).await {
-        Ok(d) => d,
-        Err(_) => manager.connect_by_name(name).await?,
-    };
-    // auto_audio=false：连上时不自动推流，等用户打开录音开关再开启实时流
-    let _ = device.hello("recording-card", false).await;
-    let device_id_meta = Arc::new(Mutex::new(None));
-    if let Ok(info) = device.device_info(false).await {
-        if let Some(did) = info.get("device_id").and_then(Value::as_str) {
-            *device_id_meta.lock().unwrap() = Some(did.to_string());
+fn update_dyj_v1_meta_from_info(meta: &Arc<Mutex<DyjV1CachedMeta>>, info: &Value) {
+    let mut guard = meta.lock().unwrap();
+    if let Some(did) = info.get("device_id").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        guard.device_id = Some(did.to_string());
+    }
+    if let Some(ver) = info
+        .get("app_version")
+        .or_else(|| info.get("version"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        guard.fw_version = ver.to_string();
+        if guard.fw_version_code == 0 {
+            guard.fw_version_code = version_code_from_semver(ver);
         }
+    }
+    if let Some(code) = info
+        .get("version_code")
+        .or_else(|| info.get("app_version_code"))
+        .or_else(|| info.get("versionCode"))
+        .and_then(Value::as_u64)
+        .filter(|&c| c > 0)
+    {
+        guard.fw_version_code = code;
+    }
+    if let Some(model) = info.get("model").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        guard.model = model.to_string();
+    }
+}
+
+async fn connect_dyj_v1(id: &str, name: &str) -> Result<Value, BridgeError> {
+    let adapter = scan_adapter().await?;
+    let (device, hello) = DyjV1Session::connect(adapter, id, name).await?;
+    let mut initial_meta = DyjV1CachedMeta::default();
+    if let Some(ver) = hello
+        .get("app_version")
+        .or_else(|| hello.get("fw_version"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        initial_meta.fw_version = ver.to_string();
+        initial_meta.fw_version_code = version_code_from_semver(ver);
+    }
+    let meta = Arc::new(Mutex::new(initial_meta));
+    if let Ok(info) = device.device_info(false).await {
+        update_dyj_v1_meta_from_info(&meta, &info);
+    }
+    if let Ok(wifi) = device.wifi_status().await {
+        if let Some(ssid) = wifi
+            .get("ssid")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        {
+            meta.lock().unwrap().record_saved_ssid(ssid);
+        }
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    if now_ms > 0 {
+        let _ = device.device_time(Some(now_ms)).await;
     }
     let pump = spawn_dyj_v1_event_pump(&device);
     *state().event_pump.lock().await = Some(pump);
@@ -797,7 +1012,8 @@ async fn connect_dyj_v1(id: &str, name: &str) -> Result<Value, BridgeError> {
     *state().device.lock().await = Some(ActiveDevice::DyjV1 {
         device,
         name: name.to_string(),
-        device_id_meta,
+        meta,
+        realtime_active: Arc::new(AtomicBool::new(false)),
     });
     Ok(json!({
         "connected": true,
@@ -1072,47 +1288,89 @@ fn spawn_card_v2_event_pump(device: &CardV2Device) -> tokio::task::JoinHandle<()
     })
 }
 
-fn spawn_dyj_v1_event_pump(device: &DyjV1Device) -> tokio::task::JoinHandle<()> {
+fn map_dyj_v1_event_to_json(evt: &str, ts: u64, data: Value) -> Option<Value> {
+    let mapped = match evt {
+        "record.segment" => json!({
+            "kind": "record_segment",
+            "ts": ts,
+            "data": data,
+        }),
+        "record.state" | "record.stop" | "record.error" => {
+            let is_rec = data
+                .get("recording")
+                .or_else(|| data.get("isRecording"))
+                .or_else(|| data.get("is_recording"))
+                .and_then(Value::as_bool)
+                .unwrap_or(evt != "record.stop" && evt != "record.error");
+            json!({
+                "kind": "record",
+                "status": {
+                    "isRecording": is_rec,
+                    "session": data.get("session"),
+                    "error": data.get("error").or_else(|| data.get("code")),
+                },
+            })
+        }
+        "button.event" => {
+            let btn_type = data.get("type").and_then(Value::as_str).unwrap_or("");
+            if matches!(btn_type, "click" | "double_click" | "long_press_start") {
+                json!({"kind": "button", "gesture": btn_type, "ts": ts})
+            } else {
+                return None;
+            }
+        }
+        "camera.segment" | "camera.capture" => json!({
+            "kind": "camera",
+            "evt": evt,
+            "ts": ts,
+            "data": data,
+        }),
+        "upload.state" => {
+            let st = data.get("state").and_then(Value::as_str).unwrap_or("");
+            if st == "done" {
+                json!({"kind": "upload_complete", "data": data})
+            } else {
+                json!({"kind": "sync", "sync": data})
+            }
+        }
+        "ota.progress" => json!({
+            "kind": "ota",
+            "evt": evt,
+            "ts": ts,
+            "data": data,
+        }),
+        _ if evt.starts_with("battery.") => {
+            let level = data.get("level").and_then(Value::as_u64);
+            let status_str = data.get("status").and_then(Value::as_str).unwrap_or("");
+            let plugged = data.get("plugged").and_then(Value::as_i64).unwrap_or(0);
+            let charging = data
+                .get("isCharging")
+                .or_else(|| data.get("charging"))
+                .and_then(Value::as_bool)
+                .unwrap_or_else(|| status_str == "charging" || plugged != 0);
+            json!({
+                "kind": "power",
+                "battery": {
+                    "level": level,
+                    "isCharging": charging,
+                },
+                "power": data,
+            })
+        }
+        _ => return None,
+    };
+    Some(mapped)
+}
+
+fn spawn_dyj_v1_event_pump(device: &DyjV1Session) -> tokio::task::JoinHandle<()> {
     let mut events = device.subscribe_events();
     tokio::spawn(async move {
         loop {
             match events.recv().await {
                 Ok(DyjV1Event::Event { evt, ts, data }) => {
-                    let value = match evt.as_str() {
-                        "record.segment" => json!({
-                            "kind": "record_segment",
-                            "ts": ts,
-                            "data": data,
-                        }),
-                        "button.event" => {
-                            let btn_type = data.get("type").and_then(Value::as_str).unwrap_or("");
-                            if matches!(btn_type, "click" | "double_click" | "long_press_start") {
-                                json!({"kind": "button", "gesture": btn_type, "ts": ts})
-                            } else {
-                                continue;
-                            }
-                        }
-                        "camera.segment" | "camera.capture" => json!({
-                            "kind": "camera",
-                            "evt": evt,
-                            "ts": ts,
-                            "data": data,
-                        }),
-                        "upload.state" => {
-                            let st = data.get("state").and_then(Value::as_str).unwrap_or("");
-                            if st == "done" {
-                                json!({"kind": "upload_complete", "data": data})
-                            } else {
-                                json!({"kind": "sync", "sync": data})
-                            }
-                        }
-                        _ if evt.starts_with("battery.") => json!({
-                            "kind": "power",
-                            "power": data,
-                        }),
-                        _ => continue,
-                    };
-                    state().events.lock().expect("events lock").push(value);
+                    if let Some(value) = map_dyj_v1_event_to_json(&evt, ts, data) {
+                        state().events.lock().expect("events lock").push(value);
+                    }
                 }
                 Ok(DyjV1Event::Disconnected) => {
                     state()
@@ -1213,6 +1471,106 @@ fn spawn_external_event_pump(device: &Arc<dyn RecorderDevice>) -> tokio::task::J
             }
         }
     })
+}
+
+fn build_dyj_v1_snapshot_json(
+    kind: DeviceKind,
+    name: &str,
+    meta: &DyjV1CachedMeta,
+    batt_raw: &Value,
+    stor_raw: &Value,
+    rec_raw: &Value,
+    wifi_raw: &Value,
+    realtime_enabled: bool,
+) -> Value {
+    let level = batt_raw.get("level").and_then(Value::as_u64);
+    let status_str = batt_raw.get("status").and_then(Value::as_str).unwrap_or("");
+    let plugged = batt_raw.get("plugged").and_then(Value::as_i64).unwrap_or(0);
+    let charging = status_str == "charging" || plugged != 0;
+
+    let total_bytes = stor_raw.get("data_total_bytes").and_then(Value::as_u64);
+    let free_bytes = stor_raw.get("data_free_bytes").and_then(Value::as_u64);
+    let used_bytes = match (total_bytes, free_bytes) {
+        (Some(t), Some(f)) => Some(t.saturating_sub(f)),
+        _ => None,
+    };
+    let total_mb = total_bytes.map(|b| b / (1024 * 1024));
+    let used_mb = used_bytes.map(|b| b / (1024 * 1024));
+    let storage_val = match (total_mb, used_mb) {
+        (Some(t), Some(u)) => json!({
+            "total": t,
+            "used": u,
+            "totalBytes": total_bytes,
+            "freeBytes": free_bytes,
+            "usedBytes": used_bytes,
+        }),
+        _ => Value::Null,
+    };
+
+    let recording = rec_raw
+        .get("recording")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let wifi_enabled = wifi_raw
+        .get("wifi_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let wifi_ssid = wifi_raw
+        .get("ssid")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let wifi_state = wifi_raw.get("state").and_then(Value::as_str).unwrap_or("");
+    let wifi_ip = wifi_raw
+        .get("ip")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let wifi_connected =
+        wifi_state.eq_ignore_ascii_case("connected") || (wifi_ssid.is_some() && wifi_ip.is_some());
+
+    json!({
+        "deviceKind": kind.as_str(),
+        "displayModel": kind.display_model(),
+        "deviceName": name,
+        "capabilities": kind.capabilities(),
+        "battery": {
+            "level": level,
+            "isCharging": charging,
+            "charging": charging,
+        },
+        "state": {
+            "recording": recording,
+            "wifiOpen": wifi_enabled,
+            "wifiEnabled": wifi_enabled,
+            "wifiConnected": wifi_connected,
+            "ssid": wifi_ssid,
+            "ip": wifi_ip,
+        },
+        "info": {
+            "version": meta.fw_version,
+            "firmwareVersion": meta.fw_version,
+            "versionCode": meta.fw_version_code,
+            "deviceName": name,
+            "deviceId": meta.device_id,
+            "wifiVersion": "",
+            "wifiVersionCode": 0,
+            "model": (!meta.model.is_empty()).then_some(meta.model.as_str()),
+        },
+        "storage": storage_val,
+        "record": {
+            "isRecording": recording,
+            "recording": recording,
+            "realtimeEnabled": realtime_enabled,
+            "session": rec_raw.get("session"),
+            "currentFile": rec_raw.get("current_file"),
+            "files": rec_raw.get("files"),
+        },
+    })
+}
+
+fn is_dyj_disconnected_err<T>(res: &Result<T, DyjV1SdkError>) -> bool {
+    matches!(res, Err(DyjV1SdkError::Disconnected { .. }))
 }
 
 async fn snapshot_device(active: &ActiveDevice) -> Result<Value, BridgeError> {
@@ -1329,72 +1687,54 @@ async fn snapshot_device(active: &ActiveDevice) -> Result<Value, BridgeError> {
         ActiveDevice::DyjV1 {
             device,
             name,
-            device_id_meta,
+            meta,
+            realtime_active,
         } => {
-            let batt_raw = device.battery().await.unwrap_or(Value::Null);
-            let level = batt_raw.get("level").and_then(Value::as_u64);
-            let status_str = batt_raw
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let plugged = batt_raw.get("plugged").and_then(Value::as_i64).unwrap_or(0);
-            let charging = status_str == "charging" || plugged != 0;
-
-            let info_raw = device.device_info(false).await.unwrap_or(Value::Null);
-            if let Some(did) = info_raw.get("device_id").and_then(Value::as_str) {
-                *device_id_meta.lock().unwrap() = Some(did.to_string());
+            if !device.is_connected().await.unwrap_or(false) {
+                return Err(BridgeError::disconnected());
             }
-            let fw = info_raw
-                .get("app_version")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-
-            let stor_raw = device.storage().await.unwrap_or(Value::Null);
-            let total_bytes = stor_raw.get("data_total_bytes").and_then(Value::as_u64);
-            let free_bytes = stor_raw.get("data_free_bytes").and_then(Value::as_u64);
-            let used_bytes = match (total_bytes, free_bytes) {
-                (Some(t), Some(f)) => Some(t.saturating_sub(f)),
-                _ => None,
+            let need_info = {
+                let g = meta.lock().unwrap();
+                g.fw_version.is_empty() || g.device_id.is_none()
             };
-
-            let rec_raw = device.record_status().await.unwrap_or(Value::Null);
-            let recording = rec_raw
-                .get("recording")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let cam_raw = device.camera_status().await.unwrap_or(Value::Null);
-            let wifi_raw = device.wifi_status().await.unwrap_or(Value::Null);
-
-            Ok(json!({
-                "deviceKind": kind.as_str(),
-                "displayModel": kind.display_model(),
-                "deviceName": name,
-                "capabilities": kind.capabilities(),
-                "battery": {
-                    "level": level,
-                    "charging": charging,
-                },
-                "state": {
-                    "recording": recording,
-                    "wifiEnabled": wifi_raw.get("wifi_enabled").and_then(Value::as_bool).unwrap_or(false),
-                },
-                "info": {
-                    "firmwareVersion": fw,
-                    "deviceId": info_raw.get("device_id"),
-                    "model": info_raw.get("model"),
-                },
-                "storage": {
-                    "totalBytes": total_bytes,
-                    "freeBytes": free_bytes,
-                    "usedBytes": used_bytes,
-                },
-                "record": {
-                    "recording": recording,
-                    "currentFile": rec_raw.get("current_file"),
-                    "files": rec_raw.get("files"),
-                },
-                "camera": cam_raw,
-            }))
+            if need_info {
+                if let Ok(info_raw) = device.device_info(false).await {
+                    update_dyj_v1_meta_from_info(meta, &info_raw);
+                }
+            }
+            let batt_res = device.battery().await;
+            let stor_res = device.storage().await;
+            let rec_res = device.record_status().await;
+            let wifi_res = device.wifi_status().await;
+            if is_dyj_disconnected_err(&batt_res)
+                && is_dyj_disconnected_err(&stor_res)
+                && is_dyj_disconnected_err(&rec_res)
+                && is_dyj_disconnected_err(&wifi_res)
+            {
+                return Err(BridgeError::disconnected());
+            }
+            let batt_raw = batt_res.unwrap_or(Value::Null);
+            let stor_raw = stor_res.unwrap_or(Value::Null);
+            let rec_raw = rec_res.unwrap_or(Value::Null);
+            let wifi_raw = wifi_res.unwrap_or(Value::Null);
+            if let Some(ssid) = wifi_raw
+                .get("ssid")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+            {
+                meta.lock().unwrap().record_saved_ssid(ssid);
+            }
+            let cached_meta = meta.lock().unwrap().clone();
+            Ok(build_dyj_v1_snapshot_json(
+                kind,
+                name,
+                &cached_meta,
+                &batt_raw,
+                &stor_raw,
+                &rec_raw,
+                &wifi_raw,
+                realtime_active.load(Ordering::SeqCst),
+            ))
         }
         ActiveDevice::BoardV21 {
             board,
@@ -1547,7 +1887,17 @@ async fn record_start(
 async fn record_stop(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => Ok(device.raw_command("RECORD_STOP", None).await?),
-        ActiveDevice::DyjV1 { device, .. } => Ok(device.record_stop().await?),
+        ActiveDevice::DyjV1 {
+            device,
+            realtime_active,
+            ..
+        } => {
+            let res = device.record_stop().await?;
+            if !realtime_active.load(Ordering::SeqCst) {
+                let _ = device.audio_capture_stop().await;
+            }
+            Ok(res)
+        }
         ActiveDevice::BoardV21 {
             board, recording, ..
         } => {
@@ -1586,7 +1936,11 @@ async fn realtime_open(out: Emitter) -> Result<(), BridgeError> {
     let active = active_device().await?;
     match active {
         ActiveDevice::CardV2 { device, .. } => realtime_open_card_v2(device, out).await,
-        ActiveDevice::DyjV1 { device, .. } => realtime_open_dyj_v1(device, out).await,
+        ActiveDevice::DyjV1 {
+            device,
+            realtime_active,
+            ..
+        } => realtime_open_dyj_v1(device, realtime_active, out).await,
         ActiveDevice::BoardV21 {
             board,
             audio_tx,
@@ -1604,6 +1958,17 @@ async fn realtime_open_external(
     device: Arc<dyn RecorderDevice>,
     out: Emitter,
 ) -> Result<(), BridgeError> {
+    // 单例语义：已在推流时不再重复订阅/重置停止槽（Dart 侧偶发双开竞态，
+    // 第二个 open 若重装停止槽会让第一个任务失去停止句柄、随后一次 close 整体退订）。
+    if state()
+        .realtime_stop
+        .lock()
+        .expect("realtime lock")
+        .is_some()
+    {
+        out.progress(json!({ "state": "open", "deviceKind": kind.as_str(), "alreadyOpen": true }));
+        return Ok(());
+    }
     let mut audio = device.subscribe_audio();
     device.set_realtime_enabled(true).await?;
     let mut stop_rx = install_realtime_stop();
@@ -1747,9 +2112,27 @@ async fn realtime_open_card_v2(device: CardV2Device, out: Emitter) -> Result<(),
     Ok(())
 }
 
-async fn realtime_open_dyj_v1(device: DyjV1Device, out: Emitter) -> Result<(), BridgeError> {
+async fn realtime_open_dyj_v1(
+    device: Arc<DyjV1Session>,
+    realtime_active: Arc<AtomicBool>,
+    out: Emitter,
+) -> Result<(), BridgeError> {
+    if state()
+        .realtime_stop
+        .lock()
+        .expect("realtime lock")
+        .is_some()
+    {
+        out.progress(json!({
+            "state": "open",
+            "deviceKind": "dyj_v1",
+            "alreadyOpen": true,
+        }));
+        return Ok(());
+    }
     let _ = device.audio_capture_start().await;
     device.audio_stream_start().await?;
+    realtime_active.store(true, Ordering::SeqCst);
     let mut audio = device.subscribe_audio();
     let mut stop_rx = install_realtime_stop();
     out.progress(json!({"state": "open", "deviceKind": "dyj_v1"}));
@@ -1785,7 +2168,17 @@ async fn realtime_open_dyj_v1(device: DyjV1Device, out: Emitter) -> Result<(), B
                 },
             }
         }
+        realtime_active.store(false, Ordering::SeqCst);
         let _ = device.audio_stream_stop().await;
+        let still_recording = device
+            .record_status()
+            .await
+            .ok()
+            .and_then(|v| v.get("recording").and_then(Value::as_bool))
+            .unwrap_or(false);
+        if !still_recording {
+            let _ = device.audio_capture_stop().await;
+        }
         out.ok(json!({
             "closed": true,
             "blocks": blocks,
@@ -1910,6 +2303,84 @@ async fn realtime_open_board_v21(
 
 // ── 文件同步、相机媒体同步与 Wi-Fi 配置 ─────────────────────────
 
+fn normalize_mtime_sec(raw: u64) -> Option<u64> {
+    if raw == 0 {
+        None
+    } else if raw > 1_000_000_000_000 {
+        Some(raw / 1000)
+    } else {
+        Some(raw)
+    }
+}
+
+fn build_dyj_file_entry(
+    name: &str,
+    size: u64,
+    mtime_raw: u64,
+    session_hint: Option<&str>,
+    seq_hint: Option<u64>,
+    synced: bool,
+) -> Value {
+    let parsed = parse_dyj_audio_filename(name);
+    let session = session_hint
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .or_else(|| parsed.as_ref().and_then(|p| p.session.clone()));
+    let seq = seq_hint.or_else(|| parsed.as_ref().and_then(|p| p.seq.map(u64::from)));
+    let created_at = normalize_mtime_sec(mtime_raw);
+    json!({
+        "name": name,
+        "size": size,
+        "created_at": created_at,
+        "session": session,
+        "seq": seq,
+        "synced": synced,
+    })
+}
+
+fn is_dyj_wifi_connected(wifi_raw: &Value) -> bool {
+    let state_str = wifi_raw.get("state").and_then(Value::as_str).unwrap_or("");
+    let ip = wifi_raw
+        .get("ip")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    let ssid = wifi_raw
+        .get("ssid")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    state_str.eq_ignore_ascii_case("connected") || (!ip.is_empty() && !ssid.is_empty())
+}
+
+async fn resolve_dyj_device_id(
+    device: &DyjV1Session,
+    meta: &Arc<Mutex<DyjV1CachedMeta>>,
+) -> Option<String> {
+    if let Some(id) = meta.lock().unwrap().device_id.clone() {
+        return Some(id);
+    }
+    if let Ok(info) = device.device_info(false).await {
+        update_dyj_v1_meta_from_info(meta, &info);
+    }
+    meta.lock().unwrap().device_id.clone()
+}
+
+async fn resolve_dyj_server_origin(
+    device: &DyjV1Session,
+    override_origin: Option<&str>,
+) -> Option<String> {
+    if let Some(o) = override_origin.map(str::trim).filter(|s| !s.is_empty()) {
+        return extract_origin(o).or_else(|| Some(o.trim_end_matches('/').to_string()));
+    }
+    device
+        .upload_config_get()
+        .await
+        .ok()
+        .and_then(|c| c.get("url").and_then(Value::as_str).and_then(extract_origin))
+}
+
 async fn list_device_files(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::External { device, .. } => {
@@ -1920,26 +2391,52 @@ async fn list_device_files(active: &ActiveDevice) -> Result<Value, BridgeError> 
             ensure_sd_on_nrf(device).await;
             Ok(device.list_files(None).await.and_then(to_value)?)
         }
-        ActiveDevice::DyjV1 { device, .. } => {
+        ActiveDevice::DyjV1 { device, meta, .. } => {
             let agg = device.record_list().await?;
             let items = agg
                 .get("items")
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
-            let files: Vec<Value> = items
-                .into_iter()
-                .map(|it| {
-                    json!({
-                        "name": it.get("name").and_then(Value::as_str).unwrap_or_default(),
-                        "size": it.get("bytes").and_then(Value::as_u64).unwrap_or(0),
-                        "createTime": it.get("mtime").and_then(Value::as_u64).unwrap_or(0),
-                    })
-                })
-                .collect();
-            Ok(json!({ "files": files }))
+            let mut seen_names = HashSet::new();
+            let mut files = Vec::new();
+            for it in items {
+                let name = it.get("name").and_then(Value::as_str).unwrap_or_default();
+                if name.is_empty() || !seen_names.insert(name.to_string()) {
+                    continue;
+                }
+                let size = it.get("bytes").and_then(Value::as_u64).unwrap_or(0);
+                let mtime = it.get("mtime").and_then(Value::as_u64).unwrap_or(0);
+                let session = it.get("session").and_then(Value::as_str);
+                let seq = it.get("seq").and_then(Value::as_u64);
+                files.push(build_dyj_file_entry(name, size, mtime, session, seq, false));
+            }
+            // 兼顾已自动/手动上传并删源的云端暂存 .amr：3 秒内快速合并去重
+            if let (Some(did), Some(origin)) = (
+                resolve_dyj_device_id(device, meta).await,
+                resolve_dyj_server_origin(device, None).await,
+            ) {
+                if let Ok(server) = DyjV1ServerClient::new(&origin) {
+                    if let Ok(Ok(remote)) =
+                        tokio::time::timeout(Duration::from_secs(3), server.list_files(&did)).await
+                    {
+                        for rf in remote.files {
+                            let lower = rf.name.to_ascii_lowercase();
+                            if !lower.ends_with(".amr") && !lower.ends_with(".wav") {
+                                continue;
+                            }
+                            if seen_names.insert(rf.name.clone()) {
+                                files.push(build_dyj_file_entry(
+                                    &rf.name, rf.size, 0, None, None, true,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Value::Array(files))
         }
-        ActiveDevice::BoardV21 { .. } => Ok(json!({ "files": [] })),
+        ActiveDevice::BoardV21 { .. } => Ok(Value::Array(Vec::new())),
     }
 }
 
@@ -1962,13 +2459,15 @@ async fn download_device_file(
         ActiveDevice::DyjV1 {
             device,
             name: dev_name,
-            device_id_meta,
+            meta,
+            ..
         } => {
             // 1) 若设备热点已开启且可达，优先走 SoftAP 8788 快传
             if let Ok(ap_st) = device.ap_status().await {
                 if ap_st.get("active").and_then(Value::as_bool) == Some(true) {
                     if let Ok(client) = DyjV1ApClient::from_status(&ap_st) {
                         if let Ok(saved) = client.download_to_dir(name, dir).await {
+                            let _ = device.record_delete(name).await;
                             return Ok(json!({
                                 "path": saved.path.to_string_lossy(),
                                 "bytesWritten": saved.bytes_written,
@@ -1979,33 +2478,74 @@ async fn download_device_file(
                     }
                 }
             }
-            // 2) 若设备已上传到配网服务器，从上传源站拉回
-            let did = device_id_meta.lock().unwrap().clone();
-            if let (Some(device_id), Ok(cfg)) = (did, device.upload_config_get().await) {
-                if let Some(upload_url) = cfg.get("url").and_then(Value::as_str) {
-                    if let Some(origin) = extract_origin(upload_url) {
-                        if let Ok(server) = DyjV1ServerClient::new(&origin) {
-                            let only = vec![name.to_string()];
-                            if let Ok(mut list) =
-                                server.download_to_dir(&device_id, dir, Some(&only)).await
-                            {
-                                if let Some(saved) = list.pop() {
-                                    return Ok(json!({
-                                        "path": saved.path.to_string_lossy(),
-                                        "bytesWritten": saved.bytes_written,
-                                        "originalName": saved.name,
-                                        "deviceName": dev_name,
-                                    }));
-                                }
+            // 2) 通过配网上传服务取回：若服务器尚无该文件且设备连了 Wi-Fi，先触发单文件 upload.start 等完成
+            let did = resolve_dyj_device_id(device, meta).await.ok_or_else(|| {
+                BridgeError::from("未能读取点一机设备标识，请重连后重试同步".to_string())
+            })?;
+            let origin = resolve_dyj_server_origin(device, None).await.ok_or_else(|| {
+                BridgeError::from("点一机未配置上传服务地址，请检查固件上传配置".to_string())
+            })?;
+            let server = DyjV1ServerClient::new(&origin)?;
+            let already_on_server = server
+                .list_files(&did)
+                .await
+                .map(|list| list.files.iter().any(|f| f.name == name))
+                .unwrap_or(false);
+
+            if !already_on_server {
+                let wifi_st = device.wifi_status().await.unwrap_or(Value::Null);
+                if !is_dyj_wifi_connected(&wifi_st) {
+                    return Err(BridgeError::from(
+                        "点一机 V1 尚未连接 Wi-Fi，请先在「Wi-Fi 设置」中连接网络后再同步离线录音"
+                            .to_string(),
+                    ));
+                }
+                device.upload_start(Some(name)).await?;
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
+                while tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(800)).await;
+                    if let Ok(st) = device.upload_status().await {
+                        let uploading = st.get("uploading").and_then(Value::as_bool).unwrap_or(false);
+                        let last_err = st
+                            .get("last")
+                            .and_then(|l| l.get("error"))
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty());
+                        let last_state = st
+                            .get("last")
+                            .and_then(|l| l.get("state"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let last_name = st
+                            .get("last")
+                            .and_then(|l| l.get("name"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if last_name == name && last_state == "failed" {
+                            if let Some(err) = last_err {
+                                return Err(BridgeError::from(format!("点一机上传录音失败：{err}")));
                             }
+                        }
+                        if !uploading {
+                            break;
                         }
                     }
                 }
             }
-            Err(BridgeError::from(
-                "点一机 V1 离线音频走 Wi-Fi 上传或热点快传，请先连接 Wi-Fi 同步或开启实时录音流"
-                    .to_string(),
-            ))
+
+            let only = vec![name.to_string()];
+            let mut list = server.download_to_dir(&did, dir, Some(&only)).await?;
+            if let Some(saved) = list.pop() {
+                return Ok(json!({
+                    "path": saved.path.to_string_lossy(),
+                    "bytesWritten": saved.bytes_written,
+                    "originalName": saved.name,
+                    "deviceName": dev_name,
+                }));
+            }
+            Err(BridgeError::from(format!(
+                "未能从上传服务取回 {name}，请确认点一机 Wi-Fi 网络畅通后重试"
+            )))
         }
         ActiveDevice::BoardV21 { .. } => Err(BridgeError::from(
             "语音 AI 键盘无板载录音存储，仅支持实时音频流".to_string(),
@@ -2034,9 +2574,20 @@ async fn take_oldest_device_file(active: &ActiveDevice, dir: &str) -> Result<Val
                 "deviceName": saved.device_name.or_else(|| Some(dev_name.clone())),
             }))
         }
-        ActiveDevice::DyjV1 { .. } => Err(BridgeError::from(
-            "点一机 V1 不支持按最旧切片指令取回，请使用文件列表同步".to_string(),
-        )),
+        ActiveDevice::DyjV1 { device, .. } => {
+            let Value::Array(mut files) = list_device_files(active).await? else {
+                return Err(BridgeError::from("设备存储中暂无待取回的录音文件".to_string()));
+            };
+            files.sort_by_key(|f| f.get("created_at").and_then(Value::as_u64).unwrap_or(u64::MAX));
+            let oldest_name = files
+                .into_iter()
+                .filter_map(|f| f.get("name").and_then(Value::as_str).map(str::to_owned))
+                .find(|n| n.to_ascii_lowercase().ends_with(".amr"))
+                .ok_or_else(|| BridgeError::from("设备存储中暂无待取回的录音文件".to_string()))?;
+            let saved = download_device_file(active, &oldest_name, dir).await?;
+            let _ = device.record_delete(&oldest_name).await;
+            Ok(saved)
+        }
         ActiveDevice::BoardV21 { .. } => Err(BridgeError::from(
             "语音 AI 键盘无板载录音存储，仅支持实时音频流".to_string(),
         )),
@@ -2084,12 +2635,7 @@ async fn camera_sync(
     dir: &str,
     server_origin_override: Option<&str>,
 ) -> Result<Value, BridgeError> {
-    let ActiveDevice::DyjV1 {
-        device,
-        device_id_meta,
-        ..
-    } = active
-    else {
+    let ActiveDevice::DyjV1 { device, meta, .. } = active else {
         return Ok(json!({"photos": [], "pendingOnDevice": 0}));
     };
 
@@ -2099,6 +2645,7 @@ async fn camera_sync(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let mut mtime_by_name: HashMap<String, u64> = HashMap::new();
     let photo_items: Vec<Value> = items
         .into_iter()
         .filter(|it| {
@@ -2106,34 +2653,45 @@ async fn camera_sync(
                 || it
                     .get("name")
                     .and_then(Value::as_str)
-                    .is_some_and(|n| n.ends_with(".jpg") || n.ends_with(".jpeg"))
+                    .is_some_and(|n| {
+                        let low = n.to_ascii_lowercase();
+                        low.ends_with(".jpg") || low.ends_with(".jpeg")
+                    })
+        })
+        .map(|it| {
+            if let (Some(n), Some(m)) = (
+                it.get("name").and_then(Value::as_str),
+                it.get("mtime").and_then(Value::as_u64),
+            ) {
+                if let Some(sec) = normalize_mtime_sec(m) {
+                    mtime_by_name.insert(n.to_string(), sec);
+                }
+            }
+            it
         })
         .collect();
 
-    // 若设备上有未上传照片，尝试触发后台 Wi-Fi 上传（未连 Wi-Fi 时忽略 3003 错误，保留设备列表元信息）
+    // 若设备上有未上传照片且已连接 Wi-Fi，触发后台上传并短暂等待落盘后再查服务器列表
     if !photo_items.is_empty() {
-        let _ = device.upload_start(None).await;
-    }
-
-    let mut device_id = device_id_meta.lock().unwrap().clone();
-    if device_id.is_none() {
-        if let Ok(info) = device.device_info(false).await {
-            device_id = info
-                .get("device_id")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            *device_id_meta.lock().unwrap() = device_id.clone();
+        let wifi_st = device.wifi_status().await.unwrap_or(Value::Null);
+        if is_dyj_wifi_connected(&wifi_st) {
+            if device.upload_start(None).await.is_ok() {
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+                while tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(600)).await;
+                    let Ok(st) = device.upload_status().await else {
+                        break;
+                    };
+                    if st.get("uploading").and_then(Value::as_bool) != Some(true) {
+                        break;
+                    }
+                }
+            }
         }
     }
 
-    let origin = match server_origin_override {
-        Some(o) if !o.is_empty() => Some(o.to_string()),
-        _ => device
-            .upload_config_get()
-            .await
-            .ok()
-            .and_then(|c| c.get("url").and_then(Value::as_str).and_then(extract_origin)),
-    };
+    let device_id = resolve_dyj_device_id(device, meta).await;
+    let origin = resolve_dyj_server_origin(device, server_origin_override).await;
 
     let mut downloaded = Vec::new();
     if let (Some(did), Some(orig)) = (device_id, origin) {
@@ -2142,7 +2700,10 @@ async fn camera_sync(
                 let photo_names: Vec<String> = remote_list
                     .files
                     .iter()
-                    .filter(|f| f.name.ends_with(".jpg") || f.name.ends_with(".jpeg"))
+                    .filter(|f| {
+                        let low = f.name.to_ascii_lowercase();
+                        low.ends_with(".jpg") || low.ends_with(".jpeg")
+                    })
                     .map(|f| f.name.clone())
                     .collect();
                 if !photo_names.is_empty() {
@@ -2150,11 +2711,14 @@ async fn camera_sync(
                         server.download_to_dir(&did, dir, Some(&photo_names)).await
                     {
                         for sf in saved_files {
+                            let captured_at = mtime_by_name.get(&sf.name).copied();
                             downloaded.push(json!({
                                 "name": sf.name,
                                 "path": sf.path.to_string_lossy(),
+                                "bytesWritten": sf.bytes_written,
                                 "bytes": sf.bytes_written,
-                                "source": "dyj_v1",
+                                "capturedAt": captured_at,
+                                "source": "dyj_camera",
                             }));
                         }
                     }
@@ -2316,6 +2880,20 @@ async fn sync_ble_wifi_creds_kv(
     let _ = device.set_config(BLE_WIFI_CRED_SUMMARY_KEY, &encoded).await;
 }
 
+fn map_dyj_wifi_connect_result(ssid: &str, resp: Value) -> Result<Value, BridgeError> {
+    if resp.get("connected").and_then(Value::as_bool) == Some(true) {
+        return Ok(resp);
+    }
+    let phase = resp.get("phase").and_then(Value::as_str).unwrap_or("");
+    let msg = match phase {
+        "auth" => format!("Wi-Fi「{ssid}」密码错误，请核对后重试"),
+        "dhcp" => format!("Wi-Fi「{ssid}」获取 IP 地址失败（DHCP 超时），请重试"),
+        "timeout" => format!("连接 Wi-Fi「{ssid}」超时，请确认路由器在 2.4GHz 范围内后重试"),
+        _ => format!("连接 Wi-Fi「{ssid}」失败，请确认信号与密码后重试"),
+    };
+    Err(BridgeError::from(msg))
+}
+
 async fn wifi_connect(
     active: &ActiveDevice,
     ssid: &str,
@@ -2330,13 +2908,16 @@ async fn wifi_connect(
             }
             Ok(to_value(connected)?)
         }
-        ActiveDevice::DyjV1 { device, .. } => {
+        ActiveDevice::DyjV1 { device, meta, .. } => {
             let pwd = if password.is_empty() {
                 None
             } else {
                 Some(password)
             };
-            Ok(device.wifi_connect(ssid, pwd, None).await?)
+            let resp = device.wifi_connect(ssid, pwd, None).await?;
+            let ok = map_dyj_wifi_connect_result(ssid, resp)?;
+            meta.lock().unwrap().record_saved_ssid(ssid);
+            Ok(ok)
         }
         ActiveDevice::BoardV21 { .. } => {
             Err(BridgeError::from("语音 AI 键盘不支持设备端 Wi-Fi 配置".to_string()))
@@ -2409,12 +2990,25 @@ async fn wifi_credentials(active: &ActiveDevice, passive: bool) -> Result<Value,
             close_wifi_quietly(device).await;
             Ok(creds.and_then(to_value)?)
         }
-        ActiveDevice::DyjV1 { device, .. } => {
+        ActiveDevice::DyjV1 { device, meta, .. } => {
             let st = device.wifi_status().await.unwrap_or(Value::Null);
-            let mut creds = Vec::new();
-            if let Some(ssid) = st.get("ssid").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                creds.push(json!({"ssid": ssid, "connected": true}));
+            let current_ssid = st
+                .get("ssid")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+            if let Some(ref s) = current_ssid {
+                meta.lock().unwrap().record_saved_ssid(s);
             }
+            let saved = meta.lock().unwrap().saved_ssids.clone();
+            let creds: Vec<Value> = saved
+                .into_iter()
+                .map(|ssid| {
+                    let connected = current_ssid.as_deref() == Some(ssid.as_str());
+                    json!({"ssid": ssid, "connected": connected})
+                })
+                .collect();
             Ok(Value::Array(creds))
         }
         ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
@@ -2457,7 +3051,11 @@ async fn wifi_forget(active: &ActiveDevice, ssid: &str) -> Result<Value, BridgeE
             close_wifi_quietly(device).await;
             Ok(res.and_then(to_value)?)
         }
-        ActiveDevice::DyjV1 { device, .. } => Ok(device.wifi_forget(Some(ssid)).await?),
+        ActiveDevice::DyjV1 { device, meta, .. } => {
+            let res = device.wifi_forget(Some(ssid)).await?;
+            meta.lock().unwrap().remove_saved_ssid(ssid);
+            Ok(res)
+        }
         ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
             Ok(json!({"removed": 0}))
         }
@@ -2543,10 +3141,115 @@ async fn time_sync(active: &ActiveDevice) -> Result<Value, BridgeError> {
     }
 }
 
-// ── 录音卡 V2 两阶段固件 OTA ────────────────────────────────────
+// ── 固件 OTA（CardV2 双芯 DFU + 点一机 V1 single_ota）────────────
+
+fn format_version_from_code(code: u64) -> String {
+    if code == 0 {
+        return String::new();
+    }
+    if code >= 100 {
+        format!("{}.{}.{}", code / 10_000, (code % 10_000) / 100, code % 100)
+    } else {
+        format!("0.0.{code}")
+    }
+}
+
+fn parse_dyj_ota_info_response(chk: &Value) -> Value {
+    let need_update = chk
+        .get("need_update")
+        .or_else(|| chk.get("needUpdate"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let current = chk.get("current").unwrap_or(&Value::Null);
+    let current_code = current
+        .get("version_code")
+        .or_else(|| current.get("versionCode"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let remote = chk.get("remote").unwrap_or(&Value::Null);
+    let remote_code = remote
+        .get("versionCode")
+        .or_else(|| remote.get("version_code"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let remote_ver_raw = remote
+        .get("versionName")
+        .or_else(|| remote.get("version"))
+        .or_else(|| remote.get("version_name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    let version = remote_ver_raw.unwrap_or_else(|| format_version_from_code(remote_code));
+    let url = remote
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    json!({
+        "version": version,
+        "versionCode": remote_code,
+        "url": url,
+        "needUpdate": need_update,
+        "currentVersionCode": current_code,
+    })
+}
+
+async fn dyj_v1_ota_check_with_fallback(device: &DyjV1Session) -> Result<Value, BridgeError> {
+    match device.ota_check().await {
+        Ok(chk) => {
+            let parsed = parse_dyj_ota_info_response(&chk);
+            let remote_code = parsed.get("versionCode").and_then(Value::as_u64).unwrap_or(0);
+            if remote_code >= 815 {
+                return Ok(parsed);
+            }
+            let _ = device
+                .ota_config_set(legacy_upgrade::default_target_ota_info_url())
+                .await;
+            if let Ok(chk2) = device.ota_check().await {
+                let parsed2 = parse_dyj_ota_info_response(&chk2);
+                if parsed2.get("versionCode").and_then(Value::as_u64).unwrap_or(0) >= remote_code {
+                    return Ok(parsed2);
+                }
+            }
+            Ok(parsed)
+        }
+        Err(first_err) => {
+            if device
+                .ota_config_set(legacy_upgrade::default_target_ota_info_url())
+                .await
+                .is_ok()
+            {
+                if let Ok(chk2) = device.ota_check().await {
+                    return Ok(parse_dyj_ota_info_response(&chk2));
+                }
+            }
+            Err(BridgeError::from(first_err))
+        }
+    }
+}
 
 async fn ota_info(payload: &Value) -> Result<Value, BridgeError> {
-    let module = match payload.get("mod").and_then(Value::as_str) {
+    let mod_str = payload.get("mod").and_then(Value::as_str);
+    if let Ok(ActiveDevice::DyjV1 { device, .. }) = active_device().await {
+        if mod_str == Some("wifi") {
+            return Ok(json!({
+                "version": "",
+                "versionCode": 0,
+                "url": "",
+                "needUpdate": false,
+            }));
+        }
+        let wifi_st = device.wifi_status().await.unwrap_or(Value::Null);
+        if !is_dyj_wifi_connected(&wifi_st) {
+            return Err(BridgeError::from(
+                "点一机检查固件更新需要先连接 Wi-Fi 网络".to_string(),
+            ));
+        }
+        return dyj_v1_ota_check_with_fallback(&device).await;
+    }
+
+    let module = match mod_str {
         Some("wifi") => OtaModule::Wifi,
         _ => OtaModule::Main,
     };
@@ -2560,6 +3263,11 @@ async fn ota_info(payload: &Value) -> Result<Value, BridgeError> {
 }
 
 async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
+    let current_active = state().device.lock().await.clone();
+    if let Some(ActiveDevice::DyjV1 { device, .. }) = current_active {
+        return ota_main_dyj_v1(device, out).await;
+    }
+
     let api_base = payload
         .get("apiBase")
         .and_then(Value::as_str)
@@ -2639,6 +3347,159 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
         })),
         Err(error) => out.fail(error),
     }
+    Ok(())
+}
+
+async fn ota_main_dyj_v1(device: Arc<DyjV1Session>, out: Emitter) -> Result<(), BridgeError> {
+    out.progress(json!({
+        "stage": "checking",
+        "percent": 2,
+        "text": "正在检查点一机系统固件版本…",
+    }));
+    let wifi_st = device.wifi_status().await.unwrap_or(Value::Null);
+    if !is_dyj_wifi_connected(&wifi_st) {
+        out.fail("点一机升级固件需要先连接 Wi-Fi 网络");
+        return Ok(());
+    }
+    let parsed = match dyj_v1_ota_check_with_fallback(&device).await {
+        Ok(p) => p,
+        Err(e) => {
+            out.fail(e.message);
+            return Ok(());
+        }
+    };
+    let target_ver = parsed
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if parsed.get("needUpdate").and_then(Value::as_bool) != Some(true) {
+        out.progress(json!({
+            "stage": "done",
+            "percent": 100,
+            "text": "点一机系统固件已是最新版本",
+        }));
+        out.ok(json!({
+            "module": "main",
+            "upToDate": true,
+            "version": target_ver,
+        }));
+        return Ok(());
+    }
+
+    let mut events = device.subscribe_events();
+    out.progress(json!({
+        "stage": "downloading",
+        "percent": 5,
+        "text": "正在下载系统固件…",
+        "version": target_ver,
+    }));
+    if let Err(e) = device.ota_install(true).await {
+        out.fail(BridgeError::from(e).message);
+        return Ok(());
+    }
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+    let mut last_state = String::from("downloading");
+    let mut seen_installing = false;
+    let mut install_deadline: Option<tokio::time::Instant> = None;
+
+    loop {
+        let now = tokio::time::Instant::now();
+        let target_deadline = match install_deadline {
+            Some(id) if id < deadline => id,
+            _ => deadline,
+        };
+        let remaining = target_deadline.saturating_duration_since(now);
+        if remaining.is_zero() {
+            if seen_installing {
+                break;
+            }
+            out.fail("点一机系统固件升级超时，请重连设备确认版本后重试");
+            return Ok(());
+        }
+        match tokio::time::timeout(remaining, events.recv()).await {
+            Ok(Ok(DyjV1Event::Event { evt, data, .. })) if evt == "ota.progress" => {
+                let state_str = data.get("state").and_then(Value::as_str).unwrap_or("");
+                if !state_str.is_empty() {
+                    last_state = state_str.to_string();
+                }
+                match state_str {
+                    "downloading" => {
+                        let raw_pct = data.get("progress").and_then(Value::as_u64).unwrap_or(0);
+                        let pct = 5 + ((raw_pct.min(100) * 65) / 100) as u8;
+                        out.progress(json!({
+                            "stage": "downloading",
+                            "percent": pct,
+                            "text": "正在下载系统固件…",
+                            "version": target_ver,
+                        }));
+                    }
+                    "verifying" => {
+                        out.progress(json!({
+                            "stage": "verifying",
+                            "percent": 75,
+                            "text": "正在校验系统固件完整性…",
+                            "version": target_ver,
+                        }));
+                    }
+                    "installing" => {
+                        seen_installing = true;
+                        install_deadline.get_or_insert_with(|| {
+                            tokio::time::Instant::now() + Duration::from_secs(4)
+                        });
+                        out.progress(json!({
+                            "stage": "installing",
+                            "percent": 90,
+                            "text": "正在安装系统固件并重启设备…",
+                            "version": target_ver,
+                        }));
+                    }
+                    "failed" => {
+                        let err_msg = data
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or("固件下载或校验失败");
+                        out.fail(format!("点一机系统固件升级失败：{err_msg}"));
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Ok(DyjV1Event::Disconnected)) => {
+                if seen_installing || matches!(last_state.as_str(), "verifying" | "installing") {
+                    break;
+                }
+                out.fail("升级过程中与点一机连接意外断开，请重新连接后查看当前固件版本");
+                return Ok(());
+            }
+            Ok(Ok(_)) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(_)) => {
+                if seen_installing {
+                    break;
+                }
+                out.fail("升级监听通道意外中断，请重新连接设备查看版本");
+                return Ok(());
+            }
+            Err(_) => {
+                if seen_installing {
+                    break;
+                }
+                out.fail("点一机系统固件升级超时，请重连设备确认版本后重试");
+                return Ok(());
+            }
+        }
+    }
+
+    // 覆盖安装杀进程重启：显式清理本地会话，交由上层重连读取新版本
+    release_device().await;
+    out.ok(json!({
+        "module": "main",
+        "upToDate": false,
+        "version": target_ver,
+    }));
     Ok(())
 }
 
@@ -2901,21 +3762,59 @@ unsafe fn cstr(ptr: *const c_char) -> String {
 }
 
 #[cfg(target_os = "android")]
+static ANDROID_VM: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// tokio 运行时线程启动钩子：把线程永久附加到 JavaVM。
+/// droidplug 从任意线程调 `global_jvm().get_env()`，未附加线程会 `JniCall(ThreadDetached)`
+/// （Jelly Star 2026-11-16 实测扫描挂此）。任务可在 worker 间迁移，必须按线程附加。
+#[cfg(target_os = "android")]
+fn ensure_jvm_thread_attached() {
+    use std::sync::atomic::Ordering;
+    let raw = ANDROID_VM.load(Ordering::SeqCst) as *mut jni::sys::JavaVM;
+    if raw.is_null() {
+        return;
+    }
+    if let Ok(vm) = unsafe { jni::JavaVM::from_raw(raw) } {
+        let _ = vm.attach_current_thread_permanently();
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn ensure_jvm_thread_attached() {}
+
+#[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn JNI_OnLoad(
     vm: *mut jni::sys::JavaVM,
     _reserved: *mut core::ffi::c_void,
 ) -> jni::sys::jint {
+    // Rust log! → logcat（tag "card_bridge"），btleplug/jni 内部错误由此落盘可见。
+    // 必须显式 with_max_level，否则默认过滤吞掉 info（2026-11-16 Jelly Star 实测）。
+    static LOGGER: std::sync::Once = std::sync::Once::new();
+    LOGGER.call_once(|| {
+        let _ = android_logger::init_once(
+            android_logger::Config::default()
+                .with_tag("card_bridge")
+                .with_max_level(log::LevelFilter::Info),
+        );
+        // panic 默认输出到 /dev/null，真机上等于静默死亡——直通 logcat 才能排障。
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            alog::info(&format!("PANIC: {info}"));
+            default_hook(info);
+        }));
+    });
     let result = std::panic::catch_unwind(|| {
+        ANDROID_VM.store(vm as usize, std::sync::atomic::Ordering::SeqCst);
         let vm = unsafe { jni::JavaVM::from_raw(vm)? };
         let env = vm.attach_current_thread()?;
         btleplug::platform::init(&env)?;
         Ok::<(), Box<dyn std::error::Error>>(())
     });
     match result {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => eprintln!("card_bridge: Android BLE 初始化失败: {error}"),
-        Err(_) => eprintln!("card_bridge: Android BLE 初始化 panic"),
+        Ok(Ok(())) => log::info!("Android BLE 平台初始化成功"),
+        Ok(Err(error)) => log::error!("Android BLE 初始化失败: {error}"),
+        Err(_) => log::error!("Android BLE 初始化 panic"),
     }
     jni::sys::JNI_VERSION_1_6
 }
@@ -2980,5 +3879,192 @@ mod tests {
         assert!(encoded.len() <= 63);
         let decoded = decode_ssid_list_kv(&encoded);
         assert_eq!(decoded.len(), 3);
+    }
+
+    #[test]
+    fn builds_dyj_v1_snapshot_matching_card_snapshot_schema() {
+        let meta = DyjV1CachedMeta {
+            device_id: Some("C5F96AD5895ADF02".into()),
+            fw_version: "0.8.15".into(),
+            fw_version_code: 815,
+            model: "DYJ-V1".into(),
+            saved_ssids: vec!["CloudOS.com".into()],
+        };
+        let batt = json!({"level": 76, "status": "charging", "plugged": 1});
+        let stor = json!({
+            "data_total_bytes": 16u64 * 1024 * 1024 * 1024,
+            "data_free_bytes": 12u64 * 1024 * 1024 * 1024,
+        });
+        let rec = json!({"recording": true, "session": "A1B2C3D4", "files": 3});
+        let wifi = json!({"wifi_enabled": true, "state": "connected", "ssid": "CloudOS.com", "ip": "192.168.31.57"});
+
+        let snap = build_dyj_v1_snapshot_json(
+            DeviceKind::DyjV1,
+            "DYJ_Q2M34R",
+            &meta,
+            &batt,
+            &stor,
+            &rec,
+            &wifi,
+            true,
+        );
+        assert_eq!(snap["battery"]["level"], 76);
+        assert_eq!(snap["battery"]["isCharging"], true);
+        assert_eq!(snap["state"]["wifiOpen"], true);
+        assert_eq!(snap["state"]["wifiConnected"], true);
+        assert_eq!(snap["record"]["isRecording"], true);
+        assert_eq!(snap["record"]["realtimeEnabled"], true);
+        assert_eq!(snap["record"]["session"], "A1B2C3D4");
+        assert_eq!(snap["info"]["version"], "0.8.15");
+        assert_eq!(snap["info"]["versionCode"], 815);
+        assert_eq!(snap["info"]["deviceName"], "DYJ_Q2M34R");
+        assert_eq!(snap["storage"]["total"], 16 * 1024);
+        assert_eq!(snap["storage"]["used"], 4 * 1024);
+    }
+
+    #[test]
+    fn builds_dyj_file_entries_and_normalizes_millis_mtime() {
+        let e = build_dyj_file_entry(
+            "audio_20261026-153000_A1B2C3D4_03.amr",
+            48_000,
+            1_730_000_000_123,
+            None,
+            None,
+            false,
+        );
+        assert_eq!(e["name"], "audio_20261026-153000_A1B2C3D4_03.amr");
+        assert_eq!(e["size"], 48_000);
+        assert_eq!(e["created_at"], 1_730_000_000);
+        assert_eq!(e["session"], "A1B2C3D4");
+        assert_eq!(e["seq"], 3);
+        assert_eq!(e["synced"], false);
+    }
+
+    #[test]
+    fn maps_dyj_wifi_connect_failures_and_ota_check_schema() {
+        assert!(map_dyj_wifi_connect_result("Office", json!({"connected": true, "ip": "1.2.3.4"})).is_ok());
+        let auth_err = map_dyj_wifi_connect_result("Office", json!({"connected": false, "phase": "auth"}))
+            .err()
+            .unwrap();
+        assert!(auth_err.message.contains("密码错误"));
+        let dhcp_err = map_dyj_wifi_connect_result("Office", json!({"connected": false, "phase": "dhcp"}))
+            .err()
+            .unwrap();
+        assert!(dhcp_err.message.contains("DHCP"));
+
+        let ota = parse_dyj_ota_info_response(&json!({
+            "need_update": true,
+            "current": {"version_name": "0.8.12", "version_code": 812},
+            "remote": {"versionCode": 815, "url": "https://ota.example/app.apk"}
+        }));
+        assert_eq!(ota["needUpdate"], true);
+        assert_eq!(ota["version"], "0.8.15");
+        assert_eq!(ota["versionCode"], 815);
+        assert_eq!(ota["currentVersionCode"], 812);
+        assert_eq!(ota["url"], "https://ota.example/app.apk");
+    }
+
+    #[test]
+    fn maps_dyj_v1_battery_and_camera_and_record_events() {
+        let batt = map_dyj_v1_event_to_json(
+            "battery.changed",
+            1000,
+            json!({"level": 52, "status": "charging", "plugged": 1}),
+        )
+        .unwrap();
+        assert_eq!(batt["kind"], "power");
+        assert_eq!(batt["battery"]["level"], 52);
+        assert_eq!(batt["battery"]["isCharging"], true);
+
+        let cam = map_dyj_v1_event_to_json(
+            "camera.capture",
+            2000,
+            json!({"name": "img_20261116-200000-001.jpg"}),
+        )
+        .unwrap();
+        assert_eq!(cam["kind"], "camera");
+
+        let rec = map_dyj_v1_event_to_json(
+            "record.stop",
+            3000,
+            json!({"session": "DEADBEEF"}),
+        )
+        .unwrap();
+        assert_eq!(rec["kind"], "record");
+        assert_eq!(rec["status"]["isRecording"], false);
+        assert_eq!(rec["status"]["session"], "DEADBEEF");
+    }
+
+    #[test]
+    #[ignore = "requires physical DYJ_* device nearby"]
+    fn dyj_v1_live_ble_probe() {
+        let rt = &state().runtime;
+        rt.block_on(async {
+            let find_v1 = |list: &[Value]| {
+                list.iter()
+                    .find(|d| {
+                        d.get("name")
+                            .and_then(Value::as_str)
+                            .is_some_and(|n| n.starts_with("DYJ_") && !n.starts_with("DYJV2_"))
+                    })
+                    .cloned()
+            };
+            let t0 = std::time::Instant::now();
+            let mut target = None;
+            for attempt in 0..3 {
+                let list1 = unified_scan(Duration::from_millis(5000))
+                    .await
+                    .expect("unified_scan must succeed");
+                eprintln!("[probe] scan1[{attempt}] ({:?}): {list1:#?}", t0.elapsed());
+                if let Some(found) = find_v1(&list1) {
+                    target = Some(found);
+                    break;
+                }
+            }
+            let target = target.expect("expected a nearby DYJ_* V1 device in scan1");
+            let rssi = target["rssi"].as_i64().unwrap();
+            assert!(rssi < 0, "expected real negative RSSI, got {rssi}");
+
+            let id = target["id"].as_str().unwrap().to_string();
+            let name = target["name"].as_str().unwrap().to_string();
+            let t1 = std::time::Instant::now();
+            let conn_res = connect_device(json!({
+                "id": id,
+                "name": name,
+                "deviceKind": "dyj_v1",
+            }))
+            .await;
+            eprintln!("[probe] connect ({:?}): {:?}", t1.elapsed(), conn_res.as_ref().map_err(|e| &e.message));
+            if let Err(err) = conn_res {
+                assert!(
+                    err.message.contains("LEGACY_UPGRADE_REQUIRED")
+                        || err.message.contains("v0.7.2")
+                        || err.message.contains("v0.8.12")
+                        || err.message.contains("固件"),
+                    "unexpected connect error: {}",
+                    err.message
+                );
+                assert!(t1.elapsed() < Duration::from_secs(12), "legacy connect took too long: {:?}", t1.elapsed());
+            } else {
+                let _ = release_device().await;
+            }
+
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+            let mut found_again = false;
+            for attempt in 0..3 {
+                let list2 = unified_scan(Duration::from_millis(5000))
+                    .await
+                    .expect("second unified_scan must succeed");
+                eprintln!("[probe] scan2[{attempt}] count={}", list2.len());
+                if list2
+                    .iter()
+                    .any(|d| d.get("name").and_then(Value::as_str) == Some(name.as_str()))
+                {
+                    found_again = true;
+                    break;
+                }
+            }
+            assert!(found_again, "expected {name} to immediately resume advertising after disconnect");
+        });
     }
 }

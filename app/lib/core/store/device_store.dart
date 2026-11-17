@@ -17,6 +17,9 @@ import 'package:flutter/foundation.dart';
 
 import '../../services/audio/live_audio_recorder.dart';
 import '../../services/audio/phone_mic_service.dart';
+import '../../services/legacy_upgrade/legacy_upgrade_controller.dart';
+import '../../services/legacy_upgrade/legacy_upgrade_gateway.dart';
+import '../../services/legacy_upgrade/legacy_upgrade_models.dart';
 import '../../services/platform/live_activity_service.dart';
 import '../../services/watch/watch_hardware_service.dart';
 import '../device/card_gateway.dart';
@@ -65,6 +68,7 @@ class DeviceStore extends ChangeNotifier {
     PhoneMicRecorder? phoneMicRecorder,
     LiveActivityService? liveActivityService,
     WatchHardwareService? watchHardware,
+    LegacyUpgradeController? legacyUpgrade,
   }) : _bleGateway = gateway ?? realOrUnsupported(),
        _ownsWatchHardware = watchHardware == null,
        _watchHardware = watchHardware ?? WatchHardwareService(),
@@ -72,11 +76,17 @@ class DeviceStore extends ChangeNotifier {
        _phoneMicBackend = phoneMicBackend ?? PlatformPhoneMicBackend(),
        _ownsPhoneMicRecorder = phoneMicRecorder == null,
        _phoneMicRecorder = phoneMicRecorder ?? PhoneMicRecorder(),
-       _liveActivityService = liveActivityService ?? LiveActivityService() {
+       _liveActivityService = liveActivityService ?? LiveActivityService(),
+       _ownsLegacyUpgrade = legacyUpgrade == null {
     _gateway = WatchCompositeCardGateway(
       bleGateway: _bleGateway,
       watchService: _watchHardware,
     );
+    this.legacyUpgrade = legacyUpgrade ??
+        LegacyUpgradeController(
+          gateway: BridgeLegacyUpgradeGateway(_gw),
+          onAutoReconnect: _autoReconnectAfterLegacyUpgrade,
+        );
     _watchHardware.addListener(_onWatchHardwareChanged);
     if (autoStart) {
       unawaited(restoreLink());
@@ -95,6 +105,8 @@ class DeviceStore extends ChangeNotifier {
   final bool _ownsPhoneMicRecorder;
   final PhoneMicRecorder _phoneMicRecorder;
   final LiveActivityService _liveActivityService;
+  final bool _ownsLegacyUpgrade;
+  late final LegacyUpgradeController legacyUpgrade;
 
   /// 全部真实命令都经它转发：发出与返回都视为"蓝牙传输"，供看门狗顺延。
   late final CardGateway _gw = ActivityGateway(_gateway, _markLinkActivity);
@@ -196,12 +208,17 @@ class DeviceStore extends ChangeNotifier {
   bool get omiLinkEnabled => _omiLinkEnabled;
 
   /// 只展示我们自己的录音卡/点一机/键盘（按需含已开启的 Apple Watch 与第三方硬件）。
+  ///
+  /// [listAll] 仅供临时排障直通（2026-11-16 Omi 联调用过一次）：扫描列表无过滤列出全部
+  /// BLE 设备，识别与开关过滤后置恢复——连接阶段仍按设备 kind 走对应驱动。
   static bool isOurDevice(
     CardDevice device, {
     bool allowWatch = true,
     bool allowGetSeed = false,
     bool allowOmi = false,
+    bool listAll = false,
   }) {
+    if (listAll) return true;
     final kind = device.kind ?? DeviceKind.fromBleName(device.name);
     if (kind == null) return false;
     return switch (kind) {
@@ -391,12 +408,25 @@ class DeviceStore extends ChangeNotifier {
       unawaited(_afterConnect(epoch));
     } on CardException catch (e) {
       if (epoch != _epoch) return;
+      final mismatch = LegacyUpgradeMismatch.tryParse(device, e);
+      if (mismatch != null) {
+        linkState = LinkState.disconnected;
+        linkError = null;
+        sheetOpen = false;
+        _stopSheetWatch();
+        unawaited(_releaseLink());
+        legacyUpgrade.triggerFromMismatch(mismatch);
+        notifyListeners();
+        return;
+      }
       linkState = LinkState.disconnected;
       linkError = e.message;
+      unawaited(_releaseLink());
     } on TimeoutException {
       if (epoch != _epoch) return;
       linkState = LinkState.disconnected;
       linkError = '读取设备状态超时，请重试连接';
+      unawaited(_releaseLink());
     }
     notifyListeners();
   }
@@ -409,6 +439,16 @@ class DeviceStore extends ChangeNotifier {
       if (epoch != _epoch) return;
     }
     await prefetchSummaryInfo();
+  }
+
+  Future<bool> _autoReconnectAfterLegacyUpgrade(CardDevice updated) async {
+    await connectTo(updated);
+    if (!isConnected) return false;
+    sheetOpen = true;
+    view = DeviceView.main;
+    _startSheetWatch();
+    notifyListeners();
+    return true;
   }
 
   /// 用户主动断开：先把会占用链路的状态收干净，再断。
@@ -1653,8 +1693,8 @@ class DeviceStore extends ChangeNotifier {
         // 卡片尚未记录被动缓存或设备暂不支持时保持原状
       }
     }
-    if (activeCapabilities.hasDualChipOta && !_otaChecked) {
-      await checkFirmware();
+    if (activeCapabilities.hasOta && !_otaChecked) {
+      await checkFirmware(silent: activeCapabilities.hasSingleOta);
     }
   }
 
@@ -1684,7 +1724,10 @@ class DeviceStore extends ChangeNotifier {
 
   void closeSheet() {
     if (fwUpdating) return; // 更新中弹层锁定
-    if (view == DeviceView.wifi && deviceWifiOpen == true && !wifiJoining) {
+    if (activeCapabilities.hasDualChipOta &&
+        view == DeviceView.wifi &&
+        deviceWifiOpen == true &&
+        !wifiJoining) {
       unawaited(_closeWifiQuietly());
     }
     sheetOpen = false;
@@ -1696,7 +1739,8 @@ class DeviceStore extends ChangeNotifier {
   void showView(DeviceView v) {
     final prev = view;
     view = v;
-    if (prev == DeviceView.wifi &&
+    if (activeCapabilities.hasDualChipOta &&
+        prev == DeviceView.wifi &&
         v != DeviceView.wifi &&
         deviceWifiOpen == true &&
         !wifiJoining) {
@@ -1742,7 +1786,7 @@ class DeviceStore extends ChangeNotifier {
   String get fwValText {
     if (fwStage == FwStage.failed) return '检查失败';
     if (fwUpdating) return fwPctText;
-    if (!_otaChecked && activeCapabilities.hasDualChipOta && isConnected) {
+    if (!_otaChecked && activeCapabilities.hasOta && isConnected) {
       return '正在检查…';
     }
     return fwAvailable ? '有可用更新' : '已是最新';
@@ -1754,9 +1798,11 @@ class DeviceStore extends ChangeNotifier {
     return '已更新到 $fwVersionText';
   }
 
-  String get fwVersionText => _fwVersion.isEmpty
-      ? '—'
-      : '主控 $_fwVersion / Wi-Fi ${_wifiVersion.isEmpty ? '—' : _wifiVersion}';
+  String get fwVersionText {
+    if (_fwVersion.isEmpty) return '—';
+    if (activeCapabilities.hasSingleOta) return _fwVersion;
+    return '主控 $_fwVersion / Wi-Fi ${_wifiVersion.isEmpty ? '—' : _wifiVersion}';
+  }
 
   String get fwPctText => '${fwProgress.round()}%';
 
@@ -1795,12 +1841,17 @@ class DeviceStore extends ChangeNotifier {
   }
 
   /// 查服务器最新版本（只读，不写设备）。
-  Future<void> checkFirmware() async {
+  ///
+  /// [silent] 为 true 时（用于单芯片 OTA 首页预检，未配网可能 3003）：
+  /// 静默失败不把主弹层标为「检查失败」，等用户进入升级页再显式提示配网。
+  Future<void> checkFirmware({bool silent = false}) async {
     if (!isConnected) return;
     final epoch = _epoch;
-    fwStage = FwStage.checking;
-    fwError = null;
-    notifyListeners();
+    if (!silent) {
+      fwStage = FwStage.checking;
+      fwError = null;
+      notifyListeners();
+    }
     try {
       if (activeCapabilities.hasWifiConfig && !_wifiSummaryProbed) {
         try {
@@ -1812,22 +1863,37 @@ class DeviceStore extends ChangeNotifier {
           // 读取被动缓存失败不阻断检查服务器最新版本
         }
       }
-      final results = await Future.wait([
-        _fetchOtaModule('main'),
-        _fetchOtaModule('wifi'),
-      ]);
-      if (epoch != _epoch) return;
-      _otaMainInfo = results[0];
-      _otaWifiInfo = results[1];
-      _otaChecked = true;
-      fwStage = FwStage.idle;
+      if (activeCapabilities.hasSingleOta) {
+        final mainInfo = await _fetchOtaModule('main');
+        if (epoch != _epoch) return;
+        _otaMainInfo = mainInfo;
+        _otaWifiInfo = null;
+        _otaChecked = true;
+        fwStage = FwStage.idle;
+      } else {
+        final results = await Future.wait([
+          _fetchOtaModule('main'),
+          _fetchOtaModule('wifi'),
+        ]);
+        if (epoch != _epoch) return;
+        _otaMainInfo = results[0];
+        _otaWifiInfo = results[1];
+        _otaChecked = true;
+        fwStage = FwStage.idle;
+      }
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       _otaMainInfo = null;
       _otaWifiInfo = null;
-      _otaChecked = false;
-      fwError = e.message;
-      fwStage = FwStage.failed;
+      if (silent && activeCapabilities.hasSingleOta) {
+        _otaChecked = true;
+        fwStage = FwStage.idle;
+        fwError = null;
+      } else {
+        _otaChecked = false;
+        fwError = e.message;
+        fwStage = FwStage.failed;
+      }
     }
     notifyListeners();
   }
@@ -1887,7 +1953,7 @@ class DeviceStore extends ChangeNotifier {
     }
 
     final doMain = mainNeedsUpdate;
-    var doWifi = wifiNeedsUpdate;
+    var doWifi = activeCapabilities.hasDualChipOta && wifiNeedsUpdate;
     if (!doMain && !doWifi) {
       fwError = null;
       fwStage = FwStage.idle;
@@ -1904,9 +1970,11 @@ class DeviceStore extends ChangeNotifier {
     fwError = null;
     fwProgress = 0;
 
-    // 阶段 1：主控（仅在主控确实有新版本时执行）
+    // 阶段 1：主控 / 单芯片系统固件
     if (doMain) {
-      final mainStageLabel = doWifi ? '阶段 1/2 · 主控芯片' : '阶段 1/1 · 主控芯片';
+      final mainStageLabel = activeCapabilities.hasSingleOta
+          ? '正在升级系统固件'
+          : (doWifi ? '阶段 1/2 · 主控芯片' : '阶段 1/1 · 主控芯片');
       fwStage = FwStage.main;
       fwStageText = mainStageLabel;
       fwStateText = '正在准备…';
@@ -2179,6 +2247,9 @@ class DeviceStore extends ChangeNotifier {
     _stopSheetWatch();
     if (_ownsPhoneMicRecorder) {
       _phoneMicRecorder.dispose();
+    }
+    if (_ownsLegacyUpgrade) {
+      legacyUpgrade.dispose();
     }
 
     super.dispose();
