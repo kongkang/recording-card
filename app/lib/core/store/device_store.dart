@@ -203,9 +203,11 @@ class DeviceStore extends ChangeNotifier {
 
   bool _getSeedLinkEnabled = false;
   bool _omiLinkEnabled = false;
+  bool _feishuLinkEnabled = false;
 
   bool get getSeedLinkEnabled => _getSeedLinkEnabled;
   bool get omiLinkEnabled => _omiLinkEnabled;
+  bool get feishuLinkEnabled => _feishuLinkEnabled;
 
   /// 只展示我们自己的录音卡/点一机/键盘（按需含已开启的 Apple Watch 与第三方硬件）。
   ///
@@ -216,6 +218,7 @@ class DeviceStore extends ChangeNotifier {
     bool allowWatch = true,
     bool allowGetSeed = false,
     bool allowOmi = false,
+    bool allowFeishu = false,
     bool listAll = false,
   }) {
     if (listAll) return true;
@@ -226,19 +229,29 @@ class DeviceStore extends ChangeNotifier {
       DeviceKind.appleWatch => allowWatch,
       DeviceKind.getSeedGsc10 => allowGetSeed,
       DeviceKind.omiCv1 => allowOmi,
+      DeviceKind.feishuD3200 => allowFeishu,
     };
   }
 
-  Future<void> setExtHardwareEnabled({bool? getSeed, bool? omi}) async {
+  Future<void> setExtHardwareEnabled({
+    bool? getSeed,
+    bool? omi,
+    bool? feishu,
+  }) async {
     final nextGetSeed = getSeed ?? _getSeedLinkEnabled;
     final nextOmi = omi ?? _omiLinkEnabled;
-    if (nextGetSeed == _getSeedLinkEnabled && nextOmi == _omiLinkEnabled) {
+    final nextFeishu = feishu ?? _feishuLinkEnabled;
+    if (nextGetSeed == _getSeedLinkEnabled &&
+        nextOmi == _omiLinkEnabled &&
+        nextFeishu == _feishuLinkEnabled) {
       return;
     }
     _getSeedLinkEnabled = nextGetSeed;
     _omiLinkEnabled = nextOmi;
+    _feishuLinkEnabled = nextFeishu;
     if ((!nextGetSeed && isConnected && activeKind == DeviceKind.getSeedGsc10) ||
-        (!nextOmi && isConnected && activeKind == DeviceKind.omiCv1)) {
+        (!nextOmi && isConnected && activeKind == DeviceKind.omiCv1) ||
+        (!nextFeishu && isConnected && activeKind == DeviceKind.feishuD3200)) {
       await disconnectSafely();
     }
     if (discovered.isNotEmpty) {
@@ -249,6 +262,7 @@ class DeviceStore extends ChangeNotifier {
               allowWatch: watchHardware.linkEnabled,
               allowGetSeed: _getSeedLinkEnabled,
               allowOmi: _omiLinkEnabled,
+              allowFeishu: _feishuLinkEnabled,
             ),
           )
           .toList(growable: false);
@@ -325,6 +339,7 @@ class DeviceStore extends ChangeNotifier {
             allowWatch: watchHardware.linkEnabled,
             allowGetSeed: _getSeedLinkEnabled,
             allowOmi: _omiLinkEnabled,
+            allowFeishu: _feishuLinkEnabled,
           ))
             device,
       ]..sort((a, b) => (b.rssi ?? -100).compareTo(a.rssi ?? -100));

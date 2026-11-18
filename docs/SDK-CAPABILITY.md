@@ -43,8 +43,9 @@ Flutter DeviceStore ──CardGateway(FFI)──> card_bridge(staticlib) ──>
 | `reai-ext-sdk` | 第三方统一契约层 | — | `RecorderDriver` / `RecorderDevice` trait、纯 Rust Ogg Opus / Raw Opus / LC3 → 16kHz Mono PCM 解码 |
 | `reai-getseed-sdk` | 得到 Get 笔记录音卡 (`getseed_gsc10`) | `Get-*` / `0x544A`（Setting 按需开启） | `hasRemoteRecordControl=false`（机身按键控录）、GATT `0xFF00` `.ogg`/`.wav` 下载与单文件删除（禁用 `0x0041` 全盘清除） |
 | `reai-omi-sdk` | Omi 量产版 / Friend Pendant (`omi_cv1`) | UUID / `Omi-*` / `Friend_*`（Setting 按需开启） | BLE 实时流（Opus/PCM/μ-law/LC3）、按键手势事件、StorageRing 离线文件同步、BAS 电量 |
+| `reai-feishu-sdk` | 飞书录音豆 D3200 (`feishu_d3200`，设置项标 Beta) | Service `020cf5da-…` / `D3200-*` / `soundcore Work`（Setting 按需开启） | BLE 目录、远程启停、ECDH + AES-CTR 离线 Opus 拉取并转 16kHz WAV。不含实时流、SoftAP 与固件升级。尚未真机验证 |
 
-> Priority 2（飞书录音豆 D3200 / `reai-feishu-sdk`）与 Priority 3（Plaud Note / Pro / `reai-plaud-sdk`）将在后续独立分支沿同一 `reai-ext-sdk` 契约接入。
+> Priority 3（Plaud Note / Pro / `reai-plaud-sdk`）仍待后续独立分支沿同一 `reai-ext-sdk` 契约接入。飞书录音豆的 Wi-Fi SoftAP 快传不在当前 BLE 接入包内。
 
 ## 清洗需求与数据边界
 持续源录音默认不分段；偶尔手动 mark，后续分析结合标记推测意图。大段无意义/空白作为阶段边界；清洗内容优先，原始脏数据完整保留、低权重，含口误。声纹近似或偏差时由 LLM 推测归整，必须保留原始映射，不能断言身份。这是产品需求，不代表演示已实现 ASR、声纹、LLM 或完整原始音频存储。

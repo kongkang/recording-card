@@ -233,6 +233,7 @@ class _HomeGateState extends State<_HomeGate> {
       _device.setExtHardwareEnabled(
         getSeed: _agentConfig.getSeedLinkEnabled,
         omi: _agentConfig.omiLinkEnabled,
+        feishu: _agentConfig.feishuLinkEnabled,
       ),
     );
     unawaited(_boot());

@@ -67,6 +67,7 @@ Future<({
   WidgetTester tester, {
   bool initialGetSeedEnabled = false,
   bool initialOmiEnabled = false,
+  bool initialFeishuEnabled = false,
 }) async {
   final model = SummaryModel();
   final store = AppStore(
@@ -80,6 +81,9 @@ Future<({
   }
   if (initialOmiEnabled) {
     await agentConfig.setOmiLinkEnabled(true);
+  }
+  if (initialFeishuEnabled) {
+    await agentConfig.setFeishuLinkEnabled(true);
   }
   final gateway = FakeCardGateway(
     devices: const [
@@ -100,6 +104,12 @@ Future<({
         name: 'Omi-7F20',
         rssi: -61,
         kind: DeviceKind.omiCv1,
+      ),
+      CardDevice(
+        id: 'feishu-1',
+        name: 'D3200-C3A1',
+        rssi: -55,
+        kind: DeviceKind.feishuD3200,
       ),
       CardDevice(
         id: 'v1',
@@ -123,6 +133,7 @@ Future<({
   await device.setExtHardwareEnabled(
     getSeed: initialGetSeedEnabled,
     omi: initialOmiEnabled,
+    feishu: initialFeishuEnabled,
   );
 
   tester.view.physicalSize = const Size(390, 844);
@@ -169,6 +180,7 @@ void main() {
     ]);
     expect(find.byKey(const Key('dev-item-getseed-1')), findsNothing);
     expect(find.byKey(const Key('dev-item-omi-1')), findsNothing);
+    expect(find.byKey(const Key('dev-item-feishu-1')), findsNothing);
   });
 
   testWidgets('在 Setting 开启第三方硬件联动后扫描发现 Get笔记卡 与 Omi 录音器', (
@@ -194,6 +206,9 @@ void main() {
 
     expect(find.byKey(const Key('ext-getseed-card')), findsOneWidget);
     expect(find.byKey(const Key('ext-omi-card')), findsOneWidget);
+    expect(find.byKey(const Key('ext-feishu-card')), findsOneWidget);
+    expect(find.byKey(const Key('ext-feishu-beta')), findsOneWidget);
+    expect(find.text('Beta'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('ext-getseed-switch')));
     await tester.pump();
@@ -335,5 +350,58 @@ void main() {
     // 关闭弹层停止定时轮询
     await tester.tap(find.byKey(const Key('sheet-close')));
     await tester.pump();
+  });
+
+  testWidgets('连接飞书录音豆：远程录音开关与同步行可见，Wi-Fi 和固件行隐藏', (tester) async {
+    final env = await _pumpExtShell(
+      tester,
+      initialFeishuEnabled: true,
+    );
+    env.gateway.connectResult = const CardSnapshot(
+      batteryLevel: 80,
+      isCharging: false,
+      wifiOpen: false,
+      recording: false,
+      fwVersion: '04.92',
+      fwVersionCode: 492,
+      wifiVersion: '',
+      wifiVersionCode: 0,
+      deviceName: 'D3200-C3A1',
+      deviceId: 'feishu-1',
+      deviceKind: DeviceKind.feishuD3200,
+      displayModel: '飞书录音豆',
+      capabilities: HardwareCapabilities.feishuD3200,
+    );
+
+    await tester.tap(find.byKey(const Key('hw-capsule')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(env.device.discovered.map((d) => d.id).toList(), [
+      'v2',
+      'feishu-1',
+      'v1',
+      'kbd',
+    ]);
+    expect(find.text('C3A1'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('dev-item-feishu-1')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(env.device.isConnected, isTrue);
+    expect(env.device.activeKind, DeviceKind.feishuD3200);
+    expect(find.text('飞书录音豆'), findsOneWidget);
+    expect(find.byKey(const Key('rec-toggle')), findsOneWidget);
+    expect(find.byKey(const Key('rec-physical-only')), findsNothing);
+    expect(find.byKey(const Key('sync-now')), findsOneWidget);
+    expect(find.byKey(const Key('wifi-row')), findsNothing);
+    expect(find.byKey(const Key('fw-update')), findsNothing);
+    expect(find.byKey(const Key('phone-rec-row')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('rec-toggle')));
+    await tester.pump();
+    await tester.pump();
+    expect(env.gateway.recordCalls, ['start']);
   });
 }

@@ -358,6 +358,11 @@ class DeviceKindBadge extends StatelessWidget {
           const Color(0xFFD3ADF7),
           const Color(0xFF531DAB),
         ),
+        DeviceKind.feishuD3200 => (
+          const Color(0xFFFFF1F0),
+          const Color(0xFFFFCCC7),
+          const Color(0xFFCF1322),
+        ),
         DeviceKind.appleWatch => (
           const Color(0xFFEAF7EE),
           const Color(0xFFB7E1C4),
