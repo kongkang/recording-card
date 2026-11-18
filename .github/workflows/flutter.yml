@@ -21,6 +21,15 @@ jobs:
           channel: stable
           cache: true
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
       - name: Install dependencies
         run: flutter pub get
 
@@ -29,3 +38,14 @@ jobs:
 
       - name: Test
         run: flutter test
+
+      - name: Prepare Android Gradle Config
+        run: flutter build apk --debug --config-only
+
+      - name: Compile Android Debug Kotlin
+        run: |
+          if [ -x android/gradlew ]; then
+            (cd android && ./gradlew :app:compileDebugKotlin -Prust.skip=true)
+          else
+            (cd android && gradle :app:compileDebugKotlin -Prust.skip=true)
+          fi

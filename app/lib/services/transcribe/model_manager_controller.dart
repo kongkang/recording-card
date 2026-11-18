@@ -165,6 +165,15 @@ class ModelManagerController extends ChangeNotifier {
     }
   }
 
+  /// 在支持系统端侧引擎但离线语音包未预装时（如 Android 13+），拉起系统语言包下载。
+  Future<bool> requestSystemLanguagePack({String language = 'zh'}) async {
+    final ok = await _systemSpeech.triggerSystemModelDownload(
+      language: language,
+    );
+    await refresh();
+    return ok;
+  }
+
   /// 启动自动就绪：
   /// - 仅确保随包 VAD（644 KB）与小型声纹模型 CAM++（~27 MB）就绪；
   /// - 绝不自动下载 ~228 MB 的 SenseVoice 语音包（iOS 26+ 默认使用系统内置免下载即用，
