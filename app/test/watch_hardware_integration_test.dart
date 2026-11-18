@@ -227,6 +227,15 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.byKey(const Key('watch-install-guide-banner')), findsNothing);
+    expect(find.text('已安装'), findsOneWidget);
+    env.watchBackend.emitStatus(
+      env.watchBackend.currentStatus.copyWith(
+        watchAppVersion: '1.0.0 (2026111815)',
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('已安装 · 1.0.0 (2026111815)'), findsOneWidget);
     // 电量禁止出现 % 或「已充满」
     expect(find.textContaining('%'), findsNothing);
     expect(find.textContaining('已充满'), findsNothing);

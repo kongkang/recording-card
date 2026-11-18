@@ -180,8 +180,11 @@ final class SystemSpeechBridge: NSObject {
     let targetLocale = Locale(identifier: localeId)
 
     // 1. 优先使用系统已预置的高精度 SpeechTranscriber
-    if let speechLocale = await SpeechTranscriber.supportedLocale(equivalentTo: targetLocale)
-        ?? (await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current)) {
+    var speechLocale = await SpeechTranscriber.supportedLocale(equivalentTo: targetLocale)
+    if speechLocale == nil {
+      speechLocale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current)
+    }
+    if let speechLocale {
       let bcp47 = speechLocale.identifier(.bcp47)
       let installed = await SpeechTranscriber.installedLocales
       if installed.contains(where: { $0.identifier(.bcp47) == bcp47 }) {
@@ -226,8 +229,11 @@ final class SystemSpeechBridge: NSObject {
     }
 
     // 2. 瞬态垫底：使用已内置的 DictationTranscriber
-    if let dictLocale = await DictationTranscriber.supportedLocale(equivalentTo: targetLocale)
-        ?? (await DictationTranscriber.supportedLocale(equivalentTo: Locale.current)) {
+    var dictLocale = await DictationTranscriber.supportedLocale(equivalentTo: targetLocale)
+    if dictLocale == nil {
+      dictLocale = await DictationTranscriber.supportedLocale(equivalentTo: Locale.current)
+    }
+    if let dictLocale {
       let dictBcp47 = dictLocale.identifier(.bcp47)
       let dictInstalled = await DictationTranscriber.installedLocales
       if dictInstalled.contains(where: { $0.identifier(.bcp47) == dictBcp47 }) {
@@ -300,6 +306,7 @@ final class SystemSpeechBridge: NSObject {
     }
   }
 
+  @available(iOS 26.0, *)
   private static func extractTokensAndTimestamps(
     from attributed: AttributedString
   ) -> (text: String, tokens: [String], timestampsMs: [Int]) {

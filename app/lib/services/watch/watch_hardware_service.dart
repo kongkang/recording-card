@@ -42,6 +42,7 @@ class WatchBridgeStatus {
     this.snapshotUpdatedAtMs = 0,
     this.watchName = '我的手表',
     this.watchVersion = '',
+    this.watchAppVersion = '',
     this.lastError,
   });
 
@@ -82,6 +83,7 @@ class WatchBridgeStatus {
           ? '我的手表'
           : rawName,
       watchVersion: readStr('watchVersion', null) ?? '',
+      watchAppVersion: readStr('watchAppVersion', 'appVersion') ?? '',
       lastError: readStr('lastError', null),
     );
   }
@@ -106,6 +108,7 @@ class WatchBridgeStatus {
   final int snapshotUpdatedAtMs;
   final String watchName;
   final String watchVersion;
+  final String watchAppVersion;
   final String? lastError;
 
   WatchBridgeStatus copyWith({
@@ -128,6 +131,7 @@ class WatchBridgeStatus {
     int? snapshotUpdatedAtMs,
     String? watchName,
     String? watchVersion,
+    String? watchAppVersion,
     String? lastError,
     bool clearLastError = false,
   }) {
@@ -150,6 +154,7 @@ class WatchBridgeStatus {
       snapshotUpdatedAtMs: snapshotUpdatedAtMs ?? this.snapshotUpdatedAtMs,
       watchName: watchName ?? this.watchName,
       watchVersion: watchVersion ?? this.watchVersion,
+      watchAppVersion: watchAppVersion ?? this.watchAppVersion,
       lastError: clearLastError ? null : (lastError ?? this.lastError),
     );
   }
