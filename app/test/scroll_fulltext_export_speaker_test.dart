@@ -166,7 +166,7 @@ void main() {
     expect(find.byKey(const Key('sec-ov')), findsOneWidget);
   });
 
-  testWidgets('3. 极简说话人命名弹窗跨对话详情 / 总结全文同步，未标簇保持「推测」，原始数据保留原始簇标签', (
+  testWidgets('3. 极简说话人命名弹窗跨对话详情 / 总结全文同步，清洗视图不展示推测后缀，原始数据保留原始簇标签', (
     tester,
   ) async {
     final model = SummaryModel();
@@ -194,9 +194,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('spk-quick-sheet')), findsNothing);
 
-    // 对话详情已改为「老陈」，而未标记的 B 依然保留「推测」后缀
+    // 对话详情已改为「老陈」；未标记的 B 在清洗视图里不再带「（推测）」
     expect(find.textContaining('老陈'), findsWidgets);
-    expect(find.textContaining('说话人 B（推测）'), findsWidgets);
+    expect(find.textContaining('说话人 B'), findsWidgets);
+    expect(find.textContaining('说话人 B（推测）'), findsNothing);
 
     // 切到「原始数据」仍保留底层簇标识映射
     await tester.tap(find.byKey(const Key('det-tab-raw')));
@@ -221,7 +222,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const Key('sum-fulltext-body')),
-        matching: find.textContaining('说话人 B（推测）'),
+        matching: find.textContaining('说话人 B'),
       ),
       findsWidgets,
     );

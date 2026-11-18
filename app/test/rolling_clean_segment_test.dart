@@ -39,7 +39,8 @@ class _CapturingChat implements ChatCompletion {
     int callIndex,
     Map<String, dynamic> userJson,
     String model,
-  ) responder;
+  )
+  responder;
 
   final List<({String model, Map<String, dynamic> userJson, String system})>
   calls = [];
@@ -93,12 +94,8 @@ class _NoopEngine implements SpeechEngine {
   Future<AsrResult> transcribe(
     Float32List samples, {
     int sampleRate = 16000,
-  }) async => const AsrResult(
-    text: '',
-    tokens: [],
-    timestampsMs: [],
-    audioMs: 0,
-  );
+  }) async =>
+      const AsrResult(text: '', tokens: [], timestampsMs: [], audioMs: 0);
 }
 
 class _NoopModels implements SpeechModelProvider {
@@ -130,7 +127,13 @@ void main() {
       timeSynced: true,
       stage: RecordingStage.ready,
       slices: const [
-        AudioSlice(id: '0001', index: 0, startMs: 0, endMs: 120000, wavPath: ''),
+        AudioSlice(
+          id: '0001',
+          index: 0,
+          startMs: 0,
+          endMs: 120000,
+          wavPath: '',
+        ),
       ],
       utterances: const [
         RawUtterance(
@@ -178,7 +181,13 @@ void main() {
       timeSynced: true,
       stage: RecordingStage.ready,
       slices: const [
-        AudioSlice(id: '0002', index: 0, startMs: 0, endMs: 120000, wavPath: ''),
+        AudioSlice(
+          id: '0002',
+          index: 0,
+          startMs: 0,
+          endMs: 120000,
+          wavPath: '',
+        ),
       ],
       utterances: const [
         RawUtterance(
@@ -208,7 +217,7 @@ void main() {
     // 投影层无需等磁盘重写即刻把两片纯句号幻觉折叠成无语音汇总卡
     final immediateProj = SegmentProjection.build([dirtySilent1, dirtySilent2]);
     expect(immediateProj.events.length, 1);
-    expect(immediateProj.events.single.title, '未识别到语音（已合并 2 段）');
+    expect(immediateProj.events.single.title, '未识别到语音');
 
     await store.save(dirtySilent1);
     await store.save(dirtySilent2);
@@ -253,7 +262,11 @@ void main() {
         session: 'SES_ROLL',
         profiles: [
           SpeakerProfile(index: 0, centroid: [1.0, 0.0, 0.0], speechMs: 24000),
-          SpeakerProfile(index: 1, centroid: [0.85, 0.526, 0.0], speechMs: 8000),
+          SpeakerProfile(
+            index: 1,
+            centroid: [0.85, 0.526, 0.0],
+            speechMs: 8000,
+          ),
         ],
       ),
     );
@@ -278,7 +291,13 @@ void main() {
       timeSynced: true,
       stage: RecordingStage.ready,
       slices: const [
-        AudioSlice(id: '0001', index: 0, startMs: 0, endMs: 360000, wavPath: ''),
+        AudioSlice(
+          id: '0001',
+          index: 0,
+          startMs: 0,
+          endMs: 360000,
+          wavPath: '',
+        ),
         AudioSlice(
           id: '0002',
           index: 1,
@@ -394,7 +413,8 @@ void main() {
             'mergesPreviousParagraph': true,
             'title': '联调压测排期与回归分工确认',
             'brief': '周三完成压测与回归补充，周四复核监控指标。',
-            'overview': '在确认周三联调与压测deadline基础上，补充压测脚本与回归用例准备安排，并约定周四下午共同核验监控指标。',
+            'overview':
+                '在确认周三联调与压测deadline基础上，补充压测脚本与回归用例准备安排，并约定周四下午共同核验监控指标。',
             'tags': ['联调', '压测', '监控'],
             'paragraphs': [
               {
@@ -557,15 +577,10 @@ void main() {
     expect(find.byKey(const Key('turn-spk-0')), findsOneWidget);
     expect(find.byKey(const Key('turn-spk-1')), findsNothing);
     expect(find.byKey(const Key('turn-spk-2')), findsOneWidget);
-    expect(
-      find.textContaining('先把核心流程走通，再补齐异常分支。'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('先把核心流程走通，再补齐异常分支。'), findsOneWidget);
   });
 
-  testWidgets('设置页「开发者设置」：可调清洗周期、重叠策略并触发存量重洗', (
-    tester,
-  ) async {
+  testWidgets('设置页「开发者设置」：可调清洗周期、重叠策略并触发存量重洗', (tester) async {
     late Directory tmp;
     late RecordingStore rStore;
     late AgentConfigStore cfg;
@@ -609,10 +624,7 @@ void main() {
               builder: (_, _) {
                 final top = store.stackTop;
                 if (top?.type == 'setsub') {
-                  return SettingSubPage(
-                    subId: top!.id,
-                    agentConfig: cfg,
-                  );
+                  return SettingSubPage(subId: top!.id, agentConfig: cfg);
                 }
                 return SettingPage(
                   settings: SettingsStore(store: InMemoryStore()),
@@ -633,10 +645,20 @@ void main() {
 
     expect(store.stackTop?.type, 'setsub');
     expect(store.stackTop?.id, 'dev');
+    expect(find.byKey(const Key('dev-effective-model')), findsOneWidget);
+    expect(find.text('短轮清洗'), findsNothing);
+    final devScroll = find
+        .descendant(
+          of: find.byKey(const Key('setsub-scroll-dev')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    final cycle = find.byKey(const Key('dev-cycle-preset-30'));
+    await tester.scrollUntilVisible(cycle, 200, scrollable: devScroll);
     expect(find.byKey(const Key('dev-cycle-value')), findsOneWidget);
     expect(find.text('10 分钟'), findsWidgets);
 
-    await tester.tap(find.byKey(const Key('dev-cycle-preset-30')));
+    await tester.tap(cycle);
     await tester.pump();
     expect(cfg.cleanCycleMinutes, 30);
     expect(find.text('30 分钟'), findsWidgets);
@@ -646,7 +668,7 @@ void main() {
     expect(cfg.cleanOverlapMode, 'minutes');
 
     final recleanBtn = find.byKey(const Key('dev-reclean-btn'));
-    await tester.scrollUntilVisible(recleanBtn, 200);
+    await tester.scrollUntilVisible(recleanBtn, 200, scrollable: devScroll);
     await tester.ensureVisible(recleanBtn);
     await tester.pumpAndSettle();
     await tester.tap(recleanBtn);
@@ -659,5 +681,135 @@ void main() {
     expect(store.isRecleaning, isFalse);
     await tester.pump();
     expect(find.byKey(const Key('dev-reclean-status')), findsOneWidget);
+  });
+  test('短轮 payload 透传 emotion，且模型只回 summary 时映射到 brief/overview', () async {
+    final tmp = await Directory.systemTemp.createTemp('rc-emotion-summary-');
+    addTearDown(() => tmp.delete(recursive: true));
+    final store = RecordingStore(
+      root: tmp,
+      jsonStore: JsonStore(store: InMemoryStore()),
+    );
+    final topicStore = TopicSegmentationStore(resolveRoot: store.root);
+    final start = DateTime.now()
+        .subtract(const Duration(minutes: 20))
+        .millisecondsSinceEpoch;
+    final recFile = RecordingFile(
+      deviceName: 'REC_EM.APM',
+      session: 'SES_EM',
+      seq: 1,
+      startAtMs: start,
+      apmPath: '\${tmp.path}/em.apm',
+      createdAtMs: start,
+      durationMs: 8 * 60 * 1000,
+      timeSynced: true,
+      stage: RecordingStage.ready,
+      slices: const [
+        AudioSlice(id: 's1', index: 0, startMs: 0, endMs: 480000, wavPath: ''),
+      ],
+      utterances: const [
+        RawUtterance(
+          id: 's1u0',
+          sliceId: 's1',
+          startMs: 1000,
+          endMs: 8000,
+          text: '今晚测试环境到底能不能用，我有点担心。',
+          emotion: 'SAD',
+          speakerLabel: '说话人 1',
+          speakerCluster: 0,
+          spkConfidence: 0.9,
+        ),
+        RawUtterance(
+          id: 's1u1',
+          sliceId: 's1',
+          startMs: 9000,
+          endMs: 16000,
+          text: '应该可以，先跑登录和支付。',
+          emotion: 'NEUTRAL',
+          speakerLabel: '说话人 2',
+          speakerCluster: 1,
+          spkConfidence: 0.86,
+        ),
+      ],
+      segments: [
+        SegmentRecord(
+          id: 'seg-em-0',
+          sessionId: 'SES_EM',
+          index: 0,
+          startAtMs: start,
+          endAtMs: start + 8 * 60 * 1000,
+          title: '实时切片 #1',
+          brief: '',
+          status: SegmentStatus.closed,
+          sliceIds: const ['s1'],
+        ),
+      ],
+    );
+
+    final chat = _CapturingChat((_, payload, _) {
+      return jsonEncode({
+        'sections': [
+          {
+            'continuesPrevious': false,
+            'title': '下班前同步测试环境',
+            'summary': '和同事确认测试环境今晚可用，用例先跑登录和支付。',
+            'tags': ['测试'],
+            'paragraphs': [
+              {
+                'uStart': 0,
+                'uEnd': 0,
+                'speaker': '说话人 1',
+                'text': '今晚测试环境能不能用，有些担心。',
+              },
+              {
+                'uStart': 1,
+                'uEnd': 1,
+                'speaker': '说话人 2',
+                'text': '应该可以，先跑登录和支付。',
+              },
+            ],
+          },
+        ],
+      });
+    });
+    final cleaner = RollingCleanSegmentService(
+      chat: chat,
+      modelResolver: () => 'qwen-plus',
+      ready: () => true,
+      resolveRoot: store.root,
+    );
+    final res = await cleaner.run([recFile], topicStore: topicStore);
+    expect(res.evaluatedBatches, greaterThan(0));
+    expect(chat.calls, isNotEmpty);
+
+    final utterances = chat.calls.first.userJson['utterances'] as List;
+    expect(utterances, isNotEmpty);
+    expect(utterances.first['emotion'], 'SAD');
+    expect(utterances.first['id'], 's1u0');
+    expect(utterances.first['sliceId'], 's1');
+    expect(utterances[1]['emotion'], 'NEUTRAL');
+    expect(jsonEncode(chat.calls.first.userJson).contains('0.526'), isFalse);
+    expect(chat.calls.first.system, contains('情绪仅供理解'));
+    expect(chat.calls.first.system, contains('按内容/时间事件切卡'));
+
+    // 原始记录仍保留情绪，不被清洗覆盖删除
+    expect(recFile.utterances.first.emotion, 'SAD');
+    expect(recFile.utterances.last.emotion, 'NEUTRAL');
+
+    final proj = SegmentProjection.build([recFile], topicState: res.state);
+    final ev = proj.events.single;
+    expect(ev.title, '下班前同步测试环境');
+    expect(ev.brief, '和同事确认测试环境今晚可用，用例先跑登录和支付。');
+    expect(ev.longText, contains('和同事确认测试环境今晚可用'));
+    expect(ev.brief.contains('SAD'), isFalse);
+    expect(ev.longText.contains('SAD'), isFalse);
+    expect(ev.dialog.any((t) => t.text.contains('SAD') || t.text.contains('情绪')), isFalse);
+    expect(ev.note, isNull);
+    expect(ev.note, isNot(equals('总结未完成')));
+
+    final section = res.state.rollingByAnchor.values.single.sections.single;
+    expect(section.summary, contains('测试环境今晚可用'));
+    expect(section.brief, contains('测试环境今晚可用'));
+    expect(section.overview, contains('测试环境今晚可用'));
+    expect(section.evidenceSliceIds, contains('s1'));
   });
 }

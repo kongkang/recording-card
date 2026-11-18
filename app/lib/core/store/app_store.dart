@@ -24,6 +24,9 @@ import '../../services/recordings/recordings_manifest.dart';
 import '../../services/recordings/recording_sync_service.dart';
 import '../../services/recordings/segment_projection.dart';
 import '../../services/recordings/speaker_profile_store.dart';
+import '../../services/schedule/cleaning_replay.dart';
+import '../../services/schedule/cleaning_task_ids.dart';
+import '../../services/schedule/task_scheduler.dart';
 import '../../services/segment/fast_topic_segment_agent.dart';
 import '../device/card_gateway.dart';
 import '../models/record.dart';
@@ -108,6 +111,15 @@ class AppStore extends ChangeNotifier {
   bool isRecleaning = false;
   String recleanStatus = '';
   bool _rollingCleanInFlight = false;
+  TaskScheduler? taskScheduler;
+
+  void attachTaskScheduler(TaskScheduler scheduler) {
+    taskScheduler = scheduler;
+    notifyListeners();
+  }
+
+  bool isReplaying = false;
+  String replayStatus = '';
 
   /// 分段详情视图：Timeline 与详情页共用同一份 turns/utterances。
   Map<String, SegmentView> segmentViews = const {};
@@ -249,8 +261,7 @@ class AppStore extends ChangeNotifier {
         debugPrint('[store] 实时切片转写失败：$e');
         if (!completer.isCompleted) completer.completeError(e, st);
       } finally {
-        _liveSlicesInFlight =
-            (_liveSlicesInFlight - 1).clamp(0, 1 << 20);
+        _liveSlicesInFlight = (_liveSlicesInFlight - 1).clamp(0, 1 << 20);
         if (_status?.isRecording == true) {
           _status?.setRecordingDetail(
             _liveSlicesInFlight > 0
@@ -274,32 +285,45 @@ class AppStore extends ChangeNotifier {
     if (_status?.isRecording != true && _liveSlicesInFlight == 0) {
       _status?.stopRecording();
     }
-    unawaited(evaluateTopicSegmentationAndRefresh(sessionJustEnded: true));
+    final scheduler = taskScheduler;
+    if (scheduler != null) {
+      unawaited(
+        scheduler.runNow(CleaningTaskIds.short, reason: 'session-ended'),
+      );
+    } else {
+      unawaited(evaluateTopicSegmentationAndRefresh(sessionJustEnded: true));
+    }
     return _liveSlicesSavedThisRun;
   }
 
   Future<void> _maybeTriggerScheduledRollingClean() async {
-    if (_disposed || _rollingCleanInFlight) return;
+    if (_disposed || _rollingCleanInFlight || isReplaying) return;
     final p = _pipeline;
     if (p == null) return;
+    final scheduler = taskScheduler;
     try {
       final ready = await p.hasReadyRollingCleanTrigger();
-      if (ready) {
-        await evaluateTopicSegmentationAndRefresh();
+      if (!ready || _disposed) return;
+      if (scheduler != null) {
+        await scheduler.runNow(CleaningTaskIds.short, reason: 'audio-ready');
+        return;
       }
+      await evaluateTopicSegmentationAndRefresh();
     } on Object catch (e) {
       debugPrint('[store] 周期清洗门槛检查失败：$e');
     }
   }
 
   /// 检查是否有连续说话簇到达清洗周期、`>= 1 分钟` 空白或刚结束录音，异步执行滚动语意+声纹联合清洗分段并刷新时间轴。
-  Future<void> evaluateTopicSegmentationAndRefresh({
+  Future<({int batches, int runs, Object? error, bool changed})>
+  evaluateTopicSegmentationAndRefresh({
     bool sessionJustEnded = false,
     int? wallClockNowMs,
   }) async {
-    if (_disposed || _rollingCleanInFlight) return;
+    const idle = (batches: 0, runs: 0, error: null, changed: false);
+    if (_disposed || _rollingCleanInFlight) return idle;
     final p = _pipeline;
-    if (p == null) return;
+    if (p == null) return idle;
     _rollingCleanInFlight = true;
     try {
       if (p.rollingCleaner != null) {
@@ -307,24 +331,118 @@ class AppStore extends ChangeNotifier {
           sessionJustEnded: sessionJustEnded,
           wallClockNowMs: wallClockNowMs,
         );
-        if (!_disposed &&
-            rolling != null &&
-            (rolling.evaluatedRuns > 0 || rolling.evaluatedBatches > 0)) {
+        final batches = rolling?.evaluatedBatches ?? 0;
+        final runs = rolling?.evaluatedRuns ?? 0;
+        if (!_disposed && rolling != null && (runs > 0 || batches > 0)) {
           await refreshFromStore();
-          return;
+          return (
+            batches: batches,
+            runs: runs,
+            error: rolling.error,
+            changed: true,
+          );
         }
       }
       final res = await p.evaluateTopicSegmentation(
         sessionJustEnded: sessionJustEnded,
         wallClockNowMs: wallClockNowMs,
       );
-      if (!_disposed && res != null && res.evaluatedCount > 0) {
+      final changed = res != null && res.evaluatedCount > 0;
+      if (!_disposed && changed) {
         await refreshFromStore();
       }
+      return (
+        batches: 0,
+        runs: res?.evaluatedCount ?? 0,
+        error: res?.error,
+        changed: changed,
+      );
     } on Object catch (e) {
       debugPrint('[store] 滚动语义分段检查失败：$e');
+      return (batches: 0, runs: 0, error: e, changed: false);
     } finally {
       _rollingCleanInFlight = false;
+    }
+  }
+
+  /// 清掉 AI 整理后，按模拟窗口重跑清洗与分段。不删原始音频和本地转写。
+  Future<CleaningReplayResult?> replayCleaning({
+    required int windowMinutes,
+  }) async {
+    final pipeline = _pipeline;
+    final recordings = _recordingStore;
+    if (pipeline == null || recordings == null) {
+      replayStatus = '当前没有本地录音库，无法回放';
+      notifyListeners();
+      return null;
+    }
+    if (isReplaying) return null;
+    isReplaying = true;
+    _rollingCleanInFlight = true;
+    replayStatus = '正在清掉上一轮 AI 整理…';
+    notifyListeners();
+    try {
+      await taskScheduler?.discardOutputs(CleaningTaskIds.all);
+      final result = await CleaningReplayService().run(
+        store: recordings,
+        topicStore: pipeline.topicStore,
+        windowMinutes: windowMinutes,
+        onProgress: (message) {
+          replayStatus = message;
+          notifyListeners();
+        },
+        cleanWindow: (visible, simNow, sessionEnded) async {
+          var batches = 0;
+          var cleaned = false;
+          final cleaner = pipeline.rollingCleaner;
+          if (cleaner != null && cleaner.isReady) {
+            final rolling = await cleaner.run(
+              visible,
+              topicStore: pipeline.topicStore,
+              wallClockNowMs: simNow,
+              sessionJustEnded: sessionEnded,
+            );
+            batches += rolling.evaluatedBatches;
+            cleaned = rolling.evaluatedRuns > 0 || rolling.evaluatedBatches > 0;
+          }
+          final agent = pipeline.topicAgent;
+          if (!cleaned && agent != null && agent.isReady) {
+            await agent.evaluateRuns(
+              visible,
+              store: pipeline.topicStore,
+              wallClockNowMs: simNow,
+              sessionJustEnded: sessionEnded,
+            );
+          }
+          return batches;
+        },
+      );
+      _rollingCleanInFlight = false;
+      final scheduler = taskScheduler;
+      if (scheduler != null) {
+        replayStatus = '窗口回放完成，正在跑已启用的后续轮次…';
+        notifyListeners();
+        await scheduler.runNow(
+          CleaningTaskIds.medium,
+          reason: 'replay',
+          onlyIfEnabled: true,
+        );
+        await scheduler.runNow(
+          CleaningTaskIds.long,
+          reason: 'replay',
+          onlyIfEnabled: true,
+        );
+      }
+      await refreshFromStore();
+      replayStatus = result.summary;
+      return result;
+    } on Object catch (e) {
+      replayStatus = '回放失败：$e';
+      return null;
+    } finally {
+      _rollingCleanInFlight = false;
+      isReplaying = false;
+      notifyListeners();
     }
   }
 
@@ -416,10 +534,7 @@ class AppStore extends ChangeNotifier {
     try {
       final files = await store.loadAll(refresh: true);
       final topicState = await _topicStoreFor()?.load();
-      final projection = SegmentProjection.build(
-        files,
-        topicState: topicState,
-      );
+      final projection = SegmentProjection.build(files, topicState: topicState);
       recordingFiles = files;
       events = projection.events;
       segmentViews = projection.views;
@@ -521,8 +636,9 @@ class AppStore extends ChangeNotifier {
       if (flushActiveRecordingSlice != null) {
         _status?.setRecordingDetail('正在切分并本地转写当前语音…');
       }
-      final flushed = await (flushActiveRecordingSlice?.call() ??
-          Future<bool>.value(false));
+      final flushed =
+          await (flushActiveRecordingSlice?.call() ??
+              Future<bool>.value(false));
       if (flushed) {
         // 让 broadcast Stream 微任务订阅回调先执行并把新切片挂上 _liveIngestTail（不建 Timer 兼容 FakeAsync）。
         await Future<void>.value();
@@ -879,9 +995,7 @@ class AppStore extends ChangeNotifier {
     final ids = view != null && view.isMerged
         ? view.constituentSegmentIds
         : <String>[e.id];
-    final byId = <String, EventPhoto>{
-      for (final p in e.photos) p.id: p,
-    };
+    final byId = <String, EventPhoto>{for (final p in e.photos) p.id: p};
     for (final id in ids) {
       final list = eventPhotos[id];
       if (list == null) continue;
@@ -1058,16 +1172,27 @@ class AppStore extends ChangeNotifier {
         : List<EventPhoto>.of(eventPhotos[fromEventId] ?? const []);
     final idx = fromMerged.indexWhere((p) => p.id == photoId);
     if (idx < 0) return;
-    final restored = fromMerged[idx].copyWith(excluded: false, dismissed: false);
+    final restored = fromMerged[idx].copyWith(
+      excluded: false,
+      dismissed: false,
+    );
     final fromCanonical = fromEvent?.id ?? fromEventId;
     final toCanonical = toEvent.id;
     var nextMap = Map<String, List<EventPhoto>>.of(eventPhotos);
     if (fromCanonical == toCanonical) {
       fromMerged[idx] = restored;
-      nextMap = _writePhotosForEventId(fromCanonical, fromMerged, base: nextMap);
+      nextMap = _writePhotosForEventId(
+        fromCanonical,
+        fromMerged,
+        base: nextMap,
+      );
     } else {
       fromMerged.removeAt(idx);
-      nextMap = _writePhotosForEventId(fromCanonical, fromMerged, base: nextMap);
+      nextMap = _writePhotosForEventId(
+        fromCanonical,
+        fromMerged,
+        base: nextMap,
+      );
       final toMerged = List<EventPhoto>.of(photosForEvent(toEvent));
       final existIdx = toMerged.indexWhere((p) => p.id == photoId);
       if (existIdx >= 0) {
@@ -1180,7 +1305,9 @@ class AppStore extends ChangeNotifier {
     }
     for (final entry in eventPhotos.entries) {
       if (entry.key == targetEventId) continue;
-      final hasExcluded = entry.value.any((p) => p.id == photo.id && p.excluded);
+      final hasExcluded = entry.value.any(
+        (p) => p.id == photo.id && p.excluded,
+      );
       if (hasExcluded) return false;
       if (entry.value.any((p) => p.id == photo.id)) {
         nextMap[entry.key] = entry.value
@@ -1408,7 +1535,8 @@ class AppStore extends ChangeNotifier {
         int? bestDelta;
         for (final e in events) {
           final w = _windowForEvent(e);
-          if (capturedMs >= w.startMs - 15000 && capturedMs <= w.endMs + 15000) {
+          if (capturedMs >= w.startMs - 15000 &&
+              capturedMs <= w.endMs + 15000) {
             final delta = capturedMs < w.startMs
                 ? w.startMs - capturedMs
                 : (capturedMs > w.endMs ? capturedMs - w.endMs : 0);
@@ -1510,8 +1638,7 @@ class AppStore extends ChangeNotifier {
       }
     }
 
-    final days = byDay.keys.where((d) => byDay[d]!.isNotEmpty).toList()
-      ..sort();
+    final days = byDay.keys.where((d) => byDay[d]!.isNotEmpty).toList()..sort();
     return [for (final d in days) FeedGroup(dayLabel(d), byDay[d]!)];
   }
 
@@ -1520,7 +1647,9 @@ class AppStore extends ChangeNotifier {
   int? _latestSourceDay(SummaryCard s) {
     final ids = s.srcIds.isNotEmpty
         ? s.srcIds
-        : (s.state == SummaryState.pending ? selIds.toList() : const <String>[]);
+        : (s.state == SummaryState.pending
+              ? selIds.toList()
+              : const <String>[]);
     int? day;
     for (final id in ids) {
       final e = eventByIdOrNull(id);
@@ -1533,8 +1662,7 @@ class AppStore extends ChangeNotifier {
   static int _minutesOfDay(String hhmm) {
     final parts = hhmm.split(':');
     if (parts.length != 2) return 0;
-    return (int.tryParse(parts[0]) ?? 0) * 60 +
-        (int.tryParse(parts[1]) ?? 0);
+    return (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
   }
 
   // ── 卡片展开/收起（互斥） ───────────────────────────────
@@ -1793,10 +1921,7 @@ class AppStore extends ChangeNotifier {
   }
 
   static bool isUnclusteredSpeaker(String slot) =>
-      slot.isEmpty ||
-      slot == '未区分' ||
-      slot == '说话人 未区分' ||
-      slot == '无语音';
+      slot.isEmpty || slot == '未区分' || slot == '说话人 未区分' || slot == '无语音';
 
   String? speakerAliasFor(RecordEvent event, String rawSpeaker) {
     final slot = normalizeSpeakerSlot(rawSpeaker);
@@ -1926,11 +2051,7 @@ class AppStore extends ChangeNotifier {
   };
 
   /// 为快捷命名浮层推断「可能为：XXX」候选名（端侧声纹弱匹配 > 相邻对话上下文称呼）。
-  String? speakerHintFor(
-    RecordEvent event,
-    int turnIndex,
-    String rawSpeaker,
-  ) {
+  String? speakerHintFor(RecordEvent event, int turnIndex, String rawSpeaker) {
     final slot = normalizeSpeakerSlot(rawSpeaker);
     final view = segmentViewFor(event.id);
     if (view != null && !isUnclusteredSpeaker(slot)) {
@@ -2076,9 +2197,7 @@ class AppStore extends ChangeNotifier {
       savedProfile = voiceprintStore.upsertPersonAndSample(
         name: clean,
         embedding: centroid,
-        deviceLabel:
-            sampleDeviceLabel ??
-            (view?.file.deviceName ?? '录音卡'),
+        deviceLabel: sampleDeviceLabel ?? (view?.file.deviceName ?? '录音卡'),
         sceneLabel: sampleSceneLabel ?? event.title,
         preferFrequentSlot: true,
       );
@@ -2114,9 +2233,17 @@ class AppStore extends ChangeNotifier {
   }
 
   /// 收集一组记录中可标记的说话人条目（保持原始声纹簇与代表原话）。
-  List<({String slot, String currentAlias, String sampleQuote, List<RecordEvent> events})>
+  List<
+    ({
+      String slot,
+      String currentAlias,
+      String sampleQuote,
+      List<RecordEvent> events,
+    })
+  >
   speakerEntriesForEvents(List<RecordEvent> targets) {
-    final bySlot = <String, ({String alias, String sample, List<RecordEvent> events})>{};
+    final bySlot =
+        <String, ({String alias, String sample, List<RecordEvent> events})>{};
     void addTurn(RecordEvent event, String rawSpk, String text) {
       final slot = normalizeSpeakerSlot(rawSpk);
       if (isUnclusteredSpeaker(slot)) return;
@@ -2124,11 +2251,7 @@ class AppStore extends ChangeNotifier {
       final existing = bySlot[slot];
       final alias = speakerAliasFor(event, slot) ?? '';
       if (existing == null) {
-        bySlot[slot] = (
-          alias: alias,
-          sample: trimmedText,
-          events: [event],
-        );
+        bySlot[slot] = (alias: alias, sample: trimmedText, events: [event]);
       } else {
         if (!existing.events.any((item) => item.id == event.id)) {
           existing.events.add(event);
@@ -2249,7 +2372,9 @@ class AppStore extends ChangeNotifier {
     final slotAliases = <String, Set<String>>{};
     for (final item in speakerEntriesForEvents(events)) {
       if (item.currentAlias.isEmpty) continue;
-      slotAliases.putIfAbsent(item.slot, () => <String>{}).add(item.currentAlias);
+      slotAliases
+          .putIfAbsent(item.slot, () => <String>{})
+          .add(item.currentAlias);
     }
     var out = text;
     for (final entry in slotAliases.entries) {
@@ -2258,10 +2383,7 @@ class AppStore extends ChangeNotifier {
       final slot = entry.key;
       final escapedSlot = RegExp.escape(slot);
       // 先替换带（推测）或(推测)的完整形式
-      out = out.replaceAll(
-        RegExp('$escapedSlot\\s*(?:（推测）|\\(推测\\))'),
-        alias,
-      );
+      out = out.replaceAll(RegExp('$escapedSlot\\s*(?:（推测）|\\(推测\\))'), alias);
       // 再替换未带（推测）的完整边界匹配（避免误伤「说话人 10」中的「说话人 1」）
       out = out.replaceAll(
         RegExp('(?<![A-Za-z0-9\\u4e00-\\u9fff])$escapedSlot(?![0-9A-Za-z])'),

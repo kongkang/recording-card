@@ -77,7 +77,7 @@ class RecordEvent {
   final String id;
   final int dayOffset;
   final String title;
-  final String brief; // 折叠态摘要（卡片展开时显示的 long 用 longText）
+  final String brief; // 折叠态 2–3 行生活摘要；展开时 long 用 longText
   final String longText;
   final String time; // "14:20"
   final String dur; // "18分40秒"
@@ -90,13 +90,13 @@ class RecordEvent {
   /// 分段仍在整理中（时间轴显示「整理中」，不可进详情）。
   final bool live;
 
-  /// 降级提示（部分未润色 / 时间未校准 / 总结未完成）；null 表示正常。
+  /// 仅保留直播整理等非错误状态；不再用于「总结未完成」「时间未校准」之类错误徽标。
   final String? note;
 
   /// 本段录音关联照片（含初始注入或持久化恢复）。
   final List<EventPhoto> photos;
 
-  /// 由连续 `< 30s` 停顿声学合并的底层分片数（默认 1；`> 1` 时时间轴显示合并徽标）。
+  /// 由连续 `< 30s` 停顿声学合并的底层分片数（默认 1；仅内部使用，用户界面不再展示「已合并 N 分片」）。
   final int mergedSliceCount;
 
   const RecordEvent({

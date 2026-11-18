@@ -23,6 +23,7 @@ import '../recordings/segment_projection.dart';
 import '../recordings/speaker_profile_store.dart';
 import '../transcribe/utterance_builder.dart';
 import 'fast_topic_segment_agent.dart';
+import 'section_copy.dart';
 
 class RollingCleanResult {
   const RollingCleanResult({
@@ -67,6 +68,8 @@ class _ParsedRollingSection {
     required this.overview,
     required this.tags,
     required this.paragraphs,
+    this.summary = '',
+    this.evidenceSliceIds = const [],
   });
 
   final bool continuesPrevious;
@@ -74,8 +77,10 @@ class _ParsedRollingSection {
   final String title;
   final String brief;
   final String overview;
+  final String summary;
   final List<String> tags;
   final List<_ParsedParagraph> paragraphs;
+  final List<String> evidenceSliceIds;
 }
 
 class _ParsedParagraph {
@@ -130,7 +135,10 @@ class RollingCleanSegmentService {
 
   bool get isReady => effectiveModel.isNotEmpty && (_ready?.call() ?? true);
 
-  int get _cycleMinutes => (_agentConfig?.cleanCycleMinutes ?? 10).clamp(1, 180);
+  /// 与短轮定时任务的间隔对齐。上限 7 天，避免开发者把间隔改长后被 180 分钟静默截断。
+  /// `< 30s` 合并、`30–59s` 声学拆段、`≥ 1 分钟` 静音触发不在这里改。
+  int get _cycleMinutes =>
+      (_agentConfig?.cleanCycleMinutes ?? 10).clamp(1, 10080);
   bool get _cleanOnSilenceGap => _agentConfig?.cleanOnSilenceGap ?? true;
   String get _overlapMode =>
       _agentConfig?.cleanOverlapMode == 'minutes' ? 'minutes' : 'paragraphs';
@@ -452,6 +460,8 @@ class RollingCleanSegmentService {
         for (var i = 0; i < batch.length; i++)
           {
             'u': i,
+            'id': batch[i].utterance.id,
+            'sliceId': batch[i].utterance.sliceId,
             'offsetSec': ((batch[i].absStartMs - batch.first.absStartMs) / 1000)
                 .round(),
             'durSec':
@@ -463,6 +473,8 @@ class RollingCleanSegmentService {
               (batch[i].utterance.spkConfidence ?? 0.0).toStringAsFixed(2),
             ),
             'text': batch[i].utterance.text.trim(),
+            if ((batch[i].utterance.emotion ?? '').trim().isNotEmpty)
+              'emotion': batch[i].utterance.emotion!.trim(),
           },
       ],
     };
@@ -514,6 +526,7 @@ class RollingCleanSegmentService {
         'title': lastSec.title,
         'brief': lastSec.brief,
         'overview': lastSec.overview,
+        'summary': lastSec.summary.isNotEmpty ? lastSec.summary : lastSec.brief,
       },
       'overlapMode': _overlapMode,
       'tailParagraphs': [
@@ -544,17 +557,22 @@ class RollingCleanSegmentService {
         '3. **按说话人与语义合并成完整自然段**：同一说话人连续发表的完整意思必须合并润色为通顺的书面/口语自然段（`paragraphs`），去掉「嗯啊呃」口水词与卡顿重复，修正明显同音错字，不要按短切片时间戳切碎。',
       )
       ..writeln(
-        '4. **阶段性主题切分与命名**：把当前批次内容组织为 1 到多个阶段话题 `sections`。每个话题必须具备：\n'
+        '4. **按内容/时间事件切卡**：把当前批次组织为 1 到多个事件卡 `sections`。同一件事（例如前十分钟的一场讨论）合并为一张卡，下一件不同时或不同主题的事另起一张卡。严禁按逐词逐句或原始短切片切碎。每个话题必须具备：\n'
         '   - `title`: 6-20字准确有信息量的标题（严禁使用"实时切片 #1"等编号标题）；\n'
-        '   - `brief`: 1-2句干练摘要；\n'
-        '   - `overview`: 2-4句完整「阶段概述」，交代背景、核心讨论点与结论；\n'
-        '   - `continuesPrevious`: 若本批开头话题紧接 `previousSection` 为同一话题的延续则为 true（可提供更新后的完整 title/brief/overview），新话题则为 false；\n'
+        '   - `summary`: 2-3句生活化卡片摘要，只写和这件事有关的内容；\n'
+        '   - `brief`: 1-2句干练摘要，可与 summary 相同；若只返回 summary，将同时用作 brief；\n'
+        '   - `overview`: 2-4句完整「阶段概述」，交代背景、核心讨论点与结论；若只返回 summary，将同时用作 overview；\n'
+        '   - `continuesPrevious`: 若本批开头话题紧接 `previousSection` 为同一话题的延续则为 true（可提供更新后的完整 title/summary/brief/overview），新话题则为 false；\n'
         '   - `mergesPreviousParagraph`: 仅当 `continuesPrevious=true` 且首段与 `tailParagraphs` 末段实为同一人同一句话被打断续说时为 true（只输出新增续接内容，勿重复上文）；\n'
-        '   - `paragraphs`: 每项 `{"uStart":起始u,"uEnd":结束u,"speaker":"说话人标签","text":"合并润色后的整段文本"}`。',
+        '   - `paragraphs`: 每项 `{"uStart":起始u,"uEnd":结束u,"speaker":"说话人标签","text":"合并润色后的整段文本"}`。同一人连续完整意思合并为自然段，不要因分片边界拆开。',
       )
       ..writeln(
-        '5. **忠实不编造**：严格忠于输入事实，只输出合法 JSON：'
-        '{"sections":[{"continuesPrevious":false,"mergesPreviousParagraph":false,"title":"...","brief":"...","overview":"...","tags":["关键词"],"paragraphs":[{"uStart":0,"uEnd":2,"speaker":"说话人 1","text":"..."}]}]}。'
+        '5. **情绪仅供理解**：输入里的 `emotion`、说话人置信度与声纹上下文只帮助你理解语气和说话人，'
+        '禁止把情绪标签、模型名、切片编号、「已合并 N 段」、「（推测）」等工程标记写进 title / summary / brief / overview / paragraphs。',
+      )
+      ..writeln(
+        '6. **忠实不编造**：严格忠于输入事实，只输出合法 JSON：'
+        '{"sections":[{"continuesPrevious":false,"mergesPreviousParagraph":false,"title":"...","summary":"...","brief":"...","overview":"...","tags":["关键词"],"paragraphs":[{"uStart":0,"uEnd":2,"speaker":"说话人 1","text":"..."}]}]}。'
         '不要输出 Markdown 代码块之外的多余说明。',
       );
     if (customStyle.isNotEmpty) {
@@ -585,9 +603,11 @@ class RollingCleanSegmentService {
     final parsed = <_ParsedRollingSection>[];
     for (final s in rawSections) {
       if (s is! Map<String, dynamic>) continue;
-      final title = '${s['title'] ?? ''}'.trim();
-      final brief = '${s['brief'] ?? ''}'.trim();
-      final overview = '${s['overview'] ?? ''}'.trim();
+      final copy = SectionCopy.fromModel(s);
+      final title = copy.title;
+      final brief = copy.brief;
+      final overview = copy.overview;
+      final summary = copy.summary;
       final continuesPrev = s['continuesPrevious'] == true;
       final mergesPrevPara = continuesPrev && s['mergesPreviousParagraph'] == true;
       final tags = <String>[
@@ -639,6 +659,15 @@ class RollingCleanSegmentService {
         );
       }
       if (paras.isEmpty) continue;
+      final evIds = SectionCopy.evidenceSliceIds(
+        s,
+        fallback: [
+          for (final p in paras)
+            for (var k = p.uStart; k <= p.uEnd && k < batch.length; k++)
+              if (batch[k].utterance.sliceId.trim().isNotEmpty)
+                batch[k].utterance.sliceId,
+        ],
+      );
       parsed.add(
         _ParsedRollingSection(
           continuesPrevious: continuesPrev,
@@ -646,8 +675,10 @@ class RollingCleanSegmentService {
           title: title,
           brief: brief,
           overview: overview,
+          summary: summary,
           tags: tags,
           paragraphs: paras,
+          evidenceSliceIds: evIds,
         ),
       );
     }
@@ -694,8 +725,10 @@ class RollingCleanSegmentService {
             title: first.title,
             brief: first.brief,
             overview: first.overview,
+            summary: first.summary,
             tags: first.tags,
             paragraphs: [...fallbackParas, ...first.paragraphs],
+            evidenceSliceIds: first.evidenceSliceIds,
           );
         } else {
           final last = normalized.last;
@@ -705,8 +738,10 @@ class RollingCleanSegmentService {
             title: last.title,
             brief: last.brief,
             overview: last.overview,
+            summary: last.summary,
             tags: last.tags,
             paragraphs: [...last.paragraphs, ...fallbackParas],
+            evidenceSliceIds: last.evidenceSliceIds,
           );
         }
       }
@@ -729,15 +764,18 @@ class RollingCleanSegmentService {
     for (final p in sec.paragraphs) {
       if (merged.isNotEmpty && merged.last.speaker == p.speaker) {
         final prev = merged.last;
-        merged[merged.length - 1] = _ParsedParagraph(
-          uStart: math.min(prev.uStart, p.uStart),
-          uEnd: math.max(prev.uEnd, p.uEnd),
-          speaker: prev.speaker,
-          text: joinPolishedUtterances(prev.text, p.text),
-        );
-      } else {
-        merged.add(p);
+        final gapMs = batch[p.uStart].absStartMs - batch[prev.uEnd].absEndMs;
+        if (gapMs < 30 * 1000) {
+          merged[merged.length - 1] = _ParsedParagraph(
+            uStart: math.min(prev.uStart, p.uStart),
+            uEnd: math.max(prev.uEnd, p.uEnd),
+            speaker: prev.speaker,
+            text: joinPolishedUtterances(prev.text, p.text),
+          );
+          continue;
+        }
       }
+      merged.add(p);
     }
     final seedText = merged.map((p) => p.text).join(' ');
     final safeTitle = isMeaningfulSpeechText(sec.title)
@@ -745,9 +783,12 @@ class RollingCleanSegmentService {
         : buildReadableFallbackTitle(seedText, fallback: '阶段整理');
     final safeBrief = isMeaningfulSpeechText(sec.brief)
         ? sec.brief.trim()
-        : _truncate(seedText, 68);
+        : (isMeaningfulSpeechText(sec.summary) ? sec.summary.trim() : _truncate(seedText, 68));
     final safeOverview = isMeaningfulSpeechText(sec.overview)
         ? sec.overview.trim()
+        : safeBrief;
+    final safeSummary = isMeaningfulSpeechText(sec.summary)
+        ? sec.summary.trim()
         : safeBrief;
     return _ParsedRollingSection(
       continuesPrevious: isFirstBatchSection && sec.continuesPrevious,
@@ -755,8 +796,10 @@ class RollingCleanSegmentService {
       title: safeTitle,
       brief: safeBrief,
       overview: safeOverview,
+      summary: safeSummary,
       tags: sec.tags,
       paragraphs: merged,
+      evidenceSliceIds: sec.evidenceSliceIds,
     );
   }
 
@@ -787,9 +830,12 @@ class RollingCleanSegmentService {
         final prev = accumulated.last;
         final mergedParas = [...prev.paragraphs];
         var startIdx = 0;
-        if (mergedParas.isNotEmpty &&
+        final canJoinTail = mergedParas.isNotEmpty &&
             (sec.mergesPreviousParagraph ||
-                mergedParas.last.speaker == topicParagraphs.first.speaker)) {
+                (mergedParas.last.speaker == topicParagraphs.first.speaker &&
+                    (topicParagraphs.first.startAtMs - mergedParas.last.endAtMs) <
+                        30 * 1000));
+        if (canJoinTail) {
           final tail = mergedParas.last;
           final head = topicParagraphs.first;
           mergedParas[mergedParas.length - 1] = TopicParagraph(
@@ -809,11 +855,18 @@ class RollingCleanSegmentService {
           title: sec.title.isNotEmpty ? sec.title : prev.title,
           brief: sec.brief.isNotEmpty ? sec.brief : prev.brief,
           overview: sec.overview.isNotEmpty ? sec.overview : prev.overview,
+          summary: sec.summary.isNotEmpty
+              ? sec.summary
+              : (sec.brief.isNotEmpty ? sec.brief : prev.summary),
           tags: {...prev.tags, ...sec.tags}.toList(),
           paragraphs: mergedParas,
           cleanedByCloud: true,
           endAtMs: math.max(prev.endAtMs, secEnd),
           endTurnIndex: mergedParas.length - 1,
+          evidenceSliceIds: {
+            ...prev.evidenceSliceIds,
+            ...sec.evidenceSliceIds,
+          }.toList(),
         );
       } else {
         accumulated.add(
@@ -821,6 +874,7 @@ class RollingCleanSegmentService {
             title: sec.title,
             brief: sec.brief,
             overview: sec.overview,
+            summary: sec.summary.isNotEmpty ? sec.summary : sec.brief,
             startTurnIndex: 0,
             endTurnIndex: topicParagraphs.length - 1,
             tags: sec.tags,
@@ -828,6 +882,7 @@ class RollingCleanSegmentService {
             cleanedByCloud: true,
             startAtMs: secStart,
             endAtMs: secEnd,
+            evidenceSliceIds: sec.evidenceSliceIds,
           ),
         );
       }
@@ -876,6 +931,7 @@ class RollingCleanSegmentService {
       title: buildReadableFallbackTitle(seed, fallback: '录音整理'),
       brief: _truncate(seed, 68),
       overview: _truncate(seed, 120),
+      summary: _truncate(seed, 68),
       tags: const [],
       paragraphs: paras,
     );
@@ -891,7 +947,9 @@ class RollingCleanSegmentService {
       final u = batch[i];
       final clean = cleanSpokenFillers(u.utterance.text);
       if (clean.isEmpty || !isMeaningfulSpeechText(clean)) continue;
-      if (paras.isNotEmpty && paras.last.speaker == u.speaker) {
+      if (paras.isNotEmpty &&
+          paras.last.speaker == u.speaker &&
+          (u.absStartMs - batch[paras.last.uEnd].absEndMs) < 30 * 1000) {
         final prev = paras.last;
         paras[paras.length - 1] = _ParsedParagraph(
           uStart: prev.uStart,

@@ -417,7 +417,7 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
   }
 
   private func scheduleCompletionTimeout(for job: ImportJob) {
-    guard job.completion != nil else { return }
+    guard job.hasCompletion else { return }
     DispatchQueue.main.asyncAfter(deadline: .now() + 25) {
       job.callCompletion()
     }
@@ -1439,6 +1439,8 @@ private final class ImportJob {
     self.completion = completion
     self.done = done
   }
+
+  var hasCompletion: Bool { completion != nil }
 
   func callCompletion() {
     lock.lock()

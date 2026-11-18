@@ -29,6 +29,7 @@ class WatchBridgeStatus {
     this.watchAppInstalled = false,
     this.complicationEnabled = false,
     this.reachable = false,
+    this.linkLost = false,
     this.isRecording = false,
     this.sessionId,
     this.startedAtMs = 0,
@@ -37,6 +38,8 @@ class WatchBridgeStatus {
     this.pendingCount = 0,
     this.syncedCount = 0,
     this.elapsedSec = 0,
+    this.lastContactAtMs = 0,
+    this.snapshotUpdatedAtMs = 0,
     this.watchName = '我的手表',
     this.watchVersion = '',
     this.lastError,
@@ -64,6 +67,7 @@ class WatchBridgeStatus {
           ? raw['complicationEnabled'] == true
           : installed,
       reachable: raw['reachable'] == true,
+      linkLost: raw['linkLost'] == true,
       isRecording: raw['isRecording'] == true,
       sessionId: readStr('activeSessionId', 'sessionId'),
       startedAtMs: readInt('recordingStartedAtMs', 'startedAtMs'),
@@ -72,6 +76,8 @@ class WatchBridgeStatus {
       pendingCount: readInt('pendingSliceCount', 'pendingCount'),
       syncedCount: readInt('syncedSliceCount', 'syncedCount'),
       elapsedSec: readInt('elapsedSec', null),
+      lastContactAtMs: readInt('lastWatchContactAtMs', 'lastContactAtMs'),
+      snapshotUpdatedAtMs: readInt('snapshotUpdatedAtMs', 'updatedAtMs'),
       watchName: (rawName == null || rawName == 'Apple Watch')
           ? '我的手表'
           : rawName,
@@ -85,6 +91,7 @@ class WatchBridgeStatus {
   final bool watchAppInstalled;
   final bool complicationEnabled;
   final bool reachable;
+  final bool linkLost;
   final bool isRecording;
   final String? sessionId;
   final int startedAtMs;
@@ -95,6 +102,8 @@ class WatchBridgeStatus {
   final int pendingCount;
   final int syncedCount;
   final int elapsedSec;
+  final int lastContactAtMs;
+  final int snapshotUpdatedAtMs;
   final String watchName;
   final String watchVersion;
   final String? lastError;
@@ -105,6 +114,7 @@ class WatchBridgeStatus {
     bool? watchAppInstalled,
     bool? complicationEnabled,
     bool? reachable,
+    bool? linkLost,
     bool? isRecording,
     String? sessionId,
     bool clearSessionId = false,
@@ -114,6 +124,8 @@ class WatchBridgeStatus {
     int? pendingCount,
     int? syncedCount,
     int? elapsedSec,
+    int? lastContactAtMs,
+    int? snapshotUpdatedAtMs,
     String? watchName,
     String? watchVersion,
     String? lastError,
@@ -125,6 +137,7 @@ class WatchBridgeStatus {
       watchAppInstalled: watchAppInstalled ?? this.watchAppInstalled,
       complicationEnabled: complicationEnabled ?? this.complicationEnabled,
       reachable: reachable ?? this.reachable,
+      linkLost: linkLost ?? this.linkLost,
       isRecording: isRecording ?? this.isRecording,
       sessionId: clearSessionId ? null : (sessionId ?? this.sessionId),
       startedAtMs: startedAtMs ?? this.startedAtMs,
@@ -133,6 +146,8 @@ class WatchBridgeStatus {
       pendingCount: pendingCount ?? this.pendingCount,
       syncedCount: syncedCount ?? this.syncedCount,
       elapsedSec: elapsedSec ?? this.elapsedSec,
+      lastContactAtMs: lastContactAtMs ?? this.lastContactAtMs,
+      snapshotUpdatedAtMs: snapshotUpdatedAtMs ?? this.snapshotUpdatedAtMs,
       watchName: watchName ?? this.watchName,
       watchVersion: watchVersion ?? this.watchVersion,
       lastError: clearLastError ? null : (lastError ?? this.lastError),
@@ -525,7 +540,16 @@ class FakeWatchBridgeBackend implements WatchBridgeBackend {
   }
 
   void simulateReachable(bool reachable) {
-    emitStatus(_status.copyWith(reachable: reachable));
+    emitStatus(
+      _status.copyWith(
+        reachable: reachable,
+        linkLost: reachable ? false : _status.linkLost,
+      ),
+    );
+  }
+
+  void simulateUnexpectedDisconnect() {
+    emitStatus(_status.copyWith(reachable: false, linkLost: true));
   }
 
   void pushReadySlice(WatchPendingSlicePayload payload, {bool notifyStream = true}) {
@@ -630,14 +654,18 @@ class WatchHardwareService extends ChangeNotifier {
   bool _connectedAsHardware = false;
   WatchBridgeStatus _status = const WatchBridgeStatus();
 
+  static const Duration outOfRangeTimeout = Duration(seconds: 150);
+
   int _eventSeq = 0;
   final List<({int seq, Map<String, dynamic> event})> _eventQueue = [];
   bool _pendingUnexpectedDisconnect = false;
-  bool _lostConnectionWhileRecording = false;
+  DateTime? _lastWatchActivityAt;
+  bool _outOfRangeDisconnected = false;
   bool _disposed = false;
 
   bool get linkEnabled => _linkEnabled;
   bool get isConnectedAsHardware => _connectedAsHardware;
+  bool get isOutOfRangeDisconnected => _outOfRangeDisconnected;
   WatchBridgeStatus get currentStatus => _status;
   Stream<LiveAudioSlice> get audioSlices => _audioSlicesCtrl.stream;
   List<WatchReceivedSliceRecord> get receivedSlices =>
@@ -697,15 +725,27 @@ class WatchHardwareService extends ChangeNotifier {
         '请先在 Apple Watch 上安装「录音卡」手表应用',
       );
     }
-    if (_lostConnectionWhileRecording && !s.reachable) {
+    if (s.linkLost) {
       throw const CardException(
         CardErrorKind.disconnected,
         'Apple Watch 通信中断，已由本机保底录音接力',
       );
     }
+    if (_outOfRangeDisconnected && !s.reachable) {
+      final hasRecentContact = s.lastContactAtMs > 0 &&
+          DateTime.now().millisecondsSinceEpoch - s.lastContactAtMs <
+              outOfRangeTimeout.inMilliseconds;
+      if (!hasRecentContact) {
+        throw const CardException(
+          CardErrorKind.disconnected,
+          'Apple Watch 超出通信距离，已由本机保底录音接力',
+        );
+      }
+    }
     _connectedAsHardware = true;
     _pendingUnexpectedDisconnect = false;
-    _lostConnectionWhileRecording = false;
+    _outOfRangeDisconnected = false;
+    _lastWatchActivityAt = DateTime.now();
     _eventQueue.clear();
     notifyListeners();
     unawaited(drainPendingSlices());
@@ -746,6 +786,8 @@ class WatchHardwareService extends ChangeNotifier {
   }
 
   Future<CardSnapshot> startRecording({String? sessionId}) async {
+    _lastWatchActivityAt = DateTime.now();
+    _outOfRangeDisconnected = false;
     final s = await _backend.startRecording(sessionId: sessionId);
     _applyStatus(s, fromPush: false);
     return toSnapshot();
@@ -766,8 +808,31 @@ class WatchHardwareService extends ChangeNotifier {
       _applyStatus(s, fromPush: false);
     } on CardException {
       // 即使手表当前离线，也把手机端已接收待入库的本地切片先消化掉
+    } on Object {
+      // 避免底层桥返回值异常导致调用方崩溃
     }
     return drainPendingSlices();
+  }
+
+  /// 看门狗判定手表在录音期间是否长时间彻底失联（>150s 无心跳、无切片、且不可直连）。
+  bool checkOutOfRangeIfNeeded(WatchBridgeStatus s) {
+    if (s.reachable) {
+      _outOfRangeDisconnected = false;
+      _lastWatchActivityAt = DateTime.now();
+      return false;
+    }
+    if (!s.isRecording) {
+      return false;
+    }
+    final last = _lastWatchActivityAt;
+    if (last == null) {
+      return false;
+    }
+    if (DateTime.now().difference(last) > outOfRangeTimeout) {
+      _outOfRangeDisconnected = true;
+      return true;
+    }
+    return false;
   }
 
   Future<int> drainPendingSlices() async {
@@ -812,6 +877,8 @@ class WatchHardwareService extends ChangeNotifier {
   Future<bool> _emitSlice(WatchPendingSlicePayload p) async {
     if (_disposed || p.sliceId.isEmpty || p.wavPath.isEmpty) return false;
     if (!_deliveredSliceIds.add(p.sliceId)) return false;
+    _lastWatchActivityAt = DateTime.now();
+    _outOfRangeDisconnected = false;
     final record = WatchReceivedSliceRecord.fromPayload(p);
     _receivedSlices.removeWhere((r) => r.sliceId == record.sliceId);
     _receivedSlices.insert(0, record);
@@ -882,13 +949,35 @@ class WatchHardwareService extends ChangeNotifier {
     final prev = _status;
     _status = next;
 
+    final hasFreshSignal = !next.linkLost &&
+        (next.reachable ||
+            (next.lastContactAtMs > 0 &&
+                next.lastContactAtMs > prev.lastContactAtMs) ||
+            (next.snapshotUpdatedAtMs > 0 &&
+                next.snapshotUpdatedAtMs > prev.snapshotUpdatedAtMs) ||
+            next.elapsedSec > prev.elapsedSec ||
+            next.syncedCount > prev.syncedCount ||
+            next.pendingCount != prev.pendingCount ||
+            (fromPush &&
+                (next.batteryLevel != prev.batteryLevel ||
+                    next.isCharging != prev.isCharging ||
+                    next.isRecording != prev.isRecording)));
+    if (hasFreshSignal) {
+      _lastWatchActivityAt = DateTime.now();
+      _outOfRangeDisconnected = false;
+    }
+
     if (_connectedAsHardware && fromPush) {
       if (prev.isRecording != next.isRecording) {
+        final hasFault = !next.isRecording &&
+            next.lastError != null &&
+            next.lastError!.trim().isNotEmpty;
         _pushEvent(<String, dynamic>{
           'kind': 'record',
           'status': <String, dynamic>{
             'isRecording': next.isRecording,
             if (next.sessionId != null) 'session': next.sessionId,
+            if (hasFault) 'errorMessage': next.lastError!.trim(),
           },
         });
       }
@@ -902,12 +991,16 @@ class WatchHardwareService extends ChangeNotifier {
           },
         });
       }
-      if (prev.reachable && !next.reachable && prev.isRecording) {
+      final isBrokenLink =
+          !next.paired || !next.watchAppInstalled || next.linkLost;
+      final wasBrokenLink =
+          !prev.paired || !prev.watchAppInstalled || prev.linkLost;
+      if (isBrokenLink && !wasBrokenLink) {
         _pendingUnexpectedDisconnect = true;
-        _lostConnectionWhileRecording = true;
+        if (next.linkLost) {
+          _outOfRangeDisconnected = true;
+        }
         _pushEvent(const <String, dynamic>{'kind': 'disconnected'});
-      } else if (next.reachable) {
-        _lostConnectionWhileRecording = false;
       }
     }
     notifyListeners();
@@ -1001,11 +1094,14 @@ class WatchCompositeCardGateway implements CardGateway {
   Future<CardSnapshot> snapshot() async {
     if (_watchActive) {
       final s = await watchService.refreshStatus();
-      if (!s.paired || !s.watchAppInstalled) {
+      if (!s.paired || !s.watchAppInstalled || s.linkLost) {
         throw const CardException(CardErrorKind.disconnected, 'Apple Watch 未就绪');
       }
-      if (!s.reachable && watchService.isConnectedAsHardware) {
-        return watchService.toSnapshot();
+      if (watchService.checkOutOfRangeIfNeeded(s)) {
+        throw const CardException(
+          CardErrorKind.disconnected,
+          'Apple Watch 超出通信距离或已关机',
+        );
       }
       return watchService.toSnapshot();
     }

@@ -244,6 +244,8 @@ class SegmentRecord {
     this.legacy = false,
     this.polishStale = false,
     this.fallback = false,
+    this.summary = '',
+    this.evidenceSliceIds = const [],
   });
 
   final String id;
@@ -269,7 +271,14 @@ class SegmentRecord {
   bool polishStale;
 
   /// 云端阶段总结失败、用原文兜底时置 true（标题/概述来自原文截取）。
+  /// 成功清洗后应清掉；用户界面不再用它展示错误徽标。
   bool fallback;
+
+  /// 事件卡生活摘要。可与 brief 相同；模型只回 summary 时两者都会被回填。
+  String summary;
+
+  /// 回溯到原始切片的证据 id，供未来搜索使用，不在用户界面展示。
+  List<String> evidenceSliceIds;
 
   bool get closed => status == SegmentStatus.closed;
   int? get durationMs => endAtMs == null ? null : endAtMs! - startAtMs;
@@ -293,6 +302,8 @@ class SegmentRecord {
     if (legacy) 'lg': true,
     if (polishStale) 'ps': true,
     if (fallback) 'fb': true,
+    if (summary.isNotEmpty) 'su': summary,
+    if (evidenceSliceIds.isNotEmpty) 'ev': evidenceSliceIds,
   };
 
   factory SegmentRecord.fromJson(Map<String, dynamic> j) => SegmentRecord(
@@ -319,6 +330,10 @@ class SegmentRecord {
     legacy: j['lg'] == true,
     polishStale: j['ps'] == true,
     fallback: j['fb'] == true,
+    summary: '${j['su'] ?? j['summary'] ?? ''}',
+    evidenceSliceIds: [
+      for (final s in (j['ev'] as List? ?? const [])) '$s',
+    ],
   );
 }
 
@@ -356,7 +371,7 @@ class RecordingFile {
   /// 录音起点（Unix 毫秒）。来自设备 `.txt` 的 `start_at`；不可信时用 created - duration。
   int startAtMs;
 
-  /// 设备时钟是否已同步；false 时界面标注「时间未校准」。
+  /// 设备时钟是否已同步；false 表示起点由创建时间反推，用户界面不再展示错误徽标。
   bool timeSynced;
 
   String apmPath;

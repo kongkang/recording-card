@@ -66,7 +66,7 @@ class SummaryGenerator {
 
   String? _resolveModelOverride() {
     final cfg = _agentConfig;
-    if (cfg == null || !cfg.developerMode || !cfg.userPickedCloudModel) {
+    if (cfg == null || !cfg.userPickedCloudModel) {
       return null;
     }
     final picked = cfg.cloudModel.trim();

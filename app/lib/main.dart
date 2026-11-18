@@ -29,6 +29,12 @@ import 'services/net/model_gateway.dart';
 import 'services/polish/slice_polish_service.dart';
 import 'services/recordings/recording_pipeline.dart';
 import 'services/recordings/recording_store.dart';
+import 'services/schedule/cleaning_task_ids.dart';
+import 'services/schedule/cleaning_tasks.dart';
+import 'services/schedule/in_app_task_runner.dart';
+import 'services/schedule/metered_chat.dart';
+import 'services/schedule/organize_pass_service.dart';
+import 'services/schedule/task_scheduler.dart';
 import 'services/segment/fast_topic_segment_agent.dart';
 import 'services/segment/rolling_clean_segment_service.dart';
 import 'services/segment/segment_build_service.dart';
@@ -121,6 +127,9 @@ class _HomeGateState extends State<_HomeGate> {
   late final RecordingPipeline _pipeline;
   late final ModelManagerController _modelManager;
   late final SummaryGenerator _summaries;
+  late final MeteredChatCompletion _meteredChat;
+  TaskScheduler? _scheduler;
+  InAppTaskRunner? _taskRunner;
   late final AgentChatController _agentChat;
   bool _booted = false;
   bool _wasSignedIn = false;
@@ -180,7 +189,10 @@ class _HomeGateState extends State<_HomeGate> {
       },
     );
     unawaited(_healthSignals.start());
-    final chat = ModelGatewayChatCompletion(_modelGateway);
+    _meteredChat = MeteredChatCompletion(
+      ModelGatewayChatCompletion(_modelGateway),
+    );
+    final chat = _meteredChat;
     _pipeline = RecordingPipeline(
       gateway: _device.gateway,
       store: _recordingStore,
@@ -246,8 +258,10 @@ class _HomeGateState extends State<_HomeGate> {
   }
 
   String _resolveCloudTextModel() {
-    final override = _agentConfig.cloudModel.trim();
-    if (override.isNotEmpty) return override;
+    if (_agentConfig.userPickedCloudModel) {
+      final override = _agentConfig.cloudModel.trim();
+      if (override.isNotEmpty) return override;
+    }
     return _modelGateway.textModel.trim();
   }
 
@@ -285,9 +299,49 @@ class _HomeGateState extends State<_HomeGate> {
       ]);
     }
     await _store.init();
+    await _startScheduler();
     if (mounted) setState(() => _booted = true);
     // 有本地未完成的录音就继续处理（不访问设备）；等模型目录探测完再触发云端清洗
     unawaited(_continuePendingAfterModels(discoverFuture));
+  }
+
+  Future<void> _startScheduler() async {
+    KeyValueStore backing;
+    try {
+      backing = await PrefsStore.open();
+    } catch (_) {
+      backing = InMemoryStore();
+    }
+    final scheduler = TaskScheduler(store: JsonStore(store: backing));
+    await scheduler.load();
+    final organize = OrganizePassService(
+      chat: _meteredChat,
+      modelResolver: _resolveCloudTextModel,
+      ready: _isCloudReady,
+    );
+    registerCleaningHandlers(
+      scheduler: scheduler,
+      store: _store,
+      pipeline: _pipeline,
+      meter: _meteredChat,
+      organize: organize,
+      agentConfig: _agentConfig,
+    );
+    await scheduler.ensureTasks(
+      defaultCleaningTasks(shortMinutes: _agentConfig.cleanCycleMinutes),
+    );
+    final short = scheduler.taskById(CleaningTaskIds.short);
+    if (short != null &&
+        short.schedule.mode == 'interval' &&
+        short.schedule.everyMinutes != _agentConfig.cleanCycleMinutes) {
+      await _agentConfig.setCleanCycleMinutes(short.schedule.everyMinutes);
+    }
+    bindCleaningCycle(scheduler, _agentConfig);
+    _scheduler = scheduler;
+    _store.attachTaskScheduler(scheduler);
+    final runner = InAppTaskRunner(scheduler);
+    _taskRunner = runner;
+    runner.start();
   }
 
   Future<void> _continuePendingAfterModels(Future<void>? discoverFuture) async {
@@ -316,6 +370,8 @@ class _HomeGateState extends State<_HomeGate> {
 
   @override
   void dispose() {
+    _taskRunner?.stop();
+    _scheduler?.dispose();
     _auth.removeListener(_onAuthChanged);
     _device.dispose();
     _store.dispose();

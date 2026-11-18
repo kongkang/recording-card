@@ -130,7 +130,10 @@ void main() {
     await tester.pumpWidget(_host(store, const DetailPage(eventId: 'seg1')));
     await tester.pump();
 
-    expect(find.byKey(const Key('detail-note')), findsOneWidget);
+    expect(find.byKey(const Key('detail-note')), findsNothing);
+    expect(find.textContaining('总结未完成'), findsNothing);
+    expect(find.textContaining('清洗未完成'), findsNothing);
+    expect(find.textContaining('部分内容未润色'), findsNothing);
     expect(find.text('原始一'), findsOneWidget);
   });
 
@@ -283,7 +286,13 @@ void main() {
     expect(find.byKey(const Key('recording-status-block')), findsOneWidget);
     expect(status.phase, RecordingPhase.recording);
 
-    // 展开事件卡片，确认简介设置了 maxLines = 4 截断
+    // 折叠态即展示 2–3 行生活摘要
+    final briefText = tester.widget<Text>(find.byKey(const Key('card-summary-seg1')));
+    expect(briefText.data, '讨论了排期');
+    expect(briefText.maxLines, 3);
+    expect(briefText.overflow, TextOverflow.ellipsis);
+
+    // 展开后显示更完整概述
     await tester.tap(find.byKey(const Key('card-seg1')));
     await tester.pump();
     final summaryText = tester.widget<Text>(find.text('详细概述'));
@@ -295,5 +304,114 @@ void main() {
     await tester.pump();
     expect(status.phase, RecordingPhase.recording);
     expect(find.byKey(const Key('recording-status-block')), findsOneWidget);
+  });
+  testWidgets('对话详情：同人短间隔一段，长停顿同气泡另起一段，换人新气泡，不见情绪标签', (
+    tester,
+  ) async {
+    final start = DateTime.now()
+        .subtract(const Duration(hours: 1))
+        .millisecondsSinceEpoch;
+    final file = RecordingFile(
+      deviceName: 'PAUSE.APM',
+      session: 'S_PAUSE',
+      seq: 1,
+      startAtMs: start,
+      apmPath: '/tmp/pause.apm',
+      createdAtMs: start,
+      durationMs: 180000,
+      timeSynced: true,
+      stage: RecordingStage.ready,
+      utterances: const [
+        RawUtterance(
+          id: 'u0',
+          sliceId: 's1',
+          startMs: 1000,
+          endMs: 8000,
+          text: '今晚先把方案写完。',
+          emotion: 'HAPPY',
+          speakerLabel: '说话人 1',
+        ),
+      ],
+      turns: const [
+        PolishedTurn(
+          id: 't0',
+          startMs: 1000,
+          endMs: 8000,
+          speakerLabel: '说话人 1（推测）',
+          text: '今晚先把方案写完。',
+          srcUtteranceIds: ['u0'],
+        ),
+        PolishedTurn(
+          id: 't1',
+          startMs: 9000,
+          endMs: 16000,
+          speakerLabel: '说话人 1（推测）',
+          text: '把纪要也一并发到群里。',
+          srcUtteranceIds: ['u0'],
+        ),
+        PolishedTurn(
+          id: 't2',
+          startMs: 50000,
+          endMs: 62000,
+          speakerLabel: '说话人 1（推测）',
+          text: '明日早间再同步给团队。',
+          srcUtteranceIds: ['u0'],
+        ),
+        PolishedTurn(
+          id: 't3',
+          startMs: 70000,
+          endMs: 80000,
+          speakerLabel: '说话人 2（推测）',
+          text: '好，我早上先看一眼。',
+          srcUtteranceIds: ['u1'],
+        ),
+      ],
+      segments: [
+        SegmentRecord(
+          id: 'seg-pause',
+          sessionId: 'S_PAUSE',
+          index: 0,
+          startAtMs: start,
+          endAtMs: start + 180000,
+          title: '晨间工作计划',
+          brief: '先写完方案，明早再同步。',
+          longText: '先把方案和纪要准备好，明早再同步给团队。',
+          speakerLabels: const ['说话人 1', '说话人 2'],
+          speakerCount: 2,
+          status: SegmentStatus.closed,
+          turnIds: const ['t0', 't1', 't2', 't3'],
+        ),
+      ],
+    );
+    final store = _storeFor(file);
+    addTearDown(store.dispose);
+    await tester.pumpWidget(_host(store, const DetailPage(eventId: 'seg-pause')));
+    await tester.pump();
+
+    // 短间隔 t0+t1 与长停顿 t2 都在同一个气泡；换人 t3 新气泡
+    expect(find.byKey(const Key('turn-spk-0')), findsOneWidget);
+    expect(find.byKey(const Key('turn-spk-1')), findsNothing);
+    expect(find.byKey(const Key('turn-spk-2')), findsNothing);
+    expect(find.byKey(const Key('turn-spk-3')), findsOneWidget);
+    expect(find.byKey(const Key('turn-para-seg-pause-0')), findsOneWidget);
+    expect(
+      find.byKey(const Key('turn-para-body-seg-pause-0-0')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('turn-para-body-seg-pause-0-1')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('今晚先把方案写完。把纪要也一并发到群里。'), findsOneWidget);
+    expect(find.text('明日早间再同步给团队。'), findsOneWidget);
+    expect(find.text('好，我早上先看一眼。'), findsOneWidget);
+    expect(find.textContaining('（推测）'), findsNothing);
+    expect(find.textContaining('HAPPY'), findsNothing);
+    expect(find.textContaining('情绪'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('det-tab-raw')));
+    await tester.pump();
+    expect(find.textContaining('情绪 HAPPY'), findsOneWidget);
+    expect(find.text('今晚先把方案写完。'), findsOneWidget);
   });
 }

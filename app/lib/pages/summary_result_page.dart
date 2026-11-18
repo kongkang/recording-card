@@ -801,7 +801,7 @@ class _ResultView extends StatelessWidget {
         final t = turns[ti];
         final cleaned = cleanSpokenFillers(t.text);
         if (cleaned.isEmpty) continue;
-        final resolved = store.displayTurnSpeaker(e, ti, t.spk).trim();
+        final resolved = store.displayTurnSpeaker(e, ti, t.spk, includeGuessSuffix: false).trim();
         final effective = resolved.isEmpty ? '未区分' : resolved;
         if (effective == curSpk) {
           curText = joinPolishedUtterances(curText, cleaned);

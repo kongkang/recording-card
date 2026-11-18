@@ -25,6 +25,7 @@ import '../../services/transcribe/system_speech_client.dart';
 import '../../services/watch/watch_hardware_service.dart';
 import '../../widgets/rc_switch.dart';
 import '../../widgets/store_scope.dart';
+import 'developer_schedule_section.dart';
 import 'health_signal_body.dart';
 
 class SettingSubPage extends StatelessWidget {
@@ -1015,6 +1016,12 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
             if (config.developerMode) ...[
               const SizedBox(height: 20),
               const _SubSectionLabel('开发者模式 · 总结与 Agent 推理模型'),
+              const SizedBox(height: 6),
+              Text(
+                '当前生效：${config.effectiveModelLabel}（${config.modelSourceLabel}）。未手动点选时不会把 deepseek-v3 当作已选。清洗模型也可以在「开发者设置」里改，不必先连点版本号。',
+                key: const Key('cloud-effective-model'),
+                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+              ),
               const SizedBox(height: 8),
               Container(
                 decoration: BoxDecoration(
@@ -1056,7 +1063,7 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
                       keyName: 'ctx-scoped',
                       mode: 'scoped',
                       title: '仅所选记录独立上下文',
-                      subtitle: '每次仅发送当前勾选记录文本。',
+                      subtitle: '每次仅发送当前勾选记录文本。这项偏好目前只保存，清洗和总结还没有读取。',
                     ),
                   ],
                 ),
@@ -1082,7 +1089,7 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
 
   Widget _modelRow(BuildContext context, CloudModelOption m) {
     final c = context.rc;
-    final selected = config.cloudModel == m.id;
+    final selected = config.userPickedCloudModel && config.cloudModel == m.id;
     return InkWell(
       key: Key('model-opt-${m.id}'),
       onTap: () => unawaited(config.setCloudModel(m.id)),
@@ -1777,7 +1784,7 @@ class _AgentExtensionsBodyState extends State<_AgentExtensionsBody> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '为录音 Agent 按需挂载整理技能（Skills）、本地上下文工具（Tools）与外部协议连接器（MCP）。已启用的 Skills 会自动注入总结生成指令。',
+              'Skills、Tools、MCP 要分开看。标成「已接入」的才会进入当前清洗或总结；标成「未接入」的只是占位，打开开关也不会调用。',
               style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
             ),
             const SizedBox(height: 16),
@@ -2064,6 +2071,12 @@ class _AgentExtensionsBodyState extends State<_AgentExtensionsBody> {
                   Text(
                     item.subtitle,
                     style: TextStyle(fontSize: 12, height: 1.4, color: c.sec),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${item.wiringLabel} · ${item.wiringNote}',
+                    key: Key('ext-wiring-${item.id}'),
+                    style: TextStyle(fontSize: 11.5, height: 1.4, color: c.sec),
                   ),
                 ],
               ),
@@ -3623,7 +3636,11 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
             : (status.watchAppInstalled ? '已安装' : '未安装');
         final linkText = isWatchConnected
             ? '已连接'
-            : (status?.reachable == true ? '在线' : '离线');
+            : (status?.reachable == true
+                ? '在线'
+                : (status?.paired == true && status?.watchAppInstalled == true
+                    ? '待机就绪'
+                    : '离线'));
         final battText = status == null ? '未知' : _batteryTierText(status);
         final pendingText = '${status?.pendingCount ?? 0} 段';
 
@@ -4122,6 +4139,8 @@ class _DeveloperCleanBody extends StatelessWidget {
       builder: (context, _) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+        DeveloperModelSection(config: config),
+        const SizedBox(height: 16),
         _SubSectionLabel('增量清洗与逻辑分段周期'),
         Container(
           padding: const EdgeInsets.all(14),
@@ -4387,6 +4406,10 @@ class _DeveloperCleanBody extends StatelessWidget {
             ],
           ),
         ),
+        const SizedBox(height: 16),
+        const DeveloperTaskSection(),
+        const SizedBox(height: 16),
+        const DeveloperReplaySection(),
         const SizedBox(height: 16),
         _SubSectionLabel('存量清洗与验证'),
         Container(

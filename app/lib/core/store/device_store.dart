@@ -295,7 +295,36 @@ class DeviceStore extends ChangeNotifier {
         unawaited(_retryReconnect());
         return;
       }
+      final prevRec = _liveRecording ?? false;
+      final prevClock = _clockTicks;
       _applySnapshot(_watchHardware.toSnapshot());
+      final s = _watchHardware.currentStatus;
+      final faultMsg = s.lastError?.trim() ?? '';
+      if (prevRec && !s.isRecording) {
+        if (faultMsg.isNotEmpty) {
+          recordingError = faultMsg;
+          if (_phoneStandbyArmed) {
+            unawaited(_triggerPhoneFailover(carrySecOverride: prevClock));
+          }
+        } else {
+          _phoneStandbyArmed = false;
+        }
+      }
+    } else if (!isConnected &&
+        linkState != LinkState.connecting &&
+        linkState != LinkState.reconnecting &&
+        _failoverPhoneRecording &&
+        _lastDevice?.id == WatchHardwareService.watchDeviceId &&
+        _watchHardware.linkEnabled) {
+      final s = _watchHardware.currentStatus;
+      if (s.supported &&
+          s.paired &&
+          s.watchAppInstalled &&
+          !s.linkLost &&
+          !_watchHardware.isOutOfRangeDisconnected &&
+          s.isRecording) {
+        unawaited(connectTo(_lastDevice!));
+      }
     }
     notifyListeners();
   }
@@ -608,16 +637,26 @@ class DeviceStore extends ChangeNotifier {
     } else if (!recording) {
       _recordSession = null;
     }
-    // 固件自停时会带 error 码（如存储异常）：必须让用户看见原因，
+    // 固件自停时会带 error 码（如存储异常）或 errorMessage（如手表存储不足）：必须让用户看见原因，
     // 不能只是把开关悄悄关掉。参考实现会把整条 RECORD_STATUS 原样展示。
     final error = status['error'];
-    final hasDeviceFault = error is num;
-    if (hasDeviceFault) {
+    final errorMessage = status['errorMessage'];
+    final hasErrorMessage =
+        errorMessage is String && errorMessage.trim().isNotEmpty;
+    final hasDeviceFault = error is num || hasErrorMessage;
+    if (error is num) {
       recordingError = '录音中断（设备错误码 ${error.toInt()}）';
+    } else if (hasErrorMessage) {
+      recordingError = errorMessage.trim();
     } else if (recording) {
       recordingError = null; // 新一轮录音开始，清掉上次的失败
     }
-    if (recording == (_liveRecording ?? false)) return;
+    if (recording == (_liveRecording ?? false)) {
+      if (!recording && !hasDeviceFault) {
+        _phoneStandbyArmed = false;
+      }
+      return;
+    }
     _liveRecording = recording;
     final carrySec = _clockTicks;
     _clockTicks = 0;
