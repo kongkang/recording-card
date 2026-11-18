@@ -1423,7 +1423,7 @@ function triggerHwButton(kind){
   },1450));
 }
 var DEFAULT_AGENT_PROMPT="你是 OS1，用户的随身录音记忆与生活搭档。说话像真人朋友一样自然简练、有温度，有把握的事实直接引用记录或总结里的具体时间、人物和要点，没有把握或未采集的绝不编造。严禁在回复中输出“思考过程”“调用工具”等内部步骤字样。";
-var agCfg={auth:true,accountEmail:"owner@wainao.chat",binds:{wechat:true,apple:false,google:false,github:false,facebook:false},local:{vad:"ready",asr:"none",spk:"ready"},asrEngine:"system",asrPlat:"ios26",localHasUpdate:false,devMode:false,cloudEnabled:true,customApi:"",cloud:"deepseek-v3",ctx:"selected",temp:"0.2",photoPerm:false,photoAutoSync:true,askedPhotoOnRec:false,hasDynamicIsland:true,islandEnabled:true,actionBtnBound:true,watchLinkEnabled:false,watchPaired:true,watchInstalled:true,watchPending:0,watchCharging:false,getSeedLinkEnabled:false,omiLinkEnabled:false,healthSignalEnabled:true,agentWeb:true,agentRecords:true,agentHealth:true,searchUrl:"",searchKey:"",agentPrompt:DEFAULT_AGENT_PROMPT,customMcps:[],preset:"general",presetLabel:"通用纪要",pSum:"围绕核心议题提炼概览、逻辑树、带时间戳溯源的信息点与可执行待办。",pPol:"去除口头禅、重复词与长静音，保留原意与关键数字，不编造事实。",pDream:"睡前生成叙事日记并挑出 1~5 个待确认轻标注；夜间做梦整理事件/关系/实体记忆图谱，按需绘制 4~6 格梦境漫画并从重复事项提炼 Skill。",exts:{term:true,brief:true,risk:false,photo:true,hist:true,todo:true,mcp:false},cleanCycleMin:10,cleanOnSilence:true,cleanOverlapMode:"paragraphs",cleanOverlapPara:3,cleanOverlapMin:3,recleanNote:""};
+var agCfg={auth:true,accountEmail:"owner@wainao.chat",binds:{wechat:true,apple:false,google:false,github:false,facebook:false},local:{vad:"ready",asr:"none",spk:"ready"},asrEngine:"system",asrPlat:"ios26",sysPackReady:false,localHasUpdate:false,devMode:false,cloudEnabled:true,customApi:"",cloud:"deepseek-v3",ctx:"selected",temp:"0.2",photoPerm:false,photoAutoSync:true,askedPhotoOnRec:false,hasDynamicIsland:true,islandEnabled:true,actionBtnBound:true,watchLinkEnabled:false,watchPaired:true,watchInstalled:true,watchPending:0,watchCharging:false,getSeedLinkEnabled:false,omiLinkEnabled:false,healthSignalEnabled:true,agentWeb:true,agentRecords:true,agentHealth:true,searchUrl:"",searchKey:"",agentPrompt:DEFAULT_AGENT_PROMPT,customMcps:[],preset:"general",presetLabel:"通用纪要",pSum:"围绕核心议题提炼概览、逻辑树、带时间戳溯源的信息点与可执行待办。",pPol:"去除口头禅、重复词与长静音，保留原意与关键数字，不编造事实。",pDream:"睡前生成叙事日记并挑出 1~5 个待确认轻标注；夜间做梦整理事件/关系/实体记忆图谱，按需绘制 4~6 格梦境漫画并从重复事项提炼 Skill。",exts:{term:true,brief:true,risk:false,photo:true,hist:true,todo:true,mcp:false},cleanCycleMin:10,cleanOnSilence:true,cleanOverlapMode:"paragraphs",cleanOverlapPara:3,cleanOverlapMin:3,recleanNote:""};
 var HEALTH_RECORDS=[
   {time:"14:38",kind:"步行",metric:"88 bpm · 血氧 98%",meta:"南山科技园"},
   {time:"14:20",kind:"静坐",metric:"72 bpm · HRV 46ms",meta:"创维设计大厦"},
@@ -1437,7 +1437,15 @@ var PRESETS={general:{label:"通用纪要",sum:"围绕核心议题提炼概览�
 var verTapCnt=0,verTapTs=0,pendingDelMdl=null;
 function tapAppVersion(){var now=Date.now();if(now-verTapTs>1600)verTapCnt=0;verTapTs=now;verTapCnt++;if(verTapCnt>=7){verTapCnt=0;agCfg.devMode=!agCfg.devMode;syncSetSummary();if(subStack.some(function(x){return x.t==="setsub"&&x.id==="cloud"}))renderSetSub("cloud");toast(agCfg.devMode?"已开启开发者模式":"已退出开发者模式")}}
 function toggleIslandHardware(){agCfg.hasDynamicIsland=!agCfg.hasDynamicIsland;syncSetSummary();syncPhoneRecUI();var btn=document.querySelector('[data-testid="toggle-island-hw"]');if(btn){btn.classList.toggle("on",agCfg.hasDynamicIsland);btn.textContent=agCfg.hasDynamicIsland?"当前：灵动岛机型（切换至无灵动岛机型）":"当前：无灵动岛机型（切换至灵动岛机型）"}toast(agCfg.hasDynamicIsland?"已切换为支持灵动岛机型":"已切换为无灵动岛机型（设置项已隐藏）")}
-function isSysAsrSupported(){return agCfg.asrPlat==="ios26"}
+var DEVICE_ASR_PROFILES={
+  ios26:{id:"ios26",plat:"ios",summary:"iPhone · iOS 26",chip:"iOS 26+（内置）",title:"系统默认模型（iOS 26+ 内置）",engTag:"原生 SpeechAnalyzer 生效中",sysOk:true,offlinePack:true,canDlPack:false,sysSub:"调用 iOS 26+ 原生 SpeechAnalyzer 纯端侧引擎（未预置长音频资产时自动以系统听写包垫底），刚装好软件即可立即离线使用，音频不出本机。",topReady:"默认使用 iOS 26+ 原生端侧引擎（SpeechAnalyzer），安装后免下载 228 MB 语音包即可立即离线转写；27 MB 声纹模型已在后台自动就绪。",topNoSpk:"默认使用 iOS 26+ 原生端侧引擎（SpeechAnalyzer）离线转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。",noSysToast:"需 iOS 26 及以上系统支持内置引擎",noSysMsg:""},
+  ios_old:{id:"ios-old",plat:"ios",summary:"iPhone · iOS 18",chip:"iOS 15–25（引导下载）",title:"",engTag:"",sysOk:false,offlinePack:false,canDlPack:false,sysSub:"",topReady:"",topNoSpk:"",noSysToast:"需 iOS 26 及以上系统支持内置引擎",noSysMsg:"当前系统低于 iOS 26，不支持新一代端侧内置引擎；默认不自动消耗流量下载，请手动下载 SenseVoice 增强离线模型（~228 MB）。"},
+  android_gms:{id:"android-gms",plat:"android",summary:"Google Pixel 9 · Android 15",chip:"Android GMS（内置即用）",title:"Google 端侧离线语音引擎",engTag:"系统内置生效中",sysOk:true,offlinePack:false,canDlPack:true,sysSub:"调用 Android 13+ 系统内置端侧语音服务（Google / AICore），直接传入切片 PCM 流转写，全程无需打开麦克风且音频不出本机。",topReady:"已识别当前手机支持 Google 端侧离线语音引擎，免下载 228 MB 增强模型即可直接离线转写；27 MB 声纹模型已在后台自动就绪。",topNoSpk:"已识别当前手机支持 Google 端侧离线语音引擎；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。",noSysToast:"当前设备不支持系统端侧离线语音识别",noSysMsg:""},
+  android_cn:{id:"android-cn",plat:"android",summary:"Xiaomi 15（HyperOS）· Android 15",chip:"Android 国产 ROM（仅 SenseVoice）",title:"",engTag:"",sysOk:false,offlinePack:false,canDlPack:false,sysSub:"",topReady:"",topNoSpk:"",noSysToast:"当前设备未开放标准系统端侧离线识别接口，请使用 SenseVoice 增强模型",noSysMsg:"已检测当前手机未预置标准系统端侧离线语音引擎（国行 ROM 未开启 Google 端侧服务，且厂商私有语音接口未向第三方开放）；请使用本机可选的 SenseVoice 增强离线模型（~228 MB）。"},
+  android_bixby:{id:"android-bixby",plat:"android",summary:"Samsung Galaxy S24 · One UI（Bixby）",chip:"Samsung Bixby（拦截降级）",title:"",engTag:"",sysOk:false,offlinePack:false,canDlPack:false,sysSub:"",topReady:"",topNoSpk:"",noSysToast:"检测到三星 Bixby 引擎存在音频注入兼容问题，已切至 SenseVoice",noSysMsg:"已检测当前设备默认绑定三星 Bixby / SMT 语音服务，该系统服务无法直接读取录音卡音频文件（会误触发手机麦克风）；为保护隐私并确保转写可用，已自动停用并仅保留本机可选的 SenseVoice 增强离线模型（~228 MB）。"}
+};
+function curAsrProf(){return DEVICE_ASR_PROFILES[agCfg.asrPlat]||DEVICE_ASR_PROFILES.ios26}
+function isSysAsrSupported(){return !!curAsrProf().sysOk}
 function effectiveAsrMode(){if(isSysAsrSupported()&&agCfg.asrEngine==="system")return"system";if(agCfg.local.asr==="ready")return"sensevoice";return"pending"}
 function syncSetSummary(){var c=agCfg;var sa=document.getElementById("sv-auth");if(sa)sa.textContent=c.auth?c.accountEmail:"未登录 · 点击授权";var asrMode=effectiveAsrMode();var sl=document.getElementById("sv-local");if(sl)sl.textContent=asrMode==="system"?(c.local.spk==="ready"?"系统内置 · 即用":"系统内置 · 缺声纹"):asrMode==="sensevoice"?(c.local.spk==="ready"?"SenseVoice · 已就绪":"SenseVoice · 缺声纹"):"推荐下载增强模型";var svp=document.getElementById("sv-voiceprint");if(svp)svp.textContent=c.local.spk==="ready"?"已就绪":"待下载";var sc=document.getElementById("sv-cloud");if(sc)sc.textContent=!c.cloudEnabled?"已关闭":!c.devMode?(c.customApi?"自定义接口":"已开启"):c.cloud;var sp=document.getElementById("sv-preset");if(sp)sp.textContent=c.presetLabel;var en=Object.keys(c.exts).filter(k=>c.exts[k]).length;var se=document.getElementById("sv-ext");if(se)se.textContent="已启用 "+en+" 项";var ri=document.getElementById("row-set-island"),si=document.getElementById("sv-island");if(ri)ri.hidden=!c.hasDynamicIsland;if(si)si.textContent=c.islandEnabled?"已开启":"已关闭";var sw=document.getElementById("sv-watch");if(sw){var wConn=conn.connected&&conn.curDev&&conn.curDev.kind==="watch";sw.textContent=!c.watchLinkEnabled?"未开启":wConn?"已连接":c.watchPaired?"已配对":"未配对"}var sex=document.getElementById("sv-exthw");if(sex){var exCnt=(c.getSeedLinkEnabled?1:0)+(c.omiLinkEnabled?1:0);var exConn=conn.connected&&conn.curDev&&(conn.curDev.kind==="getseed"||conn.curDev.kind==="omi");sex.textContent=exCnt===0?"未开启":exConn?("已连接 "+conn.curDev.badge):("已开启 "+exCnt+" 款")}var sh=document.getElementById("sv-health");if(sh)sh.textContent=c.healthSignalEnabled?("已开启 · "+HEALTH_RECORDS.length+" 条"):"已关闭";var lv=document.getElementById("lbl-version");if(lv)lv.textContent=c.devMode?"版本（开发者）":"版本";var sd=document.getElementById("sv-developer");if(sd){var cyc=fmtCleanCycle(c.cleanCycleMin);var ov=c.cleanOverlapMode==="minutes"?(c.cleanOverlapMin+"分"):(c.cleanOverlapPara+"段");sd.textContent="每 "+cyc+" · 叠 "+ov}var sm=document.getElementById("sv-mem");if(sm){var tagged=Object.keys(SPEAKER_DB).filter(function(k){return SPEAKER_DB[k].confirmed}).length;sm.textContent="声纹 "+tagged+" 人 · 升格关系 2"}}
 function openSetSub(id){if(!document.getElementById("p-setting").classList.contains("show")){["timeline","setting"].forEach(x=>document.getElementById("p-"+x).classList.toggle("show",x==="setting"));document.getElementById("nt").classList.remove("on");document.getElementById("ns").classList.add("on")}navSub({t:"setsub",id:id},true)}
@@ -1460,18 +1468,19 @@ function renderSetSub(id){var t=document.getElementById("setsub-title"),s=docume
   if(id==="local"){
     t.textContent="本地语音引擎";
     s.textContent="音频切片、转写文本与声纹向量只在本机离线处理";
-    var asrMode=effectiveAsrMode(),sysOk=isSysAsrSupported(),asrSt=agCfg.local.asr,spkSt=agCfg.local.spk;
-    var topTitle,topTag,topDesc,topAct="";
+    var prof=curAsrProf(),asrMode=effectiveAsrMode(),sysOk=isSysAsrSupported(),asrSt=agCfg.local.asr,spkSt=agCfg.local.spk;
+    var topTitle,topTag,topDesc,topBtns=[];
     if(asrMode==="system"){
       topTitle="本地转写已就绪 · 免下载即用";
       topTag='<span class="ext-tag" style="background:#EDF7F0;color:#1F7A34">系统内置生效中</span>';
-      topDesc=spkSt==="ready"
-        ?"默认使用 iOS 26+ 原生端侧引擎（SpeechAnalyzer），安装后免下载 228 MB 语音包即可立即离线转写；27 MB 声纹模型已在后台自动就绪。"
-        :"默认使用 iOS 26+ 原生端侧引擎（SpeechAnalyzer）离线转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。";
+      topDesc=spkSt==="ready"?prof.topReady:prof.topNoSpk;
+      if(prof.plat==="android"&&prof.canDlPack&&!agCfg.sysPackReady){
+        topBtns.push('<button class="btn ghost" data-testid="model-dl-sys-pack" onclick="dlSystemOfflinePack()">下载系统中文离线包</button>');
+      }
       if(spkSt!=="ready"){
-        topAct='<div class="wbtns" style="margin-top:10px"><button class="btn ghost" data-testid="model-install-all" '+(spkSt==="dl"?"disabled":"")+' onclick="dlLocalModel(\'spk\',false)">'+(spkSt==="dl"?"下载中…":"恢复声纹模型（~27 MB）")+'</button></div>';
+        topBtns.push('<button class="btn ghost" data-testid="model-install-all" '+(spkSt==="dl"?"disabled":"")+' onclick="dlLocalModel(\'spk\',false)">'+(spkSt==="dl"?"下载中…":"恢复声纹模型（~27 MB）")+'</button>');
       }else if(agCfg.localHasUpdate){
-        topAct='<div class="wbtns" style="margin-top:10px"><button class="btn" data-testid="model-install-all" onclick="installAllLocalModels()">更新至新版模型</button></div>';
+        topBtns.push('<button class="btn" data-testid="model-install-all" onclick="installAllLocalModels()">更新至新版模型</button>');
       }
     }else if(asrMode==="sensevoice"){
       topTitle="本地转写已就绪 · 增强模型";
@@ -1480,30 +1489,28 @@ function renderSetSub(id){var t=document.getElementById("setsub-title"),s=docume
         ?"当前使用 SenseVoice 增强离线模型，针对中英混杂、粤语方言与多人对话深度优化。"
         :"当前使用 SenseVoice 增强离线模型转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。";
       if(spkSt!=="ready"){
-        topAct='<div class="wbtns" style="margin-top:10px"><button class="btn ghost" data-testid="model-install-all" '+(spkSt==="dl"?"disabled":"")+' onclick="dlLocalModel(\'spk\',false)">'+(spkSt==="dl"?"下载中…":"恢复声纹模型（~27 MB）")+'</button></div>';
+        topBtns.push('<button class="btn ghost" data-testid="model-install-all" '+(spkSt==="dl"?"disabled":"")+' onclick="dlLocalModel(\'spk\',false)">'+(spkSt==="dl"?"下载中…":"恢复声纹模型（~27 MB）")+'</button>');
       }else if(agCfg.localHasUpdate){
-        topAct='<div class="wbtns" style="margin-top:10px"><button class="btn" data-testid="model-install-all" onclick="installAllLocalModels()">更新至新版模型</button></div>';
+        topBtns.push('<button class="btn" data-testid="model-install-all" onclick="installAllLocalModels()">更新至新版模型</button>');
       }
     }else{
       topTitle="待启用本地转写 · 推荐下载增强模型";
       topTag='<span class="ext-tag" style="background:#FFF4E0;color:#8A4300">待手动下载</span>';
-      topDesc=agCfg.asrPlat==="android"
-        ?"Android 各厂商内置离线接口仍在兼容性评估中；默认不自动消耗流量下载，请手动下载 SenseVoice 增强离线模型（~228 MB）。"
-        :"当前系统低于 iOS 26，不支持新一代纯端侧内置引擎；默认不自动消耗流量下载，请手动下载 SenseVoice 增强离线模型（~228 MB）。";
-      topAct='<div class="wbtns" style="margin-top:10px"><button class="btn" data-testid="model-install-all" '+(asrSt==="dl"?"disabled":"")+' onclick="installAllLocalModels()">'+(asrSt==="dl"?"下载中…":"下载增强模型（~228 MB）")+'</button></div>';
+      topDesc=prof.noSysMsg;
+      topBtns.push('<button class="btn" data-testid="model-install-all" '+(asrSt==="dl"?"disabled":"")+' onclick="installAllLocalModels()">'+(asrSt==="dl"?"下载中…":"下载增强模型（~228 MB）")+'</button>');
     }
-    var topCard='<div class="subcard" data-testid="local-status-card"><h4><span>'+topTitle+'</span>'+topTag+'</h4><p>'+topDesc+'</p>'+topAct+'</div>';
-    var sysSub=agCfg.asrPlat==="ios26"
-      ?"调用 iOS 26+ 原生 SpeechAnalyzer 纯端侧引擎（未预置长音频资产时自动以系统听写包垫底），刚装好软件即可立即离线使用，音频不出本机。"
-      :agCfg.asrPlat==="android"
-        ?"各手机厂商内置离线接口尚在评估适配中，现阶段请先使用下方 SenseVoice 增强模型。"
-        :"需 iOS 26 及以上系统支持；当前设备推荐使用下方 SenseVoice 增强模型。";
-    var sysBadge=sysOk?'<span class="ext-tag" style="background:#EDF7F0;color:#1F7A34">默认推荐</span>':'<span class="ext-tag">当前环境不可用</span>';
+    var devLine='<div style="font-size:12px;color:var(--sec);margin-bottom:6px" data-testid="local-device-summary">当前设备：'+esc(prof.summary)+'</div>';
+    var topAct=topBtns.length?'<div class="wbtns" style="margin-top:10px">'+topBtns.join("")+'</div>':"";
+    var topCard='<div class="subcard" data-testid="local-status-card">'+devLine+'<h4><span>'+topTitle+'</span>'+topTag+'</h4><p>'+topDesc+'</p>'+topAct+'</div>';
     var svStateLbl=asrSt==="ready"?"已下载":asrSt==="dl"?"下载中…":"按需下载";
     var svSub="外脑调优多语种离线模型，在中英混杂、粤语/口音与情绪识别场景下效果更佳。"+(asrSt!=="ready"?"默认不随安装自动下载，点此即可下载并启用。":"");
+    var sysOptHtml=sysOk
+      ?'<div class="optrow'+(asrMode==="system"?" on":"")+'" data-testid="asr-opt-system" onclick="pickAsrEngine(\'system\')"><div class="optmain"><b>'+esc(prof.title)+'<span class="ext-tag">免下载 · 0 MB</span><span class="ext-tag" style="background:#EDF7F0;color:#1F7A34">默认推荐</span></b><span>'+esc(prof.sysSub)+'</span></div><span class="optradio"></span></div>'
+      :"";
+    var svTag=!sysOk?'<span class="ext-tag" style="background:#EEF5FF;color:#0F4C81">本机推荐方案</span>':"";
     var engineGroup='<div class="set-title">语音转写模型</div><div class="set-group" data-testid="asr-engine-group">'
-      +'<div class="optrow'+(asrMode==="system"?" on":"")+'" data-testid="asr-opt-system"'+(sysOk?'':' style="opacity:.52"')+' onclick="pickAsrEngine(\'system\')"><div class="optmain"><b>系统默认模型（iOS 26+ 内置）<span class="ext-tag">免下载 · 0 MB</span>'+sysBadge+'</b><span>'+sysSub+'</span></div><span class="optradio"></span></div>'
-      +'<div class="optrow'+(asrMode==="sensevoice"?" on":"")+'" data-testid="asr-opt-sensevoice" onclick="pickAsrEngine(\'sensevoice\')"><div class="optmain"><b>SenseVoice 增强模型<span class="ext-tag">~228 MB · '+svStateLbl+'</span>'+(!sysOk?'<span class="ext-tag" style="background:#EEF5FF;color:#0F4C81">推荐方案</span>':'')+'</b><span>'+svSub+'</span></div><span class="optradio"></span></div>'
+      +sysOptHtml
+      +'<div class="optrow'+(asrMode==="sensevoice"?" on":"")+'" data-testid="asr-opt-sensevoice" onclick="pickAsrEngine(\'sensevoice\')"><div class="optmain"><b>SenseVoice 增强模型<span class="ext-tag">~228 MB · '+svStateLbl+'</span>'+svTag+'</b><span>'+svSub+'</span></div><span class="optradio"></span></div>'
       +'</div>';
     var items=[
       {id:"sensevoice-small-int8",k:"asr",n:"SenseVoice",sz:"语音转文字 · ~228 MB",fix:false,d:"离线增强模型，按需下载，随时可删并释放空间"},
@@ -1517,10 +1524,11 @@ function renderSetSub(id){var t=document.getElementById("setsub-title"),s=docume
       var dlRow=!m.fix&&st!=="ready"?'<div class="wbtns" style="margin-top:10px"><button class="btn ghost" data-testid="model-dl-'+m.k+'" '+(st==="dl"?"disabled":"")+' onclick="dlLocalModel(\''+m.k+'\','+(m.k==="asr"?"true":"false")+')">'+(st==="dl"?"下载中…":m.k==="asr"?"下载并启用（~228 MB）":"下载模型（~27 MB）")+'</button></div>':'';
       return '<div class="subcard"><h4><span>'+m.n+'</span><span class="ext-tag">'+stLbl+'</span>'+delBtn+'</h4><p>'+m.sz+'<br>'+m.d+'</p>'+dlRow+'</div>';
     }).join("");
-    var platBar='<div class="hw-tools" data-testid="local-plat-preview"><span style="font-size:11px;color:var(--sec);align-self:center">系统环境预览 <span class="fake-badge" data-testid="fake-local-plat-preview" title="仅原型预览不同系统默认策略，真机按系统版本自动判定">F</span>：</span>'
-      +'<button type="button" class="mini-chip'+(agCfg.asrPlat==="ios26"?" on":"")+'" data-testid="plat-chip-ios26" onclick="setAsrPlatPreview(\'ios26\')">iOS 26+（默认系统内置）</button>'
-      +'<button type="button" class="mini-chip'+(agCfg.asrPlat==="ios_old"?" on":"")+'" data-testid="plat-chip-ios-old" onclick="setAsrPlatPreview(\'ios_old\')">iOS 15–25（引导手动下载）</button>'
-      +'<button type="button" class="mini-chip'+(agCfg.asrPlat==="android"?" on":"")+'" data-testid="plat-chip-android" onclick="setAsrPlatPreview(\'android\')">Android（评估中 · 引导下载）</button>'
+    var platBar='<div class="hw-tools" data-testid="local-plat-preview"><span style="font-size:11px;color:var(--sec);align-self:center">系统环境预览 <span class="fake-badge" data-testid="fake-local-plat-preview" title="仅原型预览不同系统与 Android 品牌默认策略，真机按设备自动判定">F</span>：</span>'
+      +["ios26","ios_old","android_gms","android_cn","android_bixby"].map(function(pk){
+        var p=DEVICE_ASR_PROFILES[pk];
+        return '<button type="button" class="mini-chip'+(agCfg.asrPlat===pk?" on":"")+'" data-testid="plat-chip-'+p.id+'" onclick="setAsrPlatPreview(\''+pk+'\')">'+esc(p.chip)+'</button>';
+      }).join("")
       +'</div>';
     b.innerHTML=topCard+engineGroup+fileCards+platBar;
     return;
@@ -1770,13 +1778,14 @@ function connectWatchFromSetting(){var isW=conn.connected&&conn.curDev&&conn.cur
 function flushWatchFromSetting(){if(!agCfg.watchLinkEnabled)return;var c=agCfg.watchPending||0;agCfg.watchPending=0;if(conn.connected&&conn.curDev&&conn.curDev.kind==="watch"){applyDeviceCapabilities()}watchSubHint=c>0?("已同步 "+c+" 段手表录音"):"暂无待传录音";syncSetSummary();renderSetSub("watch")}
 function toggleExtHw(kind){if(kind==="getseed"){agCfg.getSeedLinkEnabled=!agCfg.getSeedLinkEnabled;if(!agCfg.getSeedLinkEnabled&&conn.connected&&conn.curDev&&conn.curDev.kind==="getseed")confirmDisconnect()}else if(kind==="omi"){agCfg.omiLinkEnabled=!agCfg.omiLinkEnabled;if(!agCfg.omiLinkEnabled&&conn.connected&&conn.curDev&&conn.curDev.kind==="omi")confirmDisconnect()}syncSetSummary();renderSetSub("exthw")}
 function dlVoiceprintModel(){agCfg.local.spk="dl";renderSetSub("voiceprint");setTimeout(function(){agCfg.local.spk="ready";syncSetSummary();renderSetSub("voiceprint");toast("CAM++ 声纹模型已就绪")},350)}
-function pickAsrEngine(eng){if(eng==="system"){if(!isSysAsrSupported()){toast(agCfg.asrPlat==="android"?"Android 内置接口评估中，请使用 SenseVoice 增强模型":"需 iOS 26 及以上系统支持内置引擎");return}agCfg.asrEngine="system";syncSetSummary();renderSetSub("local");toast("已切换为系统默认模型（免下载即用）");return}if(eng==="sensevoice"){if(agCfg.local.asr==="ready"){agCfg.asrEngine="sensevoice";syncSetSummary();renderSetSub("local");toast("已切换为 SenseVoice 增强模型");return}if(agCfg.local.asr!=="dl")dlLocalModel("asr",true)}}
-function setAsrPlatPreview(plat){agCfg.asrPlat=plat;if(plat!=="ios26"){agCfg.asrEngine="sensevoice"}else if(agCfg.local.asr!=="ready"){agCfg.asrEngine="system"}syncSetSummary();renderSetSub("local")}
+function pickAsrEngine(eng){var prof=curAsrProf();if(eng==="system"){if(!isSysAsrSupported()){toast(prof.noSysToast);return}agCfg.asrEngine="system";syncSetSummary();renderSetSub("local");toast("已切换为"+prof.title);return}if(eng==="sensevoice"){if(agCfg.local.asr==="ready"){agCfg.asrEngine="sensevoice";syncSetSummary();renderSetSub("local");toast("已切换为 SenseVoice 增强模型");return}if(agCfg.local.asr!=="dl")dlLocalModel("asr",true)}}
+function setAsrPlatPreview(plat){agCfg.asrPlat=plat;var p=DEVICE_ASR_PROFILES[plat]||DEVICE_ASR_PROFILES.ios26;if(!p.sysOk){agCfg.asrEngine="sensevoice"}else if(agCfg.local.asr!=="ready"){agCfg.asrEngine="system"}agCfg.sysPackReady=!!p.offlinePack;syncSetSummary();renderSetSub("local")}
+function dlSystemOfflinePack(){agCfg.sysPackReady=true;renderSetSub("local");toast("已触发系统中文离线语言包下载")}
 function dlLocalModel(k,switchAfter){agCfg.local[k]="dl";renderSetSub("local");setTimeout(function(){agCfg.local[k]="ready";agCfg.localHasUpdate=false;if(k==="asr"&&(switchAfter||!isSysAsrSupported()))agCfg.asrEngine="sensevoice";syncSetSummary();renderSetSub("local");toast(k==="asr"?"SenseVoice 增强模型已下载并启用":"声纹模型已就绪")},350)}
 function installAllLocalModels(){["vad","asr","spk"].forEach(function(k){if(agCfg.local[k]!=="ready")agCfg.local[k]="dl"});renderSetSub("local");setTimeout(function(){var wasAsrMissing=agCfg.local.asr!=="ready";agCfg.local.vad="ready";agCfg.local.asr="ready";agCfg.local.spk="ready";agCfg.localHasUpdate=false;if(wasAsrMissing||!isSysAsrSupported())agCfg.asrEngine="sensevoice";syncSetSummary();renderSetSub("local");toast("本地语音模型已全部就绪")},350)}
-function askDeleteLocalModel(k,name){pendingDelMdl=k;var n=document.getElementById("mdl-del-name");if(n)n.textContent=name;var warn=document.getElementById("mdl-del-warn");if(warn){if(k==="asr"){warn.textContent=isSysAsrSupported()?"删除后将释放约 228 MB 本机空间，并自动切回「系统默认模型（iOS 26+ 内置）」继续本地离线转写（音频不上传云端）；中英混杂与方言增强能力将停用，随时可重新下载。":"当前系统环境暂不支持新一代端侧内置引擎。没有本地模型后将无法自动离线语音转文本，只能切换为付费云端模式，且音频上传云端存在隐私风险。"}else{warn.textContent="删除后将释放约 27 MB 本机空间；本地语音转文字不受影响，但新录音将暂停声纹自动区分说话人（显示为「未区分」），随时可重新下载。"}}var w=document.getElementById("mdl-del-wrap");if(w)w.classList.add("show")}
+function askDeleteLocalModel(k,name){pendingDelMdl=k;var prof=curAsrProf();var n=document.getElementById("mdl-del-name");if(n)n.textContent=name;var warn=document.getElementById("mdl-del-warn");if(warn){if(k==="asr"){warn.textContent=isSysAsrSupported()?"删除后将释放约 228 MB 本机空间，并自动切回「"+prof.title+"」继续本地离线转写（音频不上传云端）；中英混杂与方言增强能力将停用，随时可重新下载。":prof.noSysMsg+" 没有本地语音模型后，录音将无法在本地完成自动转写，只能切换为付费云端模式，且音频上传云端存在隐私风险。"}else{warn.textContent="删除后将释放约 27 MB 本机空间；本地语音转文字不受影响，但新录音将暂停声纹自动区分说话人（显示为「未区分」），随时可重新下载。"}}var w=document.getElementById("mdl-del-wrap");if(w)w.classList.add("show")}
 function closeDeleteLocalModel(){pendingDelMdl=null;var w=document.getElementById("mdl-del-wrap");if(w)w.classList.remove("show")}
-function confirmDeleteLocalModel(){if(!pendingDelMdl){closeDeleteLocalModel();return}var delK=pendingDelMdl;agCfg.local[delK]="none";if(delK==="asr"&&isSysAsrSupported())agCfg.asrEngine="system";closeDeleteLocalModel();syncSetSummary();renderSetSub("local");toast(delK==="asr"&&isSysAsrSupported()?"已删除 SenseVoice，并切回系统默认模型":"已删除本地语音模型")}
+function confirmDeleteLocalModel(){if(!pendingDelMdl){closeDeleteLocalModel();return}var delK=pendingDelMdl,prof=curAsrProf();agCfg.local[delK]="none";if(delK==="asr"&&isSysAsrSupported())agCfg.asrEngine="system";closeDeleteLocalModel();syncSetSummary();renderSetSub("local");toast(delK==="asr"&&isSysAsrSupported()?"已删除 SenseVoice，并切回"+prof.title:"已删除本地语音模型")}
 var RELEASE_SNAPSHOTS=[];
 function initSnapMenu(){var seg=document.querySelector(".ver-seg");if(!seg||!RELEASE_SNAPSHOTS.length)return;var w=document.createElement("span");w.className="ver-snap-wrap";w.innerHTML='<button type="button" class="ver-opt" data-testid="ver-snap-btn" title="历史发版快照" onclick="var p=this.nextElementSibling;p.hidden=!p.hidden">▾</button><div class="ver-snap-pop" hidden>'+RELEASE_SNAPSHOTS.map(function(s){return '<a href="'+s.href+'"><b>'+esc(s.v)+'</b> · <span style="color:var(--sec)">'+esc(s.date)+'</span></a>'}).join("")+'</div>';seg.appendChild(w)}
 initSnapMenu();

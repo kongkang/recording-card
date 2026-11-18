@@ -211,10 +211,11 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
   ) {
     if (spec.id == senseVoiceSpec.id) {
       if (ctrl.supportsSystemAsr) {
+        final fallbackName = ctrl.systemCapabilities.effectiveEngineTitle;
         return (
           title: '确认删除 SenseVoice 增强模型？',
           content:
-              '删除后将释放约 228 MB 本机存储空间，并自动回退为「系统默认模型（iOS 26+ 内置）」继续免费离线转写，隐私同样全程留在本机。后续需要方言或中英混杂增强效果时可随时重新下载。',
+              '删除后将释放约 228 MB 本机存储空间，并自动回退为「$fallbackName」继续免费离线转写，隐私同样全程留在本机。后续需要方言或中英混杂增强效果时可随时重新下载。',
         );
       }
       return (
@@ -334,17 +335,33 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
       pillText = '系统内置生效中';
       pillBg = const Color(0xFFEDF7F0);
       pillFg = const Color(0xFF1F7A34);
-      desc = speakerReady
-          ? '默认使用 iOS 26+ 原生端侧引擎（SpeechAnalyzer），安装后免下载 228 MB 语音包即可立即离线转写；27 MB 声纹模型已在后台自动就绪。'
-          : '默认使用 iOS 26+ 原生端侧引擎（SpeechAnalyzer）离线转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。';
+      final engineTitle = sysCaps.effectiveEngineTitle;
+      final devLabel = sysCaps.effectiveDeviceLabel;
+      if (sysCaps.isAndroid) {
+        if (!sysCaps.offlinePackInstalled) {
+          desc =
+              '已识别本机为 $devLabel，默认启用「$engineTitle」；当前系统中文离线语音包未就绪，可先一键拉起系统下载或改用 SenseVoice。';
+        } else {
+          desc = speakerReady
+              ? '已识别本机为 $devLabel，默认启用「$engineTitle」，免下载 228 MB 语音包即可立即离线转写；27 MB 声纹模型已在后台自动就绪。'
+              : '已识别本机为 $devLabel，默认启用「$engineTitle」离线转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。';
+        }
+      } else {
+        desc = speakerReady
+            ? '已识别本机为 $devLabel，默认使用原生端侧引擎（SpeechAnalyzer），免下载 228 MB 语音包即可立即离线转写；27 MB 声纹模型已在后台自动就绪。'
+            : '已识别本机为 $devLabel，默认使用原生端侧引擎（SpeechAnalyzer）离线转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。';
+      }
     } else if (effectiveMode == 'sensevoice') {
       title = '本地转写已就绪';
       pillText = 'SenseVoice 生效中';
       pillBg = const Color(0xFFEDF7F0);
       pillFg = const Color(0xFF1F7A34);
+      final devPrefix = sysCaps.deviceSummary.trim().isNotEmpty
+          ? '当前设备为 ${sysCaps.effectiveDeviceLabel}，'
+          : '';
       desc = speakerReady
-          ? '当前使用 SenseVoice 增强离线模型，针对中英混杂、粤语方言与多人对话深度优化，全程在本机离线处理。'
-          : '当前使用 SenseVoice 增强离线模型转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。';
+          ? '$devPrefix当前使用 SenseVoice 增强离线模型，针对中英混杂、粤语方言与多人对话深度优化，全程在本机离线处理。'
+          : '$devPrefix当前使用 SenseVoice 增强离线模型转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。';
     } else {
       title = (ctrl != null && !configured) ? '模型下载服务未配置' : '待启用本地转写';
       pillText = (ctrl != null && !configured) ? '未配置' : '待手动下载';
@@ -352,18 +369,20 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
       pillFg = const Color(0xFF8A4300);
       if (ctrl != null && !configured) {
         desc = '未配置模型下载地址（RC_MODEL_BASE）；音频与声纹均不上传云端，配置后可下载 SenseVoice 增强模型。';
-      } else if (sysCaps.platform == 'android') {
-        desc =
-            'Android 各厂商内置离线接口仍在兼容性评估中；默认不自动消耗流量下载，请手动下载 SenseVoice 增强离线模型（~228 MB）。';
       } else {
-        desc =
-            '当前系统低于 iOS 26，不支持新一代纯端侧内置引擎；默认不自动消耗流量下载，请手动下载 SenseVoice 增强离线模型（~228 MB）。';
+        desc = sysCaps.effectiveUnsupportedReason;
       }
     }
 
     final showActionBtn =
         ctrl != null &&
         (effectiveMode == 'pending' || !speakerReady || ctrl.hasRemoteUpdates);
+    final showSysPackDownload =
+        ctrl != null &&
+        effectiveMode == 'system' &&
+        sysCaps.isAndroid &&
+        !sysCaps.offlinePackInstalled &&
+        sysCaps.canDownloadOfflinePack;
     final String btnLabel;
     if (ctrl != null && ctrl.busy) {
       btnLabel = '下载中…';
@@ -410,20 +429,47 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
               _tagPill(pillText, bg: pillBg, fg: pillFg),
             ],
           ),
-          const SizedBox(height: 8),
+          if (sysCaps.deviceSummary.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              '当前设备：${sysCaps.effectiveDeviceLabel}',
+              key: const Key('local-device-summary'),
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: c.ink,
+              ),
+            ),
+          ],
+          const SizedBox(height: 6),
           Text(desc, style: TextStyle(fontSize: 12.5, height: 1.45, color: c.sec)),
-          if (showActionBtn) ...[
+          if (showActionBtn || showSysPackDownload) ...[
             const SizedBox(height: 10),
-            OutlinedButton(
-              key: const Key('model-install-all'),
-              onPressed: ctrl.busy || !configured
-                  ? null
-                  : () => unawaited(
-                      effectiveMode == 'pending' || ctrl.hasRemoteUpdates
-                          ? ctrl.installAll()
-                          : ctrl.installSpec(campplusEmbeddingSpec),
-                    ),
-              child: Text(btnLabel),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (showSysPackDownload)
+                  OutlinedButton(
+                    key: const Key('model-dl-sys-pack'),
+                    onPressed: ctrl.busy
+                        ? null
+                        : () => unawaited(ctrl.requestSystemLanguagePack()),
+                    child: const Text('下载系统中文离线语音包'),
+                  ),
+                if (showActionBtn)
+                  OutlinedButton(
+                    key: const Key('model-install-all'),
+                    onPressed: ctrl.busy || !configured
+                        ? null
+                        : () => unawaited(
+                            effectiveMode == 'pending' || ctrl.hasRemoteUpdates
+                                ? ctrl.installAll()
+                                : ctrl.installSpec(campplusEmbeddingSpec),
+                          ),
+                    child: Text(btnLabel),
+                  ),
+              ],
             ),
           ],
           if (ctrl != null && ctrl.busy) ...[
@@ -466,11 +512,9 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
         ctrl?.statusFor(senseVoiceSpec)?.installed ?? false;
     final configured = ctrl?.configured ?? false;
 
-    final sysDesc = sysOk
-        ? '调用 iOS 26+ 原生 SpeechAnalyzer 纯端侧引擎（未预置长音频资产时自动以系统听写包垫底），刚装好软件即可立即离线使用，音频不出本机。'
-        : (sysCaps.platform == 'android'
-              ? '各手机厂商内置离线接口尚在评估适配中，现阶段请先使用下方 SenseVoice 增强模型。'
-              : '需 iOS 26 及以上系统支持；当前设备推荐使用下方 SenseVoice 增强模型。');
+    final sysDesc = sysCaps.isAndroid
+        ? '调用「${sysCaps.effectiveEngineTitle}」纯端侧离线识别，音频仅留在本机；${sysCaps.offlinePackInstalled ? '安装即用，免下 228 MB 增强模型。' : '中文离线语音包未就绪时可一键拉起系统下载。'}'
+        : '调用原生 SpeechAnalyzer 纯端侧引擎（未预置长音频资产时自动以系统听写包垫底），刚装好软件即可立即离线使用，音频不出本机。';
 
     final senseStateLabel = senseInstalled
         ? '~228 MB · 已下载'
@@ -491,45 +535,29 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
       ),
       child: Column(
         children: [
-          Opacity(
-            opacity: sysOk ? 1.0 : 0.52,
-            child: _buildEngineOptionRow(
+          if (sysOk) ...[
+            _buildEngineOptionRow(
               context,
               key: const Key('asr-opt-system'),
-              title: '系统默认模型（iOS 26+ 内置）',
+              title: sysCaps.effectiveEngineTitle,
               tags: [
                 _tagPill('免下载 · 0 MB', bg: const Color(0xFFF0F0EC), fg: c.sec),
                 _tagPill(
-                  sysOk ? '默认推荐' : '当前环境不可用',
-                  bg: sysOk
-                      ? const Color(0xFFEDF7F0)
-                      : const Color(0xFFF0F0EC),
-                  fg: sysOk ? const Color(0xFF1F7A34) : c.sec,
+                  '默认推荐',
+                  bg: const Color(0xFFEDF7F0),
+                  fg: const Color(0xFF1F7A34),
                 ),
               ],
               subtitle: sysDesc,
               selected: effectiveMode == 'system',
-              onTap: ctrl == null
+              onTap: ctrl == null || ctrl.busy
                   ? null
-                  : () {
-                      if (!sysOk) {
-                        _showHint(
-                          context,
-                          sysCaps.platform == 'android'
-                              ? 'Android 各厂商内置离线接口评估适配中，请使用下方 SenseVoice'
-                              : '需升级至 iOS 26+ 才支持新一代纯端侧内置引擎',
-                        );
-                        return;
-                      }
-                      if (!ctrl.busy) {
-                        unawaited(
-                          ctrl.selectAsrEngine(LocalAsrEngineMode.system),
-                        );
-                      }
-                    },
+                  : () => unawaited(
+                      ctrl.selectAsrEngine(LocalAsrEngineMode.system),
+                    ),
             ),
-          ),
-          Divider(height: 1, thickness: 1, color: c.sep),
+            Divider(height: 1, thickness: 1, color: c.sep),
+          ],
           _buildEngineOptionRow(
             context,
             key: const Key('asr-opt-sensevoice'),
@@ -538,7 +566,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
               _tagPill(senseStateLabel, bg: const Color(0xFFF0F0EC), fg: c.sec),
               if (!sysOk)
                 _tagPill(
-                  '推荐方案',
+                  '本机推荐方案',
                   bg: const Color(0xFFEEF5FF),
                   fg: const Color(0xFF0F4C81),
                 ),
