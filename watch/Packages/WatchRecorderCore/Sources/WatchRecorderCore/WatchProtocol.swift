@@ -109,6 +109,8 @@ public struct WatchStatusSnapshot: Codable, Equatable, Sendable {
     public let keepAliveMode: WatchKeepAliveMode
     public let updatedAtMs: Int64
     public let lastError: String?
+    /// 手表 App 构建版本，形如 `1.0.0 (2026111815)`，供手机端联动状态展示。
+    public let appVersion: String
 
     public init(
         isRecording: Bool = false,
@@ -123,7 +125,8 @@ public struct WatchStatusSnapshot: Codable, Equatable, Sendable {
         freeDiskBytes: Int64 = 0,
         keepAliveMode: WatchKeepAliveMode = .idle,
         updatedAtMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
-        lastError: String? = nil
+        lastError: String? = nil,
+        appVersion: String = ""
     ) {
         self.isRecording = isRecording
         self.activeSessionId = activeSessionId
@@ -138,6 +141,7 @@ public struct WatchStatusSnapshot: Codable, Equatable, Sendable {
         self.keepAliveMode = keepAliveMode
         self.updatedAtMs = updatedAtMs
         self.lastError = lastError
+        self.appVersion = appVersion
     }
 
     public func toDictionary() -> [String: Any] {
@@ -163,6 +167,9 @@ public struct WatchStatusSnapshot: Codable, Equatable, Sendable {
         if let lastError, !lastError.isEmpty {
             dict["lastError"] = lastError
         }
+        if !appVersion.isEmpty {
+            dict["appVersion"] = appVersion
+        }
         return dict
     }
 
@@ -184,6 +191,7 @@ public struct WatchStatusSnapshot: Codable, Equatable, Sendable {
         let keepAliveMode = WatchKeepAliveMode(rawValue: modeRaw) ?? .idle
         let updatedAtMs = (dict["updatedAtMs"] as? NSNumber)?.int64Value ?? 0
         let lastError = dict["lastError"] as? String
+        let appVersion = (dict["appVersion"] as? String) ?? ""
         return WatchStatusSnapshot(
             isRecording: isRecording,
             activeSessionId: activeSessionId,
@@ -197,7 +205,8 @@ public struct WatchStatusSnapshot: Codable, Equatable, Sendable {
             freeDiskBytes: freeDiskBytes,
             keepAliveMode: keepAliveMode,
             updatedAtMs: updatedAtMs,
-            lastError: lastError
+            lastError: lastError,
+            appVersion: appVersion
         )
     }
 }
