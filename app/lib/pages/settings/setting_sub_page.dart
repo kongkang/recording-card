@@ -3892,6 +3892,15 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
     });
   }
 
+  Future<void> _toggleFeishu(bool next) async {
+    await widget.config.setFeishuLinkEnabled(next);
+    await widget.device?.setExtHardwareEnabled(feishu: next);
+    if (!mounted) return;
+    setState(() {
+      _hint = next ? '已开启飞书录音豆扫描联动' : '已关闭飞书录音豆联动';
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
@@ -3904,11 +3913,15 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
       builder: (context, _) {
         final getSeedOn = widget.config.getSeedLinkEnabled;
         final omiOn = widget.config.omiLinkEnabled;
+        final feishuOn = widget.config.feishuLinkEnabled;
         final gsConn =
             dev?.isConnected == true &&
             dev?.activeKind == DeviceKind.getSeedGsc10;
         final omiConn =
             dev?.isConnected == true && dev?.activeKind == DeviceKind.omiCv1;
+        final feishuConn =
+            dev?.isConnected == true &&
+            dev?.activeKind == DeviceKind.feishuD3200;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -3948,8 +3961,28 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                     subtitle: '蓝牙随身拾音，支持按键打点与板载存储同步',
                     enabled: omiOn,
                     connected: omiConn,
-                    bottomRadius: 12,
                     onChanged: () => unawaited(_toggleOmi(!omiOn)),
+                  ),
+                  Divider(
+                    height: 1,
+                    thickness: 1,
+                    indent: 16,
+                    endIndent: 16,
+                    color: c.sep,
+                  ),
+                  _extHardwareRow(
+                    context,
+                    cardKey: const Key('ext-feishu-card'),
+                    switchKey: const Key('ext-feishu-switch'),
+                    title: '飞书录音豆',
+                    modelTag: 'D3200',
+                    statusTag: 'Beta',
+                    statusKey: const Key('ext-feishu-beta'),
+                    subtitle: 'BLE 同步板载录音，支持远程启停；尚未真机验证，固件走官方 App',
+                    enabled: feishuOn,
+                    connected: feishuConn,
+                    bottomRadius: 12,
+                    onChanged: () => unawaited(_toggleFeishu(!feishuOn)),
                   ),
                 ],
               ),
@@ -3974,6 +4007,8 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
     required Key switchKey,
     required String title,
     required String modelTag,
+    String? statusTag,
+    Key? statusKey,
     required String subtitle,
     required bool enabled,
     required bool connected,
@@ -4031,6 +4066,26 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                             ),
                           ),
                         ),
+                        if (statusTag != null)
+                          Container(
+                            key: statusKey,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF7E6),
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              statusTag,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFFAD6800),
+                              ),
+                            ),
+                          ),
                         if (connected)
                           Text(
                             '· 已连接',

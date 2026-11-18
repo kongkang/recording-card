@@ -1,7 +1,7 @@
 # 多硬件录音设备解耦与无缝多源切换架构设计
 
-> 状态：Phase 1（统一抽象层 + 自研三款设备单连接落地）已实施；Round 1 第三方独立 SDK 包装层（`reai-ext-sdk` + `reai-getseed-sdk` + `reai-omi-sdk`）已落地；Priority 2（飞书录音豆）与 Priority 3（Plaud Note / Pro）待独立分支推进；Phase 2（多设备并发连接与无缝切源）架构定稿
-> 更新日期：2026-11-15
+> 状态：Phase 1（统一抽象层 + 自研三款设备单连接落地）已实施；第三方独立 SDK 包装层（`reai-ext-sdk` + `reai-getseed-sdk` + `reai-omi-sdk` + `reai-feishu-sdk`）已落地。飞书录音豆当前包只覆盖 BLE 文件同步，SoftAP 与 OTA 未纳入；Priority 3（Plaud Note / Pro）待独立分支推进；Phase 2（多设备并发连接与无缝切源）架构定稿
+> 更新日期：2026-11-18
 
 ---
 
@@ -65,7 +65,7 @@ flowchart TD
 
 UI 与同步调度器**严禁写 `if (deviceKind == 'board_v21')` 之类的型号硬编码判断**，一律读取设备连接时声明的 `HardwareCapabilities` 能力位进行裁剪：
 
-| 能力字段 (`HardwareCapabilities`) | 录音卡 V2 (`card_v2`) | 点一机 V1 (`dyj_v1`) | 语音 AI 键盘 V2.1 (`board_v21`) | 飞书录音豆 / 钉钉卡 / Get卡（规划） | UI / 业务层行为映射 |
+| 能力字段 (`HardwareCapabilities`) | 录音卡 V2 (`card_v2`) | 点一机 V1 (`dyj_v1`) | 语音 AI 键盘 V2.1 (`board_v21`) | 第三方硬件（按型号声明） | UI / 业务层行为映射 |
 |---|---|---|---|---|---|
 | `blePrefix` / 广播识别 | `DYJV2_*` | `DYJ_*`（排除 `DYJV2_`） | `REAI_VB_*`（含系统已配对 GATT） | Service UUID + 厂商广播头 | 统一扫描面板自动识别型号徽章 |
 | `realtimePcm16k`（实时流） | ✅ IMA-ADPCM → 16k PCM | ✅ AMR-WB 12.65k → 16k PCM | ✅ mSBC (`FE63`) → 16k PCM | ✅ Opus / ADPCM / mSBC → 16k PCM | 开启录音即走 1 分钟本地流式切片 + SenseVoice 转写 |
@@ -105,8 +105,8 @@ UI 与同步调度器**严禁写 `if (deviceKind == 'board_v21')` 之类的型�
 - **Round 1 已落地（默认关闭，需在 Setting →「硬件设备联动 → 第三方硬件联动」按需启用，保持默认 3 款自研扫描基线不变）**：
   - **`app/rust/sdks/reai-getseed-sdk`**（得到 Get 笔记录音卡 / GetSeed GSC10，`deviceKind: "getseed_gsc10"`）：厂商广播过滤（Company ID `0x544A` / `Get-*`）、GATT `0xFF00` TLV 命令帧、Ogg Opus / WAV 离线文件拉取、只删单文件（`0x0044`；严禁调用 `0x0041` 全盘擦除）、`hasRemoteRecordControl = false`（UI 裁剪为「机身按键控录」）。
   - **`app/rust/sdks/reai-omi-sdk`**（Omi 量产版 CV1 / Friend Pendant，`deviceKind: "omi_cv1"`）：UUID-only / `Omi-*` / `Friend_*` 广播识别、Opus / PCM / μ-law / LC3 实时分片重组（`19B10000` 服务）、按键手势特征（`23BA7924` → `voice_key` / `mark`）、StorageRing（`30295780`）离线文件下载与单文件清理、标准 BAS（`0x2A19`）电量读取。
+  - **`app/rust/sdks/reai-feishu-sdk`**（飞书录音豆 / soundcore Work D3200，`deviceKind: "feishu_d3200"`）：服务 `020cf5da-0000-1000-8000-00805f9b34fb` 或名称 `D3200-*` / `soundcore Work` 识别。本包实现设备信息、时间同步、远程启停、分页目录、ECDH P-256 会话密钥与 AES-CTR 离线 Opus 拉取，再封装 Ogg 并转 16kHz WAV。`realtime_audio = false`，`has_wifi_config = false`，`ota_mode = none`。SoftAP 快传与固件升级仍走官方 App。
 - **后续独立分支规划**：
-  - Priority 2：飞书录音豆（D3200 / `reai-feishu-sdk`）
   - Priority 3：Plaud Note / Pro（`reai-plaud-sdk`）
 
 1. **广播指纹注册（`ScanMatcher`）**：

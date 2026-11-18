@@ -229,7 +229,8 @@ class _SettingPageState extends State<SettingPage> {
     if (dev != null &&
         dev.isConnected &&
         (dev.activeKind == DeviceKind.getSeedGsc10 ||
-            dev.activeKind == DeviceKind.omiCv1)) {
+            dev.activeKind == DeviceKind.omiCv1 ||
+            dev.activeKind == DeviceKind.feishuD3200)) {
       return '已连接 ${dev.activeKind.displayModel}';
     }
     return '已开启 $count 款';

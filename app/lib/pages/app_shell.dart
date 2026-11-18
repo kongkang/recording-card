@@ -193,11 +193,13 @@ class _AppShellState extends State<AppShell> {
       unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
     }
     if (_agentConfig.getSeedLinkEnabled != _device.getSeedLinkEnabled ||
-        _agentConfig.omiLinkEnabled != _device.omiLinkEnabled) {
+        _agentConfig.omiLinkEnabled != _device.omiLinkEnabled ||
+        _agentConfig.feishuLinkEnabled != _device.feishuLinkEnabled) {
       unawaited(
         _device.setExtHardwareEnabled(
           getSeed: _agentConfig.getSeedLinkEnabled,
           omi: _agentConfig.omiLinkEnabled,
+          feishu: _agentConfig.feishuLinkEnabled,
         ),
       );
     }
