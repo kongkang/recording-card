@@ -355,6 +355,21 @@ void main() {
       tester,
       initialFeishuEnabled: true,
     );
+    env.gateway.connectResult = const CardSnapshot(
+      batteryLevel: 80,
+      isCharging: false,
+      wifiOpen: false,
+      recording: false,
+      fwVersion: '04.92',
+      fwVersionCode: 492,
+      wifiVersion: '',
+      wifiVersionCode: 0,
+      deviceName: 'D3200-C3A1',
+      deviceId: 'feishu-1',
+      deviceKind: DeviceKind.feishuD3200,
+      displayModel: '飞书录音豆',
+      capabilities: HardwareCapabilities.feishuD3200,
+    );
 
     await tester.tap(find.byKey(const Key('hw-capsule')));
     await tester.pump();
