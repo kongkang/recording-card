@@ -25,6 +25,9 @@ import 'services/health/health_signal_collector.dart';
 import 'services/health/health_signal_controller.dart';
 import 'services/health/health_signal_models.dart';
 import 'services/health/health_signal_store.dart';
+import 'services/memory/local_memory_index.dart';
+import 'services/memory/memory_indexer.dart';
+import 'services/memory/memory_search_service.dart';
 import 'services/net/model_gateway.dart';
 import 'services/polish/slice_polish_service.dart';
 import 'services/recordings/recording_pipeline.dart';
@@ -131,6 +134,7 @@ class _HomeGateState extends State<_HomeGate> {
   TaskScheduler? _scheduler;
   InAppTaskRunner? _taskRunner;
   late final AgentChatController _agentChat;
+  late final MemorySearchService _memorySearch;
   bool _booted = false;
   bool _wasSignedIn = false;
 
@@ -236,6 +240,15 @@ class _HomeGateState extends State<_HomeGate> {
       agentConfig: _agentConfig,
       gateway: _modelGateway,
       healthStore: _healthSignals.store,
+    );
+    _memorySearch = MemorySearchService(
+      index: LocalMemoryIndex(),
+      corpus: () =>
+          MemoryCorpus(events: _store.events, summaries: _store.summaries),
+      chat: (turns) => _modelGateway.chat([
+        for (final turn in turns)
+          ChatMessage(role: turn.role, content: turn.content),
+      ]),
     );
     _store.photoSyncEnabled = () => _agentConfig.photoLinkEnabled;
     _store.deviceGateway = () => _device.gateway;
@@ -377,6 +390,7 @@ class _HomeGateState extends State<_HomeGate> {
     _store.dispose();
     _recordingStatus.dispose();
     _agentChat.dispose();
+    unawaited(_memorySearch.close());
     _healthSignals.dispose();
     _modelManager.dispose();
     if (widget.agentConfig == null) _agentConfig.dispose();
@@ -404,6 +418,7 @@ class _HomeGateState extends State<_HomeGate> {
               agentConfig: _agentConfig,
               authService: _auth,
               healthSignals: _healthSignals,
+              memorySearch: _memorySearch,
               agentChat: _agentChat,
             );
           }

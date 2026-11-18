@@ -19,6 +19,8 @@ import '../services/audio/live_audio_recorder.dart';
 import '../services/audio/recording_status.dart';
 import '../services/auth_service.dart';
 import '../services/health/health_signal_controller.dart';
+import '../services/memory/memory_search_scope.dart';
+import '../services/memory/memory_search_service.dart';
 import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/model_manager_controller.dart';
 import '../widgets/legacy_upgrade_sheet.dart';
@@ -45,6 +47,7 @@ class AppShell extends StatefulWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    this.memorySearch,
     this.agentChat,
     this.supportsDynamicIslandOverride,
     this.onDeviceCreated,
@@ -60,6 +63,7 @@ class AppShell extends StatefulWidget {
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
+  final MemorySearchService? memorySearch;
   final AgentChatController? agentChat;
   final bool? supportsDynamicIslandOverride;
   final void Function(DeviceStore)? onDeviceCreated;
@@ -282,70 +286,73 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    return StoreScope(
-      store: widget.store,
-      child: ListenableBuilder(
-        listenable: widget.store,
-        builder: (context, _) => LayoutBuilder(
-          builder: (context, constraints) {
-            final wide = constraints.maxWidth >= RCDims.wideBreakpoint;
-            return PopScope(
-              // Android 物理返回键 / 手势：先退自管路由栈，栈空才交给系统退出
-              canPop: false,
-              onPopInvokedWithResult: (didPop, _) {
-                if (didPop) return;
-                final handled = widget.store.handleSystemBack();
-                if (!handled && mounted) {
-                  // 栈已空：让系统退出 App（Android 期望行为）
-                  SystemNavigator.pop();
-                }
-              },
-              child: Scaffold(
-                backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-                body: Stack(
-                  children: [
-                    if (wide)
-                      _WideLayout(
-                        device: _device,
-                        recordingStatus: _recording,
-                        modelManager: widget.modelManager,
-                        settings: widget.settings,
-                        agentConfig: _agentConfig,
-                        authService: widget.authService,
-                        photoLibrary: _photoLib,
-                        healthSignals: widget.healthSignals,
-                        onOpenOs1: () => _agentChat.open(),
-                        supportsDynamicIsland: _resolvedSupportsDynamicIsland,
-                      )
-                    else
-                      _NarrowLayout(
-                        device: _device,
-                        recordingStatus: _recording,
-                        modelManager: widget.modelManager,
-                        settings: widget.settings,
-                        agentConfig: _agentConfig,
-                        authService: widget.authService,
-                        photoLibrary: _photoLib,
-                        healthSignals: widget.healthSignals,
-                        onOpenOs1: () => _agentChat.open(),
-                        supportsDynamicIsland: _resolvedSupportsDynamicIsland,
+    return MemorySearchScope(
+      service: widget.memorySearch,
+      child: StoreScope(
+        store: widget.store,
+        child: ListenableBuilder(
+          listenable: widget.store,
+          builder: (context, _) => LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= RCDims.wideBreakpoint;
+              return PopScope(
+                // Android 物理返回键 / 手势：先退自管路由栈，栈空才交给系统退出
+                canPop: false,
+                onPopInvokedWithResult: (didPop, _) {
+                  if (didPop) return;
+                  final handled = widget.store.handleSystemBack();
+                  if (!handled && mounted) {
+                    // 栈已空：让系统退出 App（Android 期望行为）
+                    SystemNavigator.pop();
+                  }
+                },
+                child: Scaffold(
+                  backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+                  body: Stack(
+                    children: [
+                      if (wide)
+                        _WideLayout(
+                          device: _device,
+                          recordingStatus: _recording,
+                          modelManager: widget.modelManager,
+                          settings: widget.settings,
+                          agentConfig: _agentConfig,
+                          authService: widget.authService,
+                          photoLibrary: _photoLib,
+                          healthSignals: widget.healthSignals,
+                          onOpenOs1: () => _agentChat.open(),
+                          supportsDynamicIsland: _resolvedSupportsDynamicIsland,
+                        )
+                      else
+                        _NarrowLayout(
+                          device: _device,
+                          recordingStatus: _recording,
+                          modelManager: widget.modelManager,
+                          settings: widget.settings,
+                          agentConfig: _agentConfig,
+                          authService: widget.authService,
+                          photoLibrary: _photoLib,
+                          healthSignals: widget.healthSignals,
+                          onOpenOs1: () => _agentChat.open(),
+                          supportsDynamicIsland: _resolvedSupportsDynamicIsland,
+                        ),
+                      ListenableBuilder(
+                        listenable: _agentConfig,
+                        builder: (context, _) => StatusSheetOverlay(
+                          store: _device,
+                          islandEnabled: _agentConfig.islandEnabled,
+                        ),
                       ),
-                    ListenableBuilder(
-                      listenable: _agentConfig,
-                      builder: (context, _) => StatusSheetOverlay(
-                        store: _device,
-                        islandEnabled: _agentConfig.islandEnabled,
+                      LegacyUpgradeSheetOverlay(
+                        controller: _device.legacyUpgrade,
                       ),
-                    ),
-                    LegacyUpgradeSheetOverlay(
-                      controller: _device.legacyUpgrade,
-                    ),
-                    Os1AiSpaceOverlay(controller: _agentChat),
-                  ],
+                      Os1AiSpaceOverlay(controller: _agentChat),
+                    ],
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );

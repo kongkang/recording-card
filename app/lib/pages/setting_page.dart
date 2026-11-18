@@ -352,9 +352,7 @@ class _SettingPageState extends State<SettingPage> {
     final c = context.rc;
     var index = 0; // 开关的全局序号：测试锚点 sw-0 … sw-5
     final mm = widget.modelManager;
-    final localVal = mm == null
-        ? '本地离线'
-        : mm.settingSummaryLabel;
+    final localVal = mm == null ? '本地离线' : mm.settingSummaryLabel;
     final voiceVal = mm == null
         ? '本地聚类'
         : (mm.statusFor(campplusEmbeddingSpec)?.installed == true
@@ -436,6 +434,15 @@ class _SettingPageState extends State<SettingPage> {
                   value: '已勾选 ${_agent.enabledExtensionCount} 项',
                   valueKey: const Key('sv-ext'),
                   onTap: () => _openSub(context, 'ext'),
+                ),
+                const _RowDivider(),
+                _navRow(
+                  context,
+                  keyName: 'set-memory-search',
+                  label: '本机记忆检索',
+                  value: '仅本机',
+                  valueKey: const Key('sv-memory'),
+                  onTap: () => _openSub(context, 'mem'),
                 ),
                 const _RowDivider(),
                 _navRow(
