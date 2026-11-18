@@ -73,12 +73,27 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- OAuth 回调：系统浏览器授权完成后回到本 App（scheme 与 RC_OAUTH_REDIRECT 一致） -->
+        </activity>
+        <!-- 授权页在 App 内打开。回调不能挂在 MainActivity 上：
+             外脑 App 也注册了 reai-mobile://callback，系统浏览器会弹出选择框。 -->
+        <activity
+            android:name=".OAuthWebActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/NormalTheme"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".OAuthCallbackActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity="">
             <intent-filter>
-                <action android:name="android.intent.action.VIEW"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-                <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="reai-mobile" android:host="callback"/>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="reai-mobile"
+                    android:host="callback" />
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
