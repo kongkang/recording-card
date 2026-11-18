@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/device/card_gateway.dart';
 import 'package:recording_card/core/models/recording.dart';
@@ -177,7 +178,30 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  group('iOS 26+ 默认系统内置免下载即用与 SenseVoice 按需切换', () {
+  void expectNoCrossPlatformText(
+    WidgetTester tester, {
+    required List<String> forbidden,
+  }) {
+    final texts = <String>[];
+    for (final w in tester.widgetList<Text>(find.byType(Text))) {
+      final raw = w.data ?? w.textSpan?.toPlainText() ?? '';
+      if (raw.isNotEmpty) texts.add(raw);
+    }
+    for (final w in tester.widgetList<RichText>(find.byType(RichText))) {
+      final raw = w.text.toPlainText();
+      if (raw.isNotEmpty) texts.add(raw);
+    }
+    final joined = texts.join('\n');
+    for (final bad in forbidden) {
+      expect(
+        joined,
+        isNot(contains(bad)),
+        reason: '界面不应跨平台出现 "$bad"，实际文本：\n$joined',
+      );
+    }
+  }
+
+  group('系统内置 ASR 默认策略、Android 多品牌检测与平台隔离 UI', () {
     testWidgets(
       '(a) iOS 26+ autoEnsureInstalled 仅准备 VAD + CAM++，绝不下载 SenseVoice',
       (tester) async {
@@ -186,6 +210,9 @@ void main() {
           capabilitiesOverride: () async => const SystemSpeechCapabilities(
             platform: 'ios',
             osMajorVersion: 26,
+            brandId: 'apple',
+            deviceSummary: 'iPhone · iOS 26',
+            engineName: 'iOS 系统内置模型（SpeechAnalyzer）',
             supportsModernSystemAsr: true,
             authStatus: 'authorized',
           ),
@@ -244,6 +271,8 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.byKey(const Key('local-status-card')), findsOneWidget);
+        expect(find.byKey(const Key('local-device-summary')), findsOneWidget);
+        expect(find.text('当前设备：iPhone · iOS 26'), findsOneWidget);
         expect(find.text('本地转写已就绪'), findsOneWidget);
         expect(find.text('系统内置生效中'), findsOneWidget);
         expect(find.byKey(const Key('model-install-all')), findsNothing);
@@ -252,17 +281,23 @@ void main() {
         expect(find.byKey(const Key('asr-opt-sensevoice')), findsOneWidget);
         expect(find.byKey(const Key('model-dl-asr')), findsOneWidget);
         expect(find.text('下载并启用（~228 MB）'), findsOneWidget);
+        expectNoCrossPlatformText(
+          tester,
+          forbidden: const ['Android', 'Bixby', 'HyperOS'],
+        );
       },
     );
 
     testWidgets(
-      '(b1) iOS 15-25 不自动下载 SenseVoice，引导手动下载并禁用系统选项',
+      '(b1) iOS 15-25 隐藏不可用的系统模型选项，引导手动下载并保持平台纯净',
       (tester) async {
         final installer = _FakeModelInstaller();
         final systemSpeech = SystemSpeechClient(
           capabilitiesOverride: () async => const SystemSpeechCapabilities(
             platform: 'ios',
             osMajorVersion: 18,
+            brandId: 'apple',
+            deviceSummary: 'iPhone · iOS 18',
             supportsModernSystemAsr: false,
             authStatus: 'notDetermined',
           ),
@@ -297,13 +332,14 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.text('待启用本地转写'), findsOneWidget);
-        expect(find.text('当前环境不可用'), findsOneWidget);
+        expect(find.byKey(const Key('asr-opt-system')), findsNothing);
+        expect(find.byKey(const Key('asr-opt-sensevoice')), findsOneWidget);
+        expect(find.text('本机推荐方案'), findsOneWidget);
         expect(find.textContaining('低于 iOS 26'), findsAtLeastNWidgets(1));
-
-        // 点灰态系统选项不得切过去
-        await tester.tap(find.byKey(const Key('asr-opt-system')));
-        await tester.pumpAndSettle();
-        expect(ctrl.effectiveAsrMode, 'pending');
+        expectNoCrossPlatformText(
+          tester,
+          forbidden: const ['Android', 'Bixby', 'HyperOS'],
+        );
 
         // 手动下载后立即启用 SenseVoice
         await tester.tap(find.byKey(const Key('model-install-all')));
@@ -318,15 +354,30 @@ void main() {
     );
 
     testWidgets(
-      '(b2) Android 同样不自动下载 SenseVoice，提示厂商内置评估中并引导手动下载',
+      '(b2) Android 13+ GMS 机型默认启用系统端侧引擎，支持拉取中文语言包与双引擎切换回退且零 iOS 文案',
       (tester) async {
         final installer = _FakeModelInstaller();
+        var packInstalled = false;
+        final downloadCalls = <String>[];
         final systemSpeech = SystemSpeechClient(
-          capabilitiesOverride: () async => const SystemSpeechCapabilities(
+          capabilitiesOverride: () async => SystemSpeechCapabilities(
             platform: 'android',
-            osMajorVersion: 14,
-            supportsModernSystemAsr: false,
+            osMajorVersion: 15,
+            sdkInt: 35,
+            brandId: 'pixel',
+            deviceSummary: 'Google Pixel 9 · Android 15',
+            engineName: 'Google 端侧离线语音引擎',
+            onDeviceServicePackage: 'com.google.android.tts',
+            supportsModernSystemAsr: true,
+            offlinePackInstalled: packInstalled,
+            canDownloadOfflinePack: !packInstalled,
+            authStatus: 'granted',
           ),
+          downloadModelOverride: (lang) async {
+            downloadCalls.add(lang);
+            packInstalled = true;
+            return true;
+          },
         );
         final ctrl = ModelManagerController(
           installer: installer,
@@ -337,8 +388,11 @@ void main() {
         addTearDown(ctrl.dispose);
 
         await ctrl.autoEnsureInstalled();
-        expect(ctrl.effectiveAsrMode, 'pending');
-        expect(ctrl.settingSummaryLabel, '推荐下载增强模型');
+
+        expect(installer.installedFromCalls, [campplusEmbeddingSpec.id]);
+        expect(ctrl.supportsSystemAsr, isTrue);
+        expect(ctrl.effectiveAsrMode, 'system');
+        expect(ctrl.settingSummaryLabel, '系统内置 · 即用');
 
         await tester.pumpWidget(
           wrap(
@@ -351,20 +405,242 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.textContaining('Android 各厂商内置离线接口'), findsAtLeastNWidgets(1));
-        expect(find.text('推荐方案'), findsOneWidget);
+        expect(
+          find.text('当前设备：Google Pixel 9 · Android 15'),
+          findsOneWidget,
+        );
+        expect(find.byKey(const Key('asr-opt-system')), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byKey(const Key('asr-opt-system')),
+            matching: find.text('Google 端侧离线语音引擎'),
+          ),
+          findsOneWidget,
+        );
+        expect(find.byKey(const Key('model-dl-sys-pack')), findsOneWidget);
+        expectNoCrossPlatformText(
+          tester,
+          forbidden: const ['iOS', 'SpeechAnalyzer', 'iPhone'],
+        );
 
-        await tester.ensureVisible(find.byKey(const Key('model-dl-asr')));
-        await tester.tap(find.byKey(const Key('model-dl-asr')));
+        // 点击拉取系统中文离线包后，按钮消失
+        await tester.tap(find.byKey(const Key('model-dl-sys-pack')));
         await flushAsync(tester);
+        expect(downloadCalls, ['zh']);
+        expect(find.byKey(const Key('model-dl-sys-pack')), findsNothing);
 
+        // 切换并按需下载 SenseVoice，再删除 SenseVoice 自动回退为 Google 端侧离线语音引擎
+        await tester.ensureVisible(find.byKey(const Key('asr-opt-sensevoice')));
+        await tester.tap(find.byKey(const Key('asr-opt-sensevoice')));
+        await flushAsync(tester);
         expect(ctrl.effectiveAsrMode, 'sensevoice');
-        expect(ctrl.settingSummaryLabel, 'SenseVoice · 已就绪');
+
+        final delBtn = find.byKey(const Key('model-delete-sensevoice-small-int8'));
+        await tester.ensureVisible(delBtn);
+        await tester.tap(delBtn);
+        await tester.pumpAndSettle();
+
+        final dialog = find.byKey(const Key('model-delete-confirm-dialog'));
+        expect(
+          find.descendant(of: dialog, matching: find.textContaining('228 MB')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: dialog,
+            matching: find.textContaining('Google 端侧离线语音引擎'),
+          ),
+          findsOneWidget,
+        );
+        expectNoCrossPlatformText(
+          tester,
+          forbidden: const ['iOS', 'SpeechAnalyzer', 'iPhone'],
+        );
+
+        await tester.tap(find.byKey(const Key('model-delete-confirm-btn')));
+        await flushAsync(tester);
+        expect(ctrl.effectiveAsrMode, 'system');
+        expect(ctrl.settingSummaryLabel, '系统内置 · 即用');
       },
     );
 
     testWidgets(
-      '(c) iOS 26+ 双引擎切换持久化与删除 SenseVoice 自动回退系统默认',
+      '(b3) Android 各不支持品牌/ROM（小米/OPPO/vivo/荣耀/华为/三星 Bixby）隐藏系统选项，仅显示 SenseVoice 且绝不出现 iOS 文案',
+      (tester) async {
+        final unsupportedProfiles = <({
+          SystemSpeechCapabilities caps,
+          List<String> mustContain,
+        })>[
+          (
+            caps: const SystemSpeechCapabilities(
+              platform: 'android',
+              osMajorVersion: 15,
+              sdkInt: 35,
+              brandId: 'xiaomi',
+              deviceSummary: '小米 24129PN74C · 澎湃 HyperOS 2.0',
+              onDeviceServicePackage: 'com.miui.voiceassistant',
+              supportsModernSystemAsr: false,
+              unsupportedReason:
+                  '已识别本机为 小米（澎湃 HyperOS 2.0），当前未开放免签名端侧音频文件转写服务；音频不上传小爱云端，请下载 SenseVoice 增强模型。',
+            ),
+            mustContain: const ['小米', 'HyperOS'],
+          ),
+          (
+            caps: const SystemSpeechCapabilities(
+              platform: 'android',
+              osMajorVersion: 15,
+              sdkInt: 35,
+              brandId: 'oppo',
+              deviceSummary: 'OPPO Find X8 · ColorOS 15',
+              supportsModernSystemAsr: false,
+              unsupportedReason:
+                  '已识别本机为 OPPO（ColorOS 15），当前未开启 Google 端侧语音且 ColorOS AIUnit 需系统白名单；请下载 SenseVoice 增强模型。',
+            ),
+            mustContain: const ['OPPO', 'AIUnit'],
+          ),
+          (
+            caps: const SystemSpeechCapabilities(
+              platform: 'android',
+              osMajorVersion: 15,
+              sdkInt: 35,
+              brandId: 'vivo',
+              deviceSummary: 'vivo X200 · OriginOS',
+              supportsModernSystemAsr: false,
+              unsupportedReason:
+                  '已识别本机为 vivo（OriginOS），OriginOS 离线识别接口未向第三方开放标准文件流；请下载 SenseVoice 增强模型。',
+            ),
+            mustContain: const ['vivo', 'OriginOS'],
+          ),
+          (
+            caps: const SystemSpeechCapabilities(
+              platform: 'android',
+              osMajorVersion: 15,
+              sdkInt: 35,
+              brandId: 'honor',
+              deviceSummary: '荣耀 HONOR Magic7 · MagicOS 9.0',
+              supportsModernSystemAsr: false,
+              unsupportedReason:
+                  '已识别本机为 荣耀 HONOR（MagicOS 9.0），当前设备未启用标准端侧识别服务，请下载 SenseVoice 增强模型。',
+            ),
+            mustContain: const ['MagicOS'],
+          ),
+          (
+            caps: const SystemSpeechCapabilities(
+              platform: 'android',
+              osMajorVersion: 12,
+              sdkInt: 31,
+              brandId: 'huawei',
+              deviceSummary: '华为 HUAWEI Mate 70 · HarmonyOS 4.3',
+              supportsModernSystemAsr: false,
+              unsupportedReason:
+                  '已识别本机为 华为 HUAWEI（Android 12），系统版本低于 Android 13，不支持音频文件级端侧转写；请下载纯端侧 SenseVoice 增强模型。',
+            ),
+            mustContain: const ['华为', 'SenseVoice'],
+          ),
+          (
+            caps: const SystemSpeechCapabilities(
+              platform: 'android',
+              osMajorVersion: 14,
+              sdkInt: 34,
+              brandId: 'samsung',
+              deviceSummary: '三星 Galaxy S24 · One UI',
+              onDeviceServicePackage: 'com.samsung.android.bixby.agent',
+              supportsModernSystemAsr: false,
+              unsupportedReason:
+                  '已识别本机为 三星 Galaxy（Bixby 语音组件），三星 Bixby 端侧接口会忽略离线音频文件并误开手机麦克风；为防串音与隐私风险，请下载 SenseVoice 增强模型。',
+            ),
+            mustContain: const ['Bixby', '麦克风'],
+          ),
+        ];
+
+        ModelManagerController? lastCtrl;
+        for (final entry in unsupportedProfiles) {
+          final localKv = InMemoryStore();
+          final localAgentCfg = AgentConfigStore(store: localKv);
+          await localAgentCfg.load();
+          addTearDown(localAgentCfg.dispose);
+
+          final installer = _FakeModelInstaller(
+            initiallyInstalled: {sileroVadSpec.id, campplusEmbeddingSpec.id},
+          );
+          final systemSpeech = SystemSpeechClient(
+            capabilitiesOverride: () async => entry.caps,
+          );
+          final ctrl = ModelManagerController(
+            installer: installer,
+            systemSpeech: systemSpeech,
+            agentConfig: localAgentCfg,
+            baseUrl: 'https://models.example.test',
+          );
+          addTearDown(ctrl.dispose);
+          lastCtrl = ctrl;
+
+          await ctrl.refresh();
+          expect(ctrl.supportsSystemAsr, isFalse);
+          expect(ctrl.effectiveAsrMode, 'pending');
+          expect(ctrl.settingSummaryLabel, '推荐下载增强模型');
+
+          await tester.pumpWidget(
+            wrap(
+              SettingSubPage(
+                subId: 'local',
+                agentConfig: localAgentCfg,
+                modelManager: ctrl,
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          expect(find.byKey(const Key('asr-opt-system')), findsNothing);
+          expect(find.byKey(const Key('asr-opt-sensevoice')), findsOneWidget);
+          expect(find.text('本机推荐方案'), findsOneWidget);
+          expect(
+            find.text('当前设备：${entry.caps.deviceSummary}'),
+            findsOneWidget,
+          );
+          for (final kw in entry.mustContain) {
+            expect(find.textContaining(kw), findsAtLeastNWidgets(1));
+          }
+          expectNoCrossPlatformText(
+            tester,
+            forbidden: const ['iOS', 'SpeechAnalyzer', 'iPhone'],
+          );
+        }
+
+        // 在最后一个机型（三星 Bixby）上手动下载 SenseVoice 后可正常就绪，删除时出现云端风险提示且无 iOS 字样
+        await tester.ensureVisible(find.byKey(const Key('model-dl-asr')));
+        await tester.tap(find.byKey(const Key('model-dl-asr')));
+        await flushAsync(tester);
+
+        expect(lastCtrl!.effectiveAsrMode, 'sensevoice');
+        expect(lastCtrl.settingSummaryLabel, 'SenseVoice · 已就绪');
+
+        final delBtn = find.byKey(const Key('model-delete-sensevoice-small-int8'));
+        await tester.ensureVisible(delBtn);
+        await tester.tap(delBtn);
+        await tester.pumpAndSettle();
+
+        final dialog = find.byKey(const Key('model-delete-confirm-dialog'));
+        expect(
+          find.descendant(
+            of: dialog,
+            matching: find.textContaining('付费云端模式'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: dialog, matching: find.textContaining('隐私')),
+          findsOneWidget,
+        );
+        expectNoCrossPlatformText(
+          tester,
+          forbidden: const ['iOS', 'SpeechAnalyzer', 'iPhone'],
+        );
+      },
+    );
+
+    testWidgets(
+      '(c) iOS 26+ 双引擎切换持久化与删除 SenseVoice 自动回退系统内置',
       (tester) async {
         final installer = _FakeModelInstaller(
           initiallyInstalled: {sileroVadSpec.id, campplusEmbeddingSpec.id},
@@ -373,6 +649,9 @@ void main() {
           capabilitiesOverride: () async => const SystemSpeechCapabilities(
             platform: 'ios',
             osMajorVersion: 26,
+            brandId: 'apple',
+            deviceSummary: 'iPhone · iOS 26',
+            engineName: 'iOS 系统内置模型（SpeechAnalyzer）',
             supportsModernSystemAsr: true,
             authStatus: 'authorized',
           ),
@@ -439,9 +718,13 @@ void main() {
         expect(
           find.descendant(
             of: dialog,
-            matching: find.textContaining('系统默认模型'),
+            matching: find.textContaining('iOS 系统内置模型（SpeechAnalyzer）'),
           ),
           findsOneWidget,
+        );
+        expectNoCrossPlatformText(
+          tester,
+          forbidden: const ['Android', 'Bixby', 'HyperOS'],
         );
 
         await tester.tap(find.byKey(const Key('model-delete-confirm-btn')));
@@ -560,6 +843,159 @@ void main() {
         expect(rec.stage, RecordingStage.ready);
         expect(rec.utterances, isNotEmpty);
         expect(rec.utterances.first.text, '今天先用系统内置模型直接转写');
+      },
+    );
+
+    test(
+      '(d2) Android MethodChannel 通道协议 + 临时 WAV 清理 + RecordingPipeline 全流程出稿',
+      () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+        const channel = MethodChannel('com.reai.recordingcard/system_speech');
+        String? capturedWavPath;
+        String? capturedHeaderRiff;
+        String? capturedHeaderWave;
+        final invokedMethods = <String>[];
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              invokedMethods.add(call.method);
+              switch (call.method) {
+                case 'capabilities':
+                  return <Object?, Object?>{
+                    'platform': 'android',
+                    'osMajorVersion': 15,
+                    'sdkInt': 35,
+                    'brandId': 'pixel',
+                    'deviceSummary': 'Google Pixel 9 · Android 15',
+                    'engineName': 'Google 端侧离线语音引擎',
+                    'onDeviceServicePackage': 'com.google.android.tts',
+                    'supportsModernSystemAsr': true,
+                    'offlinePackInstalled': false,
+                    'canDownloadOfflinePack': true,
+                    'unsupportedReason': '',
+                    'authStatus': 'granted',
+                  };
+                case 'requestAuthorization':
+                  return 'granted';
+                case 'downloadSystemModel':
+                  return true;
+                case 'transcribeWav':
+                  final args = call.arguments as Map<Object?, Object?>;
+                  final path = args['wavPath'] as String;
+                  capturedWavPath = path;
+                  final wavBytes = File(path).readAsBytesSync();
+                  capturedHeaderRiff = String.fromCharCodes(
+                    wavBytes.sublist(0, 4),
+                  );
+                  capturedHeaderWave = String.fromCharCodes(
+                    wavBytes.sublist(8, 12),
+                  );
+                  return <Object?, Object?>{
+                    'text': 'Android 端侧内置模型离线转写成功',
+                    'tokens': const ['A', 'n', 'd'],
+                    'timestampsMs': const [100, 250, 400],
+                    'lang': 'zh-CN',
+                  };
+              }
+              return null;
+            });
+        addTearDown(() {
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null);
+        });
+
+        final realRoot = await Directory.systemTemp.createTemp('rc-and-asr-');
+        addTearDown(() async {
+          if (await realRoot.exists()) {
+            await realRoot.delete(recursive: true);
+          }
+        });
+
+        final realInstaller = ModelInstaller(root: realRoot);
+        await realInstaller.ensureBundled(sileroVadSpec);
+
+        final androidSpeech = SystemSpeechClient(
+          channel: channel,
+          debugForceNativePlatform: true,
+        );
+
+        final caps = await androidSpeech.capabilities();
+        expect(caps.isAndroid, isTrue);
+        expect(caps.sdkInt, 35);
+        expect(caps.brandId, 'pixel');
+        expect(caps.supportsModernSystemAsr, isTrue);
+        expect(caps.offlinePackInstalled, isFalse);
+        expect(caps.canDownloadOfflinePack, isTrue);
+
+        expect(await androidSpeech.triggerSystemModelDownload(), isTrue);
+
+        final controller = ModelManagerController(
+          installer: realInstaller,
+          systemSpeech: androidSpeech,
+          agentConfig: agentConfig,
+          baseUrl: '',
+        );
+        addTearDown(controller.dispose);
+        await controller.refresh();
+        expect(controller.effectiveAsrMode, 'system');
+
+        final models = InstalledSpeechModelProvider(
+          realInstaller,
+          useSystemAsr: () async => controller.effectiveAsrMode == 'system',
+        );
+        final stubLocal = _StubVadAndSpkLocalEngine();
+        final routingEngine = RoutingSpeechEngine(
+          localEngine: stubLocal,
+          systemSpeech: androidSpeech,
+        );
+
+        final gateway = FakeCardGateway()
+          ..writeDownload = true
+          ..transcodeSeconds = 4
+          ..deviceFiles = [
+            const CardFile(
+              name: 'AND001.APM',
+              size: 1000,
+              startAtSec: 1730000100,
+              session: 'A1',
+              seq: 1,
+              synced: true,
+            ),
+          ];
+        final recStore = RecordingStore(
+          root: realRoot,
+          jsonStore: JsonStore(store: InMemoryStore()),
+        );
+        final pipeline = RecordingPipeline(
+          gateway: gateway,
+          store: recStore,
+          engine: routingEngine,
+          models: models,
+          agentConfig: agentConfig,
+        );
+
+        final report = await pipeline.sync();
+        expect(report.failed, 0);
+        expect(report.ready, 1);
+
+        expect(
+          invokedMethods,
+          containsAll([
+            'capabilities',
+            'downloadSystemModel',
+            'requestAuthorization',
+            'transcribeWav',
+          ]),
+        );
+        expect(capturedWavPath, isNotNull);
+        expect(capturedHeaderRiff, 'RIFF');
+        expect(capturedHeaderWave, 'WAVE');
+        expect(File(capturedWavPath!).existsSync(), isFalse);
+        expect(stubLocal.localTranscribeCalls, 0);
+
+        final rec = (await recStore.loadAll(refresh: true)).single;
+        expect(rec.stage, RecordingStage.ready);
+        expect(rec.utterances.first.text, 'Android 端侧内置模型离线转写成功');
       },
     );
 

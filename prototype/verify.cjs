@@ -513,7 +513,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     }
   });
   await p.click('[data-testid="crumb-back"]');
-  // 本地语音引擎：iOS 26+ 默认系统内置免下载即用，SenseVoice 按需下载，删除回退，旧系统风险确认框
+  // 本地语音引擎：iOS 26+ 与 Android GMS 默认系统内置免下载即用，国产 ROM / 三星 Bixby / iOS < 26 自动隐藏系统项并隔离平台展示
   assert.equal(await p.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
   await p.$eval('[data-testid="set-local-model"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="set-local-model"]');
@@ -533,8 +533,44 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="model-delete-confirm-btn"]');
   assert.equal(await p.$('[data-testid="model-install-all"]'), null);
   assert(await p.$eval('#p-setsub', x => x.innerText.includes('系统内置生效中')));
+  // Android GMS（Pixel）：默认系统内置免下载即用，且界面绝不出现 iOS / SpeechAnalyzer 推荐文案
+  await p.$eval('[data-testid="plat-chip-android-gms"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-android-gms"]');
+  assert.equal(await p.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
+  assert(await p.$eval('[data-testid="local-device-summary"]', x => x.innerText.includes('Pixel')));
+  assert(await p.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('Google 端侧离线语音引擎')));
+  assert(await p.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+  }), 'Android GMS 页面不应出现 iOS 模型推荐');
+  await p.$eval('[data-testid="model-dl-sys-pack"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="model-dl-sys-pack"]');
+  assert.equal(await p.$('[data-testid="model-dl-sys-pack"]'), null);
+  // 国产 Android（HyperOS 等）：隐藏系统选项，仅显示 Android 可选的 SenseVoice
+  await p.$eval('[data-testid="plat-chip-android-cn"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-android-cn"]');
+  assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
+  assert(await p.$eval('[data-testid="asr-opt-sensevoice"]', x => x.innerText.includes('本机推荐方案')));
+  assert(await p.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    return txt.includes('Xiaomi 15') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+  }));
+  // 三星 Bixby：明确拦截说明并仅展示 SenseVoice
+  await p.$eval('[data-testid="plat-chip-android-bixby"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-android-bixby"]');
+  assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
+  assert(await p.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    return txt.includes('Bixby') && txt.includes('麦克风') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+  }));
+  // 旧 iOS 15–25：同样隐藏不可用系统选项，引导手动下载并在删完后提示云端风险，绝不出现 Android 字样
   await p.$eval('[data-testid="plat-chip-ios-old"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-ios-old"]');
+  assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
+  assert(await p.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    return !txt.includes('Android') && !txt.includes('Bixby');
+  }));
   await p.waitForSelector('[data-testid="model-install-all"]', { timeout: 3000 });
   await p.$eval('[data-testid="model-install-all"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="model-install-all"]');
@@ -1083,6 +1119,21 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$('[data-testid="asr-engine-group"]'));
   assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on')));
   assert(await pCur.$('[data-testid="model-dl-asr"]'));
+  await pCur.$eval('[data-testid="plat-chip-android-gms"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="plat-chip-android-gms"]');
+  assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('Google 端侧离线语音引擎')));
+  assert(await pCur.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+  }));
+  await pCur.$eval('[data-testid="plat-chip-android-cn"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="plat-chip-android-cn"]');
+  assert.equal(await pCur.$('[data-testid="asr-opt-system"]'), null);
+  await pCur.$eval('[data-testid="plat-chip-android-bixby"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="plat-chip-android-bixby"]');
+  assert.equal(await pCur.$('[data-testid="asr-opt-system"]'), null);
+  await pCur.$eval('[data-testid="plat-chip-ios26"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="plat-chip-ios26"]');
   assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0);
   assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0);
   await pCur.click('[data-testid="crumb-back"]');

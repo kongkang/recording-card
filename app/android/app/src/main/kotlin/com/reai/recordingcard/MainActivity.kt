@@ -30,6 +30,7 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     }
 
     private var speechChannel: MethodChannel? = null
+    private var systemSpeechBridge: SystemSpeechBridge? = null
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -87,6 +88,10 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             }
         }
         speechChannel = channel
+
+        val sysSpeech = SystemSpeechBridge(this)
+        sysSpeech.register(flutterEngine.dartExecutor.binaryMessenger)
+        systemSpeechBridge = sysSpeech
     }
 
     override fun onInit(status: Int) {
@@ -119,6 +124,9 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (systemSpeechBridge?.onRequestPermissionsResult(requestCode, grantResults) == true) {
+            return
+        }
         if (requestCode == REQ_AUDIO_PERM) {
             val res = pendingPermResult
             pendingPermResult = null
@@ -204,6 +212,8 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        systemSpeechBridge?.destroy()
+        systemSpeechBridge = null
         recognizer?.destroy()
         tts?.shutdown()
         super.onDestroy()

@@ -35,10 +35,18 @@ final class SystemSpeechBridge: NSObject {
   private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "capabilities":
+      let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+      let supported = isModernSystemAsrSupported()
       result([
         "platform": "ios",
-        "osMajorVersion": ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
-        "supportsModernSystemAsr": isModernSystemAsrSupported(),
+        "osMajorVersion": major,
+        "brandId": "apple",
+        "deviceSummary": "iPhone · iOS \(major)",
+        "engineName": supported ? "iOS 系统内置模型（SpeechAnalyzer）" : "",
+        "supportsModernSystemAsr": supported,
+        "offlinePackInstalled": supported,
+        "canDownloadOfflinePack": false,
+        "unsupportedReason": supported ? "" : "当前系统版本为 iOS \(major)，低于 iOS 26，不支持新一代端侧 SpeechAnalyzer；请下载 SenseVoice 增强模型。",
         "authStatus": Self.authStatusText(SFSpeechRecognizer.authorizationStatus()),
       ])
 
@@ -113,6 +121,9 @@ final class SystemSpeechBridge: NSObject {
           }
         }
       }
+
+    case "downloadSystemModel":
+      result(false)
 
     default:
       result(FlutterMethodNotImplemented)

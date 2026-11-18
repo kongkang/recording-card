@@ -1,10 +1,14 @@
-/// 系统内置语音识别客户端与引擎路由器 —— iOS 26+ 默认走纯端侧 SpeechAnalyzer，
-/// 按需下载 SenseVoice 后可双引擎无缝切换。
+/// 系统内置语音识别客户端与引擎路由器 ——
+/// - iOS 26+ 默认走纯端侧 `SpeechAnalyzer`；
+/// - Android 13+ 已识别到标准端侧识别服务（非三星 Bixby/SMT 误开麦实现）时默认启用系统内置引擎；
+/// - 其余系统（iOS < 26、无端侧服务的国行 Android / HarmonyOS 等）仅提供按需 SenseVoice，不跨平台错误推荐；
+/// - 按需下载 SenseVoice 后可双引擎无缝切换。
 library;
 
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
 import 'local_asr_service.dart';
@@ -21,6 +25,14 @@ class SystemSpeechCapabilities {
     required this.osMajorVersion,
     required this.supportsModernSystemAsr,
     this.authStatus = 'notDetermined',
+    this.sdkInt = 0,
+    this.brandId = '',
+    this.deviceSummary = '',
+    this.engineName = '',
+    this.onDeviceServicePackage = '',
+    this.offlinePackInstalled = true,
+    this.canDownloadOfflinePack = false,
+    this.unsupportedReason = '',
   });
 
   static const SystemSpeechCapabilities unsupported = SystemSpeechCapabilities(
@@ -33,6 +45,48 @@ class SystemSpeechCapabilities {
   final int osMajorVersion;
   final bool supportsModernSystemAsr;
   final String authStatus;
+  final int sdkInt;
+  final String brandId;
+  final String deviceSummary;
+  final String engineName;
+  final String onDeviceServicePackage;
+  final bool offlinePackInstalled;
+  final bool canDownloadOfflinePack;
+  final String unsupportedReason;
+
+  bool get isAndroid => platform == 'android';
+  bool get isIOS => platform == 'ios';
+
+  String get effectiveEngineTitle {
+    final clean = engineName.trim();
+    if (clean.isNotEmpty) return clean;
+    if (isAndroid) return 'Android 系统端侧语音引擎';
+    return 'iOS 系统内置模型（SpeechAnalyzer）';
+  }
+
+  String get effectiveDeviceLabel {
+    final clean = deviceSummary.trim();
+    if (clean.isNotEmpty) return clean;
+    if (isAndroid) {
+      return sdkInt > 0 ? 'Android (API $sdkInt)' : 'Android 设备';
+    }
+    if (isIOS) {
+      return osMajorVersion > 0 ? 'iPhone · iOS $osMajorVersion' : 'iPhone';
+    }
+    return '当前设备';
+  }
+
+  String get effectiveUnsupportedReason {
+    final clean = unsupportedReason.trim();
+    if (clean.isNotEmpty) return clean;
+    if (isAndroid) {
+      return '当前 Android 设备未提供可用的端侧音频文件转写服务，音频不上传云端，请下载纯端侧 SenseVoice 增强模型。';
+    }
+    if (isIOS) {
+      return '当前系统低于 iOS 26，不支持新一代纯端侧内置引擎，请下载 SenseVoice 增强模型。';
+    }
+    return '当前运行环境未提供系统端侧离线语音引擎，请下载 SenseVoice 增强模型。';
+  }
 
   factory SystemSpeechCapabilities.fromMap(Map<Object?, Object?> map) =>
       SystemSpeechCapabilities(
@@ -40,6 +94,14 @@ class SystemSpeechCapabilities {
         osMajorVersion: (map['osMajorVersion'] as num?)?.toInt() ?? 0,
         supportsModernSystemAsr: map['supportsModernSystemAsr'] == true,
         authStatus: '${map['authStatus'] ?? 'notDetermined'}',
+        sdkInt: (map['sdkInt'] as num?)?.toInt() ?? 0,
+        brandId: '${map['brandId'] ?? ''}',
+        deviceSummary: '${map['deviceSummary'] ?? ''}',
+        engineName: '${map['engineName'] ?? ''}',
+        onDeviceServicePackage: '${map['onDeviceServicePackage'] ?? ''}',
+        offlinePackInstalled: map['offlinePackInstalled'] != false,
+        canDownloadOfflinePack: map['canDownloadOfflinePack'] == true,
+        unsupportedReason: '${map['unsupportedReason'] ?? ''}',
       );
 }
 
@@ -48,24 +110,30 @@ class SystemSpeechClient {
     MethodChannel? channel,
     Future<SystemSpeechCapabilities> Function()? capabilitiesOverride,
     Future<String> Function()? requestAuthOverride,
+    Future<bool> Function(String language)? downloadModelOverride,
     Future<AsrResult> Function(
       Float32List samples,
       int sampleRate,
       String language,
     )?
     transcribeOverride,
+    bool? debugForceNativePlatform,
   }) : _channel = channel,
        _capabilitiesOverride = capabilitiesOverride,
        _requestAuthOverride = requestAuthOverride,
-       _transcribeOverride = transcribeOverride;
+       _downloadModelOverride = downloadModelOverride,
+       _transcribeOverride = transcribeOverride,
+       _debugForceNativePlatform = debugForceNativePlatform;
 
   static const MethodChannel _defaultChannel = MethodChannel(
     'com.reai.recordingcard/system_speech',
   );
 
   final MethodChannel? _channel;
+  final bool? _debugForceNativePlatform;
   final Future<SystemSpeechCapabilities> Function()? _capabilitiesOverride;
   final Future<String> Function()? _requestAuthOverride;
+  final Future<bool> Function(String language)? _downloadModelOverride;
   final Future<AsrResult> Function(
     Float32List samples,
     int sampleRate,
@@ -75,13 +143,17 @@ class SystemSpeechClient {
 
   int _seq = 0;
 
+  bool get _hasNativePlatform =>
+      _debugForceNativePlatform ??
+      (_channel != null || (!kIsWeb && (Platform.isIOS || Platform.isAndroid)));
+
   Future<SystemSpeechCapabilities> capabilities() async {
     if (_capabilitiesOverride != null) {
       return _capabilitiesOverride();
     }
-    if (_channel == null && !Platform.isIOS) {
-      return SystemSpeechCapabilities(
-        platform: Platform.isAndroid ? 'android' : 'other',
+    if (!_hasNativePlatform) {
+      return const SystemSpeechCapabilities(
+        platform: 'other',
         osMajorVersion: 0,
         supportsModernSystemAsr: false,
       );
@@ -102,7 +174,7 @@ class SystemSpeechClient {
     if (_requestAuthOverride != null) {
       return _requestAuthOverride();
     }
-    if (_channel == null && !Platform.isIOS) {
+    if (!_hasNativePlatform) {
       return 'denied';
     }
     try {
@@ -114,6 +186,25 @@ class SystemSpeechClient {
       return 'denied';
     } on PlatformException {
       return 'denied';
+    }
+  }
+
+  /// Android 13+ 触发系统端侧中文离线语言包下载；其余平台或不支持时返回 false。
+  Future<bool> triggerSystemModelDownload({String language = 'zh'}) async {
+    if (_downloadModelOverride != null) {
+      return _downloadModelOverride(language);
+    }
+    if (!_hasNativePlatform) return false;
+    try {
+      final ok = await (_channel ?? _defaultChannel).invokeMethod<bool>(
+        'downloadSystemModel',
+        {'language': language},
+      );
+      return ok == true;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
     }
   }
 
@@ -133,8 +224,8 @@ class SystemSpeechClient {
     if (_transcribeOverride != null) {
       return _transcribeOverride(samples, sampleRate, language);
     }
-    if (_channel == null && !Platform.isIOS) {
-      throw const AsrException('当前平台不支持 iOS 系统语音识别');
+    if (!_hasNativePlatform) {
+      throw const AsrException('当前平台不支持系统内置离线语音识别');
     }
 
     final audioMs = samples.length * 1000 ~/ sampleRate;
@@ -192,7 +283,7 @@ class SystemSpeechClient {
   }
 }
 
-/// 根据 `modelPath` 是否为系统哨兵值，在 iOS 原生引擎与 SenseVoice 之间路由转写。
+/// 根据 `modelPath` 是否为系统哨兵值，在系统内置引擎与 SenseVoice 之间路由转写。
 /// VAD 与声纹嵌入仍统一走本地 sherpa-onnx 引擎，保证切片与声纹完全一致。
 class RoutingSpeechEngine implements SpeechEngine {
   RoutingSpeechEngine({
