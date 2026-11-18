@@ -46,10 +46,20 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
   }
 
   func register(messenger: FlutterBinaryMessenger) {
-    let channel = FlutterMethodChannel(
-      name: "com.reai.recordingcard/health_signal",
-      binaryMessenger: messenger
-    )
+    let channel: FlutterMethodChannel
+    if let taskQueue = messenger.makeBackgroundTaskQueue?() {
+      channel = FlutterMethodChannel(
+        name: "com.reai.recordingcard/health_signal",
+        binaryMessenger: messenger,
+        codec: FlutterStandardMethodCodec.sharedInstance(),
+        taskQueue: taskQueue
+      )
+    } else {
+      channel = FlutterMethodChannel(
+        name: "com.reai.recordingcard/health_signal",
+        binaryMessenger: messenger
+      )
+    }
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handle(call, result: result)
     }
@@ -61,7 +71,9 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
     case "info":
       result(infoPayload())
     case "requestAccess":
-      requestAccess(result: result)
+      DispatchQueue.main.async { [weak self] in
+        self?.requestAccess(result: result)
+      }
     case "setCollectionActive":
       let args = call.arguments as? [String: Any] ?? [:]
       let active = args["active"] as? Bool ?? false
@@ -70,16 +82,22 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
       UserDefaults.standard.set(active, forKey: enabledKey)
       UserDefaults.standard.set(interval, forKey: intervalKey)
       UserDefaults.standard.set(phase, forKey: phaseKey)
-      if active {
-        startCollection(intervalMs: interval, phaseMs: phase)
-      } else {
-        stopCollection()
+      DispatchQueue.main.async { [weak self] in
+        guard let self else {
+          result(nil)
+          return
+        }
+        if active {
+          self.startCollection(intervalMs: interval, phaseMs: phase)
+        } else {
+          self.stopCollection()
+        }
+        result(nil)
       }
-      result(nil)
     case "catchUp":
       let args = call.arguments as? [String: Any] ?? [:]
       enqueueCatchUp(args: args, quick: false, trigger: nil) {
-        DispatchQueue.main.async { result(nil) }
+        result(nil)
       }
     case "drainSpool":
       result(drainSpool(maxItems: 400))

@@ -16,6 +16,7 @@ import 'core/store/settings_store.dart';
 import 'core/theme/tokens.dart';
 import 'pages/app_shell.dart';
 import 'pages/login_page.dart';
+import 'services/agent/agent_chat_controller.dart';
 import 'services/ai/summary_generator.dart';
 import 'services/analysis/chat_completion.dart';
 import 'services/audio/recording_status.dart';
@@ -40,6 +41,7 @@ import 'services/segment/segment_build_service.dart';
 import 'services/transcribe/model_manager_controller.dart';
 import 'services/transcribe/asr_models.dart';
 import 'services/transcribe/local_asr_service.dart';
+import 'services/transcribe/system_speech_client.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -117,8 +119,9 @@ class _HomeGateState extends State<_HomeGate> {
 
   late final ModelGateway _modelGateway;
   late final ModelInstaller _installer;
+  late final SystemSpeechClient _systemSpeech;
   late final InstalledSpeechModelProvider _models;
-  late final LocalAsrService _asr;
+  late final RoutingSpeechEngine _asr;
   late final RecordingStore _recordingStore;
   late final HealthSignalController _healthSignals;
   late final RecordingPipeline _pipeline;
@@ -127,6 +130,7 @@ class _HomeGateState extends State<_HomeGate> {
   late final MeteredChatCompletion _meteredChat;
   TaskScheduler? _scheduler;
   InAppTaskRunner? _taskRunner;
+  late final AgentChatController _agentChat;
   bool _booted = false;
   bool _wasSignedIn = false;
 
@@ -144,14 +148,28 @@ class _HomeGateState extends State<_HomeGate> {
       agentConfig: _agentConfig,
     );
 
-    // 本地转写/润色/分段流水线（离线优先；云端未配置/未登录时自动降级）
+    // 本地转写/润色/分段流水线（离线优先；iOS 26+ 默认系统内置免下载，按需可切 SenseVoice）
     _installer = ModelInstaller();
-    _models = InstalledSpeechModelProvider(_installer);
+    _systemSpeech = SystemSpeechClient();
     _modelManager = ModelManagerController(
       installer: _installer,
+      systemSpeech: _systemSpeech,
+      agentConfig: _agentConfig,
       onInstalled: () => _store.processPendingRecordings(),
     );
-    _asr = LocalAsrService();
+    _models = InstalledSpeechModelProvider(
+      _installer,
+      useSystemAsr: () async {
+        if (!_modelManager.hasStatuses) {
+          await _modelManager.refresh();
+        }
+        return _modelManager.effectiveAsrMode == 'system';
+      },
+    );
+    _asr = RoutingSpeechEngine(
+      localEngine: LocalAsrService(),
+      systemSpeech: _systemSpeech,
+    );
     _recordingStore = RecordingStore();
     _healthSignals = HealthSignalController(
       store: HealthSignalStore(),
@@ -212,6 +230,12 @@ class _HomeGateState extends State<_HomeGate> {
       store: _recordingStore,
       generator: _summaries,
       status: _recordingStatus,
+    );
+    _agentChat = AgentChatController(
+      appStore: _store,
+      agentConfig: _agentConfig,
+      gateway: _modelGateway,
+      healthStore: _healthSignals.store,
     );
     _store.photoSyncEnabled = () => _agentConfig.photoLinkEnabled;
     _store.deviceGateway = () => _device.gateway;
@@ -351,6 +375,7 @@ class _HomeGateState extends State<_HomeGate> {
     _device.dispose();
     _store.dispose();
     _recordingStatus.dispose();
+    _agentChat.dispose();
     _healthSignals.dispose();
     _modelManager.dispose();
     if (widget.agentConfig == null) _agentConfig.dispose();
@@ -378,6 +403,7 @@ class _HomeGateState extends State<_HomeGate> {
               agentConfig: _agentConfig,
               authService: _auth,
               healthSignals: _healthSignals,
+              agentChat: _agentChat,
             );
           }
           return LoginPage(

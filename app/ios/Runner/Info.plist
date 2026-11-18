@@ -69,6 +69,8 @@
 	<string>为录音卡设备配置 Wi-Fi 时，App 需要访问局域网，以发现设备热点并完成配网；聊天记录与个人资料不会因此上传。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>开启本机录音，或在蓝牙硬件意外断连、固件升级期间自动接力保底录音时，录音卡需要使用手机麦克风采集音频；音频仅在本地处理，不上传原始录音。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>在本地语音转文字（iOS 26+ 原生离线引擎）及 OS1 语音对话中，录音卡使用系统语音识别能力；录音切片仅在本机离线处理，原始音频不上传云端。</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>打开「定位与健康采集」后，录音卡会读取你在系统授权页中允许的健康数据（含心率、睡眠、活动、症状等敏感类型），只保存在这台手机，用来和录音时间对齐。未打开开关时不会读取。唤醒 Apple Watch 录音也不会把健康数据写回系统。</string>
 	<key>NSHealthUpdateUsageDescription</key>

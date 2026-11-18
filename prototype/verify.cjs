@@ -513,18 +513,76 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     }
   });
   await p.click('[data-testid="crumb-back"]');
-  // 本地语音三引擎：移除校验、就绪隐藏下载、右上角垃圾桶删除前必弹风险确认框
+  // 本地语音引擎：iOS 26+ 与 Android GMS 默认系统内置免下载即用，国产 ROM / 三星 Bixby / iOS < 26 自动隐藏系统项并隔离平台展示
+  assert.equal(await p.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
+  await p.$eval('[data-testid="set-local-model"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="set-local-model"]');
-  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('本地转写已就绪') && x.innerText.includes('SenseVoice')));
+  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('本地转写已就绪') && x.innerText.includes('系统内置生效中') && x.innerText.includes('SenseVoice')));
   assert.equal(await p.$('[data-testid="local-verify-btn"]'), null);
   assert.equal(await p.$('[data-testid="model-install-all"]'), null);
+  assert.equal(await p.$('[data-testid="model-delete-sensevoice-small-int8"]'), null);
+  assert(await p.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on')));
+  await p.$eval('[data-testid="model-dl-asr"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="model-dl-asr"]');
+  await p.waitForSelector('[data-testid="model-delete-sensevoice-small-int8"]', { timeout: 3000 });
+  assert(await p.$eval('[data-testid="asr-opt-sensevoice"]', x => x.classList.contains('on')));
+  await p.$eval('[data-testid="model-delete-sensevoice-small-int8"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="model-delete-sensevoice-small-int8"]');
   assert(await p.$eval('#mdl-del-wrap', x => x.classList.contains('show')));
+  assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('228 MB') && x.innerText.includes('系统默认模型')));
+  await p.click('[data-testid="model-delete-confirm-btn"]');
+  assert.equal(await p.$('[data-testid="model-install-all"]'), null);
+  assert(await p.$eval('#p-setsub', x => x.innerText.includes('系统内置生效中')));
+  // Android GMS（Pixel）：默认系统内置免下载即用，且界面绝不出现 iOS / SpeechAnalyzer 推荐文案
+  await p.$eval('[data-testid="plat-chip-android-gms"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-android-gms"]');
+  assert.equal(await p.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
+  assert(await p.$eval('[data-testid="local-device-summary"]', x => x.innerText.includes('Pixel')));
+  assert(await p.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('Google 端侧离线语音引擎')));
+  assert(await p.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+  }), 'Android GMS 页面不应出现 iOS 模型推荐');
+  await p.$eval('[data-testid="model-dl-sys-pack"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="model-dl-sys-pack"]');
+  assert.equal(await p.$('[data-testid="model-dl-sys-pack"]'), null);
+  // 国产 Android（HyperOS 等）：隐藏系统选项，仅显示 Android 可选的 SenseVoice
+  await p.$eval('[data-testid="plat-chip-android-cn"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-android-cn"]');
+  assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
+  assert(await p.$eval('[data-testid="asr-opt-sensevoice"]', x => x.innerText.includes('本机推荐方案')));
+  assert(await p.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    return txt.includes('Xiaomi 15') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+  }));
+  // 三星 Bixby：明确拦截说明并仅展示 SenseVoice
+  await p.$eval('[data-testid="plat-chip-android-bixby"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-android-bixby"]');
+  assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
+  assert(await p.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    return txt.includes('Bixby') && txt.includes('麦克风') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+  }));
+  // 旧 iOS 15–25：同样隐藏不可用系统选项，引导手动下载并在删完后提示云端风险，绝不出现 Android 字样
+  await p.$eval('[data-testid="plat-chip-ios-old"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-ios-old"]');
+  assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
+  assert(await p.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    return !txt.includes('Android') && !txt.includes('Bixby');
+  }));
+  await p.waitForSelector('[data-testid="model-install-all"]', { timeout: 3000 });
+  await p.$eval('[data-testid="model-install-all"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="model-install-all"]');
+  await p.waitForFunction(() => document.getElementById('p-setsub').innerText.includes('SenseVoice 生效中'), { timeout: 4000 });
+  await p.$eval('[data-testid="model-delete-sensevoice-small-int8"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="model-delete-sensevoice-small-int8"]');
   assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('付费云端模式') && x.innerText.includes('隐私')));
   await p.click('[data-testid="model-delete-confirm-btn"]');
   await p.waitForSelector('[data-testid="model-install-all"]', { timeout: 3000 });
-  await p.click('[data-testid="model-install-all"]');
-  await p.waitForFunction(() => document.getElementById('p-setsub').innerText.includes('本地转写已就绪'), { timeout: 4000 });
+  await p.$eval('[data-testid="plat-chip-ios26"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-ios26"]');
+  assert(await p.$eval('#p-setsub', x => x.innerText.includes('本地转写已就绪') && x.innerText.includes('系统内置生效中')));
   await p.click('[data-testid="crumb-back"]');
   assert(await p.$eval('#p-setting', x => x.classList.contains('show')));
   // 云端模型极简模式 + 连击版本号 7 次解锁开发者模式
@@ -566,12 +624,18 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="toggle-island-hw"]');
   assert(await p.$eval('[data-testid="set-dynamic-island"]', x => !x.hidden));
   await p.click('[data-testid="set-prompts"]');
+  assert(await p.$('[data-testid="agent-prompt-editor"]'));
   await p.click('[data-testid="preset-meeting"]');
   await p.click('[data-testid="prompt-save"]');
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$eval('#sv-preset', x => x.innerText.trim()), '深度会议');
   await p.click('[data-testid="set-extensions"]');
   assert.equal(await p.$eval('[data-testid="tbc-mcp"]', x => x.innerText.trim()), 'TBC');
+  assert(await p.$('[data-testid="mcp-add-btn"]'));
+  assert(await p.$('[data-testid="sw-agent-web"]'));
+  assert(await p.$('[data-testid="sw-agent-records"]'));
+  assert(await p.$('[data-testid="sw-agent-health"]'));
+  assert(await p.$('[data-testid="agent-search-url-input"]'));
   await p.click('[data-testid="sw-sk-risk"]');
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$eval('#sv-ext', x => x.innerText.trim()), '已启用 6 项');
@@ -616,7 +680,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="parity-btn"]');
   assert(await p.$eval('#parity-wrap', x => x.classList.contains('show')));
   assert.equal(await p.$('#parity-tabs'), null, '清理后不再保留 App 超前对比分页');
-  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 12);
+  assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 11);
   await p.evaluate(() => closeParity());
   assert.equal(await p.$('[data-testid="nc-btn"]'), null, '行为与健康信号落地后不再保留 NC 胶囊');
   await p.click('[data-testid="hw-capsule"]');
@@ -959,8 +1023,36 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.getAttribute('href')), 'index.html');
   assert.equal(await p.$eval('[data-testid="ver-switch-current"]', x => x.getAttribute('href')), 'current.html');
   assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0, 'current.html 不应出现 TBC 标记');
-  assert.deepEqual(await pCur.$$eval('nav.bottom button', e => e.map(x => x.innerText.trim())), ['Timeline', 'Setting'], 'current.html 保持两枚底部 Tab，不含目标版 OS1 入口');
-  assert.equal(await pCur.$('[data-testid="nav-ai-sunrise"]'), null);
+  assert.deepEqual(await pCur.$$eval('nav.bottom button', e => e.map(x => x.innerText.trim())), ['Timeline', 'OS1', 'Setting'], 'current.html 底栏已晋升接入 OS1 入口');
+  const curSunriseRise = await pCur.evaluate(() => {
+    const navTop = document.querySelector('nav.bottom').getBoundingClientRect().top;
+    const orbTop = document.querySelector('[data-testid="nav-ai-sunrise"] .ai-sunrise-orb').getBoundingClientRect().top;
+    return navTop - orbTop;
+  });
+  assert(curSunriseRise >= 14, 'current.html 底部日出圆钮应高于底栏顶部 >=14px，实际 ' + curSunriseRise);
+  await pCur.click('[data-testid="nav-ai-sunrise"]');
+  assert(await pCur.$eval('#ai-space', x => x.classList.contains('show')));
+  assert.equal(await pCur.$$eval('#ai-space .tbc-badge', x => x.length), 0);
+  await pCur.click('[data-testid="ai-her-prompt-mood"]');
+  await new Promise(r => setTimeout(r, 360));
+  const curHerPixels = await pCur.$eval('[data-testid="ai-her-canvas"]', cv => {
+    const ctx = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let cnt = 0; for (let i = 3; i < ctx.length; i += 16) if (ctx[i] > 20) cnt++;
+    return cnt;
+  });
+  assert(curHerPixels > 50, 'current.html 《Her》OS1 声波圆环应正常绘制');
+  await pCur.click('[data-testid="ai-mode-chat"]');
+  assert(await pCur.$eval('#ai-chat-pane', x => !x.hidden));
+  await pCur.click('[data-testid="ai-quick-1"]');
+  await new Promise(r => setTimeout(r, 220));
+  assert(await pCur.$('[data-testid="ai-typing-bubble"]'), 'current.html 轻聊等待态应显示极简 typing 点');
+  const curBusyTxt = await pCur.$eval('#ai-chat-pane', x => x.innerText);
+  assert(!curBusyTxt.includes('思考过程') && !curBusyTxt.includes('调用工具'));
+  await new Promise(r => setTimeout(r, 600));
+  assert.equal(await pCur.$('[data-testid="ai-typing-bubble"]'), null);
+  assert(await pCur.$('[data-testid="ai-chat-clear"]'));
+  await pCur.click('[data-testid="ai-space-close"]');
+  assert(!(await pCur.$eval('#ai-space', x => x.classList.contains('show'))));
   assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, 'current.html 行为与健康信号已落地，不再展示 NC 胶囊');
   assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0, 'current.html 不再展示 NC 徽标');
   assert.equal(await pCur.$$eval('.card[data-kind="daily"], .card[data-kind="dream"]', x => x.length), 0);
@@ -1013,7 +1105,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.evaluate(() => diClockHTML(3660).includes('di-colon') && diClockHTML(3661).includes('dim')));
   await pCur.click('[data-testid="crumb-back"]');
   // 验证「当前版」已落地清单、合并分片徽标及声纹管理（5 常用槽位含我的声音+单独录音 / 不限人数人物库）
-  assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·12');
+  assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·11');
   assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, 'current.html 不再保留 NC 待确认胶囊');
   await pCur.click('[data-testid="parity-btn"]');
   assert(await pCur.$eval('#parity-wrap', x => x.classList.contains('show')));
@@ -1021,6 +1113,30 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.evaluate(() => closeParity());
   assert(await pCur.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
   await pCur.click('[data-testid="nav-setting"]');
+  assert.equal(await pCur.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
+  await pCur.$eval('[data-testid="set-local-model"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-local-model"]');
+  assert(await pCur.$('[data-testid="asr-engine-group"]'));
+  assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on')));
+  assert(await pCur.$('[data-testid="model-dl-asr"]'));
+  await pCur.$eval('[data-testid="plat-chip-android-gms"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="plat-chip-android-gms"]');
+  assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('Google 端侧离线语音引擎')));
+  assert(await pCur.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+  }));
+  await pCur.$eval('[data-testid="plat-chip-android-cn"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="plat-chip-android-cn"]');
+  assert.equal(await pCur.$('[data-testid="asr-opt-system"]'), null);
+  await pCur.$eval('[data-testid="plat-chip-android-bixby"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="plat-chip-android-bixby"]');
+  assert.equal(await pCur.$('[data-testid="asr-opt-system"]'), null);
+  await pCur.$eval('[data-testid="plat-chip-ios26"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="plat-chip-ios26"]');
+  assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0);
+  assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0);
+  await pCur.click('[data-testid="crumb-back"]');
   await pCur.evaluate(() => { agCfg.local.spk = 'none'; syncSetSummary(); });
   await pCur.$eval('[data-testid="set-voiceprint"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="set-voiceprint"]');

@@ -10,27 +10,37 @@ library;
 import 'package:flutter/foundation.dart';
 
 import '../../core/config/remote/client_config.dart';
+import '../../core/store/agent_config_store.dart';
 import 'apple_asset_pack_client.dart';
 import 'asr_models.dart';
+import 'system_speech_client.dart';
 
 class ModelManagerController extends ChangeNotifier {
   ModelManagerController({
     ModelInstaller? installer,
     AppleAssetPackClient? appleAssets,
+    SystemSpeechClient? systemSpeech,
+    AgentConfigStore? agentConfig,
     String? baseUrl,
     ClientConfig? clientConfig,
     this.onInstalled,
   }) : _installer = installer ?? ModelInstaller(),
        _appleAssets = appleAssets ?? AppleAssetPackClient(),
+       _systemSpeech = systemSpeech ?? SystemSpeechClient(),
+       _agentConfig = agentConfig,
        _explicitBaseUrl = baseUrl != null
            ? baseUrl.trim()
            : ((clientConfig ?? ClientConfig.instance).explicitModelBase ?? ''),
        _fallbackBaseUrl = baseUrl != null
            ? ''
-           : (clientConfig ?? ClientConfig.instance).fallbackModelBase;
+           : (clientConfig ?? ClientConfig.instance).fallbackModelBase {
+    _agentConfig?.addListener(_onAgentConfigChanged);
+  }
 
   final ModelInstaller _installer;
   final AppleAssetPackClient _appleAssets;
+  final SystemSpeechClient _systemSpeech;
+  final AgentConfigStore? _agentConfig;
   final String _explicitBaseUrl;
   final String _fallbackBaseUrl;
 
@@ -41,6 +51,7 @@ class ModelManagerController extends ChangeNotifier {
 
   final Map<String, ModelStatus> _statuses = {};
   final Set<String> _unavailableRemotePacks = {};
+  SystemSpeechCapabilities _sysCaps = SystemSpeechCapabilities.unsupported;
   bool _busy = false;
   double _progress = 0;
   String _text = '';
@@ -52,6 +63,8 @@ class ModelManagerController extends ChangeNotifier {
   double get progress => _progress;
   String get text => _text;
   String? get error => _error;
+  SystemSpeechCapabilities get systemCapabilities => _sysCaps;
+  bool get supportsSystemAsr => _sysCaps.supportsModernSystemAsr;
 
   bool get hasExplicitBaseUrl => _explicitBaseUrl.isNotEmpty;
   bool get hasFallbackBaseUrl => _fallbackBaseUrl.isNotEmpty;
@@ -79,28 +92,133 @@ class ModelManagerController extends ChangeNotifier {
 
   bool get hasStatuses => _statuses.isNotEmpty;
 
-  /// 核心离线转写（SenseVoice + VAD）是否已就绪。
+  /// SenseVoice 增强转写（SenseVoice + VAD）文件是否已落盘就绪。
   bool get asrReady =>
       _statuses[senseVoiceSpec.id]?.installed == true &&
       _statuses[sileroVadSpec.id]?.installed == true;
 
+  bool get speakerReady =>
+      _statuses[campplusEmbeddingSpec.id]?.installed == true;
+
   bool get allReady =>
       specs.every((s) => _statuses[s.id]?.installed == true);
 
-  bool get _allAvailableSpecsReady => specs
-      .where((s) => !_unavailableRemotePacks.contains(s.id))
-      .every((s) => _statuses[s.id]?.installed == true);
+  /// 当前选中的语音转写引擎策略。
+  LocalAsrEngineMode get selectedEngine {
+    final pref = _agentConfig?.preferredAsrEngine;
+    if (pref == 'sensevoice') return LocalAsrEngineMode.sensevoice;
+    if (supportsSystemAsr) return LocalAsrEngineMode.system;
+    return LocalAsrEngineMode.sensevoice;
+  }
+
+  /// 当前实际生效的转写状态：`'system'` | `'sensevoice'` | `'pending'`。
+  String get effectiveAsrMode {
+    if (supportsSystemAsr && selectedEngine == LocalAsrEngineMode.system) {
+      return 'system';
+    }
+    if (asrReady) return 'sensevoice';
+    return 'pending';
+  }
+
+  String get settingSummaryLabel => switch (effectiveAsrMode) {
+    'system' => speakerReady ? '系统内置 · 即用' : '系统内置 · 缺声纹',
+    'sensevoice' => speakerReady ? 'SenseVoice · 已就绪' : 'SenseVoice · 缺声纹',
+    _ => '推荐下载增强模型',
+  };
 
   /// 是否有明确的新版本可更新（版本与本地一致或离线未比对时不提示更新，避免打扰）。
   bool get hasRemoteUpdates => false;
 
-  /// 若已配置下载地址（或 iOS Apple-Hosted）但本地模型缺失，则在后台自动触发下载与加载。
+  void _onAgentConfigChanged() {
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _agentConfig?.removeListener(_onAgentConfigChanged);
+    super.dispose();
+  }
+
+  /// 切换转写引擎；若切到 SenseVoice 且本地未下载，立即按需下载并在成功后启用。
+  Future<void> selectAsrEngine(LocalAsrEngineMode mode) async {
+    if (mode == LocalAsrEngineMode.system) {
+      if (!supportsSystemAsr) return;
+      await _agentConfig?.setPreferredAsrEngine('system');
+      notifyListeners();
+      await onInstalled?.call();
+      return;
+    }
+
+    if (_statuses[senseVoiceSpec.id]?.installed == true) {
+      if (_statuses[sileroVadSpec.id]?.installed != true) {
+        await _installer.ensureBundled(sileroVadSpec);
+        await refresh();
+      }
+      await _agentConfig?.setPreferredAsrEngine('sensevoice');
+      notifyListeners();
+      await onInstalled?.call();
+      return;
+    }
+
+    if (configured && !_busy) {
+      await installSpec(senseVoiceSpec);
+    }
+  }
+
+  /// 在支持系统端侧引擎但离线语音包未预装时（如 Android 13+），拉起系统语言包下载。
+  Future<bool> requestSystemLanguagePack({String language = 'zh'}) async {
+    final ok = await _systemSpeech.triggerSystemModelDownload(
+      language: language,
+    );
+    await refresh();
+    return ok;
+  }
+
+  /// 启动自动就绪：
+  /// - 仅确保随包 VAD（644 KB）与小型声纹模型 CAM++（~27 MB）就绪；
+  /// - 绝不自动下载 ~228 MB 的 SenseVoice 语音包（iOS 26+ 默认使用系统内置免下载即用，
+  ///   旧系统与 Android 引导用户按需手动下载）。
   Future<void> autoEnsureInstalled() async {
     if (!hasStatuses) {
       await refresh();
     }
-    if (configured && !_allAvailableSpecsReady && !_busy) {
-      await installAll();
+    if (_statuses[sileroVadSpec.id]?.installed != true) {
+      try {
+        await _installer.ensureBundled(sileroVadSpec);
+        _statuses[sileroVadSpec.id] = await _installer.status(sileroVadSpec);
+        notifyListeners();
+      } on Object {
+        // 随包资源在纯 Dart 单元测试环境中可能不存在，交由调用方显式装配
+      }
+    }
+    final spkInstalled = _statuses[campplusEmbeddingSpec.id]?.installed == true;
+    if (!configured ||
+        _busy ||
+        spkInstalled ||
+        _unavailableRemotePacks.contains(campplusEmbeddingSpec.id)) {
+      return;
+    }
+
+    _busy = true;
+    _error = null;
+    _progress = 0;
+    _text = '正在准备声纹模型…';
+    notifyListeners();
+    try {
+      await _installRemoteSpec(campplusEmbeddingSpec, force: false);
+      await onInstalled?.call();
+    } on AppleAssetPackException catch (e) {
+      if (e.isNotFound) {
+        _unavailableRemotePacks.add(campplusEmbeddingSpec.id);
+      } else {
+        _error = '声纹模型下载失败：$e（转写仍可用）';
+      }
+    } on Object catch (e) {
+      _error = '声纹模型下载失败：$e（转写仍可用）';
+    } finally {
+      _busy = false;
+      _text = '';
+      await refresh();
     }
   }
 
@@ -112,6 +230,11 @@ class ModelManagerController extends ChangeNotifier {
 
   Future<void> refresh() async {
     await _ensureAppleAssetsChecked();
+    try {
+      _sysCaps = await _systemSpeech.capabilities();
+    } on Object {
+      _sysCaps = SystemSpeechCapabilities.unsupported;
+    }
     for (final spec in specs) {
       try {
         _statuses[spec.id] = await _installer.status(spec);
@@ -122,7 +245,7 @@ class ModelManagerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 单独下载/重试指定模型（如「声纹识别」子页下载 `campplusEmbeddingSpec`）。
+  /// 单独下载/重试指定模型（如按需下载 `senseVoiceSpec` 或「声纹识别」子页下载 `campplusEmbeddingSpec`）。
   Future<void> installSpec(ModelSpec spec, {bool force = false}) async {
     if (_busy) return;
     await _ensureAppleAssetsChecked();
@@ -140,7 +263,14 @@ class ModelManagerController extends ChangeNotifier {
       if (spec.bundled) {
         await _installer.ensureBundled(spec);
       } else {
+        if (spec.kind == LocalModelKind.asr &&
+            _statuses[sileroVadSpec.id]?.installed != true) {
+          await _installer.ensureBundled(sileroVadSpec);
+        }
         await _installRemoteSpec(spec, force: force);
+        if (spec.id == senseVoiceSpec.id) {
+          await _agentConfig?.setPreferredAsrEngine('sensevoice');
+        }
       }
       await onInstalled?.call();
     } on Object catch (e) {
@@ -160,6 +290,7 @@ class ModelManagerController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final wasAsrMissing = _statuses[senseVoiceSpec.id]?.installed != true;
     _busy = true;
     _error = null;
     _progress = 0;
@@ -168,6 +299,9 @@ class ModelManagerController extends ChangeNotifier {
     try {
       await _installer.ensureBundled(sileroVadSpec);
       await _installRemoteSpec(senseVoiceSpec, force: force);
+      if (wasAsrMissing || !supportsSystemAsr) {
+        await _agentConfig?.setPreferredAsrEngine('sensevoice');
+      }
       // 声纹模型为可选能力：若无兜底 HTTP 源且 Apple 远端尚未上架该资源包则静默标记跳过；真实下载/校验故障如实提示
       try {
         await _installRemoteSpec(campplusEmbeddingSpec, force: force);
@@ -258,6 +392,9 @@ class ModelManagerController extends ChangeNotifier {
       await _installer.delete(spec);
       if (_appleAssetsAvailable && !spec.bundled) {
         await _appleAssets.removeAssetPack(spec.id);
+      }
+      if (spec.id == senseVoiceSpec.id && supportsSystemAsr) {
+        await _agentConfig?.setPreferredAsrEngine('system');
       }
     } on Object catch (e) {
       _error = '$e';

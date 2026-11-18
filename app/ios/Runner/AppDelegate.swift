@@ -1,6 +1,8 @@
+import AVFoundation
 import CoreBluetooth
 import Flutter
 import Photos
+import Speech
 import UIKit
 
 /// 蓝牙授权桥：让 Dart 侧能在扫描前主动申请权限并知道真实状态。
@@ -68,6 +70,12 @@ import UIKit
     }
     if let healthRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCHealthSignal") {
       HealthSignalBridge.shared.register(messenger: healthRegistrar.messenger())
+    }
+    if let speechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCSystemSpeech") {
+      SystemSpeechBridge.shared.register(with: speechRegistrar.messenger())
+    }
+    if let agentSpeechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCAgentSpeech") {
+      RCAgentSpeechBridge.shared.register(with: agentSpeechRegistrar.messenger())
     }
   }
 
@@ -280,6 +288,302 @@ extension AppDelegate: CBCentralManagerDelegate {
   func centralManagerDidUpdateState(_ central: CBCentralManager) {
     // 状态就绪不等于授权已决定：授权对话框点选后会再次回调，
     // 实际判定交给 pollAuthorization（见 requestAuthorization 的说明）。
+  }
+}
+
+/// OS1 原生语音交互通道：发送端 SFSpeechRecognizer 实时听写 + 接收端 AVSpeechSynthesizer 本地播报。
+final class RCAgentSpeechBridge: NSObject, AVSpeechSynthesizerDelegate {
+  static let shared = RCAgentSpeechBridge()
+
+  private var channel: FlutterMethodChannel?
+  private let synthesizer = AVSpeechSynthesizer()
+  private var speechRecognizer: SFSpeechRecognizer?
+  private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+  private var recognitionTask: SFSpeechRecognitionTask?
+  private var audioEngine: AVAudioEngine?
+  private var listening = false
+  private var speaking = false
+  private var lastTranscript = ""
+  private var finalizing = false
+  private var listenGeneration: UInt64 = 0
+
+  private override init() {
+    super.init()
+    synthesizer.delegate = self
+  }
+
+  func register(with messenger: FlutterBinaryMessenger) {
+    let ch = FlutterMethodChannel(
+      name: "com.reai.recordingcard/agent_speech",
+      binaryMessenger: messenger
+    )
+    ch.setMethodCallHandler { [weak self] call, result in
+      self?.handle(call, result: result)
+    }
+    channel = ch
+  }
+
+  private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "startListening":
+      let args = call.arguments as? [String: Any] ?? [:]
+      let localeId = args["locale"] as? String ?? "zh-CN"
+      startListening(localeId: localeId, result: result)
+    case "stopListening":
+      stopListening(emitFinal: true)
+      result(nil)
+    case "speak":
+      let args = call.arguments as? [String: Any] ?? [:]
+      let text = (args["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+      let localeId = args["locale"] as? String ?? "zh-CN"
+      speak(text: text, localeId: localeId)
+      result(nil)
+    case "stopSpeaking":
+      stopSpeaking()
+      result(nil)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func startListening(localeId: String, result: @escaping FlutterResult) {
+    stopSpeaking()
+    stopListening(emitFinal: false)
+
+    ensureSpeechAndMicPermissions { [weak self] granted, errorText in
+      DispatchQueue.main.async {
+        guard let self else {
+          result(false)
+          return
+        }
+        guard granted else {
+          self.emitError(errorText ?? "需要允许语音识别与麦克风权限")
+          result(false)
+          return
+        }
+        do {
+          try self.beginRecognition(localeId: localeId)
+          result(true)
+        } catch {
+          self.stopListening(emitFinal: false)
+          self.emitError("语音识别启动失败：\(error.localizedDescription)")
+          result(false)
+        }
+      }
+    }
+  }
+
+  private func ensureSpeechAndMicPermissions(
+    done: @escaping (Bool, String?) -> Void
+  ) {
+    let proceedMic = {
+      let session = AVAudioSession.sharedInstance()
+      switch session.recordPermission {
+      case .granted:
+        done(true, nil)
+      case .denied:
+        done(false, "请在系统设置允许麦克风权限后再使用语音对话")
+      case .undetermined:
+        session.requestRecordPermission { ok in
+          done(ok, ok ? nil : "需要麦克风权限才能进行语音对话")
+        }
+      @unknown default:
+        done(false, "麦克风权限不可用")
+      }
+    }
+
+    switch SFSpeechRecognizer.authorizationStatus() {
+    case .authorized:
+      proceedMic()
+    case .notDetermined:
+      SFSpeechRecognizer.requestAuthorization { status in
+        if status == .authorized {
+          proceedMic()
+        } else {
+          done(false, "请在系统设置允许语音识别权限后再使用语音对话")
+        }
+      }
+    default:
+      done(false, "请在系统设置允许语音识别权限后再使用语音对话")
+    }
+  }
+
+  private func beginRecognition(localeId: String) throws {
+    let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
+      ?? SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
+    guard let recognizer, recognizer.isAvailable else {
+      throw NSError(
+        domain: "RCAgentSpeech",
+        code: -1,
+        userInfo: [NSLocalizedDescriptionKey: "当前设备系统语音识别暂不可用"]
+      )
+    }
+
+    let req = SFSpeechAudioBufferRecognitionRequest()
+    req.shouldReportPartialResults = true
+    speechRecognizer = recognizer
+    recognitionRequest = req
+    lastTranscript = ""
+    finalizing = false
+
+    if PhoneMicBridge.shared.isCapturing {
+      // 本机正在后台保底/独立录音：共享输入 Tap，不打断正在采集的切片流水线
+      PhoneMicBridge.shared.auxiliaryBufferTap = { [weak self, weak req] buffer in
+        req?.append(buffer)
+        self?.emitAudioLevel(buffer)
+      }
+    } else {
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(
+        .playAndRecord,
+        mode: .measurement,
+        options: [.defaultToSpeaker, .allowBluetooth, .duckOthers]
+      )
+      try session.setActive(true)
+
+      let engine = AVAudioEngine()
+      let input = engine.inputNode
+      let format = input.outputFormat(forBus: 0)
+      input.installTap(onBus: 0, bufferSize: 1024, format: format) {
+        [weak self, weak req] buffer, _ in
+        req?.append(buffer)
+        self?.emitAudioLevel(buffer)
+      }
+      engine.prepare()
+      try engine.start()
+      audioEngine = engine
+    }
+
+    listening = true
+    listenGeneration &+= 1
+    let gen = listenGeneration
+    DispatchQueue.main.async { [weak self] in
+      self?.channel?.invokeMethod("onListenState", arguments: ["listening": true])
+    }
+
+    recognitionTask = recognizer.recognitionTask(with: req) { [weak self] res, err in
+      DispatchQueue.main.async {
+        guard let self, self.listenGeneration == gen else { return }
+        if let res {
+          let text = res.bestTranscription.formattedString
+          self.lastTranscript = text
+          let isFinal = res.isFinal
+          self.channel?.invokeMethod("onTranscript", arguments: [
+            "text": text,
+            "isFinal": isFinal,
+          ])
+          if isFinal {
+            self.stopListening(emitFinal: false)
+          }
+        } else if let err, !self.finalizing, self.listening {
+          self.stopListening(emitFinal: false)
+          self.emitError("未能听清语音：\(err.localizedDescription)")
+        }
+      }
+    }
+  }
+
+  private func stopListening(emitFinal: Bool) {
+    finalizing = true
+    listenGeneration &+= 1
+    let wasListening = listening
+    let captured = lastTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+    listening = false
+
+    PhoneMicBridge.shared.auxiliaryBufferTap = nil
+    if let engine = audioEngine {
+      engine.inputNode.removeTap(onBus: 0)
+      if engine.isRunning { engine.stop() }
+      audioEngine = nil
+    }
+    recognitionRequest?.endAudio()
+    recognitionRequest = nil
+    recognitionTask?.cancel()
+    recognitionTask = nil
+
+    if wasListening {
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
+        if emitFinal && !captured.isEmpty {
+          self.channel?.invokeMethod("onTranscript", arguments: [
+            "text": captured,
+            "isFinal": true,
+          ])
+        }
+        self.channel?.invokeMethod("onListenState", arguments: ["listening": false])
+      }
+    }
+  }
+
+  private func speak(text: String, localeId: String) {
+    guard !text.isEmpty else { return }
+    stopSpeaking()
+    if !PhoneMicBridge.shared.isCapturing {
+      let session = AVAudioSession.sharedInstance()
+      try? session.setCategory(
+        .playAndRecord,
+        mode: .default,
+        options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers]
+      )
+      try? session.setActive(true)
+    }
+
+    let utterance = AVSpeechUtterance(string: text)
+    utterance.voice = AVSpeechSynthesisVoice(language: localeId)
+      ?? AVSpeechSynthesisVoice(language: "zh-CN")
+    utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+    speaking = true
+    DispatchQueue.main.async { [weak self] in
+      self?.channel?.invokeMethod("onSpeakState", arguments: ["speaking": true])
+    }
+    synthesizer.speak(utterance)
+  }
+
+  private func stopSpeaking() {
+    if synthesizer.isSpeaking {
+      synthesizer.stopSpeaking(at: .immediate)
+    }
+    if speaking {
+      speaking = false
+      DispatchQueue.main.async { [weak self] in
+        self?.channel?.invokeMethod("onSpeakState", arguments: ["speaking": false])
+      }
+    }
+  }
+
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+    speaking = false
+    DispatchQueue.main.async { [weak self] in
+      self?.channel?.invokeMethod("onSpeakState", arguments: ["speaking": false])
+    }
+  }
+
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+    speaking = false
+    DispatchQueue.main.async { [weak self] in
+      self?.channel?.invokeMethod("onSpeakState", arguments: ["speaking": false])
+    }
+  }
+
+  private func emitAudioLevel(_ buffer: AVAudioPCMBuffer) {
+    guard let ptr = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
+    let count = Int(buffer.frameLength)
+    var sum: Float = 0
+    for i in stride(from: 0, to: count, by: 4) {
+      let s = ptr[i]
+      sum += s * s
+    }
+    let rms = sqrt(sum / Float(max(1, count / 4)))
+    let level = min(1.0, max(0.0, Double(rms * 8.0)))
+    DispatchQueue.main.async { [weak self] in
+      self?.channel?.invokeMethod("onSoundLevel", arguments: ["level": level])
+    }
+  }
+
+  private func emitError(_ message: String) {
+    DispatchQueue.main.async { [weak self] in
+      self?.channel?.invokeMethod("onSpeechError", arguments: ["message": message])
+    }
   }
 }
 

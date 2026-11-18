@@ -96,13 +96,15 @@ CREATE TABLE health_sync_state (
     if (samples.isEmpty) return;
     final db = await _open();
     await db.transaction((txn) async {
+      final batch = txn.batch();
       for (final sample in samples) {
-        await txn.insert(
+        batch.insert(
           'health_samples',
           sample.toRow(),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
+      await batch.commit(noResult: true);
     });
   }
 
@@ -167,22 +169,30 @@ CREATE TABLE health_sync_state (
         offset: offset,
       );
       if (rows.isEmpty) break;
-      await db.transaction((txn) async {
-        for (final row in rows) {
-          final start = _asInt(row['start_ms']);
-          final end = _asInt(row['end_ms']);
-          final next = linkRecordingId(start, end, spans);
-          final current = row['recording_id'] as String?;
-          if (next == current) continue;
-          changed += 1;
-          await txn.update(
-            'health_samples',
-            {'recording_id': next},
-            where: 'id = ?',
-            whereArgs: [row['id']],
-          );
-        }
-      });
+      final updates = <({Object? id, String? next})>[];
+      for (final row in rows) {
+        final start = _asInt(row['start_ms']);
+        final end = _asInt(row['end_ms']);
+        final next = linkRecordingId(start, end, spans);
+        final current = row['recording_id'] as String?;
+        if (next == current) continue;
+        updates.add((id: row['id'], next: next));
+      }
+      if (updates.isNotEmpty) {
+        changed += updates.length;
+        await db.transaction((txn) async {
+          final batch = txn.batch();
+          for (final item in updates) {
+            batch.update(
+              'health_samples',
+              {'recording_id': item.next},
+              where: 'id = ?',
+              whereArgs: [item.id],
+            );
+          }
+          await batch.commit(noResult: true);
+        });
+      }
       if (rows.length < page) break;
       offset += rows.length;
     }
@@ -210,12 +220,14 @@ CREATE TABLE health_sync_state (
     if (cursors.isEmpty) return;
     final db = await _open();
     await db.transaction((txn) async {
+      final batch = txn.batch();
       for (final entry in cursors.entries) {
-        await txn.insert('health_sync_state', {
+        batch.insert('health_sync_state', {
           'key': 'cursor:${entry.key}',
           'value': '${entry.value}',
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
+      await batch.commit(noResult: true);
     });
   }
 

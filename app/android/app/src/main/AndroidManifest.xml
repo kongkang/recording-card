@@ -35,6 +35,8 @@
     <!-- 可选云端转写 / 版本检查 / 固件更新 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- OS1 原生语音对话输入 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- BLE 是核心能力但不设为 required，避免不带蓝牙的平板在商店无法安装；运行时再做能力判断 -->
     <uses-feature
@@ -94,6 +96,12 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
     </queries>
 </manifest>

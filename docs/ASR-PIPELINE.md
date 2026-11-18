@@ -83,3 +83,33 @@
   （见 `/tmp/run_pipeline_device.sh` 或 handoff 的 P7 命令）。
 - iOS 重装会重置 TCC：每次真机首跑需在设备上点一次「允许蓝牙」/
   「允许查找本地网络」；授权后 `BluetoothPermission.request()` 返回 granted。
+
+## 7. Android 各品牌系统语音识别接口评估与端侧策略（2026-11-18）
+
+本节总结各品牌 Android 设备的原生/厂商语音识别能力、音频文件流注入可行性（`RecognizerIntent.EXTRA_AUDIO_SOURCE`）、离线隐私合规与接入成本，作为 `SystemSpeechBridge.kt` 运行时判定与 UI 平台隔离展示的依据。
+
+### 7.1 Android 各品牌/接口横向对比与接入成本表
+
+| 品牌 / 系统 | 底层服务 / 公开接口 | 离线转写硬件卡片音频文件（无麦/不上云） | 接入成本 & 前置门槛 | V1 运行时策略 |
+|---|---|---|---|---|
+| **Google Pixel / 海外版 GMS 机型**<br>（Android 13+, API 33+） | AOSP `SpeechRecognizer.createOnDeviceSpeechRecognizer()` + `EXTRA_AUDIO_SOURCE`<br>底层 `com.google.android.as`（System Intelligence / AICore）或 `com.google.android.tts` | **可行**：剥离 WAV 头后通过 `ParcelFileDescriptor` 注入 16kHz 16-bit mono PCM，配合 ~12s 能量谷底切片与 `EXTRA_ENABLE_FORMATTING` | **低**：纯标准 Android SDK，零白名单、零商业商务接入费；单次 ~15–25s 断句上限由窗切消除 | **支持**：默认启用「系统内置」（免下载 228MB SenseVoice）；若缺中文语言包可调用 `triggerModelDownload` 按需拉取 |
+| **Android Flagship（ML Kit GenAI / AICore）** | Google `mlkit:genai-speech-recognition`（Gemini Nano 端侧） | **有限可行**：仅 Pixel 8–10 / Samsung S24+ 等海外旗舰白名单芯片；国内机 0 覆盖 | **中**：仅覆盖极窄高端海外机型，无法替代通用分支 | 当前由标准 Android 13+ On-Device API 统一覆盖 Pixel / GMS 旗舰 |
+| **三星 Galaxy（One UI）**<br>海外 GMS vs 国行 Bixby | 底层绑定 `com.google.android.as` 时走标准通道；若 `config_defaultOnDeviceSpeechRecognitionService` 指向 `com.samsung.android.bixby.*` 或 `com.samsung.SMT` | **海外 GMS 可行；国行 / Bixby 不可行**：实测 Bixby / SMT 会忽略 `EXTRA_AUDIO_SOURCE` 并**静默回退打开手机物理麦克风** | **高风险拦截成本**：不可直接依赖 `isOnDeviceRecognitionAvailable == true`，必须读取系统资源判断默认包名 | **强制拦截**：识别 `servicePkg` 含 `bixby` 或 `com.samsung.smt` 时 `supportsModernSystemAsr = false`，明确提示原因并仅显示 SenseVoice |
+| **小米 / Redmi（HyperOS / MIUI）** | 国行 `com.miui.voiceassistant`（小爱）<br>海外版带 GMS 的 Xiaomi 14/15 取决于系统是否预置 Google 端侧语言包 | **国行不可行**：`isOnDeviceRecognitionAvailable == false`；小爱开放平台偏云端/唤醒场景 | **极高**：小爱私有接口需商业白名单与系统签名，普通应用不可接 | 国行与未开 GMS 服务机型返回不支持并识别设备型号，仅保留 SenseVoice 增强模型 |
+| **OPPO / OnePlus / realme（ColorOS）** | ColorOS Breeno / `AIUnit` | **国行不可行**：标准端侧 API 不可用；AIUnit AAR 对接需企业商务审核与机型白名单 | **高**：仅适配特定 ColorOS 高端机 + 额外 SDK 体积 + 商务白名单 | 仅海外 GMS 可用；其余统一屏蔽系统项，引导下载 SenseVoice |
+| **vivo / iQOO（OriginOS）** | OriginOS 蓝心大模型 / Jovi 语音 | **国行不可行**：未向第三方开放无麦克风的离线音频文件 PCM 转写流 | **高 / 封闭**：无公开第三方离线转写 SDK | 国行统一屏蔽系统项，仅保留 SenseVoice |
+| **荣耀 HONOR（MagicOS）** | Honor Voice Kit vs 海外 GMS | **国行受限**：Honor Voice Kit 需开发者资质审核、AppId + 签名指纹绑定，且偏在线/交互场景；海外 GMS 可走标准 API | **高**：额外维护厂商私钥/签名与渠道 SDK，偏离离线卡片录音场景 | 检测是否具备标准非 Bixby 端侧服务；未开放时仅显示 SenseVoice |
+| **华为 HUAWEI（HarmonyOS 4 / EMUI / NEXT）** | Android 兼容层无 GMS；HMS `ml-computer-voice-aft` 为**云端接口**；HarmonyOS NEXT `@kit.CoreSpeechKit` 非 Android APK | **不可行**：HMS 音频文件转写会将音频上传华为云，违反本地隐私红线；HarmonyOS NEXT 不走 Android 通道 | **极高 / 架构隔离**：需独立 ArkTS 原生工程 | 在 Android 包内明确标识为华为设备，禁用系统引擎，纯本地使用 SenseVoice |
+| **Android 12 及以下（API ≤ 32）** | 无 `EXTRA_AUDIO_SOURCE` 与无 `createOnDeviceSpeechRecognizer`（或仅 API 31/32 无文件流注入） | **物理不可行**：Android 13（API 33）之前无法将文件描述符作为 `SpeechRecognizer` 输入 | 无标准 API 可用 | 一律返回不支持，隐藏系统模型项，仅显示 SenseVoice |
+
+### 7.2 运行时判定与平台 UI 隔离约束
+
+1. **Android 运行时检测链路（`SystemSpeechBridge.kt`）**：
+   - 通过 `Build.MANUFACTURER` / `Build.BRAND` / `Build.MODEL` 及系统属性（`ro.mi.os.version.name`、`ro.miui.ui.version.name`、`ro.build.version.opporom`、`ro.vivo.os.build.display.id`、`ro.build.version.magic`、`hw_sc.build.platform.version`、`ro.build.version.emui`、`ro.build.version.oneui`）生成 `brandId`（`pixel`/`samsung`/`xiaomi`/`oppo`/`vivo`/`honor`/`huawei`/`other`）与 `deviceSummary`。
+   - 读取 AOSP 系统字符串 `android:string/config_defaultOnDeviceSpeechRecognitionService` 对应的默认服务包名 `onDeviceServicePackage`。
+   - 当且仅当 `Build.VERSION.SDK_INT >= 33`（TIRAMISU）且 `SpeechRecognizer.isOnDeviceRecognitionAvailable(context) == true` 且服务包名不包含 `bixby` 与 `com.samsung.smt` 时，`supportsModernSystemAsr = true`。
+   - 返回真实 `engineName`（如 `Android 系统端侧语音（System Intelligence）` 或 `Google 端侧离线语音引擎`）与通过 `checkRecognitionSupport` 探测到的 `offlinePackInstalled` / `canDownloadOfflinePack`，支持点击「下载系统中文离线包」触发 `SpeechRecognizer.triggerModelDownload`。
+2. **平台纯净化（Platform-Pure UI）**：
+   - Android 端界面（`SettingSubPage` / `ModelManagerController` / `SystemSpeechCapabilities`）禁止出现任何 `iOS` 或 `SpeechAnalyzer` 字样；iOS 端同样不出现 `Android` / `Bixby` / 国产 ROM 文案。
+   - 当当前设备 `!supportsSystemAsr` 时，**完全隐藏 `asr-opt-system` 选项行**，在 `asr-engine-group` 内仅渲染本机可选的模型（`SenseVoice 增强模型`）并在 `local-status-card` 顶部通过 `Key('local-device-summary')` 如实展示当前识别到的设备及不支持原因。
+

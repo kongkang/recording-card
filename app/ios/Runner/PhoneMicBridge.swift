@@ -12,6 +12,21 @@ final class PhoneMicBridge {
   private var targetFormat: AVAudioFormat?
   private var tapToken: UInt64 = 0
   private var running = false
+  private let auxTapLock = NSLock()
+  private var _auxiliaryBufferTap: ((AVAudioPCMBuffer) -> Void)?
+  var isCapturing: Bool { running }
+  var auxiliaryBufferTap: ((AVAudioPCMBuffer) -> Void)? {
+    get {
+      auxTapLock.lock()
+      defer { auxTapLock.unlock() }
+      return _auxiliaryBufferTap
+    }
+    set {
+      auxTapLock.lock()
+      _auxiliaryBufferTap = newValue
+      auxTapLock.unlock()
+    }
+  }
 
   private init() {
     installObserver()
@@ -156,6 +171,7 @@ final class PhoneMicBridge {
     inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) {
       [weak self] buffer, _ in
       guard let self, self.tapToken == token else { return }
+      self.auxiliaryBufferTap?(buffer)
       self.processBuffer(buffer)
     }
 

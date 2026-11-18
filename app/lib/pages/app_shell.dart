@@ -14,6 +14,7 @@ import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
+import '../services/agent/agent_chat_controller.dart';
 import '../services/audio/live_audio_recorder.dart';
 import '../services/audio/recording_status.dart';
 import '../services/auth_service.dart';
@@ -21,6 +22,7 @@ import '../services/health/health_signal_controller.dart';
 import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/model_manager_controller.dart';
 import '../widgets/legacy_upgrade_sheet.dart';
+import '../widgets/os1_ai_space.dart';
 import '../widgets/store_scope.dart';
 import 'detail_page.dart';
 import 'setting_page.dart';
@@ -43,6 +45,7 @@ class AppShell extends StatefulWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    this.agentChat,
     this.supportsDynamicIslandOverride,
     this.onDeviceCreated,
   });
@@ -57,6 +60,7 @@ class AppShell extends StatefulWidget {
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
+  final AgentChatController? agentChat;
   final bool? supportsDynamicIslandOverride;
   final void Function(DeviceStore)? onDeviceCreated;
 
@@ -70,6 +74,13 @@ class _AppShellState extends State<AppShell> {
       widget.recordingStatus ?? RecordingStatusController();
   late final AgentConfigStore _agentConfig =
       widget.agentConfig ?? AgentConfigStore(store: InMemoryStore());
+  late final AgentChatController _agentChat =
+      widget.agentChat ??
+      AgentChatController(
+        appStore: widget.store,
+        agentConfig: _agentConfig,
+        healthStore: widget.healthSignals?.store,
+      );
 
   /// 实时音频接收器：录音期间边录边把 PCM 收进本地，每满 1 分钟切片即刻送本地 ASR 转写落库。
   late final LiveAudioRecorder _liveAudio =
@@ -262,6 +273,7 @@ class _AppShellState extends State<AppShell> {
     _device.releaseClock();
     if (widget.device == null) _device.dispose();
     if (widget.recordingStatus == null) _recording.dispose();
+    if (widget.agentChat == null) _agentChat.dispose();
     if (widget.agentConfig == null) _agentConfig.dispose();
     super.dispose();
   }
@@ -300,6 +312,7 @@ class _AppShellState extends State<AppShell> {
                         authService: widget.authService,
                         photoLibrary: _photoLib,
                         healthSignals: widget.healthSignals,
+                        onOpenOs1: () => _agentChat.open(),
                         supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                       )
                     else
@@ -312,6 +325,7 @@ class _AppShellState extends State<AppShell> {
                         authService: widget.authService,
                         photoLibrary: _photoLib,
                         healthSignals: widget.healthSignals,
+                        onOpenOs1: () => _agentChat.open(),
                         supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                       ),
                     ListenableBuilder(
@@ -324,6 +338,7 @@ class _AppShellState extends State<AppShell> {
                     LegacyUpgradeSheetOverlay(
                       controller: _device.legacyUpgrade,
                     ),
+                    Os1AiSpaceOverlay(controller: _agentChat),
                   ],
                 ),
               ),
@@ -462,11 +477,16 @@ class _Header extends StatelessWidget {
 }
 
 class _BottomNav extends StatelessWidget {
-  const _BottomNav({required this.height, this.bottomInset = 0});
+  const _BottomNav({
+    required this.height,
+    this.bottomInset = 0,
+    required this.onOpenOs1,
+  });
   final double height;
 
   /// 窄屏真机安全区：home indicator 高度并入底栏背景，图标区仍占上方 [height]
   final double bottomInset;
+  final VoidCallback onOpenOs1;
 
   @override
   Widget build(BuildContext context) {
@@ -498,6 +518,73 @@ class _BottomNav extends StatelessWidget {
       );
     }
 
+    Widget sunriseItem() {
+      return Expanded(
+        child: GestureDetector(
+          key: const Key('nav-ai-sunrise'),
+          behavior: HitTestBehavior.opaque,
+          onTap: onOpenOs1,
+          child: SizedBox(
+            height: double.infinity,
+            child: Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.topCenter,
+              children: [
+                Positioned(
+                  top: -18,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        key: const Key('nav-ai-sunrise-orb'),
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: const RadialGradient(
+                            center: Alignment(-0.28, -0.44),
+                            radius: 0.9,
+                            colors: [
+                              Color(0xFFFFB57A),
+                              Color(0xFFEF653F),
+                              Color(0xFFC5361B),
+                            ],
+                          ),
+                          border: Border.all(color: RCColors.bg, width: 3),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x61D94124),
+                              blurRadius: 14,
+                              offset: Offset(0, 5),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.all_inclusive_rounded,
+                          size: 22,
+                          color: Color(0xFFFFF6EE),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'OS1',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFC5361B),
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Container(
       key: const Key('bottom-nav'),
       height: height,
@@ -510,6 +597,7 @@ class _BottomNav extends StatelessWidget {
       child: Row(
         children: [
           item('Timeline', RootTab.timeline, 'nav-timeline', Icons.schedule),
+          sunriseItem(),
           item(
             'Setting',
             RootTab.setting,
@@ -574,6 +662,7 @@ class _NarrowLayout extends StatelessWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    required this.onOpenOs1,
     this.supportsDynamicIsland = false,
   });
   final DeviceStore device;
@@ -584,6 +673,7 @@ class _NarrowLayout extends StatelessWidget {
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
+  final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
 
   @override
@@ -668,7 +758,11 @@ class _NarrowLayout extends StatelessWidget {
         ),
         // 子页隐藏底栏，经顶栏面包屑或边缘滑动返回；内容底部让出 home indicator
         if (!sub)
-          _BottomNav(height: 56 + insets.bottom, bottomInset: insets.bottom)
+          _BottomNav(
+            height: 56 + insets.bottom,
+            bottomInset: insets.bottom,
+            onOpenOs1: onOpenOs1,
+          )
         else if (insets.bottom > 0)
           SizedBox(height: insets.bottom),
       ],
@@ -718,6 +812,7 @@ class _WideLayout extends StatelessWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    required this.onOpenOs1,
     this.supportsDynamicIsland = false,
   });
   final DeviceStore device;
@@ -728,6 +823,7 @@ class _WideLayout extends StatelessWidget {
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
+  final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
 
   @override
@@ -789,7 +885,7 @@ class _WideLayout extends StatelessWidget {
             ],
           ),
         ),
-        const _BottomNav(height: 56),
+        _BottomNav(height: 56, onOpenOs1: onOpenOs1),
       ],
     );
   }

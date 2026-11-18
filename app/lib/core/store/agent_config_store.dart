@@ -279,6 +279,11 @@ class AgentConfigStore extends ChangeNotifier {
     'mcp-kb': false,
   };
 
+  static const String defaultAgentPrompt =
+      '你是 OS1，用户的随身录音记忆与生活搭档。说话像真人朋友一样自然简练、有温度，'
+      '有把握的事实直接引用记录或总结里的具体时间、人物和要点，没有把握或未采集的绝不编造。'
+      '严禁在回复中输出“思考过程”“调用工具”等内部步骤字样。';
+
   bool cloudEnabled = true;
   String customApiBase = '';
   bool developerMode = false;
@@ -290,6 +295,17 @@ class AgentConfigStore extends ChangeNotifier {
 
   /// 行为与健康信号总开关。默认关闭；打开后才申请系统权限并在本机采集。
   bool healthSignalEnabled = false;
+
+  /// 用户手动选中的端侧语音转写引擎（null=跟随平台默认，'system'=系统内置，'sensevoice'=增强模型）。
+  String? preferredAsrEngine;
+
+  /// OS1 对话 Agent 默认挂载的基础能力权限（保持开放可扩展，均可在设置或由 Agent 自身调整）。
+  bool agentWebSearchEnabled = true;
+  bool agentRecordSearchEnabled = true;
+  bool agentHealthAccessEnabled = true;
+  String customSearchApiUrl = '';
+  String customSearchApiKey = '';
+  String agentPrompt = defaultAgentPrompt;
 
   int get enabledExtHardwareCount =>
       (getSeedLinkEnabled ? 1 : 0) + (omiLinkEnabled ? 1 : 0);
@@ -509,6 +525,28 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['healthSignalEnabled'] is bool) {
       healthSignalEnabled = data['healthSignalEnabled'] as bool;
     }
+    if (data['asrEngine'] == 'system' || data['asrEngine'] == 'sensevoice') {
+      preferredAsrEngine = data['asrEngine'] as String;
+    }
+    if (data['agentWebSearchEnabled'] is bool) {
+      agentWebSearchEnabled = data['agentWebSearchEnabled'] as bool;
+    }
+    if (data['agentRecordSearchEnabled'] is bool) {
+      agentRecordSearchEnabled = data['agentRecordSearchEnabled'] as bool;
+    }
+    if (data['agentHealthAccessEnabled'] is bool) {
+      agentHealthAccessEnabled = data['agentHealthAccessEnabled'] as bool;
+    }
+    if (data['customSearchApiUrl'] is String) {
+      customSearchApiUrl = data['customSearchApiUrl'] as String;
+    }
+    if (data['customSearchApiKey'] is String) {
+      customSearchApiKey = data['customSearchApiKey'] as String;
+    }
+    if (data['agentPrompt'] is String &&
+        (data['agentPrompt'] as String).trim().isNotEmpty) {
+      agentPrompt = (data['agentPrompt'] as String).trim();
+    }
     final storedModel = data['model'] is String
         ? (data['model'] as String).trim()
         : '';
@@ -662,6 +700,48 @@ class AgentConfigStore extends ChangeNotifier {
 
   Future<void> setHealthSignalEnabled(bool value) async {
     healthSignalEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setAgentWebSearchEnabled(bool value) async {
+    agentWebSearchEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setAgentRecordSearchEnabled(bool value) async {
+    agentRecordSearchEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setAgentHealthAccessEnabled(bool value) async {
+    agentHealthAccessEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setCustomSearchApi({String? url, String? apiKey}) async {
+    if (url != null) {
+      customSearchApiUrl = url.trim().replaceFirst(RegExp(r'/+$'), '');
+    }
+    if (apiKey != null) {
+      customSearchApiKey = apiKey.trim();
+    }
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setAgentPrompt(String text) async {
+    final trimmed = text.trim();
+    agentPrompt = trimmed.isEmpty ? defaultAgentPrompt : trimmed;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> resetAgentPrompt() async {
+    agentPrompt = defaultAgentPrompt;
     notifyListeners();
     await _save();
   }
@@ -931,6 +1011,14 @@ class AgentConfigStore extends ChangeNotifier {
     await _save();
   }
 
+  Future<void> setPreferredAsrEngine(String? mode) async {
+    final normalized = (mode == 'system' || mode == 'sensevoice') ? mode : null;
+    if (preferredAsrEngine == normalized) return;
+    preferredAsrEngine = normalized;
+    notifyListeners();
+    await _save();
+  }
+
   Future<void> _save() async {
     await _json.write(_storageKey, {
       'cloudEnabled': cloudEnabled,
@@ -942,6 +1030,15 @@ class AgentConfigStore extends ChangeNotifier {
       'getSeedLinkEnabled': getSeedLinkEnabled,
       'omiLinkEnabled': omiLinkEnabled,
       'healthSignalEnabled': healthSignalEnabled,
+      if (preferredAsrEngine != null) 'asrEngine': preferredAsrEngine,
+      'agentWebSearchEnabled': agentWebSearchEnabled,
+      'agentRecordSearchEnabled': agentRecordSearchEnabled,
+      'agentHealthAccessEnabled': agentHealthAccessEnabled,
+      if (customSearchApiUrl.isNotEmpty)
+        'customSearchApiUrl': customSearchApiUrl,
+      if (customSearchApiKey.isNotEmpty)
+        'customSearchApiKey': customSearchApiKey,
+      if (agentPrompt != defaultAgentPrompt) 'agentPrompt': agentPrompt,
       'recordingSliceSeconds': recordingSliceSeconds,
       'healthSampleIntervalSeconds': healthSampleIntervalSeconds,
       'healthSamplePhaseSeconds': healthSamplePhaseSeconds,
