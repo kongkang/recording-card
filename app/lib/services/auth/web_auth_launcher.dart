@@ -1,8 +1,8 @@
 /// OAuth 浏览器跳转抽象层。
 ///
-/// 生产实现 [FlutterWebAuthLauncher] 走 `flutter_web_auth_2`：
+/// 生产实现 [FlutterWebAuthLauncher]：
 /// iOS 用 ASWebAuthenticationSession（应用内系统浏览器，共用 Safari 登录态），
-/// Android 用 Chrome Custom Tabs。业务层只依赖 [WebAuthLauncher] 接口，便于测试替换。
+/// Android 用内嵌页截住 `reai-mobile://callback`。业务层只依赖 [WebAuthLauncher] 接口。
 ///
 /// 另有：
 /// - [UnavailableWebAuthLauncher]：门控用的空实现（`isSupported == false`）；
@@ -10,6 +10,7 @@
 library;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 import 'oauth_exception.dart';
@@ -45,6 +46,16 @@ class FlutterWebAuthLauncher implements WebAuthLauncher {
     required String callbackScheme,
   }) async {
     try {
+      // Android 用内嵌页。系统浏览器跳 reai-mobile://callback 时，
+      // 外脑 App 也注册了同一 scheme，会弹出选择框，授权结果回不到本 App。
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        final raw = await const MethodChannel('com.reai.recordingcard/oauth')
+            .invokeMethod<String>('authenticate', {'url': authorizeUrl.toString()});
+        if (raw == null || raw.isEmpty) {
+          throw const OAuthCancelledException();
+        }
+        return Uri.parse(raw);
+      }
       final result = await FlutterWebAuth2.authenticate(
         url: authorizeUrl.toString(),
         callbackUrlScheme: callbackScheme,
@@ -52,6 +63,8 @@ class FlutterWebAuthLauncher implements WebAuthLauncher {
         options: const FlutterWebAuth2Options(preferEphemeral: false),
       );
       return Uri.parse(result);
+    } on OAuthException {
+      rethrow;
     } on Exception catch (error) {
       final text = error.toString();
       // flutter_web_auth_2 用 PlatformException('CANCELED') / 'canceled' 表示用户取消
