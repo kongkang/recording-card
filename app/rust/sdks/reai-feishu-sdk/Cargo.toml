@@ -1,0 +1,23 @@
+[package]
+name = "reai-feishu-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "ReAI-style BLE SDK for soundcore Work / 飞书录音豆 D3200 offline file sync"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+aes = "0.8"
+async-trait = "0.1"
+btleplug = "0.12"
+cipher = "0.4"
+ctr = "0.9"
+futures = "0.3"
+hkdf = "0.12"
+log = "0.4"
+p256 = { version = "0.13", features = ["ecdh"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+reai-ext-sdk = { path = "../reai-ext-sdk" }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["fs", "macros", "rt", "sync", "time"] }
+uuid = "1"

@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use reai_ext_sdk::{RecorderSdkDriver, SdkCapabilities};
+use reai_feishu_sdk::FeishuSdkDriver;
 use reai_getseed_sdk::GetSeedSdkDriver;
 use reai_omi_sdk::OmiSdkDriver;
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,8 @@ pub enum DeviceKind {
     GetSeedGsc10,
     /// Omi 量产版 / Friend Pendant（`reai-omi-sdk`）
     OmiCv1,
+    /// 飞书录音豆 / soundcore Work D3200（`reai-feishu-sdk`）
+    FeishuD3200,
 }
 
 impl DeviceKind {
@@ -32,6 +35,7 @@ impl DeviceKind {
             Self::BoardV21 => "board_v21",
             Self::GetSeedGsc10 => "getseed_gsc10",
             Self::OmiCv1 => "omi_cv1",
+            Self::FeishuD3200 => "feishu_d3200",
         }
     }
 
@@ -42,6 +46,7 @@ impl DeviceKind {
             Self::BoardV21 => "语音AI键盘 V2.1",
             Self::GetSeedGsc10 => "Get笔记卡",
             Self::OmiCv1 => "Omi 录音器",
+            Self::FeishuD3200 => "飞书录音豆",
         }
     }
 
@@ -52,6 +57,7 @@ impl DeviceKind {
             Some("board_v21") => return Some(Self::BoardV21),
             Some("getseed_gsc10") => return Some(Self::GetSeedGsc10),
             Some("omi_cv1") => return Some(Self::OmiCv1),
+            Some("feishu_d3200") => return Some(Self::FeishuD3200),
             _ => {}
         }
         name_hint.and_then(|n| classify_ble_name(n).map(|(k, _)| k))
@@ -96,6 +102,9 @@ impl DeviceKind {
                 HardwareCapabilities::from_sdk(GetSeedSdkDriver.default_capabilities())
             }
             Self::OmiCv1 => HardwareCapabilities::from_sdk(OmiSdkDriver.default_capabilities()),
+            Self::FeishuD3200 => {
+                HardwareCapabilities::from_sdk(FeishuSdkDriver.default_capabilities())
+            }
         }
     }
 }
@@ -144,8 +153,8 @@ fn classify_proprietary_name(trimmed: &str) -> Option<(DeviceKind, HardwareCapab
     }
 }
 
-fn external_drivers() -> [&'static dyn RecorderSdkDriver; 2] {
-    [&GetSeedSdkDriver, &OmiSdkDriver]
+fn external_drivers() -> [&'static dyn RecorderSdkDriver; 3] {
+    [&GetSeedSdkDriver, &OmiSdkDriver, &FeishuSdkDriver]
 }
 
 /// 根据 BLE 广播名称识别支持的录音硬件。
@@ -262,5 +271,21 @@ mod tests {
         )
         .expect("friend pendant");
         assert_eq!(kf, DeviceKind::OmiCv1);
+
+        let (name_bean, kb, cb) = classify_ble_advertisement(
+            "aabb-c3a1",
+            None,
+            &[reai_feishu_sdk::SERVICE_UUID],
+            &empty,
+        )
+        .expect("feishu uuid only");
+        assert_eq!(kb, DeviceKind::FeishuD3200);
+        assert!(name_bean.starts_with("D3200-"));
+        assert!(cb.has_file_sync && cb.has_remote_record_control && cb.has_physical_record_toggle);
+        assert!(!cb.realtime_audio && !cb.has_wifi_config && !cb.has_mark_button);
+        assert_eq!(cb.ota_mode, "none");
+
+        let (kn, _) = classify_ble_name("D3200-C3A1").expect("feishu name");
+        assert_eq!(kn, DeviceKind::FeishuD3200);
     }
 }

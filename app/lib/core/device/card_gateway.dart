@@ -30,6 +30,7 @@ enum DeviceKind {
   boardV21('board_v21', '语音AI键盘 V2.1'),
   getSeedGsc10('getseed_gsc10', 'Get笔记卡'),
   omiCv1('omi_cv1', 'Omi 录音器'),
+  feishuD3200('feishu_d3200', '飞书录音豆'),
   appleWatch('apple_watch', 'Apple Watch');
 
   const DeviceKind(this.code, this.displayModel);
@@ -62,6 +63,15 @@ enum DeviceKind {
         trimmed.startsWith('FRIEND ')) {
       return DeviceKind.omiCv1;
     }
+    if (trimmed == 'SOUNDCORE WORK' ||
+        trimmed.startsWith('SOUNDCORE WORK ') ||
+        trimmed.startsWith('D3200')) {
+      return DeviceKind.feishuD3200;
+    }
+    final raw = name.trim();
+    if (raw == '录音豆' || raw.startsWith('飞书录音豆')) {
+      return DeviceKind.feishuD3200;
+    }
     return null;
   }
 
@@ -81,6 +91,8 @@ enum DeviceKind {
       'OMI ',
       'FRIEND_',
       'FRIEND ',
+      'D3200-',
+      'D3200_',
     ]) {
       if (upper.startsWith(prefix)) {
         final suffix = trimmed.substring(prefix.length).trim();
@@ -102,6 +114,8 @@ enum DeviceKind {
         return DeviceKind.getSeedGsc10;
       case 'omi_cv1':
         return DeviceKind.omiCv1;
+      case 'feishu_d3200':
+        return DeviceKind.feishuD3200;
       case 'apple_watch':
         return DeviceKind.appleWatch;
       default:
@@ -188,6 +202,19 @@ class HardwareCapabilities {
     otaMode: 'none',
   );
 
+  /// 飞书录音豆 D3200：BLE 拉取板载 Opus，本机解成 16kHz WAV。不含实时流、Wi-Fi 与固件升级。
+  static const feishuD3200 = HardwareCapabilities(
+    realtimeAudio: false,
+    hasOnboardStorage: true,
+    hasFileSync: true,
+    hasWifiConfig: false,
+    hasCameraMedia: false,
+    hasPhysicalRecordToggle: true,
+    hasRemoteRecordControl: true,
+    hasMarkButton: false,
+    otaMode: 'none',
+  );
+
   /// Omi 量产版 / Friend Pendant：BLE 实时 Opus/PCM/uLaw/LC3 流 + 按键手势 + 板载存储同步。
   static const omiCv1 = HardwareCapabilities(
     realtimeAudio: true,
@@ -220,6 +247,7 @@ class HardwareCapabilities {
     DeviceKind.boardV21 => boardV21,
     DeviceKind.getSeedGsc10 => getSeedGsc10,
     DeviceKind.omiCv1 => omiCv1,
+    DeviceKind.feishuD3200 => feishuD3200,
     DeviceKind.appleWatch => appleWatch,
   };
 
