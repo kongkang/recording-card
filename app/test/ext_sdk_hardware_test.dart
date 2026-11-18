@@ -207,6 +207,8 @@ void main() {
     expect(find.byKey(const Key('ext-getseed-card')), findsOneWidget);
     expect(find.byKey(const Key('ext-omi-card')), findsOneWidget);
     expect(find.byKey(const Key('ext-feishu-card')), findsOneWidget);
+    expect(find.byKey(const Key('ext-feishu-beta')), findsOneWidget);
+    expect(find.text('Beta'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('ext-getseed-switch')));
     await tester.pump();

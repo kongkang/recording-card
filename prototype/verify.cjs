@@ -1219,6 +1219,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.$eval('[data-testid="set-ext-hw"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="set-ext-hw"]');
   await pCur.waitForSelector('[data-testid="ext-feishu-switch"]', { timeout: 3000 });
+  assert.equal(await pCur.$eval('[data-testid="ext-feishu-beta"]', x => x.innerText.trim()), 'Beta');
   await pCur.click('[data-testid="ext-feishu-switch"]');
   await pCur.click('[data-testid="crumb-back"]');
   assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '已开启 1 款');

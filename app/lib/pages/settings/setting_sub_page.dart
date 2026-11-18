@@ -3931,7 +3931,9 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                     switchKey: const Key('ext-feishu-switch'),
                     title: '飞书录音豆',
                     modelTag: 'D3200',
-                    subtitle: 'BLE 同步板载录音，支持远程启停；固件走官方 App',
+                    statusTag: 'Beta',
+                    statusKey: const Key('ext-feishu-beta'),
+                    subtitle: 'BLE 同步板载录音，支持远程启停；尚未真机验证，固件走官方 App',
                     enabled: feishuOn,
                     connected: feishuConn,
                     bottomRadius: 12,
@@ -3960,6 +3962,8 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
     required Key switchKey,
     required String title,
     required String modelTag,
+    String? statusTag,
+    Key? statusKey,
     required String subtitle,
     required bool enabled,
     required bool connected,
@@ -4017,6 +4021,26 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                             ),
                           ),
                         ),
+                        if (statusTag != null)
+                          Container(
+                            key: statusKey,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF7E6),
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              statusTag,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFFAD6800),
+                              ),
+                            ),
+                          ),
                         if (connected)
                           Text(
                             '· 已连接',

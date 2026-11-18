@@ -43,7 +43,7 @@ Flutter DeviceStore ──CardGateway(FFI)──> card_bridge(staticlib) ──>
 | `reai-ext-sdk` | 第三方统一契约层 | — | `RecorderDriver` / `RecorderDevice` trait、纯 Rust Ogg Opus / Raw Opus / LC3 → 16kHz Mono PCM 解码 |
 | `reai-getseed-sdk` | 得到 Get 笔记录音卡 (`getseed_gsc10`) | `Get-*` / `0x544A`（Setting 按需开启） | `hasRemoteRecordControl=false`（机身按键控录）、GATT `0xFF00` `.ogg`/`.wav` 下载与单文件删除（禁用 `0x0041` 全盘清除） |
 | `reai-omi-sdk` | Omi 量产版 / Friend Pendant (`omi_cv1`) | UUID / `Omi-*` / `Friend_*`（Setting 按需开启） | BLE 实时流（Opus/PCM/μ-law/LC3）、按键手势事件、StorageRing 离线文件同步、BAS 电量 |
-| `reai-feishu-sdk` | 飞书录音豆 D3200 (`feishu_d3200`) | Service `020cf5da-…` / `D3200-*` / `soundcore Work`（Setting 按需开启） | BLE 目录、远程启停、ECDH + AES-CTR 离线 Opus 拉取并转 16kHz WAV。不含实时流、SoftAP 与固件升级 |
+| `reai-feishu-sdk` | 飞书录音豆 D3200 (`feishu_d3200`，设置项标 Beta) | Service `020cf5da-…` / `D3200-*` / `soundcore Work`（Setting 按需开启） | BLE 目录、远程启停、ECDH + AES-CTR 离线 Opus 拉取并转 16kHz WAV。不含实时流、SoftAP 与固件升级。尚未真机验证 |
 
 > Priority 3（Plaud Note / Pro / `reai-plaud-sdk`）仍待后续独立分支沿同一 `reai-ext-sdk` 契约接入。飞书录音豆的 Wi-Fi SoftAP 快传不在当前 BLE 接入包内。
 
