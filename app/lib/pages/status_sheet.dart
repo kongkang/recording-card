@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/device/card_gateway.dart';
 import '../core/store/agent_config_store.dart';
 import '../core/store/device_store.dart';
 import '../core/theme/rc_icons.dart';
@@ -344,11 +345,36 @@ class StatusSheetOverlay extends StatefulWidget {
   State<StatusSheetOverlay> createState() => _StatusSheetOverlayState();
 }
 
-class _StatusSheetOverlayState extends State<StatusSheetOverlay> {
+class _StatusSheetOverlayState extends State<StatusSheetOverlay>
+    with WidgetsBindingObserver {
   DeviceStore get store => widget.store;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    store.markSheetAttached();
+  }
+
+  @override
+  void didUpdateWidget(StatusSheetOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.markSheetDetached();
+      widget.store.markSheetAttached();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      store.handleAppResumed();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     // 宿主要没了：只把"弹层已关闭"这件事登记下去，不在这里触发重建。
     // 直接调用会修改 store 并在 dispose 期间发通知，属于 build 期改状态。
     store.markSheetDetached();
@@ -1055,6 +1081,7 @@ class _ConnectView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final busy = store.isLinkBusy;
+    final bleExpired = store.isBleScanExpired;
     return Column(
       key: const Key('dev-connect'),
       mainAxisSize: MainAxisSize.min,
@@ -1152,6 +1179,16 @@ class _ConnectView extends StatelessWidget {
               Text('正在连接录音卡…', style: TextStyle(fontSize: 13)),
             ],
           )
+        else if (bleExpired)
+          const Text(
+            '蓝牙设备列表已过期，请重新扫描',
+            key: Key('dev-scan-expired-hint'),
+            style: TextStyle(
+              fontSize: 13,
+              color: Color(0xFF8A5A10),
+              fontWeight: FontWeight.w500,
+            ),
+          )
         else if (store.linkError != null)
           Column(
             key: const Key('dev-scan-empty'),
@@ -1176,43 +1213,134 @@ class _ConnectView extends StatelessWidget {
           ),
         for (final device in store.discovered) ...[
           const SizedBox(height: 10),
-          InkWell(
-            key: Key('dev-item-${device.id}'),
-            onTap: busy ? null : () => store.connectTo(device),
+          _ConnectDeviceTile(
+            device: device,
+            expired: store.isDeviceScanExpired(device),
+            busy: busy,
+            onTap: () => store.connectTo(device),
+          ),
+        ],
+        const SizedBox(height: 16),
+        if (bleExpired) ...[
+          FilledButton(
+            key: const Key('dev-rescan'),
+            onPressed: busy ? null : () => store.startScan(),
+            style: FilledButton.styleFrom(
+              backgroundColor: RCColors.label,
+              foregroundColor: Colors.white,
+              shape: const StadiumBorder(),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+            child: const Text('重新扫描'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            key: const Key('sheet-close'),
+            onPressed: store.closeSheet,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: RCColors.label,
+              side: const BorderSide(color: RCColors.ax),
+              shape: const StadiumBorder(),
+              padding: const EdgeInsets.symmetric(vertical: 11),
+            ),
+            child: const Text('关闭'),
+          ),
+        ] else ...[
+          OutlinedButton(
+            key: const Key('dev-rescan'),
+            onPressed: busy ? null : () => store.startScan(),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: RCColors.label,
+              side: const BorderSide(color: RCColors.ax),
+              shape: const StadiumBorder(),
+              padding: const EdgeInsets.symmetric(vertical: 11),
+            ),
+            child: const Text('重新扫描'),
+          ),
+          const SizedBox(height: 8),
+          FilledButton(
+            key: const Key('sheet-close'),
+            onPressed: store.closeSheet,
+            style: FilledButton.styleFrom(
+              backgroundColor: RCColors.label,
+              foregroundColor: Colors.white,
+              shape: const StadiumBorder(),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+            child: const Text('关闭'),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ConnectDeviceTile extends StatelessWidget {
+  const _ConnectDeviceTile({
+    required this.device,
+    required this.expired,
+    required this.busy,
+    required this.onTap,
+  });
+
+  final CardDevice device;
+  final bool expired;
+  final bool busy;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final disabled = busy || expired;
+    return Semantics(
+      button: true,
+      enabled: !disabled,
+      child: InkWell(
+        key: Key('dev-item-${device.id}'),
+        onTap: disabled ? null : onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: expired ? const Color(0xFFF5F5F2) : null,
+            border: Border.all(color: RCColors.sep),
             borderRadius: BorderRadius.circular(10),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                border: Border.all(color: RCColors.sep),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        DeviceKindBadge(
-                          key: Key('dev-kind-${device.id}'),
-                          kind: device.deviceKind,
-                          label: device.modelLabel,
-                        ),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            device.shortName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
+          ),
+          child: Opacity(
+            opacity: expired ? 0.55 : 1.0,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      DeviceKindBadge(
+                        key: Key('dev-kind-${device.id}'),
+                        kind: device.deviceKind,
+                        label: device.modelLabel,
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          device.shortName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  _SignalBars(strength: DeviceStore.signalOf(device.rssi)),
-                  const SizedBox(width: 10),
+                ),
+                _SignalBars(strength: DeviceStore.signalOf(device.rssi)),
+                const SizedBox(width: 10),
+                if (expired)
+                  Text(
+                    '已过期',
+                    key: Key('dev-expired-${device.id}'),
+                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                  )
+                else ...[
                   const Text(
                     '连接',
                     style: TextStyle(fontSize: 12, color: RCColors.okInk),
@@ -1224,35 +1352,11 @@ class _ConnectView extends StatelessWidget {
                     color: RCColors.ax,
                   ),
                 ],
-              ),
+              ],
             ),
           ),
-        ],
-        const SizedBox(height: 16),
-        OutlinedButton(
-          key: const Key('dev-rescan'),
-          onPressed: busy ? null : () => store.startScan(),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: RCColors.label,
-            side: const BorderSide(color: RCColors.ax),
-            shape: const StadiumBorder(),
-            padding: const EdgeInsets.symmetric(vertical: 11),
-          ),
-          child: const Text('重新扫描'),
         ),
-        const SizedBox(height: 8),
-        FilledButton(
-          key: const Key('sheet-close'),
-          onPressed: store.closeSheet,
-          style: FilledButton.styleFrom(
-            backgroundColor: RCColors.label,
-            foregroundColor: Colors.white,
-            shape: const StadiumBorder(),
-            padding: const EdgeInsets.symmetric(vertical: 12),
-          ),
-          child: const Text('关闭'),
-        ),
-      ],
+      ),
     );
   }
 }
