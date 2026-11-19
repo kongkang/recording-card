@@ -11,6 +11,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [dependencies]
 # 三款自研硬件 + 第三方外设 SDK 均基于 btleplug 0.12 + tokio 1，Cargo 自动复用同一平台蓝牙底座。
 btleplug = "0.12"
+async-trait = "0.1"
 uuid = "1"
 # unified_scan 泵 btleplug CentralEvent 事件流用（btleplug 本身依赖 futures 0.3，lock 不新增版本）。
 futures = "0.3"

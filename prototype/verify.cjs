@@ -707,6 +707,17 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="phone-rec-toggle"]');
   assert(!(await p.$eval('#dyn-island', x => x.classList.contains('show'))));
   await shot('device-connect');
+  // 目标版验证：超过 60s 后 BLE 列表置灰过期、点击无效，点重新扫描恢复
+  await p.evaluate(() => { conn.scanAt = Date.now() - 61000; markScanExpired(); });
+  assert(await p.$eval('#conn-sub', x => x.classList.contains('expired') && x.innerText.includes('已过期')));
+  assert(await p.$eval('[data-testid="dev-item-DYJV2_T4W25T"]', x => x.classList.contains('expired') && x.getAttribute('aria-disabled') === 'true' && x.innerText.includes('已过期')));
+  await p.click('[data-testid="dev-item-DYJV2_T4W25T"]');
+  assert(await p.$eval('#dev-connect', x => !x.hidden));
+  await p.click('[data-testid="conn-rescan"]');
+  await p.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="dev-item-DYJV2_T4W25T"]');
+    return el && !el.classList.contains('expired') && el.innerText.includes('连接');
+  }, { timeout: 5000 });
   await p.click('#conn-list .conn-item');
   await p.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
   assert.equal(await p.$eval('#dev-name', x => x.innerText.trim()), 'T4W25T');
@@ -1214,6 +1225,19 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="hw-capsule"]');
   await pCur.waitForFunction(() => document.querySelectorAll('#conn-list .conn-item').length === 4, { timeout: 5000 });
   assert(await pCur.$eval('#conn-list', x => x.innerText.includes('Apple Watch')));
+  // 当前版验证：BLE 扫描列表 60s 过期禁用、Apple Watch 保持可连、重新扫描恢复
+  await pCur.evaluate(() => { conn.scanAt = Date.now() - 61000; markScanExpired(); });
+  assert(await pCur.$eval('#conn-sub', x => x.classList.contains('expired') && x.innerText.includes('已过期')));
+  assert(await pCur.$eval('[data-testid="dev-item-DYJV2_T4W25T"]', x => x.classList.contains('expired') && x.getAttribute('aria-disabled') === 'true' && x.innerText.includes('已过期')));
+  await pCur.click('[data-testid="dev-item-DYJV2_T4W25T"]');
+  assert(await pCur.$eval('#dev-connect', x => !x.hidden), '过期 BLE 条目点击后不应触发建连');
+  assert(await pCur.$eval('[data-testid="dev-item-APPLE_WATCH_S10"]', x => !x.classList.contains('expired') && x.getAttribute('aria-disabled') !== 'true' && x.innerText.includes('连接')));
+  await pCur.click('[data-testid="conn-rescan"]');
+  await pCur.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="dev-item-DYJV2_T4W25T"]');
+    return el && !el.classList.contains('expired') && el.innerText.includes('连接');
+  }, { timeout: 5000 });
+  assert(await pCur.$eval('#conn-sub', x => !x.classList.contains('expired') && x.innerText.includes('信号强弱')));
   await pCur.click('[data-testid="dev-item-APPLE_WATCH_S10"]');
   await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
   assert.equal(await pCur.$eval('#dev-kind-badge', x => x.innerText.trim()), 'Apple Watch');
@@ -1333,6 +1357,6 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'bedtime-diary', 'diary-likes-annotations', 'dream-card', 'dream-sheet', 'dream-comic-skill', 'unc-triage-sheet', 'voiceprint-context-tag', 'voiceprint-merge-detach', 'memory-graph-triad', 'memory-provenance-metabolism', 'hw-button-island-push', 'tbc-markers', 'parity-drawer', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'raw-seek', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'sum-contextual-photos', 'map-photo-hierarchy', 'todo-progressive-meta', 'point-expand', 'point-trace', 'src-photo-infocards', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'setting-v2-subpages', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'multi-hw-scan', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'dfu-rec-guard', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'apple-watch-hardware-link', 'territory-checkin-map', 'sleep-hr-hrv-emotion', 'sunrise-ai-her-chat', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'bedtime-diary', 'diary-likes-annotations', 'dream-card', 'dream-sheet', 'dream-comic-skill', 'unc-triage-sheet', 'voiceprint-context-tag', 'voiceprint-merge-detach', 'memory-graph-triad', 'memory-provenance-metabolism', 'hw-button-island-push', 'tbc-markers', 'parity-drawer', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'raw-seek', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'sum-contextual-photos', 'map-photo-hierarchy', 'todo-progressive-meta', 'point-expand', 'point-trace', 'src-photo-infocards', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'setting-v2-subpages', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'multi-hw-scan', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'dfu-rec-guard', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'apple-watch-hardware-link', 'ble-scan-expiry', 'territory-checkin-map', 'sleep-hr-hrv-emotion', 'sunrise-ai-her-chat', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });

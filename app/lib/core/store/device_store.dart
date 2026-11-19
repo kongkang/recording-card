@@ -70,6 +70,7 @@ class DeviceStore extends ChangeNotifier {
     LiveActivityService? liveActivityService,
     WatchHardwareService? watchHardware,
     LegacyUpgradeController? legacyUpgrade,
+    DateTime Function()? now,
   }) : _bleGateway = gateway ?? realOrUnsupported(),
        _ownsWatchHardware = watchHardware == null,
        _watchHardware = watchHardware ?? WatchHardwareService(),
@@ -78,7 +79,8 @@ class DeviceStore extends ChangeNotifier {
        _ownsPhoneMicRecorder = phoneMicRecorder == null,
        _phoneMicRecorder = phoneMicRecorder ?? PhoneMicRecorder(),
        _liveActivityService = liveActivityService ?? LiveActivityService(),
-       _ownsLegacyUpgrade = legacyUpgrade == null {
+       _ownsLegacyUpgrade = legacyUpgrade == null,
+       _now = now ?? DateTime.now {
     _gateway = WatchCompositeCardGateway(
       bleGateway: _bleGateway,
       watchService: _watchHardware,
@@ -97,6 +99,7 @@ class DeviceStore extends ChangeNotifier {
 
   /// 生产环境在启动时开启心跳；widget 测试传 false，避免悬挂定时器。
   final bool _autoStart;
+  final DateTime Function() _now;
 
   final CardGateway _bleGateway;
   final bool _ownsWatchHardware;
@@ -128,6 +131,8 @@ class DeviceStore extends ChangeNotifier {
   }
 
   // ── 蓝牙连接状态 ───────────────────────────────────────────
+  static const Duration scanResultTtl = Duration(seconds: 60);
+
   LinkState linkState = LinkState.unknown;
   List<CardDevice> discovered = const [];
   String? linkError;
@@ -135,6 +140,85 @@ class DeviceStore extends ChangeNotifier {
   DeviceKind activeKind = DeviceKind.cardV2;
   HardwareCapabilities activeCapabilities = HardwareCapabilities.cardV2;
   String activeModelLabel = DeviceKind.cardV2.displayModel;
+
+  DateTime? _bleScanSeenAt;
+  bool _scanExpiredByTimer = false;
+  bool _sheetAttached = false;
+  Timer? _scanExpiryTimer;
+
+  static bool isBleDiscoveredDevice(CardDevice device) =>
+      device.deviceKind != DeviceKind.appleWatch;
+
+  bool get hasBleDiscovered => discovered.any(isBleDiscoveredDevice);
+
+  bool get isBleScanExpired {
+    if (isConnected || isLinkBusy || !hasBleDiscovered) return false;
+    if (_scanExpiredByTimer) return true;
+    final seenAt = _bleScanSeenAt;
+    if (seenAt == null) return false;
+    return _now().difference(seenAt) >= scanResultTtl;
+  }
+
+  bool isDeviceScanExpired(CardDevice device) {
+    if (!isBleDiscoveredDevice(device) || isConnected || isLinkBusy) {
+      return false;
+    }
+    if (_scanExpiredByTimer) return true;
+    final anchor = device.lastSeenAt ?? _bleScanSeenAt;
+    if (anchor == null) return false;
+    return _now().difference(anchor) >= scanResultTtl;
+  }
+
+  DateTime? _computeBleScanAnchor(List<CardDevice> list, DateTime completedAt) {
+    DateTime? anchor;
+    for (final device in list) {
+      if (!isBleDiscoveredDevice(device)) continue;
+      final seen = device.lastSeenAt;
+      final effective =
+          seen != null && !seen.isAfter(completedAt) ? seen : completedAt;
+      if (anchor == null || effective.isBefore(anchor)) {
+        anchor = effective;
+      }
+    }
+    return anchor;
+  }
+
+  void _stopScanExpiryTimer() {
+    _scanExpiryTimer?.cancel();
+    _scanExpiryTimer = null;
+  }
+
+  void _scheduleScanExpiryTimer() {
+    _stopScanExpiryTimer();
+    if (!sheetOpen || isConnected || isLinkBusy || !hasBleDiscovered) {
+      return;
+    }
+    if (isBleScanExpired) {
+      _scanExpiredByTimer = true;
+      return;
+    }
+    if (!_sheetAttached) {
+      // 无 UI 挂载（如纯状态机单元测试）时不挂起定时器，避免悬挂到测试清理前。
+      return;
+    }
+    final seenAt = _bleScanSeenAt;
+    if (seenAt == null) return;
+    final remaining = scanResultTtl - _now().difference(seenAt);
+    if (remaining <= Duration.zero) {
+      _scanExpiredByTimer = true;
+      return;
+    }
+    _scanExpiryTimer = Timer(remaining, _onScanExpiryTimer);
+  }
+
+  void _onScanExpiryTimer() {
+    _scanExpiryTimer = null;
+    if (!sheetOpen || isConnected || isLinkBusy || !hasBleDiscovered) {
+      return;
+    }
+    _scanExpiredByTimer = true;
+    notifyListeners();
+  }
 
   /// UI 展示的设备短名：剥离代际广播前缀（仅保留下划线后的蓝牙编号）。
   /// [connectedName] 保持完整原始广播名供 DFU 重连等底层匹配使用。
@@ -183,6 +267,7 @@ class DeviceStore extends ChangeNotifier {
     try {
       final snapshot = await _gw.snapshot();
       if (epoch != _epoch) return;
+      _stopScanExpiryTimer();
       linkState = LinkState.connected;
       linkError = null;
       _applySnapshot(snapshot);
@@ -275,6 +360,11 @@ class DeviceStore extends ChangeNotifier {
             ),
           )
           .toList(growable: false);
+      if (!hasBleDiscovered) {
+        _stopScanExpiryTimer();
+        _bleScanSeenAt = null;
+        _scanExpiredByTimer = false;
+      }
     }
     notifyListeners();
   }
@@ -362,6 +452,9 @@ class DeviceStore extends ChangeNotifier {
     }
 
     final epoch = ++_epoch;
+    _stopScanExpiryTimer();
+    _bleScanSeenAt = null;
+    _scanExpiredByTimer = false;
     linkState = LinkState.scanning;
     linkError = null;
     discovered = const [];
@@ -381,14 +474,21 @@ class DeviceStore extends ChangeNotifier {
           ))
             device,
       ]..sort((a, b) => (b.rssi ?? -100).compareTo(a.rssi ?? -100));
+      final completedAt = _now();
+      _bleScanSeenAt = _computeBleScanAnchor(discovered, completedAt);
+      _scanExpiredByTimer = false;
       linkState = LinkState.disconnected;
       linkError = discovered.isEmpty
           ? (bleAuth == BluetoothAuthorization.notDetermined
               ? '请允许「录音卡」使用蓝牙后重试'
               : '没有找到附近的录音卡，请确认录音卡已开机')
           : null;
+      _scheduleScanExpiryTimer();
     } on CardException catch (e) {
       if (epoch != _epoch) return;
+      _stopScanExpiryTimer();
+      _bleScanSeenAt = null;
+      _scanExpiredByTimer = false;
       discovered = const [];
       linkState = LinkState.disconnected;
       linkError = e.message;
@@ -398,7 +498,13 @@ class DeviceStore extends ChangeNotifier {
 
   Future<void> connectTo(CardDevice device) async {
     if (linkState == LinkState.connecting) return;
+    if (isDeviceScanExpired(device)) {
+      linkError = '蓝牙设备列表已过期，请重新扫描';
+      notifyListeners();
+      return;
+    }
     final epoch = ++_epoch;
+    _stopScanExpiryTimer();
     linkState = LinkState.connecting;
     linkError = null;
     notifyListeners();
@@ -445,11 +551,13 @@ class DeviceStore extends ChangeNotifier {
       }
       linkState = LinkState.disconnected;
       linkError = e.message;
+      _scheduleScanExpiryTimer();
       unawaited(_releaseLink());
     } on TimeoutException {
       if (epoch != _epoch) return;
       linkState = LinkState.disconnected;
       linkError = '读取设备状态超时，请重试连接';
+      _scheduleScanExpiryTimer();
       unawaited(_releaseLink());
     }
     notifyListeners();
@@ -532,6 +640,9 @@ class DeviceStore extends ChangeNotifier {
             ? '蓝牙链路未确认释放，请重试连接后再断开'
             : null);
     if (linkError != null) debugPrint('[disconnect] $linkError');
+    if (sheetOpen && hasBleDiscovered) {
+      _scheduleScanExpiryTimer();
+    }
     notifyListeners();
   }
 
@@ -704,10 +815,20 @@ class DeviceStore extends ChangeNotifier {
 
 
 
+  /// 宿主挂载（UI 就绪）：允许为开着的连接列表安排过期定时器。
+  void markSheetAttached() {
+    _sheetAttached = true;
+    if (sheetOpen && hasBleDiscovered && !isConnected && !isLinkBusy) {
+      _scheduleScanExpiryTimer();
+    }
+  }
+
   /// 宿主被卸载（页面销毁/热重载）：登记弹层已关并停掉轮询，不发通知。
   void markSheetDetached() {
+    _sheetAttached = false;
     sheetOpen = false;
     _stopSheetWatch();
+    _stopScanExpiryTimer();
   }
 
   void _stopSheetWatch() {
@@ -902,6 +1023,9 @@ class DeviceStore extends ChangeNotifier {
     linkError = message;
     if (_phoneStandbyArmed && !_phoneRecording && !_phoneRecordingBusy) {
       unawaited(_triggerPhoneFailover(carrySecOverride: carrySec));
+    }
+    if (sheetOpen && hasBleDiscovered) {
+      _scheduleScanExpiryTimer();
     }
     notifyListeners();
   }
@@ -1801,8 +1925,31 @@ class DeviceStore extends ChangeNotifier {
     }
     sheetOpen = false;
     _stopSheetWatch();
+    _stopScanExpiryTimer();
     // 不停录音时钟：录音还在继续，Timeline 顶部状态块要继续计时
     notifyListeners();
+  }
+
+  /// App 切回前台时对扫描结果做真实墙钟过期校准：
+  /// 若弹层停在「连接设备」页且列表已超过 TTL，立即自动重扫一次；否则按真实剩余时间重排定时器。
+  void handleAppResumed() {
+    if (!sheetOpen || isConnected || isLinkBusy || view != DeviceView.main) {
+      return;
+    }
+    if (!hasBleDiscovered) {
+      return;
+    }
+    if (isBleScanExpired) {
+      _scanExpiredByTimer = true;
+      _stopScanExpiryTimer();
+      if (canScan) {
+        unawaited(startScan());
+      } else {
+        notifyListeners();
+      }
+      return;
+    }
+    _scheduleScanExpiryTimer();
   }
 
   void showView(DeviceView v) {
@@ -2314,6 +2461,7 @@ class DeviceStore extends ChangeNotifier {
     _heartbeatTimer?.cancel();
     _eventWatch?.cancel();
     _stopSheetWatch();
+    _stopScanExpiryTimer();
     if (_ownsPhoneMicRecorder) {
       _phoneMicRecorder.dispose();
     }

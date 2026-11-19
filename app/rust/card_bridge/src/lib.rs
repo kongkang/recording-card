@@ -19,7 +19,10 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
-use btleplug::api::{Central as _, CentralEvent, Manager as _, Peripheral as _, ScanFilter};
+use btleplug::api::{
+    Central as _, CentralEvent, CharPropFlags, Characteristic, Manager as _, Peripheral as _,
+    PeripheralProperties, ScanFilter, WriteType,
+};
 use futures::StreamExt;
 use capabilities::{classify_ble_advertisement, DeviceKind};
 use dyj_v1_session::{parse_dyj_audio_filename, version_code_from_semver, DyjV1Session};
@@ -33,8 +36,9 @@ use reai_board_sdk::kernel::audio::{
 use reai_board_sdk::kernel::sink::AudioFrameSink;
 use reai_board_sdk::{BoardConfig, BoardDevice, BoardEvent};
 use reai_card_sdk::{
-    DeviceEvent as CardV2Event, DeviceManager as CardV2Manager, DfuPackage,
-    DyjDevice as CardV2Device, OtaInfo, OtaModule, SdkError as CardSdkError,
+    BleTransport, DeviceEvent as CardV2Event, DeviceManager as CardV2Manager, DfuPackage,
+    DyjDevice as CardV2Device, NotificationStream, OtaInfo, OtaModule, Result as CardSdkResult,
+    SdkError as CardSdkError, SharedTransport, NUS_NOTIFY_UUID, NUS_SERVICE_UUID, NUS_WRITE_UUID,
 };
 use reai_dyj_sdk::{
     ApClient as DyjV1ApClient, DeviceEvent as DyjV1Event, SdkError as DyjV1SdkError,
@@ -148,7 +152,7 @@ impl ActiveDevice {
 struct BridgeState {
     runtime: tokio::runtime::Runtime,
     device: tokio::sync::Mutex<Option<ActiveDevice>>,
-    connecting_dyj_peripheral: Mutex<Option<btleplug::platform::Peripheral>>,
+    connecting_peripheral: Mutex<Option<btleplug::platform::Peripheral>>,
     scan_adapter: tokio::sync::OnceCell<btleplug::platform::Adapter>,
     card_v2_manager: tokio::sync::OnceCell<CardV2Manager>,
     scan_cache: Mutex<HashMap<String, CachedScanEntry>>,
@@ -243,7 +247,7 @@ fn state() -> &'static BridgeState {
             .build()
             .expect("tokio runtime"),
         device: tokio::sync::Mutex::new(None),
-        connecting_dyj_peripheral: Mutex::new(None),
+        connecting_peripheral: Mutex::new(None),
         scan_adapter: tokio::sync::OnceCell::new(),
         card_v2_manager: tokio::sync::OnceCell::new(),
         scan_cache: Mutex::new(HashMap::new()),
@@ -692,6 +696,30 @@ async fn card_v2_manager() -> Result<&'static CardV2Manager, BridgeError> {
         .map_err(BridgeError::from)
 }
 
+fn now_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// droidplug 的 properties() 是同步 Mutex 锁（真机实测会被 Java 回调线程卡死，
+/// 直接 await 会把 tokio worker 整个挂住）。丢进 blocking 池 + 有界超时。
+async fn read_peripheral_props_bounded(
+    p: &btleplug::platform::Peripheral,
+) -> Option<PeripheralProperties> {
+    let p = p.clone();
+    match tokio::time::timeout(
+        Duration::from_millis(400),
+        tokio::task::spawn_blocking(move || tokio::runtime::Handle::current().block_on(p.properties())),
+    )
+    .await
+    {
+        Ok(Ok(Ok(props))) => props,
+        _ => None,
+    }
+}
+
 /// 单次 BLE 扫描同时发现录音卡 V2 (`DYJV2_`)、点一机 V1 (`DYJ_`) 与语音 AI 键盘 V2.1 (`REAI_VB_`)。
 async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
     alog::info("unified_scan: begin");
@@ -701,12 +729,12 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
     // 事件里回填 properties.rssi（初始 None）；只带本地名的广播（如点一机 V1 `DYJ_*`）
     // 永远拿不到 RSSI，曾被下方 `None => continue` 误丢——安卓后端无此问题，故出现
     // 「安卓五类硬件全出、iPhone 只剩 V2」（真机对照实测 2026-11-16）。
-    // 这里订阅扫描窗口内的事件流，记录「本窗口确实广播过」的设备，作为无 RSSI 时的展示依据。
+    // 这里订阅扫描窗口内的事件流，记录「本窗口确实广播过」的设备及最后收到广播的墙钟时刻。
     let mut scan_events = adapter
         .events()
         .await
         .map_err(|e| BridgeError::from(format!("BLE events failed: {e}")))?;
-    let mut seen_this_scan: HashSet<String> = HashSet::new();
+    let mut seen_this_scan: HashMap<String, i64> = HashMap::new();
     adapter
         .start_scan(ScanFilter::default())
         .await
@@ -726,7 +754,7 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
                 | CentralEvent::ServicesAdvertisement { id, .. } => id,
                 _ => continue,
             };
-            seen_this_scan.insert(id.to_string());
+            seen_this_scan.insert(id.to_string(), now_unix_ms());
         }
     };
     let _ = tokio::time::timeout(duration, pump).await;
@@ -735,6 +763,7 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         seen_this_scan.len()
     ));
     let _ = adapter.stop_scan().await;
+    let scan_completed_at_ms = now_unix_ms();
     alog::info("unified_scan: stopped");
 
     let peripherals = adapter
@@ -750,25 +779,9 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         if idx % 10 == 0 {
             alog::info(&format!("unified_scan: loop[{idx}] begin"));
         }
-        // droidplug 的 properties() 是同步 Mutex 锁（真机实测会被 Java 回调线程卡死，
-        // 直接 await 会把 tokio worker 整个挂住）。丢进 blocking 池 + 有界超时，
-        // 单台卡死只损失一个 blocking 线程，扫描列表照常产出。
-        let props = {
-            let p = p.clone();
-            match tokio::time::timeout(
-                Duration::from_millis(400),
-                tokio::task::spawn_blocking(move || {
-                    tokio::runtime::Handle::current().block_on(p.properties())
-                }),
-            )
-            .await
-            {
-                Ok(Ok(Ok(Some(props)))) => props,
-                _ => {
-                    alog::info(&format!("unified_scan: loop[{idx}] properties 卡死/失败，跳过"));
-                    continue;
-                }
-            }
+        let Some(props) = read_peripheral_props_bounded(&p).await else {
+            alog::info(&format!("unified_scan: loop[{idx}] properties 卡死/失败，跳过"));
+            continue;
         };
         // 2026-11-16 调试直连结束，恢复过滤基线：未识别设备直接跳过
         // （classify 覆盖自有 3 款硬件 + 开启联动的 Get/Omi/Watch）。
@@ -786,7 +799,8 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         // CoreBluetooth 本地缓存但未广播的旧外设通常无 RSSI；若已系统连接则仍展示。
         // RSSI 0/127 为无效值（CoreBluetooth 偶发上报 127），一并走兜底。
         let id = p.id().to_string();
-        let advertised_now = seen_this_scan.contains(&id);
+        let last_seen_at_ms = seen_this_scan.get(&id).copied();
+        let advertised_now = last_seen_at_ms.is_some();
         let props_rssi = props.rssi.filter(|r| *r < 0);
         // CoreBluetooth 会把旧外设及其历史 rssi 长期留在 adapter.peripherals() 里，哪怕设备早已断开或轮换了 RPA 地址。
         // 若本扫描窗口完全没收到它的广播，仅当系统仍处于已连接状态时才保留，绝不把过期 RPA 当作新发现返回。
@@ -827,6 +841,7 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
                 "id": id,
                 "name": name,
                 "rssi": rssi,
+                "lastSeenAtMs": last_seen_at_ms.unwrap_or(scan_completed_at_ms),
                 "deviceKind": kind_str,
                 "displayModel": display_model,
                 "capabilities": caps_json,
@@ -935,27 +950,352 @@ async fn bootstrap_card_v2_ble_metadata_if_missing(device: &CardV2Device) {
     }
 }
 
-async fn connect_card_v2(id: &str, name_hint: Option<&str>) -> Result<Value, BridgeError> {
-    let manager = card_v2_manager().await?;
-    let mut found = None;
-    for window in [Duration::from_secs(4), Duration::from_secs(6)] {
-        let devices = manager.scan(window).await?;
-        if let Some(d) = devices
-            .iter()
-            .find(|d| d.id == id || name_hint.is_some_and(|nh| d.name == nh))
-            .cloned()
-        {
-            found = Some(d);
-            break;
+struct CardV2BtleplugTransport {
+    peripheral: btleplug::platform::Peripheral,
+    write: Characteristic,
+    write_type: WriteType,
+}
+
+#[async_trait::async_trait]
+impl BleTransport for CardV2BtleplugTransport {
+    async fn write(&self, bytes: &[u8]) -> CardSdkResult<()> {
+        self.peripheral
+            .write(&self.write, bytes, self.write_type)
+            .await
+            .map_err(|e| CardSdkError::Transport(e.to_string()))
+    }
+
+    async fn notifications(&self) -> CardSdkResult<NotificationStream> {
+        let stream = self
+            .peripheral
+            .notifications()
+            .await
+            .map_err(|e| CardSdkError::Transport(e.to_string()))?;
+        Ok(Box::pin(stream.map(|notification| Ok(notification.value))))
+    }
+
+    async fn disconnect(&self) -> CardSdkResult<()> {
+        let connected =
+            tokio::time::timeout(Duration::from_secs(4), self.peripheral.is_connected())
+                .await
+                .map_err(|_| CardSdkError::Timeout {
+                    command: "ble.is_connected".to_string(),
+                    seconds: 4,
+                })?
+                .map_err(|e| CardSdkError::Transport(e.to_string()))?;
+        if connected {
+            tokio::time::timeout(Duration::from_secs(4), self.peripheral.disconnect())
+                .await
+                .map_err(|_| CardSdkError::Timeout {
+                    command: "ble.disconnect".to_string(),
+                    seconds: 4,
+                })?
+                .map_err(|e| CardSdkError::Transport(e.to_string()))?;
+        }
+        Ok(())
+    }
+}
+
+fn matches_card_v2_candidate(
+    pid: &str,
+    id_hint: &str,
+    name_hint: Option<&str>,
+    local_name: Option<&str>,
+    services: &[uuid::Uuid],
+) -> Option<String> {
+    let trimmed_hint = name_hint.map(str::trim).filter(|s| !s.is_empty());
+    let trimmed_local = local_name.map(str::trim).filter(|s| !s.is_empty());
+    if let (Some(nh), Some(ln)) = (trimmed_hint, trimmed_local) {
+        if nh != ln {
+            return None;
         }
     }
-    let found = found.ok_or_else(|| CardSdkError::DeviceNotFound(id.to_string()))?;
-    let connected_name = found.name.clone();
-    let device = manager.connect(&found).await?;
+    if let Some(nh) = trimmed_hint {
+        if trimmed_local == Some(nh) {
+            return Some(nh.to_string());
+        }
+    }
+    let nus_uuid = uuid::Uuid::parse_str(NUS_SERVICE_UUID).ok();
+    let id_match = !id_hint.is_empty() && pid == id_hint;
+    if id_match {
+        let valid_identity = trimmed_local.is_none()
+            || trimmed_local.is_some_and(|n| {
+                let u = n.to_ascii_uppercase();
+                u.starts_with("DYJV2") || u.starts_with("DYJ")
+            })
+            || nus_uuid.is_some_and(|u| services.contains(&u));
+        if valid_identity {
+            return Some(
+                trimmed_local
+                    .or(trimmed_hint)
+                    .unwrap_or(pid)
+                    .to_string(),
+            );
+        }
+    }
+    None
+}
+
+fn matches_external_candidate(
+    driver: &dyn RecorderSdkDriver,
+    pid: &str,
+    id_hint: &str,
+    name_hint: Option<&str>,
+    local_name: Option<&str>,
+    services: &[uuid::Uuid],
+    manufacturer_data: &HashMap<u16, Vec<u8>>,
+) -> Option<String> {
+    let trimmed_hint = name_hint.map(str::trim).filter(|s| !s.is_empty());
+    let trimmed_local = local_name.map(str::trim).filter(|s| !s.is_empty());
+    if let (Some(nh), Some(ln)) = (trimmed_hint, trimmed_local) {
+        if nh != ln {
+            return None;
+        }
+    }
+    let adv_match = driver.matches_advertisement(trimmed_local, services, manufacturer_data);
+    let id_match = !id_hint.is_empty() && pid == id_hint;
+    let name_match = trimmed_hint.is_some_and(|nh| trimmed_local == Some(nh)) && adv_match;
+    if id_match || name_match {
+        return Some(
+            trimmed_local
+                .or(trimmed_hint)
+                .map(str::to_owned)
+                .unwrap_or_else(|| driver.fallback_ble_name(pid)),
+        );
+    }
+    None
+}
+
+async fn try_connect_peripheral_with_slot(
+    p: &btleplug::platform::Peripheral,
+    label: &str,
+    timeout: Duration,
+    connecting_slot: &Mutex<Option<btleplug::platform::Peripheral>>,
+) -> Result<(), BridgeError> {
+    *connecting_slot.lock().unwrap() = Some(p.clone());
+    let res = tokio::time::timeout(timeout, p.connect()).await;
+    match res {
+        Ok(Ok(())) => {
+            *connecting_slot.lock().unwrap() = None;
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            *connecting_slot.lock().unwrap() = None;
+            let _ = tokio::time::timeout(Duration::from_secs(2), p.disconnect()).await;
+            Err(BridgeError::from(format!("连接{label}失败: {e}")))
+        }
+        Err(_) => {
+            *connecting_slot.lock().unwrap() = None;
+            let _ = tokio::time::timeout(Duration::from_secs(2), p.disconnect()).await;
+            Err(BridgeError::from(format!(
+                "连接{label}超时，请确认设备已开机且在蓝牙范围内"
+            )))
+        }
+    }
+}
+
+/// 统一实时扫描 + RPA 地址容错建连：
+/// 1. 若刚扫到精确 `id_hint`，用 4 秒短超时直连；若发生 RPA 轮换或已离线，显式断开取消挂起链路；
+/// 2. 随后开启 `adapter.events()` 实时监听本轮真正广播出的匹配设备并建连（14 秒超时），避免命中缓存僵尸外设。
+async fn connect_fresh_peripheral<F>(
+    adapter: &btleplug::platform::Adapter,
+    id_hint: &str,
+    label: &str,
+    connecting_slot: &Mutex<Option<btleplug::platform::Peripheral>>,
+    matcher: F,
+) -> Result<(btleplug::platform::Peripheral, String), BridgeError>
+where
+    F: Fn(&str, Option<&PeripheralProperties>) -> Option<String>,
+{
+    struct SlotGuard<'a>(&'a Mutex<Option<btleplug::platform::Peripheral>>);
+    impl Drop for SlotGuard<'_> {
+        fn drop(&mut self) {
+            *self.0.lock().unwrap() = None;
+        }
+    }
+    let _guard = SlotGuard(connecting_slot);
+    let mut last_err: Option<BridgeError> = None;
+
+    if !id_hint.is_empty() {
+        if let Ok(peripherals) = adapter.peripherals().await {
+            if let Some(cached) = peripherals.into_iter().find(|p| p.id().to_string() == id_hint) {
+                let props = read_peripheral_props_bounded(&cached).await;
+                if let Some(display_name) = matcher(id_hint, props.as_ref()) {
+                    match try_connect_peripheral_with_slot(
+                        &cached,
+                        label,
+                        Duration::from_secs(4),
+                        connecting_slot,
+                    )
+                    .await
+                    {
+                        Ok(()) => return Ok((cached, display_name)),
+                        Err(e) => last_err = Some(e),
+                    }
+                }
+            }
+        }
+    }
+
+    let mut events = adapter
+        .events()
+        .await
+        .map_err(|e| BridgeError::from(format!("BLE 扫描事件流失败: {e}")))?;
+    adapter
+        .start_scan(ScanFilter::default())
+        .await
+        .map_err(|e| BridgeError::from(format!("BLE 扫描启动失败: {e}")))?;
+
+    let scan_deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+    let mut fresh: Option<(btleplug::platform::Peripheral, String)> = None;
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= scan_deadline {
+            break;
+        }
+        let rem = scan_deadline.saturating_duration_since(now);
+        let ev = match tokio::time::timeout(rem, events.next()).await {
+            Ok(Some(ev)) => ev,
+            _ => break,
+        };
+        let ev_id = match ev {
+            CentralEvent::DeviceDiscovered(id)
+            | CentralEvent::DeviceUpdated(id)
+            | CentralEvent::ManufacturerDataAdvertisement { id, .. }
+            | CentralEvent::ServiceDataAdvertisement { id, .. }
+            | CentralEvent::ServicesAdvertisement { id, .. } => id,
+            _ => continue,
+        };
+        if let Ok(p) = adapter.peripheral(&ev_id).await {
+            let pid = ev_id.to_string();
+            let props = read_peripheral_props_bounded(&p).await;
+            if let Some(display_name) = matcher(&pid, props.as_ref()) {
+                fresh = Some((p, display_name));
+                break;
+            }
+        }
+    }
+    let _ = adapter.stop_scan().await;
+    tokio::time::sleep(Duration::from_millis(120)).await;
+
+    let Some((fresh_peripheral, display_name)) = fresh else {
+        return Err(last_err.unwrap_or_else(|| {
+            BridgeError::from(format!(
+                "未扫描到设备 {label}（id={id_hint}），请确认设备已开机且在蓝牙范围内"
+            ))
+        }));
+    };
+
+    try_connect_peripheral_with_slot(
+        &fresh_peripheral,
+        label,
+        Duration::from_secs(14),
+        connecting_slot,
+    )
+    .await?;
+    Ok((fresh_peripheral, display_name))
+}
+
+async fn connect_card_v2(id: &str, name_hint: Option<&str>) -> Result<Value, BridgeError> {
+    let adapter = scan_adapter().await?;
+    let label = name_hint
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DeviceKind::CardV2.display_model());
+    let (peripheral, connected_name) = connect_fresh_peripheral(
+        adapter,
+        id,
+        label,
+        &state().connecting_peripheral,
+        |pid, props| {
+            let local_name = props.and_then(|pr| pr.local_name.as_deref());
+            let services = props.map(|pr| pr.services.as_slice()).unwrap_or(&[]);
+            matches_card_v2_candidate(pid, id, name_hint, local_name, services)
+        },
+    )
+    .await?;
+
+    let discover_res =
+        tokio::time::timeout(Duration::from_secs(10), peripheral.discover_services()).await;
+    match discover_res {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+            return Err(BridgeError::from(format!("录音卡 V2 服务发现失败: {e}")));
+        }
+        Err(_) => {
+            let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+            return Err(BridgeError::from("录音卡 V2 服务发现超时，请重试连接".to_string()));
+        }
+    }
+
+    let write_uuid = uuid::Uuid::parse_str(NUS_WRITE_UUID)
+        .map_err(|e| BridgeError::from(format!("invalid NUS write UUID: {e}")))?;
+    let notify_uuid = uuid::Uuid::parse_str(NUS_NOTIFY_UUID)
+        .map_err(|e| BridgeError::from(format!("invalid NUS notify UUID: {e}")))?;
+    let chars = peripheral.characteristics();
+    let Some(write) = chars
+        .iter()
+        .find(|c| {
+            c.uuid == write_uuid
+                && (c.properties.contains(CharPropFlags::WRITE)
+                    || c.properties.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE))
+        })
+        .cloned()
+    else {
+        let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+        return Err(CardSdkError::MissingCharacteristic("write").into());
+    };
+    let Some(notify) = chars
+        .iter()
+        .find(|c| c.uuid == notify_uuid && c.properties.contains(CharPropFlags::NOTIFY))
+        .cloned()
+    else {
+        let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+        return Err(CardSdkError::MissingCharacteristic("notify").into());
+    };
+
+    match tokio::time::timeout(Duration::from_secs(6), peripheral.subscribe(&notify)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+            return Err(BridgeError::from(format!("订阅录音卡通知失败: {e}")));
+        }
+        Err(_) => {
+            let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+            return Err(BridgeError::from("订阅录音卡通知超时，请重试连接".to_string()));
+        }
+    }
+
+    let write_type = if write.properties.contains(CharPropFlags::WRITE) {
+        WriteType::WithResponse
+    } else {
+        WriteType::WithoutResponse
+    };
+    let actual_id = peripheral.id().to_string();
+    let transport: SharedTransport = Arc::new(CardV2BtleplugTransport {
+        peripheral,
+        write,
+        write_type,
+    });
+    let device = match CardV2Device::from_transport(transport.clone()).await {
+        Ok(dev) => dev,
+        Err(error) => {
+            let _ = tokio::time::timeout(Duration::from_secs(3), transport.disconnect()).await;
+            return Err(error.into());
+        }
+    };
     bootstrap_card_v2_ble_metadata_if_missing(&device).await;
     let pump = spawn_card_v2_event_pump(&device);
     *state().event_pump.lock().await = Some(pump);
-    *state().last_device_id.lock().expect("device id lock") = Some(id.to_string());
+    *state().last_device_id.lock().expect("device id lock") = Some(actual_id.clone());
+    state().scan_cache.lock().expect("scan cache lock").insert(
+        actual_id,
+        CachedScanEntry {
+            name: connected_name.clone(),
+            kind: DeviceKind::CardV2,
+        },
+    );
     *state().device.lock().await = Some(ActiveDevice::CardV2 {
         device,
         name: connected_name.clone(),
@@ -1002,7 +1342,7 @@ fn update_dyj_v1_meta_from_info(meta: &Arc<Mutex<DyjV1CachedMeta>>, info: &Value
 async fn connect_dyj_v1(id: &str, name: &str) -> Result<Value, BridgeError> {
     let adapter = scan_adapter().await?;
     let (device, hello) =
-        DyjV1Session::connect(adapter, id, name, Some(&state().connecting_dyj_peripheral)).await?;
+        DyjV1Session::connect(adapter, id, name, Some(&state().connecting_peripheral)).await?;
     let actual_id = device.peripheral().id().to_string();
     let mut initial_meta = DyjV1CachedMeta::default();
     if let Some(did) = hello
@@ -1147,8 +1487,6 @@ async fn connect_external_sdk(
     name_hint: Option<&str>,
     kind: DeviceKind,
 ) -> Result<Value, BridgeError> {
-    use btleplug::api::{Central as _, Peripheral as _, ScanFilter};
-
     let driver: &dyn RecorderSdkDriver = match kind {
         DeviceKind::GetSeedGsc10 => &GetSeedSdkDriver,
         DeviceKind::OmiCv1 => &OmiSdkDriver,
@@ -1162,65 +1500,48 @@ async fn connect_external_sdk(
     };
 
     let adapter = scan_adapter().await?;
-    let mut found: Option<(btleplug::platform::Peripheral, String)> = None;
-    for window in [Duration::from_secs(3), Duration::from_secs(5)] {
-        adapter
-            .start_scan(ScanFilter::default())
-            .await
-            .map_err(|e| BridgeError::from(format!("BLE 扫描启动失败: {e}")))?;
-        tokio::time::sleep(window).await;
-        let _ = adapter.stop_scan().await;
-        let peripherals = adapter
-            .peripherals()
-            .await
-            .map_err(|e| BridgeError::from(format!("读取 BLE 外设列表失败: {e}")))?;
-        for p in peripherals {
-            let pid = p.id().to_string();
-            let props = p.properties().await.ok().flatten();
-            let local_name = props
-                .as_ref()
-                .and_then(|pr| pr.local_name.as_deref())
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            let id_match = !id.is_empty() && pid == id;
-            let name_match = name_hint
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .is_some_and(|nh| local_name == Some(nh));
-            let adv_match = props.as_ref().is_some_and(|pr| {
-                driver.matches_advertisement(
-                    local_name,
-                    &pr.services,
-                    &pr.manufacturer_data,
-                )
-            });
-            if id_match || (name_match && adv_match) {
-                let display_name = local_name
-                    .map(str::to_owned)
-                    .or_else(|| name_hint.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
-                    .unwrap_or_else(|| driver.fallback_ble_name(&pid));
-                found = Some((p, display_name));
-                break;
+    let label = name_hint
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(kind.display_model());
+    let (peripheral, ble_name) = connect_fresh_peripheral(
+        adapter,
+        id,
+        label,
+        &state().connecting_peripheral,
+        |pid, props| {
+            let local_name = props.and_then(|pr| pr.local_name.as_deref());
+            let services = props.map(|pr| pr.services.as_slice()).unwrap_or(&[]);
+            let mfd = props.map(|pr| &pr.manufacturer_data);
+            match mfd {
+                Some(data) => matches_external_candidate(
+                    driver, pid, id, name_hint, local_name, services, data,
+                ),
+                None => {
+                    let empty_mfd = HashMap::new();
+                    matches_external_candidate(
+                        driver, pid, id, name_hint, local_name, services, &empty_mfd,
+                    )
+                }
             }
-        }
-        if found.is_some() {
-            break;
-        }
-    }
+        },
+    )
+    .await?;
 
-    let (peripheral, ble_name) = found.ok_or_else(|| {
-        BridgeError::from(format!(
-            "未扫描到设备 {}（id={id}），请确认设备已开机且在蓝牙范围内",
-            kind.display_model()
-        ))
-    })?;
-
+    let actual_id = peripheral.id().to_string();
     let device = driver.connect(peripheral, ble_name.clone()).await?;
     let connected_name = device.device_name().to_string();
     let caps = capabilities::HardwareCapabilities::from_sdk(device.capabilities());
     let pump = spawn_external_event_pump(&device);
     *state().event_pump.lock().await = Some(pump);
-    *state().last_device_id.lock().expect("device id lock") = Some(id.to_string());
+    *state().last_device_id.lock().expect("device id lock") = Some(actual_id.clone());
+    state().scan_cache.lock().expect("scan cache lock").insert(
+        actual_id,
+        CachedScanEntry {
+            name: connected_name.clone(),
+            kind,
+        },
+    );
     *state().device.lock().await = Some(ActiveDevice::External {
         kind,
         device,
@@ -1249,8 +1570,8 @@ async fn release_device() -> Value {
         let _ = stop.send(());
     }
     let active = state().device.lock().await.take();
-    let connecting_dyj = state().connecting_dyj_peripheral.lock().unwrap().take();
-    if let Some(p) = connecting_dyj {
+    let connecting = state().connecting_peripheral.lock().unwrap().take();
+    if let Some(p) = connecting {
         let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
     }
     // 兜底释放：若此前某次 connect 超时或半连接遗留在 CoreBluetooth，把 adapter 里仍连着的 DYJ_ 外设也断开。
@@ -4293,6 +4614,109 @@ mod tests {
             1_700_000_005_000,
         )
         .is_none());
+    }
+
+    #[test]
+    fn card_v2_candidate_matcher_handles_rpa_and_rejects_mismatch() {
+        let nus_uuid = uuid::Uuid::parse_str(NUS_SERVICE_UUID).unwrap();
+        // 1) RPA 轮换后 ID 变化，但广播名与提示名匹配，命中新外设
+        assert_eq!(
+            matches_card_v2_candidate(
+                "new-rpa-id",
+                "old-id",
+                Some("DYJV2_T4W25T"),
+                Some("DYJV2_T4W25T"),
+                &[],
+            ),
+            Some("DYJV2_T4W25T".to_string())
+        );
+        // 2) ID 相同但本地名明确指向另一台设备，拒绝误连
+        assert_eq!(
+            matches_card_v2_candidate(
+                "same-id",
+                "same-id",
+                Some("DYJV2_T4W25T"),
+                Some("DYJV2_OTHER"),
+                &[nus_uuid],
+            ),
+            None
+        );
+        // 3) ID 相同且带有 NUS 服务 UUID（本地名缺失时），允许按 hint 建连
+        assert_eq!(
+            matches_card_v2_candidate(
+                "same-id",
+                "same-id",
+                Some("DYJV2_T4W25T"),
+                None,
+                &[nus_uuid],
+            ),
+            Some("DYJV2_T4W25T".to_string())
+        );
+        // 4) 不同 ID 且无本地名，即使有 NUS 也不盲连
+        assert_eq!(
+            matches_card_v2_candidate(
+                "other-id",
+                "same-id",
+                Some("DYJV2_T4W25T"),
+                None,
+                &[nus_uuid],
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn external_candidate_matcher_handles_rpa_for_getseed_omi_feishu() {
+        let empty_mfd = HashMap::new();
+        assert_eq!(
+            matches_external_candidate(
+                &GetSeedSdkDriver,
+                "new-rpa-id",
+                "old-id",
+                Some("Get-A102"),
+                Some("Get-A102"),
+                &[],
+                &empty_mfd,
+            ),
+            Some("Get-A102".to_string())
+        );
+        assert_eq!(
+            matches_external_candidate(
+                &GetSeedSdkDriver,
+                "other-id",
+                "old-id",
+                Some("Get-A102"),
+                Some("Get-B999"),
+                &[],
+                &empty_mfd,
+            ),
+            None
+        );
+        assert_eq!(
+            matches_external_candidate(
+                &OmiSdkDriver,
+                "new-rpa-omi",
+                "old-id",
+                Some("Omi-7F20"),
+                Some("Omi-7F20"),
+                &[],
+                &empty_mfd,
+            ),
+            Some("Omi-7F20".to_string())
+        );
+        assert_eq!(
+            matches_external_candidate(
+                &FeishuSdkDriver,
+                "new-rpa-feishu",
+                "old-id",
+                Some("D3200-C3A1"),
+                Some("D3200-C3A1"),
+                &[],
+                &empty_mfd,
+            ),
+            Some("D3200-C3A1".to_string())
+        );
+        assert!(now_unix_ms() > 0);
     }
 
     #[test]
