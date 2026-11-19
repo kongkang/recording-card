@@ -30,6 +30,7 @@ base64 = "0.22"
 log = "0.4"
 
 [dev-dependencies]
+crc32fast = "1"
 uuid = "1"
 
 # Android：btleplug 的 droidplug 后端需要一个 JavaVM 才能调用系统蓝牙 API。
@@ -37,3 +38,6 @@ uuid = "1"
 jni = "0.19"
 # 把 Rust log! 输出到 logcat：btleplug/jni 的内部错误（如 JniCall 细节）才能在真机看到。
 android_logger = "0.14"
+
+[patch.crates-io]
+btleplug = { path = "../vendor/btleplug-0.12.0" }

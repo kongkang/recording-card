@@ -695,6 +695,7 @@ class DeviceStore extends ChangeNotifier {
 
   /// 取走设备主动推送的事件（录音开关、电源/电量、物理语音键、相机拍照、被动断连）并应用到状态。
   Future<void> _pullDeviceEvents() async {
+    if (fwUpdating) return;
     try {
       final batch = await _gw.pullEvents(after: _eventSeq);
       if (batch.seq == _eventSeq && batch.events.isEmpty) return;
@@ -2185,6 +2186,7 @@ class DeviceStore extends ChangeNotifier {
     fwUpdating = true;
     fwError = null;
     fwProgress = 0;
+    unawaited(_setKeepScreenOn(true));
 
     // 阶段 1：主控 / 单芯片系统固件
     if (doMain) {
@@ -2204,7 +2206,11 @@ class DeviceStore extends ChangeNotifier {
           notifyListeners();
         }
       } on CardException catch (e) {
-        _failFw('主控固件升级失败：${e.message}');
+        final recovered = await _recoverAfterMainOtaFailure();
+        final suffix = recovered
+            ? ''
+            : '（连接已断开，请重连或扫描恢复模式设备后重试）';
+        _failFw('主控固件升级失败：${e.message}$suffix');
         return;
       }
 
@@ -2218,9 +2224,10 @@ class DeviceStore extends ChangeNotifier {
         await Future<void>.delayed(const Duration(seconds: 2));
         try {
           final list = await _gw.scan();
-          final target =
-              list.where((d) => d.name == connectedName).firstOrNull ??
-              list.firstOrNull;
+          final target = _pickReconnectedCardV2Target(
+            list,
+            allowDfuFallback: false,
+          );
           if (target != null) {
             final snap = await _gw.connect(
               target.id,
@@ -2228,7 +2235,15 @@ class DeviceStore extends ChangeNotifier {
               deviceKind: target.deviceKind.code,
             );
             _lastDevice = target;
+            connectedName = target.name;
+            linkState = LinkState.connected;
             if (snap != null) _applySnapshot(snap);
+            try {
+              final batch = await _gw.pullEvents(after: _eventSeq);
+              _eventSeq = batch.seq;
+            } on Object {
+              // 忽略事件序号同步失败
+            }
             reconnected = true;
             break;
           }
@@ -2237,11 +2252,13 @@ class DeviceStore extends ChangeNotifier {
         }
       }
       if (!reconnected) {
+        linkState = LinkState.disconnected;
+        connectedName = null;
         _failFw('升级后未能重新连接录音卡，请手动重连');
         return;
       }
       await refreshFromDevice();
-      doWifi = doWifi && wifiNeedsUpdate;
+      doWifi = activeCapabilities.hasDualChipOta && wifiNeedsUpdate;
       if (!doWifi && priorWifiOpen && deviceWifiOpen != true) {
         try {
           await _gw.openWifi();
@@ -2277,6 +2294,7 @@ class DeviceStore extends ChangeNotifier {
     }
 
     fwUpdating = false;
+    unawaited(_setKeepScreenOn(false));
     fwProgress = 100;
     fwStage = FwStage.done;
     view = DeviceView.main;
@@ -2289,8 +2307,96 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _setKeepScreenOn(bool enabled) =>
+      _permission.setKeepScreenOn(enabled);
+
+  static bool _isDfuBootloaderName(String? name) =>
+      name != null && name.trim().toUpperCase().startsWith('DFU');
+
+  CardDevice? _pickReconnectedCardV2Target(
+    List<CardDevice> list, {
+    required bool allowDfuFallback,
+  }) {
+    final normal = list.where((d) => !_isDfuBootloaderName(d.name)).toList();
+    final currentName = connectedName;
+    if (currentName != null &&
+        currentName.isNotEmpty &&
+        !_isDfuBootloaderName(currentName)) {
+      final hit = normal.where((d) => d.name == currentName).firstOrNull;
+      if (hit != null) return hit;
+    }
+    final lastName = _lastDevice?.name;
+    if (lastName != null &&
+        lastName.isNotEmpty &&
+        !_isDfuBootloaderName(lastName)) {
+      final hit = normal.where((d) => d.name == lastName).firstOrNull;
+      if (hit != null) return hit;
+    }
+    final v2Hit = normal
+        .where((d) => d.deviceKind == DeviceKind.cardV2)
+        .firstOrNull;
+    if (v2Hit != null) return v2Hit;
+    if (normal.isNotEmpty) return normal.first;
+    if (!allowDfuFallback) return null;
+    return list.where((d) => _isDfuBootloaderName(d.name)).firstOrNull ??
+        list.firstOrNull;
+  }
+
+  Future<bool> _recoverAfterMainOtaFailure() async {
+    try {
+      final snap = await _gw.snapshot().timeout(const Duration(seconds: 5));
+      _applySnapshot(snap);
+      return true;
+    } on Object {
+      // 桥在进入 DFU 前已取走设备句柄，扫描恢复正常连接或 DFU_DYJ 恢复模式
+    }
+
+    for (var i = 0; i < 2; i++) {
+      if (i > 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+      }
+      try {
+        final list = await _gw.scan();
+        final target = _pickReconnectedCardV2Target(
+          list,
+          allowDfuFallback: true,
+        );
+        if (target == null) continue;
+        final snap = await _gw.connect(
+          target.id,
+          name: target.name,
+          deviceKind: target.deviceKind.code,
+        );
+        _lastDevice = target;
+        connectedName = target.name;
+        linkState = LinkState.connected;
+        if (snap != null) {
+          _applySnapshot(snap);
+        } else {
+          await refreshFromDevice();
+        }
+        try {
+          final batch = await _gw.pullEvents(after: _eventSeq);
+          _eventSeq = batch.seq;
+        } on Object {
+          // 忽略事件序号同步失败
+        }
+        if (_isDfuBootloaderName(target.name)) {
+          _otaChecked = true;
+        }
+        return true;
+      } on Object {
+        continue;
+      }
+    }
+    linkState = LinkState.disconnected;
+    connectedName = null;
+    return false;
+  }
+
   void _failFw(String message) {
     fwUpdating = false;
+    unawaited(_setKeepScreenOn(false));
     fwStage = FwStage.failed;
     fwError = message;
     fwStateText = message;
@@ -2452,6 +2558,9 @@ class DeviceStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (fwUpdating) {
+      unawaited(_setKeepScreenOn(false));
+    }
     _watchHardware.removeListener(_onWatchHardwareChanged);
     if (_ownsWatchHardware) {
       _watchHardware.dispose();

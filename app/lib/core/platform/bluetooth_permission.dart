@@ -80,4 +80,18 @@ class BluetoothPermission {
       return BluetoothAuthorization.unknown;
     }
   }
+
+  /// 固件升级等长耗时流程期间请求保持屏幕常亮，避免系统休眠中断 BLE 连接。
+  Future<void> setKeepScreenOn(bool enabled) async {
+    if (!Platform.isIOS && !Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('setKeepScreenOn', {
+        'enabled': enabled,
+      });
+    } on PlatformException catch (e) {
+      debugPrint('[ble] 设置屏幕常亮失败：$e');
+    } on MissingPluginException {
+      // 原生侧未注册该通道（例如测试环境）：安全忽略
+    }
+  }
 }

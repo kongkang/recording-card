@@ -94,6 +94,13 @@ import AppIntents
       result(statusText())
     case "request":
       requestAuthorization(result: result)
+    case "setKeepScreenOn":
+      let args = call.arguments as? [String: Any]
+      let enabled = (args?["enabled"] as? Bool) ?? false
+      DispatchQueue.main.async {
+        UIApplication.shared.isIdleTimerDisabled = enabled
+        result(true)
+      }
 
     default:
       result(FlutterMethodNotImplemented)

@@ -107,6 +107,7 @@ build_abi() {
   if [ -x "$cxx" ]; then
     make_shim "$cxx" "${clang_prefix}-clang++"
     export "CXX_${env_var}=$SHIM_DIR/${clang_prefix}-clang++"
+    export "CXXFLAGS_${env_var}=-Wno-register"
   fi
   export "AR_${env_var}=$BIN/llvm-ar"
   export "CARGO_TARGET_${env_var}_LINKER=$SHIM_DIR/${clang_prefix}-clang"

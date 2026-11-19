@@ -10,6 +10,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.view.WindowManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
@@ -30,6 +31,7 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
 
         private const val SPEECH_CHANNEL = "com.reai.recordingcard/agent_speech"
         private const val OAUTH_CHANNEL = "com.reai.recordingcard/oauth"
+        private const val BLUETOOTH_CHANNEL = "com.reai.recordingcard/bluetooth"
         private const val AUTH_REQUEST = 0x5243
         private const val REQ_AUDIO_PERM = 4091
     }
@@ -97,6 +99,24 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         val sysSpeech = SystemSpeechBridge(this)
         sysSpeech.register(flutterEngine.dartExecutor.binaryMessenger)
         systemSpeechBridge = sysSpeech
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BLUETOOTH_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "setKeepScreenOn" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        runOnUiThread {
+                            if (enabled) {
+                                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            } else {
+                                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            }
+                            result.success(true)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OAUTH_CHANNEL)
             .setMethodCallHandler { call, result ->
