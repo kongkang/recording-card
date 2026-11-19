@@ -21,6 +21,8 @@ import '../services/audio/live_audio_recorder.dart';
 import '../services/audio/recording_status.dart';
 import '../services/auth_service.dart';
 import '../services/health/health_signal_controller.dart';
+import '../services/memory/memory_search_scope.dart';
+import '../services/memory/memory_search_service.dart';
 import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/model_manager_controller.dart';
 import '../services/transcribe/system_speech_client.dart';
@@ -48,6 +50,7 @@ class AppShell extends StatefulWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    this.memorySearch,
     this.agentChat,
     this.hardwareAgentCoordinator,
     this.transcribeSamples,
@@ -66,6 +69,7 @@ class AppShell extends StatefulWidget {
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
+  final MemorySearchService? memorySearch;
   final AgentChatController? agentChat;
   final HardwareAgentTaskCoordinator? hardwareAgentCoordinator;
   final SliceTranscribeFn? transcribeSamples;
@@ -321,156 +325,96 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    return StoreScope(
-      store: widget.store,
-      child: ListenableBuilder(
-        listenable: widget.store,
-        builder: (context, _) => LayoutBuilder(
-          builder: (context, constraints) {
-            final wide = constraints.maxWidth >= RCDims.wideBreakpoint;
-            return PopScope(
-              // Android 物理返回键 / 手势：先退自管路由栈，栈空才交给系统退出
-              canPop: false,
-              onPopInvokedWithResult: (didPop, _) {
-                if (didPop) return;
-                final handled = widget.store.handleSystemBack();
-                if (!handled && mounted) {
-                  // 栈已空：让系统退出 App（Android 期望行为）
-                  SystemNavigator.pop();
-                }
-              },
-              child: Scaffold(
-                backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-                body: Stack(
-                  children: [
-                    if (wide)
-                      _WideLayout(
-                        device: _device,
-                        recordingStatus: _recording,
-                        modelManager: widget.modelManager,
-                        settings: widget.settings,
-                        agentConfig: _agentConfig,
-                        authService: widget.authService,
-                        photoLibrary: _photoLib,
-                        healthSignals: widget.healthSignals,
-                        onOpenOs1: () => _agentChat.open(),
-                        supportsDynamicIsland: _resolvedSupportsDynamicIsland,
-                      )
-                    else
-                      _NarrowLayout(
-                        device: _device,
-                        recordingStatus: _recording,
-                        modelManager: widget.modelManager,
-                        settings: widget.settings,
-                        agentConfig: _agentConfig,
-                        authService: widget.authService,
-                        photoLibrary: _photoLib,
-                        healthSignals: widget.healthSignals,
-                        onOpenOs1: () => _agentChat.open(),
-                        supportsDynamicIsland: _resolvedSupportsDynamicIsland,
-                      ),
-                    ListenableBuilder(
-                      listenable: _hwAgent,
-                      builder: (context, _) {
-                        final toastText = _hwAgent.lastButtonToast;
-                        final text = _hwAgent.statusText;
-                        if ((toastText == null || toastText.isEmpty) &&
-                            (text == null || text.isEmpty)) {
-                          return const SizedBox.shrink();
-                        }
-                        final topPad = MediaQuery.paddingOf(context).top + 10;
-                        return Positioned(
-                          top: topPad,
-                          left: 16,
-                          right: 16,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (toastText != null && toastText.isNotEmpty)
-                                Padding(
-                                  padding: EdgeInsets.only(
-                                    bottom: (text != null && text.isNotEmpty)
-                                        ? 8
-                                        : 0,
-                                  ),
-                                  child: IgnorePointer(
-                                    child: Container(
-                                      key: const Key('hw-button-toast'),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 14,
-                                        vertical: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xEB111827),
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(
-                                          color: const Color(0x4034D399),
-                                        ),
-                                        boxShadow: const [
-                                          BoxShadow(
-                                            color: Color(0x30000000),
-                                            blurRadius: 12,
-                                            offset: Offset(0, 4),
-                                          ),
-                                        ],
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Icon(
-                                            Icons.radio_button_checked_rounded,
-                                            size: 14,
-                                            color: Color(0xFF34D399),
-                                          ),
-                                          const SizedBox(width: 7),
-                                          Flexible(
-                                            child: Text(
-                                              toastText,
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 12.5,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+    return MemorySearchScope(
+      service: widget.memorySearch,
+      child: StoreScope(
+        store: widget.store,
+        child: ListenableBuilder(
+          listenable: widget.store,
+          builder: (context, _) => LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= RCDims.wideBreakpoint;
+              return PopScope(
+                // Android 物理返回键 / 手势：先退自管路由栈，栈空才交给系统退出
+                canPop: false,
+                onPopInvokedWithResult: (didPop, _) {
+                  if (didPop) return;
+                  final handled = widget.store.handleSystemBack();
+                  if (!handled && mounted) {
+                    // 栈已空：让系统退出 App（Android 期望行为）
+                    SystemNavigator.pop();
+                  }
+                },
+                child: Scaffold(
+                  backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+                  body: Stack(
+                    children: [
+                      if (wide)
+                        _WideLayout(
+                          device: _device,
+                          recordingStatus: _recording,
+                          modelManager: widget.modelManager,
+                          settings: widget.settings,
+                          agentConfig: _agentConfig,
+                          authService: widget.authService,
+                          photoLibrary: _photoLib,
+                          healthSignals: widget.healthSignals,
+                          onOpenOs1: () => _agentChat.open(),
+                          supportsDynamicIsland: _resolvedSupportsDynamicIsland,
+                        )
+                      else
+                        _NarrowLayout(
+                          device: _device,
+                          recordingStatus: _recording,
+                          modelManager: widget.modelManager,
+                          settings: widget.settings,
+                          agentConfig: _agentConfig,
+                          authService: widget.authService,
+                          photoLibrary: _photoLib,
+                          healthSignals: widget.healthSignals,
+                          onOpenOs1: () => _agentChat.open(),
+                          supportsDynamicIsland: _resolvedSupportsDynamicIsland,
+                        ),
+                      ListenableBuilder(
+                        listenable: _hwAgent,
+                        builder: (context, _) {
+                          final toastText = _hwAgent.lastButtonToast;
+                          final text = _hwAgent.statusText;
+                          if ((toastText == null || toastText.isEmpty) &&
+                              (text == null || text.isEmpty)) {
+                            return const SizedBox.shrink();
+                          }
+                          final topPad = MediaQuery.paddingOf(context).top + 10;
+                          return Positioned(
+                            top: topPad,
+                            left: 16,
+                            right: 16,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (toastText != null && toastText.isNotEmpty)
+                                  Padding(
+                                    padding: EdgeInsets.only(
+                                      bottom: (text != null && text.isNotEmpty)
+                                          ? 8
+                                          : 0,
                                     ),
-                                  ),
-                                ),
-                              if (text != null && text.isNotEmpty)
-                                Center(
-                                  child: Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      key: const Key('hw-agent-task-pill'),
-                                      borderRadius: BorderRadius.circular(999),
-                                      onTap: () {
-                                        if (_hwAgent.phase ==
-                                            HardwareAgentPhase.listening) {
-                                          unawaited(
-                                            _hwAgent.handleIphoneAgentTrigger(),
-                                          );
-                                        } else {
-                                          _agentChat.open();
-                                        }
-                                      },
+                                    child: IgnorePointer(
                                       child: Container(
+                                        key: const Key('hw-button-toast'),
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 14,
                                           vertical: 8,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: RCColors.label.withValues(
-                                            alpha: 0.92,
+                                          color: const Color(0xEB111827),
+                                          borderRadius: BorderRadius.circular(12),
+                                          border: Border.all(
+                                            color: const Color(0x4034D399),
                                           ),
-                                          borderRadius:
-                                              BorderRadius.circular(999),
                                           boxShadow: const [
                                             BoxShadow(
-                                              color: Color(0x28000000),
+                                              color: Color(0x30000000),
                                               blurRadius: 12,
                                               offset: Offset(0, 4),
                                             ),
@@ -479,26 +423,16 @@ class _AppShellState extends State<AppShell> {
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            SizedBox(
-                                              width: 8,
-                                              height: 8,
-                                              child: DecoratedBox(
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  color:
-                                                      _hwAgent.phase ==
-                                                          HardwareAgentPhase
-                                                              .listening
-                                                      ? RCColors.ok
-                                                      : const Color(0xFF60A5FA),
-                                                ),
-                                              ),
+                                            const Icon(
+                                              Icons.radio_button_checked_rounded,
+                                              size: 14,
+                                              color: Color(0xFF34D399),
                                             ),
-                                            const SizedBox(width: 8),
+                                            const SizedBox(width: 7),
                                             Flexible(
                                               child: Text(
-                                                text,
-                                                maxLines: 1,
+                                                toastText,
+                                                maxLines: 2,
                                                 overflow: TextOverflow.ellipsis,
                                                 style: const TextStyle(
                                                   color: Colors.white,
@@ -512,29 +446,102 @@ class _AppShellState extends State<AppShell> {
                                       ),
                                     ),
                                   ),
-                                ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                    ListenableBuilder(
-                      listenable: _agentConfig,
-                      builder: (context, _) => StatusSheetOverlay(
-                        store: _device,
-                        agentConfig: _agentConfig,
-                        islandEnabled: _agentConfig.islandEnabled,
+                                if (text != null && text.isNotEmpty)
+                                  Center(
+                                    child: Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        key: const Key('hw-agent-task-pill'),
+                                        borderRadius: BorderRadius.circular(999),
+                                        onTap: () {
+                                          if (_hwAgent.phase ==
+                                              HardwareAgentPhase.listening) {
+                                            unawaited(
+                                              _hwAgent.handleIphoneAgentTrigger(),
+                                            );
+                                          } else {
+                                            _agentChat.open();
+                                          }
+                                        },
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 14,
+                                            vertical: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: RCColors.label.withValues(
+                                              alpha: 0.92,
+                                            ),
+                                            borderRadius:
+                                                BorderRadius.circular(999),
+                                            boxShadow: const [
+                                              BoxShadow(
+                                                color: Color(0x28000000),
+                                                blurRadius: 12,
+                                                offset: Offset(0, 4),
+                                              ),
+                                            ],
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              SizedBox(
+                                                width: 8,
+                                                height: 8,
+                                                child: DecoratedBox(
+                                                  decoration: BoxDecoration(
+                                                    shape: BoxShape.circle,
+                                                    color:
+                                                        _hwAgent.phase ==
+                                                            HardwareAgentPhase
+                                                                .listening
+                                                        ? RCColors.ok
+                                                        : const Color(0xFF60A5FA),
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Flexible(
+                                                child: Text(
+                                                  text,
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 12.5,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
                       ),
-                    ),
-                    LegacyUpgradeSheetOverlay(
-                      controller: _device.legacyUpgrade,
-                    ),
-                    Os1AiSpaceOverlay(controller: _agentChat),
-                  ],
+                      ListenableBuilder(
+                        listenable: _agentConfig,
+                        builder: (context, _) => StatusSheetOverlay(
+                          store: _device,
+                          agentConfig: _agentConfig,
+                          islandEnabled: _agentConfig.islandEnabled,
+                        ),
+                      ),
+                      LegacyUpgradeSheetOverlay(
+                        controller: _device.legacyUpgrade,
+                      ),
+                      Os1AiSpaceOverlay(controller: _agentChat),
+                    ],
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );

@@ -19,6 +19,7 @@ import '../../services/audio/voice_sample_capture.dart';
 import '../../services/auth/oauth_config.dart';
 import '../../services/auth_service.dart';
 import '../../services/health/health_signal_controller.dart';
+import '../../services/memory/memory_search_scope.dart';
 import '../../services/transcribe/asr_models.dart';
 import '../../services/transcribe/model_manager_controller.dart';
 import '../../services/transcribe/system_speech_client.dart';
@@ -27,6 +28,7 @@ import '../../widgets/rc_switch.dart';
 import '../../widgets/store_scope.dart';
 import 'developer_schedule_section.dart';
 import 'health_signal_body.dart';
+import 'memory_search_body.dart';
 
 class SettingSubPage extends StatelessWidget {
   const SettingSubPage({
@@ -41,7 +43,7 @@ class SettingSubPage extends StatelessWidget {
     this.standalone = false,
   });
 
-  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'island' | 'watch' | 'exthw' | 'dev'
+  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'dev'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
@@ -57,6 +59,7 @@ class SettingSubPage extends StatelessWidget {
     'prompts' => '预设风格与提示词',
     'voiceprint' => '声纹识别',
     'ext' => '扩展能力（Skills · Tools · MCP）',
+    'mem' => '本机记忆检索',
     'island' => '灵动岛与操作按钮',
     'watch' => 'Apple Watch 联动',
     'exthw' => '第三方硬件联动',
@@ -151,6 +154,7 @@ class SettingSubPage extends StatelessWidget {
                     'prompts' => _AgentPromptsBody(config: agentConfig),
                     'voiceprint' => _VoiceprintBody(controller: modelManager),
                     'ext' => _AgentExtensionsBody(config: agentConfig),
+                    'mem' => _memorySearchBody(context),
                     'island' => _DynamicIslandBody(config: agentConfig),
                     'watch' => _AppleWatchLinkBody(
                       config: agentConfig,
@@ -173,6 +177,14 @@ class SettingSubPage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _memorySearchBody(BuildContext context) {
+    final service = MemorySearchScope.maybeOf(context);
+    if (service == null) {
+      return const Text('检索服务未装载', key: Key('memory-search-missing'));
+    }
+    return MemorySearchBody(ask: service.ask);
   }
 }
 
