@@ -243,7 +243,8 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
                 freeDiskBytes: prev?.freeDiskBytes ?? 0,
                 keepAliveMode: prev?.keepAliveMode ?? .idle,
                 updatedAtMs: nowMs,
-                lastError: nil
+                lastError: nil,
+                appVersion: prev?.appVersion ?? ""
             )
         }
         stateLock.unlock()
@@ -266,7 +267,8 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
             freeDiskBytes: prev?.freeDiskBytes ?? 0,
             keepAliveMode: .idle,
             updatedAtMs: nowMs,
-            lastError: prev?.lastError
+            lastError: prev?.lastError,
+            appVersion: prev?.appVersion ?? ""
         )
         stateLock.unlock()
     }
@@ -324,6 +326,9 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         }
         if let lastError = snap?.lastError {
             out["lastError"] = lastError
+        }
+        if let appVersion = snap?.appVersion, !appVersion.isEmpty {
+            out["watchAppVersion"] = appVersion
         }
         return out
     }

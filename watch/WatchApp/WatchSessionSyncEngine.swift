@@ -179,6 +179,18 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
         refreshSnapshotAndBroadcast(pushContext: false)
     }
 
+    static var bundledAppVersionLabel: String {
+        let info = Bundle.main.infoDictionary
+        let name = (info?["CFBundleShortVersionString"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let build = (info?["CFBundleVersion"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if name.isEmpty && build.isEmpty { return "" }
+        if build.isEmpty { return name }
+        if name.isEmpty { return build }
+        return "\(name) (\(build))"
+    }
+
     private func refreshSnapshotAndBroadcast(pushContext: Bool) {
         let device = WKInterfaceDevice.current()
         let rawBattery = device.batteryLevel
@@ -200,7 +212,8 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
             freeDiskBytes: WatchAudioCaptureEngine.freeDiskBytes(),
             keepAliveMode: captureEngine.isRecording ? keepAlive.mode : .idle,
             updatedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
-            lastError: captureEngine.lastError ?? keepAlive.lastWarning
+            lastError: captureEngine.lastError ?? keepAlive.lastWarning,
+            appVersion: Self.bundledAppVersionLabel
         )
         snapshot = nextSnapshot
         slices = manifestStore.allEntries()

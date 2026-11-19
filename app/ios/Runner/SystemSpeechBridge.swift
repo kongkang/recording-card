@@ -180,8 +180,11 @@ final class SystemSpeechBridge: NSObject {
     let targetLocale = Locale(identifier: localeId)
 
     // 1. 优先使用系统已预置的高精度 SpeechTranscriber
-    if let speechLocale = await SpeechTranscriber.supportedLocale(equivalentTo: targetLocale)
-        ?? (await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current)) {
+    var resolvedSpeechLocale = await SpeechTranscriber.supportedLocale(equivalentTo: targetLocale)
+    if resolvedSpeechLocale == nil {
+      resolvedSpeechLocale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current)
+    }
+    if let speechLocale = resolvedSpeechLocale {
       let bcp47 = speechLocale.identifier(.bcp47)
       let installed = await SpeechTranscriber.installedLocales
       if installed.contains(where: { $0.identifier(.bcp47) == bcp47 }) {
@@ -226,8 +229,11 @@ final class SystemSpeechBridge: NSObject {
     }
 
     // 2. 瞬态垫底：使用已内置的 DictationTranscriber
-    if let dictLocale = await DictationTranscriber.supportedLocale(equivalentTo: targetLocale)
-        ?? (await DictationTranscriber.supportedLocale(equivalentTo: Locale.current)) {
+    var resolvedDictLocale = await DictationTranscriber.supportedLocale(equivalentTo: targetLocale)
+    if resolvedDictLocale == nil {
+      resolvedDictLocale = await DictationTranscriber.supportedLocale(equivalentTo: Locale.current)
+    }
+    if let dictLocale = resolvedDictLocale {
       let dictBcp47 = dictLocale.identifier(.bcp47)
       let dictInstalled = await DictationTranscriber.installedLocales
       if dictInstalled.contains(where: { $0.identifier(.bcp47) == dictBcp47 }) {
@@ -282,11 +288,7 @@ final class SystemSpeechBridge: NSObject {
 
     Task.detached(priority: .utility) { [weak self] in
       defer {
-        if let self {
-          self.warmupLock.lock()
-          self.warmingLocales.remove(key)
-          self.warmupLock.unlock()
-        }
+        self?.removeWarmingLocale(key)
       }
       let transcriber = SpeechTranscriber(
         locale: locale,
@@ -300,6 +302,13 @@ final class SystemSpeechBridge: NSObject {
     }
   }
 
+  private func removeWarmingLocale(_ key: String) {
+    warmupLock.lock()
+    warmingLocales.remove(key)
+    warmupLock.unlock()
+  }
+
+  @available(iOS 26.0, *)
   private static func extractTokensAndTimestamps(
     from attributed: AttributedString
   ) -> (text: String, tokens: [String], timestampsMs: [Int]) {

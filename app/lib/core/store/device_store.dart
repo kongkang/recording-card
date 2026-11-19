@@ -16,6 +16,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../services/audio/live_audio_recorder.dart';
+import '../../services/audio/pcm_ring_buffer.dart';
 import '../../services/audio/phone_mic_service.dart';
 import '../../services/legacy_upgrade/legacy_upgrade_controller.dart';
 import '../../services/legacy_upgrade/legacy_upgrade_gateway.dart';
@@ -30,7 +31,7 @@ enum SyncState { idle, busy, done }
 /// 最近一次同步是谁触发的：自动（停止录音/后台）还是用户点同步行。
 enum SyncTrigger { auto, manual }
 
-enum DeviceView { main, upg, wifi }
+enum DeviceView { main, upg, wifi, btn }
 
 /// 与录音卡的蓝牙连接状态：未连接时顶栏胶囊变灰，点开进扫描流程。
 enum LinkState {
@@ -146,6 +147,13 @@ class DeviceStore extends ChangeNotifier {
   /// 点一机 V1 硬件拍照事件到达时触发（供外层同步硬件抓拍照片）。
   VoidCallback? onHardwarePhotoCaptured;
 
+  final StreamController<HardwareButtonEvent> _hardwareButtonCtrl =
+      StreamController<HardwareButtonEvent>.broadcast();
+
+  /// 点一机 V1 硬件物理按键事件流（down / up / click / double_click / long_press_*）。
+  Stream<HardwareButtonEvent> get hardwareButtonEvents =>
+      _hardwareButtonCtrl.stream;
+
   /// 蓝牙授权状态（iOS 专用；Android 恒为 unknown 由系统自行申请）。
   BluetoothAuthorization bleAuth = BluetoothAuthorization.unknown;
   final BluetoothPermission _permission = const BluetoothPermission();
@@ -180,6 +188,7 @@ class DeviceStore extends ChangeNotifier {
       _applySnapshot(snapshot);
       await _reconcileRecordingOnConnect();
       if (epoch != _epoch) return;
+      _startHeartbeat();
       if (sheetOpen) {
         _startSheetWatch();
         unawaited(prefetchSummaryInfo());
@@ -622,6 +631,13 @@ class DeviceStore extends ChangeNotifier {
         onHardwarePhotoCaptured?.call();
       }
 
+      // 物理按键手势事件（点一机 V1 down / up / click / double_click / long_press_*）
+      for (final btnEv in batch.buttonEvents) {
+        if (!_hardwareButtonCtrl.isClosed) {
+          _hardwareButtonCtrl.add(btnEv);
+        }
+      }
+
       if (changed) notifyListeners();
     } on CardException {
       // 队列读不到不影响主链路：看门狗负责判掉线
@@ -740,7 +756,10 @@ class DeviceStore extends ChangeNotifier {
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _heartbeatTick();
     });
-    _eventWatch = Timer.periodic(const Duration(seconds: 1), (_) {
+    final eventInterval = activeCapabilities.hasConfigurableButtons
+        ? const Duration(milliseconds: 200)
+        : const Duration(seconds: 1);
+    _eventWatch = Timer.periodic(eventInterval, (_) {
       if (isConnected && !sheetOpen) {
         unawaited(_pullDeviceEvents());
       }
@@ -1159,6 +1178,40 @@ class DeviceStore extends ChangeNotifier {
     }
   }
 
+  /// 点一机 V1 立即拍照并经 Wi-Fi AP 拉取原图到本地路径。
+  Future<Map<String, dynamic>> captureAndFetchDyjPhoto({
+    required String dir,
+    String? serverOrigin,
+  }) async {
+    if (!isConnected) throw CardException.disconnected();
+    if (!activeCapabilities.hasCameraMedia) {
+      throw const CardException(CardErrorKind.device, '当前硬件不支持拍照');
+    }
+    return _gw.invokeBridgeCommand(
+      'camera_capture_and_fetch',
+      {
+        'dir': dir,
+        if (serverOrigin != null && serverOrigin.trim().isNotEmpty)
+          'serverOrigin': serverOrigin.trim(),
+      },
+      const Duration(seconds: 45),
+    );
+  }
+
+  /// 向点一机 V1 下发 LED 状态提示（best-effort，不抛异常中断主链路）。
+  Future<void> sendDyjLedHint(String mode) async {
+    if (!isConnected || !activeCapabilities.hasConfigurableButtons) return;
+    try {
+      await _gw.invokeBridgeCommand(
+        'dyj_led_hint',
+        {'mode': mode},
+        const Duration(seconds: 5),
+      );
+    } on Object {
+      // 固件未实现或链路忙时静默跳过
+    }
+  }
+
   // ── 电量 ───────────────────────────────────────────────────
   int get battery => _liveBattery ?? 0;
   bool get batteryKnown => _liveBattery != null;
@@ -1186,6 +1239,7 @@ class DeviceStore extends ChangeNotifier {
   String? get phoneRecordingError => _phoneRecordingError;
   DateTime? get phoneRecordingStartedAt => _phoneRecordingStartedAt;
   Stream<LiveAudioSlice> get phoneAudioSlices => _phoneMicRecorder.slices;
+  PcmRingBuffer get phoneRingBuffer => _phoneMicRecorder.ringBuffer;
   LiveActivityService get liveActivityService => _liveActivityService;
 
   void setIslandEnabled(bool enabled) {
@@ -2265,6 +2319,9 @@ class DeviceStore extends ChangeNotifier {
     }
     if (_ownsLegacyUpgrade) {
       legacyUpgrade.dispose();
+    }
+    if (!_hardwareButtonCtrl.isClosed) {
+      unawaited(_hardwareButtonCtrl.close());
     }
 
     super.dispose();

@@ -318,6 +318,61 @@ class _HomeGateState extends State<_HomeGate> {
     unawaited(_continuePendingAfterModels(discoverFuture));
   }
 
+  Future<String> _transcribeSliceForAgent(
+    Float32List samples, {
+    int sampleRate = 16000,
+  }) async {
+    final paths = await _models.resolve();
+    if (paths != null && !paths.usesSystemAsr && paths.canTranscribe) {
+      await _asr.load(
+        modelPath: paths.asrModelPath,
+        tokensPath: paths.tokensPath,
+      );
+      final res = await _asr.transcribe(samples, sampleRate: sampleRate);
+      return res.text.trim();
+    }
+    await _systemSpeech.requestAuthorization();
+    final res = await _systemSpeech.transcribeSamples(
+      samples,
+      sampleRate: sampleRate,
+    );
+    return res.text.trim();
+  }
+
+  Future<String?> _lookupExistingTranscript(int startMs, int endMs) async {
+    final files = await _recordingStore.loadAll();
+    for (final file in files) {
+      if (file.startAtMs <= 0 || file.durationMs <= 0) continue;
+      final fileEndMs = file.startAtMs + file.durationMs;
+      if (fileEndMs < endMs - 500 || file.startAtMs > endMs) continue;
+      final texts = <String>[];
+      if (file.turns.isNotEmpty) {
+        for (final t in file.turns) {
+          final absStart = file.startAtMs + t.startMs;
+          final absEnd = file.startAtMs + t.endMs;
+          if (absEnd > startMs &&
+              absStart < endMs &&
+              t.text.trim().isNotEmpty) {
+            texts.add(t.text.trim());
+          }
+        }
+      } else {
+        for (final u in file.utterances) {
+          final absStart = file.startAtMs + u.startMs;
+          final absEnd = file.startAtMs + u.endMs;
+          if (absEnd > startMs &&
+              absStart < endMs &&
+              u.text.trim().isNotEmpty) {
+            texts.add(u.text.trim());
+          }
+        }
+      }
+      final joined = texts.join(' ').trim();
+      if (joined.isNotEmpty) return joined;
+    }
+    return null;
+  }
+
   Future<void> _startScheduler() async {
     KeyValueStore backing;
     try {
@@ -420,6 +475,8 @@ class _HomeGateState extends State<_HomeGate> {
               healthSignals: _healthSignals,
               memorySearch: _memorySearch,
               agentChat: _agentChat,
+              transcribeSamples: _transcribeSliceForAgent,
+              lookupExistingTranscript: _lookupExistingTranscript,
             );
           }
           return LoginPage(

@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/store/agent_config_store.dart';
 import '../core/store/device_store.dart';
 import '../core/theme/rc_icons.dart';
 import '../core/theme/tokens.dart';
@@ -332,9 +333,11 @@ class StatusSheetOverlay extends StatefulWidget {
   const StatusSheetOverlay({
     super.key,
     required this.store,
+    this.agentConfig,
     this.islandEnabled = true,
   });
   final DeviceStore store;
+  final AgentConfigStore? agentConfig;
   final bool islandEnabled;
 
   @override
@@ -385,6 +388,7 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay> {
                     child: switch (store.view) {
                       DeviceView.main => _MainView(
                         store: store,
+                        agentConfig: widget.agentConfig,
                         islandEnabled: widget.islandEnabled,
                       ),
                       DeviceView.upg => _FirmwareView(
@@ -392,6 +396,10 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay> {
                         islandEnabled: widget.islandEnabled,
                       ),
                       DeviceView.wifi => _WifiView(store: store),
+                      DeviceView.btn => _ButtonConfigView(
+                        store: store,
+                        agentConfig: widget.agentConfig,
+                      ),
                     },
                   ),
                 ),
@@ -593,9 +601,11 @@ class _PhoneRecRow extends StatelessWidget {
 class _MainView extends StatelessWidget {
   const _MainView({
     required this.store,
+    this.agentConfig,
     this.islandEnabled = true,
   });
   final DeviceStore store;
+  final AgentConfigStore? agentConfig;
   final bool islandEnabled;
 
   @override
@@ -925,6 +935,35 @@ class _MainView extends StatelessWidget {
                 const SizedBox(width: 5),
                 const RCIcon(RCIconKind.chevronRight, size: 15, color: RCColors.ax),
               ],
+            ),
+          ),
+        if (store.activeCapabilities.hasConfigurableButtons &&
+            agentConfig != null)
+          ListenableBuilder(
+            listenable: agentConfig!,
+            builder: (context, _) => _Row(
+              keyName: 'btn-config',
+              label: '按键行为',
+              onTap: () => store.showView(DeviceView.btn),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      agentConfig!.dyjButtonSummary,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  const RCIcon(
+                    RCIconKind.chevronRight,
+                    size: 15,
+                    color: RCColors.ax,
+                  ),
+                ],
+              ),
             ),
           ),
         if (store.devStateText.isNotEmpty)
@@ -1805,6 +1844,164 @@ class _WifiViewState extends State<_WifiView> {
               ],
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ButtonConfigView extends StatelessWidget {
+  const _ButtonConfigView({required this.store, this.agentConfig});
+
+  final DeviceStore store;
+  final AgentConfigStore? agentConfig;
+
+  @override
+  Widget build(BuildContext context) {
+    final config = agentConfig;
+    return Column(
+      key: const Key('btn-config-view'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            IconButton(
+              key: const Key('btn-cfg-back'),
+              onPressed: () => store.showView(DeviceView.main),
+              icon: const RCIcon(
+                RCIconKind.chevronLeft,
+                size: 18,
+                color: RCColors.ink,
+              ),
+              color: RCColors.ink,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+            ),
+            const SizedBox(width: 4),
+            const Text(
+              '按键行为设置',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          '配置点一机 V1 物理按键触发的动作；未开启持续录音时触发「语音任务」将自动开启临时录音并在完成后关闭。',
+          style: TextStyle(fontSize: 12, height: 1.45, color: RCColors.sec),
+        ),
+        const SizedBox(height: 12),
+        if (config == null)
+          const Text(
+            '暂无按键配置上下文',
+            style: TextStyle(fontSize: 13, color: RCColors.sec),
+          )
+        else
+          ListenableBuilder(
+            listenable: config,
+            builder: (context, _) => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _gestureSection(
+                  key: const Key('btn-cfg-click'),
+                  gesture: 'click',
+                  title: '单击',
+                  current: config.dyjClickAction,
+                  onPick: (a) => unawaited(config.setDyjButtonAction('click', a)),
+                ),
+                const SizedBox(height: 12),
+                _gestureSection(
+                  key: const Key('btn-cfg-long'),
+                  gesture: 'long_press',
+                  title: '长按',
+                  current: config.dyjLongPressAction,
+                  onPick: (a) =>
+                      unawaited(config.setDyjButtonAction('long_press', a)),
+                ),
+                const SizedBox(height: 12),
+                _gestureSection(
+                  key: const Key('btn-cfg-double'),
+                  gesture: 'double_click',
+                  title: '双击',
+                  current: config.dyjDoubleClickAction,
+                  onPick: (a) =>
+                      unawaited(config.setDyjButtonAction('double_click', a)),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _gestureSection({
+    required Key key,
+    required String gesture,
+    required String title,
+    required HardwareButtonAction current,
+    required ValueChanged<HardwareButtonAction> onPick,
+  }) {
+    return Container(
+      key: key,
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: RCColors.bg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: RCColors.sep),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                current.shortLabel,
+                style: const TextStyle(fontSize: 12, color: RCColors.sec),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final act in HardwareButtonAction.values)
+                InkWell(
+                  key: Key('btn-cfg-$gesture-${act.code}'),
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: () => onPick(act),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: current == act ? RCColors.label : RCColors.card,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: current == act ? RCColors.label : RCColors.sep,
+                      ),
+                    ),
+                    child: Text(
+                      act.shortLabel,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: current == act ? Colors.white : RCColors.ink,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ],
       ),
     );

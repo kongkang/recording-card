@@ -148,6 +148,7 @@ impl ActiveDevice {
 struct BridgeState {
     runtime: tokio::runtime::Runtime,
     device: tokio::sync::Mutex<Option<ActiveDevice>>,
+    connecting_dyj_peripheral: Mutex<Option<btleplug::platform::Peripheral>>,
     scan_adapter: tokio::sync::OnceCell<btleplug::platform::Adapter>,
     card_v2_manager: tokio::sync::OnceCell<CardV2Manager>,
     scan_cache: Mutex<HashMap<String, CachedScanEntry>>,
@@ -242,6 +243,7 @@ fn state() -> &'static BridgeState {
             .build()
             .expect("tokio runtime"),
         device: tokio::sync::Mutex::new(None),
+        connecting_dyj_peripheral: Mutex::new(None),
         scan_adapter: tokio::sync::OnceCell::new(),
         card_v2_manager: tokio::sync::OnceCell::new(),
         scan_cache: Mutex::new(HashMap::new()),
@@ -499,6 +501,24 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
             let active = active_device().await?;
             out.ok(camera_sync(&active, &dir, server_origin.as_deref()).await?);
         }
+        "camera_capture_and_fetch" => {
+            let dir = str_field(&payload, "dir");
+            let server_origin = payload
+                .get("serverOrigin")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let active = active_device().await?;
+            out.ok(camera_capture_and_fetch(&active, &dir, server_origin.as_deref()).await?);
+        }
+        "dyj_button_status" => {
+            let active = active_device().await?;
+            out.ok(dyj_button_status(&active).await?);
+        }
+        "dyj_led_hint" => {
+            let mode = str_field(&payload, "mode");
+            let active = active_device().await?;
+            out.ok(dyj_led_hint(&active, &mode).await?);
+        }
         "wifi.scan" => {
             let active = active_device().await?;
             out.ok(wifi_scan(&active).await?);
@@ -723,7 +743,7 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         .map_err(|e| BridgeError::from(format!("BLE peripherals failed: {e}")))?;
     alog::info(&format!("unified_scan: {} peripherals", peripherals.len()));
 
-    let mut discovered: Vec<(i16, String, Value)> = Vec::new();
+    let mut discovered: Vec<(i16, String, String, String, Value)> = Vec::new();
     let mut cache_updates: Vec<(String, CachedScanEntry)> = Vec::new();
 
     for (idx, p) in peripherals.into_iter().enumerate() {
@@ -768,30 +788,27 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         let id = p.id().to_string();
         let advertised_now = seen_this_scan.contains(&id);
         let props_rssi = props.rssi.filter(|r| *r < 0);
-        let rssi = match props_rssi {
-            Some(r) => r,
-            None if advertised_now => {
-                // 本窗口广播过但无 RSSI 载体事件（纯名称广播）：设备必然在附近，按近距离兜底展示
-                -60
-            }
-            None => {
-                let p = p.clone();
-                let is_conn = match tokio::time::timeout(
-                    Duration::from_millis(400),
-                    tokio::task::spawn_blocking(move || {
-                        tokio::runtime::Handle::current().block_on(p.is_connected())
-                    }),
-                )
-                .await
-                {
-                    Ok(Ok(Ok(v))) => v,
-                    _ => false,
-                };
-                if is_conn {
-                    -58
-                } else {
-                    continue;
-                }
+        // CoreBluetooth 会把旧外设及其历史 rssi 长期留在 adapter.peripherals() 里，哪怕设备早已断开或轮换了 RPA 地址。
+        // 若本扫描窗口完全没收到它的广播，仅当系统仍处于已连接状态时才保留，绝不把过期 RPA 当作新发现返回。
+        let rssi = if advertised_now {
+            props_rssi.unwrap_or(-60)
+        } else {
+            let p = p.clone();
+            let is_conn = match tokio::time::timeout(
+                Duration::from_millis(400),
+                tokio::task::spawn_blocking(move || {
+                    tokio::runtime::Handle::current().block_on(p.is_connected())
+                }),
+            )
+            .await
+            {
+                Ok(Ok(Ok(v))) => v,
+                _ => false,
+            };
+            if is_conn {
+                props_rssi.unwrap_or(-58)
+            } else {
+                continue;
             }
         };
         cache_updates.push((
@@ -804,6 +821,8 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         discovered.push((
             rssi,
             id.clone(),
+            kind_str.to_string(),
+            name.clone(),
             json!({
                 "id": id,
                 "name": name,
@@ -822,15 +841,21 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         }
     }
 
-    // 去重（同名保留信号最强的一条），按 RSSI 从强到弱排序
+    // 去重（同款同名设备只保留信号最强的一条，防 RPA 轮换留下双重条目），按 RSSI 从强到弱排序
     discovered.sort_by(|a, b| b.0.cmp(&a.0));
     let mut seen_ids = std::collections::HashSet::new();
+    let mut seen_names = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(discovered.len());
     alog::info(&format!("unified_scan: classified {} devices", discovered.len()));
-    for (_, id, val) in discovered {
-        if seen_ids.insert(id) {
-            out.push(val);
+    for (_, id, kind_str, name, val) in discovered {
+        if !seen_ids.insert(id) {
+            continue;
         }
+        let trimmed = name.trim();
+        if !trimmed.is_empty() && !seen_names.insert(format!("{kind_str}:{trimmed}")) {
+            continue;
+        }
+        out.push(val);
     }
     alog::info(&format!("unified_scan: done, {} entries out", out.len()));
     Ok(out)
@@ -976,8 +1001,18 @@ fn update_dyj_v1_meta_from_info(meta: &Arc<Mutex<DyjV1CachedMeta>>, info: &Value
 
 async fn connect_dyj_v1(id: &str, name: &str) -> Result<Value, BridgeError> {
     let adapter = scan_adapter().await?;
-    let (device, hello) = DyjV1Session::connect(adapter, id, name).await?;
+    let (device, hello) =
+        DyjV1Session::connect(adapter, id, name, Some(&state().connecting_dyj_peripheral)).await?;
+    let actual_id = device.peripheral().id().to_string();
     let mut initial_meta = DyjV1CachedMeta::default();
+    if let Some(did) = hello
+        .get("device_id")
+        .or_else(|| hello.get("deviceId"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        initial_meta.device_id = Some(did.to_string());
+    }
     if let Some(ver) = hello
         .get("app_version")
         .or_else(|| hello.get("fw_version"))
@@ -988,28 +1023,36 @@ async fn connect_dyj_v1(id: &str, name: &str) -> Result<Value, BridgeError> {
         initial_meta.fw_version_code = version_code_from_semver(ver);
     }
     let meta = Arc::new(Mutex::new(initial_meta));
-    if let Ok(info) = device.device_info(false).await {
-        update_dyj_v1_meta_from_info(&meta, &info);
-    }
-    if let Ok(wifi) = device.wifi_status().await {
-        if let Some(ssid) = wifi
-            .get("ssid")
-            .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-        {
-            meta.lock().unwrap().record_saved_ssid(ssid);
+    // 尽量用 hello 信息建连，首轮 snapshot 会按需补齐 device.info 与 wifi_status；
+    // 对时与按键模式检查异步延后执行，避免阻塞握手并挤占首包指令通道。
+    let bg_device = Arc::downgrade(&device);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let Some(dev) = bg_device.upgrade() else {
+            return;
+        };
+        if !dev.is_connected().await.unwrap_or(false) {
+            return;
         }
-    }
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    if now_ms > 0 {
-        let _ = device.device_time(Some(now_ms)).await;
-    }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        if now_ms > 0 {
+            let _ = dev.device_time(Some(now_ms)).await;
+        }
+        dev.ensure_buttons_event_only().await;
+    });
     let pump = spawn_dyj_v1_event_pump(&device);
     *state().event_pump.lock().await = Some(pump);
-    *state().last_device_id.lock().expect("device id lock") = Some(id.to_string());
+    *state().last_device_id.lock().expect("device id lock") = Some(actual_id.clone());
+    state().scan_cache.lock().expect("scan cache lock").insert(
+        actual_id,
+        CachedScanEntry {
+            name: name.to_string(),
+            kind: DeviceKind::DyjV1,
+        },
+    );
     *state().device.lock().await = Some(ActiveDevice::DyjV1 {
         device,
         name: name.to_string(),
@@ -1206,6 +1249,32 @@ async fn release_device() -> Value {
         let _ = stop.send(());
     }
     let active = state().device.lock().await.take();
+    let connecting_dyj = state().connecting_dyj_peripheral.lock().unwrap().take();
+    if let Some(p) = connecting_dyj {
+        let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
+    }
+    // 兜底释放：若此前某次 connect 超时或半连接遗留在 CoreBluetooth，把 adapter 里仍连着的 DYJ_ 外设也断开。
+    if let Some(adapter) = state().scan_adapter.get() {
+        if let Ok(peripherals) = adapter.peripherals().await {
+            for p in peripherals {
+                if let Ok(true) = tokio::time::timeout(Duration::from_millis(350), p.is_connected())
+                    .await
+                    .unwrap_or(Ok(false))
+                {
+                    let is_dyj = tokio::time::timeout(Duration::from_millis(300), p.properties())
+                        .await
+                        .ok()
+                        .and_then(std::result::Result::ok)
+                        .flatten()
+                        .and_then(|pr| pr.local_name)
+                        .is_some_and(|n| n.trim().starts_with("DYJ_"));
+                    if is_dyj {
+                        let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
+                    }
+                }
+            }
+        }
+    }
     let device_id = state().last_device_id.lock().expect("device id lock").take();
     let had_device = active.is_some();
     let sdk = match active {
@@ -1290,7 +1359,12 @@ fn spawn_card_v2_event_pump(device: &CardV2Device) -> tokio::task::JoinHandle<()
     })
 }
 
-fn map_dyj_v1_event_to_json(evt: &str, ts: u64, data: Value) -> Option<Value> {
+fn map_dyj_v1_event_to_json(
+    evt: &str,
+    ts: u64,
+    data: Value,
+    received_at_ms: u64,
+) -> Option<Value> {
     let mapped = match evt {
         "record.segment" => json!({
             "kind": "record_segment",
@@ -1313,10 +1387,38 @@ fn map_dyj_v1_event_to_json(evt: &str, ts: u64, data: Value) -> Option<Value> {
                 },
             })
         }
-        "button.event" => {
-            let btn_type = data.get("type").and_then(Value::as_str).unwrap_or("");
-            if matches!(btn_type, "click" | "double_click" | "long_press_start") {
-                json!({"kind": "button", "gesture": btn_type, "ts": ts})
+        _ if evt == "button.event" || evt.starts_with("button.") => {
+            let suffix = evt.strip_prefix("button.").unwrap_or("");
+            let btn_type = data
+                .get("type")
+                .or_else(|| data.get("gesture"))
+                .or_else(|| data.get("event"))
+                .or_else(|| data.get("action"))
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty() && *s != "event")
+                .unwrap_or(suffix);
+            if matches!(
+                btn_type,
+                "down"
+                    | "up"
+                    | "click"
+                    | "double_click"
+                    | "long_press"
+                    | "long_press_start"
+                    | "long_press_end"
+            ) {
+                let duration_ms = data
+                    .get("duration_ms")
+                    .or_else(|| data.get("durationMs"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                json!({
+                    "kind": "button",
+                    "gesture": btn_type,
+                    "durationMs": duration_ms,
+                    "deviceTs": ts,
+                    "receivedAtMs": received_at_ms,
+                })
             } else {
                 return None;
             }
@@ -1370,7 +1472,11 @@ fn spawn_dyj_v1_event_pump(device: &DyjV1Session) -> tokio::task::JoinHandle<()>
         loop {
             match events.recv().await {
                 Ok(DyjV1Event::Event { evt, ts, data }) => {
-                    if let Some(value) = map_dyj_v1_event_to_json(&evt, ts, data) {
+                    let received_at_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    if let Some(value) = map_dyj_v1_event_to_json(&evt, ts, data, received_at_ms) {
                         state().events.lock().expect("events lock").push(value);
                     }
                 }
@@ -2736,6 +2842,157 @@ async fn camera_sync(
     }))
 }
 
+async fn dyj_button_status(active: &ActiveDevice) -> Result<Value, BridgeError> {
+    let ActiveDevice::DyjV1 { device, .. } = active else {
+        return Err(BridgeError::from("当前硬件不支持点一机物理按键配置".to_string()));
+    };
+    Ok(device.button_status().await?)
+}
+
+async fn dyj_led_hint(active: &ActiveDevice, mode: &str) -> Result<Value, BridgeError> {
+    let ActiveDevice::DyjV1 { device, .. } = active else {
+        return Ok(json!({"supported": false}));
+    };
+    let ok = match mode {
+        "listening" => {
+            let res = device.led_set("breathe", Some("mid"), Some(850), Some(60)).await;
+            if res.is_err() {
+                device
+                    .led_set("blink", Some("mid"), Some(850), Some(60))
+                    .await
+                    .is_ok()
+            } else {
+                true
+            }
+        }
+        "thinking" => device
+            .led_set("blink", Some("mid"), Some(850), Some(30))
+            .await
+            .is_ok(),
+        _ => device.led_clear().await.is_ok(),
+    };
+    Ok(json!({"ok": ok, "mode": mode}))
+}
+
+async fn camera_capture_and_fetch(
+    active: &ActiveDevice,
+    dir: &str,
+    server_origin_override: Option<&str>,
+) -> Result<Value, BridgeError> {
+    let ActiveDevice::DyjV1 { device, meta, .. } = active else {
+        return Err(BridgeError::from("当前设备不支持拍照识别".to_string()));
+    };
+    let cap = device.camera_capture().await?;
+    let name = cap
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let bytes = cap.get("bytes").and_then(Value::as_u64).unwrap_or(0);
+    if name.is_empty() {
+        return Err(BridgeError::from("点一机拍照未返回文件名".to_string()));
+    }
+
+    let wifi_st = device.wifi_status().await.unwrap_or(Value::Null);
+    if !is_dyj_wifi_connected(&wifi_st) {
+        return Ok(json!({
+            "name": name,
+            "bytes": bytes,
+            "wifiConnected": false,
+            "downloaded": false,
+            "error": "点一机尚未连接 Wi-Fi，照片已保存在设备，配网后可回传识别",
+        }));
+    }
+
+    let Some(did) = resolve_dyj_device_id(device, meta).await else {
+        return Ok(json!({
+            "name": name,
+            "bytes": bytes,
+            "wifiConnected": true,
+            "downloaded": false,
+            "error": "未获取到点一机设备标识，请稍后重试",
+        }));
+    };
+    let Some(origin) = resolve_dyj_server_origin(device, server_origin_override).await else {
+        return Ok(json!({
+            "name": name,
+            "bytes": bytes,
+            "wifiConnected": true,
+            "downloaded": false,
+            "error": "未配置点一机上传服务地址，暂时无法回传照片",
+        }));
+    };
+
+    if let Err(e) = device.upload_start(Some(&name)).await {
+        return Ok(json!({
+            "name": name,
+            "bytes": bytes,
+            "wifiConnected": true,
+            "downloaded": false,
+            "error": format!("触发照片上传失败: {e}"),
+        }));
+    }
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+    while tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let Ok(st) = device.upload_status().await else {
+            continue;
+        };
+        let last = st.get("last");
+        let last_name = last.and_then(|l| l.get("name")).and_then(Value::as_str);
+        let last_state = last.and_then(|l| l.get("state")).and_then(Value::as_str);
+        if last_name == Some(name.as_str()) && last_state == Some("failed") {
+            let err_msg = last
+                .and_then(|l| l.get("error"))
+                .and_then(Value::as_str)
+                .unwrap_or("照片上传失败");
+            return Ok(json!({
+                "name": name,
+                "bytes": bytes,
+                "wifiConnected": true,
+                "downloaded": false,
+                "error": err_msg,
+            }));
+        }
+        if st.get("uploading").and_then(Value::as_bool) != Some(true) {
+            break;
+        }
+    }
+
+    let server = DyjV1ServerClient::new(&origin)?;
+    let filter = vec![name.clone()];
+    let mut saved_files = server
+        .download_to_dir(&did, dir, Some(&filter))
+        .await
+        .unwrap_or_default();
+    if saved_files.is_empty() {
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        saved_files = server
+            .download_to_dir(&did, dir, Some(&filter))
+            .await
+            .unwrap_or_default();
+    }
+
+    if let Some(sf) = saved_files.into_iter().next() {
+        return Ok(json!({
+            "name": sf.name,
+            "path": sf.path.to_string_lossy(),
+            "bytes": sf.bytes_written,
+            "wifiConnected": true,
+            "downloaded": true,
+        }));
+    }
+
+    Ok(json!({
+        "name": name,
+        "bytes": bytes,
+        "wifiConnected": true,
+        "downloaded": false,
+        "error": "照片尚未同步到云端暂存，请稍后在时间线查看",
+    }))
+}
+
 fn extract_origin(url: &str) -> Option<String> {
     let idx = url.find("://")?;
     let rest = &url[idx + 3..];
@@ -3967,11 +4224,12 @@ mod tests {
     }
 
     #[test]
-    fn maps_dyj_v1_battery_and_camera_and_record_events() {
+    fn maps_dyj_v1_battery_and_camera_and_record_and_button_events() {
         let batt = map_dyj_v1_event_to_json(
             "battery.changed",
             1000,
             json!({"level": 52, "status": "charging", "plugged": 1}),
+            1_700_000_001_000,
         )
         .unwrap();
         assert_eq!(batt["kind"], "power");
@@ -3982,6 +4240,7 @@ mod tests {
             "camera.capture",
             2000,
             json!({"name": "img_20261116-200000-001.jpg"}),
+            1_700_000_002_000,
         )
         .unwrap();
         assert_eq!(cam["kind"], "camera");
@@ -3990,11 +4249,50 @@ mod tests {
             "record.stop",
             3000,
             json!({"session": "DEADBEEF"}),
+            1_700_000_003_000,
         )
         .unwrap();
         assert_eq!(rec["kind"], "record");
         assert_eq!(rec["status"]["isRecording"], false);
         assert_eq!(rec["status"]["session"], "DEADBEEF");
+
+        for gesture in [
+            "down",
+            "up",
+            "click",
+            "double_click",
+            "long_press_start",
+            "long_press_end",
+        ] {
+            let btn = map_dyj_v1_event_to_json(
+                "button.event",
+                4567,
+                json!({"type": gesture, "duration_ms": 1820}),
+                1_700_000_004_567,
+            )
+            .unwrap();
+            assert_eq!(btn["kind"], "button");
+            assert_eq!(btn["gesture"], gesture);
+            assert_eq!(btn["durationMs"], 1820);
+            assert_eq!(btn["deviceTs"], 4567);
+            assert_eq!(btn["receivedAtMs"], 1_700_000_004_567u64);
+        }
+        for (evt_name, gesture) in [
+            ("button.click", "click"),
+            ("button.double_click", "double_click"),
+            ("button.long_press", "long_press"),
+        ] {
+            let btn = map_dyj_v1_event_to_json(evt_name, 5123, json!({}), 1_700_000_005_123).unwrap();
+            assert_eq!(btn["kind"], "button");
+            assert_eq!(btn["gesture"], gesture);
+        }
+        assert!(map_dyj_v1_event_to_json(
+            "button.event",
+            5000,
+            json!({"type": "unknown"}),
+            1_700_000_005_000,
+        )
+        .is_none());
     }
 
     #[test]

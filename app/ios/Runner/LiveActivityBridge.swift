@@ -9,11 +9,30 @@ import ActivityKit
 final class LiveActivityBridge {
   static let shared = LiveActivityBridge()
 
+  static let actionButtonToggleNotification = Notification.Name("com.reai.recordingcard.actionButtonToggle")
+  static let actionButtonAgentNotification = Notification.Name("com.reai.recordingcard.actionButtonAgent")
+
   private var channel: FlutterMethodChannel?
   private var pendingActionToggle = false
+  private var pendingActionAgent = false
   private var hourBlinkTask: Task<Void, Never>?
 
-  private init() {}
+  private init() {
+    NotificationCenter.default.addObserver(
+      forName: Self.actionButtonToggleNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.triggerActionButtonToggle()
+    }
+    NotificationCenter.default.addObserver(
+      forName: Self.actionButtonAgentNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.triggerActionButtonAgent()
+    }
+  }
 
   func register(with messenger: FlutterBinaryMessenger) {
     let ch = FlutterMethodChannel(
@@ -30,6 +49,12 @@ final class LiveActivityBridge {
         ch.invokeMethod("actionButtonToggle", arguments: nil)
       }
     }
+    if pendingActionAgent {
+      pendingActionAgent = false
+      DispatchQueue.main.async {
+        ch.invokeMethod("actionButtonAgent", arguments: nil)
+      }
+    }
   }
 
   func triggerActionButtonToggle() {
@@ -39,6 +64,17 @@ final class LiveActivityBridge {
         ch.invokeMethod("actionButtonToggle", arguments: nil)
       } else {
         self.pendingActionToggle = true
+      }
+    }
+  }
+
+  func triggerActionButtonAgent() {
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      if let ch = self.channel {
+        ch.invokeMethod("actionButtonAgent", arguments: nil)
+      } else {
+        self.pendingActionAgent = true
       }
     }
   }
