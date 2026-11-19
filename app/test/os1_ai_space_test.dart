@@ -149,6 +149,15 @@ void main() {
     expect(find.byKey(const Key('ai-her-pane')), findsOneWidget);
     expect(find.byKey(const Key('ai-her-canvas')), findsOneWidget);
 
+    // 点提示按钮等于说了一句：选项先收起，这句话留在对话区滚动。
+    await tester.tap(find.byKey(const Key('ai-her-prompt-mood')));
+    await tester.pump();
+    expect(find.byKey(const Key('ai-her-prompt-mood')), findsNothing);
+    expect(find.textContaining('今天聊了哪些重点'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 2400));
+    await tester.tap(find.byKey(const Key('ai-her-stage')));
+    await tester.pump();
+
     // 3) 沉浸通话语音闭环：点麦克风 → 系统 STT 给出最终识别文本 → Agent 回复 → 本地 TTS 自动播报
     await tester.tap(find.byKey(const Key('ai-her-talk-btn')));
     await tester.pump();

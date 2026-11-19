@@ -7,6 +7,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -94,9 +95,7 @@ class _TopBar extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
-              color: isHer
-                  ? const Color(0x26FFFFFF)
-                  : const Color(0x0F000000),
+              color: isHer ? const Color(0x26FFFFFF) : const Color(0x0F000000),
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
                 color: isHer ? const Color(0x38FFFFFF) : RCColors.sep,
@@ -174,10 +173,7 @@ class _TopBar extends StatelessWidget {
 // ── 沉浸通话（《Her》OS1 声波圆环 + 系统 STT/TTS）──────────────────
 
 class _HerVoicePane extends StatefulWidget {
-  const _HerVoicePane({
-    required this.controller,
-    required this.bottomPadding,
-  });
+  const _HerVoicePane({required this.controller, required this.bottomPadding});
 
   final AgentChatController controller;
   final double bottomPadding;
@@ -190,17 +186,23 @@ class _HerVoicePaneState extends State<_HerVoicePane>
     with SingleTickerProviderStateMixin {
   late final Ticker _ticker;
   double _phase = 0;
+  String? _spoken;
+  Timer? _spokenTimer;
+  var _spokenHoldDone = false;
 
   @override
   void initState() {
     super.initState();
     _ticker = createTicker((elapsed) {
       if (!mounted) return;
-      final boost = widget.controller.isListening || widget.controller.isSpeaking
-          ? 0.055
-          : (widget.controller.isBusy ? 0.04 : 0.02);
+      final listening =
+          widget.controller.isListening || widget.controller.isSpeaking;
+      // 未通话也要缓慢呼吸；通话/思考再加快，音量只加一点点，避免波纹乱跳。
+      final boost = listening
+          ? 0.022
+          : (widget.controller.isBusy ? 0.016 : 0.009);
       setState(() {
-        _phase += boost + widget.controller.voiceEnergy * 0.025;
+        _phase += boost + widget.controller.voiceEnergy * 0.008;
       });
     });
     _syncTicker();
@@ -208,17 +210,36 @@ class _HerVoicePaneState extends State<_HerVoicePane>
   }
 
   void _syncTicker() {
+    // 面板开着就一直转。未通话停表会让圆环完全冻住。
     final shouldAnimate =
-        widget.controller.isOpen &&
-        widget.controller.mode == Os1Mode.her &&
-        (widget.controller.isListening ||
-            widget.controller.isSpeaking ||
-            widget.controller.isBusy);
+        widget.controller.isOpen && widget.controller.mode == Os1Mode.her;
     if (shouldAnimate && !_ticker.isActive) {
       _ticker.start();
     } else if (!shouldAnimate && _ticker.isActive) {
       _ticker.stop();
     }
+    _releaseSpoken();
+  }
+
+  void _releaseSpoken() {
+    if (!_spokenHoldDone || widget.controller.isBusy || _spoken == null) {
+      return;
+    }
+    setState(() => _spoken = null);
+  }
+
+  void _onPrompt(String shown, String sent) {
+    _spokenTimer?.cancel();
+    _spokenHoldDone = false;
+    setState(() => _spoken = shown);
+    final ms = (shown.length * 180).clamp(2200, 5000);
+    _spokenTimer = Timer(Duration(milliseconds: ms), () {
+      _spokenHoldDone = true;
+      _releaseSpoken();
+    });
+    unawaited(
+      widget.controller.sendMessage(sent, viaVoice: true, speakReply: true),
+    );
   }
 
   @override
@@ -233,6 +254,7 @@ class _HerVoicePaneState extends State<_HerVoicePane>
 
   @override
   void dispose() {
+    _spokenTimer?.cancel();
     widget.controller.removeListener(_syncTicker);
     _ticker.dispose();
     super.dispose();
@@ -249,142 +271,150 @@ class _HerVoicePaneState extends State<_HerVoicePane>
         ? '● 语音回复中（轻触可打断）'
         : '● 语音同频就绪';
 
-    return SingleChildScrollView(
-      key: const Key('ai-her-pane'),
-      padding: EdgeInsets.fromLTRB(
-        22,
-        8,
-        22,
-        RCDims.pageBottomPad + widget.bottomPadding,
+    // 跟设计稿 .ai-her：圆环固定尺寸居中，底部是短句 + 半透明芯片 + 麦克风。
+    // 回复再长也不进滚动区，避免把圆环顶出屏幕。
+    final showingSpoken = _spoken != null;
+    final voice = showingSpoken ? _spoken! : _herVoiceLine(c.herHeadline);
+    final live = showingSpoken || c.isSpeaking;
+    final hidePrompts =
+        showingSpoken || c.isBusy || c.isSpeaking || c.isListening;
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: RadialGradient(
+          center: Alignment(0, -0.16),
+          radius: 1.05,
+          colors: [Color(0xFFEE6F4C), Color(0xFFD44A32), Color(0xFFB02E1C)],
+          stops: [0, 0.48, 1],
+        ),
       ),
       child: Column(
+        key: const Key('ai-her-pane'),
         children: [
           Text(
             stateLine,
             style: const TextStyle(
-              fontSize: 12.5,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: Color(0xE6FFF7EF),
+              letterSpacing: 0.4,
+              color: Color(0xD6FFF5EB),
             ),
           ),
-          const SizedBox(height: 18),
-          GestureDetector(
-            key: const Key('ai-her-stage'),
-            onTap: () {
-              if (c.isSpeaking) {
-                unawaited(c.interruptSpeech());
-              } else {
-                unawaited(c.toggleListening());
-              }
-            },
-            child: SizedBox(
-              width: 240,
-              height: 240,
-              child: CustomPaint(
-                key: const Key('ai-her-canvas'),
-                painter: _HerWavePainter(
-                  phase: _phase,
-                  energy: c.voiceEnergy,
-                  active: c.isListening || c.isSpeaking || c.isBusy,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            '“${c.herHeadline}”',
-            key: const Key('ai-her-voice'),
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 17,
-              height: 1.5,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            c.herSubline,
-            key: const Key('ai-her-sub'),
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 12.5, color: Color(0xCCFFF7EF)),
-          ),
-          const SizedBox(height: 22),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            alignment: WrapAlignment.center,
-            children: [
-              _promptChip(
-                key: const Key('ai-her-prompt-mood'),
-                label: '今天聊了哪些重点',
-                onTap: () => unawaited(
-                  c.sendMessage(
-                    '帮我梳理一下今天和最近录音里聊到的核心重点与待办',
-                    speakReply: true,
-                  ),
-                ),
-              ),
-              _promptChip(
-                key: const Key('ai-her-prompt-walk'),
-                label: '看看今天状态',
-                onTap: () => unawaited(
-                  c.sendMessage(
-                    '查一下我今天和最近采集的健康数据与活动状态',
-                    speakReply: true,
-                  ),
-                ),
-              ),
-              _promptChip(
-                key: const Key('ai-her-prompt-movie'),
-                label: '联网查个资料',
-                onTap: () => unawaited(
-                  c.sendMessage(
-                    '帮我联网查一下今天有哪些值得关注的科技新闻',
-                    speakReply: true,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 26),
-          GestureDetector(
-            key: const Key('ai-her-talk-btn'),
-            onTap: () => unawaited(c.toggleListening()),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              width: 68,
-              height: 68,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: c.isListening
-                    ? Colors.white
-                    : const Color(0x38FFFFFF),
-                border: Border.all(
-                  color: Colors.white,
-                  width: c.isListening ? 3 : 2,
-                ),
-                boxShadow: c.isListening
-                    ? const [
-                        BoxShadow(
-                          color: Color(0x55FFFFFF),
-                          blurRadius: 18,
-                          spreadRadius: 2,
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final side = math.min(
+                  constraints.maxWidth * 0.74,
+                  math.min(constraints.maxHeight * 0.92, 300),
+                );
+                return Center(
+                  child: GestureDetector(
+                    key: const Key('ai-her-stage'),
+                    onTap: () {
+                      if (c.isSpeaking) {
+                        unawaited(c.interruptSpeech());
+                      } else {
+                        unawaited(c.toggleListening());
+                      }
+                    },
+                    child: SizedBox(
+                      width: side.toDouble(),
+                      height: side.toDouble(),
+                      child: CustomPaint(
+                        key: const Key('ai-her-canvas'),
+                        painter: _HerWavePainter(
+                          phase: _phase,
+                          energy: c.voiceEnergy,
+                          active: c.isListening || c.isSpeaking || c.isBusy,
                         ),
-                      ]
-                    : null,
-              ),
-              child: Icon(
-                c.isListening ? Icons.stop_rounded : Icons.mic_rounded,
-                size: 30,
-                color: c.isListening ? const Color(0xFFD64933) : Colors.white,
-              ),
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
-          const SizedBox(height: 10),
-          Text(
-            c.isListening ? '轻点停止并发送' : '轻点说话（本地 STT + TTS）',
-            style: const TextStyle(fontSize: 12, color: Color(0xCCFFF7EF)),
+          Padding(
+            padding: EdgeInsets.fromLTRB(22, 0, 22, widget.bottomPadding),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _HerSpokenLine(text: voice, live: live),
+                const SizedBox(height: 4),
+                Text(
+                  c.herSubline,
+                  key: const Key('ai-her-sub'),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    color: Color(0xB8FFF5EB),
+                  ),
+                ),
+                if (!hidePrompts) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      _promptChip(
+                        key: const Key('ai-her-prompt-mood'),
+                        label: '今天聊了哪些重点',
+                        onTap: () => _onPrompt(
+                          '今天聊了哪些重点',
+                          '帮我梳理一下今天和最近录音里聊到的核心重点与待办',
+                        ),
+                      ),
+                      _promptChip(
+                        key: const Key('ai-her-prompt-walk'),
+                        label: '看看今天状态',
+                        onTap: () => _onPrompt(
+                          '看看今天状态',
+                          '查一下我今天和最近采集的健康数据与活动状态',
+                        ),
+                      ),
+                      _promptChip(
+                        key: const Key('ai-her-prompt-movie'),
+                        label: '联网查个资料',
+                        onTap: () => _onPrompt(
+                          '联网查个资料',
+                          '帮我联网查一下今天有哪些值得关注的科技新闻',
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 12),
+                GestureDetector(
+                  key: const Key('ai-her-talk-btn'),
+                  onTap: () => unawaited(c.toggleListening()),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    width: 58,
+                    height: 58,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: c.isListening
+                          ? const Color(0x52FFFFFF)
+                          : const Color(0x2EFFFFFF),
+                      border: Border.all(
+                        color: c.isListening
+                            ? Colors.white
+                            : const Color(0x99FFF7EF),
+                        width: 2,
+                      ),
+                    ),
+                    child: Icon(
+                      c.isListening ? Icons.stop_rounded : Icons.mic_rounded,
+                      size: 26,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -396,19 +426,148 @@ class _HerVoicePaneState extends State<_HerVoicePane>
     required String label,
     required VoidCallback onTap,
   }) {
-    return ActionChip(
+    return GestureDetector(
       key: key,
-      onPressed: onTap,
-      backgroundColor: const Color(0x28FFFFFF),
-      side: const BorderSide(color: Color(0x4DFFFFFF)),
-      labelStyle: const TextStyle(
-        fontSize: 12.5,
-        fontWeight: FontWeight.w500,
-        color: Colors.white,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+        decoration: BoxDecoration(
+          color: const Color(0x26FFFFFF),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: const Color(0x47FFFFFF)),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFFFFF7EF),
+          ),
+        ),
       ),
-      label: Text(label),
     );
   }
+}
+
+class _HerSpokenLine extends StatefulWidget {
+  const _HerSpokenLine({required this.text, required this.live});
+
+  final String text;
+  final bool live;
+
+  @override
+  State<_HerSpokenLine> createState() => _HerSpokenLineState();
+}
+
+class _HerSpokenLineState extends State<_HerSpokenLine> {
+  final ScrollController _scroll = ScrollController();
+  int _token = 0;
+
+  static const _style = TextStyle(
+    fontSize: 15,
+    height: 1.45,
+    fontWeight: FontWeight.w500,
+    color: Color(0xFFFFF7EF),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _schedule();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HerSpokenLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text || oldWidget.live != widget.live) {
+      _schedule();
+    }
+  }
+
+  void _schedule() {
+    final token = ++_token;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || token != _token || !_scroll.hasClients) return;
+      _scroll.jumpTo(0);
+      if (!widget.live) return;
+      final max = _scroll.position.maxScrollExtent;
+      if (max < 4) return;
+      final ms = (widget.text.length * 150).clamp(1800, 14000);
+      _scroll.animateTo(
+        max,
+        duration: Duration(milliseconds: ms),
+        curve: Curves.linear,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _token++;
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.live) {
+      return Text(
+        '“${widget.text}”',
+        key: const Key('ai-her-voice'),
+        textAlign: TextAlign.center,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: _style,
+      );
+    }
+    return SizedBox(
+      key: const Key('ai-her-voice'),
+      height: 46,
+      child: SingleChildScrollView(
+        controller: _scroll,
+        physics: const NeverScrollableScrollPhysics(),
+        child: Column(
+          children: [
+            const SizedBox(height: 46),
+            Text(
+              '“${widget.text}”',
+              textAlign: TextAlign.center,
+              style: _style,
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _herVoiceLine(String raw) {
+  var text = raw.trim();
+  if (text.startsWith('{') && text.contains('"reply"')) {
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is Map && decoded['reply'] != null) {
+        text = '${decoded['reply']}'.trim();
+      }
+    } catch (_) {
+      final match = RegExp(
+        r'"reply"\s*:\s*"((?:\\.|[^"\\])*)"',
+      ).firstMatch(text);
+      if (match != null) {
+        text = match
+            .group(1)!
+            .replaceAll(r'\n', '\n')
+            .replaceAll(r'\"', '"')
+            .trim();
+      }
+    }
+  }
+  text = text.replaceAll('**', '');
+  final para = text.split(RegExp(r'\n\s*\n')).first.trim();
+  if (para.isNotEmpty) text = para;
+  text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return text;
 }
 
 class _HerWavePainter extends CustomPainter {
@@ -440,7 +599,8 @@ class _HerWavePainter extends CustomPainter {
     for (var s = 0; s < 5; s++) {
       final path = Path();
       final pOffset = s * 1.15;
-      final amp = (active ? (4.5 + energy * 12) : 2.8) * (1 - s * 0.09);
+      final breathe = 2.6 + 1.4 * math.sin(phase * 0.45);
+      final amp = (active ? (3.4 + energy * 8) : breathe) * (1 - s * 0.09);
       const steps = 64;
       for (var i = 0; i <= steps; i++) {
         final a = (i / steps) * math.pi * 2;
@@ -462,7 +622,9 @@ class _HerWavePainter extends CustomPainter {
       final ringPaint = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = (10 - s * 1.4).toDouble()
-        ..color = Colors.white.withValues(alpha: (0.92 - s * 0.14).clamp(0.15, 0.95));
+        ..color = Colors.white.withValues(
+          alpha: (0.92 - s * 0.14).clamp(0.15, 0.95),
+        );
       canvas.drawPath(path, ringPaint);
     }
   }
@@ -475,10 +637,7 @@ class _HerWavePainter extends CustomPainter {
 // ── 轻聊（文本对话 + 快捷语音输入 + TTS 按需播报）───────────────────
 
 class _HumanChatPane extends StatefulWidget {
-  const _HumanChatPane({
-    required this.controller,
-    required this.bottomPadding,
-  });
+  const _HumanChatPane({required this.controller, required this.bottomPadding});
 
   final AgentChatController controller;
   final double bottomPadding;
@@ -566,8 +725,7 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
                     ),
                   ),
                 ),
-                if (c.messages.isEmpty && !c.isBusy)
-                  _emptyGuideCard(),
+                if (c.messages.isEmpty && !c.isBusy) _emptyGuideCard(),
                 for (var i = 0; i < c.messages.length; i++)
                   _ChatBubble(
                     index: i,
@@ -610,25 +768,19 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
               _quickChip(
                 key: const Key('ai-quick-1'),
                 label: '查一下最近待办',
-                onTap: () => unawaited(
-                  c.sendMessage('帮我查一下最近录音和总结里记了哪些待办事项'),
-                ),
+                onTap: () => unawaited(c.sendMessage('帮我查一下最近录音和总结里记了哪些待办事项')),
               ),
               const SizedBox(width: 8),
               _quickChip(
                 key: const Key('ai-quick-2'),
                 label: '今天聊了什么',
-                onTap: () => unawaited(
-                  c.sendMessage('帮我回顾一下今天录音里主要讨论了什么内容'),
-                ),
+                onTap: () => unawaited(c.sendMessage('帮我回顾一下今天录音里主要讨论了什么内容')),
               ),
               const SizedBox(width: 8),
               _quickChip(
                 key: const Key('ai-quick-3'),
                 label: '看看今天状态',
-                onTap: () => unawaited(
-                  c.sendMessage('看看我今天和最近采集的健康数据与活动状态'),
-                ),
+                onTap: () => unawaited(c.sendMessage('看看我今天和最近采集的健康数据与活动状态')),
               ),
             ],
           ),
@@ -741,11 +893,7 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
 }
 
 class _ChatBubble extends StatelessWidget {
-  const _ChatBubble({
-    required this.index,
-    required this.message,
-    this.onSpeak,
-  });
+  const _ChatBubble({required this.index, required this.message, this.onSpeak});
 
   final int index;
   final AgentChatMessage message;
