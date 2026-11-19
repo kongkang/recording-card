@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'live_audio_recorder.dart';
+import 'pcm_ring_buffer.dart';
 
 enum PhoneMicPermission { granted, denied, notDetermined }
 
@@ -114,7 +115,9 @@ class PhoneMicRecorder {
   PhoneMicRecorder({
     this.sliceDuration = const Duration(minutes: 1),
     Future<Directory> Function()? sliceRootDir,
-  }) : _sliceRootDir = sliceRootDir;
+    DateTime Function()? clock,
+  }) : _sliceRootDir = sliceRootDir,
+       _clock = clock ?? DateTime.now;
 
   static const int sampleRate = 16000;
   static const int bytesPerSample = 2;
@@ -125,6 +128,10 @@ class PhoneMicRecorder {
 
   final Duration sliceDuration;
   final Future<Directory> Function()? _sliceRootDir;
+  final DateTime Function() _clock;
+
+  /// 最近 120 秒本机麦实时音频内存环形缓冲，供侧边按钮按 `[startMs, endMs]` 截取。
+  final PcmRingBuffer ringBuffer = PcmRingBuffer();
 
   final StreamController<LiveAudioSlice> _slices =
       StreamController<LiveAudioSlice>.broadcast();
@@ -161,17 +168,19 @@ class PhoneMicRecorder {
 
   Future<void> start({DateTime? startedAt}) async {
     if (_disposed || _running) return;
-    final now = startedAt ?? DateTime.now();
+    final now = startedAt ?? _clock();
     _sessionStartedAtMs = now.millisecondsSinceEpoch;
     _sessionId = 'phone-$_sessionStartedAtMs';
     _sliceIndex = 0;
     _sliceStartSamples = 0;
     _buffer.clear();
+    ringBuffer.clear();
     _running = true;
   }
 
   void ingestPcm(Uint8List pcmBytes) {
     if (!_running || _disposed || pcmBytes.isEmpty) return;
+    ringBuffer.append(pcmBytes, endTimestampMs: _clock().millisecondsSinceEpoch);
     _buffer.add(pcmBytes);
     final limit = _sliceByteLimit;
     while (_buffer.length >= limit) {

@@ -180,11 +180,11 @@ final class SystemSpeechBridge: NSObject {
     let targetLocale = Locale(identifier: localeId)
 
     // 1. 优先使用系统已预置的高精度 SpeechTranscriber
-    var speechLocale = await SpeechTranscriber.supportedLocale(equivalentTo: targetLocale)
-    if speechLocale == nil {
-      speechLocale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current)
+    var resolvedSpeechLocale = await SpeechTranscriber.supportedLocale(equivalentTo: targetLocale)
+    if resolvedSpeechLocale == nil {
+      resolvedSpeechLocale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current)
     }
-    if let speechLocale {
+    if let speechLocale = resolvedSpeechLocale {
       let bcp47 = speechLocale.identifier(.bcp47)
       let installed = await SpeechTranscriber.installedLocales
       if installed.contains(where: { $0.identifier(.bcp47) == bcp47 }) {
@@ -229,11 +229,11 @@ final class SystemSpeechBridge: NSObject {
     }
 
     // 2. 瞬态垫底：使用已内置的 DictationTranscriber
-    var dictLocale = await DictationTranscriber.supportedLocale(equivalentTo: targetLocale)
-    if dictLocale == nil {
-      dictLocale = await DictationTranscriber.supportedLocale(equivalentTo: Locale.current)
+    var resolvedDictLocale = await DictationTranscriber.supportedLocale(equivalentTo: targetLocale)
+    if resolvedDictLocale == nil {
+      resolvedDictLocale = await DictationTranscriber.supportedLocale(equivalentTo: Locale.current)
     }
-    if let dictLocale {
+    if let dictLocale = resolvedDictLocale {
       let dictBcp47 = dictLocale.identifier(.bcp47)
       let dictInstalled = await DictationTranscriber.installedLocales
       if dictInstalled.contains(where: { $0.identifier(.bcp47) == dictBcp47 }) {
@@ -288,11 +288,7 @@ final class SystemSpeechBridge: NSObject {
 
     Task.detached(priority: .utility) { [weak self] in
       defer {
-        if let self {
-          self.warmupLock.lock()
-          self.warmingLocales.remove(key)
-          self.warmupLock.unlock()
-        }
+        self?.removeWarmingLocale(key)
       }
       let transcriber = SpeechTranscriber(
         locale: locale,
@@ -304,6 +300,12 @@ final class SystemSpeechBridge: NSObject {
         try? await request.downloadAndInstall()
       }
     }
+  }
+
+  private func removeWarmingLocale(_ key: String) {
+    warmupLock.lock()
+    warmingLocales.remove(key)
+    warmupLock.unlock()
   }
 
   @available(iOS 26.0, *)

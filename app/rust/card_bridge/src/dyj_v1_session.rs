@@ -9,7 +9,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use btleplug::api::{Central as _, CharPropFlags, Characteristic, Peripheral as _, ScanFilter, WriteType};
+use btleplug::api::{
+    Central as _, CentralEvent, CharPropFlags, Characteristic, Peripheral as _, ScanFilter,
+    WriteType,
+};
 use btleplug::platform::{Adapter, Peripheral};
 use futures::stream::StreamExt;
 use reai_dyj_sdk::audio::{self, AdpcmDecoder, AmrWbDecoder, PcmChunk};
@@ -165,6 +168,10 @@ impl DyjV1Session {
         &self.name
     }
 
+    pub fn peripheral(&self) -> &Peripheral {
+        &self.peripheral
+    }
+
     pub fn subscribe_events(&self) -> broadcast::Receiver<DeviceEvent> {
         self.event_tx.subscribe()
     }
@@ -196,22 +203,27 @@ impl DyjV1Session {
     }
 
     /// 连接点一机 V1（复用统一扫描适配器），自动规避 `< 0.8.0` FF12 无 Notify 死锁并完成 `proto.hello`。
+    ///
+    /// 针对真机 RPA 随机地址轮换：先尝试 `id_hint` 对应外设（4s 短超时，失败即显式 `disconnect` 取消挂起连接），
+    /// 随后立即开启实时事件扫描等待本轮窗口内真正广播出的同名设备再连（14s 超时），避免命中 btleplug 缓存中的过期旧外设。
     pub async fn connect(
         adapter: &Adapter,
         id_hint: &str,
         name: &str,
+        connecting_slot: Option<&Mutex<Option<Peripheral>>>,
     ) -> std::result::Result<(Arc<Self>, Value), String> {
-        let peripheral = Self::resolve_peripheral(adapter, id_hint, name).await?;
-
-        let connect_res = tokio::time::timeout(Duration::from_secs(12), peripheral.connect()).await;
-        match connect_res {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(format!("连接点一机 V1 {name} 失败: {e}")),
-            Err(_) => {
-                let _ = tokio::time::timeout(Duration::from_secs(2), peripheral.disconnect()).await;
-                return Err(format!("连接点一机 V1 {name} 超时，请确认设备在附近并已开机"));
+        struct SlotGuard<'a>(Option<&'a Mutex<Option<Peripheral>>>);
+        impl Drop for SlotGuard<'_> {
+            fn drop(&mut self) {
+                if let Some(slot) = self.0 {
+                    *slot.lock().unwrap() = None;
+                }
             }
         }
+        let _guard = SlotGuard(connecting_slot);
+
+        let peripheral =
+            Self::connect_peripheral_with_rescan(adapter, id_hint, name, connecting_slot).await?;
 
         let discover_res =
             tokio::time::timeout(Duration::from_secs(8), peripheral.discover_services()).await;
@@ -468,66 +480,163 @@ impl DyjV1Session {
             });
         }
 
+        if let Some(slot) = connecting_slot {
+            *slot.lock().unwrap() = None;
+        }
         Ok((session, hello_data))
     }
 
-    async fn resolve_peripheral(
-        adapter: &Adapter,
-        id_hint: &str,
-        name: &str,
-    ) -> std::result::Result<Peripheral, String> {
-        let trimmed_name = name.trim();
-        if let Some(p) = Self::find_in_adapter(adapter, id_hint, trimmed_name).await {
-            return Ok(p);
-        }
-
-        // 缓存未命中（如冷重连）才在共享 adapter 上启扫描，适配 V1 间歇广播周期
-        let _ = adapter.start_scan(ScanFilter::default()).await;
-        let mut found = None;
-        for _ in 0..14 {
-            tokio::time::sleep(Duration::from_millis(1500)).await;
-            if let Some(p) = Self::find_in_adapter(adapter, id_hint, trimmed_name).await {
-                found = Some(p);
-                break;
-            }
-        }
-        let _ = adapter.stop_scan().await;
-        found.ok_or_else(|| {
-            format!("未在附近找到点一机 V1（{name}），请确认设备已开机且未被其他手机连接")
-        })
-    }
-
-    async fn find_in_adapter(
-        adapter: &Adapter,
+    async fn peripheral_matches_target(
+        p: &Peripheral,
         id_hint: &str,
         trimmed_name: &str,
-    ) -> Option<Peripheral> {
-        let peripherals = adapter.peripherals().await.ok()?;
-        if !id_hint.is_empty() {
-            if let Some(exact) = peripherals
-                .iter()
-                .find(|p| p.id().to_string() == id_hint)
-                .cloned()
-            {
-                return Some(exact);
+    ) -> bool {
+        if !id_hint.is_empty() && p.id().to_string() == id_hint {
+            if trimmed_name.is_empty() {
+                return true;
             }
-        }
-        if trimmed_name.is_empty() {
-            return None;
-        }
-        for p in peripherals {
-            let props = tokio::time::timeout(Duration::from_millis(400), p.properties())
+            let props = tokio::time::timeout(Duration::from_millis(350), p.properties())
                 .await
                 .ok()
                 .and_then(std::result::Result::ok)
                 .flatten();
             if let Some(props) = props {
-                if props.local_name.as_deref().map(str::trim) == Some(trimmed_name) {
-                    return Some(p);
+                if let Some(local) = props.local_name.as_deref().map(str::trim) {
+                    if !local.is_empty() && local != trimmed_name {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        if trimmed_name.is_empty() {
+            return false;
+        }
+        let props = tokio::time::timeout(Duration::from_millis(350), p.properties())
+            .await
+            .ok()
+            .and_then(std::result::Result::ok)
+            .flatten();
+        props
+            .and_then(|pr| pr.local_name)
+            .as_deref()
+            .map(str::trim)
+            == Some(trimmed_name)
+    }
+
+    async fn try_connect_candidate(
+        p: &Peripheral,
+        name: &str,
+        timeout: Duration,
+        connecting_slot: Option<&Mutex<Option<Peripheral>>>,
+    ) -> std::result::Result<(), String> {
+        if let Some(slot) = connecting_slot {
+            *slot.lock().unwrap() = Some(p.clone());
+        }
+        let res = tokio::time::timeout(timeout, p.connect()).await;
+        match res {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                if let Some(slot) = connecting_slot {
+                    *slot.lock().unwrap() = None;
+                }
+                let _ = tokio::time::timeout(Duration::from_secs(2), p.disconnect()).await;
+                Err(format!("连接点一机 V1 {name} 失败: {e}"))
+            }
+            Err(_) => {
+                if let Some(slot) = connecting_slot {
+                    *slot.lock().unwrap() = None;
+                }
+                let _ = tokio::time::timeout(Duration::from_secs(2), p.disconnect()).await;
+                Err(format!("连接点一机 V1 {name} 超时，请确认设备在附近并已开机"))
+            }
+        }
+    }
+
+    async fn connect_peripheral_with_rescan(
+        adapter: &Adapter,
+        id_hint: &str,
+        name: &str,
+        connecting_slot: Option<&Mutex<Option<Peripheral>>>,
+    ) -> std::result::Result<Peripheral, String> {
+        let trimmed_name = name.trim();
+        let mut last_err: Option<String> = None;
+
+        // 1) 若刚刚扫到精确 ID，用 4 秒短超时尝试直连；若设备发生 RPA 轮换或已离线，立刻 cancel 掉，转入实时扫描。
+        if !id_hint.is_empty() {
+            if let Ok(peripherals) = adapter.peripherals().await {
+                if let Some(cached) = peripherals
+                    .into_iter()
+                    .find(|p| p.id().to_string() == id_hint)
+                {
+                    if Self::peripheral_matches_target(&cached, id_hint, trimmed_name).await {
+                        match Self::try_connect_candidate(
+                            &cached,
+                            name,
+                            Duration::from_secs(4),
+                            connecting_slot,
+                        )
+                        .await
+                        {
+                            Ok(()) => return Ok(cached),
+                            Err(e) => last_err = Some(e),
+                        }
+                    }
                 }
             }
         }
-        None
+
+        // 2) 只认「本轮扫描实时收到广播事件」的外设，彻底避开 btleplug 缓存里的过期 RPA UUID。
+        let mut events = adapter
+            .events()
+            .await
+            .map_err(|e| format!("点一机蓝牙事件流失败: {e}"))?;
+        let _ = adapter.start_scan(ScanFilter::default()).await;
+
+        let scan_deadline = tokio::time::Instant::now() + Duration::from_secs(16);
+        let mut fresh: Option<Peripheral> = None;
+        loop {
+            let now = tokio::time::Instant::now();
+            if now >= scan_deadline {
+                break;
+            }
+            let rem = scan_deadline.saturating_duration_since(now);
+            let ev = match tokio::time::timeout(rem, events.next()).await {
+                Ok(Some(ev)) => ev,
+                _ => break,
+            };
+            let id = match ev {
+                CentralEvent::DeviceDiscovered(id)
+                | CentralEvent::DeviceUpdated(id)
+                | CentralEvent::ManufacturerDataAdvertisement { id, .. }
+                | CentralEvent::ServiceDataAdvertisement { id, .. }
+                | CentralEvent::ServicesAdvertisement { id, .. } => id,
+                _ => continue,
+            };
+            if let Ok(p) = adapter.peripheral(&id).await {
+                if Self::peripheral_matches_target(&p, id_hint, trimmed_name).await {
+                    fresh = Some(p);
+                    break;
+                }
+            }
+        }
+        let _ = adapter.stop_scan().await;
+        tokio::time::sleep(Duration::from_millis(120)).await;
+
+        let Some(fresh_peripheral) = fresh else {
+            return Err(last_err.unwrap_or_else(|| {
+                format!("未在附近找到点一机 V1（{name}），请确认设备已开机且未被其他手机连接")
+            }));
+        };
+
+        Self::try_connect_candidate(
+            &fresh_peripheral,
+            name,
+            Duration::from_secs(14),
+            connecting_slot,
+        )
+        .await?;
+        Ok(fresh_peripheral)
     }
 
     async fn write_bytes(&self, bytes: &[u8]) -> SdkResult<()> {
@@ -953,6 +1062,66 @@ impl DyjV1Session {
             .map(|t| json!({ "epoch_ms": t }))
             .unwrap_or_else(|| json!({}));
         self.request("device.time", params, Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn button_status(&self) -> SdkResult<Value> {
+        self.request_idem("button.status", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn button_bind_get(&self) -> SdkResult<Value> {
+        self.request_idem("button.bind.get", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn button_bind_set(&self, gesture: &str, action: &str) -> SdkResult<Value> {
+        self.request_idem(
+            "button.bind.set",
+            json!({ "gesture": gesture, "action": action }),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    /// 确保物理按键统一处于 `event_only`（由手机端解释手势行为，不触发固件本地自停录）。
+    pub async fn ensure_buttons_event_only(&self) {
+        let current = self.button_bind_get().await.ok();
+        let bindings = current.as_ref().and_then(|v| v.get("bindings"));
+        for gesture in ["click", "double_click", "long_press"] {
+            let cur = bindings
+                .and_then(|b| b.get(gesture))
+                .and_then(Value::as_str);
+            if cur != Some("event_only") {
+                let _ = self.button_bind_set(gesture, "event_only").await;
+            }
+        }
+    }
+
+    pub async fn led_set(
+        &self,
+        pattern: &str,
+        brightness: Option<&str>,
+        priority: Option<u32>,
+        timeout_s: Option<u64>,
+    ) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        params.insert("pattern".into(), json!(pattern));
+        if let Some(b) = brightness {
+            params.insert("brightness".into(), json!(b));
+        }
+        if let Some(p) = priority {
+            params.insert("priority".into(), json!(p));
+        }
+        if let Some(t) = timeout_s {
+            params.insert("timeout_s".into(), json!(t));
+        }
+        self.request_idem("led.set", Value::Object(params), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn led_clear(&self) -> SdkResult<Value> {
+        self.request_idem("led.clear", json!({}), Duration::from_secs(5))
             .await
     }
 }

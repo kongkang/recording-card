@@ -74,6 +74,7 @@ impl DeviceKind {
                 has_physical_record_toggle: true,
                 has_remote_record_control: true,
                 has_mark_button: true,
+                has_configurable_buttons: false,
                 ota_mode: "dual_chip",
             },
             Self::DyjV1 => HardwareCapabilities {
@@ -85,6 +86,7 @@ impl DeviceKind {
                 has_physical_record_toggle: true,
                 has_remote_record_control: true,
                 has_mark_button: false,
+                has_configurable_buttons: true,
                 ota_mode: "single_ota",
             },
             Self::BoardV21 => HardwareCapabilities {
@@ -96,6 +98,7 @@ impl DeviceKind {
                 has_physical_record_toggle: true,
                 has_remote_record_control: true,
                 has_mark_button: false,
+                has_configurable_buttons: false,
                 ota_mode: "none",
             },
             Self::GetSeedGsc10 => {
@@ -121,6 +124,7 @@ pub struct HardwareCapabilities {
     pub has_physical_record_toggle: bool,
     pub has_remote_record_control: bool,
     pub has_mark_button: bool,
+    pub has_configurable_buttons: bool,
     /// `"dual_chip"` | `"single_ota"` | `"none"`
     pub ota_mode: &'static str,
 }
@@ -136,6 +140,7 @@ impl HardwareCapabilities {
             has_physical_record_toggle: caps.has_physical_record_toggle,
             has_remote_record_control: caps.has_remote_record_control,
             has_mark_button: caps.has_mark_button,
+            has_configurable_buttons: false,
             ota_mode: caps.ota_mode,
         }
     }
@@ -219,13 +224,13 @@ mod tests {
         let (k2, c2) = classify_ble_name("DYJV2_T4W25T").expect("card v2");
         assert_eq!(k2, DeviceKind::CardV2);
         assert!(c2.has_onboard_storage && c2.has_file_sync && !c2.has_camera_media);
-        assert!(c2.has_remote_record_control);
+        assert!(c2.has_remote_record_control && !c2.has_configurable_buttons);
         assert_eq!(c2.ota_mode, "dual_chip");
 
         let (k1, c1) = classify_ble_name("DYJ_RA6BO5").expect("dyj v1");
         assert_eq!(k1, DeviceKind::DyjV1);
         assert!(c1.has_onboard_storage && c1.has_camera_media);
-        assert!(c1.has_remote_record_control);
+        assert!(c1.has_remote_record_control && c1.has_configurable_buttons);
         assert_eq!(c1.ota_mode, "single_ota");
 
         let (kb, cb) = classify_ble_name("REAI_VB_A91C").expect("board v2.1");

@@ -24,6 +24,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/device/card_gateway.dart';
+import 'pcm_ring_buffer.dart';
 
 /// 一段连续的接收区间（相对会话起点的毫秒）。
 class ReceivedSpan {
@@ -213,11 +214,17 @@ class LiveAudioRecorder extends ChangeNotifier {
     Directory? baseDir,
     this.sliceDuration = const Duration(minutes: 1),
     this.onSliceReady,
+    DateTime Function()? clock,
   }) : _gateway = gateway,
-       _baseDirOverride = baseDir;
+       _baseDirOverride = baseDir,
+       _clock = clock ?? DateTime.now;
 
   final CardGateway _gateway;
   final Directory? _baseDirOverride;
+  final DateTime Function() _clock;
+
+  /// 最近 120 秒实时音频内存环形缓冲，供按键按 `[startMs, endMs]` 零干扰截取给 Agent。
+  final PcmRingBuffer ringBuffer = PcmRingBuffer();
 
   /// 16kHz 16-bit 单声道 PCM 参数与手动下拉刷新的最小切分阈值（0.5 秒 = 16000 字节）。
   static const int defaultSampleRate = 16000;
@@ -311,7 +318,7 @@ class LiveAudioRecorder extends ChangeNotifier {
   }
 
   Future<void> _startInner() async {
-    final now = DateTime.now();
+    final now = _clock();
     final id = 'live-${now.millisecondsSinceEpoch}';
     Directory dir;
     try {
@@ -336,6 +343,7 @@ class LiveAudioRecorder extends ChangeNotifier {
     _sliceStartSample = 0;
     _sliceIndex = 0;
     _sliceGapCount = 0;
+    ringBuffer.clear();
     lastError = null;
 
     _wavFile = File('${dir.path}/audio.wav');
@@ -369,6 +377,7 @@ class LiveAudioRecorder extends ChangeNotifier {
             ? pcm
             : Uint8List.sublistView(pcm, 0, evenLen);
         _sink?.add(aligned);
+        ringBuffer.append(aligned, endTimestampMs: _clock().millisecondsSinceEpoch);
         final samples = aligned.length ~/ 2;
         final startMs = _writtenSamples * 1000 ~/ session.sampleRate;
         _writtenSamples += samples;

@@ -8,6 +8,51 @@ import 'package:flutter/foundation.dart';
 
 import '../storage/storage.dart';
 
+/// 点一机 V1 物理按键可绑定动作（固件事件上行，App 侧解释执行）。
+enum HardwareButtonAction {
+  mark('mark', '打重点（Mark）', '重点'),
+  agentVoice('agent_voice', '语音任务（发给 Agent）', '语音'),
+  photoRecognize('photo_recognize', '拍照识别（发给 Agent）', '识图'),
+  recordToggle('record_toggle', '开关录音', '录音'),
+  none('none', '无动作', '无');
+
+  const HardwareButtonAction(this.code, this.label, this.shortLabel);
+
+  final String code;
+  final String label;
+  final String shortLabel;
+
+  static HardwareButtonAction fromCode(
+    String? raw, {
+    required HardwareButtonAction fallback,
+  }) {
+    final trimmed = raw?.trim();
+    for (final v in values) {
+      if (v.code == trimmed) return v;
+    }
+    return fallback;
+  }
+}
+
+/// iPhone 侧边操作按钮默认快捷指令行为。
+enum IphoneActionButtonBehavior {
+  recordToggle('record_toggle', '切换录音开关'),
+  agentVoice('agent_voice', '发语音任务给 Agent');
+
+  const IphoneActionButtonBehavior(this.code, this.label);
+
+  final String code;
+  final String label;
+
+  static IphoneActionButtonBehavior fromCode(String? raw) {
+    final trimmed = raw?.trim();
+    for (final v in values) {
+      if (v.code == trimmed) return v;
+    }
+    return IphoneActionButtonBehavior.recordToggle;
+  }
+}
+
 class CloudModelOption {
   final String id;
   final String name;
@@ -308,6 +353,26 @@ class AgentConfigStore extends ChangeNotifier {
   String customSearchApiKey = '';
   String agentPrompt = defaultAgentPrompt;
 
+  /// 点一机 V1 物理按键默认行为：单击=重点、长按=语音任务、双击=拍照识别。
+  HardwareButtonAction dyjClickAction = HardwareButtonAction.mark;
+  HardwareButtonAction dyjLongPressAction = HardwareButtonAction.agentVoice;
+  HardwareButtonAction dyjDoubleClickAction =
+      HardwareButtonAction.photoRecognize;
+
+  /// iPhone 侧边操作按钮「切换录音」快捷动作模式（专用「向 Agent 发送语音任务」始终直接发给 Agent）。
+  IphoneActionButtonBehavior iphoneActionButtonBehavior =
+      IphoneActionButtonBehavior.recordToggle;
+
+  HardwareButtonAction dyjActionForGesture(String gesture) => switch (gesture) {
+    'click' => dyjClickAction,
+    'long_press' || 'long_press_start' || 'long_press_end' => dyjLongPressAction,
+    'double_click' => dyjDoubleClickAction,
+    _ => HardwareButtonAction.none,
+  };
+
+  String get dyjButtonSummary =>
+      '单击${dyjClickAction.shortLabel} · 长按${dyjLongPressAction.shortLabel} · 双击${dyjDoubleClickAction.shortLabel}';
+
   int get enabledExtHardwareCount =>
       (getSeedLinkEnabled ? 1 : 0) +
       (omiLinkEnabled ? 1 : 0) +
@@ -552,6 +617,29 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['agentPrompt'] is String &&
         (data['agentPrompt'] as String).trim().isNotEmpty) {
       agentPrompt = (data['agentPrompt'] as String).trim();
+    }
+    if (data['dyjBtnClick'] is String) {
+      dyjClickAction = HardwareButtonAction.fromCode(
+        data['dyjBtnClick'] as String,
+        fallback: HardwareButtonAction.mark,
+      );
+    }
+    if (data['dyjBtnLong'] is String) {
+      dyjLongPressAction = HardwareButtonAction.fromCode(
+        data['dyjBtnLong'] as String,
+        fallback: HardwareButtonAction.agentVoice,
+      );
+    }
+    if (data['dyjBtnDouble'] is String) {
+      dyjDoubleClickAction = HardwareButtonAction.fromCode(
+        data['dyjBtnDouble'] as String,
+        fallback: HardwareButtonAction.photoRecognize,
+      );
+    }
+    if (data['iphoneActionBehavior'] is String) {
+      iphoneActionButtonBehavior = IphoneActionButtonBehavior.fromCode(
+        data['iphoneActionBehavior'] as String,
+      );
     }
     final storedModel = data['model'] is String
         ? (data['model'] as String).trim()
@@ -1031,6 +1119,42 @@ class AgentConfigStore extends ChangeNotifier {
     await _save();
   }
 
+  Future<void> setDyjButtonAction(
+    String gesture,
+    HardwareButtonAction action,
+  ) async {
+    var changed = false;
+    switch (gesture) {
+      case 'click':
+        if (dyjClickAction != action) {
+          dyjClickAction = action;
+          changed = true;
+        }
+      case 'long_press':
+        if (dyjLongPressAction != action) {
+          dyjLongPressAction = action;
+          changed = true;
+        }
+      case 'double_click':
+        if (dyjDoubleClickAction != action) {
+          dyjDoubleClickAction = action;
+          changed = true;
+        }
+    }
+    if (!changed) return;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setIphoneActionButtonBehavior(
+    IphoneActionButtonBehavior next,
+  ) async {
+    if (iphoneActionButtonBehavior == next) return;
+    iphoneActionButtonBehavior = next;
+    notifyListeners();
+    await _save();
+  }
+
   Future<void> _save() async {
     await _json.write(_storageKey, {
       'cloudEnabled': cloudEnabled,
@@ -1052,6 +1176,10 @@ class AgentConfigStore extends ChangeNotifier {
       if (customSearchApiKey.isNotEmpty)
         'customSearchApiKey': customSearchApiKey,
       if (agentPrompt != defaultAgentPrompt) 'agentPrompt': agentPrompt,
+      'dyjBtnClick': dyjClickAction.code,
+      'dyjBtnLong': dyjLongPressAction.code,
+      'dyjBtnDouble': dyjDoubleClickAction.code,
+      'iphoneActionBehavior': iphoneActionButtonBehavior.code,
       'recordingSliceSeconds': recordingSliceSeconds,
       'healthSampleIntervalSeconds': healthSampleIntervalSeconds,
       'healthSamplePhaseSeconds': healthSamplePhaseSeconds,

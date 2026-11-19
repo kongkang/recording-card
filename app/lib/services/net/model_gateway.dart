@@ -46,18 +46,30 @@ class TranscriptionResult {
       'TranscriptionResult(len=${text.length}, language=$language, duration=$duration)';
 }
 
-/// 对话消息（OpenAI 兼容的 `role` / `content`）。
+/// 对话消息（OpenAI 兼容的 `role` / `content`，支持纯文本与多模态图片）。
 class ChatMessage {
-  const ChatMessage({required this.role, required this.content});
+  const ChatMessage({
+    required this.role,
+    required this.content,
+    this.imageDataUrl,
+  });
 
   /// 系统提示。
-  const ChatMessage.system(this.content) : role = 'system';
+  const ChatMessage.system(this.content) : role = 'system', imageDataUrl = null;
 
   /// 用户输入。
-  const ChatMessage.user(this.content) : role = 'user';
+  const ChatMessage.user(this.content) : role = 'user', imageDataUrl = null;
+
+  /// 用户图文混合输入（OpenAI content parts，用于拍照识别）。
+  const ChatMessage.userWithImage(
+    this.content, {
+    required String this.imageDataUrl,
+  }) : role = 'user';
 
   /// 助手回复（多轮上下文用）。
-  const ChatMessage.assistant(this.content) : role = 'assistant';
+  const ChatMessage.assistant(this.content)
+    : role = 'assistant',
+      imageDataUrl = null;
 
   /// `system` / `user` / `assistant`。
   final String role;
@@ -65,7 +77,25 @@ class ChatMessage {
   /// 文本内容。
   final String content;
 
-  Map<String, String> toJson() => {'role': role, 'content': content};
+  /// 可选 `data:image/jpeg;base64,...` 多模态图片 URL。
+  final String? imageDataUrl;
+
+  Map<String, dynamic> toJson() {
+    final img = imageDataUrl?.trim();
+    if (img != null && img.isNotEmpty) {
+      return {
+        'role': role,
+        'content': [
+          {'type': 'text', 'text': content},
+          {
+            'type': 'image_url',
+            'image_url': {'url': img},
+          },
+        ],
+      };
+    }
+    return {'role': role, 'content': content};
+  }
 }
 
 /// 模型网关客户端。
@@ -103,6 +133,7 @@ class ModelGateway {
   /// 运行时从服务端探测到的模型（dart-define 没配时用它）。
   String? _discoveredAsr;
   String? _discoveredText;
+  String? _discoveredVision;
   List<GatewayModel> _discoveredModels = const [];
   bool _catalogLoaded = false;
   String? _catalogError;
@@ -128,6 +159,15 @@ class ModelGateway {
   String get textModel => _config.refineModel.trim().isNotEmpty
       ? _config.refineModel.trim()
       : (_discoveredText ?? '');
+
+  /// 实际生效的视觉模型名（多模态识图）：显式指定或网关声明的视觉/通用模型。
+  String get visionModel {
+    if (_config.refineModel.trim().isNotEmpty) {
+      return _config.refineModel.trim();
+    }
+    final v = (_discoveredVision ?? '').trim();
+    return v.isNotEmpty ? v : textModel;
+  }
 
   /// 网关端点与两个模型名都配齐（纯配置判断，与登录态无关）。
   bool get configured =>
@@ -161,6 +201,7 @@ class ModelGateway {
       _discoveredModels = catalog.models;
       _discoveredAsr = catalog.asrModel;
       _discoveredText = catalog.textModel;
+      _discoveredVision = catalog.visionModel;
       _catalogLoaded = true;
       _catalogError = catalog.isEmpty ? '服务端未返回可用模型' : null;
     } on Object catch (e) {
