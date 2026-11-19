@@ -35,9 +35,11 @@ final class WatchRecorderCoreTests: XCTestCase {
             freeDiskBytes: 1024 * 1024 * 200,
             keepAliveMode: .extended,
             updatedAtMs: 1_794_758_442_000,
-            lastError: nil
+            lastError: nil,
+            appVersion: "1.0.0 (2026111815)"
         )
         XCTAssertEqual(WatchStatusSnapshot.fromDictionary(status.toDictionary()), status)
+        XCTAssertEqual(status.toDictionary()["appVersion"] as? String, "1.0.0 (2026111815)")
 
         let slice = WatchSliceDescriptor(
             sliceId: "slice-1",

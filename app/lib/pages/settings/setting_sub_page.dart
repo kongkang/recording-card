@@ -3732,9 +3732,14 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
         final pairedText = status == null
             ? '待检测'
             : (!status.supported ? '不支持' : (status.paired ? '已配对' : '未配对'));
+        final watchAppVer = status?.watchAppVersion.trim() ?? '';
         final installedText = status == null
             ? '—'
-            : (status.watchAppInstalled ? '已安装' : '未安装');
+            : (status.watchAppInstalled
+                ? (watchAppVer.isNotEmpty
+                    ? '已安装 · $watchAppVer'
+                    : '已安装')
+                : '未安装');
         final linkText = isWatchConnected
             ? '已连接'
             : (status?.reachable == true

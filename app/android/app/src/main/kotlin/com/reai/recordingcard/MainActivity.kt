@@ -1,6 +1,7 @@
 package com.reai.recordingcard
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -17,6 +18,8 @@ import io.flutter.plugin.common.MethodChannel
 import java.util.Locale
 
 class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
+    private var pendingAuth: MethodChannel.Result? = null
+
     companion object {
         init {
             // Android：必须从 Java 侧加载 card_bridge，JNI_OnLoad 才会被 ART 调用，
@@ -26,6 +29,8 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         }
 
         private const val SPEECH_CHANNEL = "com.reai.recordingcard/agent_speech"
+        private const val OAUTH_CHANNEL = "com.reai.recordingcard/oauth"
+        private const val AUTH_REQUEST = 0x5243
         private const val REQ_AUDIO_PERM = 4091
     }
 
@@ -92,6 +97,42 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         val sysSpeech = SystemSpeechBridge(this)
         sysSpeech.register(flutterEngine.dartExecutor.binaryMessenger)
         systemSpeechBridge = sysSpeech
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OAUTH_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                if (call.method != "authenticate") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val url = call.argument<String>("url")
+                if (url.isNullOrBlank()) {
+                    result.error("BAD_URL", "missing url", null)
+                    return@setMethodCallHandler
+                }
+                pendingAuth?.error("CANCELED", "replaced", null)
+                pendingAuth = result
+                startActivityForResult(
+                    Intent(this, OAuthWebActivity::class.java)
+                        .putExtra(OAuthWebActivity.EXTRA_URL, url),
+                    AUTH_REQUEST,
+                )
+            }
+    }
+
+    // FlutterActivity 继承 Activity，没有 registerForActivityResult。
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != AUTH_REQUEST) return
+        val callback = pendingAuth
+        pendingAuth = null
+        if (callback == null) return
+        val url = data?.dataString
+        if (resultCode == Activity.RESULT_OK && !url.isNullOrBlank()) {
+            callback.success(url)
+        } else {
+            callback.error("CANCELED", "User canceled authentication", null)
+        }
     }
 
     override fun onInit(status: Int) {

@@ -5,25 +5,45 @@ struct WatchMainView: View {
     @ObservedObject var engine: WatchSessionSyncEngine
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @State private var sessionMarkCount: Int = 0
+    @State private var knockPulse = false
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 6) {
-                statusHeader
-                Spacer(minLength: 2)
-                centerDial
-                Spacer(minLength: 2)
-                if let error = engine.snapshot.lastError, !error.isEmpty {
-                    Text(error)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.red)
-                        .lineLimit(1)
+            ZStack {
+                Color.black
+
+                VStack(spacing: 0) {
+                    statusHeader
+                        .frame(height: 16)
+                        .padding(.top, 5)
+                        .padding(.leading, 20)
+                        .padding(.trailing, 58)
+                    Spacer(minLength: 0)
+                    centerDial
+                    Spacer(minLength: 0)
+                    if let error = engine.snapshot.lastError, !error.isEmpty {
+                        Text(error)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.red)
+                            .lineLimit(1)
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 3)
+                    }
+                    bottomControls
                 }
-                bottomControls
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(Color.orange, lineWidth: 2)
+                    .padding(6)
+                    .opacity(knockPulse ? 0.85 : 0)
+                    .scaleEffect(knockPulse ? 1.02 : 0.84)
+                    .allowsHitTesting(false)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color.black)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .ignoresSafeArea(.all, edges: .all)
+            .containerBackground(Color.black, for: .navigation)
+            .toolbar(.hidden, for: .navigationBar)
             .onChange(of: engine.snapshot.isRecording) { _, isRec in
                 if isRec { sessionMarkCount = 0 }
             }
@@ -38,13 +58,18 @@ struct WatchMainView: View {
             Text(engine.isPhoneReachable ? "已连手机" : "离线暂存")
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
-            Spacer()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             if engine.snapshot.isCharging || engine.snapshot.batteryPercent >= 0 {
                 Text(batteryTierLabel)
                     .font(.system(size: 10.5))
                     .foregroundStyle(engine.snapshot.isCharging ? Color.green : Color.white.opacity(0.72))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var centerDial: some View {
@@ -92,44 +117,49 @@ struct WatchMainView: View {
                     .foregroundStyle(.white.opacity(0.42))
             }
         }
+        .padding(.horizontal, 8)
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             guard engine.snapshot.isRecording, !isLuminanceReduced else { return }
             engine.addMark()
             sessionMarkCount += 1
+            triggerKnockRipple()
         }
     }
 
     private var bottomControls: some View {
-        VStack(spacing: 6) {
-            if engine.snapshot.isRecording {
-                if isLuminanceReduced {
-                    Text("先点亮屏幕 · 再滑动停止")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.68))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 36)
-                        .background(Color.white.opacity(0.08), in: Capsule())
-                        .overlay(Capsule().stroke(Color.white.opacity(0.22), lineWidth: 1))
-                } else {
-                    FlatSlideToStopControl {
-                        engine.toggleRecording()
+        VStack(spacing: 5) {
+            Group {
+                if engine.snapshot.isRecording {
+                    if isLuminanceReduced {
+                        Text("先点亮屏幕 · 再滑动停止")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.68))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 36)
+                            .background(Color.white.opacity(0.08), in: Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.22), lineWidth: 1))
+                    } else {
+                        FlatSlideToStopControl {
+                            engine.toggleRecording()
+                        }
                     }
+                } else {
+                    Button {
+                        engine.toggleRecording()
+                    } label: {
+                        Text("开始录音")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 36)
+                            .background(Color(red: 0.19, green: 0.82, blue: 0.35), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
                 }
-            } else {
-                Button {
-                    engine.toggleRecording()
-                } label: {
-                    Text("开始录音")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 36)
-                        .background(Color.green, in: Capsule())
-                }
-                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 8)
 
             NavigationLink {
                 WatchQueueView(engine: engine)
@@ -146,8 +176,15 @@ struct WatchMainView: View {
         let progress = engine.snapshot.isRecording ? Double(lap) / 60.0 : 0.0
         let pending = engine.snapshot.pendingSliceCount
         let synced = engine.snapshot.syncedSliceCount
+        let footerShape = UnevenRoundedRectangle(
+            topLeadingRadius: 14,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 14,
+            style: .continuous
+        )
 
-        return ZStack(alignment: .bottomLeading) {
+        return ZStack(alignment: .bottom) {
             HStack(spacing: 6) {
                 HStack(spacing: 5) {
                     ZStack {
@@ -156,7 +193,7 @@ struct WatchMainView: View {
                         Circle()
                             .trim(from: progress, to: 1)
                             .stroke(
-                                engine.snapshot.isRecording ? Color.red : Color.green,
+                                engine.snapshot.isRecording ? Color.red : Color(red: 0.19, green: 0.82, blue: 0.35),
                                 style: StrokeStyle(lineWidth: 1.8, lineCap: .round)
                             )
                             .rotationEffect(.degrees(-90))
@@ -171,28 +208,35 @@ struct WatchMainView: View {
                 HStack(spacing: 3) {
                     Text(footerQueueSummary(pending: pending, synced: synced))
                         .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(pending > 0 ? Color.orange : (synced > 0 ? Color.green : Color.white.opacity(0.65)))
+                        .foregroundStyle(pending > 0 ? Color.orange : (synced > 0 ? Color.green : Color.white.opacity(0.72)))
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.5))
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 30)
+            .padding(.horizontal, 18)
+            .padding(.bottom, 4)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
             GeometryReader { geo in
+                let inset: CGFloat = 28
+                let width = max(0, geo.size.width - inset * 2)
                 Rectangle()
-                    .fill(Color.red)
-                    .frame(width: geo.size.width * progress, height: 2)
+                    .fill(Color(red: 1, green: 0.27, blue: 0.23))
+                    .frame(width: width * progress, height: 2)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .padding(.horizontal, inset)
+                    .padding(.bottom, 1.5)
             }
             .allowsHitTesting(false)
         }
+        .frame(height: 34)
+        .frame(maxWidth: .infinity)
         .background(
             pending > 0 ? Color.orange.opacity(0.15) : Color.white.opacity(0.09),
-            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+            in: footerShape
         )
-        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .clipShape(footerShape)
     }
 
     private func footerQueueSummary(pending: Int, synced: Int) -> String {
@@ -229,6 +273,18 @@ struct WatchMainView: View {
         let m = (totalSec % 3600) / 60
         let s = totalSec % 60
         return String(format: "%02d:%02d:%02d", h, m, s)
+    }
+
+    private func triggerKnockRipple() {
+        knockPulse = false
+        withAnimation(.easeOut(duration: 0.14)) {
+            knockPulse = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) {
+            withAnimation(.easeOut(duration: 0.16)) {
+                knockPulse = false
+            }
+        }
     }
 }
 
@@ -316,8 +372,21 @@ private struct WatchQueueView: View {
                     }
                 }
             }
+            Text("版本 \(watchAppVersionLabel)")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .listRowBackground(Color.clear)
         }
         .navigationTitle("本地队列")
+        .toolbar(.visible, for: .navigationBar)
+        .containerBackground(Color.black, for: .navigation)
+    }
+
+    private var watchAppVersionLabel: String {
+        let ver = engine.snapshot.appVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !ver.isEmpty { return ver }
+        let fallback = WatchSessionSyncEngine.bundledAppVersionLabel
+        return fallback.isEmpty ? "1.0.0" : fallback
     }
 
     private func stateLabel(_ state: WatchSliceTransferState) -> String {
