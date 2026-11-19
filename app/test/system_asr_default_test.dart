@@ -465,6 +465,104 @@ void main() {
     );
 
     testWidgets(
+      '(b2-compat) Android 兼容方案层（三星 Galaxy 默认 Bixby 但本机存在 Google 端侧服务）优先显示兼容方案且零 iOS 文案',
+      (tester) async {
+        final installer = _FakeModelInstaller();
+        final systemSpeech = SystemSpeechClient(
+          capabilitiesOverride: () async => const SystemSpeechCapabilities(
+            platform: 'android',
+            osMajorVersion: 15,
+            sdkInt: 35,
+            brandId: 'samsung',
+            deviceSummary: '三星 Galaxy S24 · One UI',
+            engineName: '三星 Galaxy 兼容方案（直连 Google 端侧语音）',
+            onDeviceServicePackage: 'com.google.android.tts',
+            resolutionStrategy: 'compat_service',
+            compatServiceComponent:
+                'com.google.android.tts/com.google.android.apps.speech.tts.googletts.service.GoogleTTSRecognitionService',
+            compatDescription:
+                '已绕开三星 Bixby 语音组件，直连本机已安装的 Google 端侧离线语音服务，免下载 228 MB 模型即可离线转写。',
+            detectedServices: ['com.google.android.tts', 'com.samsung.android.bixby.agent'],
+            supportsModernSystemAsr: true,
+            offlinePackInstalled: true,
+            canDownloadOfflinePack: false,
+            authStatus: 'granted',
+          ),
+        );
+        final ctrl = ModelManagerController(
+          installer: installer,
+          systemSpeech: systemSpeech,
+          agentConfig: agentConfig,
+          baseUrl: 'https://models.example.test',
+        );
+        addTearDown(ctrl.dispose);
+
+        await ctrl.autoEnsureInstalled();
+
+        expect(installer.installedFromCalls, [campplusEmbeddingSpec.id]);
+        expect(ctrl.supportsSystemAsr, isTrue);
+        expect(ctrl.systemCapabilities.isCompatService, isTrue);
+        expect(ctrl.effectiveAsrMode, 'system');
+        expect(ctrl.settingSummaryLabel, '兼容方案 · 即用');
+
+        await tester.pumpWidget(
+          wrap(
+            SettingSubPage(
+              subId: 'local',
+              agentConfig: agentConfig,
+              modelManager: ctrl,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('兼容方案生效中'), findsOneWidget);
+        expect(find.text('兼容方案优先'), findsOneWidget);
+        expect(find.byKey(const Key('asr-opt-system')), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byKey(const Key('asr-opt-system')),
+            matching: find.text('三星 Galaxy 兼容方案（直连 Google 端侧语音）'),
+          ),
+          findsOneWidget,
+        );
+        expectNoCrossPlatformText(
+          tester,
+          forbidden: const ['iOS', 'SpeechAnalyzer', 'iPhone'],
+        );
+
+        // 下载 SenseVoice 后再删除，确认弹窗与回退仍保留该兼容方案
+        await tester.ensureVisible(find.byKey(const Key('asr-opt-sensevoice')));
+        await tester.tap(find.byKey(const Key('asr-opt-sensevoice')));
+        await flushAsync(tester);
+        expect(ctrl.effectiveAsrMode, 'sensevoice');
+
+        final delBtn = find.byKey(const Key('model-delete-sensevoice-small-int8'));
+        await tester.ensureVisible(delBtn);
+        await tester.tap(delBtn);
+        await tester.pumpAndSettle();
+
+        final dialog = find.byKey(const Key('model-delete-confirm-dialog'));
+        expect(
+          find.descendant(
+            of: dialog,
+            matching: find.textContaining('三星 Galaxy 兼容方案（直连 Google 端侧语音）'),
+          ),
+          findsOneWidget,
+        );
+        expectNoCrossPlatformText(
+          tester,
+          forbidden: const ['iOS', 'SpeechAnalyzer', 'iPhone'],
+        );
+
+        await tester.tap(find.byKey(const Key('model-delete-confirm-btn')));
+        await flushAsync(tester);
+        expect(ctrl.effectiveAsrMode, 'system');
+        expect(ctrl.settingSummaryLabel, '兼容方案 · 即用');
+      },
+    );
+
+    testWidgets(
       '(b3) Android 各不支持品牌/ROM（小米/OPPO/vivo/荣耀/华为/三星 Bixby）隐藏系统选项，仅显示 SenseVoice 且绝不出现 iOS 文案',
       (tester) async {
         final unsupportedProfiles = <({
@@ -594,6 +692,7 @@ void main() {
           expect(find.byKey(const Key('asr-opt-system')), findsNothing);
           expect(find.byKey(const Key('asr-opt-sensevoice')), findsOneWidget);
           expect(find.text('本机推荐方案'), findsOneWidget);
+          expect(find.text('本地首选'), findsOneWidget);
           expect(
             find.text('当前设备：${entry.caps.deviceSummary}'),
             findsOneWidget,
@@ -865,10 +964,15 @@ void main() {
                     'platform': 'android',
                     'osMajorVersion': 15,
                     'sdkInt': 35,
-                    'brandId': 'pixel',
-                    'deviceSummary': 'Google Pixel 9 · Android 15',
-                    'engineName': 'Google 端侧离线语音引擎',
+                    'brandId': 'samsung',
+                    'deviceSummary': '三星 Galaxy S24 · One UI',
+                    'engineName': '三星 Galaxy 兼容方案（直连 Google 端侧语音）',
                     'onDeviceServicePackage': 'com.google.android.tts',
+                    'resolutionStrategy': 'compat_service',
+                    'compatServiceComponent':
+                        'com.google.android.tts/com.google.android.apps.speech.tts.googletts.service.GoogleTTSRecognitionService',
+                    'compatDescription': '直连 Google 端侧离线语音服务，免下载 228 MB 模型即可离线转写。',
+                    'detectedServices': const ['com.google.android.tts'],
                     'supportsModernSystemAsr': true,
                     'offlinePackInstalled': false,
                     'canDownloadOfflinePack': true,
@@ -922,7 +1026,15 @@ void main() {
         final caps = await androidSpeech.capabilities();
         expect(caps.isAndroid, isTrue);
         expect(caps.sdkInt, 35);
-        expect(caps.brandId, 'pixel');
+        expect(caps.brandId, 'samsung');
+        expect(caps.isCompatService, isTrue);
+        expect(caps.resolutionStrategy, 'compat_service');
+        expect(
+          caps.compatServiceComponent,
+          'com.google.android.tts/com.google.android.apps.speech.tts.googletts.service.GoogleTTSRecognitionService',
+        );
+        expect(caps.compatDescription, contains('Google 端侧离线语音服务'));
+        expect(caps.detectedServices, ['com.google.android.tts']);
         expect(caps.supportsModernSystemAsr, isTrue);
         expect(caps.offlinePackInstalled, isFalse);
         expect(caps.canDownloadOfflinePack, isTrue);
@@ -938,6 +1050,7 @@ void main() {
         addTearDown(controller.dispose);
         await controller.refresh();
         expect(controller.effectiveAsrMode, 'system');
+        expect(controller.settingSummaryLabel, '兼容方案 · 缺声纹');
 
         final models = InstalledSpeechModelProvider(
           realInstaller,
