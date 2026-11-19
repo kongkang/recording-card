@@ -240,6 +240,7 @@ name = "card_bridge"
 version = "0.2.0"
 dependencies = [
  "android_logger",
+ "async-trait",
  "base64 0.22.1",
  "btleplug",
  "futures",

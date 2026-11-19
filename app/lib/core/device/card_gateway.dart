@@ -418,6 +418,7 @@ class CardDevice {
     required this.id,
     required this.name,
     this.rssi,
+    this.lastSeenAt,
     this.kind,
     this.displayModel,
     this.capabilities,
@@ -426,6 +427,7 @@ class CardDevice {
   final String id;
   final String name;
   final int? rssi;
+  final DateTime? lastSeenAt;
   final DeviceKind? kind;
   final String? displayModel;
   final HardwareCapabilities? capabilities;
@@ -1252,10 +1254,14 @@ class RealCardGateway implements CardGateway {
           final capsMap = d['capabilities'] is Map<String, dynamic>
               ? d['capabilities'] as Map<String, dynamic>
               : null;
+          final lastSeenAtMs = (d['lastSeenAtMs'] as num?)?.toInt();
           return CardDevice(
             id: (d['id'] as String?) ?? '',
             name: name,
             rssi: (d['rssi'] as num?)?.toInt(),
+            lastSeenAt: lastSeenAtMs != null && lastSeenAtMs > 0
+                ? DateTime.fromMillisecondsSinceEpoch(lastSeenAtMs)
+                : null,
             kind: kind,
             displayModel:
                 (d['displayModel'] as String?) ?? kind?.displayModel ?? 'BLE 设备',

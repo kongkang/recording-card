@@ -114,14 +114,25 @@ impl RecorderSdkDriver for FeishuSdkDriver {
         peripheral: Peripheral,
         ble_name: String,
     ) -> Result<Arc<dyn RecorderDevice>, SdkError> {
-        peripheral
-            .connect()
+        if !peripheral
+            .is_connected()
             .await
-            .map_err(|err| SdkError::Ble(format!("连接录音豆失败: {err}")))?;
+            .map_err(|err| SdkError::Ble(format!("检查录音豆连接状态失败: {err}")))?
+        {
+            match tokio::time::timeout(Duration::from_secs(18), peripheral.connect()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => return Err(SdkError::Ble(format!("连接录音豆失败: {err}"))),
+                Err(_) => {
+                    let _ =
+                        tokio::time::timeout(Duration::from_secs(2), peripheral.disconnect()).await;
+                    return Err(SdkError::Timeout("飞书录音豆蓝牙建连超时".into()));
+                }
+            }
+        }
         let opened = async {
-            peripheral
-                .discover_services()
+            tokio::time::timeout(Duration::from_secs(15), peripheral.discover_services())
                 .await
+                .map_err(|_| SdkError::Timeout("发现录音豆 GATT 服务超时".into()))?
                 .map_err(|err| SdkError::Ble(format!("发现 GATT 服务失败: {err}")))?;
             let chars = peripheral.characteristics();
             let write = chars
