@@ -146,6 +146,33 @@ impl HardwareCapabilities {
     }
 }
 
+const DFU_FE59_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000fe59_0000_1000_8000_00805f9b34fb);
+
+/// V2 录音卡 Bootloader 恢复模式（`DFU_DYJ` / `0xFE59`）能力裁剪：仅允许固件恢复升级。
+pub fn card_v2_dfu_recovery_capabilities() -> HardwareCapabilities {
+    HardwareCapabilities {
+        realtime_audio: false,
+        has_onboard_storage: false,
+        has_file_sync: false,
+        has_wifi_config: false,
+        has_camera_media: false,
+        has_physical_record_toggle: false,
+        has_remote_record_control: false,
+        has_mark_button: false,
+        has_configurable_buttons: false,
+        ota_mode: "dual_chip",
+    }
+}
+
+pub fn is_card_v2_dfu_advertisement(local_name: Option<&str>, services: &[Uuid]) -> bool {
+    let clean = local_name.map(str::trim).filter(|s| !s.is_empty());
+    if clean.is_some_and(|n| n.to_ascii_uppercase().starts_with("DFU_DYJ")) {
+        return true;
+    }
+    services.contains(&DFU_FE59_SERVICE_UUID)
+        && clean.is_none_or(|n| n.to_ascii_uppercase().starts_with("DFU"))
+}
+
 fn classify_proprietary_name(trimmed: &str) -> Option<(DeviceKind, HardwareCapabilities)> {
     if trimmed.starts_with("DYJV2_") {
         Some((DeviceKind::CardV2, DeviceKind::CardV2.capabilities()))
@@ -153,6 +180,8 @@ fn classify_proprietary_name(trimmed: &str) -> Option<(DeviceKind, HardwareCapab
         Some((DeviceKind::DyjV1, DeviceKind::DyjV1.capabilities()))
     } else if trimmed.starts_with("REAI_VB_") {
         Some((DeviceKind::BoardV21, DeviceKind::BoardV21.capabilities()))
+    } else if trimmed.to_ascii_uppercase().starts_with("DFU_DYJ") {
+        Some((DeviceKind::CardV2, card_v2_dfu_recovery_capabilities()))
     } else {
         None
     }
@@ -196,6 +225,13 @@ pub fn classify_ble_advertisement(
         if let Some((kind, caps)) = classify_proprietary_name(name) {
             return Some((name.to_string(), kind, caps));
         }
+    }
+    if is_card_v2_dfu_advertisement(clean_name, services) {
+        return Some((
+            "DFU_DYJ".to_string(),
+            DeviceKind::CardV2,
+            card_v2_dfu_recovery_capabilities(),
+        ));
     }
     for drv in external_drivers() {
         if drv.matches_advertisement(clean_name, services, manufacturer_data) {
@@ -292,5 +328,23 @@ mod tests {
 
         let (kn, _) = classify_ble_name("D3200-C3A1").expect("feishu name");
         assert_eq!(kn, DeviceKind::FeishuD3200);
+
+        let (dfu_name, dfu_kind, dfu_caps) = classify_ble_advertisement(
+            "dfu-1",
+            Some("DFU_DYJ"),
+            &[DFU_FE59_SERVICE_UUID],
+            &empty,
+        )
+        .expect("dfu recovery name");
+        assert_eq!(dfu_name, "DFU_DYJ");
+        assert_eq!(dfu_kind, DeviceKind::CardV2);
+        assert_eq!(dfu_caps.ota_mode, "dual_chip");
+        assert!(!dfu_caps.realtime_audio && !dfu_caps.has_wifi_config);
+
+        let (dfu_uuid_only, dfu_uuid_kind, _) =
+            classify_ble_advertisement("dfu-2", None, &[DFU_FE59_SERVICE_UUID], &empty)
+                .expect("dfu recovery uuid only");
+        assert_eq!(dfu_uuid_only, "DFU_DYJ");
+        assert_eq!(dfu_uuid_kind, DeviceKind::CardV2);
     }
 }

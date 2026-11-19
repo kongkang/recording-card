@@ -7,6 +7,7 @@
 
 pub mod amr_transcode;
 pub mod capabilities;
+pub mod card_v2_ble;
 pub mod dyj_v1_session;
 pub mod legacy_upgrade;
 
@@ -20,8 +21,7 @@ use std::time::Duration;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use btleplug::api::{
-    Central as _, CentralEvent, CharPropFlags, Characteristic, Manager as _, Peripheral as _,
-    PeripheralProperties, ScanFilter, WriteType,
+    Central as _, CentralEvent, Manager as _, Peripheral as _, PeripheralProperties, ScanFilter,
 };
 use futures::StreamExt;
 use capabilities::{classify_ble_advertisement, DeviceKind};
@@ -35,10 +35,10 @@ use reai_board_sdk::kernel::audio::{
 };
 use reai_board_sdk::kernel::sink::AudioFrameSink;
 use reai_board_sdk::{BoardConfig, BoardDevice, BoardEvent};
+use card_v2_ble::CardV2ConnectOutcome;
 use reai_card_sdk::{
-    BleTransport, DeviceEvent as CardV2Event, DeviceManager as CardV2Manager, DfuPackage,
-    DyjDevice as CardV2Device, NotificationStream, OtaInfo, OtaModule, Result as CardSdkResult,
-    SdkError as CardSdkError, SharedTransport, NUS_NOTIFY_UUID, NUS_SERVICE_UUID, NUS_WRITE_UUID,
+    DeviceEvent as CardV2Event, DfuPackage, DyjDevice as CardV2Device, OtaInfo, OtaModule,
+    SdkError as CardSdkError, NUS_SERVICE_UUID,
 };
 use reai_dyj_sdk::{
     ApClient as DyjV1ApClient, DeviceEvent as DyjV1Event, SdkError as DyjV1SdkError,
@@ -118,6 +118,10 @@ enum ActiveDevice {
         device: CardV2Device,
         name: String,
     },
+    CardV2DfuRecovery {
+        id: String,
+        name: String,
+    },
     DyjV1 {
         device: Arc<DyjV1Session>,
         name: String,
@@ -141,7 +145,7 @@ enum ActiveDevice {
 impl ActiveDevice {
     fn kind(&self) -> DeviceKind {
         match self {
-            Self::CardV2 { .. } => DeviceKind::CardV2,
+            Self::CardV2 { .. } | Self::CardV2DfuRecovery { .. } => DeviceKind::CardV2,
             Self::DyjV1 { .. } => DeviceKind::DyjV1,
             Self::BoardV21 { .. } => DeviceKind::BoardV21,
             Self::External { kind, .. } => *kind,
@@ -154,10 +158,10 @@ struct BridgeState {
     device: tokio::sync::Mutex<Option<ActiveDevice>>,
     connecting_peripheral: Mutex<Option<btleplug::platform::Peripheral>>,
     scan_adapter: tokio::sync::OnceCell<btleplug::platform::Adapter>,
-    card_v2_manager: tokio::sync::OnceCell<CardV2Manager>,
     scan_cache: Mutex<HashMap<String, CachedScanEntry>>,
     event_pump: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     last_device_id: Mutex<Option<String>>,
+    last_card_v2_target: Mutex<Option<(String, String)>>,
     realtime_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     board_lease_seq: AtomicU32,
     events: Mutex<EventFeed>,
@@ -249,10 +253,10 @@ fn state() -> &'static BridgeState {
         device: tokio::sync::Mutex::new(None),
         connecting_peripheral: Mutex::new(None),
         scan_adapter: tokio::sync::OnceCell::new(),
-        card_v2_manager: tokio::sync::OnceCell::new(),
         scan_cache: Mutex::new(HashMap::new()),
         event_pump: tokio::sync::Mutex::new(None),
         last_device_id: Mutex::new(None),
+        last_card_v2_target: Mutex::new(None),
         realtime_stop: Mutex::new(None),
         board_lease_seq: AtomicU32::new(1),
         events: Mutex::new(EventFeed::new()),
@@ -429,7 +433,14 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
             out.ok(Value::Array(devices));
         }
         "connect" => out.ok(connect_device(payload).await?),
-        "disconnect" => out.ok(release_device().await),
+        "disconnect" => {
+            state()
+                .last_card_v2_target
+                .lock()
+                .expect("card v2 target lock")
+                .take();
+            out.ok(release_device().await);
+        }
         "snapshot" => {
             let active = active_device().await?;
             out.ok(snapshot_device(&active).await?);
@@ -688,14 +699,6 @@ async fn scan_adapter() -> Result<&'static btleplug::platform::Adapter, BridgeEr
         .await
 }
 
-async fn card_v2_manager() -> Result<&'static CardV2Manager, BridgeError> {
-    state()
-        .card_v2_manager
-        .get_or_try_init(CardV2Manager::new)
-        .await
-        .map_err(BridgeError::from)
-}
-
 fn now_unix_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -705,7 +708,7 @@ fn now_unix_ms() -> i64 {
 
 /// droidplug 的 properties() 是同步 Mutex 锁（真机实测会被 Java 回调线程卡死，
 /// 直接 await 会把 tokio worker 整个挂住）。丢进 blocking 池 + 有界超时。
-async fn read_peripheral_props_bounded(
+pub(crate) async fn read_peripheral_props_bounded(
     p: &btleplug::platform::Peripheral,
 ) -> Option<PeripheralProperties> {
     let p = p.clone();
@@ -950,53 +953,7 @@ async fn bootstrap_card_v2_ble_metadata_if_missing(device: &CardV2Device) {
     }
 }
 
-struct CardV2BtleplugTransport {
-    peripheral: btleplug::platform::Peripheral,
-    write: Characteristic,
-    write_type: WriteType,
-}
-
-#[async_trait::async_trait]
-impl BleTransport for CardV2BtleplugTransport {
-    async fn write(&self, bytes: &[u8]) -> CardSdkResult<()> {
-        self.peripheral
-            .write(&self.write, bytes, self.write_type)
-            .await
-            .map_err(|e| CardSdkError::Transport(e.to_string()))
-    }
-
-    async fn notifications(&self) -> CardSdkResult<NotificationStream> {
-        let stream = self
-            .peripheral
-            .notifications()
-            .await
-            .map_err(|e| CardSdkError::Transport(e.to_string()))?;
-        Ok(Box::pin(stream.map(|notification| Ok(notification.value))))
-    }
-
-    async fn disconnect(&self) -> CardSdkResult<()> {
-        let connected =
-            tokio::time::timeout(Duration::from_secs(4), self.peripheral.is_connected())
-                .await
-                .map_err(|_| CardSdkError::Timeout {
-                    command: "ble.is_connected".to_string(),
-                    seconds: 4,
-                })?
-                .map_err(|e| CardSdkError::Transport(e.to_string()))?;
-        if connected {
-            tokio::time::timeout(Duration::from_secs(4), self.peripheral.disconnect())
-                .await
-                .map_err(|_| CardSdkError::Timeout {
-                    command: "ble.disconnect".to_string(),
-                    seconds: 4,
-                })?
-                .map_err(|e| CardSdkError::Transport(e.to_string()))?;
-        }
-        Ok(())
-    }
-}
-
-fn matches_card_v2_candidate(
+pub(crate) fn matches_card_v2_candidate(
     pid: &str,
     id_hint: &str,
     name_hint: Option<&str>,
@@ -1005,14 +962,18 @@ fn matches_card_v2_candidate(
 ) -> Option<String> {
     let trimmed_hint = name_hint.map(str::trim).filter(|s| !s.is_empty());
     let trimmed_local = local_name.map(str::trim).filter(|s| !s.is_empty());
+    let is_dfu = capabilities::is_card_v2_dfu_advertisement(trimmed_local, services);
     if let (Some(nh), Some(ln)) = (trimmed_hint, trimmed_local) {
-        if nh != ln {
+        if nh != ln && !(nh.eq_ignore_ascii_case("DFU_DYJ") && is_dfu) {
             return None;
         }
     }
     if let Some(nh) = trimmed_hint {
         if trimmed_local == Some(nh) {
             return Some(nh.to_string());
+        }
+        if nh.eq_ignore_ascii_case("DFU_DYJ") && is_dfu {
+            return Some(trimmed_local.unwrap_or(nh).to_string());
         }
     }
     let nus_uuid = uuid::Uuid::parse_str(NUS_SERVICE_UUID).ok();
@@ -1021,9 +982,10 @@ fn matches_card_v2_candidate(
         let valid_identity = trimmed_local.is_none()
             || trimmed_local.is_some_and(|n| {
                 let u = n.to_ascii_uppercase();
-                u.starts_with("DYJV2") || u.starts_with("DYJ")
+                u.starts_with("DYJV2") || u.starts_with("DYJ") || u.starts_with("DFU")
             })
-            || nus_uuid.is_some_and(|u| services.contains(&u));
+            || nus_uuid.is_some_and(|u| services.contains(&u))
+            || is_dfu;
         if valid_identity {
             return Some(
                 trimmed_local
@@ -1198,115 +1160,72 @@ where
 
 async fn connect_card_v2(id: &str, name_hint: Option<&str>) -> Result<Value, BridgeError> {
     let adapter = scan_adapter().await?;
-    let label = name_hint
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(DeviceKind::CardV2.display_model());
-    let (peripheral, connected_name) = connect_fresh_peripheral(
+    match card_v2_ble::connect_card_v2_on_adapter(
         adapter,
         id,
-        label,
-        &state().connecting_peripheral,
-        |pid, props| {
-            let local_name = props.and_then(|pr| pr.local_name.as_deref());
-            let services = props.map(|pr| pr.services.as_slice()).unwrap_or(&[]);
-            matches_card_v2_candidate(pid, id, name_hint, local_name, services)
-        },
+        name_hint,
+        Some(&state().connecting_peripheral),
     )
-    .await?;
-
-    let discover_res =
-        tokio::time::timeout(Duration::from_secs(10), peripheral.discover_services()).await;
-    match discover_res {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
-            let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
-            return Err(BridgeError::from(format!("录音卡 V2 服务发现失败: {e}")));
+    .await?
+    {
+        CardV2ConnectOutcome::Connected {
+            device,
+            id: actual_id,
+            name: connected_name,
+        } => {
+            bootstrap_card_v2_ble_metadata_if_missing(&device).await;
+            let pump = spawn_card_v2_event_pump(&device);
+            *state().event_pump.lock().await = Some(pump);
+            *state().last_device_id.lock().expect("device id lock") = Some(actual_id.clone());
+            *state()
+                .last_card_v2_target
+                .lock()
+                .expect("card v2 target lock") = Some((actual_id.clone(), connected_name.clone()));
+            state().scan_cache.lock().expect("scan cache lock").insert(
+                actual_id,
+                CachedScanEntry {
+                    name: connected_name.clone(),
+                    kind: DeviceKind::CardV2,
+                },
+            );
+            *state().device.lock().await = Some(ActiveDevice::CardV2 {
+                device,
+                name: connected_name.clone(),
+            });
+            Ok(json!({
+                "connected": true,
+                "name": connected_name,
+                "deviceKind": DeviceKind::CardV2.as_str(),
+                "displayModel": DeviceKind::CardV2.display_model(),
+                "capabilities": DeviceKind::CardV2.capabilities(),
+            }))
         }
-        Err(_) => {
-            let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
-            return Err(BridgeError::from("录音卡 V2 服务发现超时，请重试连接".to_string()));
+        CardV2ConnectOutcome::DfuRecovery {
+            id: actual_id,
+            name: dfu_name,
+        } => {
+            *state().event_pump.lock().await = None;
+            *state().last_device_id.lock().expect("device id lock") = Some(actual_id.clone());
+            state().scan_cache.lock().expect("scan cache lock").insert(
+                actual_id.clone(),
+                CachedScanEntry {
+                    name: dfu_name.clone(),
+                    kind: DeviceKind::CardV2,
+                },
+            );
+            *state().device.lock().await = Some(ActiveDevice::CardV2DfuRecovery {
+                id: actual_id,
+                name: dfu_name.clone(),
+            });
+            Ok(json!({
+                "connected": true,
+                "name": dfu_name,
+                "deviceKind": DeviceKind::CardV2.as_str(),
+                "displayModel": "录音卡 V2（恢复模式）",
+                "capabilities": capabilities::card_v2_dfu_recovery_capabilities(),
+            }))
         }
     }
-
-    let write_uuid = uuid::Uuid::parse_str(NUS_WRITE_UUID)
-        .map_err(|e| BridgeError::from(format!("invalid NUS write UUID: {e}")))?;
-    let notify_uuid = uuid::Uuid::parse_str(NUS_NOTIFY_UUID)
-        .map_err(|e| BridgeError::from(format!("invalid NUS notify UUID: {e}")))?;
-    let chars = peripheral.characteristics();
-    let Some(write) = chars
-        .iter()
-        .find(|c| {
-            c.uuid == write_uuid
-                && (c.properties.contains(CharPropFlags::WRITE)
-                    || c.properties.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE))
-        })
-        .cloned()
-    else {
-        let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
-        return Err(CardSdkError::MissingCharacteristic("write").into());
-    };
-    let Some(notify) = chars
-        .iter()
-        .find(|c| c.uuid == notify_uuid && c.properties.contains(CharPropFlags::NOTIFY))
-        .cloned()
-    else {
-        let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
-        return Err(CardSdkError::MissingCharacteristic("notify").into());
-    };
-
-    match tokio::time::timeout(Duration::from_secs(6), peripheral.subscribe(&notify)).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
-            let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
-            return Err(BridgeError::from(format!("订阅录音卡通知失败: {e}")));
-        }
-        Err(_) => {
-            let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
-            return Err(BridgeError::from("订阅录音卡通知超时，请重试连接".to_string()));
-        }
-    }
-
-    let write_type = if write.properties.contains(CharPropFlags::WRITE) {
-        WriteType::WithResponse
-    } else {
-        WriteType::WithoutResponse
-    };
-    let actual_id = peripheral.id().to_string();
-    let transport: SharedTransport = Arc::new(CardV2BtleplugTransport {
-        peripheral,
-        write,
-        write_type,
-    });
-    let device = match CardV2Device::from_transport(transport.clone()).await {
-        Ok(dev) => dev,
-        Err(error) => {
-            let _ = tokio::time::timeout(Duration::from_secs(3), transport.disconnect()).await;
-            return Err(error.into());
-        }
-    };
-    bootstrap_card_v2_ble_metadata_if_missing(&device).await;
-    let pump = spawn_card_v2_event_pump(&device);
-    *state().event_pump.lock().await = Some(pump);
-    *state().last_device_id.lock().expect("device id lock") = Some(actual_id.clone());
-    state().scan_cache.lock().expect("scan cache lock").insert(
-        actual_id,
-        CachedScanEntry {
-            name: connected_name.clone(),
-            kind: DeviceKind::CardV2,
-        },
-    );
-    *state().device.lock().await = Some(ActiveDevice::CardV2 {
-        device,
-        name: connected_name.clone(),
-    });
-    Ok(json!({
-        "connected": true,
-        "name": connected_name,
-        "deviceKind": DeviceKind::CardV2.as_str(),
-        "displayModel": DeviceKind::CardV2.display_model(),
-        "capabilities": DeviceKind::CardV2.capabilities(),
-    }))
 }
 
 fn update_dyj_v1_meta_from_info(meta: &Arc<Mutex<DyjV1CachedMeta>>, info: &Value) {
@@ -1574,7 +1493,7 @@ async fn release_device() -> Value {
     if let Some(p) = connecting {
         let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
     }
-    // 兜底释放：若此前某次 connect 超时或半连接遗留在 CoreBluetooth，把 adapter 里仍连着的 DYJ_ 外设也断开。
+    // 兜底释放：若此前某次 connect 超时或半连接遗留在 CoreBluetooth，把 adapter 里仍连着的 DYJ_/DYJV2_/DFU 外设也断开。
     if let Some(adapter) = state().scan_adapter.get() {
         if let Ok(peripherals) = adapter.peripherals().await {
             for p in peripherals {
@@ -1582,14 +1501,16 @@ async fn release_device() -> Value {
                     .await
                     .unwrap_or(Ok(false))
                 {
-                    let is_dyj = tokio::time::timeout(Duration::from_millis(300), p.properties())
+                    let is_reai_ble = read_peripheral_props_bounded(&p)
                         .await
-                        .ok()
-                        .and_then(std::result::Result::ok)
-                        .flatten()
                         .and_then(|pr| pr.local_name)
-                        .is_some_and(|n| n.trim().starts_with("DYJ_"));
-                    if is_dyj {
+                        .is_some_and(|n| {
+                            let t = n.trim();
+                            t.starts_with("DYJ_")
+                                || t.starts_with("DYJV2_")
+                                || t.to_ascii_uppercase().starts_with("DFU")
+                        });
+                    if is_reai_ble {
                         let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
                     }
                 }
@@ -1606,6 +1527,7 @@ async fn release_device() -> Value {
                 Err(_) => json!("timeout"),
             }
         }
+        Some(ActiveDevice::CardV2DfuRecovery { .. }) => json!("ok"),
         Some(ActiveDevice::DyjV1 { device, .. }) => {
             match tokio::time::timeout(Duration::from_secs(8), device.disconnect()).await {
                 Ok(Ok(())) => json!("ok"),
@@ -2039,6 +1961,32 @@ async fn snapshot_device(active: &ActiveDevice) -> Result<Value, BridgeError> {
                 "capabilities": caps,
             }))
         }
+        ActiveDevice::CardV2DfuRecovery { id, name } => Ok(json!({
+            "deviceKind": kind.as_str(),
+            "displayModel": "录音卡 V2（恢复模式）",
+            "deviceName": name,
+            "capabilities": capabilities::card_v2_dfu_recovery_capabilities(),
+            "battery": {
+                "level": 0,
+                "isCharging": false,
+            },
+            "state": {
+                "wifiOpen": false,
+                "recording": false,
+            },
+            "info": {
+                "version": "恢复模式",
+                "versionCode": 1,
+                "deviceName": name,
+                "deviceId": id,
+                "wifiVersion": "",
+                "wifiVersionCode": 0,
+            },
+            "storage": Value::Null,
+            "record": {
+                "isRecording": false,
+            },
+        })),
         ActiveDevice::CardV2 { device, name } => {
             let battery_res = match device.battery().await {
                 Ok(v) if v.level > 0 => Ok(v),
@@ -2266,6 +2214,9 @@ async fn record_action(active: &ActiveDevice, action: &str) -> Result<Value, Bri
                     record_start(active, None).await
                 }
             }
+            ActiveDevice::CardV2DfuRecovery { .. } => Err(BridgeError::from(
+                "录音卡处于恢复模式，请先完成固件升级".to_string(),
+            )),
         },
     }
 }
@@ -2310,6 +2261,9 @@ async fn record_start(
             let st = device.start_record(duration_secs).await?;
             Ok(serde_json::to_value(&st).unwrap_or(json!({"recording": true})))
         }
+        ActiveDevice::CardV2DfuRecovery { .. } => Err(BridgeError::from(
+            "录音卡处于恢复模式，请先完成固件升级".to_string(),
+        )),
     }
 }
 
@@ -2338,6 +2292,9 @@ async fn record_stop(active: &ActiveDevice) -> Result<Value, BridgeError> {
             let st = device.stop_record().await?;
             Ok(serde_json::to_value(&st).unwrap_or(json!({"recording": false})))
         }
+        ActiveDevice::CardV2DfuRecovery { .. } => Err(BridgeError::from(
+            "录音卡处于恢复模式，请先完成固件升级".to_string(),
+        )),
     }
 }
 
@@ -2356,6 +2313,9 @@ async fn record_mark(active: &ActiveDevice) -> Result<Value, BridgeError> {
         ActiveDevice::DyjV1 { .. } | ActiveDevice::BoardV21 { .. } => {
             Ok(json!({"marked": true, "localOnly": true}))
         }
+        ActiveDevice::CardV2DfuRecovery { .. } => Err(BridgeError::from(
+            "录音卡处于恢复模式，请先完成固件升级".to_string(),
+        )),
     }
 }
 
@@ -2379,6 +2339,9 @@ async fn realtime_open(out: Emitter) -> Result<(), BridgeError> {
         ActiveDevice::External { kind, device, .. } => {
             realtime_open_external(kind, device, out).await
         }
+        ActiveDevice::CardV2DfuRecovery { .. } => Err(BridgeError::from(
+            "录音卡处于恢复模式，请先完成固件升级".to_string(),
+        )),
     }
 }
 
@@ -2865,7 +2828,9 @@ async fn list_device_files(active: &ActiveDevice) -> Result<Value, BridgeError> 
             }
             Ok(Value::Array(files))
         }
-        ActiveDevice::BoardV21 { .. } => Ok(Value::Array(Vec::new())),
+        ActiveDevice::BoardV21 { .. } | ActiveDevice::CardV2DfuRecovery { .. } => {
+            Ok(Value::Array(Vec::new()))
+        }
     }
 }
 
@@ -2979,6 +2944,9 @@ async fn download_device_file(
         ActiveDevice::BoardV21 { .. } => Err(BridgeError::from(
             "语音 AI 键盘无板载录音存储，仅支持实时音频流".to_string(),
         )),
+        ActiveDevice::CardV2DfuRecovery { .. } => Err(BridgeError::from(
+            "录音卡处于恢复模式，请先完成固件升级".to_string(),
+        )),
         ActiveDevice::External { device, name: dev_name, .. } => {
             let saved = device.download_file(name, dir).await?;
             Ok(json!({
@@ -3020,6 +2988,9 @@ async fn take_oldest_device_file(active: &ActiveDevice, dir: &str) -> Result<Val
         ActiveDevice::BoardV21 { .. } => Err(BridgeError::from(
             "语音 AI 键盘无板载录音存储，仅支持实时音频流".to_string(),
         )),
+        ActiveDevice::CardV2DfuRecovery { .. } => Err(BridgeError::from(
+            "录音卡处于恢复模式，请先完成固件升级".to_string(),
+        )),
         ActiveDevice::External { device, name: dev_name, .. } => {
             let files = device.list_files().await?;
             let first = files.into_iter().next().ok_or_else(|| {
@@ -3047,7 +3018,9 @@ async fn delete_device_file(active: &ActiveDevice, name: &str) -> Result<Value, 
             Ok(device.delete_file(name).await.and_then(to_value)?)
         }
         ActiveDevice::DyjV1 { device, .. } => Ok(device.record_delete(name).await?),
-        ActiveDevice::BoardV21 { .. } => Ok(json!({"deleted": false})),
+        ActiveDevice::BoardV21 { .. } | ActiveDevice::CardV2DfuRecovery { .. } => {
+            Ok(json!({"deleted": false}))
+        }
     }
 }
 
@@ -3386,9 +3359,9 @@ async fn wifi_scan(active: &ActiveDevice) -> Result<Value, BridgeError> {
                 .collect();
             Ok(Value::Array(networks))
         }
-        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
-            Ok(Value::Array(Vec::new()))
-        }
+        ActiveDevice::BoardV21 { .. }
+        | ActiveDevice::External { .. }
+        | ActiveDevice::CardV2DfuRecovery { .. } => Ok(Value::Array(Vec::new())),
     }
 }
 
@@ -3502,6 +3475,9 @@ async fn wifi_connect(
         ActiveDevice::BoardV21 { .. } => {
             Err(BridgeError::from("语音 AI 键盘不支持设备端 Wi-Fi 配置".to_string()))
         }
+        ActiveDevice::CardV2DfuRecovery { .. } => Err(BridgeError::from(
+            "录音卡处于恢复模式，请先完成固件升级".to_string(),
+        )),
         ActiveDevice::External { kind, .. } => Err(BridgeError::from(format!(
             "{} 不支持设备端 Wi-Fi 配置",
             kind.display_model()
@@ -3513,9 +3489,9 @@ async fn wifi_open(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => Ok(device.open_wifi().await.and_then(to_value)?),
         ActiveDevice::DyjV1 { device, .. } => Ok(device.wifi_status().await?),
-        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
-            Ok(json!({"enabled": false}))
-        }
+        ActiveDevice::BoardV21 { .. }
+        | ActiveDevice::External { .. }
+        | ActiveDevice::CardV2DfuRecovery { .. } => Ok(json!({"enabled": false})),
     }
 }
 
@@ -3524,7 +3500,8 @@ async fn wifi_close(active: &ActiveDevice) -> Result<Value, BridgeError> {
         ActiveDevice::CardV2 { device, .. } => Ok(device.close_wifi().await.and_then(to_value)?),
         ActiveDevice::DyjV1 { .. }
         | ActiveDevice::BoardV21 { .. }
-        | ActiveDevice::External { .. } => Ok(json!({"closed": true})),
+        | ActiveDevice::External { .. }
+        | ActiveDevice::CardV2DfuRecovery { .. } => Ok(json!({"closed": true})),
     }
 }
 
@@ -3591,9 +3568,9 @@ async fn wifi_credentials(active: &ActiveDevice, passive: bool) -> Result<Value,
                 .collect();
             Ok(Value::Array(creds))
         }
-        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
-            Ok(Value::Array(Vec::new()))
-        }
+        ActiveDevice::BoardV21 { .. }
+        | ActiveDevice::External { .. }
+        | ActiveDevice::CardV2DfuRecovery { .. } => Ok(Value::Array(Vec::new())),
     }
 }
 
@@ -3636,9 +3613,9 @@ async fn wifi_forget(active: &ActiveDevice, ssid: &str) -> Result<Value, BridgeE
             meta.lock().unwrap().remove_saved_ssid(ssid);
             Ok(res)
         }
-        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
-            Ok(json!({"removed": 0}))
-        }
+        ActiveDevice::BoardV21 { .. }
+        | ActiveDevice::External { .. }
+        | ActiveDevice::CardV2DfuRecovery { .. } => Ok(json!({"removed": 0})),
     }
 }
 
@@ -3646,7 +3623,9 @@ async fn sync_start(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => Ok(device.start_sync().await.and_then(to_value)?),
         ActiveDevice::DyjV1 { device, .. } => Ok(device.upload_start(None).await?),
-        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => Ok(json!({"queued": 0})),
+        ActiveDevice::BoardV21 { .. }
+        | ActiveDevice::External { .. }
+        | ActiveDevice::CardV2DfuRecovery { .. } => Ok(json!({"queued": 0})),
     }
 }
 
@@ -3654,9 +3633,9 @@ async fn sync_status(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => Ok(device.sync_status().await.and_then(to_value)?),
         ActiveDevice::DyjV1 { device, .. } => Ok(device.upload_status().await?),
-        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
-            Ok(json!({"uploading": false}))
-        }
+        ActiveDevice::BoardV21 { .. }
+        | ActiveDevice::External { .. }
+        | ActiveDevice::CardV2DfuRecovery { .. } => Ok(json!({"uploading": false})),
     }
 }
 
@@ -3666,7 +3645,9 @@ async fn upload_set_url(active: &ActiveDevice, url: &str) -> Result<Value, Bridg
             Ok(device.set_wifi_upload_url(url).await.and_then(to_value)?)
         }
         ActiveDevice::DyjV1 { device, .. } => Ok(device.upload_config_set(Some(url), None).await?),
-        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => Ok(json!({"url": url})),
+        ActiveDevice::BoardV21 { .. }
+        | ActiveDevice::External { .. }
+        | ActiveDevice::CardV2DfuRecovery { .. } => Ok(json!({"url": url})),
     }
 }
 
@@ -3684,6 +3665,9 @@ async fn ap_start(
         ActiveDevice::BoardV21 { .. } => {
             Err(BridgeError::from("语音 AI 键盘不支持热点模式".to_string()))
         }
+        ActiveDevice::CardV2DfuRecovery { .. } => Err(BridgeError::from(
+            "录音卡处于恢复模式，请先完成固件升级".to_string(),
+        )),
         ActiveDevice::External { kind, .. } => Err(BridgeError::from(format!(
             "{} 不支持热点模式",
             kind.display_model()
@@ -3697,9 +3681,9 @@ async fn ap_stop(active: &ActiveDevice) -> Result<Value, BridgeError> {
             Ok(device.stop_access_point().await.and_then(to_value)?)
         }
         ActiveDevice::DyjV1 { device, .. } => Ok(device.ap_stop().await?),
-        ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. } => {
-            Ok(json!({"active": false}))
-        }
+        ActiveDevice::BoardV21 { .. }
+        | ActiveDevice::External { .. }
+        | ActiveDevice::CardV2DfuRecovery { .. } => Ok(json!({"active": false})),
     }
 }
 
@@ -3717,6 +3701,7 @@ async fn time_sync(active: &ActiveDevice) -> Result<Value, BridgeError> {
                 .unwrap_or_else(|_| json!({"epoch_ms": now_ms})))
         }
         ActiveDevice::BoardV21 { .. } => Ok(json!({"synced": true, "hostClock": true})),
+        ActiveDevice::CardV2DfuRecovery { .. } => Ok(json!({"synced": false})),
         ActiveDevice::External { device, .. } => Ok(device.sync_time().await?),
     }
 }
@@ -3842,10 +3827,27 @@ async fn ota_info(payload: &Value) -> Result<Value, BridgeError> {
     Ok(to_value(info)?)
 }
 
+async fn enter_dfu_mode_tolerating_reboot(device: &CardV2Device) -> Result<(), CardSdkError> {
+    match tokio::time::timeout(Duration::from_secs(6), device.enter_dfu_mode()).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(CardSdkError::Disconnected)) | Ok(Err(CardSdkError::Timeout { .. })) | Err(_) => {
+            Ok(())
+        }
+        Ok(Err(err)) => Err(err),
+    }
+}
+
 async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
     let current_active = state().device.lock().await.clone();
     if let Some(ActiveDevice::DyjV1 { device, .. }) = current_active {
         return ota_main_dyj_v1(device, out).await;
+    }
+    if matches!(
+        current_active,
+        Some(ActiveDevice::BoardV21 { .. } | ActiveDevice::External { .. })
+    ) {
+        out.fail("当前连接设备不支持双芯 DFU 固件升级");
+        return Ok(());
     }
 
     let api_base = payload
@@ -3888,35 +3890,100 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
     }
     state().last_device_id.lock().expect("device id lock").take();
     let active = state().device.lock().await.take();
-    let Some(ActiveDevice::CardV2 { device, .. }) = active else {
-        out.fail("当前连接设备不支持双芯 DFU 固件升级");
-        return Ok(());
-    };
 
-    let manager = match card_v2_manager().await {
-        Ok(manager) => manager,
+    let adapter = match scan_adapter().await {
+        Ok(adapter) => adapter,
         Err(error) => {
             out.fail(error.message);
             return Ok(());
         }
     };
 
-    out.progress(json!({"stage": "dfu", "percent": 5, "text": "设备重启进 bootloader…"}));
+    let dfu_budget = match active {
+        Some(ActiveDevice::CardV2 { device, .. }) => {
+            out.progress(json!({"stage": "dfu", "percent": 5, "text": "设备重启进 bootloader…"}));
+            let enter_res = enter_dfu_mode_tolerating_reboot(&device).await;
+            let _ = tokio::time::timeout(Duration::from_secs(3), device.disconnect()).await;
+            if let Err(error) = enter_res {
+                out.fail(error);
+                return Ok(());
+            }
+            Duration::from_secs(20)
+        }
+        Some(ActiveDevice::CardV2DfuRecovery { .. }) => {
+            out.progress(json!({"stage": "dfu", "percent": 5, "text": "正在连接恢复模式 Bootloader…"}));
+            Duration::from_secs(12)
+        }
+        None => {
+            let dfu_nearby =
+                matches!(card_v2_ble::scan_dfu_peripheral(adapter, Duration::from_secs(3)).await, Ok(Some(_)));
+            if dfu_nearby {
+                out.progress(json!({"stage": "dfu", "percent": 5, "text": "发现 Bootloader，正在续传主控固件…"}));
+                Duration::from_secs(12)
+            } else {
+                let saved_target = state()
+                    .last_card_v2_target
+                    .lock()
+                    .expect("card v2 target lock")
+                    .clone();
+                let Some((tid, tname)) = saved_target else {
+                    out.fail("当前未连接录音卡，也未检测到 DFU_DYJ 恢复设备");
+                    return Ok(());
+                };
+                out.progress(json!({"stage": "dfu", "percent": 4, "text": "正在重连录音卡进入升级模式…"}));
+                match card_v2_ble::connect_card_v2_on_adapter(
+                    adapter,
+                    &tid,
+                    Some(&tname),
+                    Some(&state().connecting_peripheral),
+                )
+                .await
+                {
+                    Ok(CardV2ConnectOutcome::Connected { device, .. }) => {
+                        out.progress(json!({"stage": "dfu", "percent": 5, "text": "设备重启进 bootloader…"}));
+                        let enter_res = enter_dfu_mode_tolerating_reboot(&device).await;
+                        let _ = tokio::time::timeout(Duration::from_secs(3), device.disconnect()).await;
+                        if let Err(error) = enter_res {
+                            out.fail(error);
+                            return Ok(());
+                        }
+                        Duration::from_secs(20)
+                    }
+                    Ok(CardV2ConnectOutcome::DfuRecovery { .. }) => {
+                        out.progress(json!({"stage": "dfu", "percent": 5, "text": "正在连接恢复模式 Bootloader…"}));
+                        Duration::from_secs(12)
+                    }
+                    Err(error) => {
+                        out.fail(error.message);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        Some(_) => {
+            out.fail("当前连接设备不支持双芯 DFU 固件升级");
+            return Ok(());
+        }
+    };
+
     let ota_out = out;
     let options = reai_card_sdk::DfuOptions::default();
-    let report = manager
-        .update_main_firmware(&device, &package, &options, move |progress| {
+    let report = card_v2_ble::run_dfu_upload_with_resume(
+        &package,
+        &options,
+        move |_attempt| card_v2_ble::connect_dfu_target_on_adapter(adapter, dfu_budget),
+        move |percent, text, sent, total| {
             ota_out.progress(json!({
                 "stage": "dfu",
-                "percent": 5 + (progress.percent() as f64 * 0.9) as u8,
-                "text": "正在写入主控固件…",
-                "sent": progress.sent,
-                "total": progress.total,
+                "percent": percent,
+                "text": text,
+                "sent": sent,
+                "total": total,
             }));
-        })
-        .await;
+        },
+    )
+    .await;
 
-    let _ = tokio::time::timeout(Duration::from_secs(3), device.disconnect()).await;
     match report {
         Ok(report) => out.ok(json!({
             "module": "main",
@@ -3967,6 +4034,12 @@ async fn ota_main_dyj_v1(device: Arc<DyjV1Session>, out: Emitter) -> Result<(), 
         return Ok(());
     }
 
+    if let Some(pump) = state().event_pump.lock().await.take() {
+        pump.abort();
+    }
+    if let Some(stop) = state().realtime_stop.lock().expect("realtime lock").take() {
+        let _ = stop.send(());
+    }
     let mut events = device.subscribe_events();
     out.progress(json!({
         "stage": "downloading",

@@ -42,7 +42,9 @@ enum DeviceKind {
   /// 必须先判 `DYJV2_` 再判 `DYJ_`，避免把 V2 误判成点一机 V1。
   static DeviceKind? fromBleName(String name) {
     final trimmed = name.trim().toUpperCase();
-    if (trimmed.startsWith('DYJV2_') || trimmed == 'DYJV2') {
+    if (trimmed.startsWith('DYJV2_') ||
+        trimmed == 'DYJV2' ||
+        trimmed.startsWith('DFU_DYJ')) {
       return DeviceKind.cardV2;
     }
     if (trimmed.startsWith('DYJ_') || trimmed.startsWith('DYJ')) {

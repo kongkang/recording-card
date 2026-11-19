@@ -622,4 +622,275 @@ void main() {
     expect(store.fwStage, FwStage.failed);
     expect(store.fwValText, '检查失败');
   });
+
+  testWidgets('⑧ ota.main 失败清句柄后自动扫描回连 DFU_DYJ，界面可直接重试刷完', (
+    tester,
+  ) async {
+    const dfuDev = CardDevice(id: 'dev-dfu', name: 'DFU_DYJ', rssi: -42);
+    final dfuSnap = CardSnapshot(
+      batteryLevel: 0,
+      isCharging: false,
+      wifiOpen: false,
+      recording: false,
+      fwVersion: '恢复模式',
+      fwVersionCode: 1,
+      wifiVersion: '',
+      wifiVersionCode: 0,
+      deviceName: 'DFU_DYJ',
+      deviceId: 'dev-dfu',
+      hasBattery: false,
+      deviceKind: DeviceKind.cardV2,
+      displayModel: '录音卡 V2（恢复模式）',
+      capabilities: const HardwareCapabilities(
+        realtimeAudio: false,
+        hasOnboardStorage: false,
+        hasFileSync: false,
+        hasWifiConfig: false,
+        hasCameraMedia: false,
+        hasPhysicalRecordToggle: false,
+        hasRemoteRecordControl: false,
+        hasMarkButton: false,
+        otaMode: 'dual_chip',
+      ),
+    );
+    final initialSnap = _cardSnap(
+      fwVersion: '0.3.12',
+      fwVersionCode: 312,
+      wifiVersion: '0.1.4',
+      wifiVersionCode: 104,
+    );
+    final updatedSnap = _cardSnap(
+      fwVersion: '0.3.17',
+      fwVersionCode: 317,
+      wifiVersion: '0.1.4',
+      wifiVersionCode: 104,
+    );
+
+    final gw = FakeCardGateway(
+      initialSnapshot: initialSnap,
+      devices: const [_card],
+      mainOta: const CardOtaInfo(
+        version: '0.3.17',
+        versionCode: 317,
+        url: 'https://ota.invalid/main_317.zip',
+      ),
+      wifiOta: const CardOtaInfo(
+        version: '0.1.4',
+        versionCode: 104,
+        url: 'https://ota.invalid/wifi_104.bin',
+      ),
+      progressDelay: Duration.zero,
+    );
+
+    var otaAttempts = 0;
+    gw.otaMainOverride = () async* {
+      otaAttempts++;
+      if (otaAttempts == 1) {
+        // 真实桥进入 DFU 前会 take() 走 active device，导致 snapshot() 报断开
+        gw.current = null;
+        gw.devices = const [dfuDev];
+        yield const CardProgress(
+          stage: 'dfu',
+          percent: 30,
+          text: '正在写入主控固件…',
+        );
+        throw CardException.timeout('DFU packet write 超时');
+      }
+      gw.current = null;
+      gw.devices = const [_card];
+      yield const CardProgress(stage: 'dfu', percent: 100, text: '主控写入完成');
+    };
+    gw.connectOverride = (id, {name, deviceKind}) async {
+      final snap = id == dfuDev.id
+          ? dfuSnap
+          : (otaAttempts >= 2 ? updatedSnap : initialSnap);
+      gw.current = snap;
+      return snap;
+    };
+
+    final store = DeviceStore(gateway: gw);
+    await pumpShell(tester, device: store);
+    await store.connectTo(_card);
+    await store.checkFirmware();
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('hw-capsule')));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('fw-update')));
+    await tester.pump();
+    await tester.pump();
+
+    // 第 1 次点击开始更新：注入写超时失败，DeviceStore 应自动回连到 DFU_DYJ，保持可重试态
+    await tester.tap(find.byKey(const Key('upg-btn')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(store.fwStage, FwStage.failed);
+    expect(store.isConnected, isTrue);
+    expect(store.connectedName, 'DFU_DYJ');
+    expect(store.fwVersionCode, 1);
+    expect(store.fwAvailable, isTrue);
+    expect(find.byKey(const Key('fw-error')), findsOneWidget);
+
+    // 第 2 次直接点击重试按钮：续传完成，回连至正常模式 DYJV2_OTA_TEST
+    await tester.tap(find.byKey(const Key('upg-btn')));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+
+    expect(otaAttempts, 2);
+    expect(store.fwStage, FwStage.done);
+    expect(store.connectedName, _card.name);
+    expect(store.fwVersion, '0.3.17');
+    expect(store.fwVersionCode, 317);
+
+    store.closeSheet();
+    await tester.pump();
+  });
+
+  testWidgets('⑨ 直连 DFU_DYJ 恢复模式：主控升级回连后若发现 Wi-Fi 落后则自动接力 Stage 2', (
+    tester,
+  ) async {
+    const dfuDev = CardDevice(id: 'dev-dfu', name: 'DFU_DYJ', rssi: -40);
+    final dfuSnap = CardSnapshot(
+      batteryLevel: 0,
+      isCharging: false,
+      wifiOpen: false,
+      recording: false,
+      fwVersion: '恢复模式',
+      fwVersionCode: 1,
+      wifiVersion: '',
+      wifiVersionCode: 0,
+      deviceName: 'DFU_DYJ',
+      deviceId: 'dev-dfu',
+      hasBattery: false,
+      deviceKind: DeviceKind.cardV2,
+      displayModel: '录音卡 V2（恢复模式）',
+      capabilities: const HardwareCapabilities(
+        realtimeAudio: false,
+        hasOnboardStorage: false,
+        hasFileSync: false,
+        hasWifiConfig: false,
+        hasCameraMedia: false,
+        hasPhysicalRecordToggle: false,
+        hasRemoteRecordControl: false,
+        hasMarkButton: false,
+        otaMode: 'dual_chip',
+      ),
+    );
+    final postMainSnap = _cardSnap(
+      fwVersion: '0.3.17',
+      fwVersionCode: 317,
+      wifiVersion: '0.1.3',
+      wifiVersionCode: 103,
+    );
+    final postWifiSnap = _cardSnap(
+      fwVersion: '0.3.17',
+      fwVersionCode: 317,
+      wifiVersion: '0.1.4',
+      wifiVersionCode: 104,
+    );
+
+    final gw = FakeCardGateway(
+      initialSnapshot: dfuSnap,
+      devices: const [dfuDev],
+      postWifiOtaSnapshot: postWifiSnap,
+      mainOta: const CardOtaInfo(
+        version: '0.3.17',
+        versionCode: 317,
+        url: 'https://ota.invalid/main_317.zip',
+      ),
+      wifiOta: const CardOtaInfo(
+        version: '0.1.4',
+        versionCode: 104,
+        url: 'https://ota.invalid/wifi_104.bin',
+      ),
+      wifiProgress: const [
+        CardProgress(stage: 'wifi', percent: 100, text: 'Wi-Fi 升级完成'),
+      ],
+      progressDelay: Duration.zero,
+    );
+    gw.otaMainOverride = () async* {
+      gw.current = null;
+      gw.devices = const [_card];
+      yield const CardProgress(stage: 'dfu', percent: 100, text: '主控恢复完成');
+    };
+    gw.connectOverride = (id, {name, deviceKind}) async {
+      final snap = id == dfuDev.id ? dfuSnap : postMainSnap;
+      gw.current = snap;
+      return snap;
+    };
+
+    final store = DeviceStore(gateway: gw);
+    addTearDown(store.dispose);
+    await store.connectTo(dfuDev);
+    await store.checkFirmware();
+
+    expect(store.connectedName, 'DFU_DYJ');
+    expect(store.mainNeedsUpdate, isTrue);
+    expect(store.wifiNeedsUpdate, isFalse);
+
+    final done = store.startFwUpdate();
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await done;
+
+    expect(gw.callLog, contains('ota.main'));
+    expect(gw.callLog, contains('ota.wifi'));
+    expect(store.fwStage, FwStage.done);
+    expect(store.connectedName, _card.name);
+    expect(store.fwVersion, '0.3.17');
+    expect(store.wifiVersion, '0.1.4');
+  });
+
+  testWidgets('⑩ 升级期间忽略轮询中的 disconnected 事件，不误触发掉线重连', (tester) async {
+    final otaGate = Completer<void>();
+    final gw = FakeCardGateway(
+      initialSnapshot: _cardSnap(),
+      devices: const [_card],
+      postMainOtaSnapshot: _cardSnap(
+        fwVersion: '0.3.17',
+        fwVersionCode: 317,
+      ),
+      mainOta: const CardOtaInfo(
+        version: '0.3.17',
+        versionCode: 317,
+        url: 'https://ota.invalid/main_317.zip',
+      ),
+      wifiOta: const CardOtaInfo(
+        version: '0.1.4',
+        versionCode: 104,
+        url: 'https://ota.invalid/wifi_104.bin',
+      ),
+      progressDelay: Duration.zero,
+    );
+    gw.otaMainOverride = () async* {
+      yield const CardProgress(stage: 'dfu', percent: 40, text: '写入中…');
+      await otaGate.future;
+    };
+
+    final store = DeviceStore(gateway: gw);
+    addTearDown(store.dispose);
+    await store.connectTo(_card);
+    await store.checkFirmware();
+
+    final done = store.startFwUpdate();
+    await tester.pump();
+    expect(store.fwUpdating, isTrue);
+
+    gw.pushDisconnectedEvent();
+    await store.pollEventsNow();
+
+    expect(store.linkState, LinkState.connected);
+    expect(gw.connectCalls, 1);
+
+    otaGate.complete();
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await done;
+    expect(store.fwStage, FwStage.done);
+  });
 }

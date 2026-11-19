@@ -13,4 +13,5 @@ linker = "target/android-cc/aarch64-linux-android-clang"
 [env]
 CC_aarch64_linux_android = { value = "target/android-cc/aarch64-linux-android-clang", relative = true }
 CXX_aarch64_linux_android = { value = "target/android-cc/aarch64-linux-android-clang++", relative = true }
+CXXFLAGS_aarch64_linux_android = "-Wno-register"
 AR_aarch64_linux_android = { value = "target/android-cc/llvm-ar", relative = true }

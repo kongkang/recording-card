@@ -151,6 +151,13 @@ class FakeCardGateway implements CardGateway {
     void Function(Map<String, dynamic>)? onFinal,
   )?
   onBridgeStream;
+  Stream<CardProgress> Function()? otaMainOverride;
+  Future<CardSnapshot?> Function(
+    String deviceId, {
+    String? name,
+    String? deviceKind,
+  })?
+  connectOverride;
 
   /// syncStatus() 的回报（默认立即 running=false → 同步一次轮询即完成）。
   CardSyncStatus syncStatusResult;
@@ -254,6 +261,9 @@ class FakeCardGateway implements CardGateway {
     lastConnectedId = deviceId;
     lastConnectedName = name;
     lastConnectedKind = deviceKind;
+    if (connectOverride != null) {
+      return connectOverride!(deviceId, name: name, deviceKind: deviceKind);
+    }
     if (failConnect != null) throw failConnect!;
     final source =
         current ?? postMainOtaSnapshot ?? _initialSnapshot ?? defaultSnapshot;
@@ -665,6 +675,10 @@ class FakeCardGateway implements CardGateway {
   @override
   Stream<CardProgress> otaMain() async* {
     callLog.add('ota.main');
+    if (otaMainOverride != null) {
+      yield* otaMainOverride!();
+      return;
+    }
     yield* _progress(mainProgress);
     if (failMainOta != null) throw failMainOta!;
     if (clearAfterMainOta) {
