@@ -345,7 +345,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
 
     if (effectiveMode == 'system') {
       title = '本地转写已就绪';
-      pillText = '系统内置生效中';
+      pillText = sysCaps.activeStatusPillLabel;
       pillBg = const Color(0xFFEDF7F0);
       pillFg = const Color(0xFF1F7A34);
       final engineTitle = sysCaps.effectiveEngineTitle;
@@ -353,7 +353,11 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
       if (sysCaps.isAndroid) {
         if (!sysCaps.offlinePackInstalled) {
           desc =
-              '已识别本机为 $devLabel，默认启用「$engineTitle」；当前系统中文离线语音包未就绪，可先一键拉起系统下载或改用 SenseVoice。';
+              '已识别本机为 $devLabel，优先启用「$engineTitle」；当前系统中文离线语音包未就绪，可先一键拉起系统下载或改用本地模型 SenseVoice。';
+        } else if (sysCaps.isCompatService) {
+          desc = speakerReady
+              ? '已识别本机为 $devLabel，已优先启用本机兼容方案「$engineTitle」，免下载 228 MB 模型即可立即离线转写；27 MB 声纹模型已在后台自动就绪。'
+              : '已识别本机为 $devLabel，已优先启用本机兼容方案「$engineTitle」离线转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。';
         } else {
           desc = speakerReady
               ? '已识别本机为 $devLabel，默认启用「$engineTitle」，免下载 228 MB 语音包即可立即离线转写；27 MB 声纹模型已在后台自动就绪。'
@@ -525,9 +529,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
         ctrl?.statusFor(senseVoiceSpec)?.installed ?? false;
     final configured = ctrl?.configured ?? false;
 
-    final sysDesc = sysCaps.isAndroid
-        ? '调用「${sysCaps.effectiveEngineTitle}」纯端侧离线识别，音频仅留在本机；${sysCaps.offlinePackInstalled ? '安装即用，免下 228 MB 增强模型。' : '中文离线语音包未就绪时可一键拉起系统下载。'}'
-        : '调用原生 SpeechAnalyzer 纯端侧引擎（未预置长音频资产时自动以系统听写包垫底），刚装好软件即可立即离线使用，音频不出本机。';
+    final sysDesc = sysCaps.effectiveEngineSubtitle;
 
     final senseStateLabel = senseInstalled
         ? '~228 MB · 已下载'
@@ -535,9 +537,9 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                   ctrl?.selectedEngine != LocalAsrEngineMode.system
               ? '~228 MB · 下载中…'
               : '~228 MB · 按需下载');
-    final senseDesc =
-        '外脑调优多语种离线模型，在中英混杂、粤语/口音与情绪识别场景下效果更佳。'
-        '${senseInstalled ? '' : '默认不随安装自动下载，点此即可下载并启用。'}';
+    final senseDesc = sysOk
+        ? '外脑自研调优多语种本地离线模型（可作备用与加强），在中英混杂、粤语/口音与情绪识别场景下效果更佳。${senseInstalled ? '' : '默认不随安装自动下载，点此即可下载并启用。'}'
+        : '未匹配到免下载系统/兼容服务，已将外脑本地离线模型设为第一选择；音频全程不出本机，${senseInstalled ? '已可直接使用。' : '点此即可下载并启用。'}';
 
     return Container(
       key: const Key('asr-engine-group'),
@@ -556,7 +558,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
               tags: [
                 _tagPill('免下载 · 0 MB', bg: const Color(0xFFF0F0EC), fg: c.sec),
                 _tagPill(
-                  '默认推荐',
+                  sysCaps.recommendedBadgeLabel,
                   bg: const Color(0xFFEDF7F0),
                   fg: const Color(0xFF1F7A34),
                 ),
@@ -582,6 +584,12 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                   '本机推荐方案',
                   bg: const Color(0xFFEEF5FF),
                   fg: const Color(0xFF0F4C81),
+                ),
+              if (!sysOk)
+                _tagPill(
+                  '本地首选',
+                  bg: const Color(0xFFEDF7F0),
+                  fg: const Color(0xFF1F7A34),
                 ),
             ],
             subtitle: senseDesc,

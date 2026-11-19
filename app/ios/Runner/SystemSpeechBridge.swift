@@ -43,10 +43,14 @@ final class SystemSpeechBridge: NSObject {
         "brandId": "apple",
         "deviceSummary": "iPhone · iOS \(major)",
         "engineName": supported ? "iOS 系统内置模型（SpeechAnalyzer）" : "",
+        "resolutionStrategy": supported ? "native_on_device" : "local_self_hosted",
+        "compatServiceComponent": "",
+        "compatDescription": supported ? "调用 iOS 26+ 原生 SpeechAnalyzer 纯端侧引擎（未预置长音频资产时自动以系统听写包垫底），免下载 228 MB 模型即可离线使用，音频不出本机。" : "",
+        "detectedServices": [],
         "supportsModernSystemAsr": supported,
         "offlinePackInstalled": supported,
         "canDownloadOfflinePack": false,
-        "unsupportedReason": supported ? "" : "当前系统版本为 iOS \(major)，低于 iOS 26，不支持新一代端侧 SpeechAnalyzer；请下载 SenseVoice 增强模型。",
+        "unsupportedReason": supported ? "" : "当前系统版本为 iOS \(major)，低于 iOS 26，不支持新一代端侧 SpeechAnalyzer；已将本地离线模型 SenseVoice 设为第一选择。",
         "authStatus": Self.authStatusText(SFSpeechRecognizer.authorizationStatus()),
       ])
 

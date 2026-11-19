@@ -121,7 +121,9 @@ class ModelManagerController extends ChangeNotifier {
   }
 
   String get settingSummaryLabel => switch (effectiveAsrMode) {
-    'system' => speakerReady ? '系统内置 · 即用' : '系统内置 · 缺声纹',
+    'system' => _sysCaps.isCompatService
+        ? (speakerReady ? '兼容方案 · 即用' : '兼容方案 · 缺声纹')
+        : (speakerReady ? '系统内置 · 即用' : '系统内置 · 缺声纹'),
     'sensevoice' => speakerReady ? 'SenseVoice · 已就绪' : 'SenseVoice · 缺声纹',
     _ => '推荐下载增强模型',
   };
