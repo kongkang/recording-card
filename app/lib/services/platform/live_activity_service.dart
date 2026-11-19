@@ -49,12 +49,46 @@ class LiveActivityService {
   final MethodChannel _channel;
   final LiveActivityCapabilities? _capabilitiesOverride;
 
-  /// 当用户按下绑定的 iPhone 侧边操作按钮触发 AppIntent 时回调。
-  VoidCallback? onActionButtonToggle;
+  VoidCallback? _onActionButtonToggle;
+  VoidCallback? _onActionButtonAgent;
+  bool _pendingActionToggle = false;
+  bool _pendingActionAgent = false;
+
+  /// 当用户按下绑定的 iPhone 侧边操作按钮触发「切换录音」AppIntent 时回调。
+  VoidCallback? get onActionButtonToggle => _onActionButtonToggle;
+  set onActionButtonToggle(VoidCallback? callback) {
+    _onActionButtonToggle = callback;
+    if (callback != null && _pendingActionToggle) {
+      _pendingActionToggle = false;
+      callback();
+    }
+  }
+
+  /// 当用户触发「向 Agent 发送语音任务」AppIntent 时回调。
+  VoidCallback? get onActionButtonAgent => _onActionButtonAgent;
+  set onActionButtonAgent(VoidCallback? callback) {
+    _onActionButtonAgent = callback;
+    if (callback != null && _pendingActionAgent) {
+      _pendingActionAgent = false;
+      callback();
+    }
+  }
 
   Future<void> _handleIncoming(MethodCall call) async {
     if (call.method == 'actionButtonToggle') {
-      onActionButtonToggle?.call();
+      final cb = _onActionButtonToggle;
+      if (cb != null) {
+        cb();
+      } else {
+        _pendingActionToggle = true;
+      }
+    } else if (call.method == 'actionButtonAgent') {
+      final cb = _onActionButtonAgent;
+      if (cb != null) {
+        cb();
+      } else {
+        _pendingActionAgent = true;
+      }
     }
   }
 

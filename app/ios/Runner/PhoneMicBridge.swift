@@ -136,7 +136,7 @@ final class PhoneMicBridge {
     try session.setCategory(
       .playAndRecord,
       mode: .default,
-      options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers]
+      options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers]
     )
     try session.setActive(true)
 

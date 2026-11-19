@@ -28,6 +28,8 @@ class AgentChatController extends ChangeNotifier {
     required AgentConfigStore agentConfig,
     ModelGateway? gateway,
     ChatCompletion? completion,
+    Future<String> Function(List<ChatMessage> messages, {String? model})?
+    visionCompletion,
     HealthSignalStore? healthStore,
     AgentSpeechBackend? speech,
     AgentHarnessWorker? worker,
@@ -37,6 +39,7 @@ class AgentChatController extends ChangeNotifier {
        _agentConfig = agentConfig,
        _gateway = gateway,
        _completion = completion,
+       _visionCompletion = visionCompletion,
        _healthStore = healthStore,
        _speech = speech ?? PlatformAgentSpeechBackend(),
        _ownsSpeech = speech == null,
@@ -58,6 +61,8 @@ class AgentChatController extends ChangeNotifier {
   final AgentConfigStore _agentConfig;
   final ModelGateway? _gateway;
   final ChatCompletion? _completion;
+  final Future<String> Function(List<ChatMessage> messages, {String? model})?
+  _visionCompletion;
   final HealthSignalStore? _healthStore;
   final AgentSpeechBackend _speech;
   final bool _ownsSpeech;
@@ -269,6 +274,7 @@ class AgentChatController extends ChangeNotifier {
     String rawText, {
     bool viaVoice = false,
     bool speakReply = false,
+    bool speakError = false,
   }) async {
     final text = rawText.trim();
     if (text.isEmpty || isBusy || _disposed) return;
@@ -278,6 +284,7 @@ class AgentChatController extends ChangeNotifier {
       errorMessage = gateError;
       if (mode == Os1Mode.her) herHeadline = gateError;
       notifyListeners();
+      if (speakError) unawaited(speakText(gateError));
       return;
     }
 
@@ -326,6 +333,9 @@ class AgentChatController extends ChangeNotifier {
           herHeadline = errorMessage!;
           voiceEnergy = 0.30;
         }
+        if (speakError && errorMessage != null && errorMessage!.isNotEmpty) {
+          unawaited(speakText(errorMessage!));
+        }
       } else {
         final reply = result.reply.trim();
         final react = result.reaction;
@@ -353,6 +363,9 @@ class AgentChatController extends ChangeNotifier {
       if (_disposed) return;
       errorMessage = _friendlyError('$e');
       if (mode == Os1Mode.her) herHeadline = errorMessage!;
+      if (speakError && errorMessage != null && errorMessage!.isNotEmpty) {
+        unawaited(speakText(errorMessage!));
+      }
     } finally {
       if (!_disposed) {
         isBusy = false;
@@ -360,6 +373,107 @@ class AgentChatController extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  /// 发送硬件抓拍照片给多模态视觉模型识别，并按需语音播报结果或错误。
+  Future<void> sendPhotoRecognitionMessage({
+    required Uint8List jpegBytes,
+    String prompt = '请识别这张照片里的主要内容，用简洁自然的中文直接告诉我重点。',
+    bool speakReply = true,
+    bool speakError = true,
+  }) async {
+    if (jpegBytes.isEmpty || isBusy || _disposed) return;
+
+    final gateError = _visionPreflightCheck();
+    if (gateError != null) {
+      errorMessage = gateError;
+      if (mode == Os1Mode.her) herHeadline = gateError;
+      notifyListeners();
+      if (speakError) unawaited(speakText(gateError));
+      return;
+    }
+
+    await ensureInitialized();
+    if (_disposed) return;
+
+    final nowMs = _clock().millisecondsSinceEpoch;
+    final userMsg = AgentChatMessage(
+      id: 'u-$nowMs-${messages.length}',
+      role: 'user',
+      text: '📷 [拍照识别] $prompt',
+      createdAtMs: nowMs,
+      viaVoice: true,
+    );
+    messages = [...messages, userMsg];
+    isBusy = true;
+    errorMessage = null;
+    if (mode == Os1Mode.her) {
+      herHeadline = '让我仔细看看刚才拍下的画面…';
+      voiceEnergy = 0.62;
+    }
+    notifyListeners();
+
+    try {
+      final dataUrl = 'data:image/jpeg;base64,${base64Encode(jpegBytes)}';
+      final visionMsgs = [
+        ChatMessage.system(
+          '你是用户的随身视觉助手。请直接、准确、简洁地描述或解答用户拍摄的画面内容，适合语音播报，不要使用复杂 Markdown 符号。',
+        ),
+        ChatMessage.userWithImage(prompt, imageDataUrl: dataUrl),
+      ];
+      final rawReply = _visionCompletion != null
+          ? await _visionCompletion(
+              visionMsgs,
+              model: _resolveVisionModel(),
+            )
+          : await _gateway!.chat(
+              visionMsgs,
+              model: _resolveVisionModel(),
+              temperature: 0.2,
+              maxTokens: 1024,
+              timeout: const Duration(seconds: 60),
+            );
+      if (_disposed) return;
+      final reply = rawReply.trim();
+      final assistantMsg = AgentChatMessage(
+        id: 'a-${_clock().millisecondsSinceEpoch}-${messages.length}',
+        role: 'assistant',
+        text: reply,
+        createdAtMs: _clock().millisecondsSinceEpoch,
+      );
+      messages = [...messages, assistantMsg];
+      if (mode == Os1Mode.her && reply.isNotEmpty) {
+        herHeadline = reply;
+      }
+      if (speakReply && reply.isNotEmpty) {
+        unawaited(speakText(reply));
+      }
+    } on Object catch (e) {
+      if (_disposed) return;
+      errorMessage = _friendlyError('$e');
+      if (mode == Os1Mode.her) herHeadline = errorMessage!;
+      if (speakError && errorMessage != null && errorMessage!.isNotEmpty) {
+        unawaited(speakText(errorMessage!));
+      }
+    } finally {
+      if (!_disposed) {
+        isBusy = false;
+        if (!isSpeaking && !isListening) voiceEnergy = 0.30;
+        notifyListeners();
+      }
+    }
+  }
+
+  String? _visionPreflightCheck() {
+    if (_visionCompletion != null) return null;
+    return _preflightCheck();
+  }
+
+  String? _resolveVisionModel() {
+    final vm = _gateway?.visionModel.trim() ?? '';
+    if (vm.isNotEmpty) return vm;
+    final tm = _resolveModel().trim();
+    return tm.isNotEmpty ? tm : null;
   }
 
   String? _preflightCheck() {

@@ -5,6 +5,10 @@ import Photos
 import Speech
 import UIKit
 
+#if canImport(AppIntents)
+import AppIntents
+#endif
+
 /// 蓝牙授权桥：让 Dart 侧能在扫描前主动申请权限并知道真实状态。
 ///
 /// 为什么需要：Rust SDK 底层用 btleplug → CoreBluetooth，第一次创建
@@ -27,6 +31,11 @@ import UIKit
   ) -> Bool {
     // 后台被 HealthKit 唤醒时，先挂上观察者，不等 Flutter 引擎。
     HealthSignalBridge.shared.bootstrap()
+    #if canImport(AppIntents)
+    if #available(iOS 16.0, *) {
+      RecordingCardAppShortcuts.updateAppShortcutParameters()
+    }
+    #endif
     // UIScene 迁移：插件注册移至 didInitializeImplicitFlutterEngine
     //（scene 生命周期下 didFinishLaunching 早于隐式引擎初始化，直接注册失效）
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
@@ -437,7 +446,7 @@ final class RCAgentSpeechBridge: NSObject, AVSpeechSynthesizerDelegate {
       try session.setCategory(
         .playAndRecord,
         mode: .measurement,
-        options: [.defaultToSpeaker, .allowBluetooth, .duckOthers]
+        options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .duckOthers]
       )
       try session.setActive(true)
 
@@ -523,7 +532,7 @@ final class RCAgentSpeechBridge: NSObject, AVSpeechSynthesizerDelegate {
       try? session.setCategory(
         .playAndRecord,
         mode: .default,
-        options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers]
+        options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers]
       )
       try? session.setActive(true)
     }

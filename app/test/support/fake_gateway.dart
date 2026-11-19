@@ -72,6 +72,7 @@ class FakeCardGateway implements CardGateway {
     this.failMainOta,
     this.failWifiOta,
     this.cameraPhotos = const [],
+    this.fakeCapturedPhotoBytes,
   }) : _initialSnapshot = initialSnapshot,
        current = initialSnapshot,
        savedCredentials = List<CardWifiCredential>.of(wifiCredentials);
@@ -84,6 +85,15 @@ class FakeCardGateway implements CardGateway {
   /// syncCameraPhotos() 返回的硬件抓拍照片。
   List<CameraSyncItem> cameraPhotos;
   int syncCameraCalls = 0;
+
+  /// 测试用硬件抓拍字节（响应 `camera_capture_and_fetch`）。
+  Uint8List? fakeCapturedPhotoBytes;
+
+  /// 记录收到的 LED 提示模式（`dyj_led_hint`）。
+  final List<String> ledHintModes = [];
+
+  /// mark() 调用次数。
+  int markCalls = 0;
 
   /// download() 是否真的落盘（管线测试用）。
   bool writeDownload;
@@ -426,6 +436,27 @@ class FakeCardGateway implements CardGateway {
     });
   }
 
+  /// 点一机 V1 物理按键手势事件（down / up / click / double_click / long_press_start / long_press_end）。
+  void pushButtonEvent({
+    String? gesture,
+    String? type,
+    int? durationMs,
+    int deviceTs = 0,
+    int? receivedAtMs,
+  }) {
+    _eventSeq++;
+    deviceEvents.add({
+      'seq': _eventSeq,
+      'event': {
+        'kind': 'button',
+        'gesture': gesture ?? type ?? 'click',
+        'durationMs': durationMs,
+        'deviceTs': deviceTs,
+        'receivedAtMs': receivedAtMs ?? DateTime.now().millisecondsSinceEpoch,
+      },
+    });
+  }
+
   /// 蓝牙被动断连事件。
   void pushDisconnectedEvent() {
     _eventSeq++;
@@ -459,7 +490,10 @@ class FakeCardGateway implements CardGateway {
   }
 
   @override
-  Future<void> mark() async {}
+  Future<void> mark() async {
+    markCalls++;
+    callLog.add('mark');
+  }
 
   @override
   Future<List<CardFile>> files() async => deviceFiles;
@@ -682,10 +716,37 @@ class FakeCardGateway implements CardGateway {
   ]) async {
     callLog.add(kind);
     final handler = onBridgeCommand;
-    if (handler == null) {
-      throw UnimplementedError('FakeCardGateway.$kind not configured');
+    if (handler != null) {
+      return handler(kind, payload);
     }
-    return handler(kind, payload);
+    switch (kind) {
+      case 'dyj_led_hint':
+        final mode = '${payload?['mode'] ?? ''}';
+        if (mode.isNotEmpty) ledHintModes.add(mode);
+        return {'applied': true, 'mode': mode};
+      case 'dyj_button_status':
+        return {
+          'buttons': const [],
+          'bindings': {'record': 'event_only'},
+        };
+      case 'camera_capture_and_fetch':
+        final bytes = fakeCapturedPhotoBytes;
+        if (bytes != null) {
+          final dirPath = '${payload?['dir'] ?? Directory.systemTemp.path}';
+          final dir = Directory(dirPath);
+          if (!await dir.exists()) {
+            await dir.create(recursive: true);
+          }
+          final path = '${dir.path}/CAP_TEST.JPG';
+          await File(path).writeAsBytes(bytes, flush: true);
+          return {
+            'name': 'CAP_TEST.JPG',
+            'localPath': path,
+            'size': bytes.length,
+          };
+        }
+    }
+    throw UnimplementedError('FakeCardGateway.$kind not configured');
   }
 
   @override

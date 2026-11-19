@@ -40,6 +40,13 @@ class ModelCatalog {
   /// 文本能力：不同版本后端可能标成 `text` / `chat`。
   String? get textModel => firstWith('text') ?? firstWith('chat');
 
+  /// 多模态视觉能力：优先匹配 `vision` / `image` / `multimodal`，兜底复用文本对话模型。
+  String? get visionModel =>
+      firstWith('vision') ??
+      firstWith('image') ??
+      firstWith('multimodal') ??
+      textModel;
+
   bool get isEmpty => models.isEmpty;
 
   /// 拉取一次模型目录。失败抛 [ApiException]（带中文文案），由调用方决定降级。

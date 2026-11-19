@@ -136,6 +136,7 @@ class HardwareCapabilities {
     required this.hasPhysicalRecordToggle,
     this.hasRemoteRecordControl = true,
     required this.hasMarkButton,
+    this.hasConfigurableButtons = false,
     required this.otaMode,
   });
 
@@ -147,6 +148,7 @@ class HardwareCapabilities {
   final bool hasPhysicalRecordToggle;
   final bool hasRemoteRecordControl;
   final bool hasMarkButton;
+  final bool hasConfigurableButtons;
   final String otaMode; // 'dual_chip' | 'single_ota' | 'none'
 
   bool get hasDualChipOta => otaMode == 'dual_chip';
@@ -174,6 +176,7 @@ class HardwareCapabilities {
     hasPhysicalRecordToggle: true,
     hasRemoteRecordControl: true,
     hasMarkButton: false,
+    hasConfigurableButtons: true,
     otaMode: 'single_ota',
   );
 
@@ -273,6 +276,10 @@ class HardwareCapabilities {
         fallback.hasRemoteRecordControl,
       ),
       hasMarkButton: flag('hasMarkButton', fallback.hasMarkButton),
+      hasConfigurableButtons: flag(
+        'hasConfigurableButtons',
+        fallback.hasConfigurableButtons,
+      ),
       otaMode: (json['otaMode'] as String?) ?? fallback.otaMode,
     );
   }
@@ -748,6 +755,32 @@ class RealtimeAudioEvent {
 
 enum RealtimeAudioKind { open, audio, gap, closed }
 
+/// 硬件按键事件（点一机 V1 `button.event` / 第三方按键手势事件）。
+class HardwareButtonEvent {
+  const HardwareButtonEvent({
+    required this.gesture,
+    this.durationMs,
+    this.deviceTs = 0,
+    required this.receivedAtMs,
+  });
+
+  factory HardwareButtonEvent.fromEvent(Map<String, dynamic> event) =>
+      HardwareButtonEvent(
+        gesture: '${event['gesture'] ?? ''}',
+        durationMs: (event['durationMs'] as num?)?.toInt(),
+        deviceTs: (event['deviceTs'] as num?)?.toInt() ?? 0,
+        receivedAtMs:
+            (event['receivedAtMs'] as num?)?.toInt() ??
+            DateTime.now().millisecondsSinceEpoch,
+      );
+
+  /// `'down' | 'up' | 'click' | 'double_click' | 'long_press_start' | 'long_press_end'`
+  final String gesture;
+  final int? durationMs;
+  final int deviceTs;
+  final int receivedAtMs;
+}
+
 /// 一次事件拉取的结果：序号 + 自上次以来新到的事件（零蓝牙流量，读内存队列）。
 class DeviceEventBatch {
   const DeviceEventBatch({required this.seq, required this.events});
@@ -767,6 +800,15 @@ class DeviceEventBatch {
   /// 语音 AI 键盘物理语音键按下事件。
   Iterable<Map<String, dynamic>> get voiceKeyEvents =>
       events.where((e) => e['event']?['kind'] == 'voice_key');
+
+  /// 硬件物理按键事件。
+  Iterable<HardwareButtonEvent> get buttonEvents => [
+    for (final e in events)
+      if (e['event']?['kind'] == 'button' && e['event'] is Map)
+        HardwareButtonEvent.fromEvent(
+          Map<String, dynamic>.from(e['event'] as Map),
+        ),
+  ];
 
   /// 点一机 V1 硬件按键拍照事件。
   Iterable<Map<String, dynamic>> get cameraEvents =>
@@ -1074,6 +1116,19 @@ class RealCardGateway implements CardGateway {
     });
   }
 
+  /// 直接读取纯内存态或非串口指令，避免被耗时 BLE 串行队列（snapshot / ota.info）饥饿阻塞。
+  Future<Map<String, dynamic>> _onceFast(
+    String kind, [
+    Map<String, dynamic>? payload,
+    Duration timeout = const Duration(seconds: 3),
+  ]) async {
+    final json = await _open(kind, payload, timeout).first;
+    if (json['ok'] != true) {
+      throw _error(kind, json['error']?.toString());
+    }
+    return json;
+  }
+
   Stream<CardProgress> _progress(
     String kind,
     Map<String, dynamic>? payload,
@@ -1228,7 +1283,7 @@ class RealCardGateway implements CardGateway {
         if (deviceKind != null && deviceKind.isNotEmpty)
           'deviceKind': deviceKind,
       },
-      const Duration(seconds: 45),
+      const Duration(seconds: 55),
     );
     final data = json['data'];
     if (data is Map<String, dynamic> &&
@@ -1353,10 +1408,10 @@ class RealCardGateway implements CardGateway {
 
   @override
   Future<DeviceEventBatch> pullEvents({int after = 0}) async {
-    final json = await _once(
+    final json = await _onceFast(
       'events.pull',
       {'after': after},
-      const Duration(seconds: 5),
+      const Duration(seconds: 2),
     );
     final data = (json['data'] as Map<String, dynamic>?) ?? const {};
     final events = [

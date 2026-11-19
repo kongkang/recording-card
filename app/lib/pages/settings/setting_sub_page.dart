@@ -3421,6 +3421,107 @@ class _DynamicIslandBody extends StatelessWidget {
           const _SubSectionLabel('iPhone 操作按钮'),
           const SizedBox(height: 8),
           Container(
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: c.sep),
+            ),
+            child: Column(
+              children: [
+                InkWell(
+                  key: const Key('action-btn-mode-record'),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(12),
+                  ),
+                  onTap: () => unawaited(
+                    config.setIphoneActionButtonBehavior(
+                      IphoneActionButtonBehavior.recordToggle,
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '切换录音',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: c.label,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '按一次开始或停止硬件 / 本机持续录音',
+                                style: TextStyle(fontSize: 12, color: c.sec),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (config.iphoneActionButtonBehavior ==
+                            IphoneActionButtonBehavior.recordToggle)
+                          Icon(Icons.check_rounded, size: 18, color: c.label),
+                      ],
+                    ),
+                  ),
+                ),
+                Divider(height: 1, thickness: 0.6, color: c.sep),
+                InkWell(
+                  key: const Key('action-btn-mode-agent'),
+                  borderRadius: const BorderRadius.vertical(
+                    bottom: Radius.circular(12),
+                  ),
+                  onTap: () => unawaited(
+                    config.setIphoneActionButtonBehavior(
+                      IphoneActionButtonBehavior.agentVoice,
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '语音任务（发给 Agent）',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: c.label,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '抓取按压期间的语音转写后发给 Agent 并播报回复（未录音自动开启临时录音）',
+                                style: TextStyle(fontSize: 12, color: c.sec),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (config.iphoneActionButtonBehavior ==
+                            IphoneActionButtonBehavior.agentVoice)
+                          Icon(Icons.check_rounded, size: 18, color: c.label),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: c.card,
@@ -3428,7 +3529,7 @@ class _DynamicIslandBody extends StatelessWidget {
               border: Border.all(color: c.sep),
             ),
             child: Text(
-              '前往系统「设置 → 操作按钮 → 快捷指令」，选择「录音卡 · 切换录音」即可一键开启或关闭录音。',
+              '前往系统「设置 → 操作按钮 → 快捷指令」，选择「录音卡 · 切换录音」（可在上方切换触发录音或发语音任务给 Agent），或直接绑定专用快捷指令「录音卡 · 向 Agent 发送语音任务」。',
               style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
             ),
           ),

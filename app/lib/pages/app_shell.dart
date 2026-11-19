@@ -3,6 +3,7 @@
 library;
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,12 +16,14 @@ import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/agent/agent_chat_controller.dart';
+import '../services/agent/hardware_agent_task_coordinator.dart';
 import '../services/audio/live_audio_recorder.dart';
 import '../services/audio/recording_status.dart';
 import '../services/auth_service.dart';
 import '../services/health/health_signal_controller.dart';
 import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/model_manager_controller.dart';
+import '../services/transcribe/system_speech_client.dart';
 import '../widgets/legacy_upgrade_sheet.dart';
 import '../widgets/os1_ai_space.dart';
 import '../widgets/store_scope.dart';
@@ -46,6 +49,9 @@ class AppShell extends StatefulWidget {
     this.photoLibrary,
     this.healthSignals,
     this.agentChat,
+    this.hardwareAgentCoordinator,
+    this.transcribeSamples,
+    this.lookupExistingTranscript,
     this.supportsDynamicIslandOverride,
     this.onDeviceCreated,
   });
@@ -61,6 +67,9 @@ class AppShell extends StatefulWidget {
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
   final AgentChatController? agentChat;
+  final HardwareAgentTaskCoordinator? hardwareAgentCoordinator;
+  final SliceTranscribeFn? transcribeSamples;
+  final TranscriptLookupFn? lookupExistingTranscript;
   final bool? supportsDynamicIslandOverride;
   final void Function(DeviceStore)? onDeviceCreated;
 
@@ -87,6 +96,8 @@ class _AppShellState extends State<AppShell> {
       widget.liveAudio ?? LiveAudioRecorder(gateway: _device.gateway);
   late final PhotoLibraryService _photoLib =
       widget.photoLibrary ?? const PhotoLibraryService();
+  late final HardwareAgentTaskCoordinator _hwAgent;
+  late final bool _ownsHwAgent = widget.hardwareAgentCoordinator == null;
   StreamSubscription<LiveAudioSlice>? _liveSliceSub;
   StreamSubscription<LiveAudioSlice>? _phoneSliceSub;
   StreamSubscription<LiveAudioSlice>? _watchSliceSub;
@@ -143,7 +154,33 @@ class _AppShellState extends State<AppShell> {
       unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
     }
     _agentConfig.addListener(_syncAgentIslandConfig);
+    _hwAgent =
+        widget.hardwareAgentCoordinator ??
+        HardwareAgentTaskCoordinator(
+          device: _device,
+          agentConfig: _agentConfig,
+          agentChat: _agentChat,
+          liveAudio: _liveAudio,
+          transcribeSamples:
+              widget.transcribeSamples ??
+              (Float32List samples, {int sampleRate = 16000}) async {
+                final res = await SystemSpeechClient().transcribeSamples(
+                  samples,
+                  sampleRate: sampleRate,
+                );
+                return res.text;
+              },
+          lookupExistingTranscript: widget.lookupExistingTranscript,
+        );
+    _device.liveActivityService.onActionButtonAgent = () {
+      unawaited(_hwAgent.handleIphoneAgentTrigger());
+    };
     _device.liveActivityService.onActionButtonToggle = () {
+      if (_agentConfig.iphoneActionButtonBehavior ==
+          IphoneActionButtonBehavior.agentVoice) {
+        unawaited(_hwAgent.handleIphoneAgentTrigger());
+        return;
+      }
       if (_device.isConnected) {
         unawaited(_device.toggleRecording());
       } else {
@@ -266,7 +303,9 @@ class _AppShellState extends State<AppShell> {
   @override
   void dispose() {
     _agentConfig.removeListener(_syncAgentIslandConfig);
+    _device.liveActivityService.onActionButtonAgent = null;
     _device.liveActivityService.onActionButtonToggle = null;
+    if (_ownsHwAgent) _hwAgent.dispose();
     _liveSliceSub?.cancel();
     _phoneSliceSub?.cancel();
     _watchSliceSub?.cancel();
@@ -331,9 +370,159 @@ class _AppShellState extends State<AppShell> {
                         supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                       ),
                     ListenableBuilder(
+                      listenable: _hwAgent,
+                      builder: (context, _) {
+                        final toastText = _hwAgent.lastButtonToast;
+                        final text = _hwAgent.statusText;
+                        if ((toastText == null || toastText.isEmpty) &&
+                            (text == null || text.isEmpty)) {
+                          return const SizedBox.shrink();
+                        }
+                        final topPad = MediaQuery.paddingOf(context).top + 10;
+                        return Positioned(
+                          top: topPad,
+                          left: 16,
+                          right: 16,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (toastText != null && toastText.isNotEmpty)
+                                Padding(
+                                  padding: EdgeInsets.only(
+                                    bottom: (text != null && text.isNotEmpty)
+                                        ? 8
+                                        : 0,
+                                  ),
+                                  child: IgnorePointer(
+                                    child: Container(
+                                      key: const Key('hw-button-toast'),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                        vertical: 8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xEB111827),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: const Color(0x4034D399),
+                                        ),
+                                        boxShadow: const [
+                                          BoxShadow(
+                                            color: Color(0x30000000),
+                                            blurRadius: 12,
+                                            offset: Offset(0, 4),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(
+                                            Icons.radio_button_checked_rounded,
+                                            size: 14,
+                                            color: Color(0xFF34D399),
+                                          ),
+                                          const SizedBox(width: 7),
+                                          Flexible(
+                                            child: Text(
+                                              toastText,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12.5,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (text != null && text.isNotEmpty)
+                                Center(
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      key: const Key('hw-agent-task-pill'),
+                                      borderRadius: BorderRadius.circular(999),
+                                      onTap: () {
+                                        if (_hwAgent.phase ==
+                                            HardwareAgentPhase.listening) {
+                                          unawaited(
+                                            _hwAgent.handleIphoneAgentTrigger(),
+                                          );
+                                        } else {
+                                          _agentChat.open();
+                                        }
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 14,
+                                          vertical: 8,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: RCColors.label.withValues(
+                                            alpha: 0.92,
+                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                          boxShadow: const [
+                                            BoxShadow(
+                                              color: Color(0x28000000),
+                                              blurRadius: 12,
+                                              offset: Offset(0, 4),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            SizedBox(
+                                              width: 8,
+                                              height: 8,
+                                              child: DecoratedBox(
+                                                decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  color:
+                                                      _hwAgent.phase ==
+                                                          HardwareAgentPhase
+                                                              .listening
+                                                      ? RCColors.ok
+                                                      : const Color(0xFF60A5FA),
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Flexible(
+                                              child: Text(
+                                                text,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 12.5,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    ListenableBuilder(
                       listenable: _agentConfig,
                       builder: (context, _) => StatusSheetOverlay(
                         store: _device,
+                        agentConfig: _agentConfig,
                         islandEnabled: _agentConfig.islandEnabled,
                       ),
                     ),
