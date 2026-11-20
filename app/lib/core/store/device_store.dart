@@ -67,6 +67,7 @@ class DeviceStore extends ChangeNotifier {
   DeviceStore({
     CardGateway? gateway,
     bool autoStart = false,
+    BluetoothPermission? permission,
     PhoneMicBackend? phoneMicBackend,
     PhoneMicRecorder? phoneMicRecorder,
     LiveActivityService? liveActivityService,
@@ -74,6 +75,7 @@ class DeviceStore extends ChangeNotifier {
     LegacyUpgradeController? legacyUpgrade,
     DateTime Function()? now,
   }) : _bleGateway = gateway ?? realOrUnsupported(),
+       _permission = permission ?? const BluetoothPermission(),
        _ownsWatchHardware = watchHardware == null,
        _watchHardware = watchHardware ?? WatchHardwareService(),
        _autoStart = autoStart,
@@ -244,9 +246,9 @@ class DeviceStore extends ChangeNotifier {
   Stream<HardwareButtonEvent> get hardwareButtonEvents =>
       _hardwareButtonCtrl.stream;
 
-  /// 蓝牙授权状态（iOS 专用；Android 恒为 unknown 由系统自行申请）。
+  /// 蓝牙授权状态（iOS 在扫描时由系统弹窗；Android 扫描前需动态请求 BLUETOOTH_SCAN / CONNECT）。
   BluetoothAuthorization bleAuth = BluetoothAuthorization.unknown;
-  final BluetoothPermission _permission = const BluetoothPermission();
+  final BluetoothPermission _permission;
 
   /// 连接代次：异步结果回来时比对，过期丢弃。
   int _epoch = 0;
@@ -444,13 +446,19 @@ class DeviceStore extends ChangeNotifier {
       }
       return; // 防重入：扫描中再点不重复发起（SDK 要求串行）
     }
-    // 读一次授权状态用于解释失败原因。**不在这里阻塞等待用户点弹窗**：
-    // 底层（Rust/CoreBluetooth）在扫描时会自己触发同一个系统对话框，
-    // 这里若同步等 30 秒，用户看到的会是"点了扫描没反应"。
+    // iOS 底层（Rust/CoreBluetooth）在扫描时会自己触发系统对话框，这里不阻塞等待；
+    // Android 底层（droidplug / BluetoothLeScanner）不会自动申请运行时权限，若为 notDetermined
+    // 必须先主动调用 request()，否则 startScan() 会直接抛 SecurityException。
     bleAuth = await _permission.status();
+    if (bleAuth == BluetoothAuthorization.notDetermined &&
+        defaultTargetPlatform == TargetPlatform.android) {
+      bleAuth = await _permission.request();
+    }
     if (!_watchHardware.availableForScan &&
         (bleAuth == BluetoothAuthorization.denied ||
-            bleAuth == BluetoothAuthorization.restricted)) {
+            bleAuth == BluetoothAuthorization.restricted ||
+            (defaultTargetPlatform == TargetPlatform.android &&
+                !bleAuth.canScan))) {
       linkState = LinkState.disconnected;
       linkError = bleAuth.hint;
       notifyListeners();

@@ -14,7 +14,7 @@ pub mod legacy_upgrade;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -199,7 +199,79 @@ struct BridgeState {
     last_card_v2_target: Mutex<Option<(String, String)>>,
     realtime_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     board_lease_seq: AtomicU32,
+    fg_ops_in_flight: AtomicUsize,
+    wifi_or_sd_epoch: AtomicU64,
     events: Mutex<EventFeed>,
+}
+
+pub(crate) struct ForegroundOpGuard<'a>(&'a AtomicUsize);
+
+impl<'a> ForegroundOpGuard<'a> {
+    pub(crate) fn enter(counter: &'a AtomicUsize) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self(counter)
+    }
+}
+
+impl Drop for ForegroundOpGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn command_counts_as_fg_op(kind: &str) -> bool {
+    !matches!(
+        kind,
+        "events.pull" | "link.ping" | "realtime.close" | "transcode"
+    )
+}
+
+pub(crate) fn command_touches_wifi_or_sd(kind: &str, payload: &Value) -> bool {
+    if kind == "wifi.credentials" {
+        let passive = payload
+            .get("passive")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        return !passive;
+    }
+    matches!(
+        kind,
+        "connect"
+            | "disconnect"
+            | "files"
+            | "download"
+            | "file.takeOldest"
+            | "takeOldest"
+            | "deleteFile"
+            | "realtime.open"
+            | "sync.start"
+            | "sync.status"
+    ) || kind.starts_with("wifi.")
+        || kind.starts_with("ota.")
+        || kind.starts_with("record")
+        || kind.starts_with("ap.")
+}
+
+pub(crate) fn can_start_lazy_v2_bootstrap(
+    fg_ops_in_flight: &AtomicUsize,
+    realtime_active: bool,
+) -> bool {
+    !realtime_active && fg_ops_in_flight.load(Ordering::SeqCst) == 0
+}
+
+pub(crate) fn can_close_lazy_v2_bootstrap_wifi(
+    was_open: bool,
+    epoch_before_open: u64,
+    fg_ops_in_flight: &AtomicUsize,
+    wifi_or_sd_epoch: &AtomicU64,
+    realtime_active: bool,
+    is_recording: bool,
+) -> bool {
+    !was_open
+        && !realtime_active
+        && !is_recording
+        && fg_ops_in_flight.load(Ordering::SeqCst) == 0
+        && wifi_or_sd_epoch.load(Ordering::SeqCst) == epoch_before_open
 }
 
 /// 事件队列：单调递增 seq + 最近 N 条，Dart 侧用 seq 做增量读（零蓝牙开销）。
@@ -294,6 +366,8 @@ fn state() -> &'static BridgeState {
         last_card_v2_target: Mutex::new(None),
         realtime_stop: Mutex::new(None),
         board_lease_seq: AtomicU32::new(1),
+        fg_ops_in_flight: AtomicUsize::new(0),
+        wifi_or_sd_epoch: AtomicU64::new(0),
         events: Mutex::new(EventFeed::new()),
     })
 }
@@ -458,6 +532,11 @@ pub unsafe extern "C" fn card_bridge_command(
 // ── 命令分发 ────────────────────────────────────────────────
 
 async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), BridgeError> {
+    let _fg_guard = command_counts_as_fg_op(kind)
+        .then(|| ForegroundOpGuard::enter(&state().fg_ops_in_flight));
+    if command_touches_wifi_or_sd(kind, &payload) {
+        state().wifi_or_sd_epoch.fetch_add(1, Ordering::SeqCst);
+    }
     match kind {
         "scan" => {
             let timeout = payload
@@ -981,15 +1060,20 @@ async fn connect_device(payload: Value) -> Result<Value, BridgeError> {
 }
 
 async fn bootstrap_card_v2_ble_metadata_if_missing(device: &CardV2Device) {
-    if state()
-        .realtime_stop
-        .lock()
-        .map(|g| g.is_some())
-        .unwrap_or(false)
-    {
+    let is_realtime_active = || {
+        state()
+            .realtime_stop
+            .lock()
+            .map(|g| g.is_some())
+            .unwrap_or(false)
+    };
+    if !can_start_lazy_v2_bootstrap(&state().fg_ops_in_flight, is_realtime_active()) {
         return;
     }
     if let Ok(Some(_)) = device.wifi_firmware_version().await {
+        return;
+    }
+    if !can_start_lazy_v2_bootstrap(&state().fg_ops_in_flight, is_realtime_active()) {
         return;
     }
     if device
@@ -1001,24 +1085,53 @@ async fn bootstrap_card_v2_ble_metadata_if_missing(device: &CardV2Device) {
         return;
     }
     let was_open = device.state().await.map(|s| s.wifi_open).unwrap_or(false);
+    let epoch_before_open = state().wifi_or_sd_epoch.load(Ordering::SeqCst);
+    if !can_start_lazy_v2_bootstrap(&state().fg_ops_in_flight, is_realtime_active()) {
+        return;
+    }
     if !was_open && device.open_wifi().await.is_err() {
         return;
     }
     let _ = device.wait_for_ap_ready(Duration::from_secs(4)).await;
-    let _ = device.wifi_status().await;
-    if let Ok(creds) = device.list_wifi_credentials().await {
-        sync_ble_wifi_creds_kv(device, &creds).await;
+    if state().fg_ops_in_flight.load(Ordering::SeqCst) == 0
+        && state().wifi_or_sd_epoch.load(Ordering::SeqCst) == epoch_before_open
+        && !is_realtime_active()
+    {
+        let _ = device.wifi_status().await;
+        if state().fg_ops_in_flight.load(Ordering::SeqCst) == 0
+            && state().wifi_or_sd_epoch.load(Ordering::SeqCst) == epoch_before_open
+        {
+            if let Ok(creds) = device.list_wifi_credentials().await {
+                sync_ble_wifi_creds_kv(device, &creds).await;
+            }
+        }
     }
-    if !was_open {
+    let is_recording = device
+        .record_status()
+        .await
+        .map(|r| r.is_recording)
+        .unwrap_or(false);
+    if can_close_lazy_v2_bootstrap_wifi(
+        was_open,
+        epoch_before_open,
+        &state().fg_ops_in_flight,
+        &state().wifi_or_sd_epoch,
+        is_realtime_active(),
+        is_recording,
+    ) {
         close_wifi_quietly(device).await;
     }
 }
 
 /// 懒加载且非阻塞地补齐 CardV2 初次配对缺失的 BLE KV 元数据（`ble_wver` / `ble_wcred`），
-/// 避免首次建连在握手阶段同步拉起 ESP32 等待 AP 就绪阻塞 4 秒。
+/// 避免首次建连在握手阶段同步拉起 ESP32 等待 AP 就绪阻塞 4 秒；
+/// 同时感知前台 `fg_ops_in_flight` 与 `wifi_or_sd_epoch`，绝不抢占自动同步 SD 总线或误关用户 Wi-Fi 会话。
 fn schedule_lazy_card_v2_ble_metadata_bootstrap(actual_id: String, device: CardV2Device) {
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(3)).await;
+        if state().fg_ops_in_flight.load(Ordering::SeqCst) > 0 {
+            return;
+        }
         let still_same_id = state()
             .last_device_id
             .lock()
@@ -3102,6 +3215,45 @@ fn clean_download_filename(raw_name: &str) -> Result<String, BridgeError> {
     Ok(base.to_string())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CardV2TakenFileNaming {
+    pub final_file_name: String,
+    pub original_name: String,
+    pub device_name: Option<String>,
+}
+
+pub(crate) fn resolve_card_v2_taken_file_naming(
+    requested_name: Option<&str>,
+    taken_name: &str,
+    fallback_dev_name: &str,
+) -> Result<CardV2TakenFileNaming, BridgeError> {
+    let trimmed_taken = taken_name.trim();
+    let original = match requested_name {
+        Some(n) => clean_download_filename(n)?,
+        None => {
+            if !trimmed_taken.is_empty()
+                && reai_card_sdk::RecordingStamp::parse(trimmed_taken).is_none()
+            {
+                clean_download_filename(trimmed_taken).unwrap_or_else(|_| "oldest.apm".to_string())
+            } else if trimmed_taken.is_empty() {
+                "oldest.apm".to_string()
+            } else {
+                "oldest".to_string()
+            }
+        }
+    };
+    let firmware_opt = (!trimmed_taken.is_empty()).then_some(trimmed_taken);
+    let naming = reai_card_sdk::recording_file_name(&original, firmware_opt);
+    let device_name = firmware_opt.map(str::to_owned).or_else(|| {
+        (!fallback_dev_name.trim().is_empty()).then(|| fallback_dev_name.to_string())
+    });
+    Ok(CardV2TakenFileNaming {
+        final_file_name: naming.file_name,
+        original_name: original,
+        device_name,
+    })
+}
+
 async fn take_card_v2_file_with_progress(
     device: &CardV2Device,
     requested_name: Option<&str>,
@@ -3117,17 +3269,17 @@ async fn take_card_v2_file_with_progress(
         .await
         .map_err(|e| BridgeError::from(format!("创建录音目录失败: {e}")))?;
 
-    let original = match requested_name {
+    let part_seed = match requested_name {
         Some(n) => clean_download_filename(n)?,
-        None => "oldest".to_string(),
+        None => "oldest.apm".to_string(),
     };
-    let part_path = dir_path.join(format!("{original}.part"));
+    let part_path = dir_path.join(format!("{part_seed}.part"));
     let _ = tokio::fs::remove_file(&part_path).await;
 
     let file = tokio::fs::File::create(&part_path)
         .await
         .map_err(|e| BridgeError::from(format!("创建临时文件失败: {e}")))?;
-    let progress_label = original.clone();
+    let progress_label = part_seed.clone();
     let mut writer = ProgressTrackingWriter::new(file, move |bytes_written| {
         if let Some(emitter) = out {
             emitter.progress(json!({
@@ -3157,8 +3309,8 @@ async fn take_card_v2_file_with_progress(
     }
     drop(writer);
 
-    let naming = reai_card_sdk::recording_file_name(&original, Some(&taken.name));
-    let final_path = dir_path.join(&naming.file_name);
+    let resolved = resolve_card_v2_taken_file_naming(requested_name, &taken.name, dev_name)?;
+    let final_path = dir_path.join(&resolved.final_file_name);
     if let Err(e) = tokio::fs::rename(&part_path, &final_path).await {
         let _ = tokio::fs::remove_file(&part_path).await;
         return Err(BridgeError::from(format!("重命名录音文件失败: {e}")));
@@ -3167,8 +3319,8 @@ async fn take_card_v2_file_with_progress(
     Ok(json!({
         "path": final_path.to_string_lossy(),
         "bytesWritten": taken.bytes_written,
-        "originalName": original,
-        "deviceName": Some(dev_name.to_string()),
+        "originalName": resolved.original_name,
+        "deviceName": resolved.device_name,
     }))
 }
 
@@ -5955,5 +6107,129 @@ mod tests {
             assert_eq!(writer.written(), 5512);
         }
         assert_eq!(reported, vec![512, 5512]);
+    }
+
+    #[test]
+    fn card_v2_taken_file_naming_preserves_firmware_device_name_and_unstamped_oldest_ext() {
+        // 1) Explicit download with firmware synced timestamp: preserves firmware stamp name in deviceName
+        let named_synced = resolve_card_v2_taken_file_naming(
+            Some("059F19DF.APM"),
+            "synced_1792392529.apm",
+            "DYJV2_T4W25T",
+        )
+        .unwrap();
+        assert!(
+            named_synced.final_file_name.ends_with("_059F19DF.apm"),
+            "unexpected final_file_name: {}",
+            named_synced.final_file_name
+        );
+        assert_eq!(named_synced.original_name, "059F19DF.APM");
+        assert_eq!(
+            named_synced.device_name.as_deref(),
+            Some("synced_1792392529.apm")
+        );
+
+        // 2) file.takeOldest when CardV2 file has NO .txt timestamp sidecar:
+        //    must fall back to cleaned `taken.name` (preserving .apm extension instead of bare "oldest"!)
+        let oldest_unstamped =
+            resolve_card_v2_taken_file_naming(None, "059F19DF.APM", "DYJV2_T4W25T").unwrap();
+        assert_eq!(oldest_unstamped.final_file_name, "059F19DF.APM");
+        assert_eq!(oldest_unstamped.original_name, "059F19DF.APM");
+        assert_eq!(oldest_unstamped.device_name.as_deref(), Some("059F19DF.APM"));
+
+        // 3) file.takeOldest WITH firmware synced timestamp: formats timestamped _oldest.apm & keeps taken.name
+        let oldest_stamped =
+            resolve_card_v2_taken_file_naming(None, "synced_1792392529.apm", "DYJV2_T4W25T")
+                .unwrap();
+        assert!(
+            oldest_stamped.final_file_name.ends_with("_oldest.apm"),
+            "unexpected final_file_name: {}",
+            oldest_stamped.final_file_name
+        );
+        assert_eq!(oldest_stamped.original_name, "oldest");
+        assert_eq!(
+            oldest_stamped.device_name.as_deref(),
+            Some("synced_1792392529.apm")
+        );
+
+        // 4) Empty firmware taken.name falls back to BLE device name for deviceName and keeps .apm ext
+        let oldest_empty = resolve_card_v2_taken_file_naming(None, "   ", "DYJV2_T4W25T").unwrap();
+        assert_eq!(oldest_empty.final_file_name, "oldest.apm");
+        assert_eq!(oldest_empty.device_name.as_deref(), Some("DYJV2_T4W25T"));
+    }
+
+    #[test]
+    fn lazy_card_v2_bootstrap_guards_fg_ops_and_epoch_races() {
+        use std::sync::atomic::{AtomicU64, AtomicUsize};
+
+        let in_flight = AtomicUsize::new(0);
+        let epoch = AtomicU64::new(10);
+
+        // Verify command classification covers SD/Wi-Fi/OTA/recording operations
+        for cmd in [
+            "files",
+            "download",
+            "file.takeOldest",
+            "takeOldest",
+            "deleteFile",
+            "wifi.open",
+            "wifi.scan",
+            "wifi.connect",
+            "ota.info",
+            "ota.main",
+            "ota.wifi",
+            "record",
+            "record.start",
+            "record.stop",
+        ] {
+            assert!(command_counts_as_fg_op(cmd), "{cmd} must count as fg op");
+            assert!(
+                command_touches_wifi_or_sd(cmd, &Value::Null),
+                "{cmd} must bump wifi_or_sd_epoch"
+            );
+        }
+        // Passive wifi.credentials only reads local BLE KV, whereas active wifi.credentials touches ESP32
+        assert!(!command_touches_wifi_or_sd(
+            "wifi.credentials",
+            &json!({"passive": true})
+        ));
+        assert!(command_touches_wifi_or_sd(
+            "wifi.credentials",
+            &json!({"passive": false})
+        ));
+        assert!(!command_counts_as_fg_op("events.pull"));
+        assert!(!command_counts_as_fg_op("link.ping"));
+
+        // RAII guard increments & decrements cleanly even across scopes
+        assert!(can_start_lazy_v2_bootstrap(&in_flight, false));
+        {
+            let _guard = ForegroundOpGuard::enter(&in_flight);
+            assert_eq!(in_flight.load(Ordering::SeqCst), 1);
+            // Case (a): auto-sync (`files`/`download`) in flight at t=3s -> bootstrap skipped!
+            assert!(!can_start_lazy_v2_bootstrap(&in_flight, false));
+        }
+        assert_eq!(in_flight.load(Ordering::SeqCst), 0);
+        assert!(can_start_lazy_v2_bootstrap(&in_flight, false));
+        assert!(!can_start_lazy_v2_bootstrap(&in_flight, true));
+
+        // Case (b): user opens Wi-Fi setup between t=3s and t=7s (`epoch` advances) -> must NOT close ESP32!
+        let epoch_before_open = epoch.load(Ordering::SeqCst);
+        assert!(can_close_lazy_v2_bootstrap_wifi(
+            false,
+            epoch_before_open,
+            &in_flight,
+            &epoch,
+            false,
+            false,
+        ));
+        epoch.fetch_add(1, Ordering::SeqCst);
+        assert!(!can_close_lazy_v2_bootstrap_wifi(
+            false,
+            epoch_before_open,
+            &in_flight,
+            &epoch,
+            false,
+            false,
+        ));
     }
 }

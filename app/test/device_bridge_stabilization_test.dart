@@ -10,10 +10,11 @@
 library;
 
 import 'dart:async';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/device/card_gateway.dart';
+import 'package:recording_card/core/platform/bluetooth_permission.dart';
 import 'package:recording_card/core/store/device_store.dart';
 import 'package:recording_card/services/audio/phone_mic_service.dart';
 
@@ -469,6 +470,111 @@ void main() {
       store.dispose();
     });
   });
+
+  group('Android BluetoothPermission.request() in startScan', () {
+    testWidgets(
+      'Android 首次启动 notDetermined 时主动调用 request()，授权后正常发起 scan()',
+      (tester) async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        try {
+          final perm = _FakeBluetoothPermission(
+            initialStatus: BluetoothAuthorization.notDetermined,
+            requestResult: BluetoothAuthorization.granted,
+          );
+          final gw = FakeCardGateway(devices: const [_v2Card]);
+          final store = DeviceStore(gateway: gw, permission: perm);
+
+          await store.startScan();
+
+          expect(perm.statusCalls, 1);
+          expect(perm.requestCalls, 1, reason: 'Android 必须先动态申请 BLUETOOTH_SCAN');
+          expect(store.bleAuth, BluetoothAuthorization.granted);
+          expect(gw.scanCalls, 1);
+          expect(store.discovered.map((d) => d.id), [_v2Card.id]);
+          expect(store.linkError, isNull);
+          store.dispose();
+        } finally {
+          debugDefaultTargetPlatformOverride = null;
+        }
+      },
+    );
+
+    testWidgets(
+      'Android 首次启动 notDetermined 且用户拒绝授权时中止 scan() 并提示开启蓝牙权限',
+      (tester) async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        try {
+          final perm = _FakeBluetoothPermission(
+            initialStatus: BluetoothAuthorization.notDetermined,
+            requestResult: BluetoothAuthorization.denied,
+          );
+          final gw = FakeCardGateway(devices: const [_v2Card]);
+          final store = DeviceStore(gateway: gw, permission: perm);
+
+          await store.startScan();
+
+          expect(perm.statusCalls, 1);
+          expect(perm.requestCalls, 1);
+          expect(store.bleAuth, BluetoothAuthorization.denied);
+          expect(gw.scanCalls, 0, reason: '未获授权不得调底层 droidplug startScan');
+          expect(store.linkState, LinkState.disconnected);
+          expect(store.linkError, BluetoothAuthorization.denied.hint);
+          store.dispose();
+        } finally {
+          debugDefaultTargetPlatformOverride = null;
+        }
+      },
+    );
+
+    testWidgets(
+      'iOS notDetermined 保持非阻塞，不额外阻塞等待 request()，直接交由 CoreBluetooth 触发弹窗',
+      (tester) async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        try {
+          final perm = _FakeBluetoothPermission(
+            initialStatus: BluetoothAuthorization.notDetermined,
+            requestResult: BluetoothAuthorization.granted,
+          );
+          final gw = FakeCardGateway(devices: const [_v2Card]);
+          final store = DeviceStore(gateway: gw, permission: perm);
+
+          await store.startScan();
+
+          expect(perm.statusCalls, 1);
+          expect(perm.requestCalls, 0, reason: 'iOS 维持非阻塞扫描体验');
+          expect(gw.scanCalls, 1);
+          store.dispose();
+        } finally {
+          debugDefaultTargetPlatformOverride = null;
+        }
+      },
+    );
+  });
+}
+
+class _FakeBluetoothPermission extends BluetoothPermission {
+  _FakeBluetoothPermission({
+    required this.initialStatus,
+    required this.requestResult,
+  });
+
+  BluetoothAuthorization initialStatus;
+  BluetoothAuthorization requestResult;
+  int statusCalls = 0;
+  int requestCalls = 0;
+
+  @override
+  Future<BluetoothAuthorization> status() async {
+    statusCalls++;
+    return initialStatus;
+  }
+
+  @override
+  Future<BluetoothAuthorization> request() async {
+    requestCalls++;
+    initialStatus = requestResult;
+    return requestResult;
+  }
 }
 
 class _StreamingFakeGateway extends FakeCardGateway {
