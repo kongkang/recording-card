@@ -63,6 +63,7 @@ class FakeCardGateway implements CardGateway {
     this.transcodeSeconds = 0,
     this.failDownload,
     this.failTranscode,
+    this.failScan,
     this.disconnectReport,
     this.failDisconnect,
     this.connectReturnsSnapshot = true,
@@ -187,6 +188,7 @@ class FakeCardGateway implements CardGateway {
   bool startSyncCalled = false;
 
   /// 每个能力的错误注入点：非 null 时对应调用抛该异常。
+  CardException? failScan;
   CardException? failSnapshot;
   CardException? failConnect;
   CardException? failWifiScan;
@@ -215,6 +217,7 @@ class FakeCardGateway implements CardGateway {
   Future<List<CardDevice>> scan({int timeoutMs = 6000}) async {
     scanCalls++;
     callLog.add('scan');
+    if (failScan != null) throw failScan!;
     return devices;
   }
 

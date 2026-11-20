@@ -408,12 +408,12 @@ void main() {
       );
       // 注入 20 秒连续音频（在 5 分钟设置下不切分）
       recorder.ingestPcm(_tonedPcmBytes(seconds: 20));
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await recorder.pendingSliceWrites;
       expect(emitted, isEmpty);
 
       // 运行中调短为 10 秒：立即切出 2 片 10 秒 WAV
       recorder.setSliceDuration(const Duration(seconds: 10));
-      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await recorder.pendingSliceWrites;
       expect(emitted.length, 2);
       expect(emitted[0].durationMs, 10000);
       expect(emitted[1].durationMs, 10000);

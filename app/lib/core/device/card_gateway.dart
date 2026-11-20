@@ -23,6 +23,7 @@ import 'dart:io' show File, Platform;
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 /// 支持的硬件设备品类。
 enum DeviceKind {
@@ -1076,7 +1077,83 @@ class RealCardGateway implements CardGateway {
        _downloadWatchdogTimeout = downloadWatchdogTimeout,
        _callable = null;
 
+  RealCardGateway.fromAddresses({
+    required int commandAddress,
+    required int freeAddress,
+    required int versionAddress,
+  }) : _command = ffi.Pointer<ffi.NativeFunction<_CommandNative>>.fromAddress(
+         commandAddress,
+       ).asFunction(),
+       _free = ffi.Pointer<ffi.NativeFunction<_FreeNative>>.fromAddress(
+         freeAddress,
+       ).asFunction(),
+       _version = ffi.Pointer<ffi.NativeFunction<_VersionNative>>.fromAddress(
+         versionAddress,
+       ).asFunction(),
+       _testDispatch = null,
+       _downloadWatchdogTimeout = downloadInactivityTimeout {
+    _callable = ffi.NativeCallable<_CbNative>.listener(_onEvent);
+  }
+
   static RealCardGateway? _instance;
+  static const MethodChannel _bridgeControlChannel = MethodChannel(
+    'com.reai.recordingcard/bluetooth',
+  );
+
+  @visibleForTesting
+  static void resetInstanceForTesting() {
+    _instance = null;
+  }
+
+  static int _parseBridgeAddress(Object? raw) {
+    if (raw is int && raw > 0) return raw;
+    if (raw is String) {
+      final parsed = BigInt.tryParse(raw.trim());
+      if (parsed != null && parsed > BigInt.zero) {
+        return parsed.toUnsigned(64).toInt();
+      }
+    }
+    return 0;
+  }
+
+  /// 当 iOS Release 包符号表被外层 `strip` 剥离导致 `DynamicLibrary.process().lookup()` 找不到符号时，
+  /// 通过原生桥通道取回静态链入的 C 函数指针地址直接绑定 FFI（`STRIP_STYLE=all` 下仍可恢复）。
+  static Future<RealCardGateway?> tryBindFromPlatformChannel({
+    MethodChannel? channelOverride,
+    RealCardGateway Function({
+      required int commandAddress,
+      required int freeAddress,
+      required int versionAddress,
+    })?
+    factoryOverride,
+  }) async {
+    if (_instance != null) return _instance;
+    if (channelOverride == null && !Platform.isIOS) return null;
+    final channel = channelOverride ?? _bridgeControlChannel;
+    try {
+      final raw = await channel.invokeMapMethod<String, dynamic>(
+        'bridgeSymbols',
+      );
+      if (raw == null) return null;
+      final cmd = _parseBridgeAddress(raw['command']);
+      final free = _parseBridgeAddress(raw['free']);
+      final ver = _parseBridgeAddress(raw['version']);
+      if (cmd == 0 || free == 0 || ver == 0) return null;
+      final build = factoryOverride ?? RealCardGateway.fromAddresses;
+      _instance = build(
+        commandAddress: cmd,
+        freeAddress: free,
+        versionAddress: ver,
+      );
+      return _instance;
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
+    } on Object {
+      return null;
+    }
+  }
 
   static RealCardGateway? maybe() {
     if (_instance != null) return _instance;
@@ -1443,6 +1520,25 @@ class RealCardGateway implements CardGateway {
     final lower = text.toLowerCase();
     if (lower.startsWith('unsupported') || lower.contains('unsupported:')) {
       return CardException(CardErrorKind.device, text);
+    }
+    if (lower.contains('channel closed')) {
+      return const CardException(
+        CardErrorKind.device,
+        '蓝牙扫描通道异常中断，请点击「重新扫描」重试',
+      );
+    }
+    if (lower.contains('permissiondenied') ||
+        lower.contains('permission denied')) {
+      return const CardException(
+        CardErrorKind.device,
+        '未开启蓝牙权限，请在系统设置中允许「录音卡」使用蓝牙',
+      );
+    }
+    if (lower.contains('poweredoff') || lower.contains('powered off')) {
+      return const CardException(
+        CardErrorKind.device,
+        '系统蓝牙未开启，请打开蓝牙后重试',
+      );
     }
     if (lower.contains('disconnect') || text.contains('未连接')) {
       return CardException.disconnected(text);

@@ -169,6 +169,13 @@ class PhoneMicRecorder {
   bool _disposed = false;
   Future<void> _writeChain = Future<void>.value();
 
+  /// 等待当前已封口切片的异步落盘与广播流投递完成（仅供测试做确定性断言，不中断录音）。
+  @visibleForTesting
+  Future<void> get pendingSliceWrites async {
+    await _writeChain;
+    await Future<void>.microtask(() {});
+  }
+
   Future<Directory> _resolveDir() async {
     if (_sliceRootDir != null) {
       final dir = await _sliceRootDir();

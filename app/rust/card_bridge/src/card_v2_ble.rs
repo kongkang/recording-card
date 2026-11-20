@@ -159,13 +159,7 @@ impl DfuTransport for TimedDfuTransport {
 }
 
 async fn disconnect_bounded(peripheral: &Peripheral) {
-    let is_conn = matches!(
-        tokio::time::timeout(Duration::from_secs(2), peripheral.is_connected()).await,
-        Ok(Ok(true))
-    );
-    if is_conn {
-        let _ = tokio::time::timeout(BLE_DISCONNECT_TIMEOUT, peripheral.disconnect()).await;
-    }
+    let _ = tokio::time::timeout(BLE_DISCONNECT_TIMEOUT, peripheral.disconnect()).await;
 }
 
 fn parse_uuid(value: &str) -> SdkResult<Uuid> {
@@ -574,13 +568,20 @@ pub async fn connect_dfu_target_on_adapter(
 
     let mut attempt = 0u8;
     let (control, packet) = loop {
-        tokio::time::timeout(BLE_CONNECT_TIMEOUT, peripheral.connect())
-            .await
-            .map_err(|_| CardSdkError::Timeout {
-                command: "DFU connect".into(),
-                seconds: BLE_CONNECT_TIMEOUT.as_secs(),
-            })?
-            .map_err(|e| CardSdkError::Transport(e.to_string()))?;
+        match tokio::time::timeout(BLE_CONNECT_TIMEOUT, peripheral.connect()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                disconnect_bounded(&peripheral).await;
+                return Err(CardSdkError::Transport(e.to_string()));
+            }
+            Err(_) => {
+                disconnect_bounded(&peripheral).await;
+                return Err(CardSdkError::Timeout {
+                    command: "DFU connect".into(),
+                    seconds: BLE_CONNECT_TIMEOUT.as_secs(),
+                });
+            }
+        }
 
         let disc = tokio::time::timeout(BLE_DISCOVER_TIMEOUT, peripheral.discover_services()).await;
         if !matches!(disc, Ok(Ok(()))) {
@@ -1021,5 +1022,16 @@ mod tests {
 
         assert_eq!(connect_attempts, 1);
         assert!(matches!(err, CardSdkError::Dfu { result: 0x0B, .. }));
+    }
+
+    #[test]
+    fn current_thread_runtime_with_enable_all_runs_20ms_sleep_without_panicking() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current_thread runtime");
+        rt.block_on(async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        });
     }
 }

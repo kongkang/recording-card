@@ -777,9 +777,10 @@ impl CoreBluetoothInternal {
         let id = unsafe { peripheral.identifier() };
         let uuid = nsuuid_to_uuid(&id);
         let peripheral_name = unsafe { peripheral.name() };
-        let local_name = peripheral_name
-            .map(|n| n.to_string())
-            .or(advertisement_name.clone());
+        let local_name = advertisement_name
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| peripheral_name.map(|n| n.to_string()));
 
         if self.peripherals.contains_key(&uuid) {
             if local_name.is_some() || advertisement_name.is_some() {
@@ -879,19 +880,36 @@ impl CoreBluetoothInternal {
         }
     }
 
-    fn on_peripheral_connection_failed(
+    async fn on_peripheral_connection_failed(
         &mut self,
         peripheral_uuid: Uuid,
         error_description: Option<String>,
     ) {
         trace!("Got connection fail event!");
         let error = error_description.unwrap_or(String::from("Connection failed"));
-        if let Some(peripheral) = self.peripherals.get_mut(&peripheral_uuid) {
+        let cancelled = if let Some(peripheral) = self.peripherals.get_mut(&peripheral_uuid) {
             if let Some(fut) = peripheral.connected_future_state.take() {
                 fut.lock()
                     .unwrap()
                     .set_reply(CoreBluetoothReply::Err(error));
             }
+            if let Some(dfut) = peripheral.disconnected_future_state.take() {
+                dfut.lock().unwrap().set_reply(CoreBluetoothReply::Ok);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if cancelled {
+            if let Some(mut p) = self.peripherals.remove(&peripheral_uuid) {
+                p.confirm_disconnect();
+            }
+            self.dispatch_event(CoreBluetoothEvent::DeviceDisconnected {
+                uuid: peripheral_uuid,
+            })
+            .await;
         }
     }
 
@@ -899,20 +917,18 @@ impl CoreBluetoothInternal {
         warn!("Adapter powered off, canceling all pending operations");
         let peripheral_uuids: Vec<Uuid> = self.peripherals.keys().cloned().collect();
         for uuid in peripheral_uuids {
-            if let Err(e) = self
-                .peripherals
-                .get_mut(&uuid)
-                .unwrap()
-                .event_sender
-                .send(PeripheralEventInternal::Disconnected)
-                .await
-            {
-                error!("Error sending disconnect event for {}: {}", uuid, e);
+            if let Some(p) = self.peripherals.get_mut(&uuid) {
+                if let Err(e) = p
+                    .event_sender
+                    .send(PeripheralEventInternal::Disconnected)
+                    .await
+                {
+                    error!("Error sending disconnect event for {}: {}", uuid, e);
+                }
             }
-            self.peripherals
-                .get_mut(&uuid)
-                .unwrap()
-                .confirm_disconnect();
+            if let Some(p) = self.peripherals.get_mut(&uuid) {
+                p.confirm_disconnect();
+            }
             self.dispatch_event(CoreBluetoothEvent::DeviceDisconnected { uuid })
                 .await;
         }
@@ -921,24 +937,19 @@ impl CoreBluetoothInternal {
 
     async fn on_peripheral_disconnect(&mut self, peripheral_uuid: Uuid) {
         trace!("Got disconnect event!");
-        if self.peripherals.contains_key(&peripheral_uuid) {
-            if let Err(e) = self
-                .peripherals
-                .get_mut(&peripheral_uuid)
-                .expect("If we're here we should have an ID")
+        if let Some(p) = self.peripherals.get_mut(&peripheral_uuid) {
+            if let Err(e) = p
                 .event_sender
                 .send(PeripheralEventInternal::Disconnected)
                 .await
             {
                 error!("Error sending notification event: {}", e);
             }
-            // Unlike connect, we'll want to fulfill our disconnect future here, which means grabbing
-            // our peripheral and having it fire, then dropping it and dispatching our event.
-            self.peripherals
-                .get_mut(&peripheral_uuid)
-                .expect("If we're here we should have an ID")
-                .confirm_disconnect();
-            self.peripherals.remove(&peripheral_uuid);
+        }
+        // Unlike connect, we'll want to fulfill our disconnect future here, which means grabbing
+        // our peripheral and having it fire, then dropping it and dispatching our event.
+        if let Some(mut p) = self.peripherals.remove(&peripheral_uuid) {
+            p.confirm_disconnect();
             self.dispatch_event(CoreBluetoothEvent::DeviceDisconnected {
                 uuid: peripheral_uuid,
             })
@@ -1146,9 +1157,26 @@ impl CoreBluetoothInternal {
         }
     }
 
-    fn disconnect_peripheral(&mut self, peripheral_uuid: Uuid, fut: CoreBluetoothReplyStateShared) {
+    async fn disconnect_peripheral(
+        &mut self,
+        peripheral_uuid: Uuid,
+        fut: CoreBluetoothReplyStateShared,
+    ) {
         trace!("Trying to disconnect peripheral!");
         if let Some(p) = self.peripherals.get_mut(&peripheral_uuid) {
+            let cb_state = unsafe { p.peripheral.state() };
+            if cb_state == CBPeripheralState::Disconnected {
+                trace!("Peripheral already disconnected; cleaning up immediately");
+                if let Some(mut removed) = self.peripherals.remove(&peripheral_uuid) {
+                    removed.confirm_disconnect();
+                }
+                fut.lock().unwrap().set_reply(CoreBluetoothReply::Ok);
+                self.dispatch_event(CoreBluetoothEvent::DeviceDisconnected {
+                    uuid: peripheral_uuid,
+                })
+                .await;
+                return;
+            }
             trace!("Disconnecting peripheral!");
             if let Some(prev) = p.disconnected_future_state.replace(fut) {
                 prev.lock().unwrap().set_reply(CoreBluetoothReply::Ok);
@@ -1574,7 +1602,7 @@ impl CoreBluetoothInternal {
                         self.on_peripheral_connect(peripheral_uuid)
                     },
                     CentralDelegateEvent::ConnectionFailed{peripheral_uuid, error_description} => {
-                        self.on_peripheral_connection_failed(peripheral_uuid, error_description)
+                        self.on_peripheral_connection_failed(peripheral_uuid, error_description).await
                     },
                     CentralDelegateEvent::DisconnectedDevice{peripheral_uuid} => {
                         self.on_peripheral_disconnect(peripheral_uuid).await
@@ -1681,7 +1709,7 @@ impl CoreBluetoothInternal {
                         self.connect_peripheral(peripheral_uuid, future);
                     }
                     CoreBluetoothMessage::DisconnectDevice{peripheral_uuid, future} => {
-                        self.disconnect_peripheral(peripheral_uuid, future);
+                        self.disconnect_peripheral(peripheral_uuid, future).await;
                     }
                     CoreBluetoothMessage::ReadValue{peripheral_uuid, service_uuid,characteristic_uuid, future} => {
                         self.read_value(peripheral_uuid, service_uuid,characteristic_uuid, future)
@@ -1799,7 +1827,10 @@ pub fn run_corebluetooth_thread(
     let (sender, receiver) = mpsc::channel::<CoreBluetoothMessage>(256);
     // CoreBluetoothInternal is !Send, so we need to keep it on a single thread.
     thread::spawn(move || {
-        let runtime = runtime::Builder::new_current_thread().build().unwrap();
+        let runtime = runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         runtime.block_on(async move {
             let mut cbi = CoreBluetoothInternal::new(receiver, event_sender);
             loop {

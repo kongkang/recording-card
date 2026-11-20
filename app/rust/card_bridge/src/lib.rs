@@ -192,7 +192,7 @@ struct BridgeState {
     runtime: tokio::runtime::Runtime,
     device: tokio::sync::Mutex<Option<ActiveDevice>>,
     connecting_peripheral: Mutex<Option<btleplug::platform::Peripheral>>,
-    scan_adapter: tokio::sync::OnceCell<btleplug::platform::Adapter>,
+    scan_adapter: tokio::sync::Mutex<Option<btleplug::platform::Adapter>>,
     scan_cache: Mutex<HashMap<String, CachedScanEntry>>,
     event_pump: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     last_device_id: Mutex<Option<String>>,
@@ -359,7 +359,7 @@ fn state() -> &'static BridgeState {
             .expect("tokio runtime"),
         device: tokio::sync::Mutex::new(None),
         connecting_peripheral: Mutex::new(None),
-        scan_adapter: tokio::sync::OnceCell::new(),
+        scan_adapter: tokio::sync::Mutex::new(None),
         scan_cache: Mutex::new(HashMap::new()),
         event_pump: tokio::sync::Mutex::new(None),
         last_device_id: Mutex::new(None),
@@ -783,7 +783,7 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
         "ota.wifi" => ota_wifi(payload, out).await?,
         "legacy_upgrade_open" => {
             let adapter = scan_adapter().await?;
-            out.ok(legacy_upgrade::open_session(adapter, &payload).await?);
+            out.ok(legacy_upgrade::open_session(&adapter, &payload).await?);
         }
         "legacy_upgrade_scan_wifi" => out.ok(legacy_upgrade::scan_wifi().await?),
         "legacy_upgrade_connect_wifi" => out.ok(legacy_upgrade::connect_wifi(&payload).await?),
@@ -804,23 +804,49 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
 
 // ── 统一扫描与连接 ────────────────────────────────────────────
 
-async fn scan_adapter() -> Result<&'static btleplug::platform::Adapter, BridgeError> {
-    state()
-        .scan_adapter
-        .get_or_try_init(|| async {
-            let manager = btleplug::platform::Manager::new()
-                .await
-                .map_err(|e| BridgeError::from(format!("BLE unavailable: {e}")))?;
-            let adapter = manager
-                .adapters()
-                .await
-                .map_err(|e| BridgeError::from(format!("BLE adapters failed: {e}")))?
-                .into_iter()
-                .next()
-                .ok_or_else(|| BridgeError::from("no Bluetooth adapter available".to_string()))?;
-            Ok(adapter)
-        })
+pub(crate) fn is_dead_adapter_error(msg: &str) -> bool {
+    msg.contains("Channel closed") || msg.contains("Adapter failed to connect")
+}
+
+async fn create_ble_adapter() -> Result<btleplug::platform::Adapter, BridgeError> {
+    let manager = btleplug::platform::Manager::new()
         .await
+        .map_err(|e| BridgeError::from(format!("BLE unavailable: {e}")))?;
+    let adapter = manager
+        .adapters()
+        .await
+        .map_err(|e| BridgeError::from(format!("BLE adapters failed: {e}")))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| BridgeError::from("no Bluetooth adapter available".to_string()))?;
+    Ok(adapter)
+}
+
+async fn is_adapter_healthy(adapter: &btleplug::platform::Adapter) -> bool {
+    matches!(
+        tokio::time::timeout(Duration::from_millis(800), adapter.adapter_state()).await,
+        Ok(Ok(_))
+    )
+}
+
+async fn invalidate_scan_adapter() {
+    *state().scan_adapter.lock().await = None;
+    state().scan_cache.lock().expect("scan cache lock").clear();
+}
+
+async fn scan_adapter() -> Result<btleplug::platform::Adapter, BridgeError> {
+    let mut guard = state().scan_adapter.lock().await;
+    if let Some(existing) = guard.as_ref() {
+        if is_adapter_healthy(existing).await {
+            return Ok(existing.clone());
+        }
+        alog::info("scan_adapter: 检测到已失效的蓝牙适配器句柄，重建中…");
+        *guard = None;
+        state().scan_cache.lock().expect("scan cache lock").clear();
+    }
+    let fresh = create_ble_adapter().await?;
+    *guard = Some(fresh.clone());
+    Ok(fresh)
 }
 
 fn now_unix_ms() -> i64 {
@@ -849,8 +875,27 @@ pub(crate) async fn read_peripheral_props_bounded(
 
 /// 单次 BLE 扫描同时发现录音卡 V2 (`DYJV2_`)、点一机 V1 (`DYJ_`) 与语音 AI 键盘 V2.1 (`REAI_VB_`)。
 async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
-    alog::info("unified_scan: begin");
     let adapter = scan_adapter().await?;
+    match unified_scan_once(&adapter, duration).await {
+        Ok(list) => Ok(list),
+        Err(err) if is_dead_adapter_error(&err.message) => {
+            alog::info(&format!(
+                "unified_scan: 检测到蓝牙通道失效（{}），重建适配器重试一次",
+                err.message
+            ));
+            invalidate_scan_adapter().await;
+            let fresh_adapter = scan_adapter().await?;
+            unified_scan_once(&fresh_adapter, duration).await
+        }
+        Err(err) => Err(err),
+    }
+}
+
+async fn unified_scan_once(
+    adapter: &btleplug::platform::Adapter,
+    duration: Duration,
+) -> Result<Vec<Value>, BridgeError> {
+    alog::info("unified_scan: begin");
     alog::info("unified_scan: adapter ready");
     // btleplug 的 CoreBluetooth 后端只在「厂商数据 / 服务数据 / 服务 UUID」三类广播
     // 事件里回填 properties.rssi（初始 None）；只带本地名的广播（如点一机 V1 `DYJ_*`）
@@ -1361,7 +1406,7 @@ where
 async fn connect_card_v2(id: &str, name_hint: Option<&str>) -> Result<Value, BridgeError> {
     let adapter = scan_adapter().await?;
     match card_v2_ble::connect_card_v2_on_adapter(
-        adapter,
+        &adapter,
         id,
         name_hint,
         Some(&state().connecting_peripheral),
@@ -1469,7 +1514,7 @@ async fn connect_dyj_v1(
 ) -> Result<Value, BridgeError> {
     let adapter = scan_adapter().await?;
     let (device, hello) = DyjV1Session::connect(
-        adapter,
+        &adapter,
         id,
         name,
         cached_peripheral_id,
@@ -1640,7 +1685,7 @@ async fn connect_external_sdk(
         .filter(|s| !s.is_empty())
         .unwrap_or(kind.display_model());
     let (peripheral, ble_name) = connect_fresh_peripheral(
-        adapter,
+        &adapter,
         id,
         label,
         &state().connecting_peripheral,
@@ -1712,7 +1757,8 @@ async fn release_device() -> Value {
         let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
     }
     // 兜底释放：若此前某次 connect 超时或半连接遗留在 CoreBluetooth，把 adapter 里仍连着的 DYJ_/DYJV2_/DFU 外设也断开。
-    if let Some(adapter) = state().scan_adapter.get() {
+    let cached_adapter = state().scan_adapter.lock().await.clone();
+    if let Some(adapter) = cached_adapter {
         if let Ok(peripherals) = adapter.peripherals().await {
             for p in peripherals {
                 if let Ok(true) = tokio::time::timeout(Duration::from_millis(350), p.is_connected())
@@ -2246,6 +2292,14 @@ fn is_dyj_disconnected_err<T>(res: &Result<T, DyjV1SdkError>) -> bool {
     matches!(res, Err(DyjV1SdkError::Disconnected { .. }))
 }
 
+fn extract_card_v2_wifi_open(state_val: &Value) -> bool {
+    state_val
+        .get("wifiOpen")
+        .or_else(|| state_val.get("wifiEnabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 async fn snapshot_device(active: &ActiveDevice) -> Result<Value, BridgeError> {
     let kind = active.kind();
     match active {
@@ -2331,7 +2385,6 @@ async fn snapshot_device(active: &ActiveDevice) -> Result<Value, BridgeError> {
                     device.state().await
                 }
             };
-            let wifi_open_now = state_res.as_ref().map(|s| s.wifi_open).unwrap_or(false);
             let state_val = match state_res {
                 Ok(v) => serde_json::to_value(v).unwrap_or(Value::Null),
                 Err(_) => device
@@ -2339,6 +2392,7 @@ async fn snapshot_device(active: &ActiveDevice) -> Result<Value, BridgeError> {
                     .await
                     .unwrap_or(Value::Null),
             };
+            let wifi_open_now = extract_card_v2_wifi_open(&state_val);
             let info_res = match device.device_info().await {
                 Ok(v) if !v.version.trim().is_empty() => Ok(v),
                 _ => {
@@ -2353,22 +2407,31 @@ async fn snapshot_device(active: &ActiveDevice) -> Result<Value, BridgeError> {
                     .await
                     .unwrap_or(Value::Null),
             };
-            let storage = if wifi_open_now {
+            let storage: Option<Value> = if wifi_open_now {
                 None
             } else {
-                match device.storage().await {
-                    Ok(v) => Some(v),
+                // 0.2.0 旧固件 STATE_INFO 缺少 bootType 字段，SDK 的 device.storage() 内部强校验 state() 会失败；
+                // 此处仅在已确认 wifi_open_now == false 时回退 raw STORAGE 读取。
+                let typed = match device.storage().await {
+                    Ok(v) => Ok(v),
                     Err(_) => {
                         tokio::time::sleep(Duration::from_millis(120)).await;
-                        device.storage().await.ok()
+                        device.storage().await
                     }
+                };
+                match typed {
+                    Ok(v) => serde_json::to_value(v).ok(),
+                    Err(_) => device.raw_command("STORAGE", None).await.ok(),
                 }
             };
-            let record = match device.record_status().await {
-                Ok(v) => Some(v),
+            let record: Option<Value> = match device.record_status().await {
+                Ok(v) => serde_json::to_value(v).ok(),
                 Err(_) => {
                     tokio::time::sleep(Duration::from_millis(120)).await;
-                    device.record_status().await.ok()
+                    match device.record_status().await {
+                        Ok(v) => serde_json::to_value(v).ok(),
+                        Err(_) => device.raw_command("RECORD_STATUS", None).await.ok(),
+                    }
                 }
             };
             Ok(json!({
@@ -4857,7 +4920,7 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
         }
         None => {
             let dfu_nearby =
-                matches!(card_v2_ble::scan_dfu_peripheral(adapter, Duration::from_secs(3)).await, Ok(Some(_)));
+                matches!(card_v2_ble::scan_dfu_peripheral(&adapter, Duration::from_secs(3)).await, Ok(Some(_)));
             if dfu_nearby {
                 out.progress(json!({"stage": "dfu", "percent": 5, "text": "发现 Bootloader，正在续传主控固件…"}));
                 Duration::from_secs(12)
@@ -4873,7 +4936,7 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
                 };
                 out.progress(json!({"stage": "dfu", "percent": 4, "text": "正在重连录音卡进入升级模式…"}));
                 match card_v2_ble::connect_card_v2_on_adapter(
-                    adapter,
+                    &adapter,
                     &tid,
                     Some(&tname),
                     Some(&state().connecting_peripheral),
@@ -4912,7 +4975,10 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
     let report = card_v2_ble::run_dfu_upload_with_resume(
         &package,
         &options,
-        move |_attempt| card_v2_ble::connect_dfu_target_on_adapter(adapter, dfu_budget),
+        move |_attempt| {
+            let adapter = adapter.clone();
+            async move { card_v2_ble::connect_dfu_target_on_adapter(&adapter, dfu_budget).await }
+        },
         move |percent, text, sent, total| {
             ota_out.progress(json!({
                 "stage": "dfu",
@@ -6274,5 +6340,31 @@ mod tests {
             false,
             false,
         ));
+    }
+
+    #[test]
+    fn recognizes_dead_ble_adapter_errors() {
+        assert!(is_dead_adapter_error(
+            r#"BLE start_scan failed: Other("Channel closed")"#
+        ));
+        assert!(is_dead_adapter_error("Adapter failed to connect."));
+        assert!(!is_dead_adapter_error("BLE permission denied"));
+        assert!(!is_dead_adapter_error("Bluetooth powered off"));
+    }
+
+    #[test]
+    fn extracts_wifi_open_from_legacy_state_info_without_boot_type() {
+        assert!(!extract_card_v2_wifi_open(&json!({
+            "authState": false,
+            "recordRealtimeEnabled": false,
+            "wifiOpen": false
+        })));
+        assert!(extract_card_v2_wifi_open(&json!({
+            "wifiOpen": true
+        })));
+        assert!(extract_card_v2_wifi_open(&json!({
+            "wifiEnabled": true
+        })));
+        assert!(!extract_card_v2_wifi_open(&Value::Null));
     }
 }

@@ -1096,6 +1096,9 @@ class _ConnectView extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.rc;
     final busy = store.isLinkBusy;
+    final scanOrConnectBusy =
+        store.linkState == LinkState.scanning ||
+        store.linkState == LinkState.connecting;
     final bleExpired = store.isBleScanExpired;
     return Column(
       key: const Key('dev-connect'),
@@ -1207,6 +1210,24 @@ class _ConnectView extends StatelessWidget {
               ),
             ],
           )
+        else if (store.linkState == LinkState.reconnecting)
+          Row(
+            key: const Key('dev-reconnecting-state'),
+            children: [
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '正在重连录音卡…',
+                  style: TextStyle(fontSize: 13, color: c.ink),
+                ),
+              ),
+            ],
+          )
         else if (bleExpired)
           Text(
             '蓝牙设备列表已过期，请重新扫描',
@@ -1252,7 +1273,9 @@ class _ConnectView extends StatelessWidget {
         if (bleExpired) ...[
           FilledButton(
             key: const Key('dev-rescan'),
-            onPressed: busy ? null : () => store.startScan(),
+            onPressed: scanOrConnectBusy
+                ? null
+                : () => store.startScan(userInitiated: true),
             style: FilledButton.styleFrom(
               backgroundColor: c.label,
               foregroundColor: c.onLabel,
@@ -1276,7 +1299,9 @@ class _ConnectView extends StatelessWidget {
         ] else ...[
           OutlinedButton(
             key: const Key('dev-rescan'),
-            onPressed: busy ? null : () => store.startScan(),
+            onPressed: scanOrConnectBusy
+                ? null
+                : () => store.startScan(userInitiated: true),
             style: OutlinedButton.styleFrom(
               foregroundColor: c.label,
               side: BorderSide(color: c.ax),

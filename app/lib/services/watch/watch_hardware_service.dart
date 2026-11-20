@@ -1035,12 +1035,17 @@ class WatchHardwareService extends ChangeNotifier {
 /// 走同一套扫描 / 连接 / 录音 / 同步 / 断连保底状态机。
 class WatchCompositeCardGateway implements CardGateway {
   WatchCompositeCardGateway({
-    required this.bleGateway,
+    required CardGateway bleGateway,
     required this.watchService,
-  });
+  }) : _bleGateway = bleGateway;
 
-  final CardGateway bleGateway;
+  CardGateway _bleGateway;
+  CardGateway get bleGateway => _bleGateway;
   final WatchHardwareService watchService;
+
+  void rebindBleGateway(CardGateway next) {
+    _bleGateway = next;
+  }
 
   bool get _watchActive => watchService.isConnectedAsHardware;
 
