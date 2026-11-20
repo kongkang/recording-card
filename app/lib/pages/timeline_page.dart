@@ -37,6 +37,7 @@ class TimelinePage extends StatelessWidget {
     return ListenableBuilder(
       listenable: merged,
       builder: (context, _) {
+        final c = context.rc;
         final groups = store.feedGroups;
         // 录音/同步状态块只出现在「全部/记录」的内容顶部：
         // 勾选总结时收起（总结源列表保持干净），切到「总结」Tab 也不显示。
@@ -106,7 +107,7 @@ class TimelinePage extends StatelessWidget {
                                         ? Icons.summarize_outlined
                                         : Icons.mic_none,
                                     size: 36,
-                                    color: RCColors.ax,
+                                    color: c.ax,
                                   ),
                                   const SizedBox(height: 10),
                                   Text(
@@ -125,8 +126,8 @@ class TimelinePage extends StatelessWidget {
                                         ? const Key('summary-empty-text')
                                         : null,
                                     textAlign: TextAlign.center,
-                                    style: const TextStyle(
-                                      color: RCColors.sec,
+                                    style: TextStyle(
+                                      color: c.sec,
                                       fontSize: 14,
                                       height: 1.6,
                                     ),
@@ -159,9 +160,10 @@ class TimelinePage extends StatelessWidget {
                               ),
                               child: Text(
                                 g.dayLabel,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w700,
+                                  color: c.label,
                                 ),
                               ),
                             ),
@@ -202,6 +204,7 @@ class _TabsBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     Widget tab(String label, FeedFilter f, String keyName) {
       final locked = store.tabsLocked && f != FeedFilter.event;
       final on = store.filter == f;
@@ -209,8 +212,8 @@ class _TabsBar extends StatelessWidget {
         key: Key('tab-$keyName'),
         onPressed: locked ? null : () => store.setFilter(f),
         style: TextButton.styleFrom(
-          foregroundColor: on ? RCColors.label : RCColors.sec,
-          disabledForegroundColor: RCColors.ax,
+          foregroundColor: on ? c.label : c.sec,
+          disabledForegroundColor: c.ax,
           padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
           minimumSize: Size.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -227,8 +230,8 @@ class _TabsBar extends StatelessWidget {
 
     return Container(
       padding: const EdgeInsets.fromLTRB(22, 2, 22, 0),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: RCColors.sep)),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.sep)),
       ),
       child: Row(
         children: [
@@ -248,9 +251,9 @@ class _TabsBar extends StatelessWidget {
             key: const Key('summary-start'),
             onPressed: store.selMode ? null : store.startSummary,
             style: OutlinedButton.styleFrom(
-              foregroundColor: RCColors.label,
-              disabledForegroundColor: RCColors.ax,
-              side: const BorderSide(color: RCColors.label),
+              foregroundColor: c.label,
+              disabledForegroundColor: c.ax,
+              side: BorderSide(color: store.selMode ? c.ax : c.label),
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               minimumSize: Size.zero,
@@ -271,31 +274,46 @@ class _RangeBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget chip(String label, String r) => Padding(
-      key: Key('chip-$r'),
-      padding: const EdgeInsets.only(right: 8),
-      child: OutlinedButton(
-        onPressed: () => r == 'none' ? store.selNone() : store.selRange(r),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: RCColors.ink,
-          side: const BorderSide(color: RCColors.sep),
-          shape: const StadiumBorder(),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          textStyle: const TextStyle(fontSize: 13),
+    final c = context.rc;
+    Widget chip(String label, String r) {
+      final active = r != 'none' && store.activeQuickRange == r;
+      return KeyedSubtree(
+        key: Key('chip-$r'),
+        child: OutlinedButton(
+          onPressed: () => r == 'none' ? store.selNone() : store.selRange(r),
+          style: OutlinedButton.styleFrom(
+            backgroundColor: active ? c.label : Colors.transparent,
+            foregroundColor: active ? c.onLabel : c.ink,
+            side: BorderSide(color: active ? c.label : c.sep),
+            shape: const StadiumBorder(),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            textStyle: TextStyle(
+              fontSize: 13,
+              fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+            ),
+          ),
+          child: Text(label),
         ),
-        child: Text(label),
-      ),
-    );
+      );
+    }
 
     return Container(
       key: const Key('rangebar'),
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
-      child: Row(
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          const Text('全选', style: TextStyle(fontSize: 13, color: RCColors.sec)),
-          const SizedBox(width: 10),
+          Padding(
+            padding: const EdgeInsets.only(right: 2),
+            child: Text(
+              '全选',
+              style: TextStyle(fontSize: 13, color: c.sec),
+            ),
+          ),
           chip('今日', 'today'),
           chip('本周', 'week'),
           chip('本月', 'month'),
@@ -312,11 +330,12 @@ class _SelBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     return Container(
       key: const Key('sumbar'),
-      decoration: const BoxDecoration(
-        color: RCColors.bg,
-        border: Border(top: BorderSide(color: RCColors.sep)),
+      decoration: BoxDecoration(
+        color: c.bg,
+        border: Border(top: BorderSide(color: c.sep)),
       ),
       padding: const EdgeInsets.fromLTRB(22, 10, 22, 12),
       child: Column(
@@ -327,15 +346,16 @@ class _SelBar extends StatelessWidget {
               Text(
                 '已选 ${store.selCount} 项',
                 key: const Key('sel-count'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
+                  color: c.label,
                 ),
               ),
               const Spacer(),
-              const Text(
+              Text(
                 '勾选要总结的记录',
-                style: TextStyle(fontSize: 12, color: RCColors.sec),
+                style: TextStyle(fontSize: 12, color: c.sec),
               ),
             ],
           ),
@@ -347,8 +367,8 @@ class _SelBar extends StatelessWidget {
                   key: const Key('cancel-summary'),
                   onPressed: store.cancelSummary,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: RCColors.ink,
-                    side: const BorderSide(color: RCColors.ax),
+                    foregroundColor: c.ink,
+                    side: BorderSide(color: c.ax),
                     shape: const StadiumBorder(),
                     padding: const EdgeInsets.symmetric(vertical: 11),
                   ),
@@ -361,9 +381,9 @@ class _SelBar extends StatelessWidget {
                   key: const Key('generate-summary'),
                   onPressed: store.selCount == 0 ? null : store.genSummary,
                   style: FilledButton.styleFrom(
-                    backgroundColor: RCColors.label,
-                    disabledBackgroundColor: RCColors.ax,
-                    foregroundColor: Colors.white,
+                    backgroundColor: c.label,
+                    disabledBackgroundColor: c.ax,
+                    foregroundColor: c.onLabel,
                     shape: const StadiumBorder(),
                     padding: const EdgeInsets.symmetric(vertical: 11),
                   ),
@@ -392,6 +412,7 @@ class _TimelineRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final only = first && last;
     // 懒加载列表给无限高约束，IntrinsicHeight 先按卡片定高再让轨道拉伸成线
     return IntrinsicHeight(
@@ -410,7 +431,7 @@ class _TimelineRail extends StatelessWidget {
                     bottom: last ? null : 0,
                     height: last ? 9.0 : null,
                     width: 1,
-                    child: ColoredBox(color: RCColors.sep),
+                    child: ColoredBox(color: c.sep),
                   ),
                 Positioned(
                   left: 0,
@@ -420,8 +441,8 @@ class _TimelineRail extends StatelessWidget {
                     height: 10,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: RCColors.bg,
-                      border: Border.all(color: RCColors.ax, width: 1.5),
+                      color: c.bg,
+                      border: Border.all(color: c.ax, width: 1.5),
                     ),
                   ),
                 ),
@@ -444,9 +465,19 @@ class _EventCardView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final open = store.openCardId == event.id;
     final picked = store.selMode && store.selIds.contains(event.id);
     final activePhotos = store.activePhotosForEvent(event);
+    final mergeBg = c.isDark
+        ? const Color(0xFF172738)
+        : const Color(0xFFEEF5FF);
+    final mergeBorder = c.isDark
+        ? const Color(0xFF28486B)
+        : const Color(0xFFC2DBFF);
+    final mergeFg = c.isDark
+        ? const Color(0xFF8CC4FF)
+        : const Color(0xFF0F4C81);
     return Padding(
       key: Key('timeline-item-${event.id}'),
       padding: const EdgeInsets.only(bottom: 36),
@@ -468,10 +499,10 @@ class _EventCardView extends StatelessWidget {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: picked ? RCColors.ok : RCColors.ax,
+                        color: picked ? c.ok : c.ax,
                         width: 1.6,
                       ),
-                      color: picked ? RCColors.ok : Colors.transparent,
+                      color: picked ? c.ok : Colors.transparent,
                     ),
                     child: picked
                         ? const Icon(Icons.check, size: 15, color: Colors.white)
@@ -499,10 +530,11 @@ class _EventCardView extends StatelessWidget {
                                   event.title,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 17,
                                     fontWeight: FontWeight.w600,
                                     letterSpacing: -0.1,
+                                    color: c.label,
                                   ),
                                 ),
                                 if (event.live) ...[
@@ -523,9 +555,9 @@ class _EventCardView extends StatelessWidget {
                                       key: Key('when-${event.id}'),
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 12,
-                                        color: RCColors.sec,
+                                        color: c.sec,
                                       ),
                                     ),
                                     if (event.mergedSliceCount > 1 &&
@@ -537,21 +569,21 @@ class _EventCardView extends StatelessWidget {
                                           vertical: 1.5,
                                         ),
                                         decoration: BoxDecoration(
-                                          // 对齐 prototype `.merge-chip`：浅蓝底 + 蓝字
-                                          color: const Color(0xFFEEF5FF),
+                                          // 对齐 prototype `.merge-chip`：浅蓝底 + 蓝字（深色下深海蓝底 + 亮蓝字）
+                                          color: mergeBg,
                                           borderRadius: BorderRadius.circular(
                                             999,
                                           ),
                                           border: Border.all(
-                                            color: const Color(0xFFC2DBFF),
+                                            color: mergeBorder,
                                           ),
                                         ),
                                         child: Text(
                                           '已合并 ${event.mergedSliceCount} 分片',
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                             fontSize: 10.5,
                                             fontWeight: FontWeight.w600,
-                                            color: Color(0xFF0F4C81),
+                                            color: mergeFg,
                                           ),
                                         ),
                                       ),
@@ -564,10 +596,10 @@ class _EventCardView extends StatelessWidget {
                                     key: Key('card-summary-${event.id}'),
                                     maxLines: 3,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 14,
                                       height: 1.6,
-                                      color: RCColors.ink,
+                                      color: c.ink,
                                     ),
                                   ),
                                 ],
@@ -591,7 +623,11 @@ class _EventCardView extends StatelessWidget {
                             event.longText,
                             maxLines: 4,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 14, height: 1.55),
+                            style: TextStyle(
+                              fontSize: 14,
+                              height: 1.55,
+                              color: c.ink,
+                            ),
                           ),
                         ],
                         if (!event.live) ...[
@@ -603,8 +639,8 @@ class _EventCardView extends StatelessWidget {
                               onPressed: () =>
                                   store.openDetail(event.id, fresh: true),
                               style: OutlinedButton.styleFrom(
-                                foregroundColor: RCColors.label,
-                                side: const BorderSide(color: RCColors.ax),
+                                foregroundColor: c.label,
+                                side: BorderSide(color: c.ax),
                                 shape: const StadiumBorder(),
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 16,
@@ -639,6 +675,7 @@ class _SummaryCardView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final locked = card.state != SummaryState.done;
     Widget inner;
     switch (card.state) {
@@ -647,14 +684,18 @@ class _SummaryCardView extends StatelessWidget {
           key: const Key('sumcard-pending'),
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '手动总结',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: c.label,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
               '${card.time} · 选择来源切片中',
-              style: const TextStyle(fontSize: 12, color: RCColors.sec),
+              style: TextStyle(fontSize: 12, color: c.sec),
             ),
           ],
         );
@@ -663,14 +704,38 @@ class _SummaryCardView extends StatelessWidget {
           key: const Key('sumcard-generating'),
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '正在生成总结',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '正在生成总结',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: c.label,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  key: Key('sumcard-cancel-${card.id}'),
+                  onPressed: () => store.cancelGeneratingSummary(card.id),
+                  style: TextButton.styleFrom(
+                    foregroundColor: c.sec,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('取消', style: TextStyle(fontSize: 12)),
+                ),
+              ],
             ),
             const SizedBox(height: 4),
             Text(
               '${card.time} · 分析检查中',
-              style: const TextStyle(fontSize: 12, color: RCColors.sec),
+              style: TextStyle(fontSize: 12, color: c.sec),
             ),
             const SizedBox(height: 10),
             ClipRRect(
@@ -681,8 +746,8 @@ class _SummaryCardView extends StatelessWidget {
                   key: const Key('sumcard-prog'),
                   value: card.progress / 100,
                   minHeight: 4,
-                  backgroundColor: RCColors.sep,
-                  valueColor: const AlwaysStoppedAnimation(RCColors.ok),
+                  backgroundColor: c.sep,
+                  valueColor: AlwaysStoppedAnimation(c.ok),
                 ),
               ),
             ),
@@ -693,14 +758,18 @@ class _SummaryCardView extends StatelessWidget {
           key: const Key('sumcard-failed'),
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               '总结生成失败',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: c.label,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
               card.error ?? '请稍后重试',
-              style: const TextStyle(fontSize: 12, color: RCColors.sec),
+              style: TextStyle(fontSize: 12, color: c.sec),
             ),
             const SizedBox(height: 8),
             Row(
@@ -733,14 +802,15 @@ class _SummaryCardView extends StatelessWidget {
                     card.title ?? '',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
+                      color: c.label,
                     ),
                   ),
                 ),
                 // 总结没有详情页：整张卡片可点，箭头只做「会进下一页」的提示
-                const Icon(Icons.chevron_right, size: 16, color: RCColors.ax),
+                Icon(Icons.chevron_right, size: 16, color: c.ax),
               ],
             ),
             const SizedBox(height: 4),
@@ -751,18 +821,18 @@ class _SummaryCardView extends StatelessWidget {
                     '${card.time} · 已选 ${card.srcIds.length} 片段',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                    style: TextStyle(fontSize: 12, color: c.sec),
                   ),
                 ),
                 if (picCount > 0) ...[
-                  const Text(
+                  Text(
                     ' · ',
-                    style: TextStyle(fontSize: 12, color: RCColors.sec),
+                    style: TextStyle(fontSize: 12, color: c.sec),
                   ),
                   Text(
                     '含 $picCount 张图片',
                     key: Key('sumpics-${card.id}'),
-                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                    style: TextStyle(fontSize: 12, color: c.sec),
                   ),
                 ],
               ],
@@ -782,9 +852,9 @@ class _SummaryCardView extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           // 设计稿 .sumcard：只有总结才是卡片（底板 + 1px 分隔线边框 + 12 圆角）
           decoration: BoxDecoration(
-            color: RCColors.card,
+            color: c.card,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: RCColors.sep),
+            border: Border.all(color: c.sep),
           ),
           child: inner,
         ),
@@ -800,6 +870,7 @@ class _SyncBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final text = store.syncStage != null ? store.syncText : '正在读取本地录音…';
     final progress = store.syncStage != null ? store.syncProgress : null;
     return Container(
@@ -807,9 +878,9 @@ class _SyncBanner extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(22, 0, 22, 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: RCColors.card,
+        color: c.card,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: RCColors.sep),
+        border: Border.all(color: c.sep),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -826,7 +897,7 @@ class _SyncBanner extends StatelessWidget {
                 child: Text(
                   text,
                   key: const Key('sync-text'),
-                  style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                  style: TextStyle(fontSize: 12, color: c.sec),
                 ),
               ),
             ],
@@ -839,8 +910,8 @@ class _SyncBanner extends StatelessWidget {
                 key: const Key('sync-progress'),
                 value: progress.clamp(0, 1),
                 minHeight: 3,
-                backgroundColor: RCColors.sep,
-                valueColor: const AlwaysStoppedAnimation(RCColors.ok),
+                backgroundColor: c.sep,
+                valueColor: AlwaysStoppedAnimation(c.ok),
               ),
             ),
           ],
@@ -859,10 +930,14 @@ class _EventNoteBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
+    final bg = live
+        ? (c.isDark ? const Color(0xFF321B18) : const Color(0xFFFDF1EC))
+        : (c.isDark ? const Color(0xFF242428) : const Color(0xFFF2F2EE));
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: live ? const Color(0xFFFDF1EC) : const Color(0xFFF2F2EE),
+        color: bg,
         borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
@@ -872,8 +947,8 @@ class _EventNoteBadge extends StatelessWidget {
             Container(
               width: 6,
               height: 6,
-              decoration: const BoxDecoration(
-                color: RCColors.danger,
+              decoration: BoxDecoration(
+                color: c.danger,
                 shape: BoxShape.circle,
               ),
             ),
@@ -883,7 +958,7 @@ class _EventNoteBadge extends StatelessWidget {
             text,
             style: TextStyle(
               fontSize: 11,
-              color: live ? RCColors.danger : RCColors.sec,
+              color: live ? c.danger : c.sec,
             ),
           ),
         ],
@@ -932,13 +1007,14 @@ class _PhotoStackThumb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final count = photos.length;
     if (count == 0) return const SizedBox.shrink();
     if (count == 1) {
       return SizedBox(
         width: 45,
         height: 45,
-        child: _tile(photos.first, size: 45),
+        child: _tile(c, photos.first, size: 45),
       );
     }
     final layers = count > 3 ? 4 : count;
@@ -957,6 +1033,7 @@ class _PhotoStackThumb extends StatelessWidget {
               width: tileSize,
               height: tileSize,
               child: _tile(
+                c,
                 photos[i],
                 size: tileSize,
                 overlayCount: (count > 3 && i == layers - 1) ? count : null,
@@ -967,15 +1044,24 @@ class _PhotoStackThumb extends StatelessWidget {
     );
   }
 
-  Widget _tile(EventPhoto p, {required double size, int? overlayCount}) {
+  Widget _tile(
+    RCColorScheme c,
+    EventPhoto p, {
+    required double size,
+    int? overlayCount,
+  }) {
     final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
+    final phBg = c.isDark ? const Color(0xFF242428) : const Color(0xFFEAEAE4);
+    final phInner = c.isDark
+        ? const Color(0xFF2A2A2E)
+        : const Color(0xFFE6E6E0);
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: const Color(0xFFEAEAE4),
+        color: phBg,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: RCColors.card, width: 1.5),
+        border: Border.all(color: c.card, width: 1.5),
       ),
       clipBehavior: Clip.antiAlias,
       child: Stack(
@@ -984,9 +1070,9 @@ class _PhotoStackThumb extends StatelessWidget {
           if (hasFile)
             Image.file(File(p.path), fit: BoxFit.cover)
           else
-            const ColoredBox(
-              color: Color(0xFFE6E6E0),
-              child: Icon(Icons.photo_outlined, size: 16, color: RCColors.sec),
+            ColoredBox(
+              color: phInner,
+              child: Icon(Icons.photo_outlined, size: 16, color: c.sec),
             ),
           if (overlayCount != null)
             ColoredBox(
@@ -1016,16 +1102,17 @@ class _UnclassifiedPhotosCardView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final store = StoreScope.of(context);
     final title = card.dayOffset == 0 ? '今日未归类图片' : '${card.dayLabelText}未归类图片';
     return Padding(
       key: Key('card-unc-${card.dayOffset}'),
       padding: const EdgeInsets.only(bottom: 28),
       child: Material(
-        color: RCColors.card,
+        color: c.card,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: RCColors.sep),
+          side: BorderSide(color: c.sep),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -1044,16 +1131,17 @@ class _UnclassifiedPhotosCardView extends StatelessWidget {
                         title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
+                          color: c.label,
                         ),
                       ),
                     ),
-                    const Icon(
+                    Icon(
                       Icons.chevron_right,
                       size: 16,
-                      color: RCColors.ax,
+                      color: c.ax,
                     ),
                   ],
                 ),
@@ -1070,9 +1158,9 @@ class _UnclassifiedPhotosCardView extends StatelessWidget {
                         '已移出对话流 · 共 ${card.photos.length} 张',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: RCColors.sec,
+                          color: c.sec,
                         ),
                       ),
                     ),
@@ -1087,13 +1175,13 @@ class _UnclassifiedPhotosCardView extends StatelessWidget {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: RCColors.bg,
+                          color: c.bg,
                           borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: RCColors.sep),
+                          border: Border.all(color: c.sep),
                         ),
-                        child: const Text(
+                        child: Text(
                           '不归类',
-                          style: TextStyle(fontSize: 11.5, color: RCColors.sec),
+                          style: TextStyle(fontSize: 11.5, color: c.sec),
                         ),
                       ),
                     ),

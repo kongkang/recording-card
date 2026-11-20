@@ -96,7 +96,7 @@ class RecordEvent {
   /// 本段录音关联照片（含初始注入或持久化恢复）。
   final List<EventPhoto> photos;
 
-  /// 由连续 `< 30s` 停顿声学合并的底层分片数（默认 1；仅内部使用，用户界面不再展示「已合并 N 分片」）。
+  /// 由连续 `< 30s` 停顿声学合并的底层分片数（默认 1；`> 1` 时在时间轴展示 `ev-merge-badge-$id`「已合并 N 分片」）。
   final int mergedSliceCount;
 
   const RecordEvent({

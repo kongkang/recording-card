@@ -429,7 +429,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                 height: 8,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: isReady ? RCColors.ok : RCColors.warn,
+                  color: isReady ? c.ok : c.warn,
                 ),
               ),
               const SizedBox(width: 8),
@@ -556,11 +556,19 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
               key: const Key('asr-opt-system'),
               title: sysCaps.effectiveEngineTitle,
               tags: [
-                _tagPill('免下载 · 0 MB', bg: const Color(0xFFF0F0EC), fg: c.sec),
+                _tagPill(
+                  '免下载 · 0 MB',
+                  bg: c.isDark
+                      ? const Color(0xFF242428)
+                      : const Color(0xFFF0F0EC),
+                  fg: c.sec,
+                ),
                 _tagPill(
                   sysCaps.recommendedBadgeLabel,
-                  bg: const Color(0xFFEDF7F0),
-                  fg: const Color(0xFF1F7A34),
+                  bg: c.isDark
+                      ? c.ok.withValues(alpha: 0.16)
+                      : const Color(0xFFEDF7F0),
+                  fg: c.okInk,
                 ),
               ],
               subtitle: sysDesc,
@@ -578,18 +586,28 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
             key: const Key('asr-opt-sensevoice'),
             title: 'SenseVoice 增强模型',
             tags: [
-              _tagPill(senseStateLabel, bg: const Color(0xFFF0F0EC), fg: c.sec),
+              _tagPill(
+                senseStateLabel,
+                bg: c.isDark
+                    ? const Color(0xFF242428)
+                    : const Color(0xFFF0F0EC),
+                fg: c.sec,
+              ),
               if (!sysOk)
                 _tagPill(
                   '本机推荐方案',
-                  bg: const Color(0xFFEEF5FF),
-                  fg: const Color(0xFF0F4C81),
+                  bg: c.isDark
+                      ? c.info.withValues(alpha: 0.18)
+                      : const Color(0xFFEEF5FF),
+                  fg: c.isDark ? c.info : const Color(0xFF0F4C81),
                 ),
               if (!sysOk)
                 _tagPill(
                   '本地首选',
-                  bg: const Color(0xFFEDF7F0),
-                  fg: const Color(0xFF1F7A34),
+                  bg: c.isDark
+                      ? c.ok.withValues(alpha: 0.16)
+                      : const Color(0xFFEDF7F0),
+                  fg: c.okInk,
                 ),
             ],
             subtitle: senseDesc,
@@ -666,7 +684,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                     ? Icons.radio_button_checked
                     : Icons.radio_button_off,
                 size: 20,
-                color: selected ? RCColors.ok : c.ax,
+                color: selected ? c.ok : c.ax,
               ),
             ),
           ],
@@ -740,9 +758,13 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
               _tagPill(
                 pillLabel,
                 bg: installed
-                    ? const Color(0xFFE8F5EA)
-                    : const Color(0xFFF0F0EC),
-                fg: installed ? RCColors.okInk : c.sec,
+                    ? (c.isDark
+                          ? c.ok.withValues(alpha: 0.16)
+                          : const Color(0xFFE8F5EA))
+                    : (c.isDark
+                          ? const Color(0xFF242428)
+                          : const Color(0xFFF0F0EC)),
+                fg: installed ? c.okInk : c.sec,
               ),
               if (ctrl != null && !installed && !spec.bundled) ...[
                 const SizedBox(width: 4),
@@ -991,13 +1013,13 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
                   Row(
                     children: [
                       if (_savedHint)
-                        const Expanded(
+                        Expanded(
                           child: Text(
                             '已保存接口地址',
-                            key: Key('cloud-custom-api-saved'),
+                            key: const Key('cloud-custom-api-saved'),
                             style: TextStyle(
                               fontSize: 12,
-                              color: RCColors.okInk,
+                              color: c.okInk,
                             ),
                           ),
                         )
@@ -1017,7 +1039,7 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
                         onPressed: _saveApi,
                         style: FilledButton.styleFrom(
                           backgroundColor: c.label,
-                          foregroundColor: Colors.white,
+                          foregroundColor: c.onLabel,
                           shape: const StadiumBorder(),
                           padding: const EdgeInsets.symmetric(
                             horizontal: 16,
@@ -1143,14 +1165,16 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
                             vertical: 1.5,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFE8F5EA),
+                            color: c.isDark
+                                ? c.ok.withValues(alpha: 0.16)
+                                : const Color(0xFFE8F5EA),
                             borderRadius: BorderRadius.circular(999),
                           ),
-                          child: const Text(
+                          child: Text(
                             '网关可用',
                             style: TextStyle(
                               fontSize: 10,
-                              color: RCColors.okInk,
+                              color: c.okInk,
                             ),
                           ),
                         ),
@@ -1173,7 +1197,7 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
                     ? Icons.radio_button_checked
                     : Icons.radio_button_off,
                 size: 20,
-                color: selected ? RCColors.ok : c.ax,
+                color: selected ? c.ok : c.ax,
               ),
             ),
           ],
@@ -1228,7 +1252,7 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
                     ? Icons.radio_button_checked
                     : Icons.radio_button_off,
                 size: 20,
-                color: selected ? RCColors.ok : c.ax,
+                color: selected ? c.ok : c.ax,
               ),
             ),
           ],
@@ -1555,10 +1579,10 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
             ),
             if (_savedToast) ...[
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 '提示词已保存并立即生效',
-                key: Key('prompt-saved-hint'),
-                style: TextStyle(fontSize: 12, color: RCColors.okInk),
+                key: const Key('prompt-saved-hint'),
+                style: TextStyle(fontSize: 12, color: c.okInk),
               ),
             ],
             const SizedBox(height: 14),
@@ -1584,7 +1608,7 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
                     onPressed: _saveCurrent,
                     style: FilledButton.styleFrom(
                       backgroundColor: c.label,
-                      foregroundColor: Colors.white,
+                      foregroundColor: c.onLabel,
                       shape: const StadiumBorder(),
                       padding: const EdgeInsets.symmetric(vertical: 11),
                     ),
@@ -1631,10 +1655,10 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
             ),
             if (_agentSavedToast) ...[
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 'OS1 助手提示词已保存并生效',
-                key: Key('agent-prompt-saved-hint'),
-                style: TextStyle(fontSize: 12, color: RCColors.okInk),
+                key: const Key('agent-prompt-saved-hint'),
+                style: TextStyle(fontSize: 12, color: c.okInk),
               ),
             ],
             const SizedBox(height: 10),
@@ -1674,7 +1698,7 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
                     },
                     style: FilledButton.styleFrom(
                       backgroundColor: c.label,
-                      foregroundColor: Colors.white,
+                      foregroundColor: c.onLabel,
                       shape: const StadiumBorder(),
                       padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
@@ -1702,9 +1726,9 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
       onPressed: interactive ? () => _pickPreset(id) : null,
       style: OutlinedButton.styleFrom(
         backgroundColor: active ? c.label : c.card,
-        foregroundColor: active ? Colors.white : c.ink,
+        foregroundColor: active ? c.onLabel : c.ink,
         disabledBackgroundColor: c.label,
-        disabledForegroundColor: Colors.white,
+        disabledForegroundColor: c.onLabel,
         side: BorderSide(color: active ? c.label : c.sep),
         shape: const StadiumBorder(),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -1724,7 +1748,9 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
         key: Key('ptab-$id'),
         onPressed: () => _switchTab(id),
         style: OutlinedButton.styleFrom(
-          backgroundColor: active ? const Color(0xFFEAEAE4) : c.card,
+          backgroundColor: active
+              ? (c.isDark ? const Color(0xFF28282D) : const Color(0xFFEAEAE4))
+              : c.card,
           foregroundColor: active ? c.label : c.sec,
           side: BorderSide(color: active ? c.label : c.sep),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
@@ -1943,10 +1969,10 @@ class _AgentExtensionsBodyState extends State<_AgentExtensionsBody> {
                   ),
                   if (_searchSaved) ...[
                     const SizedBox(height: 6),
-                    const Text(
+                    Text(
                       '搜索接口配置已保存',
-                      key: Key('agent-search-saved-hint'),
-                      style: TextStyle(fontSize: 12, color: RCColors.okInk),
+                      key: const Key('agent-search-saved-hint'),
+                      style: TextStyle(fontSize: 12, color: c.okInk),
                     ),
                   ],
                   const SizedBox(height: 10),
@@ -2331,7 +2357,7 @@ class _LoginAuthBodyState extends State<_LoginAuthBody> {
                       height: 8,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: signedIn ? RCColors.ok : c.ax,
+                        color: signedIn ? c.ok : c.ax,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -2950,7 +2976,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                 style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w700,
-                  color: isSelfSlot ? RCColors.okInk : c.sec,
+                  color: isSelfSlot ? c.okInk : c.sec,
                 ),
               ),
               const SizedBox(width: 8),
@@ -2975,7 +3001,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   badgeText,
                   style: TextStyle(
                     fontSize: 11,
-                    color: isSelfSlot ? RCColors.okInk : c.sec,
+                    color: isSelfSlot ? c.okInk : c.sec,
                   ),
                 ),
               ),
@@ -3084,7 +3110,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   inFrequent ? '常用自动识别' : '手动选用',
                   style: TextStyle(
                     fontSize: 11,
-                    color: inFrequent ? RCColors.okInk : c.sec,
+                    color: inFrequent ? c.okInk : c.sec,
                   ),
                 ),
               ),
@@ -3200,7 +3226,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                         installed ? '已就绪' : '待下载',
                         style: TextStyle(
                           fontSize: 12,
-                          color: installed ? RCColors.okInk : c.sec,
+                          color: installed ? c.okInk : c.sec,
                         ),
                       ),
                       if (ctrl != null && !installed) ...[
@@ -3265,7 +3291,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                 key: const Key('vp-hint-text'),
                 style: TextStyle(
                   fontSize: 12,
-                  color: _vpError ? c.danger : RCColors.okInk,
+                  color: _vpError ? c.danger : c.okInk,
                 ),
               ),
             ],
@@ -4554,9 +4580,9 @@ class _DeveloperCleanBody extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               if (store == null)
-                const Text(
+                Text(
                   '当前为独立预览环境，无法操作本地录音库。',
-                  style: TextStyle(fontSize: 12, color: RCColors.sec),
+                  style: TextStyle(fontSize: 12, color: c.sec),
                 )
               else
                 ListenableBuilder(

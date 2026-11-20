@@ -8,6 +8,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 import '../core/device/card_gateway.dart';
 import '../core/storage/storage.dart';
@@ -25,7 +26,11 @@ import '../services/health/health_signal_controller.dart';
 import '../services/memory/memory_search_scope.dart';
 import '../services/memory/memory_search_service.dart';
 import '../services/photos/photo_library_service.dart';
+import '../services/transcribe/asr_models.dart';
+import '../services/transcribe/local_asr_service.dart';
 import '../services/transcribe/model_manager_controller.dart';
+import '../services/transcribe/speech_engine.dart';
+import '../services/transcribe/speech_models.dart';
 import '../services/transcribe/system_speech_client.dart';
 import '../widgets/legacy_upgrade_sheet.dart';
 import '../widgets/os1_ai_space.dart';
@@ -39,6 +44,107 @@ import 'timeline_page.dart';
 import 'unclassified_photos_page.dart';
 
 const _desktopCommands = MethodChannel('com.reai.recordingcard/desktop');
+
+/// 硬件按键 / Action Button 语音指令双路离线转写：
+/// 优先尝试系统端侧识别（[SystemSpeechClient]，`language: 'auto'`）；
+/// 若系统识别抛错或返回空文本，自动回退到本地 SenseVoice（`language: 'auto'`）。
+/// 若用户已显式指定首选 SenseVoice，则先跑 SenseVoice，不可用或为空时回退系统识别。
+Future<String> transcribeVoiceCommandWithDualFallback(
+  Float32List samples, {
+  int sampleRate = 16000,
+  SystemSpeechClient? systemSpeech,
+  SpeechEngine? localAsr,
+  Future<SpeechEngine?> Function()? resolveLocalAsr,
+  ModelInstaller? installer,
+  SpeechModelProvider? modelProvider,
+  bool preferSenseVoice = false,
+}) async {
+  if (samples.isEmpty) return '';
+
+  Future<String> trySystem() async {
+    final sys = systemSpeech ?? SystemSpeechClient();
+    await sys.requestAuthorization();
+    final res = await sys.transcribeSamples(
+      samples,
+      sampleRate: sampleRate,
+      language: 'auto',
+    );
+    return res.text.trim();
+  }
+
+  Future<({bool attempted, String text})> trySenseVoice() async {
+    String? modelPath;
+    String? tokensPath;
+    if (modelProvider != null) {
+      final resolved = await modelProvider.resolve();
+      if (resolved != null &&
+          !resolved.usesSystemAsr &&
+          resolved.asrModelPath.isNotEmpty &&
+          resolved.tokensPath.isNotEmpty) {
+        modelPath = resolved.asrModelPath;
+        tokensPath = resolved.tokensPath;
+      }
+    }
+    if ((modelPath == null || tokensPath == null) && installer != null) {
+      final asr = await installer.status(senseVoiceSpec);
+      if (asr.installed) {
+        modelPath = await installer.resolve(senseVoiceSpec, 'model.int8.onnx');
+        tokensPath = await installer.resolve(senseVoiceSpec, 'tokens.txt');
+      }
+    }
+    if (modelPath == null ||
+        modelPath.isEmpty ||
+        tokensPath == null ||
+        tokensPath.isEmpty) {
+      return (attempted: false, text: '');
+    }
+    final engine =
+        localAsr ?? (resolveLocalAsr != null ? await resolveLocalAsr() : null);
+    if (engine == null) {
+      return (attempted: false, text: '');
+    }
+    await engine.load(
+      modelPath: modelPath,
+      tokensPath: tokensPath,
+      language: 'auto',
+    );
+    final res = await engine.transcribe(samples, sampleRate: sampleRate);
+    return (attempted: true, text: res.text.trim());
+  }
+
+  if (preferSenseVoice) {
+    Object? localErr;
+    try {
+      final local = await trySenseVoice();
+      if (local.text.isNotEmpty) return local.text;
+    } on Object catch (e) {
+      localErr = e;
+    }
+    try {
+      final sysText = await trySystem();
+      if (sysText.isNotEmpty) return sysText;
+    } on Object {
+      if (localErr != null) Error.throwWithStackTrace(localErr, StackTrace.current);
+      rethrow;
+    }
+    return '';
+  }
+
+  Object? sysErr;
+  try {
+    final sysText = await trySystem();
+    if (sysText.isNotEmpty) return sysText;
+  } on Object catch (e) {
+    sysErr = e;
+  }
+
+  final local = await trySenseVoice();
+  if (local.text.isNotEmpty) return local.text;
+  if (!local.attempted && sysErr != null) {
+    throw sysErr;
+  }
+  return '';
+}
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -57,9 +163,15 @@ class AppShell extends StatefulWidget {
     this.agentChat,
     this.hardwareAgentCoordinator,
     this.transcribeSamples,
+    this.systemSpeech,
+    this.fallbackLocalAsr,
+    this.modelInstaller,
     this.lookupExistingTranscript,
     this.supportsDynamicIslandOverride,
     this.onDeviceCreated,
+    this.clock,
+    this.crashStore,
+    this.accountHttpClient,
   });
 
   final AppStore store;
@@ -76,15 +188,21 @@ class AppShell extends StatefulWidget {
   final AgentChatController? agentChat;
   final HardwareAgentTaskCoordinator? hardwareAgentCoordinator;
   final SliceTranscribeFn? transcribeSamples;
+  final SystemSpeechClient? systemSpeech;
+  final SpeechEngine? fallbackLocalAsr;
+  final ModelInstaller? modelInstaller;
   final TranscriptLookupFn? lookupExistingTranscript;
   final bool? supportsDynamicIslandOverride;
   final void Function(DeviceStore)? onDeviceCreated;
+  final DateTime Function()? clock;
+  final KeyValueStore? crashStore;
+  final http.Client? accountHttpClient;
 
   @override
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late final DeviceStore _device = widget.device ?? DeviceStore();
   late final RecordingStatusController _recording =
       widget.recordingStatus ?? RecordingStatusController();
@@ -108,15 +226,52 @@ class _AppShellState extends State<AppShell> {
   StreamSubscription<LiveAudioSlice>? _liveSliceSub;
   StreamSubscription<LiveAudioSlice>? _phoneSliceSub;
   StreamSubscription<LiveAudioSlice>? _watchSliceSub;
+  SpeechEngine? _ownedFallbackAsr;
+  late DateTime _lastCalendarDay = DateUtils.dateOnly(_now());
   bool _supportsDynamicIsland = false;
   bool _askedPhotoPermThisSession = false;
+
+  DateTime _now() => (widget.clock ?? DateTime.now)();
 
   bool get _resolvedSupportsDynamicIsland =>
       widget.supportsDynamicIslandOverride ?? _supportsDynamicIsland;
 
+  Future<String> _defaultTranscribeSamples(
+    Float32List samples, {
+    int sampleRate = 16000,
+  }) async {
+    final preferSv = _agentConfig.preferredAsrEngine == 'sensevoice';
+    if (widget.transcribeSamples != null) {
+      if (widget.systemSpeech != null && !preferSv) {
+        try {
+          await widget.systemSpeech!.requestAuthorization();
+          final sys = await widget.systemSpeech!.transcribeSamples(
+            samples,
+            sampleRate: sampleRate,
+            language: 'auto',
+          );
+          if (sys.text.trim().isNotEmpty) return sys.text.trim();
+        } on Object {
+          // 系统识别失败时自动回退至本地 SenseVoice 回调
+        }
+      }
+      return widget.transcribeSamples!(samples, sampleRate: sampleRate);
+    }
+    return transcribeVoiceCommandWithDualFallback(
+      samples,
+      sampleRate: sampleRate,
+      systemSpeech: widget.systemSpeech,
+      localAsr: widget.fallbackLocalAsr,
+      resolveLocalAsr: () async => _ownedFallbackAsr ??= LocalAsrService(),
+      installer: widget.modelInstaller ?? ModelInstaller(),
+      preferSenseVoice: preferSv,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (!Platform.environment.containsKey('FLUTTER_TEST')) {
       _desktopCommands.setMethodCallHandler(_onDesktopCommand);
     }
@@ -171,15 +326,7 @@ class _AppShellState extends State<AppShell> {
           agentConfig: _agentConfig,
           agentChat: _agentChat,
           liveAudio: _liveAudio,
-          transcribeSamples:
-              widget.transcribeSamples ??
-              (Float32List samples, {int sampleRate = 16000}) async {
-                final res = await SystemSpeechClient().transcribeSamples(
-                  samples,
-                  sampleRate: sampleRate,
-                );
-                return res.text;
-              },
+          transcribeSamples: _defaultTranscribeSamples,
           lookupExistingTranscript: widget.lookupExistingTranscript,
         );
     _device.liveActivityService.onActionButtonAgent = () {
@@ -317,9 +464,35 @@ class _AppShellState extends State<AppShell> {
   }
 
   @override
+  void didUpdateWidget(covariant AppShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.clock != widget.clock) {
+      _lastCalendarDay = DateUtils.dateOnly(_now());
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final today = DateUtils.dateOnly(_now());
+      final diffDays = today.difference(_lastCalendarDay).inDays;
+      if (diffDays != 0) {
+        _lastCalendarDay = today;
+        final elapsed = diffDays > 0 ? diffDays : 1;
+        unawaited(widget.store.onCalendarDayRollover(daysElapsed: elapsed));
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (!Platform.environment.containsKey('FLUTTER_TEST')) {
       _desktopCommands.setMethodCallHandler(null);
+    }
+    final fallbackAsr = _ownedFallbackAsr;
+    if (fallbackAsr != null) {
+      unawaited(fallbackAsr.dispose());
     }
     _agentConfig.removeListener(_syncAgentIslandConfig);
     _device.liveActivityService.onActionButtonAgent = null;
@@ -376,6 +549,8 @@ class _AppShellState extends State<AppShell> {
                           healthSignals: widget.healthSignals,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
+                          crashStore: widget.crashStore,
+                          accountHttpClient: widget.accountHttpClient,
                         )
                       else
                         _NarrowLayout(
@@ -389,6 +564,8 @@ class _AppShellState extends State<AppShell> {
                           healthSignals: widget.healthSignals,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
+                          crashStore: widget.crashStore,
+                          accountHttpClient: widget.accountHttpClient,
                         ),
                       ListenableBuilder(
                         listenable: _hwAgent,
@@ -484,9 +661,11 @@ class _AppShellState extends State<AppShell> {
                                             vertical: 8,
                                           ),
                                           decoration: BoxDecoration(
-                                            color: RCColors.label.withValues(
-                                              alpha: 0.92,
-                                            ),
+                                            color: context.rc.isDark
+                                                ? const Color(0xEB222228)
+                                                : context.rc.label.withValues(
+                                                    alpha: 0.92,
+                                                  ),
                                             borderRadius:
                                                 BorderRadius.circular(999),
                                             boxShadow: const [
@@ -510,7 +689,7 @@ class _AppShellState extends State<AppShell> {
                                                         _hwAgent.phase ==
                                                             HardwareAgentPhase
                                                                 .listening
-                                                        ? RCColors.ok
+                                                        ? context.rc.ok
                                                         : const Color(0xFF60A5FA),
                                                   ),
                                                 ),
@@ -610,15 +789,16 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final store = StoreScope.of(context);
     final sub = store.subStack.isNotEmpty;
     return Container(
       key: const Key('app-header'),
       height: height,
       padding: EdgeInsets.fromLTRB(20, topInset, 20, 0),
-      decoration: const BoxDecoration(
-        color: RCColors.bg,
-        border: Border(bottom: BorderSide(color: RCColors.sep)),
+      decoration: BoxDecoration(
+        color: c.bg,
+        border: Border(bottom: BorderSide(color: c.sep)),
       ),
       child: Row(
         children: [
@@ -627,7 +807,7 @@ class _Header extends StatelessWidget {
               key: const Key('crumb-back'),
               onPressed: store.goBack,
               style: TextButton.styleFrom(
-                foregroundColor: RCColors.label,
+                foregroundColor: c.label,
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -660,12 +840,16 @@ class _Header extends StatelessWidget {
                 key: const Key('header-tap-top'),
                 behavior: HitTestBehavior.opaque,
                 onTap: () => _scrollActiveToTop(context),
-                child: const Align(
+                child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
                     '录音卡',
-                    key: Key('app-title'),
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                    key: const Key('app-title'),
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: c.label,
+                    ),
                   ),
                 ),
               ),
@@ -697,34 +881,44 @@ class _BottomNav extends StatelessWidget {
   });
   final double height;
 
-  /// 窄屏真机安全区：home indicator 高度并入底栏背景，图标区仍占上方 [height]
+  /// 窄屏/宽屏真机安全区：home indicator 高度并入底栏背景，图标区仍占上方 [height]
   final double bottomInset;
   final VoidCallback onOpenOs1;
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final store = StoreScope.of(context);
     Widget item(String label, RootTab tab, String keyName, IconData icon) {
       final on = store.rootTab == tab;
+      final itemColor = on ? c.label : c.sec;
       return Expanded(
         child: InkWell(
           key: Key(keyName),
           onTap: () => store.go(tab),
           child: SizedBox(
             height: double.infinity,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 20, color: on ? RCColors.label : RCColors.sec),
-                const SizedBox(height: 3),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: on ? RCColors.label : RCColors.sec,
-                  ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(icon, size: 20, color: itemColor),
+                    const SizedBox(height: 3),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        height: 1.15,
+                        color: itemColor,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -763,7 +957,7 @@ class _BottomNav extends StatelessWidget {
                               Color(0xFFC5361B),
                             ],
                           ),
-                          border: Border.all(color: RCColors.bg, width: 3),
+                          border: Border.all(color: c.bg, width: 3),
                           boxShadow: const [
                             BoxShadow(
                               color: Color(0x61D94124),
@@ -779,12 +973,15 @@ class _BottomNav extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      const Text(
+                      Text(
                         'OS1',
                         style: TextStyle(
                           fontSize: 10.5,
+                          height: 1.1,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFFC5361B),
+                          color: c.isDark
+                              ? const Color(0xFFFF8A65)
+                              : const Color(0xFFC5361B),
                           letterSpacing: 0.3,
                         ),
                       ),
@@ -802,9 +999,9 @@ class _BottomNav extends StatelessWidget {
       key: const Key('bottom-nav'),
       height: height,
       padding: EdgeInsets.only(bottom: bottomInset),
-      decoration: const BoxDecoration(
-        color: RCColors.bg,
-        border: Border(top: BorderSide(color: RCColors.sep)),
+      decoration: BoxDecoration(
+        color: c.bg,
+        border: Border(top: BorderSide(color: c.sep)),
       ),
       alignment: Alignment.topCenter,
       child: Row(
@@ -877,6 +1074,8 @@ class _NarrowLayout extends StatelessWidget {
     this.healthSignals,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
+    this.crashStore,
+    this.accountHttpClient,
   });
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
@@ -888,6 +1087,8 @@ class _NarrowLayout extends StatelessWidget {
   final HealthSignalController? healthSignals;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
+  final KeyValueStore? crashStore;
+  final http.Client? accountHttpClient;
 
   @override
   Widget build(BuildContext context) {
@@ -930,6 +1131,8 @@ class _NarrowLayout extends StatelessWidget {
                         photoLibrary: photoLibrary,
                         healthSignals: healthSignals,
                         supportsDynamicIsland: supportsDynamicIsland,
+                        crashStore: crashStore,
+                        accountHttpClient: accountHttpClient,
                       ),
                     },
                   ),
@@ -1027,6 +1230,8 @@ class _WideLayout extends StatelessWidget {
     this.healthSignals,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
+    this.crashStore,
+    this.accountHttpClient,
   });
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
@@ -1038,15 +1243,25 @@ class _WideLayout extends StatelessWidget {
   final HealthSignalController? healthSignals;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
+  final KeyValueStore? crashStore;
+  final http.Client? accountHttpClient;
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final store = StoreScope.of(context);
     final sub = store.subStack.isNotEmpty;
     final primaryScroll = PrimaryScrollController.maybeOf(context);
+    // iPad / Android 15+ edge-to-edge 安全区：顶部状态栏并入顶栏，底部手势条并入底栏
+    final insets = MediaQuery.paddingOf(context);
     return Column(
       children: [
-        _Header(height: RCDims.wideChrome, wide: true, device: device),
+        _Header(
+          height: RCDims.wideChrome + insets.top,
+          topInset: insets.top,
+          wide: true,
+          device: device,
+        ),
         Expanded(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1070,18 +1285,20 @@ class _WideLayout extends StatelessWidget {
                       photoLibrary: photoLibrary,
                       healthSignals: healthSignals,
                       supportsDynamicIsland: supportsDynamicIsland,
+                      crashStore: crashStore,
+                      accountHttpClient: accountHttpClient,
                     ),
                   },
                 ),
               ),
-              Container(width: 1, color: RCColors.sep),
+              Container(width: 1, color: c.sep),
               Expanded(
                 child: _withPrimaryScroll(
                   primaryScroll,
                   active: sub,
                   child: sub
                       ? Material(
-                          color: RCColors.bg,
+                          color: c.bg,
                           child: _stackTopPage(
                             store,
                             wide: true,
@@ -1098,7 +1315,11 @@ class _WideLayout extends StatelessWidget {
             ],
           ),
         ),
-        _BottomNav(height: 56, onOpenOs1: onOpenOs1),
+        _BottomNav(
+          height: RCDims.wideChrome + insets.bottom,
+          bottomInset: insets.bottom,
+          onOpenOs1: onOpenOs1,
+        ),
       ],
     );
   }
@@ -1109,16 +1330,17 @@ class _EmptyPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      key: Key('empty-pane'),
+    final c = context.rc;
+    return Center(
+      key: const Key('empty-pane'),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.schedule, size: 40, color: RCColors.ax),
-          SizedBox(height: 10),
+          Icon(Icons.schedule, size: 40, color: c.ax),
+          const SizedBox(height: 10),
           Text(
             '选择左侧记录查看详情',
-            style: TextStyle(fontSize: 13, color: RCColors.sec),
+            style: TextStyle(fontSize: 13, color: c.sec),
           ),
         ],
       ),
