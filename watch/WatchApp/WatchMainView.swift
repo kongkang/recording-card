@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(WatchRecorderCore)
 import WatchRecorderCore
+#endif
 
 struct WatchMainView: View {
     @ObservedObject var engine: WatchSessionSyncEngine
@@ -393,6 +395,7 @@ private struct WatchQueueView: View {
         switch state {
         case .pending: return "等待手机"
         case .transferring: return "传送中"
+        case .awaitingAck: return "待确认"
         case .synced: return "已同步"
         }
     }
@@ -400,7 +403,7 @@ private struct WatchQueueView: View {
     private func stateColor(_ state: WatchSliceTransferState) -> Color {
         switch state {
         case .pending: return .orange
-        case .transferring: return .blue
+        case .transferring, .awaitingAck: return .blue
         case .synced: return .green
         }
     }

@@ -533,16 +533,20 @@ final class RCAgentSpeechBridge: NSObject, AVSpeechSynthesizerDelegate {
 
   private func speak(text: String, localeId: String) {
     guard !text.isEmpty else { return }
-    stopSpeaking()
-    if !PhoneMicBridge.shared.isCapturing {
-      let session = AVAudioSession.sharedInstance()
-      try? session.setCategory(
-        .playAndRecord,
-        mode: .default,
-        options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers]
-      )
-      try? session.setActive(true)
+    if listening {
+      stopListening(emitFinal: false)
     }
+    stopSpeaking()
+    // 即使本机麦克风正在采集（PhoneMicBridge.shared.isCapturing == true），也必须确保
+    // AVAudioSession 处于 .playAndRecord + mode: .default + .defaultToSpeaker，
+    // 避免此前 SFSpeechRecognizer 留下的 .measurement 模式导致 TTS 从听筒极小声输出。
+    let session = AVAudioSession.sharedInstance()
+    try? session.setCategory(
+      .playAndRecord,
+      mode: .default,
+      options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers]
+    )
+    try? session.setActive(true)
 
     let utterance = AVSpeechUtterance(string: text)
     utterance.voice = AVSpeechSynthesisVoice(language: localeId)
