@@ -1171,7 +1171,13 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 获取某一天待分拣的「未归类图片」（已从对话流排除且尚未标记「不归类」）。
+  bool _isHiddenSilentEvent(RecordEvent event) =>
+      !event.live && isFragmentRecord(event);
+
+  bool _needsPhotoClassification(RecordEvent event, EventPhoto photo) =>
+      !photo.dismissed && (photo.excluded || _isHiddenSilentEvent(event));
+
+  /// 获取某一天待分拣的图片，包括已从对话流排除或附在隐藏静音片段上的照片。
   List<({RecordEvent event, EventPhoto photo})> unclassifiedPhotosForDay(
     int dayOffset,
   ) {
@@ -1179,7 +1185,7 @@ class AppStore extends ChangeNotifier {
     for (final e in events) {
       if (e.dayOffset != dayOffset) continue;
       for (final p in photosForEvent(e)) {
-        if (p.excluded && !p.dismissed) {
+        if (_needsPhotoClassification(e, p)) {
           out.add((event: e, photo: p));
         }
       }
@@ -1190,7 +1196,7 @@ class AppStore extends ChangeNotifier {
   /// 按拍照时刻与当日记录时间距离从近到远排序候选记录。
   List<RecordEvent> candidateEventsForPhoto(int dayOffset, EventPhoto photo) {
     final cands = events
-        .where((e) => e.dayOffset == dayOffset && !e.live)
+        .where((e) => e.dayOffset == dayOffset && _canSelectForSummary(e))
         .toList();
     final photoMin = _minutesOfClock(photo.time);
     int dist(RecordEvent e) {
@@ -1249,7 +1255,7 @@ class AppStore extends ChangeNotifier {
       final merged = List<EventPhoto>.of(photosForEvent(e));
       var changed = false;
       for (var i = 0; i < merged.length; i++) {
-        if (merged[i].excluded && !merged[i].dismissed) {
+        if (_needsPhotoClassification(e, merged[i])) {
           merged[i] = merged[i].copyWith(excluded: true, dismissed: true);
           changed = true;
         }
@@ -1277,7 +1283,7 @@ class AppStore extends ChangeNotifier {
   }) {
     final fromEvent = eventByIdOrNull(fromEventId);
     final toEvent = eventByIdOrNull(toEventId);
-    if (toEvent == null) return;
+    if (toEvent == null || _isHiddenSilentEvent(toEvent)) return;
     final fromMerged = fromEvent != null
         ? List<EventPhoto>.of(photosForEvent(fromEvent))
         : List<EventPhoto>.of(eventPhotos[fromEventId] ?? const []);
@@ -1690,7 +1696,11 @@ class AppStore extends ChangeNotifier {
         .where((s) => f == FeedFilter.all || f == FeedFilter.summary)
         .toList();
     final evs = events
-        .where((e) => f == FeedFilter.all || f == FeedFilter.event)
+        .where(
+          (e) =>
+              (f == FeedFilter.all || f == FeedFilter.event) &&
+              !_isHiddenSilentEvent(e),
+        )
         .toList();
 
     // 总结卡是「当天最后产出的卡片」：在倒序 feed 里放到它覆盖的**最新一天**
@@ -1721,13 +1731,13 @@ class AppStore extends ChangeNotifier {
       (byDay[entry.key] ??= []).insertAll(0, entry.value);
     }
 
-    // 详情页标记「不属于本段」的照片归入当天分组顶部的「未归类图片」条目（排在总结卡之后、普通记录之前）。
+    // 隐藏静音记录时，附带照片仍可从当天「未归类图片」查看与归位。
     if (f == FeedFilter.all) {
       final excludedByDay = <int, List<EventPhoto>>{};
       for (final e in events) {
         final ex = photosForEvent(
           e,
-        ).where((p) => p.excluded && !p.dismissed).toList();
+        ).where((p) => _needsPhotoClassification(e, p)).toList();
         if (ex.isNotEmpty) {
           (excludedByDay[e.dayOffset] ??= []).addAll(ex);
         }
@@ -1799,8 +1809,8 @@ class AppStore extends ChangeNotifier {
   }
 
   // ── 勾选式总结 ─────────────────────────────────────────
-  static bool isSilentPlaceholderEvent(RecordEvent e) =>
-      e.speakers.trim() == '无语音' && e.dialog.isEmpty && e.raw.isEmpty;
+  bool _canSelectForSummary(RecordEvent event) =>
+      !event.live && !_isHiddenSilentEvent(event);
 
   void startSummary() {
     selMode = true;
@@ -1834,9 +1844,7 @@ class AppStore extends ChangeNotifier {
   }
 
   bool inRange(RecordEvent e, String r) {
-    if (e.live || isSilentPlaceholderEvent(e)) {
-      return false; // 整理中的分段或纯静音无语音占位不参与快捷全选
-    }
+    if (!_canSelectForSummary(e)) return false;
     if (r == 'today') return e.dayOffset == 0;
     if (r == 'week') return e.dayOffset <= mondayOffset;
     final n = DateTime.now();
@@ -1860,13 +1868,16 @@ class AppStore extends ChangeNotifier {
 
   void toggleSel(String id) {
     final event = eventByIdOrNull(id);
-    if (event != null && event.live) return;
+    if (event == null || !_canSelectForSummary(event)) return;
     activeQuickRange = null;
     selIds.contains(id) ? selIds.remove(id) : selIds.add(id);
     notifyListeners();
   }
 
-  int get selCount => selIds.length;
+  int get selCount => _pickedSummaryEvents.length;
+
+  Iterable<RecordEvent> get _pickedSummaryEvents =>
+      events.where((e) => selIds.contains(e.id) && _canSelectForSummary(e));
 
   // ── 生成总结（真实链路） ────────────────────────────────
   /// 开始生成：卡片进入 generating，页面立即跳转到总结页展示进度。
@@ -1874,7 +1885,7 @@ class AppStore extends ChangeNotifier {
   /// 真正的转写+大模型调用在后台跑；失败会落到 failed 态并给出可读原因，
   /// 用户可以重试或取消——不会出现"进度走完但内容是编的"。
   void genSummary() {
-    final picked = events.where((e) => selIds.contains(e.id)).toList();
+    final picked = _pickedSummaryEvents.toList();
     if (picked.isEmpty) return;
     selMode = false;
     activeQuickRange = null;

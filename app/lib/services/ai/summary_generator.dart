@@ -140,14 +140,14 @@ class SummaryGenerator {
     }
     final orderedAll = sortEventsChronological(events);
     final ordered = orderedAll
-        .where((e) => !isSilentPlaceholderEvent(e))
+        .where((e) => !isFragmentRecord(e))
         .toList(growable: false);
     if (ordered.isEmpty) {
       throw const SummaryGenerationException('所选记录均为静音片段，暂无可总结的语音内容');
     }
 
     if (!_gateway.isCloudEnabled) {
-      throw const SummaryGenerationException('已在设置中关闭云端模型');
+      throw const SummaryGenerationException('请先在设置中选择模型服务');
     }
     if (!configured) {
       throw const SummaryGenerationException('未配置总结服务，暂时无法生成');

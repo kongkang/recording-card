@@ -35,6 +35,7 @@ import '../core/theme/tokens.dart';
 import '../services/auth_service.dart';
 import '../services/health/health_signal_controller.dart';
 import '../services/memory/memory_search_scope.dart';
+import '../services/net/model_provider_store.dart';
 import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/asr_models.dart';
 import '../services/transcribe/model_manager_controller.dart';
@@ -94,7 +95,7 @@ class SettingPage extends StatefulWidget {
   /// 可选注入 HTTP 客户端（测试验证 `DELETE /api/account` 用）。
   final http.Client? accountHttpClient;
 
-  /// 可选覆盖 API 基址（测试或特殊网关用；为空时取 `agentConfig.customApiBase` 或环境默认网关）。
+  /// 可选覆盖 API 基址（测试或特殊网关用；为空时取环境默认网关）。
   final String? apiBaseOverride;
 
   /// 可选覆盖实时/本机录音 `live_audio/` 目录（测试验证账号注销清理用；生产默认取 ApplicationSupport/live_audio）。
@@ -204,12 +205,6 @@ class _SettingPageState extends State<SettingPage> {
       return explicit.endsWith('/')
           ? explicit.substring(0, explicit.length - 1)
           : explicit;
-    }
-    final custom = _agent.customApiBase.trim();
-    if (custom.isNotEmpty) {
-      return custom.endsWith('/')
-          ? custom.substring(0, custom.length - 1)
-          : custom;
     }
     return ModelGatewayConfig.fromEnvironment().baseUrl ??
         'https://block2-api.wainao.chat';
@@ -687,7 +682,12 @@ class _SettingPageState extends State<SettingPage> {
     final c = context.rc;
     var index = 0; // 开关的全局序号：测试锚点 sw-0 … sw-5
     final mm = widget.modelManager;
-    final localVal = mm == null ? '本地离线' : mm.settingSummaryLabel;
+    final localVal = switch (mm?.effectiveAsrMode) {
+      'system' => '系统转写',
+      'sensevoice' => '增强转写',
+      'pending' => '待下载',
+      _ => '本地离线',
+    };
     final voiceVal = mm == null
         ? '本地聚类'
         : (mm.statusFor(campplusEmbeddingSpec)?.installed == true
@@ -735,13 +735,18 @@ class _SettingPageState extends State<SettingPage> {
                   onTap: () => _openSub(context, 'local'),
                 ),
                 const _RowDivider(),
-                _navRow(
-                  context,
-                  keyName: 'set-cloud-model',
-                  label: '云端模型设置',
-                  value: _agent.cloudStatusSummary,
-                  valueKey: const Key('sv-cloud'),
-                  onTap: () => _openSub(context, 'cloud'),
+                ListenableBuilder(
+                  listenable: ModelProviderStore.instance,
+                  builder: (context, _) => _navRow(
+                    context,
+                    keyName: 'set-cloud-model',
+                    label: '云端模型设置',
+                    value: _agent.cloudEnabled
+                        ? ModelProviderStore.instance.activeProvider.label
+                        : '请选择服务',
+                    valueKey: const Key('sv-cloud'),
+                    onTap: () => _openSub(context, 'cloud'),
+                  ),
                 ),
                 const _RowDivider(),
                 _navRow(

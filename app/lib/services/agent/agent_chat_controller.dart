@@ -18,6 +18,7 @@ import '../health/health_signal_rows.dart';
 import '../health/health_signal_store.dart';
 import '../memory/memory_query.dart';
 import '../net/model_gateway.dart';
+import '../net/model_provider_store.dart';
 import 'agent_harness_worker.dart';
 import 'agent_models.dart';
 import 'agent_speech_service.dart';
@@ -47,7 +48,8 @@ class AgentChatController extends ChangeNotifier {
        _ownsSpeech = speech == null,
        _agentDirResolver = agentDirResolver,
        _clock = clock ?? DateTime.now {
-    _worker = worker ??
+    _worker =
+        worker ??
         AgentHarnessWorker(
           complete: _completeOnHost,
           queryHealth: _queryHealthOnHost,
@@ -434,13 +436,11 @@ class AgentChatController extends ChangeNotifier {
         ChatMessage.userWithImage(prompt, imageDataUrl: dataUrl),
       ];
       final rawReply = _visionCompletion != null
-          ? await _visionCompletion(
-              visionMsgs,
-              model: _resolveVisionModel(),
-            )
+          ? await _visionCompletion(visionMsgs, model: _resolveVisionModel())
           : await _gateway!.chat(
               visionMsgs,
               model: _resolveVisionModel(),
+              scene: ModelScene.vision,
               temperature: 0.2,
               maxTokens: 1024,
               timeout: const Duration(seconds: 60),
@@ -478,27 +478,27 @@ class AgentChatController extends ChangeNotifier {
 
   String? _visionPreflightCheck() {
     if (_visionCompletion != null) return null;
-    return _preflightCheck();
+    return _preflightCheck(scene: ModelScene.vision);
   }
 
   String? _resolveVisionModel() {
-    final vm = _gateway?.visionModel.trim() ?? '';
+    final vm = _gateway?.modelFor(ModelScene.vision).trim() ?? '';
     if (vm.isNotEmpty) return vm;
     final tm = _resolveModel().trim();
     return tm.isNotEmpty ? tm : null;
   }
 
-  String? _preflightCheck() {
+  String? _preflightCheck({ModelScene scene = ModelScene.agent}) {
     if (_completion != null) return null;
     final gw = _gateway;
     if (gw == null) return '对话服务尚未初始化，请稍后再试';
     if (!_agentConfig.cloudEnabled || !gw.isCloudEnabled) {
-      return '云端模型已在设置中关闭，开启后即可发起对话';
+      return '请先在设置中选择模型服务';
     }
-    if (!gw.chatAvailable) {
+    if (!gw.chatAvailableFor(scene)) {
       return '尚未配置对话模型端点，请检查模型设置或后端配置';
     }
-    if (!gw.ready) {
+    if (!gw.readyFor(scene)) {
       return '尚未登录云端账号，请前往「Setting → 云端账号授权」登录后再试';
     }
     return null;
@@ -506,7 +506,8 @@ class AgentChatController extends ChangeNotifier {
 
   String _friendlyError(String raw) {
     final lower = raw.toLowerCase();
-    if (lower.contains('401') || lower.contains('未登录')) {
+    if (_gateway?.usesExternalProvider != true &&
+        (lower.contains('401') || lower.contains('未登录'))) {
       return '云端登录已失效，请前往「Setting → 云端账号授权」重新登录';
     }
     return raw.replaceFirst(RegExp(r'^Bad state:\s*'), '');
@@ -550,7 +551,7 @@ class AgentChatController extends ChangeNotifier {
         _agentConfig.cloudModel.trim().isNotEmpty) {
       return _agentConfig.cloudModel.trim();
     }
-    final gwModel = _gateway?.textModel.trim() ?? '';
+    final gwModel = _gateway?.modelFor(ModelScene.agent).trim() ?? '';
     if (gwModel.isNotEmpty) return gwModel;
     return _agentConfig.cloudModel.trim();
   }
@@ -575,6 +576,7 @@ class AgentChatController extends ChangeNotifier {
     return gw.chat(
       messages,
       model: model.trim().isEmpty ? null : model.trim(),
+      scene: ModelScene.agent,
       temperature: temperature,
       maxTokens: maxTokens,
       timeout: const Duration(seconds: 60),

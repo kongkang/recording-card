@@ -448,6 +448,31 @@ if (pp && chromePath) {
         );
       })
     );
+    for (const [size, height] of [['ultra', 48], ['series', 48], ['compact', 44]]) {
+      await page.select('[data-testid="watch-size"]', size);
+      check(`E2E: ${size} status in one row, readable dial, and ${height}px control above flush footer`,
+        await page.evaluate((controlHeight) => {
+          const box = (id) => document.getElementById(id).getBoundingClientRect();
+          const screen = box('watch-screen');
+          const hero = box('w-hero');
+          const stop = box('w-stop-slider');
+          const footer = box('w-queue-entry');
+          const status = box('w-conn-status');
+          const battery = box('w-batt-pill');
+          const clock = box('w-top-clock');
+          const midpoint = (rect) => rect.top + rect.height / 2;
+          return status.right <= battery.left && battery.right <= clock.left &&
+            Math.abs(midpoint(status) - midpoint(clock)) <= 1 &&
+            [...document.getElementById('w-hero').children].every((el) => {
+              const rect = el.getBoundingClientRect();
+              return rect.top >= hero.top && rect.bottom <= hero.bottom &&
+                rect.left >= screen.left && rect.right <= screen.right;
+            }) &&
+            Math.abs(stop.height - controlHeight) <= 1 &&
+            Math.abs(footer.bottom - screen.bottom) <= 1;
+        }, height));
+    }
+    await page.select('[data-testid="watch-size"]', 'ultra');
     await page.click('[data-testid="watch-hero"]');
     await page.click('[data-testid="watch-hero"]');
     assert.equal(await page.evaluate(() => S.curMarks), 1, 'Double-knocking watch dial should increment curMarks');
