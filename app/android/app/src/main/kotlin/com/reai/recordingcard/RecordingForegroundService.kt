@@ -17,11 +17,11 @@ import androidx.core.content.ContextCompat
 /**
  * Android 录音与蓝牙同步前台保活服务（`foregroundServiceType="connectedDevice|microphone"`）。
  *
- * 同时承载两路独立生命周期引用：
- * - `SOURCE_MIC`：由 [PhoneMicBridge] 在本机录音 / 蓝牙断连保底接力时启停；
- * - `SOURCE_BLE`：由 `com.reai.recordingcard/bluetooth` (`setRecordingForeground`) 或
- *   `com.reai.recordingcard/live_activity` 在蓝牙硬件录音期间启停。
- * 任一路活跃即维持常驻低打扰通知，两路均结束后自动 `stopForeground` 并销毁服务。
+ * 线程与生命周期安全约束（防 Android 8–15 `ForegroundServiceDidNotStartInTimeException`）：
+ * 1. `dispatchUpdate` 在调用 `startForegroundService` 前先经 [resolveAllowedForegroundTypes] 校验对应权限，
+ *    权限不满足时绝不发起无法调用 `startForeground` 的服务启动；
+ * 2. 若 `startForegroundService` 已入队但主线程 `onStartCommand` 尚未完成 `startForeground`（`pendingForegroundStart == true`），
+ *    外部停止请求绝不直接调 `stopService` 抢杀未晋升服务，而是交由 `onStartCommand` 完成一次合规 `startForeground` 后立即自停。
  */
 class RecordingForegroundService : Service() {
     companion object {
@@ -39,11 +39,25 @@ class RecordingForegroundService : Service() {
         private const val SOURCE_MIC = "mic"
         private const val SOURCE_BLE = "ble"
 
+        private val stateLock = Any()
+
         @Volatile
         private var micActive: Boolean = false
 
         @Volatile
         private var bleActive: Boolean = false
+
+        @Volatile
+        private var isServiceRunning: Boolean = false
+
+        @Volatile
+        private var isPromoted: Boolean = false
+
+        @Volatile
+        private var pendingForegroundStart: Boolean = false
+
+        @Volatile
+        private var lastAuthorizedFgTypes: Int = 0
 
         fun setMicrophoneActive(
             context: Context,
@@ -64,13 +78,71 @@ class RecordingForegroundService : Service() {
         }
 
         fun stopAll(context: Context) {
-            micActive = false
-            bleActive = false
-            try {
-                context.stopService(Intent(context, RecordingForegroundService::class.java))
-            } catch (_: Throwable) {
-                // 忽略后台销毁异常
+            val appCtx = context.applicationContext
+            var canStopDirectly = false
+            synchronized(stateLock) {
+                micActive = false
+                bleActive = false
+                if (isServiceRunning && isPromoted && !pendingForegroundStart) {
+                    canStopDirectly = true
+                }
             }
+            if (canStopDirectly) {
+                try {
+                    appCtx.stopService(Intent(appCtx, RecordingForegroundService::class.java))
+                } catch (_: Throwable) {
+                    // 忽略后台销毁异常
+                }
+            }
+        }
+
+        private fun hasMicPermission(context: Context): Boolean =
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+
+        private fun hasConnectedDevicePermission(context: Context): Boolean {
+            val changeWifiGranted =
+                ContextCompat.checkSelfPermission(context, Manifest.permission.CHANGE_WIFI_STATE) ==
+                    PackageManager.PERMISSION_GRANTED
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                return true
+            }
+            val btConnect =
+                ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
+                    PackageManager.PERMISSION_GRANTED
+            val btScan =
+                ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) ==
+                    PackageManager.PERMISSION_GRANTED
+            return btConnect || btScan || changeWifiGranted
+        }
+
+        fun resolveAllowedForegroundTypes(
+            context: Context,
+            useMic: Boolean,
+            useBle: Boolean,
+        ): Int {
+            var types = 0
+            if (useMic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hasMicPermission(context)) {
+                types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            }
+            if (useBle && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && hasConnectedDevicePermission(context)) {
+                types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            }
+            return types
+        }
+
+        private fun canPromoteOnCurrentApi(
+            context: Context,
+            useMic: Boolean,
+            useBle: Boolean,
+            allowedTypes: Int,
+        ): Boolean {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                return allowedTypes != 0
+            }
+            // API <= 29: FOREGROUND_SERVICE_TYPE_MICROPHONE 尚未引入，2 参数 startForeground 合法可用
+            return (useMic && hasMicPermission(context)) ||
+                (useBle && hasConnectedDevicePermission(context))
         }
 
         private fun dispatchUpdate(
@@ -81,38 +153,74 @@ class RecordingForegroundService : Service() {
             subtitle: String?,
         ) {
             val appCtx = context.applicationContext
-            val wasAnyActive = micActive || bleActive
-            if (source == SOURCE_MIC) {
-                micActive = active
-            } else {
-                bleActive = active
-            }
-            val nowAnyActive = micActive || bleActive
+            var shouldStartFg = false
+            var shouldStopNow = false
 
-            if (!nowAnyActive && !wasAnyActive) {
-                return
-            }
-
-            val intent = Intent(appCtx, RecordingForegroundService::class.java).apply {
-                action = if (nowAnyActive) ACTION_UPDATE else ACTION_STOP_ALL
-                putExtra(EXTRA_SOURCE, source)
-                putExtra(EXTRA_ACTIVE, active)
-                if (!title.isNullOrBlank()) putExtra(EXTRA_TITLE, title)
-                if (!subtitle.isNullOrBlank()) putExtra(EXTRA_SUBTITLE, subtitle)
-            }
-
-            try {
+            synchronized(stateLock) {
+                if (source == SOURCE_MIC) {
+                    micActive = active
+                } else {
+                    bleActive = active
+                }
+                val nowAnyActive = micActive || bleActive
                 if (nowAnyActive) {
+                    val allowedTypes = resolveAllowedForegroundTypes(appCtx, micActive, bleActive)
+                    if (!canPromoteOnCurrentApi(appCtx, micActive, bleActive, allowedTypes)) {
+                        if (source == SOURCE_MIC) micActive = false else bleActive = false
+                        return
+                    }
+                    if (allowedTypes != 0) {
+                        lastAuthorizedFgTypes = allowedTypes
+                    }
+                    if (!isPromoted) {
+                        pendingForegroundStart = true
+                    }
+                    isServiceRunning = true
+                    shouldStartFg = true
+                } else {
+                    if (!isServiceRunning && !pendingForegroundStart) {
+                        return
+                    }
+                    if (isPromoted && !pendingForegroundStart) {
+                        shouldStopNow = true
+                    }
+                    // 若 pendingForegroundStart == true，绝不在此刻调 stopService；
+                    // 排队中的 onStartCommand 会先完成合规 startForeground 再立即自停。
+                }
+            }
+
+            if (shouldStartFg) {
+                val intent = Intent(appCtx, RecordingForegroundService::class.java).apply {
+                    action = ACTION_UPDATE
+                    putExtra(EXTRA_SOURCE, source)
+                    putExtra(EXTRA_ACTIVE, active)
+                    if (!title.isNullOrBlank()) putExtra(EXTRA_TITLE, title)
+                    if (!subtitle.isNullOrBlank()) putExtra(EXTRA_SUBTITLE, subtitle)
+                }
+                try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         appCtx.startForegroundService(intent)
                     } else {
                         appCtx.startService(intent)
                     }
-                } else {
-                    appCtx.stopService(intent)
+                } catch (_: Throwable) {
+                    synchronized(stateLock) {
+                        if (!isPromoted) {
+                            pendingForegroundStart = false
+                            isServiceRunning = false
+                        }
+                    }
                 }
-            } catch (_: Throwable) {
-                // Android 12+ 后台限制或缺少权限时安全降级，绝不造成宿主进程崩溃
+            } else if (shouldStopNow) {
+                try {
+                    appCtx.stopService(
+                        Intent(appCtx, RecordingForegroundService::class.java).apply {
+                            action = ACTION_STOP_ALL
+                        },
+                    )
+                } catch (_: Throwable) {
+                    // ignore
+                }
             }
         }
     }
@@ -125,11 +233,6 @@ class RecordingForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
-        if (action == ACTION_STOP_ALL || (!micActive && !bleActive)) {
-            stopForegroundAndSelf()
-            return START_NOT_STICKY
-        }
-
         val source = intent?.getStringExtra(EXTRA_SOURCE)
         intent?.getStringExtra(EXTRA_TITLE)?.takeIf { it.isNotBlank() }?.let {
             lastTitle = it
@@ -142,15 +245,41 @@ class RecordingForegroundService : Service() {
             }
         }
 
+        val (currentlyActive, mustPromoteBeforeStop, fallbackTypes) = synchronized(stateLock) {
+            val activeNow = action != ACTION_STOP_ALL && (micActive || bleActive)
+            val mustPromote = !activeNow &&
+                (pendingForegroundStart || !isPromoted) &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            Triple(activeNow, mustPromote, lastAuthorizedFgTypes)
+        }
+
+        ensureChannel()
         val resolvedSubtitle = when {
             micActive -> lastMicSubtitle
             bleActive -> lastBleSubtitle
             else -> "录音运行中"
         }
-
-        ensureChannel()
         val notification = buildNotification(lastTitle, resolvedSubtitle)
-        if (!promoteForegroundSafely(notification)) {
+
+        if (!currentlyActive) {
+            if (mustPromoteBeforeStop) {
+                promoteForegroundSafely(notification, fallbackTypes = fallbackTypes)
+            }
+            stopForegroundAndSelf()
+            return START_NOT_STICKY
+        }
+
+        if (!promoteForegroundSafely(notification, fallbackTypes = fallbackTypes)) {
+            stopForegroundAndSelf()
+            return START_NOT_STICKY
+        }
+
+        val stillActiveAfterPromote = synchronized(stateLock) {
+            isPromoted = true
+            pendingForegroundStart = false
+            micActive || bleActive
+        }
+        if (!stillActiveAfterPromote) {
             stopForegroundAndSelf()
             return START_NOT_STICKY
         }
@@ -158,57 +287,43 @@ class RecordingForegroundService : Service() {
     }
 
     override fun onDestroy() {
-        micActive = false
-        bleActive = false
+        stopForegroundRemoveOnly()
+        synchronized(stateLock) {
+            micActive = false
+            bleActive = false
+            isPromoted = false
+            pendingForegroundStart = false
+            isServiceRunning = false
+        }
         super.onDestroy()
     }
 
-    private fun promoteForegroundSafely(notification: Notification): Boolean {
+    private fun promoteForegroundSafely(
+        notification: Notification,
+        fallbackTypes: Int,
+    ): Boolean {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val fgTypes = resolveAllowedForegroundTypes()
-                if (fgTypes == 0) {
+                val liveTypes = resolveAllowedForegroundTypes(this, micActive, bleActive)
+                val fgTypes = if (liveTypes != 0) liveTypes else fallbackTypes
+                if (fgTypes != 0) {
+                    startForeground(NOTIFICATION_ID, notification, fgTypes)
+                } else if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+                    startForeground(NOTIFICATION_ID, notification)
+                } else {
                     return false
                 }
-                startForeground(NOTIFICATION_ID, notification, fgTypes)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
+            }
+            synchronized(stateLock) {
+                isPromoted = true
+                pendingForegroundStart = false
             }
             true
         } catch (_: Throwable) {
             false
         }
-    }
-
-    private fun resolveAllowedForegroundTypes(): Int {
-        var types = 0
-        if (micActive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hasMicPermission()) {
-            types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-        }
-        if ((bleActive || types == 0) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && hasConnectedDevicePermission()) {
-            types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-        }
-        return types
-    }
-
-    private fun hasMicPermission(): Boolean =
-        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
-
-    private fun hasConnectedDevicePermission(): Boolean {
-        val changeWifiGranted =
-            ContextCompat.checkSelfPermission(this, Manifest.permission.CHANGE_WIFI_STATE) ==
-                PackageManager.PERMISSION_GRANTED
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            return true
-        }
-        val btConnect =
-            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) ==
-                PackageManager.PERMISSION_GRANTED
-        val btScan =
-            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) ==
-                PackageManager.PERMISSION_GRANTED
-        return btConnect || btScan || changeWifiGranted
     }
 
     private fun ensureChannel() {
@@ -258,7 +373,7 @@ class RecordingForegroundService : Service() {
         return builder.build()
     }
 
-    private fun stopForegroundAndSelf() {
+    private fun stopForegroundRemoveOnly() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -268,6 +383,15 @@ class RecordingForegroundService : Service() {
             }
         } catch (_: Throwable) {
             // ignore
+        }
+    }
+
+    private fun stopForegroundAndSelf() {
+        stopForegroundRemoveOnly()
+        synchronized(stateLock) {
+            isPromoted = false
+            pendingForegroundStart = false
+            isServiceRunning = false
         }
         stopSelf()
     }

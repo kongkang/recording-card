@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
@@ -27,7 +28,8 @@ import kotlin.math.max
  * 对齐 iOS `PhoneMicBridge.swift` 与 Dart `PlatformPhoneMicBackend`：
  * - 输出标准 16kHz / 16-bit Little-Endian / 单声道 PCM 字节块（`pcm` 回调）；
  * - 支撑三大核心链路：Android 独立本机录音、蓝牙硬件异常断连自动接力保底、以及物理按键语音任务麦克风兜底；
- * - 采集期间自动联动 [RecordingForegroundService] 保持锁屏与后台持续录音。
+ * - 仅在 `AudioRecord.startRecording()` 确认进入 `RECORDSTATE_RECORDING` 后才启动 [RecordingForegroundService]，
+ *   杜绝启动冲突时提前 `stopService` 触发 `ForegroundServiceDidNotStartInTimeException`。
  */
 class PhoneMicBridge(private val activity: Activity) {
     companion object {
@@ -66,8 +68,12 @@ class PhoneMicBridge(private val activity: Activity) {
         val pending = pendingPermResult
         pendingPermResult = null
         if (pending != null) {
-            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
-            pending.success(if (granted) "granted" else "denied")
+            // 仅校验核心 RECORD_AUDIO 权限；API 33+ 顺带申请的 POST_NOTIFICATIONS 被拒时绝不阻断录音
+            val micGranted =
+                ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED ||
+                    (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
+            pending.success(if (micGranted) "granted" else "denied")
         }
         return true
     }
@@ -113,7 +119,8 @@ class PhoneMicBridge(private val activity: Activity) {
             activity,
             Manifest.permission.RECORD_AUDIO,
         )
-        return if (!requestedBefore && !shouldShowRationale) "notDetermined" else "denied"
+        // Android 首次拒绝后 shouldShowRationale == true 仍可弹出第 2 次系统授权框，仅永久拒绝时返回 denied
+        return if (!requestedBefore || shouldShowRationale) "notDetermined" else "denied"
     }
 
     fun requestPermission(result: MethodChannel.Result) {
@@ -132,9 +139,16 @@ class PhoneMicBridge(private val activity: Activity) {
             .edit()
             .putBoolean(KEY_MIC_REQUESTED, true)
             .apply()
+        val requestPerms = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPerms.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
         ActivityCompat.requestPermissions(
             activity,
-            arrayOf(Manifest.permission.RECORD_AUDIO),
+            requestPerms.toTypedArray(),
             REQ_PHONE_MIC_PERM,
         )
     }
@@ -162,20 +176,12 @@ class PhoneMicBridge(private val activity: Activity) {
         val record = createInitializedAudioRecord(bufferSizeBytes)
             ?: throw IllegalStateException("无法初始化系统麦克风采集器（可能被系统通话或其它独占录音占用）")
 
-        RecordingForegroundService.setMicrophoneActive(
-            activity.applicationContext,
-            active = true,
-            title = "录音卡",
-            subtitle = "本机录音运行中",
-        )
-
         try {
             record.startRecording()
         } catch (t: Throwable) {
             try {
                 record.release()
             } catch (_: Throwable) {}
-            RecordingForegroundService.setMicrophoneActive(activity.applicationContext, active = false)
             throw IllegalStateException("启动麦克风录音失败：${t.message ?: t.javaClass.simpleName}", t)
         }
 
@@ -183,9 +189,17 @@ class PhoneMicBridge(private val activity: Activity) {
             try {
                 record.release()
             } catch (_: Throwable) {}
-            RecordingForegroundService.setMicrophoneActive(activity.applicationContext, active = false)
             throw IllegalStateException("麦克风未能进入录音态（可能被系统限制或被其它应用独占）")
         }
+
+        // 必须在 startRecording() 且进入 RECORDSTATE_RECORDING 成功之后才拉起前台服务，
+        // 避免录音启动失败立即 stopService 引发 ForegroundServiceDidNotStartInTimeException
+        RecordingForegroundService.setMicrophoneActive(
+            activity.applicationContext,
+            active = true,
+            title = "录音卡",
+            subtitle = "本机录音运行中",
+        )
 
         audioRecord = record
         running.set(true)

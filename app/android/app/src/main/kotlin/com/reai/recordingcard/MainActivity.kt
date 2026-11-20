@@ -182,12 +182,28 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                     "start" -> {
                         val title = call.argument<String>("title")
                         val subtitle = call.argument<String>("subtitle")
-                        RecordingForegroundService.setConnectedDeviceActive(
-                            applicationContext,
-                            active = true,
-                            title = title,
-                            subtitle = subtitle,
-                        )
+                        val isLocalMicSession =
+                            phoneMicBridge?.isCapturing == true ||
+                                subtitle?.contains("本机") == true
+                        if (isLocalMicSession) {
+                            RecordingForegroundService.setConnectedDeviceActive(
+                                applicationContext,
+                                active = false,
+                            )
+                            RecordingForegroundService.setMicrophoneActive(
+                                applicationContext,
+                                active = true,
+                                title = title,
+                                subtitle = subtitle,
+                            )
+                        } else {
+                            RecordingForegroundService.setConnectedDeviceActive(
+                                applicationContext,
+                                active = true,
+                                title = title,
+                                subtitle = subtitle,
+                            )
+                        }
                         result.success(null)
                     }
                     "stop" -> {
@@ -195,6 +211,12 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                             applicationContext,
                             active = false,
                         )
+                        if (phoneMicBridge?.isCapturing != true) {
+                            RecordingForegroundService.setMicrophoneActive(
+                                applicationContext,
+                                active = false,
+                            )
+                        }
                         result.success(null)
                     }
                     else -> result.notImplemented()
@@ -250,7 +272,8 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         val anyRationale = perms.any { perm ->
             ActivityCompat.shouldShowRequestPermissionRationale(this, perm)
         }
-        return if (!requestedBefore && !anyRationale) "notDetermined" else "denied"
+        // Android 首次拒绝后 anyRationale == true 仍允许第 2 次系统弹窗申请，仅永久拒绝时返回 denied
+        return if (!requestedBefore || anyRationale) "notDetermined" else "denied"
     }
 
     private fun requestBlePermissions(result: MethodChannel.Result) {
@@ -272,7 +295,14 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             .edit()
             .putBoolean(KEY_BLE_REQUESTED, true)
             .apply()
-        ActivityCompat.requestPermissions(this, perms, REQ_BLE_PERM)
+        val requestList = perms.toMutableList()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+        ) {
+            requestList.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        ActivityCompat.requestPermissions(this, requestList.toTypedArray(), REQ_BLE_PERM)
     }
 
     // FlutterActivity 继承 Activity，没有 registerForActivityResult。
@@ -396,9 +426,8 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             val res = pendingBlePermResult
             pendingBlePermResult = null
             if (res != null) {
-                val granted = grantResults.isNotEmpty() &&
-                    grantResults.all { it == PackageManager.PERMISSION_GRANTED } &&
-                    areAllGranted(requiredBlePermissions())
+                // 仅按 requiredBlePermissions() 判定授权结果；API 33+ 顺带请求的 POST_NOTIFICATIONS 被拒时不阻断蓝牙连接
+                val granted = areAllGranted(requiredBlePermissions())
                 res.success(if (granted) "granted" else "denied")
             }
             return

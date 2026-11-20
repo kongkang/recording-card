@@ -335,9 +335,71 @@ void main() {
       expect(netSecXml, contains('<domain includeSubdomains="false">192.168.4.1</domain>'));
       expect(netSecXml, contains('<domain includeSubdomains="false">192.168.43.1</domain>'));
 
-      final gradleKts = _repoFile('app/android/app/build.gradle.kts').readAsStringSync();
-      expect(gradleKts, contains('RC_ANDROID_ALL_ABIS'));
-      expect(gradleKts, contains('arm64-v8a'));
+      final gradlewCheck = _repoFile('app/android/app/build.gradle.kts').readAsStringSync();
+      expect(gradlewCheck, contains('RC_ANDROID_ALL_ABIS'));
+      expect(gradlewCheck, contains('arm64-v8a'));
+    });
+
+    test('Android FGS avoids ForegroundServiceDidNotStartInTimeException, routes LiveActivity mic vs BLE accurately, and preserves 2nd-strike rationale + API 33 POST_NOTIFICATIONS', () {
+      final phoneMicSrc = _repoFile(
+        'app/android/app/src/main/kotlin/com/reai/recordingcard/PhoneMicBridge.kt',
+      ).readAsStringSync();
+      final fgServiceSrc = _repoFile(
+        'app/android/app/src/main/kotlin/com/reai/recordingcard/RecordingForegroundService.kt',
+      ).readAsStringSync();
+      final mainKt = _repoFile(
+        'app/android/app/src/main/kotlin/com/reai/recordingcard/MainActivity.kt',
+      ).readAsStringSync();
+
+      // 1a. PhoneMicBridge must startRecording() & verify RECORDSTATE_RECORDING BEFORE promoting foreground service
+      final startCapIdx = phoneMicSrc.indexOf('fun startCapture()');
+      final stopCapIdx = phoneMicSrc.indexOf('fun stopCapture()', startCapIdx);
+      expect(startCapIdx, greaterThan(0));
+      expect(stopCapIdx, greaterThan(startCapIdx));
+      final startCapBody = phoneMicSrc.substring(startCapIdx, stopCapIdx);
+      final startRecCallIdx = startCapBody.indexOf('record.startRecording()');
+      final recStateCheckIdx = startCapBody.indexOf('AudioRecord.RECORDSTATE_RECORDING');
+      final setMicActiveTrueIdx = startCapBody.indexOf(
+        'RecordingForegroundService.setMicrophoneActive(\n            activity.applicationContext,\n            active = true',
+      );
+      expect(startRecCallIdx, greaterThan(0));
+      expect(recStateCheckIdx, greaterThan(startRecCallIdx));
+      expect(
+        setMicActiveTrueIdx,
+        greaterThan(recStateCheckIdx),
+        reason: 'setMicrophoneActive(active = true) must only run AFTER startRecording() and RECORDSTATE_RECORDING succeed',
+      );
+
+      // 1b. RecordingForegroundService must pre-check allowed foreground types before startForegroundService
+      // and guard unpromoted in-flight startForegroundService against premature stopService crash
+      final dispatchIdx = fgServiceSrc.indexOf('private fun dispatchUpdate(');
+      expect(dispatchIdx, greaterThan(0));
+      final dispatchBody = fgServiceSrc.substring(
+        dispatchIdx,
+        fgServiceSrc.indexOf('override fun onBind', dispatchIdx),
+      );
+      expect(dispatchBody, contains('resolveAllowedForegroundTypes('));
+      expect(fgServiceSrc, contains('isServiceRunning'));
+      expect(fgServiceSrc, contains('isPromoted'));
+      expect(fgServiceSrc, contains('pendingForegroundStart'));
+
+      // 2. LIVE_ACTIVITY_CHANNEL must route local/failover phone recording to setMicrophoneActive instead of setConnectedDeviceActive
+      final liveActIdx = mainKt.indexOf('MethodChannel(messenger, LIVE_ACTIVITY_CHANNEL)');
+      final oauthIdx = mainKt.indexOf('MethodChannel(messenger, OAUTH_CHANNEL)', liveActIdx);
+      expect(liveActIdx, greaterThan(0));
+      expect(oauthIdx, greaterThan(liveActIdx));
+      final liveActBody = mainKt.substring(liveActIdx, oauthIdx);
+      expect(liveActBody, contains('phoneMicBridge?.isCapturing == true'));
+      expect(liveActBody, contains('subtitle?.contains("本机") == true'));
+      expect(liveActBody, contains('RecordingForegroundService.setMicrophoneActive'));
+
+      // 3. 2nd-strike rationale (!requestedBefore || shouldShowRationale -> notDetermined) & API 33+ POST_NOTIFICATIONS
+      expect(mainKt, contains('if (!requestedBefore || anyRationale) "notDetermined" else "denied"'));
+      expect(phoneMicSrc, contains('if (!requestedBefore || shouldShowRationale) "notDetermined" else "denied"'));
+      expect(mainKt, contains('Manifest.permission.POST_NOTIFICATIONS'));
+      expect(phoneMicSrc, contains('Manifest.permission.POST_NOTIFICATIONS'));
+      // REQ_BLE_PERM result must NOT fail if optional POST_NOTIFICATIONS was denied
+      expect(mainKt.contains('grantResults.all { it == PackageManager.PERMISSION_GRANTED }'), isFalse);
     });
   });
 }
