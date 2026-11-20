@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/store/agent_config_store.dart';
 import '../../core/theme/tokens.dart';
+import '../../services/net/model_provider_store.dart';
 import '../../services/schedule/task_schedule.dart';
 import '../../services/schedule/task_scheduler.dart';
 import '../../widgets/store_scope.dart';
@@ -19,18 +20,21 @@ class DeveloperModelSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
-    final primary = Theme.of(context).colorScheme.primary;
+    final providers = ModelProviderStore.instance;
     return ListenableBuilder(
-      listenable: config,
+      listenable: Listenable.merge([config, providers]),
       builder: (context, _) {
-        final gateway = config.availableCloudModels
-            .where((m) => m.fromGateway)
-            .toList();
+        final provider = providers.activeProvider;
+        final gatewayModel = config.gatewayModel.trim();
+        final model = provider == ModelProvider.wainao
+            ? gatewayModel
+            : providers.profileFor(provider).modelFor(ModelScene.polish);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const _DevLabel('当前生效的清洗模型'),
             Container(
+              width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: c.card,
@@ -41,7 +45,11 @@ class DeveloperModelSection extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    config.effectiveModelLabel,
+                    !config.cloudEnabled
+                        ? '请选择服务'
+                        : model.isEmpty
+                        ? '自动选择'
+                        : model,
                     key: const Key('dev-effective-model'),
                     style: TextStyle(
                       fontSize: 16,
@@ -49,133 +57,20 @@ class DeveloperModelSection extends StatelessWidget {
                       color: c.label,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '来源：${config.modelSourceLabel}',
-                    key: const Key('dev-model-source'),
-                    style: TextStyle(fontSize: 12.5, color: primary),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '没有手动指定时，这里显示网关实际返回的文本模型，不会把目录里的 deepseek-v3 当成已选项。',
-                    style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
-                  ),
-                  if (gateway.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    for (final model in gateway)
-                      _GatewayModelTile(config: config, model: model),
-                  ],
-                  const SizedBox(height: 8),
-                  _ModelOverrideField(config: config),
+                  if (config.cloudEnabled)
+                    Text(
+                      provider == ModelProvider.wainao
+                          ? '来源：网关默认'
+                          : provider.label,
+                      key: const Key('dev-model-source'),
+                      style: TextStyle(fontSize: 12.5, color: c.sec),
+                    ),
                 ],
               ),
             ),
           ],
         );
       },
-    );
-  }
-}
-
-class _GatewayModelTile extends StatelessWidget {
-  const _GatewayModelTile({required this.config, required this.model});
-
-  final AgentConfigStore config;
-  final CloudModelOption model;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.rc;
-    final selected =
-        config.userPickedCloudModel && config.cloudModel == model.id;
-    return InkWell(
-      key: Key('dev-model-opt-${model.id}'),
-      onTap: () => unawaited(config.setCloudModel(model.id)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          children: [
-            Icon(
-              selected ? Icons.radio_button_checked : Icons.radio_button_off,
-              size: 18,
-              color: selected ? c.ok : c.ax,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                model.name,
-                style: TextStyle(fontSize: 13.5, color: c.label),
-              ),
-            ),
-            Text(
-              '网关',
-              style: TextStyle(fontSize: 11, color: c.okInk),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ModelOverrideField extends StatefulWidget {
-  const _ModelOverrideField({required this.config});
-
-  final AgentConfigStore config;
-
-  @override
-  State<_ModelOverrideField> createState() => _ModelOverrideFieldState();
-}
-
-class _ModelOverrideFieldState extends State<_ModelOverrideField> {
-  late final TextEditingController _ctrl = TextEditingController(
-    text: widget.config.userPickedCloudModel ? widget.config.cloudModel : '',
-  );
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.rc;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          key: const Key('dev-model-input'),
-          controller: _ctrl,
-          style: TextStyle(fontSize: 13.5, color: c.label),
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: '手动指定模型 id，例如网关里的实际名称',
-            hintStyle: TextStyle(fontSize: 12.5, color: c.ax),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(9)),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            TextButton(
-              key: const Key('dev-model-use-gateway'),
-              onPressed: () async {
-                _ctrl.clear();
-                await widget.config.clearCloudModelPick();
-              },
-              child: const Text('改回网关默认'),
-            ),
-            const Spacer(),
-            FilledButton(
-              key: const Key('dev-model-save'),
-              onPressed: () =>
-                  unawaited(widget.config.setCloudModel(_ctrl.text)),
-              child: const Text('使用这个模型'),
-            ),
-          ],
-        ),
-      ],
     );
   }
 }

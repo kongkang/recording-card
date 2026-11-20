@@ -11,18 +11,16 @@ struct WatchMainView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color.black
+            GeometryReader { geometry in
+                let compact = geometry.size.width < 180
+                let controlHeight: CGFloat = compact ? 44 : 48
+                let queueHeight: CGFloat = compact ? 34 : 38
+                let bottomInset = max(geometry.safeAreaInsets.bottom, compact ? 7 : 8)
 
                 VStack(spacing: 0) {
-                    statusHeader
-                        .frame(height: 16)
-                        .padding(.top, 5)
-                        .padding(.leading, 20)
-                        .padding(.trailing, 58)
-                    Spacer(minLength: 0)
-                    centerDial
-                    Spacer(minLength: 0)
+                    centerDial(compact: compact, width: geometry.size.width)
+                        .frame(maxHeight: .infinity)
+
                     if let error = engine.snapshot.lastError, !error.isEmpty {
                         Text(error)
                             .font(.system(size: 10))
@@ -31,51 +29,59 @@ struct WatchMainView: View {
                             .padding(.horizontal, 10)
                             .padding(.bottom, 3)
                     }
-                    bottomControls
+                    bottomControls(
+                        height: controlHeight,
+                        queueHeight: queueHeight,
+                        bottomInset: bottomInset
+                    )
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .stroke(Color.orange, lineWidth: 2)
-                    .padding(6)
-                    .opacity(knockPulse ? 0.85 : 0)
-                    .scaleEffect(knockPulse ? 1.02 : 0.84)
-                    .allowsHitTesting(false)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .overlay(alignment: .topLeading) {
+                    statusLeading
+                        .padding(.leading, 14)
+                        // 49mm 模拟器实测：系统时间中线距屏幕顶 28pt，状态行约 11pt，顶距 22pt 时中线重合（误差 0.5px）。
+                        .padding(.top, compact ? 16 : 22)
+                        .ignoresSafeArea(edges: .top)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .stroke(Color.orange, lineWidth: 2)
+                        .padding(6)
+                        .opacity(knockPulse ? 0.85 : 0)
+                        .scaleEffect(knockPulse ? 1.02 : 0.84)
+                        .allowsHitTesting(false)
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .ignoresSafeArea(.all, edges: .all)
+            .ignoresSafeArea(edges: .bottom)
             .containerBackground(Color.black, for: .navigation)
-            .toolbar(.hidden, for: .navigationBar)
             .onChange(of: engine.snapshot.isRecording) { _, isRec in
                 if isRec { sessionMarkCount = 0 }
             }
         }
     }
 
-    private var statusHeader: some View {
+    /// 左侧状态贴着系统时间的中线。时间由 watchOS 绘制，这里不画。
+    private var statusLeading: some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(engine.isPhoneReachable ? Color.green : Color.orange)
+                .fill(engine.isPhoneReachable ? Color(red: 0.204, green: 0.780, blue: 0.349) : Color.orange)
                 .frame(width: 7, height: 7)
             Text(engine.isPhoneReachable ? "已连手机" : "离线暂存")
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
             if engine.snapshot.isCharging || engine.snapshot.batteryPercent >= 0 {
                 Text(batteryTierLabel)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(engine.snapshot.isCharging ? Color.green : Color.white.opacity(0.72))
+                    .foregroundStyle(engine.snapshot.isCharging ? Color(red: 0.388, green: 0.902, blue: 0.525) : .white.opacity(0.72))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
             }
-            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .font(.system(size: 10.5, weight: .semibold))
+        .foregroundStyle(.white.opacity(0.85))
+        .minimumScaleFactor(0.7)
+        .accessibilityElement(children: .combine)
     }
 
-    private var centerDial: some View {
-        VStack(spacing: 3) {
+    private func centerDial(compact: Bool, width: CGFloat) -> some View {
+        VStack(spacing: compact ? 2 : 4) {
             if engine.snapshot.isRecording {
                 HStack(spacing: 6) {
                     HStack(spacing: 4) {
@@ -96,7 +102,7 @@ struct WatchMainView: View {
                     }
                 }
                 Text(formatClock(engine.snapshot.elapsedSec))
-                    .font(.system(size: 32, weight: .semibold, design: .monospaced))
+                    .font(.system(size: min(38, width * (compact ? 0.16 : 0.18)), weight: .semibold, design: .monospaced))
                     .monospacedDigit()
                     .foregroundStyle(.white)
                 Text(remainEstimateText)
@@ -105,13 +111,13 @@ struct WatchMainView: View {
                 Text("轻敲两下机身打点")
                     .font(.system(size: 9.5))
                     .foregroundStyle(.white.opacity(0.42))
-                    .padding(.top, 2)
+                    .padding(.top, compact ? 0 : 2)
             } else {
                 Text(Date(), format: .dateTime.month().day().weekday(.abbreviated))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color.orange)
                 Text(Date(), format: .dateTime.hour().minute())
-                    .font(.system(size: 42, weight: .medium))
+                    .font(.system(size: compact ? 36 : 42, weight: .medium))
                     .monospacedDigit()
                     .foregroundStyle(.white)
                 Text("表盘组件亦可一键开录")
@@ -119,6 +125,8 @@ struct WatchMainView: View {
                     .foregroundStyle(.white.opacity(0.42))
             }
         }
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
@@ -130,7 +138,7 @@ struct WatchMainView: View {
         }
     }
 
-    private var bottomControls: some View {
+    private func bottomControls(height: CGFloat, queueHeight: CGFloat, bottomInset: CGFloat) -> some View {
         VStack(spacing: 5) {
             Group {
                 if engine.snapshot.isRecording {
@@ -138,12 +146,14 @@ struct WatchMainView: View {
                         Text("先点亮屏幕 · 再滑动停止")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.68))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                             .frame(maxWidth: .infinity)
-                            .frame(height: 36)
+                            .frame(height: height)
                             .background(Color.white.opacity(0.08), in: Capsule())
                             .overlay(Capsule().stroke(Color.white.opacity(0.22), lineWidth: 1))
                     } else {
-                        FlatSlideToStopControl {
+                        FlatSlideToStopControl(height: height) {
                             engine.toggleRecording()
                         }
                     }
@@ -155,8 +165,8 @@ struct WatchMainView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
-                            .frame(height: 36)
-                            .background(Color(red: 0.19, green: 0.82, blue: 0.35), in: Capsule())
+                            .frame(height: height)
+                            .background(Color(red: 0.188, green: 0.820, blue: 0.345), in: Capsule())
                     }
                     .buttonStyle(.plain)
                 }
@@ -166,13 +176,14 @@ struct WatchMainView: View {
             NavigationLink {
                 WatchQueueView(engine: engine)
             } label: {
-                singleLapQueueFooter
+                designSliceBar(queueHeight: queueHeight, bottomInset: bottomInset)
             }
             .buttonStyle(.plain)
         }
     }
 
-    private var singleLapQueueFooter: some View {
+    /// 设计稿 `.w-slice-bar`：全宽贴底，上圆角 14，内容高 38，进度线高 2、左 14% 起、最长 72%。
+    private func designSliceBar(queueHeight: CGFloat, bottomInset: CGFloat) -> some View {
         let lap = engine.snapshot.isRecording ? (engine.snapshot.elapsedSec % 60) : 0
         let remaining = 60 - lap
         let progress = engine.snapshot.isRecording ? Double(lap) / 60.0 : 0.0
@@ -185,60 +196,63 @@ struct WatchMainView: View {
             topTrailingRadius: 14,
             style: .continuous
         )
+        let ring = engine.snapshot.isRecording
+            ? Color(red: 1, green: 0.271, blue: 0.227)
+            : Color(red: 0.188, green: 0.820, blue: 0.345)
 
-        return ZStack(alignment: .bottom) {
+        return ZStack(alignment: .top) {
             HStack(spacing: 6) {
                 HStack(spacing: 5) {
                     ZStack {
                         Circle()
                             .stroke(Color.white.opacity(0.18), lineWidth: 1.8)
                         Circle()
-                            .trim(from: progress, to: 1)
-                            .stroke(
-                                engine.snapshot.isRecording ? Color.red : Color(red: 0.19, green: 0.82, blue: 0.35),
-                                style: StrokeStyle(lineWidth: 1.8, lineCap: .round)
-                            )
+                            .trim(from: engine.snapshot.isRecording ? progress : 0, to: 1)
+                            .stroke(ring, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
                             .rotationEffect(.degrees(-90))
                     }
-                    .frame(width: 13, height: 13)
+                    .frame(width: 14, height: 14)
                     Text(engine.snapshot.isRecording ? "单圈 \(remaining)s" : "单圈 60s")
                         .font(.system(size: 10, weight: .semibold))
                         .monospacedDigit()
                         .foregroundStyle(.white.opacity(0.88))
                 }
-                Spacer()
+                Spacer(minLength: 4)
                 HStack(spacing: 3) {
                     Text(footerQueueSummary(pending: pending, synced: synced))
                         .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(pending > 0 ? Color.orange : (synced > 0 ? Color.green : Color.white.opacity(0.72)))
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(pending > 0 ? Color.orange : (synced > 0 ? Color(red: 0.188, green: 0.820, blue: 0.345) : .white.opacity(0.72)))
+                    Text("›")
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.5))
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.bottom, 4)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-
-            GeometryReader { geo in
-                let inset: CGFloat = 28
-                let width = max(0, geo.size.width - inset * 2)
-                Rectangle()
-                    .fill(Color(red: 1, green: 0.27, blue: 0.23))
-                    .frame(width: width * progress, height: 2)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .padding(.horizontal, inset)
-                    .padding(.bottom, 1.5)
-            }
-            .allowsHitTesting(false)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .padding(.horizontal, 14)
+            .frame(height: queueHeight)
         }
-        .frame(height: 34)
         .frame(maxWidth: .infinity)
-        .background(
-            pending > 0 ? Color.orange.opacity(0.15) : Color.white.opacity(0.09),
-            in: footerShape
-        )
-        .clipShape(footerShape)
+        .frame(height: queueHeight + bottomInset, alignment: .top)
+        .background {
+            footerShape
+                .fill(pending > 0 ? Color.orange.opacity(0.15) : Color.white.opacity(0.09))
+        }
+        .overlay(alignment: .bottom) {
+            if engine.snapshot.isRecording && progress > 0 {
+                GeometryReader { geo in
+                    let lead = geo.size.width * 0.14
+                    let span = geo.size.width * 0.72 * progress
+                    Capsule()
+                        .fill(Color(red: 1, green: 0.271, blue: 0.227))
+                        .frame(width: max(2, span), height: 2)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                        .offset(x: lead)
+                        .padding(.bottom, bottomInset + 2)
+                }
+                .allowsHitTesting(false)
+            }
+        }
     }
 
     private func footerQueueSummary(pending: Int, synced: Int) -> String {
@@ -291,13 +305,14 @@ struct WatchMainView: View {
 }
 
 private struct FlatSlideToStopControl: View {
+    let height: CGFloat
     let onStop: () -> Void
     @State private var dragX: CGFloat = 0
 
     var body: some View {
         GeometryReader { geo in
-            let knobSize: CGFloat = 30
-            let padding: CGFloat = 3
+            let padding: CGFloat = 4
+            let knobSize = height - padding * 2
             let maxDrag = max(1, geo.size.width - knobSize - padding * 2)
 
             ZStack(alignment: .leading) {
@@ -308,8 +323,11 @@ private struct FlatSlideToStopControl: View {
                 Text("滑动停止录音")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color(red: 1.0, green: 0.42, blue: 0.37))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity)
-                    .padding(.leading, 16)
+                    .padding(.leading, knobSize + padding * 2)
+                    .padding(.trailing, 8)
 
                 Circle()
                     .fill(Color.red)
@@ -339,7 +357,7 @@ private struct FlatSlideToStopControl: View {
                     )
             }
         }
-        .frame(height: 36)
+        .frame(height: height)
     }
 }
 
@@ -348,6 +366,10 @@ private struct WatchQueueView: View {
 
     var body: some View {
         List {
+            Text("手表版本 \(watchAppVersionLabel)")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .listRowBackground(Color.clear)
             if engine.snapshot.pendingSliceCount > 0 {
                 Button("立即同步到手机") {
                     engine.flushPendingTransfers()
@@ -374,10 +396,7 @@ private struct WatchQueueView: View {
                     }
                 }
             }
-            Text("版本 \(watchAppVersionLabel)")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .listRowBackground(Color.clear)
+
         }
         .navigationTitle("本地队列")
         .toolbar(.visible, for: .navigationBar)
@@ -385,10 +404,7 @@ private struct WatchQueueView: View {
     }
 
     private var watchAppVersionLabel: String {
-        let ver = engine.snapshot.appVersion.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !ver.isEmpty { return ver }
-        let fallback = WatchSessionSyncEngine.bundledAppVersionLabel
-        return fallback.isEmpty ? "1.0.0" : fallback
+        WatchSessionSyncEngine.bundledAppVersionLabel
     }
 
     private func stateLabel(_ state: WatchSliceTransferState) -> String {

@@ -256,7 +256,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 50));
         final svLocal = tester.widget<Text>(find.byKey(const Key('sv-local')));
-        expect(svLocal.data, '系统内置 · 即用');
+        expect(svLocal.data, '系统转写');
 
         // 二级本地语音引擎页状态校验
         await tester.pumpWidget(
@@ -271,16 +271,19 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.byKey(const Key('local-status-card')), findsOneWidget);
-        expect(find.byKey(const Key('local-device-summary')), findsOneWidget);
-        expect(find.text('当前设备：iPhone · iOS 26'), findsOneWidget);
+        expect(find.textContaining('SpeechAnalyzer'), findsNothing);
+        await tester.tap(find.byKey(const Key('local-engine-help')));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('SpeechAnalyzer'), findsOneWidget);
+        await tester.tap(find.text('关闭'));
+        await tester.pumpAndSettle();
         expect(find.text('本地转写已就绪'), findsOneWidget);
-        expect(find.text('系统内置生效中'), findsOneWidget);
         expect(find.byKey(const Key('model-install-all')), findsNothing);
         expect(find.byKey(const Key('asr-engine-group')), findsOneWidget);
         expect(find.byKey(const Key('asr-opt-system')), findsOneWidget);
         expect(find.byKey(const Key('asr-opt-sensevoice')), findsOneWidget);
         expect(find.byKey(const Key('model-dl-asr')), findsOneWidget);
-        expect(find.text('下载并启用（~228 MB）'), findsOneWidget);
+        expect(find.text('下载并启用'), findsOneWidget);
         expectNoCrossPlatformText(
           tester,
           forbidden: const ['Android', 'Bixby', 'HyperOS'],
@@ -331,11 +334,9 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('待启用本地转写'), findsOneWidget);
+        expect(find.text('等待下载转写模型'), findsOneWidget);
         expect(find.byKey(const Key('asr-opt-system')), findsNothing);
         expect(find.byKey(const Key('asr-opt-sensevoice')), findsOneWidget);
-        expect(find.text('本机推荐方案'), findsOneWidget);
-        expect(find.textContaining('低于 iOS 26'), findsAtLeastNWidgets(1));
         expectNoCrossPlatformText(
           tester,
           forbidden: const ['Android', 'Bixby', 'HyperOS'],
@@ -348,7 +349,7 @@ void main() {
         expect(installer.installedFromCalls, contains(senseVoiceSpec.id));
         expect(ctrl.effectiveAsrMode, 'sensevoice');
         expect(ctrl.settingSummaryLabel, 'SenseVoice · 已就绪');
-        expect(find.text('SenseVoice 生效中'), findsOneWidget);
+        expect(find.text('本地转写已就绪'), findsOneWidget);
         expect(find.byKey(const Key('model-install-all')), findsNothing);
       },
     );
@@ -405,15 +406,12 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(
-          find.text('当前设备：Google Pixel 9 · Android 15'),
-          findsOneWidget,
-        );
+        expect(find.textContaining('Google Pixel 9'), findsNothing);
         expect(find.byKey(const Key('asr-opt-system')), findsOneWidget);
         expect(
           find.descendant(
             of: find.byKey(const Key('asr-opt-system')),
-            matching: find.text('Google 端侧离线语音引擎'),
+            matching: find.text('系统转写'),
           ),
           findsOneWidget,
         );
@@ -442,13 +440,9 @@ void main() {
 
         final dialog = find.byKey(const Key('model-delete-confirm-dialog'));
         expect(
-          find.descendant(of: dialog, matching: find.textContaining('228 MB')),
-          findsOneWidget,
-        );
-        expect(
           find.descendant(
             of: dialog,
-            matching: find.textContaining('Google 端侧离线语音引擎'),
+            matching: find.textContaining('使用系统转写'),
           ),
           findsOneWidget,
         );
@@ -516,13 +510,11 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('兼容方案生效中'), findsOneWidget);
-        expect(find.text('兼容方案优先'), findsOneWidget);
         expect(find.byKey(const Key('asr-opt-system')), findsOneWidget);
         expect(
           find.descendant(
             of: find.byKey(const Key('asr-opt-system')),
-            matching: find.text('三星 Galaxy 兼容方案（直连 Google 端侧语音）'),
+            matching: find.text('系统转写'),
           ),
           findsOneWidget,
         );
@@ -546,7 +538,7 @@ void main() {
         expect(
           find.descendant(
             of: dialog,
-            matching: find.textContaining('三星 Galaxy 兼容方案（直连 Google 端侧语音）'),
+            matching: find.textContaining('使用系统转写'),
           ),
           findsOneWidget,
         );
@@ -691,14 +683,9 @@ void main() {
 
           expect(find.byKey(const Key('asr-opt-system')), findsNothing);
           expect(find.byKey(const Key('asr-opt-sensevoice')), findsOneWidget);
-          expect(find.text('本机推荐方案'), findsOneWidget);
-          expect(find.text('本地首选'), findsOneWidget);
-          expect(
-            find.text('当前设备：${entry.caps.deviceSummary}'),
-            findsOneWidget,
-          );
+            expect(find.textContaining(entry.caps.deviceSummary), findsNothing);
           for (final kw in entry.mustContain) {
-            expect(find.textContaining(kw), findsAtLeastNWidgets(1));
+            expect(find.textContaining(kw), findsNothing);
           }
           expectNoCrossPlatformText(
             tester,
@@ -706,7 +693,7 @@ void main() {
           );
         }
 
-        // 在最后一个机型（三星 Bixby）上手动下载 SenseVoice 后可正常就绪，删除时出现云端风险提示且无 iOS 字样
+        // 下载后可转写，删除前说明暂停转写的影响。
         await tester.ensureVisible(find.byKey(const Key('model-dl-asr')));
         await tester.tap(find.byKey(const Key('model-dl-asr')));
         await flushAsync(tester);
@@ -723,12 +710,8 @@ void main() {
         expect(
           find.descendant(
             of: dialog,
-            matching: find.textContaining('付费云端模式'),
+            matching: find.textContaining('暂停本地转写'),
           ),
-          findsOneWidget,
-        );
-        expect(
-          find.descendant(of: dialog, matching: find.textContaining('隐私')),
           findsOneWidget,
         );
         expectNoCrossPlatformText(
@@ -802,7 +785,7 @@ void main() {
         expect(installer.installedFromCalls.length, 1);
         expect(ctrl.effectiveAsrMode, 'sensevoice');
 
-        // 4. 删除 SenseVoice 后提示释放 228 MB 且自动回退系统内置
+        // 4. 删除增强转写后自动回退系统转写
         final delBtn = find.byKey(const Key('model-delete-sensevoice-small-int8'));
         await tester.ensureVisible(delBtn);
         await tester.tap(delBtn);
@@ -811,13 +794,9 @@ void main() {
         final dialog = find.byKey(const Key('model-delete-confirm-dialog'));
         expect(dialog, findsOneWidget);
         expect(
-          find.descendant(of: dialog, matching: find.textContaining('228 MB')),
-          findsOneWidget,
-        );
-        expect(
           find.descendant(
             of: dialog,
-            matching: find.textContaining('iOS 系统内置模型（SpeechAnalyzer）'),
+            matching: find.textContaining('使用系统转写'),
           ),
           findsOneWidget,
         );
@@ -834,7 +813,6 @@ void main() {
         expect(ctrl.effectiveAsrMode, 'system');
         expect(agentConfig.preferredAsrEngine, 'system');
         expect(ctrl.settingSummaryLabel, '系统内置 · 即用');
-        expect(find.text('系统内置生效中'), findsOneWidget);
       },
     );
   });

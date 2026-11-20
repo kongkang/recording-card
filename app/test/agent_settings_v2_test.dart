@@ -104,9 +104,7 @@ void main() {
     expect(reopened.presetId, 'general');
   });
 
-  testWidgets('Setting 四个模型与智能体二级页：导航/修改/返回面包屑与父级摘要实时同步', (
-    tester,
-  ) async {
+  testWidgets('Setting 四个模型与智能体二级页：导航/修改/返回面包屑与父级摘要实时同步', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -136,37 +134,14 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const Key('sv-cloud')), findsOneWidget);
-    expect(
-      tester.widget<Text>(find.byKey(const Key('sv-cloud'))).data,
-      '已开启 · 等待网关模型',
-    );
-    await agentConfig.setDeveloperMode(true);
-    await tester.pump();
-    expect(
-      tester.widget<Text>(find.byKey(const Key('sv-cloud'))).data,
-      '已开启 · 等待网关模型',
-    );
-
-    // 1) 云端模型设置二级页：切换模型 + 温度 → 返回后摘要实时变为 qwen-max
     await tester.tap(find.byKey(const Key('set-cloud-model')));
     await tester.pump();
     expect(find.byKey(const Key('setsub-title')), findsOneWidget);
     expect(find.byKey(const Key('crumb-back')), findsOneWidget);
-    expect(find.text('Setting'), findsWidgets);
-
-    await tester.tap(find.byKey(const Key('model-opt-qwen-max')));
-    await tester.pump();
-    await tester.ensureVisible(find.byKey(const Key('temp-0.5')));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('temp-0.5')));
-    await tester.pump();
-
+    expect(find.byKey(const Key('cloud-provider-wainao')), findsOneWidget);
+    expect(find.byKey(const Key('cloud-provider-key')), findsNothing);
     await tester.tap(find.byKey(const Key('crumb-back')));
     await tester.pump();
-    expect(
-      tester.widget<Text>(find.byKey(const Key('sv-cloud'))).data,
-      'qwen-max · 用户指定',
-    );
 
     // 2) 预设风格与提示词二级页：切预设 + 编辑保存提示词 → 摘要变「自定义」
     await tester.tap(find.byKey(const Key('set-prompts')));

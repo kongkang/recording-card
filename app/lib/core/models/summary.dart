@@ -16,6 +16,34 @@ bool isSilentPlaceholderEvent(RecordEvent e) {
   return spk == '无语音' || title == '未识别到语音';
 }
 
+final RegExp _substantiveChar = RegExp(r'[\p{L}\p{N}]', unicode: true);
+
+/// 去掉标点和模型标记后的实质字数。
+int substantiveCharCount(String text) {
+  final cleaned = text.replaceAll(RegExp(r'<[^>]*>'), '');
+  return _substantiveChar.allMatches(cleaned).length;
+}
+
+/// 时间轴不展示的记录：纯静音占位，或正文只有几个字、没有独立事实。
+///
+/// 有完整话题的短句（如「询问深圳晚间天气」）字数超过 4，会保留。
+bool isFragmentRecord(RecordEvent e) {
+  if (e.live) return false;
+  if (isSilentPlaceholderEvent(e)) return true;
+  final speech = <String>[
+    for (final t in e.dialog) t.text,
+    for (final t in e.raw) t.text,
+  ].where((s) => s.trim().isNotEmpty).join();
+  if (speech.isEmpty) {
+    final fallback = '${e.title}\n${e.brief}\n${e.longText}';
+    if (fallback.contains('没有识别到人声') || fallback.contains('未识别到语音')) {
+      return true;
+    }
+    return substantiveCharCount(fallback) <= 4;
+  }
+  return substantiveCharCount(speech) <= 4;
+}
+
 /// 解析形如 `14:20—14:35`、`14:20—14:35 · 15m`、`14:20 · 18分40秒`、`14:20 · 15m` 的起止日内秒数区间。
 (int, int)? parseSourceClockWindow(String raw) {
   final text = raw.trim();

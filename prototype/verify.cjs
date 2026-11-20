@@ -525,8 +525,11 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="nt-btn"]');
   assert(await p.$eval('#nt-pop', x => !x.hidden && x.innerText.includes('Android 多品牌端侧 ASR')));
   await p.click('[data-testid="nt-item-android-asr"]');
-  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('兼容方案生效中') && x.innerText.includes('三星 Galaxy 兼容方案（直连 Google 端侧语音）')));
+  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('系统转写') && !x.innerText.includes('Google')));
   assert(await p.$eval('[data-testid="nt-badge-local-sub"]', x => x.innerText.trim() === 'NT'));
+  assert(await p.$eval('[data-testid="local-help"]', x => x.hidden));
+  await p.click('[data-testid="local-engine-help"]');
+  assert(await p.$eval('[data-testid="local-help"]', x => !x.hidden));
   await p.$eval('[data-testid="plat-chip-ios26"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-ios26"]');
   await p.click('[data-testid="crumb-back"]');
@@ -534,7 +537,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('[data-testid="nt-badge-local-row"]', x => x.innerText.trim() === 'NT'));
   await p.$eval('[data-testid="set-local-model"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="set-local-model"]');
-  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('本地转写已就绪') && x.innerText.includes('系统内置生效中') && x.innerText.includes('SenseVoice')));
+  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('系统转写') && x.innerText.includes('增强转写')));
   assert.equal(await p.$('[data-testid="local-verify-btn"]'), null);
   assert.equal(await p.$('[data-testid="model-install-all"]'), null);
   assert.equal(await p.$('[data-testid="model-delete-sensevoice-small-int8"]'), null);
@@ -546,18 +549,20 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.$eval('[data-testid="model-delete-sensevoice-small-int8"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="model-delete-sensevoice-small-int8"]');
   assert(await p.$eval('#mdl-del-wrap', x => x.classList.contains('show')));
-  assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('228 MB') && x.innerText.includes('系统默认模型')));
+  assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('228 MB') && x.innerText.includes('切回系统模型')));
   await p.click('[data-testid="model-delete-confirm-btn"]');
   assert.equal(await p.$('[data-testid="model-install-all"]'), null);
-  assert(await p.$eval('#p-setsub', x => x.innerText.includes('系统内置生效中')));
+  assert(await p.$eval('#p-setsub', x => x.innerText.includes('系统转写')));
+  assert(await p.$eval('[data-testid="local-help"]', x => x.hidden));
+  await p.click('[data-testid="local-engine-help"]');
   // Android GMS（Pixel）：原生端侧语音模型免下载即用，且界面绝不出现 iOS / SpeechAnalyzer 推荐文案
   await p.$eval('[data-testid="plat-chip-android-gms"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-android-gms"]');
   assert.equal(await p.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
   assert(await p.$eval('[data-testid="local-device-summary"]', x => x.innerText.includes('Pixel')));
-  assert(await p.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('Pixel 原生端侧语音模型')));
+  assert(await p.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('系统转写')));
   assert(await p.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
     return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
   }), 'Android GMS 页面不应出现 iOS 模型推荐');
   await p.$eval('[data-testid="model-dl-sys-pack"]', x => x.scrollIntoView({ block: 'center' }));
@@ -567,68 +572,85 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.$eval('[data-testid="plat-chip-android-compat"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-android-compat"]');
   assert.equal(await p.$eval('#sv-local', x => x.innerText.trim()), '兼容方案 · 即用');
-  assert(await p.$eval('[data-testid="local-status-card"]', x => x.innerText.includes('兼容方案生效中') && x.innerText.includes('三星 Galaxy')));
-  assert(await p.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('兼容方案优先') && x.innerText.includes('三星 Galaxy 兼容方案（直连 Google 端侧语音）')));
+  assert(await p.$eval('[data-testid="local-status-card"]', x => x.innerText.includes('系统转写') && !x.innerText.includes('三星 Galaxy')));
+  assert(await p.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('系统转写')));
   assert(await p.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
     return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
   }), 'Android 兼容方案页面不应出现 iOS 模型推荐');
   // 国产 Android（HyperOS 等）：隐藏系统选项，将本地 SenseVoice 设为第一选择
   await p.$eval('[data-testid="plat-chip-android-cn"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-android-cn"]');
   assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
-  assert(await p.$eval('[data-testid="asr-opt-sensevoice"]', x => x.innerText.includes('本机推荐方案') && x.innerText.includes('本地首选')));
+  assert(await p.$eval('[data-testid="model-install-all"]', x => x.innerText.includes('下载')));
   assert(await p.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
-    return txt.includes('Xiaomi 15') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
+    return !txt.includes('Xiaomi 15') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
   }));
   // 三星仅 Bixby：明确拦截说明并仅展示 SenseVoice
   await p.$eval('[data-testid="plat-chip-android-bixby"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-android-bixby"]');
   assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
   assert(await p.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
-    return txt.includes('Bixby') && txt.includes('麦克风') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
+    return !txt.includes('Bixby') && !txt.includes('麦克风') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
   }));
   // 旧 iOS 15–25：同样隐藏不可用系统选项，引导手动下载并在删完后提示云端风险，绝不出现 Android 字样
   await p.$eval('[data-testid="plat-chip-ios-old"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-ios-old"]');
   assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
   assert(await p.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
     return !txt.includes('Android') && !txt.includes('Bixby');
   }));
   await p.waitForSelector('[data-testid="model-install-all"]', { timeout: 3000 });
   await p.$eval('[data-testid="model-install-all"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="model-install-all"]');
-  await p.waitForFunction(() => document.getElementById('p-setsub').innerText.includes('SenseVoice 生效中'), { timeout: 4000 });
+  await p.waitForSelector('[data-testid="asr-opt-sensevoice"].on', { timeout: 4000 });
   await p.$eval('[data-testid="model-delete-sensevoice-small-int8"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="model-delete-sensevoice-small-int8"]');
-  assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('付费云端模式') && x.innerText.includes('隐私')));
+  assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('重新下载前暂停转写')));
   await p.click('[data-testid="model-delete-confirm-btn"]');
   await p.waitForSelector('[data-testid="model-install-all"]', { timeout: 3000 });
   await p.$eval('[data-testid="plat-chip-ios26"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-ios26"]');
-  assert(await p.$eval('#p-setsub', x => x.innerText.includes('本地转写已就绪') && x.innerText.includes('系统内置生效中')));
+  assert(await p.$eval('#p-setsub', x => x.innerText.includes('系统转写')));
   await p.click('[data-testid="crumb-back"]');
   assert(await p.$eval('#p-setting', x => x.classList.contains('show')));
-  // 云端模型极简模式 + 连击版本号 7 次解锁开发者模式
-  assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), '已开启');
+  // 外脑默认自动选模，并且无需先启用云端模型。
+  assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), '外脑（Wainao）');
   await p.click('[data-testid="set-cloud-model"]');
-  assert(await p.$('[data-testid="cloud-enable-switch"]'));
-  assert(await p.$('[data-testid="cloud-custom-api-input"]'));
-  assert.equal(await p.$('[data-testid="model-opt-qwen-max"]'), null);
+  assert.equal(await p.$eval('[data-testid="cloud-provider-wainao"]', x => x.getAttribute('aria-pressed')), 'true');
+  assert.equal(await p.$('[data-testid="cloud-enable-switch"]'), null);
+  assert.equal(await p.$('[data-testid="cloud-api-key"]'), null);
+  await p.click('[data-testid="cloud-provider-deepseek"]');
+  assert(await p.$('[data-testid="cloud-api-key"]'));
+  assert.equal(await p.$eval('[data-testid="cloud-advanced"]', x => x.open), false);
+  await p.click('[data-testid="cloud-test-connection"]');
+  assert.equal(await p.$eval('#cloud-connection-status', x => x.innerText), '请输入 API Key');
+  await p.type('[data-testid="cloud-api-key"]', 'preview-key');
+  await p.click('[data-testid="cloud-test-connection"]');
+  assert.equal(await p.$eval('#cloud-connection-status', x => x.innerText), '预览 · 示例模型');
+  await p.click('[data-testid="cloud-save-provider"]');
+  assert.equal(await p.$eval('#cloud-connection-status', x => x.innerText), '请选择总结模型');
+  await p.select('[data-testid="cloud-model-summary"]', 'deepseek-chat');
+  await p.click('[data-testid="cloud-save-provider"]');
+  assert.equal(await p.$eval('[data-testid="cloud-provider-deepseek"]', x => x.getAttribute('aria-pressed')), 'true');
+  await p.click('[data-testid="cloud-provider-custom"]');
+  await p.click('[data-testid="cloud-test-connection"]');
+  assert.equal(await p.$eval('#cloud-connection-status', x => x.innerText), '请输入有效的 HTTPS API 地址');
+  await p.type('[data-testid="cloud-custom-api-input"]', 'https://api.example.com/v1');
+  await p.click('[data-testid="cloud-test-connection"]');
+  assert(await p.$('[data-testid="cloud-model-summary"]'));
+  await p.click('[data-testid="cloud-provider-wainao"]');
+  await p.click('[data-testid="cloud-provider-deepseek"]');
+  await p.click('[data-testid="cloud-use-configured"]');
   await p.click('[data-testid="crumb-back"]');
+  assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), 'DeepSeek');
   for (let i = 0; i < 7; i++) {
     await p.click('[data-testid="setting-version"]');
   }
   assert.equal(await p.$eval('#lbl-version', x => x.innerText.trim()), '版本（开发者）');
-  await p.click('[data-testid="set-cloud-model"]');
-  await p.click('[data-testid="model-opt-qwen-max"]');
-  assert(await p.$('[data-testid="temp-0.2"]'));
-  assert.equal(await p.$eval('[data-testid="tbc-ctx-fullday"]', x => x.innerText.trim()), 'TBC');
-  await p.click('[data-testid="crumb-back"]');
-  assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), 'qwen-max');
   // 交叉反馈：每分钟自动关联系统相册照片（默认开启开关 + 关后重开弹权限弹窗）+ 灵动岛按机型隐藏
   assert.equal(await p.$eval('[data-testid="sw-photo-sync"]', x => x.getAttribute('aria-checked')), 'true');
   assert(await p.$eval('#sv-photo-imp', x => x.innerText.includes('每分钟随切片自动对齐')));
@@ -1166,19 +1188,22 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$eval('[data-testid="nt-badge-local-sub"]', x => x.innerText.trim() === 'NT'));
   assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on')));
   assert(await pCur.$('[data-testid="model-dl-asr"]'));
+  assert(await pCur.$eval('[data-testid="local-help"]', x => x.hidden));
+  await pCur.click('[data-testid="local-engine-help"]');
+  assert(await pCur.$eval('[data-testid="local-help"]', x => !x.hidden));
   await pCur.$eval('[data-testid="plat-chip-android-gms"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="plat-chip-android-gms"]');
-  assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('Pixel 原生端侧语音模型')));
+  assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('系统转写')));
   assert(await pCur.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
     return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
   }));
   await pCur.$eval('[data-testid="plat-chip-android-compat"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="plat-chip-android-compat"]');
   assert.equal(await pCur.$eval('#sv-local', x => x.innerText.trim()), '兼容方案 · 即用');
-  assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('兼容方案优先')));
+  assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('系统转写')));
   assert(await pCur.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
     return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
   }));
   await pCur.$eval('[data-testid="plat-chip-android-cn"]', x => x.scrollIntoView({ block: 'center' }));
