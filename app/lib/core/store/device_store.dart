@@ -437,13 +437,16 @@ class DeviceStore extends ChangeNotifier {
   }
 
   /// 扫描附近硬件（DYJ / REAI_VB 前缀蓝牙硬件 + 开启联动后的已配对 Apple Watch）。
-  Future<void> startScan() async {
-    if (isLinkBusy || !_gateway.available) {
-      if (!_gateway.available) {
-        linkState = LinkState.unsupported;
-        linkError = '此设备不支持连接录音卡';
-        notifyListeners();
-      }
+  ///
+  /// [force] 用于「重新扫描」：上一轮已经失败，或蓝牙通道卡死时，允许打断当前忙状态再扫。
+  Future<void> startScan({bool force = false}) async {
+    if (!_gateway.available) {
+      linkState = LinkState.unsupported;
+      linkError = '此设备不支持连接录音卡';
+      notifyListeners();
+      return;
+    }
+    if (!force && isLinkBusy) {
       return; // 防重入：扫描中再点不重复发起（SDK 要求串行）
     }
     // iOS 底层（Rust/CoreBluetooth）在扫描时会自己触发系统对话框，这里不阻塞等待；
@@ -500,14 +503,28 @@ class DeviceStore extends ChangeNotifier {
       _scheduleScanExpiryTimer();
     } on CardException catch (e) {
       if (epoch != _epoch) return;
-      _stopScanExpiryTimer();
-      _bleScanSeenAt = null;
-      _scanExpiredByTimer = false;
-      discovered = const [];
-      linkState = LinkState.disconnected;
-      linkError = e.message;
+      _failScan(e.message);
+    } on Object catch (e) {
+      if (epoch != _epoch) return;
+      _failScan('$e');
     }
     notifyListeners();
+  }
+
+  void _failScan(String message) {
+    _stopScanExpiryTimer();
+    _bleScanSeenAt = null;
+    _scanExpiredByTimer = false;
+    discovered = const [];
+    linkState = LinkState.disconnected;
+    linkError = _friendlyScanError(message);
+  }
+
+  String _friendlyScanError(String message) {
+    if (message.contains('Channel closed')) {
+      return '蓝牙通道已断开，请点重新扫描';
+    }
+    return message;
   }
 
   Future<void> connectTo(CardDevice device) async {

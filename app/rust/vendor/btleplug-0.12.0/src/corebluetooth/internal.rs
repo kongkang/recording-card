@@ -1536,7 +1536,7 @@ impl CoreBluetoothInternal {
         }
     }
 
-    async fn wait_for_message(&mut self) {
+    async fn wait_for_message(&mut self) -> bool {
         let has_pending_cb_writes = self
             .peripherals
             .values()
@@ -1547,7 +1547,11 @@ impl CoreBluetoothInternal {
             futures::future::Either::Right(futures::future::pending::<()>().fuse())
         };
         select! {
-            delegate_msg = self.delegate_receiver.select_next_some() => {
+            delegate_msg = self.delegate_receiver.next() => {
+                let Some(delegate_msg) = delegate_msg else {
+                    warn!("CoreBluetooth delegate channel closed");
+                    return false;
+                };
                 match delegate_msg {
                     // TODO We should probably also register some sort of
                     // "ready" variable in our adapter that will cause scans/etc
@@ -1668,7 +1672,11 @@ impl CoreBluetoothInternal {
                     },
                 };
             }
-            adapter_msg = self.message_receiver.select_next_some() => {
+            adapter_msg = self.message_receiver.next() => {
+                let Some(adapter_msg) = adapter_msg else {
+                    warn!("CoreBluetooth command channel closed");
+                    return false;
+                };
                 trace!("Adapter message!");
                 match adapter_msg {
                     CoreBluetoothMessage::GetAdapterState { future } => {
@@ -1724,6 +1732,7 @@ impl CoreBluetoothInternal {
                 self.schedule_all_pending_cb_write_drains();
             }
         }
+        true
     }
 
     fn get_adapter_state(&mut self, fut: CoreBluetoothReplyStateShared) {
@@ -1802,9 +1811,7 @@ pub fn run_corebluetooth_thread(
         let runtime = runtime::Builder::new_current_thread().build().unwrap();
         runtime.block_on(async move {
             let mut cbi = CoreBluetoothInternal::new(receiver, event_sender);
-            loop {
-                cbi.wait_for_message().await;
-            }
+            while cbi.wait_for_message().await {}
         })
     });
     Ok(sender)

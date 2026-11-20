@@ -65,6 +65,8 @@ class FakeCardGateway implements CardGateway {
     this.failTranscode,
     this.disconnectReport,
     this.failDisconnect,
+    this.scanError,
+    this.scanErrorTimes = 1,
     this.connectReturnsSnapshot = true,
     this.clearAfterMainOta = false,
     this.postMainOtaSnapshot,
@@ -178,6 +180,8 @@ class FakeCardGateway implements CardGateway {
   /// disconnect() 返回的桥结果；null = 已释放（旧测试默认）。
   CardDisconnectReport? disconnectReport;
   CardException? failDisconnect;
+  CardException? scanError;
+  int scanErrorTimes;
   String? lastConnectedId;
   String? lastConnectedName;
   String? lastConnectedKind;
@@ -215,6 +219,11 @@ class FakeCardGateway implements CardGateway {
   Future<List<CardDevice>> scan({int timeoutMs = 6000}) async {
     scanCalls++;
     callLog.add('scan');
+    final error = scanError;
+    if (error != null && scanErrorTimes > 0) {
+      scanErrorTimes--;
+      throw error;
+    }
     return devices;
   }
 

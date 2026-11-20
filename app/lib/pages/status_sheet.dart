@@ -391,16 +391,21 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay>
         if (!store.sheetOpen) return const SizedBox.shrink();
         // 真机 home indicator：卡片底边让出安全区（测试环境 inset=0，行为不变）
         final bottomInset = MediaQuery.paddingOf(context).bottom;
+        // 遮罩和卡片必须是兄弟，不能把卡片包进会参与手势竞技场的 GestureDetector。
+        // 父级 onTap 会和滚动、按钮抢点击，扫描失败后「重新扫描」看起来就按不下去。
         return Positioned.fill(
           key: const Key('sheet'),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: store.closeSheet, // 更新中由 store 拒绝
-            child: Container(
-              color: const Color(0x66000000),
-              alignment: Alignment.bottomCenter,
-              child: GestureDetector(
-                onTap: () {},
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: store.closeSheet, // 更新中由 store 拒绝
+                  child: const ColoredBox(color: Color(0x66000000)),
+                ),
+              ),
+              Align(
+                alignment: Alignment.bottomCenter,
                 child: Container(
                   key: const Key('sheet-card'),
                   width: double.infinity,
@@ -432,7 +437,7 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay>
                   ),
                 ),
               ),
-            ),
+            ],
           ),
         );
       },
@@ -1097,6 +1102,8 @@ class _ConnectView extends StatelessWidget {
     final c = context.rc;
     final busy = store.isLinkBusy;
     final bleExpired = store.isBleScanExpired;
+    // 已经失败的扫描不能把重试按钮锁死。通道断开时用户只能靠这一下恢复。
+    final canRescan = !busy || store.linkError != null;
     return Column(
       key: const Key('dev-connect'),
       mainAxisSize: MainAxisSize.min,
@@ -1252,7 +1259,7 @@ class _ConnectView extends StatelessWidget {
         if (bleExpired) ...[
           FilledButton(
             key: const Key('dev-rescan'),
-            onPressed: busy ? null : () => store.startScan(),
+            onPressed: canRescan ? () => store.startScan(force: true) : null,
             style: FilledButton.styleFrom(
               backgroundColor: c.label,
               foregroundColor: c.onLabel,
@@ -1276,7 +1283,7 @@ class _ConnectView extends StatelessWidget {
         ] else ...[
           OutlinedButton(
             key: const Key('dev-rescan'),
-            onPressed: busy ? null : () => store.startScan(),
+            onPressed: canRescan ? () => store.startScan(force: true) : null,
             style: OutlinedButton.styleFrom(
               foregroundColor: c.label,
               side: BorderSide(color: c.ax),

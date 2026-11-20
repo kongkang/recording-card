@@ -192,7 +192,9 @@ struct BridgeState {
     runtime: tokio::runtime::Runtime,
     device: tokio::sync::Mutex<Option<ActiveDevice>>,
     connecting_peripheral: Mutex<Option<btleplug::platform::Peripheral>>,
-    scan_adapter: tokio::sync::OnceCell<btleplug::platform::Adapter>,
+    /// 可丢弃重建。CoreBluetooth 命令线程一旦退出，旧 Adapter 的发送端会变成
+    /// `Channel closed`，OnceCell 会把这个死实例缓存到进程结束。
+    scan_adapter: tokio::sync::Mutex<Option<btleplug::platform::Adapter>>,
     scan_cache: Mutex<HashMap<String, CachedScanEntry>>,
     event_pump: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     last_device_id: Mutex<Option<String>>,
@@ -359,7 +361,7 @@ fn state() -> &'static BridgeState {
             .expect("tokio runtime"),
         device: tokio::sync::Mutex::new(None),
         connecting_peripheral: Mutex::new(None),
-        scan_adapter: tokio::sync::OnceCell::new(),
+        scan_adapter: tokio::sync::Mutex::new(None),
         scan_cache: Mutex::new(HashMap::new()),
         event_pump: tokio::sync::Mutex::new(None),
         last_device_id: Mutex::new(None),
@@ -783,7 +785,14 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
         "ota.wifi" => ota_wifi(payload, out).await?,
         "legacy_upgrade_open" => {
             let adapter = scan_adapter().await?;
-            out.ok(legacy_upgrade::open_session(adapter, &payload).await?);
+            match legacy_upgrade::open_session(&adapter, &payload).await {
+                Err(err) if is_ble_channel_closed_text(&err.message) => {
+                    reset_scan_adapter().await;
+                    let fresh = scan_adapter().await?;
+                    out.ok(legacy_upgrade::open_session(&fresh, &payload).await?);
+                }
+                other => out.ok(other?),
+            }
         }
         "legacy_upgrade_scan_wifi" => out.ok(legacy_upgrade::scan_wifi().await?),
         "legacy_upgrade_connect_wifi" => out.ok(legacy_upgrade::connect_wifi(&payload).await?),
@@ -804,23 +813,67 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
 
 // ── 统一扫描与连接 ────────────────────────────────────────────
 
-async fn scan_adapter() -> Result<&'static btleplug::platform::Adapter, BridgeError> {
-    state()
-        .scan_adapter
-        .get_or_try_init(|| async {
-            let manager = btleplug::platform::Manager::new()
-                .await
-                .map_err(|e| BridgeError::from(format!("BLE unavailable: {e}")))?;
-            let adapter = manager
-                .adapters()
-                .await
-                .map_err(|e| BridgeError::from(format!("BLE adapters failed: {e}")))?
-                .into_iter()
-                .next()
-                .ok_or_else(|| BridgeError::from("no Bluetooth adapter available".to_string()))?;
-            Ok(adapter)
-        })
+fn is_ble_channel_closed_text(text: &str) -> bool {
+    text.contains("Channel closed")
+}
+
+#[cfg(test)]
+mod ble_channel_closed_tests {
+    use super::is_ble_channel_closed_text;
+
+    #[test]
+    fn recognizes_corebluetooth_channel_closed() {
+        assert!(is_ble_channel_closed_text(
+            "BLE start_scan failed: Other(\"Channel closed\")"
+        ));
+        assert!(!is_ble_channel_closed_text("没有找到附近的录音卡"));
+    }
+}
+
+fn error_is_ble_channel_closed(err: &impl std::fmt::Debug) -> bool {
+    is_ble_channel_closed_text(&format!("{err:?}"))
+}
+
+async fn reset_scan_adapter() {
+    log::warn!("BLE command channel closed; dropping cached adapter so the next scan can rebuild it");
+    *state().scan_adapter.lock().await = None;
+}
+
+async fn scan_adapter() -> Result<btleplug::platform::Adapter, BridgeError> {
+    let mut slot = state().scan_adapter.lock().await;
+    if let Some(adapter) = slot.as_ref() {
+        return Ok(adapter.clone());
+    }
+    let manager = btleplug::platform::Manager::new()
         .await
+        .map_err(|e| BridgeError::from(format!("BLE unavailable: {e}")))?;
+    let adapter = manager
+        .adapters()
+        .await
+        .map_err(|e| BridgeError::from(format!("BLE adapters failed: {e}")))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| BridgeError::from("no Bluetooth adapter available".to_string()))?;
+    *slot = Some(adapter.clone());
+    Ok(adapter)
+}
+
+/// `start_scan` 命中已死的 CoreBluetooth 命令通道时，丢掉缓存并换一条新通道再试一次。
+async fn start_scan_recovering(
+    adapter: &btleplug::platform::Adapter,
+) -> Result<btleplug::platform::Adapter, BridgeError> {
+    match adapter.start_scan(ScanFilter::default()).await {
+        Ok(()) => Ok(adapter.clone()),
+        Err(err) if error_is_ble_channel_closed(&err) => {
+            reset_scan_adapter().await;
+            let fresh = scan_adapter().await?;
+            fresh.start_scan(ScanFilter::default()).await.map_err(|e| {
+                BridgeError::from(format!("BLE start_scan failed: {e:?}"))
+            })?;
+            Ok(fresh)
+        }
+        Err(err) => Err(BridgeError::from(format!("BLE start_scan failed: {err:?}"))),
+    }
 }
 
 fn now_unix_ms() -> i64 {
@@ -850,26 +903,24 @@ pub(crate) async fn read_peripheral_props_bounded(
 /// 单次 BLE 扫描同时发现录音卡 V2 (`DYJV2_`)、点一机 V1 (`DYJ_`) 与语音 AI 键盘 V2.1 (`REAI_VB_`)。
 async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
     alog::info("unified_scan: begin");
-    let adapter = scan_adapter().await?;
+    let mut adapter = scan_adapter().await?;
     alog::info("unified_scan: adapter ready");
     // btleplug 的 CoreBluetooth 后端只在「厂商数据 / 服务数据 / 服务 UUID」三类广播
     // 事件里回填 properties.rssi（初始 None）；只带本地名的广播（如点一机 V1 `DYJ_*`）
     // 永远拿不到 RSSI，曾被下方 `None => continue` 误丢——安卓后端无此问题，故出现
     // 「安卓五类硬件全出、iPhone 只剩 V2」（真机对照实测 2026-11-16）。
     // 这里订阅扫描窗口内的事件流，记录「本窗口确实广播过」的设备及最后收到广播的墙钟时刻。
+    // 命令通道已死时 start_scan 会立刻 Channel closed；丢掉缓存重建后再订阅事件流。
+    adapter = start_scan_recovering(&adapter).await.map_err(|e| {
+        alog::info(&format!("unified_scan: start_scan 失败 {}", e.message));
+        log::warn!("unified_scan start_scan 失败: {}", e.message);
+        e
+    })?;
     let mut scan_events = adapter
         .events()
         .await
         .map_err(|e| BridgeError::from(format!("BLE events failed: {e}")))?;
     let mut seen_this_scan: HashMap<String, i64> = HashMap::new();
-    adapter
-        .start_scan(ScanFilter::default())
-        .await
-        .map_err(|e| {
-            alog::info(&format!("unified_scan: start_scan 失败 {e:?}"));
-            log::warn!("unified_scan start_scan 失败: {e:?}");
-            BridgeError::from(format!("BLE start_scan failed: {e:?}"))
-        })?;
     alog::info("unified_scan: scanning…");
     let pump = async {
         while let Some(ev) = scan_events.next().await {
@@ -1299,14 +1350,11 @@ where
         }
     }
 
+    let adapter = start_scan_recovering(adapter).await?;
     let mut events = adapter
         .events()
         .await
         .map_err(|e| BridgeError::from(format!("BLE 扫描事件流失败: {e}")))?;
-    adapter
-        .start_scan(ScanFilter::default())
-        .await
-        .map_err(|e| BridgeError::from(format!("BLE 扫描启动失败: {e}")))?;
 
     let scan_deadline = tokio::time::Instant::now() + Duration::from_secs(12);
     let mut fresh: Option<(btleplug::platform::Peripheral, String)> = None;
@@ -1358,16 +1406,48 @@ where
     Ok((fresh_peripheral, display_name))
 }
 
+async fn connect_dfu_target_recovering(
+    budget: Duration,
+) -> Result<reai_card_sdk::DfuTarget, CardSdkError> {
+    let adapter = scan_adapter()
+        .await
+        .map_err(|e| CardSdkError::Transport(e.message))?;
+    match card_v2_ble::connect_dfu_target_on_adapter(&adapter, budget).await {
+        Err(err) if error_is_ble_channel_closed(&err) => {
+            reset_scan_adapter().await;
+            let fresh = scan_adapter()
+                .await
+                .map_err(|e| CardSdkError::Transport(e.message))?;
+            card_v2_ble::connect_dfu_target_on_adapter(&fresh, budget).await
+        }
+        other => other,
+    }
+}
+
 async fn connect_card_v2(id: &str, name_hint: Option<&str>) -> Result<Value, BridgeError> {
     let adapter = scan_adapter().await?;
-    match card_v2_ble::connect_card_v2_on_adapter(
-        adapter,
+    let connected = card_v2_ble::connect_card_v2_on_adapter(
+        &adapter,
         id,
         name_hint,
         Some(&state().connecting_peripheral),
     )
-    .await?
-    {
+    .await;
+    let connected = match connected {
+        Err(err) if error_is_ble_channel_closed(&err) => {
+            reset_scan_adapter().await;
+            let fresh = scan_adapter().await?;
+            card_v2_ble::connect_card_v2_on_adapter(
+                &fresh,
+                id,
+                name_hint,
+                Some(&state().connecting_peripheral),
+            )
+            .await?
+        }
+        other => other?,
+    };
+    match connected {
         CardV2ConnectOutcome::Connected {
             device,
             peripheral,
@@ -1468,14 +1548,29 @@ async fn connect_dyj_v1(
     cached_peripheral_id: Option<&btleplug::platform::PeripheralId>,
 ) -> Result<Value, BridgeError> {
     let adapter = scan_adapter().await?;
-    let (device, hello) = DyjV1Session::connect(
-        adapter,
+    let opened = DyjV1Session::connect(
+        &adapter,
         id,
         name,
         cached_peripheral_id,
         Some(&state().connecting_peripheral),
     )
-    .await?;
+    .await;
+    let (device, hello) = match opened {
+        Err(err) if is_ble_channel_closed_text(&err) => {
+            reset_scan_adapter().await;
+            let fresh = scan_adapter().await?;
+            DyjV1Session::connect(
+                &fresh,
+                id,
+                name,
+                cached_peripheral_id,
+                Some(&state().connecting_peripheral),
+            )
+            .await?
+        }
+        other => other?,
+    };
     let actual_id = device.peripheral().id().to_string();
     let actual_peripheral_id = device.peripheral().id();
     let mut initial_meta = DyjV1CachedMeta::default();
@@ -1640,7 +1735,7 @@ async fn connect_external_sdk(
         .filter(|s| !s.is_empty())
         .unwrap_or(kind.display_model());
     let (peripheral, ble_name) = connect_fresh_peripheral(
-        adapter,
+        &adapter,
         id,
         label,
         &state().connecting_peripheral,
@@ -1712,7 +1807,8 @@ async fn release_device() -> Value {
         let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
     }
     // 兜底释放：若此前某次 connect 超时或半连接遗留在 CoreBluetooth，把 adapter 里仍连着的 DYJ_/DYJV2_/DFU 外设也断开。
-    if let Some(adapter) = state().scan_adapter.get() {
+    let cached_adapter = state().scan_adapter.lock().await.clone();
+    if let Some(adapter) = cached_adapter {
         if let Ok(peripherals) = adapter.peripherals().await {
             for p in peripherals {
                 if let Ok(true) = tokio::time::timeout(Duration::from_millis(350), p.is_connected())
@@ -4856,8 +4952,24 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
             Duration::from_secs(12)
         }
         None => {
-            let dfu_nearby =
-                matches!(card_v2_ble::scan_dfu_peripheral(adapter, Duration::from_secs(3)).await, Ok(Some(_)));
+            let dfu_nearby = match card_v2_ble::scan_dfu_peripheral(&adapter, Duration::from_secs(3)).await {
+                Ok(found) => found.is_some(),
+                Err(err) if error_is_ble_channel_closed(&err) => {
+                    reset_scan_adapter().await;
+                    let fresh = match scan_adapter().await {
+                        Ok(adapter) => adapter,
+                        Err(error) => {
+                            out.fail(error.message);
+                            return Ok(());
+                        }
+                    };
+                    matches!(
+                        card_v2_ble::scan_dfu_peripheral(&fresh, Duration::from_secs(3)).await,
+                        Ok(Some(_))
+                    )
+                }
+                Err(_) => false,
+            };
             if dfu_nearby {
                 out.progress(json!({"stage": "dfu", "percent": 5, "text": "发现 Bootloader，正在续传主控固件…"}));
                 Duration::from_secs(12)
@@ -4872,14 +4984,34 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
                     return Ok(());
                 };
                 out.progress(json!({"stage": "dfu", "percent": 4, "text": "正在重连录音卡进入升级模式…"}));
-                match card_v2_ble::connect_card_v2_on_adapter(
-                    adapter,
+                let reconnect = card_v2_ble::connect_card_v2_on_adapter(
+                    &adapter,
                     &tid,
                     Some(&tname),
                     Some(&state().connecting_peripheral),
                 )
-                .await
-                {
+                .await;
+                let reconnect = match reconnect {
+                    Err(error) if error_is_ble_channel_closed(&error) => {
+                        reset_scan_adapter().await;
+                        let fresh = match scan_adapter().await {
+                            Ok(adapter) => adapter,
+                            Err(error) => {
+                                out.fail(error.message);
+                                return Ok(());
+                            }
+                        };
+                        card_v2_ble::connect_card_v2_on_adapter(
+                            &fresh,
+                            &tid,
+                            Some(&tname),
+                            Some(&state().connecting_peripheral),
+                        )
+                        .await
+                    }
+                    other => other,
+                };
+                match reconnect {
                     Ok(CardV2ConnectOutcome::Connected { device, .. }) => {
                         out.progress(json!({"stage": "dfu", "percent": 5, "text": "设备重启进 bootloader…"}));
                         let enter_res = enter_dfu_mode_tolerating_reboot(&device).await;
@@ -4912,7 +5044,7 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
     let report = card_v2_ble::run_dfu_upload_with_resume(
         &package,
         &options,
-        move |_attempt| card_v2_ble::connect_dfu_target_on_adapter(adapter, dfu_budget),
+        move |_attempt| connect_dfu_target_recovering(dfu_budget),
         move |percent, text, sent, total| {
             ota_out.progress(json!({
                 "stage": "dfu",

@@ -302,4 +302,37 @@ void main() {
     await tester.pump();
     expect(device.sheetOpen, isFalse);
   });
+
+  testWidgets('蓝牙通道关闭后重新扫描仍可点，并会再发起一次扫描', (tester) async {
+    final gateway = FakeCardGateway(
+      devices: const [CardDevice(id: 'v2', name: 'DYJV2_9920', rssi: -42)],
+      scanError: const CardException(
+        CardErrorKind.device,
+        'BLE start_scan failed: Other("Channel closed")',
+      ),
+    );
+    final device = DeviceStore(gateway: gateway);
+    await pumpShell(tester, device: device);
+
+    await tester.tap(find.byKey(const Key('hw-capsule')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('蓝牙通道已断开，请点重新扫描'), findsOneWidget);
+    final button = tester.widget<ButtonStyleButton>(
+      find.byKey(const Key('dev-rescan')),
+    );
+    expect(button.onPressed, isNotNull);
+
+    await tester.tap(find.byKey(const Key('dev-rescan')));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(gateway.scanCalls, greaterThanOrEqualTo(2));
+    expect(device.linkState, isNot(LinkState.scanning));
+    expect(device.linkError, isNull);
+    expect(device.discovered.single.id, 'v2');
+    expect(find.byKey(const Key('dev-item-v2')), findsOneWidget);
+  });
 }
