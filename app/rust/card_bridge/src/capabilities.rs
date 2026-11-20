@@ -148,6 +148,26 @@ impl HardwareCapabilities {
 
 const DFU_FE59_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000fe59_0000_1000_8000_00805f9b34fb);
 
+/// 按点一机 V1 实机协商的版本码与 `feature_bits` 动态裁剪能力矩阵。
+///
+/// - `< 0.8.8`（`version_code` in `1..808`）固件无 `camera.*` 域，`has_camera_media = false`；
+/// - `>= 0.8.8`（或未知 `0`）保留 `has_camera_media = true`。
+pub fn dyj_v1_capabilities_for_firmware(
+    fw_version_code: u64,
+    feature_bits: Option<u64>,
+) -> HardwareCapabilities {
+    let mut caps = DeviceKind::DyjV1.capabilities();
+    if fw_version_code > 0 && fw_version_code < 808 {
+        caps.has_camera_media = false;
+    }
+    if let Some(bits) = feature_bits {
+        if bits & 0x04 == 0 {
+            caps.realtime_audio = false;
+        }
+    }
+    caps
+}
+
 /// V2 录音卡 Bootloader 恢复模式（`DFU_DYJ` / `0xFE59`）能力裁剪：仅允许固件恢复升级。
 pub fn card_v2_dfu_recovery_capabilities() -> HardwareCapabilities {
     HardwareCapabilities {
@@ -346,5 +366,14 @@ mod tests {
                 .expect("dfu recovery uuid only");
         assert_eq!(dfu_uuid_only, "DFU_DYJ");
         assert_eq!(dfu_uuid_kind, DeviceKind::CardV2);
+
+        let caps_087 = dyj_v1_capabilities_for_firmware(807, Some(31));
+        assert!(!caps_087.has_camera_media);
+        assert!(caps_087.realtime_audio);
+        let caps_0815 = dyj_v1_capabilities_for_firmware(815, Some(255));
+        assert!(caps_0815.has_camera_media);
+        assert!(caps_0815.realtime_audio);
+        let caps_unknown = dyj_v1_capabilities_for_firmware(0, None);
+        assert!(caps_unknown.has_camera_media);
     }
 }

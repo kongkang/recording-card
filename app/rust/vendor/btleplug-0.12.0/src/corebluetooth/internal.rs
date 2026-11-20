@@ -830,6 +830,23 @@ impl CoreBluetoothInternal {
                 })
                 .collect();
             p.services = services;
+            if p.services.is_empty() {
+                p.check_discovered();
+            }
+        }
+    }
+
+    fn on_discovered_services_failed(
+        &mut self,
+        peripheral_uuid: Uuid,
+        error_description: String,
+    ) {
+        if let Some(p) = self.peripherals.get_mut(&peripheral_uuid) {
+            if let Some(fut) = p.services_discovered_future_state.take() {
+                fut.lock()
+                    .unwrap()
+                    .set_reply(CoreBluetoothReply::Err(error_description));
+            }
         }
     }
 
@@ -1591,6 +1608,9 @@ impl CoreBluetoothInternal {
                     }
                     CentralDelegateEvent::DiscoveredServices{peripheral_uuid, services} => {
                         self.on_discovered_services(peripheral_uuid, services)
+                    }
+                    CentralDelegateEvent::DiscoveredServicesFailed{peripheral_uuid, error_description} => {
+                        self.on_discovered_services_failed(peripheral_uuid, error_description)
                     }
                     CentralDelegateEvent::DiscoveredCharacteristics{peripheral_uuid, service_uuid, characteristics} => {
                         self.on_discovered_characteristics(peripheral_uuid, service_uuid, characteristics)

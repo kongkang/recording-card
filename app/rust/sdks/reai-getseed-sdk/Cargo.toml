@@ -1,10 +1,11 @@
 [package]
 name = "reai-getseed-sdk"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "ReAI-style BLE SDK wrapper for GetSeed (得到 Get 笔记录音卡 GSC10)"
 
 [dependencies]
+aes = "0.8"
 async-trait = "0.1"
 btleplug = "0.12"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

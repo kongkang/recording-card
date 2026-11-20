@@ -16,6 +16,15 @@ import '../widgets/rc_switch.dart';
 /// 弹层是否展示 Wi-Fi 配网行（随硬件能力 hasWifiConfig 门控）。
 const bool showWifiRow = true;
 
+/// 判断路由器 SSID 名称或错误信息是否涉及疑似 5GHz 频段（如 `KK2BY_5G`、`Home-5G`、`Office 5GHz`）。
+bool isLikely5GhzSsid(String raw) {
+  final normalized = raw.trim().toUpperCase().replaceAll(RegExp(r'[「」"“”]'), ' ');
+  if (normalized.isEmpty) return false;
+  return RegExp(r'(?:^|[_\-\s.])5G(?:HZ)?(?:$|[_\-\s.])').hasMatch(normalized) ||
+      normalized.endsWith('5G') ||
+      normalized.endsWith('5GHZ');
+}
+
 /// 电池图标：仅图形不显数字；<20% 红 / <40% 橙 / ≥40% 绿；充电时内部呼吸并叠加闪电。
 class BatteryIcon extends StatefulWidget {
   const BatteryIcon({
@@ -1863,6 +1872,21 @@ class _WifiViewState extends State<_WifiView> {
               ),
             ),
           ),
+        if (store.wifiError != null &&
+            (isLikely5GhzSsid(store.wifiJoinName) ||
+                isLikely5GhzSsid(store.wifiSelName ?? '') ||
+                isLikely5GhzSsid(store.wifiError!)))
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '当前硬件仅支持 2.4GHz Wi-Fi，请改用非 5G 频段路由或 2.4GHz 热点',
+                key: const Key('wifi-5g-hint'),
+                style: TextStyle(fontSize: 11.5, color: c.warn),
+              ),
+            ),
+          ),
         if (!store.wifiScanDone)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 14),
@@ -1949,6 +1973,7 @@ class _WifiViewState extends State<_WifiView> {
 
   Widget _joinForm(RCColorScheme c, DeviceStore store, WifiNet r) {
     final verifying = store.wifiJoining && store.wifiJoinName == r.name;
+    final warn5g = store.wifiError == null && isLikely5GhzSsid(r.name);
     return Padding(
       key: Key('wform-${r.name}'),
       padding: const EdgeInsets.only(left: 12, bottom: 10),
@@ -1963,6 +1988,14 @@ class _WifiViewState extends State<_WifiView> {
               color: c.label,
             ),
           ),
+          if (warn5g) ...[
+            const SizedBox(height: 4),
+            Text(
+              '提示：SSID 疑似 5GHz 频段；硬件仅支持 2.4GHz Wi-Fi，请确认该热点的 2.4GHz 广播已开启',
+              key: const Key('wifi-5g-hint'),
+              style: TextStyle(fontSize: 11.5, color: c.warn),
+            ),
+          ],
           const SizedBox(height: 6),
           if (verifying)
             Text(

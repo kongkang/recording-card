@@ -210,6 +210,15 @@ impl Peripheral {
             }
         }
     }
+
+    pub(super) fn cached_names(&self) -> (Option<String>, Option<String>) {
+        self.shared
+            .properties
+            .lock()
+            .ok()
+            .map(|p| (p.local_name.clone(), p.advertisement_name.clone()))
+            .unwrap_or((None, None))
+    }
 }
 
 impl Display for Peripheral {

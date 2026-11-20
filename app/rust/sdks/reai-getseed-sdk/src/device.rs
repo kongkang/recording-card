@@ -20,15 +20,20 @@ use reai_ext_sdk::{
 };
 
 use crate::protocol::{
-    encode_packet, format_time_sync_ascii, parse_file_list_csv, parse_storage_free_kb,
-    DecodedFrame, FrameStreamParser, PullAssembler, CHR_BATTERY_LEVEL_UUID, CHR_CTL_NOTIFY_UUID,
+    decrypt_auth_frame, encode_auth_cmd, encode_packet, format_time_sync_ascii,
+    is_cloud_auth_locked_fw, parse_auth_mac_fw, parse_auth_sn, parse_file_list_csv,
+    parse_mfg_data_544a, parse_mfg_fw_544a, parse_storage_free_kb, write_chunk_bytes_for_mtu,
+    DecodedFrame, FrameStreamParser, PullAssembler, AUTH_CMD_MAC_FW, AUTH_CMD_SN,
+    CHR_AUTH_NOTIFY_UUID, CHR_AUTH_WRITE_UUID, CHR_BATTERY_LEVEL_UUID, CHR_CTL_NOTIFY_UUID,
     CHR_CTL_WRITE_UUID, CHR_FW_REV_UUID, CMD_DELETE_FILE, CMD_FILE_LIST, CMD_PULL_FILE,
-    CMD_SET_TIME, CMD_STATUS, CMD_STORAGE, MFG_ID_GETSEED, NOMINAL_STORAGE_TOTAL_MB, RSP_PULL_DATA,
-    RSP_PULL_END, RSP_PULL_ERR, RSP_PULL_START, SVC_BATTERY_UUID, SVC_CTL_UUID, SVC_DIS_UUID,
-    WRITE_CHUNK_BYTES,
+    CMD_SET_TIME, CMD_STORAGE, MFG_ID_GETSEED, NOMINAL_STORAGE_TOTAL_MB, RSP_PULL_DATA,
+    RSP_PULL_END, RSP_PULL_ERR, RSP_PULL_START, SVC_AUTH_UUID, SVC_BATTERY_UUID, SVC_CTL_UUID,
+    SVC_DIS_UUID,
 };
 
-const CMD_TIMEOUT: Duration = Duration::from_secs(12);
+const CMD_TIMEOUT: Duration = Duration::from_secs(3);
+const STORAGE_PROBE_TIMEOUT: Duration = Duration::from_millis(2200);
+const AUTH_PROBE_TIMEOUT: Duration = Duration::from_millis(450);
 const PULL_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct GetSeedSdkDriver;
@@ -121,12 +126,18 @@ pub struct GetSeedDevice {
     peripheral_id: String,
     ctl_write: Characteristic,
     ctl_notify: Characteristic,
+    auth_write: Option<Characteristic>,
+    auth_notify: Option<Characteristic>,
     battery_char: Option<Characteristic>,
     fw_rev_char: Option<Characteristic>,
     frame_rx: Mutex<mpsc::UnboundedReceiver<DecodedFrame>>,
+    auth_rx: Mutex<mpsc::UnboundedReceiver<[u8; 16]>>,
     io_lock: Mutex<()>,
     battery_cache: Mutex<SdkBattery>,
     fw_cache: Mutex<String>,
+    serial_cache: Mutex<String>,
+    mac_cache: Mutex<String>,
+    ctl_locked: AtomicBool,
     events_tx: broadcast::Sender<SdkDeviceEvent>,
     audio_tx: broadcast::Sender<SdkAudioChunk>,
     connected: AtomicBool,
@@ -169,6 +180,18 @@ impl GetSeedDevice {
             .cloned()
             .ok_or_else(|| SdkError::Protocol("未找到 Get笔记卡通知特征 0x9102".into()))?;
 
+        let auth_write = chars
+            .iter()
+            .find(|c| c.uuid == CHR_AUTH_WRITE_UUID && c.service_uuid == SVC_AUTH_UUID)
+            .or_else(|| chars.iter().find(|c| c.uuid == CHR_AUTH_WRITE_UUID))
+            .cloned();
+
+        let auth_notify = chars
+            .iter()
+            .find(|c| c.uuid == CHR_AUTH_NOTIFY_UUID && c.service_uuid == SVC_AUTH_UUID)
+            .or_else(|| chars.iter().find(|c| c.uuid == CHR_AUTH_NOTIFY_UUID))
+            .cloned();
+
         let battery_char = chars
             .iter()
             .find(|c| c.uuid == CHR_BATTERY_LEVEL_UUID && c.service_uuid == SVC_BATTERY_UUID)
@@ -186,6 +209,14 @@ impl GetSeedDevice {
             .await
             .map_err(|e| SdkError::Ble(format!("订阅 Get笔记卡控制通道失败: {e}")))?;
 
+        let auth_subscribed = if let Some(ref achar) = auth_notify {
+            tokio::time::timeout(Duration::from_secs(2), peripheral.subscribe(achar))
+                .await
+                .is_ok_and(|r| r.is_ok())
+        } else {
+            false
+        };
+
         let mut initial_battery = SdkBattery::default();
         if let Some(ref bchar) = battery_char {
             if let Ok(bytes) = peripheral.read(bchar).await {
@@ -197,12 +228,27 @@ impl GetSeedDevice {
         }
 
         let mut fw_version = String::new();
-        if let Some(ref fchar) = fw_rev_char {
-            if let Ok(bytes) = peripheral.read(fchar).await {
-                fw_version = String::from_utf8_lossy(&bytes)
-                    .trim_end_matches('\0')
-                    .trim()
-                    .to_string();
+        let mut initial_mac = String::new();
+        if let Ok(Ok(Some(props))) =
+            tokio::time::timeout(Duration::from_millis(300), peripheral.properties()).await
+        {
+            if let Some(mfd) = props.manufacturer_data.get(&MFG_ID_GETSEED) {
+                if let Some(mac) = parse_mfg_data_544a(mfd) {
+                    initial_mac = mac;
+                }
+                if let Some(fw) = parse_mfg_fw_544a(mfd) {
+                    fw_version = fw;
+                }
+            }
+        }
+        if fw_version.is_empty() {
+            if let Some(ref fchar) = fw_rev_char {
+                if let Ok(bytes) = peripheral.read(fchar).await {
+                    fw_version = String::from_utf8_lossy(&bytes)
+                        .trim_end_matches('\0')
+                        .trim()
+                        .to_string();
+                }
             }
         }
 
@@ -214,6 +260,7 @@ impl GetSeedDevice {
         let (events_tx, _) = broadcast::channel(64);
         let (audio_tx, _) = broadcast::channel(8);
         let (frame_tx, frame_rx) = mpsc::unbounded_channel();
+        let (auth_tx, auth_rx) = mpsc::unbounded_channel();
 
         let device = Arc::new(Self {
             peripheral_id: peripheral.id().to_string(),
@@ -221,12 +268,18 @@ impl GetSeedDevice {
             name: ble_name,
             ctl_write,
             ctl_notify,
+            auth_write,
+            auth_notify,
             battery_char,
             fw_rev_char,
             frame_rx: Mutex::new(frame_rx),
+            auth_rx: Mutex::new(auth_rx),
             io_lock: Mutex::new(()),
             battery_cache: Mutex::new(initial_battery),
             fw_cache: Mutex::new(fw_version),
+            serial_cache: Mutex::new(String::new()),
+            mac_cache: Mutex::new(initial_mac),
+            ctl_locked: AtomicBool::new(false),
             events_tx,
             audio_tx,
             connected: AtomicBool::new(true),
@@ -244,6 +297,10 @@ impl GetSeedDevice {
                 if notif.uuid == CHR_CTL_NOTIFY_UUID {
                     for frame in parser.push(&notif.value) {
                         let _ = frame_tx.send(frame);
+                    }
+                } else if notif.uuid == CHR_AUTH_NOTIFY_UUID {
+                    if let Some(plain) = decrypt_auth_frame(&notif.value) {
+                        let _ = auth_tx.send(plain);
                     }
                 } else if notif.uuid == CHR_BATTERY_LEVEL_UUID {
                     if let Some(&lvl) = notif.value.first() {
@@ -264,9 +321,70 @@ impl GetSeedDevice {
         });
         *device.pump_task.lock().await = Some(task);
 
-        // 对时：保证新录制的 .ogg 文件名与创建时间准确
-        let _ = device.sync_time().await;
+        // 只读 0x9000 握手（MAC/FW 与序列号）：不改变鉴权状态，总预算 < 900ms
+        if auth_subscribed {
+            device.probe_auth_metadata_readonly().await;
+        }
+
+        // 不在 connect_peripheral 同步阻塞 0x0146 对时（v0.2.5+ 锁机后会浪费 12~40s）；
+        // 仅在未明确锁定的固件上后台最佳努力同步时间。
+        let fw_now = device.fw_cache.lock().await.clone();
+        if !is_cloud_auth_locked_fw(&fw_now) {
+            let weak_sync = Arc::downgrade(&device);
+            tokio::spawn(async move {
+                if let Some(dev) = weak_sync.upgrade() {
+                    let _ = dev.sync_time().await;
+                }
+            });
+        }
         Ok(device)
+    }
+
+    async fn probe_auth_metadata_readonly(&self) {
+        let Some(ref awrite) = self.auth_write else {
+            return;
+        };
+        let mut arx = self.auth_rx.lock().await;
+        while arx.try_recv().is_ok() {}
+
+        let write_type = if awrite
+            .properties
+            .contains(btleplug::api::CharPropFlags::WRITE_WITHOUT_RESPONSE)
+        {
+            WriteType::WithoutResponse
+        } else {
+            WriteType::WithResponse
+        };
+
+        let pkt1 = encode_auth_cmd(AUTH_CMD_MAC_FW, &[]);
+        if self.peripheral.write(awrite, &pkt1, write_type).await.is_ok() {
+            if let Ok(Some(plain)) = tokio::time::timeout(AUTH_PROBE_TIMEOUT, arx.recv()).await {
+                if let Some((mac, fw)) = parse_auth_mac_fw(&plain) {
+                    *self.mac_cache.lock().await = mac;
+                    *self.fw_cache.lock().await = fw;
+                }
+            }
+        }
+
+        let pkt2 = encode_auth_cmd(AUTH_CMD_SN, &[]);
+        if self.peripheral.write(awrite, &pkt2, write_type).await.is_ok() {
+            if let Ok(Some(plain)) = tokio::time::timeout(AUTH_PROBE_TIMEOUT, arx.recv()).await {
+                if let Some(sn) = parse_auth_sn(&plain) {
+                    *self.serial_cache.lock().await = sn;
+                }
+            }
+        }
+    }
+
+    pub fn classify_ctl_timeout_error(op_label: &str, cmd: u16, fw_version: &str) -> SdkError {
+        if is_cloud_auth_locked_fw(fw_version) {
+            let fw_label = fw_version.trim().trim_start_matches('v').trim_start_matches('V');
+            SdkError::Unsupported(format!(
+                "unsupported: Get笔记卡当前固件 (v{fw_label}) 已启用官方云端一机一码鉴权锁 (0x9000→0x9100)，第三方 App 仅可读取电量与设备信息，无法{op_label}（v0.1.8 及更早固件支持离线直拉）"
+            ))
+        } else {
+            SdkError::Timeout(format!("Get笔记卡{op_label} (0x{cmd:04X}) 超时"))
+        }
     }
 
     async fn write_frame(&self, cmd: u16, body: &[u8]) -> Result<(), SdkError> {
@@ -283,7 +401,8 @@ impl GetSeedDevice {
         } else {
             WriteType::WithResponse
         };
-        for (idx, chunk) in pkt.chunks(WRITE_CHUNK_BYTES).enumerate() {
+        let chunk_size = write_chunk_bytes_for_mtu(None);
+        for (idx, chunk) in pkt.chunks(chunk_size).enumerate() {
             if idx > 0 {
                 tokio::time::sleep(Duration::from_millis(4)).await;
             }
@@ -299,13 +418,18 @@ impl GetSeedDevice {
         while rx.try_recv().is_ok() {}
     }
 
-    async fn request_cmd(&self, cmd: u16, body: &[u8]) -> Result<Vec<u8>, SdkError> {
+    async fn request_cmd_with_timeout(
+        &self,
+        cmd: u16,
+        body: &[u8],
+        timeout: Duration,
+    ) -> Result<Vec<u8>, SdkError> {
         let _guard = self.io_lock.lock().await;
         let mut rx = self.frame_rx.lock().await;
         Self::flush_stale_frames(&mut rx).await;
         self.write_frame(cmd, body).await?;
 
-        let deadline = tokio::time::Instant::now() + CMD_TIMEOUT;
+        let deadline = tokio::time::Instant::now() + timeout;
         loop {
             let rem = deadline.saturating_duration_since(tokio::time::Instant::now());
             if rem.is_zero() {
@@ -324,6 +448,22 @@ impl GetSeedDevice {
                 }
             }
         }
+    }
+
+    async fn request_cmd(&self, cmd: u16, body: &[u8]) -> Result<Vec<u8>, SdkError> {
+        self.request_cmd_with_timeout(cmd, body, CMD_TIMEOUT).await
+    }
+
+    async fn resolved_device_id(&self) -> String {
+        let sn = self.serial_cache.lock().await.clone();
+        if !sn.is_empty() {
+            return sn;
+        }
+        let mac = self.mac_cache.lock().await.clone();
+        if !mac.is_empty() {
+            return mac;
+        }
+        self.peripheral_id.clone()
     }
 
     async fn read_battery_now(&self) -> SdkBattery {
@@ -372,20 +512,6 @@ impl RecorderDevice for GetSeedDevice {
         }
 
         let battery = self.read_battery_now().await;
-        let storage = match self.request_cmd(CMD_STORAGE, &[]).await {
-            Ok(body) => parse_storage_free_kb(&body).map(|free_kb| {
-                let free_mb = (u64::from(free_kb) / 1024).min(NOMINAL_STORAGE_TOTAL_MB);
-                SdkStorage {
-                    total_mb: NOMINAL_STORAGE_TOTAL_MB,
-                    free_mb,
-                    used_mb: NOMINAL_STORAGE_TOTAL_MB.saturating_sub(free_mb),
-                }
-            }),
-            Err(_) => None,
-        };
-        // Best-effort status ping to keep link telemetry alive
-        let _ = self.request_cmd(CMD_STATUS, &[]).await;
-
         let mut fw_version = self.fw_cache.lock().await.clone();
         if fw_version.is_empty() {
             if let Some(ref fchar) = self.fw_rev_char {
@@ -404,10 +530,37 @@ impl RecorderDevice for GetSeedDevice {
             }
         }
 
+        let storage = if self.ctl_locked.load(Ordering::SeqCst) {
+            None
+        } else {
+            match self
+                .request_cmd_with_timeout(CMD_STORAGE, &[], STORAGE_PROBE_TIMEOUT)
+                .await
+            {
+                Ok(body) => parse_storage_free_kb(&body).map(|free_kb| {
+                    let free_mb = (u64::from(free_kb) / 1024).min(NOMINAL_STORAGE_TOTAL_MB);
+                    SdkStorage {
+                        total_mb: NOMINAL_STORAGE_TOTAL_MB,
+                        free_mb,
+                        used_mb: NOMINAL_STORAGE_TOTAL_MB.saturating_sub(free_mb),
+                    }
+                }),
+                Err(SdkError::Timeout(_)) => {
+                    if is_cloud_auth_locked_fw(&fw_version) {
+                        self.ctl_locked.store(true, Ordering::SeqCst);
+                    }
+                    None
+                }
+                Err(_) => None,
+            }
+        };
+
+        let device_id = self.resolved_device_id().await;
+
         Ok(SdkSnapshot {
             capabilities: self.capabilities(),
             device_name: self.name.clone(),
-            device_id: self.peripheral_id.clone(),
+            device_id,
             fw_version,
             battery,
             storage,
@@ -422,17 +575,31 @@ impl RecorderDevice for GetSeedDevice {
     }
 
     async fn sync_time(&self) -> Result<Value, SdkError> {
+        let fw = self.fw_cache.lock().await.clone();
+        if self.ctl_locked.load(Ordering::SeqCst) && is_cloud_auth_locked_fw(&fw) {
+            return Err(Self::classify_ctl_timeout_error("对时", CMD_SET_TIME, &fw));
+        }
         let payload = format_time_sync_ascii(Local::now());
-        let ack = self.request_cmd(CMD_SET_TIME, &payload).await?;
-        let epoch = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        Ok(json!({
-            "synced": true,
-            "epoch": epoch,
-            "ack": ack.first().copied(),
-        }))
+        match self.request_cmd(CMD_SET_TIME, &payload).await {
+            Ok(ack) => {
+                let epoch = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                Ok(json!({
+                    "synced": true,
+                    "epoch": epoch,
+                    "ack": ack.first().copied(),
+                }))
+            }
+            Err(SdkError::Timeout(_)) => {
+                if is_cloud_auth_locked_fw(&fw) {
+                    self.ctl_locked.store(true, Ordering::SeqCst);
+                }
+                Err(Self::classify_ctl_timeout_error("对时", CMD_SET_TIME, &fw))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     async fn start_record(&self, _duration_secs: Option<u32>) -> Result<SdkRecordStatus, SdkError> {
@@ -457,13 +624,30 @@ impl RecorderDevice for GetSeedDevice {
     }
 
     async fn list_files(&self) -> Result<Vec<SdkFileEntry>, SdkError> {
+        let fw = self.fw_cache.lock().await.clone();
+        if self.ctl_locked.load(Ordering::SeqCst) && is_cloud_auth_locked_fw(&fw) {
+            return Err(Self::classify_ctl_timeout_error(
+                "读取或拉取板载录音文件",
+                CMD_FILE_LIST,
+                &fw,
+            ));
+        }
         // `[1u32 LE, 5u32 LE]` 为 GetSeed 协议标准列表请求体；空载荷回包表示无文件
         let mut req = Vec::with_capacity(8);
         req.extend_from_slice(&1u32.to_le_bytes());
         req.extend_from_slice(&5u32.to_le_bytes());
         match self.request_cmd(CMD_FILE_LIST, &req).await {
             Ok(body) => Ok(parse_file_list_csv(&body)),
-            Err(SdkError::Timeout(_)) => Ok(Vec::new()),
+            Err(SdkError::Timeout(_)) => {
+                if is_cloud_auth_locked_fw(&fw) {
+                    self.ctl_locked.store(true, Ordering::SeqCst);
+                }
+                Err(Self::classify_ctl_timeout_error(
+                    "读取或拉取板载录音文件",
+                    CMD_FILE_LIST,
+                    &fw,
+                ))
+            }
             Err(e) => Err(e),
         }
     }
@@ -472,6 +656,14 @@ impl RecorderDevice for GetSeedDevice {
         let clean_name = name.trim();
         if clean_name.is_empty() {
             return Err(SdkError::Protocol("文件名不能为空".into()));
+        }
+        let fw = self.fw_cache.lock().await.clone();
+        if self.ctl_locked.load(Ordering::SeqCst) && is_cloud_auth_locked_fw(&fw) {
+            return Err(Self::classify_ctl_timeout_error(
+                "下载板载录音文件",
+                CMD_PULL_FILE,
+                &fw,
+            ));
         }
         let mut req = Vec::with_capacity(4 + clean_name.len());
         req.extend_from_slice(&0u32.to_le_bytes());
@@ -496,6 +688,14 @@ impl RecorderDevice for GetSeedDevice {
                     },
                     Ok(None) => return Err(SdkError::Disconnected),
                     Err(_) => {
+                        if is_cloud_auth_locked_fw(&fw) {
+                            self.ctl_locked.store(true, Ordering::SeqCst);
+                            return Err(Self::classify_ctl_timeout_error(
+                                "下载板载录音文件",
+                                CMD_PULL_FILE,
+                                &fw,
+                            ));
+                        }
                         return Err(SdkError::Timeout(format!(
                             "拉取 Get笔记卡录音文件 {clean_name} 超时"
                         )));
@@ -528,10 +728,32 @@ impl RecorderDevice for GetSeedDevice {
         if clean_name.is_empty() {
             return Err(SdkError::Protocol("删除文件名不能为空".into()));
         }
+        let fw = self.fw_cache.lock().await.clone();
+        if self.ctl_locked.load(Ordering::SeqCst) && is_cloud_auth_locked_fw(&fw) {
+            return Err(Self::classify_ctl_timeout_error(
+                "删除板载录音文件",
+                CMD_DELETE_FILE,
+                &fw,
+            ));
+        }
         // 安全红线：仅发单文件删除 0x0044，严禁使用全盘清空指令 0x0041
-        let body = self
+        let body = match self
             .request_cmd(CMD_DELETE_FILE, clean_name.as_bytes())
-            .await?;
+            .await
+        {
+            Ok(b) => b,
+            Err(SdkError::Timeout(_)) => {
+                if is_cloud_auth_locked_fw(&fw) {
+                    self.ctl_locked.store(true, Ordering::SeqCst);
+                }
+                return Err(Self::classify_ctl_timeout_error(
+                    "删除板载录音文件",
+                    CMD_DELETE_FILE,
+                    &fw,
+                ));
+            }
+            Err(e) => return Err(e),
+        };
         if body.first().copied() == Some(0x01) {
             Ok(())
         } else {
@@ -547,6 +769,9 @@ impl RecorderDevice for GetSeedDevice {
             handle.abort();
         }
         let _ = self.peripheral.unsubscribe(&self.ctl_notify).await;
+        if let Some(ref achar) = self.auth_notify {
+            let _ = self.peripheral.unsubscribe(achar).await;
+        }
         if let Some(ref bchar) = self.battery_char {
             let _ = self.peripheral.unsubscribe(bchar).await;
         }
@@ -555,5 +780,34 @@ impl RecorderDevice for GetSeedDevice {
             .await
             .map_err(|e| SdkError::Ble(e.to_string()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_on_locked_firmware_returns_actionable_unsupported_error() {
+        let locked_err = GetSeedDevice::classify_ctl_timeout_error(
+            "读取或拉取板载录音文件",
+            CMD_FILE_LIST,
+            "0.2.7",
+        );
+        match locked_err {
+            SdkError::Unsupported(msg) => {
+                assert!(msg.starts_with("unsupported:"));
+                assert!(msg.contains("0.2.7"));
+                assert!(msg.contains("0x9000→0x9100"));
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+
+        let legacy_err = GetSeedDevice::classify_ctl_timeout_error(
+            "读取或拉取板载录音文件",
+            CMD_FILE_LIST,
+            "0.1.8",
+        );
+        assert!(matches!(legacy_err, SdkError::Timeout(_)));
     }
 }
