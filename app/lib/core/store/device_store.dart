@@ -901,7 +901,18 @@ class DeviceStore extends ChangeNotifier {
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _heartbeatTick();
     });
-    final eventInterval = activeCapabilities.hasConfigurableButtons
+    _refreshEventWatch();
+  }
+
+  /// 按当前硬件能力刷新后台事件轮询节拍：具备按键/打点能力时采用 200ms 保证 iOS Omi 物理按键即时响应。
+  void _refreshEventWatch() {
+    _eventWatch?.cancel();
+    _eventWatch = null;
+    if (!_autoStart || !isConnected) return;
+    final fastButtons =
+        activeCapabilities.hasConfigurableButtons ||
+        activeCapabilities.hasMarkButton;
+    final eventInterval = fastButtons
         ? const Duration(milliseconds: 200)
         : const Duration(seconds: 1);
     _eventWatch = Timer.periodic(eventInterval, (_) {
@@ -1140,9 +1151,15 @@ class DeviceStore extends ChangeNotifier {
   bool? deviceWifiOpen;
 
   void _applySnapshot(CardSnapshot s) {
+    final prevCaps = activeCapabilities;
     activeKind = s.effectiveKind;
     activeCapabilities = s.resolvedCapabilities;
     activeModelLabel = s.modelLabel;
+    if (prevCaps.hasConfigurableButtons !=
+            activeCapabilities.hasConfigurableButtons ||
+        prevCaps.hasMarkButton != activeCapabilities.hasMarkButton) {
+      _refreshEventWatch();
+    }
     // 电量三态：读到 → 更新；读不到（命令失败/字段缺失）→ 保留上次值，
     // 不把已知电量抹成未知（单次查询失败不该清状态）；设备明确报 0 → 未知。
     if (s.hasBattery && s.batteryLevel > 0) {
@@ -1395,7 +1412,7 @@ class DeviceStore extends ChangeNotifier {
 
   /// 向点一机 V1 下发 LED 状态提示（best-effort，不抛异常中断主链路）。
   Future<void> sendDyjLedHint(String mode) async {
-    if (!isConnected || !activeCapabilities.hasConfigurableButtons) return;
+    if (!isConnected || activeKind != DeviceKind.dyjV1) return;
     try {
       await _gw.invokeBridgeCommand(
         'dyj_led_hint',
@@ -1453,6 +1470,16 @@ class DeviceStore extends ChangeNotifier {
   Stream<LiveAudioSlice> get phoneAudioSlices => _phoneMicRecorder.slices;
   PcmRingBuffer get phoneRingBuffer => _phoneMicRecorder.ringBuffer;
   LiveActivityService get liveActivityService => _liveActivityService;
+  Duration get recordingSliceDuration => _phoneMicRecorder.sliceDuration;
+
+  /// 同步调整本机保底麦克风实时切片窗口；蓝牙实时流切片窗口由 [AppShell] 中的 [LiveAudioRecorder] 同步。
+  void setRecordingSliceDuration(Duration duration) {
+    _phoneMicRecorder.setSliceDuration(duration);
+  }
+
+  /// 向当前本机录音切片追加重点标记（毫秒时间偏移）。
+  void recordPhoneMark({int? timestampMs}) =>
+      _phoneMicRecorder.recordMark(timestampMs: timestampMs);
 
   void setIslandEnabled(bool enabled) {
     if (_islandEnabled == enabled) return;

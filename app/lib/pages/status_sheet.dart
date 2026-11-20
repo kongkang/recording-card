@@ -985,7 +985,9 @@ class _MainView extends StatelessWidget {
                 children: [
                   Flexible(
                     child: Text(
-                      agentConfig!.dyjButtonSummary,
+                      store.activeKind == DeviceKind.omiCv1
+                          ? agentConfig!.omiButtonSummary
+                          : agentConfig!.dyjButtonSummary,
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
                       style: TextStyle(fontSize: 14, color: c.label),
@@ -2055,7 +2057,9 @@ class _ButtonConfigView extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          '配置点一机 V1 物理按键触发的动作；未开启持续录音时触发「语音任务」将自动开启临时录音并在完成后关闭。',
+          store.activeKind == DeviceKind.omiCv1
+              ? '配置 Omi 录音器物理按键动作。因固件写死长按约 3 秒直接关机且蓝牙不可改，已禁用长按交互以防误触关机；推荐将双击设为「语音任务」（双击开始说话、再双击发送）。'
+              : '配置点一机 V1 物理按键触发的动作；未开启持续录音时触发「语音任务」将自动开启临时录音并在完成后关闭。',
           style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
         ),
         const SizedBox(height: 12),
@@ -2069,6 +2073,13 @@ class _ButtonConfigView extends StatelessWidget {
             listenable: config,
             builder: (context, _) {
               final rc = context.rc;
+              final isOmi = store.activeKind == DeviceKind.omiCv1;
+              final allowedActions = [
+                for (final act in HardwareButtonAction.values)
+                  if (store.activeCapabilities.hasCameraMedia ||
+                      act != HardwareButtonAction.photoRecognize)
+                    act,
+              ];
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -2077,29 +2088,67 @@ class _ButtonConfigView extends StatelessWidget {
                     key: const Key('btn-cfg-click'),
                     gesture: 'click',
                     title: '单击',
-                    current: config.dyjClickAction,
-                    onPick: (a) => unawaited(config.setDyjButtonAction('click', a)),
+                    actions: allowedActions,
+                    current: isOmi
+                        ? config.omiClickAction
+                        : config.dyjClickAction,
+                    onPick: (a) => unawaited(
+                      isOmi
+                          ? config.setOmiButtonAction('click', a)
+                          : config.setDyjButtonAction('click', a),
+                    ),
                   ),
-                  const SizedBox(height: 12),
-                  _gestureSection(
-                    rc: rc,
-                    key: const Key('btn-cfg-long'),
-                    gesture: 'long_press',
-                    title: '长按',
-                    current: config.dyjLongPressAction,
-                    onPick: (a) =>
-                        unawaited(config.setDyjButtonAction('long_press', a)),
-                  ),
+                  if (!isOmi) ...[
+                    const SizedBox(height: 12),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-long'),
+                      gesture: 'long_press',
+                      title: '长按',
+                      actions: allowedActions,
+                      current: config.dyjLongPressAction,
+                      onPick: (a) =>
+                          unawaited(config.setDyjButtonAction('long_press', a)),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   _gestureSection(
                     rc: rc,
                     key: const Key('btn-cfg-double'),
                     gesture: 'double_click',
                     title: '双击',
-                    current: config.dyjDoubleClickAction,
-                    onPick: (a) =>
-                        unawaited(config.setDyjButtonAction('double_click', a)),
+                    actions: allowedActions,
+                    current: isOmi
+                        ? config.omiDoubleClickAction
+                        : config.dyjDoubleClickAction,
+                    onPick: (a) => unawaited(
+                      isOmi
+                          ? config.setOmiButtonAction('double_click', a)
+                          : config.setDyjButtonAction('double_click', a),
+                    ),
                   ),
+                  if (isOmi) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      key: const Key('btn-cfg-omi-no-long'),
+                      padding: const EdgeInsets.all(11),
+                      decoration: BoxDecoration(
+                        color: rc.isDark
+                            ? const Color(0xFF222226)
+                            : rc.bg,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: rc.sep),
+                      ),
+                      child: Text(
+                        '不支持长按：Omi 硬件长按约 3 秒将直接触发关机',
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.45,
+                          color: rc.sec,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               );
             },
@@ -2113,6 +2162,7 @@ class _ButtonConfigView extends StatelessWidget {
     required Key key,
     required String gesture,
     required String title,
+    required List<HardwareButtonAction> actions,
     required HardwareButtonAction current,
     required ValueChanged<HardwareButtonAction> onPick,
   }) {
@@ -2149,7 +2199,7 @@ class _ButtonConfigView extends StatelessWidget {
             spacing: 6,
             runSpacing: 6,
             children: [
-              for (final act in HardwareButtonAction.values)
+              for (final act in actions)
                 InkWell(
                   key: Key('btn-cfg-$gesture-${act.code}'),
                   borderRadius: BorderRadius.circular(999),

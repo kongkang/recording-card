@@ -6,6 +6,7 @@ library;
 
 import 'package:flutter/foundation.dart';
 
+import '../device/card_gateway.dart';
 import '../storage/storage.dart';
 
 /// 点一机 V1 物理按键可绑定动作（固件事件上行，App 侧解释执行）。
@@ -359,19 +360,41 @@ class AgentConfigStore extends ChangeNotifier {
   HardwareButtonAction dyjDoubleClickAction =
       HardwareButtonAction.photoRecognize;
 
+  /// Omi 物理按键默认行为：固件写死长按约 3 秒直接关机且无配置项，故仅开放单击与双击（默认单击重点、双击启停录音）。
+  HardwareButtonAction omiClickAction = HardwareButtonAction.mark;
+  HardwareButtonAction omiDoubleClickAction = HardwareButtonAction.recordToggle;
+
   /// iPhone 侧边操作按钮「切换录音」快捷动作模式（专用「向 Agent 发送语音任务」始终直接发给 Agent）。
   IphoneActionButtonBehavior iphoneActionButtonBehavior =
       IphoneActionButtonBehavior.recordToggle;
 
   HardwareButtonAction dyjActionForGesture(String gesture) => switch (gesture) {
-    'click' => dyjClickAction,
+    'click' || 'single_tap' => dyjClickAction,
     'long_press' || 'long_press_start' || 'long_press_end' => dyjLongPressAction,
-    'double_click' => dyjDoubleClickAction,
+    'double_click' || 'double_tap' => dyjDoubleClickAction,
     _ => HardwareButtonAction.none,
   };
 
+  /// 按当前硬件家族解析按键手势映射；Omi 明确禁用所有 `long_press*` 与无摄像头拍照动作。
+  HardwareButtonAction buttonActionForDevice(
+    DeviceKind? kind,
+    String gesture,
+  ) {
+    if (kind == DeviceKind.omiCv1) {
+      return switch (gesture) {
+        'click' || 'single_tap' => omiClickAction,
+        'double_click' || 'double_tap' => omiDoubleClickAction,
+        _ => HardwareButtonAction.none,
+      };
+    }
+    return dyjActionForGesture(gesture);
+  }
+
   String get dyjButtonSummary =>
       '单击${dyjClickAction.shortLabel} · 长按${dyjLongPressAction.shortLabel} · 双击${dyjDoubleClickAction.shortLabel}';
+
+  String get omiButtonSummary =>
+      '单击${omiClickAction.shortLabel} · 双击${omiDoubleClickAction.shortLabel}（禁用长按）';
 
   int get enabledExtHardwareCount =>
       (getSeedLinkEnabled ? 1 : 0) +
@@ -403,9 +426,12 @@ class AgentConfigStore extends ChangeNotifier {
   /// 按时间重叠时，回溯包含上一轮末尾的分钟数（1..30）。
   int cleanOverlapMinutes = 3;
 
-  /// 录音切片长度（秒）。只保存配置，不改变现有实时切片、合并或分段。
-  /// 当前流水线仍按代码里的 1 分钟窗口运行。
+  /// 实时录音切片长度（秒，默认 60 = 1 分钟，支持 60..1800 即 1~30 分钟可调）。
+  /// 变更后立即驱动蓝牙实时音频流（Omi / 录音卡 / 点一机）与手机本机麦克风切片窗口。
   int recordingSliceSeconds = 60;
+
+  Duration get recordingSliceDuration =>
+      Duration(seconds: recordingSliceSeconds);
 
   /// 健康与位置采样间隔（秒）。默认 60，可在开发者设置调到 300（5 分钟）。
   int healthSampleIntervalSeconds = 60;
@@ -636,6 +662,24 @@ class AgentConfigStore extends ChangeNotifier {
         fallback: HardwareButtonAction.photoRecognize,
       );
     }
+    if (data['omiBtnClick'] is String) {
+      final parsed = HardwareButtonAction.fromCode(
+        data['omiBtnClick'] as String,
+        fallback: HardwareButtonAction.mark,
+      );
+      omiClickAction = parsed == HardwareButtonAction.photoRecognize
+          ? HardwareButtonAction.mark
+          : parsed;
+    }
+    if (data['omiBtnDouble'] is String) {
+      final parsed = HardwareButtonAction.fromCode(
+        data['omiBtnDouble'] as String,
+        fallback: HardwareButtonAction.recordToggle,
+      );
+      omiDoubleClickAction = parsed == HardwareButtonAction.photoRecognize
+          ? HardwareButtonAction.recordToggle
+          : parsed;
+    }
     if (data['iphoneActionBehavior'] is String) {
       iphoneActionButtonBehavior = IphoneActionButtonBehavior.fromCode(
         data['iphoneActionBehavior'] as String,
@@ -692,7 +736,7 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['recordingSliceSeconds'] is num) {
       recordingSliceSeconds = (data['recordingSliceSeconds'] as num)
           .toInt()
-          .clamp(60, 600);
+          .clamp(60, 1800);
     }
     if (data['healthSampleIntervalSeconds'] is num) {
       healthSampleIntervalSeconds = (data['healthSampleIntervalSeconds'] as num)
@@ -847,7 +891,7 @@ class AgentConfigStore extends ChangeNotifier {
   }
 
   Future<void> setRecordingSliceSeconds(int seconds) async {
-    recordingSliceSeconds = seconds.clamp(60, 600);
+    recordingSliceSeconds = seconds.clamp(60, 1800);
     notifyListeners();
     await _save();
   }
@@ -1146,6 +1190,32 @@ class AgentConfigStore extends ChangeNotifier {
     await _save();
   }
 
+  /// 配置 Omi 按键动作：拒绝长按（固件 3s 硬关机）与拍照动作（Omi 无摄像头）。
+  Future<void> setOmiButtonAction(
+    String gesture,
+    HardwareButtonAction action,
+  ) async {
+    if (action == HardwareButtonAction.photoRecognize) return;
+    var changed = false;
+    switch (gesture) {
+      case 'click' || 'single_tap':
+        if (omiClickAction != action) {
+          omiClickAction = action;
+          changed = true;
+        }
+      case 'double_click' || 'double_tap':
+        if (omiDoubleClickAction != action) {
+          omiDoubleClickAction = action;
+          changed = true;
+        }
+      default:
+        return;
+    }
+    if (!changed) return;
+    notifyListeners();
+    await _save();
+  }
+
   Future<void> setIphoneActionButtonBehavior(
     IphoneActionButtonBehavior next,
   ) async {
@@ -1189,6 +1259,8 @@ class AgentConfigStore extends ChangeNotifier {
       'dyjBtnClick': dyjClickAction.code,
       'dyjBtnLong': dyjLongPressAction.code,
       'dyjBtnDouble': dyjDoubleClickAction.code,
+      'omiBtnClick': omiClickAction.code,
+      'omiBtnDouble': omiDoubleClickAction.code,
       'iphoneActionBehavior': iphoneActionButtonBehavior.code,
       'recordingSliceSeconds': recordingSliceSeconds,
       'healthSampleIntervalSeconds': healthSampleIntervalSeconds,

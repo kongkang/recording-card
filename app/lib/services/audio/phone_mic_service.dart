@@ -109,13 +109,16 @@ class PlatformPhoneMicBackend implements PhoneMicBackend {
   }
 }
 
-/// 将本机麦克风 16kHz 16-bit mono PCM 实时切为标准 1 分钟 `.WAV` 切片。
+/// 将本机麦克风 16kHz 16-bit mono PCM 实时切为可配置窗口（默认 1 分钟）的标准 `.WAV` 切片。
 class PhoneMicRecorder {
   PhoneMicRecorder({
-    this.sliceDuration = const Duration(minutes: 1),
+    Duration sliceDuration = const Duration(minutes: 1),
     Future<Directory> Function()? sliceRootDir,
     DateTime Function()? clock,
-  }) : _sliceRootDir = sliceRootDir,
+  }) : _sliceDuration = sliceDuration >= const Duration(seconds: 1)
+           ? sliceDuration
+           : const Duration(seconds: 1),
+       _sliceRootDir = sliceRootDir,
        _clock = clock ?? DateTime.now;
 
   static const int sampleRate = 16000;
@@ -125,7 +128,25 @@ class PhoneMicRecorder {
   /// 手动下拉刷新最小切分阈值：至少累积 0.5 秒（16000 字节）才封口一片。
   static const int minManualFlushBytes = bytesPerSecond ~/ 2;
 
-  final Duration sliceDuration;
+  Duration _sliceDuration;
+  Duration get sliceDuration => _sliceDuration;
+
+  /// 动态调整本机录音切片窗口（最小 1 秒）；若缩小时已超阈值则立即切分已满片段。
+  void setSliceDuration(Duration next) {
+    final normalized = next >= const Duration(seconds: 1)
+        ? next
+        : const Duration(seconds: 1);
+    if (_sliceDuration == normalized) return;
+    _sliceDuration = normalized;
+    if (_running && !_disposed) {
+      _slicer.flushIfExceeds(
+        sliceDuration: _sliceDuration,
+        sampleRate: sampleRate,
+        onSliceFlush: (chunk) => _scheduleFlush(chunk, isFinal: false),
+      );
+    }
+  }
+
   final Future<Directory> Function()? _sliceRootDir;
   final DateTime Function() _clock;
 

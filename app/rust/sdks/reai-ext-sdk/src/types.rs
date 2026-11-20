@@ -25,6 +25,7 @@ pub struct SdkCapabilities {
     pub has_remote_record_control: bool,
     pub has_voice_key: bool,
     pub has_mark_button: bool,
+    pub has_configurable_buttons: bool,
     /// `"dual_chip"` | `"single_ota"` | `"none"`
     pub ota_mode: &'static str,
 }
@@ -42,6 +43,7 @@ impl SdkCapabilities {
             "hasRemoteRecordControl": self.has_remote_record_control,
             "hasVoiceKey": self.has_voice_key,
             "hasMarkButton": self.has_mark_button,
+            "hasConfigurableButtons": self.has_configurable_buttons,
             "otaMode": self.ota_mode,
         })
     }

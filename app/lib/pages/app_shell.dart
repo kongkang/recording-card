@@ -216,9 +216,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         healthStore: widget.healthSignals?.store,
       );
 
-  /// 实时音频接收器：录音期间边录边把 PCM 收进本地，每满 1 分钟切片即刻送本地 ASR 转写落库。
+  /// 实时音频接收器：录音期间边录边把 PCM 收进本地，按可配置窗口（默认 1 分钟）切片即刻送本地 ASR 转写落库。
+  late final bool _ownsLiveAudio = widget.liveAudio == null;
   late final LiveAudioRecorder _liveAudio =
-      widget.liveAudio ?? LiveAudioRecorder(gateway: _device.gateway);
+      widget.liveAudio ??
+      LiveAudioRecorder(
+        gateway: _device.gateway,
+        sliceDuration: _agentConfig.recordingSliceDuration,
+      );
   late final PhotoLibraryService _photoLib =
       widget.photoLibrary ?? const PhotoLibraryService();
   late final HardwareAgentTaskCoordinator _hwAgent;
@@ -314,6 +319,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _watchSliceSub = _device.watchAudioSlices.listen((slice) {
       unawaited(widget.store.ingestLiveSlice(slice));
     });
+    if (_ownsLiveAudio) {
+      _device.setRecordingSliceDuration(_agentConfig.recordingSliceDuration);
+    }
     _device.setIslandEnabled(_agentConfig.islandEnabled);
     if (_agentConfig.watchLinkEnabled != _device.watchHardware.linkEnabled) {
       unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
@@ -385,6 +393,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _device.setIslandEnabled(_agentConfig.islandEnabled);
     if (_agentConfig.watchLinkEnabled != _device.watchHardware.linkEnabled) {
       unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
+    }
+    if (_ownsLiveAudio) {
+      final dur = _agentConfig.recordingSliceDuration;
+      _liveAudio.setSliceDuration(dur);
+      _device.setRecordingSliceDuration(dur);
     }
     if (_agentConfig.getSeedLinkEnabled != _device.getSeedLinkEnabled ||
         _agentConfig.omiLinkEnabled != _device.omiLinkEnabled ||

@@ -4110,7 +4110,7 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                     switchKey: const Key('ext-omi-switch'),
                     title: 'Omi 随身录音器',
                     modelTag: 'Friend',
-                    subtitle: '蓝牙随身拾音，支持按键打点与板载存储同步',
+                    subtitle: '蓝牙实时拾音与板载存储同步，支持单击/双击按键（长按 3 秒为硬件关机）',
                     enabled: omiOn,
                     connected: omiConn,
                     onChanged: () => unawaited(_toggleOmi(!omiOn)),
@@ -4277,6 +4277,7 @@ class _DeveloperCleanBody extends StatelessWidget {
 
   final AgentConfigStore config;
 
+  static const _slicePresets = [60, 120, 300, 600, 900];
   static const _cyclePresets = [2, 5, 10, 15, 30, 60, 120];
   static const _paraPresets = [0, 1, 3, 5, 8];
   static const _minutePresets = [1, 2, 3, 5, 10, 15];
@@ -4292,6 +4293,78 @@ class _DeveloperCleanBody extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
         DeveloperModelSection(config: config),
+        const SizedBox(height: 16),
+        _SubSectionLabel('实时录音切片窗口'),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: c.card,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: c.sep),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '切片生成间隔',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: c.label,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    AgentConfigStore.formatSampleWindow(
+                      config.recordingSliceSeconds,
+                    ),
+                    key: const Key('dev-slice-seconds-value'),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: primary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '默认 1 分钟。切换为 5 分钟或其他时长后，对蓝牙实时音频流（含 Omi / 录音卡）与手机本机麦克风切片立即生效。',
+                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final s in _slicePresets)
+                    ChoiceChip(
+                      key: Key('dev-slice-preset-$s'),
+                      label: Text(AgentConfigStore.formatSampleWindow(s)),
+                      selected: config.recordingSliceSeconds == s,
+                      onSelected: (_) =>
+                          unawaited(config.setRecordingSliceSeconds(s)),
+                    ),
+                ],
+              ),
+              Slider(
+                key: const Key('dev-slice-slider'),
+                min: 60,
+                max: 1800,
+                divisions: 58,
+                value: config.recordingSliceSeconds.toDouble().clamp(60, 1800),
+                label: AgentConfigStore.formatSampleWindow(
+                  config.recordingSliceSeconds,
+                ),
+                onChanged: (v) =>
+                    unawaited(config.setRecordingSliceSeconds(v.round())),
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 16),
         _SubSectionLabel('增量清洗与逻辑分段周期'),
         Container(
