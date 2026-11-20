@@ -1921,7 +1921,8 @@ class AppStore extends ChangeNotifier {
         onProgress: (progress, step) {
           if (_disposed ||
               _cancelledSummaryIds.contains(card.id) ||
-              _genEpoch != myEpoch) {
+              _genEpoch != myEpoch ||
+              summaryById(card.id) == null) {
             return;
           }
           _genProgress = progress.clamp(0, 1);
@@ -1932,7 +1933,8 @@ class AppStore extends ChangeNotifier {
       );
       if (_disposed ||
           _cancelledSummaryIds.contains(card.id) ||
-          _genEpoch != myEpoch) {
+          _genEpoch != myEpoch ||
+          summaryById(card.id) == null) {
         return;
       }
       card
@@ -1954,7 +1956,8 @@ class AppStore extends ChangeNotifier {
     } on Object catch (e) {
       if (_disposed ||
           _cancelledSummaryIds.contains(card.id) ||
-          _genEpoch != myEpoch) {
+          _genEpoch != myEpoch ||
+          summaryById(card.id) == null) {
         return;
       }
       final message = e is SummaryGenerationException ? e.message : '生成失败：$e';
@@ -2020,15 +2023,26 @@ class AppStore extends ChangeNotifier {
     _runGeneration(card, sources);
   }
 
-  /// 放弃失败的总结卡。
+  /// 放弃失败或已取消的总结卡（同步停止在途生成状态与计时器）。
   void dismissFailed(String summaryId) {
+    _cancelledSummaryIds.add(summaryId);
     summaries = [
       for (final s in summaries)
-        if (!(s.id == summaryId && s.state == SummaryState.failed)) s,
+        if (!(s.id == summaryId &&
+            (s.state == SummaryState.failed ||
+                s.state == SummaryState.generating)))
+          s,
     ];
+    if (pend?.id == summaryId) pend = null;
     if (openCardId == summaryId) openCardId = null;
     if (subStack.isNotEmpty && stackTop?.id == summaryId) {
       subStack = subStack.sublist(0, subStack.length - 1);
+    }
+    if (summaries.every((s) => s.state != SummaryState.generating)) {
+      _genEpoch++;
+      _genTicker?.cancel();
+      _genTicker = null;
+      _genWatch?.stop();
     }
     _persist();
     notifyListeners();

@@ -532,6 +532,7 @@ class _PhoneRecRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final on = store.isPhoneRecording;
     final busy = store.phoneRecordingBusy;
     return Column(
@@ -545,9 +546,9 @@ class _PhoneRecRow extends StatelessWidget {
             children: [
               Flexible(
                 child: busy
-                    ? const Text(
+                    ? Text(
                         '处理中…',
-                        style: TextStyle(fontSize: 13, color: RCColors.sec),
+                        style: TextStyle(fontSize: 13, color: c.sec),
                       )
                     : on
                     ? Row(
@@ -556,8 +557,8 @@ class _PhoneRecRow extends StatelessWidget {
                           Container(
                             width: 7,
                             height: 7,
-                            decoration: const BoxDecoration(
-                              color: RCColors.danger,
+                            decoration: BoxDecoration(
+                              color: c.danger,
                               shape: BoxShape.circle,
                             ),
                           ),
@@ -569,7 +570,7 @@ class _PhoneRecRow extends StatelessWidget {
                                   : '本机录音中',
                               overflow: TextOverflow.ellipsis,
                               maxLines: 1,
-                              style: const TextStyle(fontSize: 13),
+                              style: TextStyle(fontSize: 13, color: c.label),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -577,17 +578,18 @@ class _PhoneRecRow extends StatelessWidget {
                             store.phoneRecClockText,
                             key: const Key('phone-rec-clock'),
                             softWrap: false,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 13,
-                              fontFeatures: [FontFeature.tabularFigures()],
+                              color: c.label,
+                              fontFeatures: const [FontFeature.tabularFigures()],
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
                       )
-                    : const Text(
+                    : Text(
                         '使用手机麦克风',
-                        style: TextStyle(fontSize: 13, color: RCColors.sec),
+                        style: TextStyle(fontSize: 13, color: c.sec),
                       ),
               ),
               const SizedBox(width: 10),
@@ -618,7 +620,7 @@ class _PhoneRecRow extends StatelessWidget {
             child: Text(
               store.phoneRecordingError!,
               key: const Key('phone-rec-error'),
-              style: const TextStyle(fontSize: 12, color: RCColors.danger),
+              style: TextStyle(fontSize: 12, color: c.danger),
             ),
           ),
       ],
@@ -638,6 +640,7 @@ class _MainView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     if (!store.isConnected) {
       return _ConnectView(store: store, islandEnabled: islandEnabled);
     }
@@ -657,7 +660,7 @@ class _MainView extends StatelessWidget {
                   height: 9,
                   decoration: BoxDecoration(
                     // 绿=录音中，橙=已连接待机
-                    color: store.isRecording ? RCColors.ok : RCColors.warn,
+                    color: store.isRecording ? c.ok : c.warn,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -674,9 +677,10 @@ class _MainView extends StatelessWidget {
                     key: const Key('dev-name'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w800,
+                      color: c.label,
                     ),
                   ),
                 ),
@@ -687,12 +691,12 @@ class _MainView extends StatelessWidget {
                     key: const Key('dev-disconnect'),
                     behavior: HitTestBehavior.opaque,
                     onTap: () => _confirmDisconnect(context, store),
-                    child: const Padding(
-                      padding: EdgeInsets.all(8),
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
                       child: RCIcon(
                         RCIconKind.disconnect,
                         size: 18,
-                        color: RCColors.sec,
+                        color: c.sec,
                       ),
                     ),
                   ),
@@ -703,11 +707,11 @@ class _MainView extends StatelessWidget {
               padding: const EdgeInsets.only(left: 16, top: 2),
               child: Row(
                 children: [
-                  const RCIcon(
+                  RCIcon(
                     RCIconKind.bluetooth,
-                    key: Key('dev-bt-icon'),
+                    key: const Key('dev-bt-icon'),
                     size: 12,
-                    color: RCColors.sec,
+                    color: c.sec,
                   ),
                   if (store.deviceSubtitleText.isNotEmpty) ...[
                     const SizedBox(width: 4),
@@ -717,9 +721,9 @@ class _MainView extends StatelessWidget {
                         key: const Key('dev-subtitle'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: RCColors.sec,
+                          color: c.sec,
                         ),
                       ),
                     ),
@@ -729,7 +733,7 @@ class _MainView extends StatelessWidget {
             ),
           ],
         ),
-        const Divider(height: 24, color: RCColors.sep),
+        Divider(height: 24, color: c.sep),
         // 录音状态：关闭时显示「未录音」+ 开关；打开后红点 + 录音中 + 正计时。
         // 开关本身就是入口，避免再去别处找「开始录音」。
         _Row(
@@ -755,10 +759,10 @@ class _MainView extends StatelessWidget {
                 child: store.recordingBusy
                     // 命令在跑：这里必须给出可见反馈。蓝牙被占时这一等可能十几秒，
                     // 只在开关上做 50% 半透明肉眼看不出，用户会以为点坏了。
-                    ? const Text(
+                    ? Text(
                         '处理中…',
-                        key: ValueKey('rec-busy'),
-                        style: TextStyle(fontSize: 14, color: RCColors.sec),
+                        key: const ValueKey('rec-busy'),
+                        style: TextStyle(fontSize: 14, color: c.sec),
                       )
                     : store.isRecording
                     ? Row(
@@ -768,19 +772,19 @@ class _MainView extends StatelessWidget {
                           Container(
                             width: 7,
                             height: 7,
-                            decoration: const BoxDecoration(
-                              color: RCColors.danger,
+                            decoration: BoxDecoration(
+                              color: c.danger,
                               shape: BoxShape.circle,
                             ),
                           ),
                           const SizedBox(width: 5),
                           // 「录音中 00:00:00」放不下时省略「录音中」，计时优先保住
-                          const Flexible(
+                          Flexible(
                             child: Text(
                               '录音中',
                               overflow: TextOverflow.ellipsis,
                               maxLines: 1,
-                              style: TextStyle(fontSize: 14),
+                              style: TextStyle(fontSize: 14, color: c.label),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -788,18 +792,19 @@ class _MainView extends StatelessWidget {
                             store.recClockText,
                             key: const Key('rec-clock'),
                             softWrap: false, // 等宽数字单行，不折行
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 14,
-                              fontFeatures: [FontFeature.tabularFigures()],
+                              color: c.label,
+                              fontFeatures: const [FontFeature.tabularFigures()],
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
                       )
-                    : const Text(
+                    : Text(
                         '未录音',
-                        key: ValueKey('rec-off'),
-                        style: TextStyle(fontSize: 14, color: RCColors.sec),
+                        key: const ValueKey('rec-off'),
+                        style: TextStyle(fontSize: 14, color: c.sec),
                       ),
                 ),
               ),
@@ -832,15 +837,17 @@ class _MainView extends StatelessWidget {
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF0F0EC),
+                    color: c.isDark
+                        ? const Color(0xFF242428)
+                        : const Color(0xFFF0F0EC),
                     borderRadius: BorderRadius.circular(999),
                   ),
-                  child: const Text(
+                  child: Text(
                     '机身按键控录',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: RCColors.sec,
+                      color: c.sec,
                     ),
                   ),
                 ),
@@ -862,7 +869,7 @@ class _MainView extends StatelessWidget {
                   key: const Key('batt-eta'),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
-                  style: const TextStyle(fontSize: 14),
+                  style: TextStyle(fontSize: 14, color: c.label),
                 ),
               ),
             ],
@@ -884,7 +891,7 @@ class _MainView extends StatelessWidget {
                     key: const Key('sync-txt'),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
-                    style: const TextStyle(fontSize: 14),
+                    style: TextStyle(fontSize: 14, color: c.label),
                   ),
                 ),
                 const SizedBox(width: 7),
@@ -892,18 +899,18 @@ class _MainView extends StatelessWidget {
                   width: 16,
                   height: 16,
                   child: switch (store.syncState) {
-                    SyncState.idle => const RCIcon(
+                    SyncState.idle => RCIcon(
                       RCIconKind.sync,
-                      key: Key('sync-ico-idle'),
+                      key: const Key('sync-ico-idle'),
                       size: 15,
-                      color: RCColors.sec,
+                      color: c.sec,
                     ),
                     SyncState.busy => const _SpinIcon(key: Key('sync-ico-busy')),
-                    SyncState.done => const RCIcon(
+                    SyncState.done => RCIcon(
                       RCIconKind.check,
-                      key: Key('sync-ico-done'),
+                      key: const Key('sync-ico-done'),
                       size: 15,
-                      color: RCColors.ok,
+                      color: c.ok,
                     ),
                   },
                 ),
@@ -923,15 +930,15 @@ class _MainView extends StatelessWidget {
                     '已配置 · ${store.wifiCountShown} 个网络',
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
-                    style: const TextStyle(fontSize: 14),
+                    style: TextStyle(fontSize: 14, color: c.label),
                   ),
                 ),
                 const SizedBox(width: 5),
-                const RCIcon(
+                RCIcon(
                   RCIconKind.chevronRight,
-                  key: Key('rowchev-wifi'),
+                  key: const Key('rowchev-wifi'),
                   size: 15,
-                  color: RCColors.ax,
+                  color: c.ax,
                 ),
               ],
             ),
@@ -953,15 +960,15 @@ class _MainView extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 14,
                       color: store.fwValText == '正在检查…'
-                          ? RCColors.sec
+                          ? c.sec
                           : (store.fwStage == FwStage.failed
-                                ? RCColors.danger
-                                : RCColors.okInk),
+                                ? c.danger
+                                : c.okInk),
                     ),
                   ),
                 ),
                 const SizedBox(width: 5),
-                const RCIcon(RCIconKind.chevronRight, size: 15, color: RCColors.ax),
+                RCIcon(RCIconKind.chevronRight, size: 15, color: c.ax),
               ],
             ),
           ),
@@ -981,14 +988,14 @@ class _MainView extends StatelessWidget {
                       agentConfig!.dyjButtonSummary,
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
-                      style: const TextStyle(fontSize: 14),
+                      style: TextStyle(fontSize: 14, color: c.label),
                     ),
                   ),
                   const SizedBox(width: 5),
-                  const RCIcon(
+                  RCIcon(
                     RCIconKind.chevronRight,
                     size: 15,
-                    color: RCColors.ax,
+                    color: c.ax,
                   ),
                 ],
               ),
@@ -1000,7 +1007,7 @@ class _MainView extends StatelessWidget {
             child: Text(
               store.devStateText,
               key: const Key('dev-state'),
-              style: const TextStyle(fontSize: 12, color: RCColors.okInk),
+              style: TextStyle(fontSize: 12, color: c.okInk),
             ),
           ),
         // 录音失败就地展示：弹层盖住整个屏幕，SnackBar 在它下面根本看不见。
@@ -1010,7 +1017,7 @@ class _MainView extends StatelessWidget {
             child: Text(
               store.recordingError!,
               key: const Key('rec-error'),
-              style: const TextStyle(fontSize: 12, color: RCColors.danger),
+              style: TextStyle(fontSize: 12, color: c.danger),
             ),
           ),
         if (store.syncError != null && store.syncError!.isNotEmpty)
@@ -1019,7 +1026,7 @@ class _MainView extends StatelessWidget {
             child: Text(
               store.syncError!,
               key: const Key('sync-error'),
-              style: const TextStyle(fontSize: 12, color: RCColors.sec),
+              style: TextStyle(fontSize: 12, color: c.sec),
             ),
           ),
         const SizedBox(height: 10),
@@ -1029,8 +1036,8 @@ class _MainView extends StatelessWidget {
             key: const Key('sheet-close'),
             onPressed: store.closeSheet,
             style: FilledButton.styleFrom(
-              backgroundColor: context.rc.label,
-              foregroundColor: context.rc.onLabel,
+              backgroundColor: c.label,
+              foregroundColor: c.onLabel,
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1061,7 +1068,10 @@ Future<void> _confirmDisconnect(BuildContext context, DeviceStore store) async {
         FilledButton(
           key: const Key('disconnect-confirm'),
           onPressed: () => Navigator.of(ctx).pop(true),
-          style: FilledButton.styleFrom(backgroundColor: RCColors.danger),
+          style: FilledButton.styleFrom(
+            backgroundColor: ctx.rc.danger,
+            foregroundColor: Colors.white,
+          ),
           child: const Text('断开连接'),
         ),
       ],
@@ -1082,6 +1092,7 @@ class _ConnectView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final busy = store.isLinkBusy;
     final bleExpired = store.isBleScanExpired;
     return Column(
@@ -1096,32 +1107,36 @@ class _ConnectView extends StatelessWidget {
               height: 10,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: store.isPhoneRecording ? RCColors.ok : null,
+                color: store.isPhoneRecording ? c.ok : null,
                 border: store.isPhoneRecording
                     ? null
-                    : Border.all(color: RCColors.ax, width: 1.4),
+                    : Border.all(color: c.ax, width: 1.4),
               ),
             ),
             const SizedBox(width: 8),
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     '录音卡',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: c.label,
+                    ),
                   ),
                   Row(
                     children: [
                       RCIcon(
                         RCIconKind.bluetooth,
                         size: 12,
-                        color: RCColors.sec,
+                        color: c.sec,
                       ),
-                      SizedBox(width: 4),
+                      const SizedBox(width: 4),
                       Text(
                         '待连接硬件',
-                        style: TextStyle(fontSize: 12, color: RCColors.sec),
+                        style: TextStyle(fontSize: 12, color: c.sec),
                       ),
                     ],
                   ),
@@ -1131,39 +1146,45 @@ class _ConnectView extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: const Color(0xFFF0F0EC),
+                color: c.isDark
+                    ? const Color(0xFF242428)
+                    : const Color(0xFFF0F0EC),
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: const Text(
+              child: Text(
                 '未连接',
-                key: Key('dev-link-chip'),
-                style: TextStyle(fontSize: 11, color: RCColors.sec),
+                key: const Key('dev-link-chip'),
+                style: TextStyle(fontSize: 11, color: c.sec),
               ),
             ),
           ],
         ),
-        const Divider(height: 20, color: RCColors.sep),
+        Divider(height: 20, color: c.sep),
         _PhoneRecRow(store: store, islandEnabled: islandEnabled),
-        const Divider(height: 18, color: RCColors.sep),
-        const Text(
+        Divider(height: 18, color: c.sep),
+        Text(
           '连接录音卡',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: c.label,
+          ),
         ),
         const SizedBox(height: 4),
         if (store.linkState == LinkState.scanning)
           Row(
             key: const Key('dev-scan-state'),
-            children: const [
-              SizedBox(
+            children: [
+              const SizedBox(
                 width: 14,
                 height: 14,
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   '正在通过蓝牙扫描附近的录音卡…',
-                  style: TextStyle(fontSize: 13),
+                  style: TextStyle(fontSize: 13, color: c.ink),
                 ),
               ),
             ],
@@ -1171,23 +1192,26 @@ class _ConnectView extends StatelessWidget {
         else if (store.linkState == LinkState.connecting)
           Row(
             key: const Key('dev-connecting-state'),
-            children: const [
-              SizedBox(
+            children: [
+              const SizedBox(
                 width: 14,
                 height: 14,
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              SizedBox(width: 8),
-              Text('正在连接录音卡…', style: TextStyle(fontSize: 13)),
+              const SizedBox(width: 8),
+              Text(
+                '正在连接录音卡…',
+                style: TextStyle(fontSize: 13, color: c.ink),
+              ),
             ],
           )
         else if (bleExpired)
-          const Text(
+          Text(
             '蓝牙设备列表已过期，请重新扫描',
-            key: Key('dev-scan-expired-hint'),
+            key: const Key('dev-scan-expired-hint'),
             style: TextStyle(
               fontSize: 13,
-              color: Color(0xFF8A5A10),
+              color: c.isDark ? c.warn : const Color(0xFF8A5A10),
               fontWeight: FontWeight.w500,
             ),
           )
@@ -1198,20 +1222,20 @@ class _ConnectView extends StatelessWidget {
             children: [
               Text(
                 store.linkError!,
-                style: const TextStyle(fontSize: 13, color: RCColors.ink),
+                style: TextStyle(fontSize: 13, color: c.ink),
               ),
               const SizedBox(height: 4),
-              const Text(
+              Text(
                 '请确认录音卡已开机，并放在手机附近',
-                style: TextStyle(fontSize: 12, color: RCColors.sec),
+                style: TextStyle(fontSize: 12, color: c.sec),
               ),
             ],
           )
         else
-          const Text(
+          Text(
             '选择要连接的录音卡（按信号强弱排序）',
-            key: Key('dev-pick-hint'),
-            style: TextStyle(fontSize: 13, color: RCColors.sec),
+            key: const Key('dev-pick-hint'),
+            style: TextStyle(fontSize: 13, color: c.sec),
           ),
         for (final device in store.discovered) ...[
           const SizedBox(height: 10),
@@ -1228,8 +1252,8 @@ class _ConnectView extends StatelessWidget {
             key: const Key('dev-rescan'),
             onPressed: busy ? null : () => store.startScan(),
             style: FilledButton.styleFrom(
-              backgroundColor: context.rc.label,
-              foregroundColor: context.rc.onLabel,
+              backgroundColor: c.label,
+              foregroundColor: c.onLabel,
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1240,8 +1264,8 @@ class _ConnectView extends StatelessWidget {
             key: const Key('sheet-close'),
             onPressed: store.closeSheet,
             style: OutlinedButton.styleFrom(
-              foregroundColor: RCColors.label,
-              side: const BorderSide(color: RCColors.ax),
+              foregroundColor: c.label,
+              side: BorderSide(color: c.ax),
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 11),
             ),
@@ -1252,8 +1276,8 @@ class _ConnectView extends StatelessWidget {
             key: const Key('dev-rescan'),
             onPressed: busy ? null : () => store.startScan(),
             style: OutlinedButton.styleFrom(
-              foregroundColor: RCColors.label,
-              side: const BorderSide(color: RCColors.ax),
+              foregroundColor: c.label,
+              side: BorderSide(color: c.ax),
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 11),
             ),
@@ -1264,8 +1288,8 @@ class _ConnectView extends StatelessWidget {
             key: const Key('sheet-close'),
             onPressed: store.closeSheet,
             style: FilledButton.styleFrom(
-              backgroundColor: context.rc.label,
-              foregroundColor: context.rc.onLabel,
+              backgroundColor: c.label,
+              foregroundColor: c.onLabel,
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1292,6 +1316,7 @@ class _ConnectDeviceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final disabled = busy || expired;
     return Semantics(
       button: true,
@@ -1303,8 +1328,12 @@ class _ConnectDeviceTile extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: expired ? const Color(0xFFF5F5F2) : null,
-            border: Border.all(color: RCColors.sep),
+            color: expired
+                ? (c.isDark
+                      ? const Color(0xFF202024)
+                      : const Color(0xFFF5F5F2))
+                : null,
+            border: Border.all(color: c.sep),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Opacity(
@@ -1325,9 +1354,10 @@ class _ConnectDeviceTile extends StatelessWidget {
                           device.shortName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
+                            color: c.label,
                           ),
                         ),
                       ),
@@ -1340,18 +1370,18 @@ class _ConnectDeviceTile extends StatelessWidget {
                   Text(
                     '已过期',
                     key: Key('dev-expired-${device.id}'),
-                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                    style: TextStyle(fontSize: 12, color: c.sec),
                   )
                 else ...[
-                  const Text(
+                  Text(
                     '连接',
-                    style: TextStyle(fontSize: 12, color: RCColors.okInk),
+                    style: TextStyle(fontSize: 12, color: c.okInk),
                   ),
                   const SizedBox(width: 4),
-                  const RCIcon(
+                  RCIcon(
                     RCIconKind.chevronRight,
                     size: 15,
-                    color: RCColors.ax,
+                    color: c.ax,
                   ),
                 ],
               ],
@@ -1386,7 +1416,7 @@ class _SpinIconState extends State<_SpinIcon>
   @override
   Widget build(BuildContext context) => RotationTransition(
     turns: _c,
-    child: const RCIcon(RCIconKind.sync, size: 15, color: RCColors.ink),
+    child: RCIcon(RCIconKind.sync, size: 15, color: context.rc.ink),
   );
 }
 
@@ -1421,7 +1451,10 @@ class _FirmwareView extends StatelessWidget {
           FilledButton(
             key: const Key('ota-rec-confirm'),
             onPressed: () => Navigator.of(ctx).pop(true),
-            style: FilledButton.styleFrom(backgroundColor: RCColors.label),
+            style: FilledButton.styleFrom(
+              backgroundColor: ctx.rc.label,
+              foregroundColor: ctx.rc.onLabel,
+            ),
             child: const Text('继续更新'),
           ),
         ],
@@ -1461,14 +1494,19 @@ class _FirmwareView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     return Column(
       key: const Key('dev-upg'),
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
+        Text(
           '固件更新',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+            color: c.label,
+          ),
         ),
         const SizedBox(height: 6),
         _Row(
@@ -1476,7 +1514,7 @@ class _FirmwareView extends StatelessWidget {
           child: Text(
             store.mainVersionCompare,
             key: const Key('fw-main-ver'),
-            style: const TextStyle(fontSize: 13),
+            style: TextStyle(fontSize: 13, color: c.label),
           ),
         ),
         if (store.activeCapabilities.hasDualChipOta)
@@ -1485,7 +1523,7 @@ class _FirmwareView extends StatelessWidget {
             child: Text(
               store.wifiVersionCompare,
               key: const Key('fw-wifi-ver'),
-              style: const TextStyle(fontSize: 13),
+              style: TextStyle(fontSize: 13, color: c.label),
             ),
           ),
         if (store.fwError != null)
@@ -1497,9 +1535,9 @@ class _FirmwareView extends StatelessWidget {
                 Text(
                   store.fwError!,
                   key: const Key('fw-error'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: RCColors.danger,
+                    color: c.danger,
                     height: 1.6,
                   ),
                 ),
@@ -1512,7 +1550,7 @@ class _FirmwareView extends StatelessWidget {
                       key: const Key('upg-goto-wifi'),
                       onPressed: () => store.showView(DeviceView.wifi),
                       style: TextButton.styleFrom(
-                        foregroundColor: RCColors.ink,
+                        foregroundColor: c.ink,
                         padding: const EdgeInsets.only(top: 4),
                         minimumSize: Size.zero,
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -1533,7 +1571,7 @@ class _FirmwareView extends StatelessWidget {
             child: Text(
               '更新期间请保持设备连接，切勿退出本页或关闭手机屏幕。',
               key: const Key('upg-warn'),
-              style: const TextStyle(fontSize: 12, color: RCColors.danger),
+              style: TextStyle(fontSize: 12, color: c.danger),
             ),
           ),
         if (store.fwUpdating) ...[
@@ -1544,8 +1582,8 @@ class _FirmwareView extends StatelessWidget {
               key: const Key('upg-bar'),
               value: store.fwProgress / 100,
               minHeight: 5,
-              backgroundColor: RCColors.sep,
-              valueColor: const AlwaysStoppedAnimation(RCColors.ok),
+              backgroundColor: c.sep,
+              valueColor: AlwaysStoppedAnimation(c.ok),
             ),
           ),
           const SizedBox(height: 8),
@@ -1555,14 +1593,15 @@ class _FirmwareView extends StatelessWidget {
               Text(
                 store.fwStageText,
                 key: const Key('upg-stage'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
+                  color: c.label,
                 ),
               ),
               Text(
                 store.fwPctText,
-                style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                style: TextStyle(fontSize: 12, color: c.sec),
               ),
             ],
           ),
@@ -1570,7 +1609,7 @@ class _FirmwareView extends StatelessWidget {
           Text(
             store.fwStateText,
             key: const Key('upg-state'),
-            style: const TextStyle(fontSize: 12, color: RCColors.sec),
+            style: TextStyle(fontSize: 12, color: c.sec),
           ),
         ],
         const SizedBox(height: 12),
@@ -1584,9 +1623,9 @@ class _FirmwareView extends StatelessWidget {
                 ? null
                 : () => unawaited(_onStartPressed(context)),
             style: FilledButton.styleFrom(
-              backgroundColor: RCColors.label,
-              disabledBackgroundColor: RCColors.ax,
-              foregroundColor: Colors.white,
+              backgroundColor: c.label,
+              disabledBackgroundColor: c.ax,
+              foregroundColor: c.onLabel,
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1608,9 +1647,9 @@ class _FirmwareView extends StatelessWidget {
                 ? null
                 : () => store.showView(DeviceView.main),
             style: OutlinedButton.styleFrom(
-              foregroundColor: RCColors.ink,
-              disabledForegroundColor: RCColors.ax,
-              side: const BorderSide(color: RCColors.ax),
+              foregroundColor: c.ink,
+              disabledForegroundColor: c.ax,
+              side: BorderSide(color: c.ax),
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1628,6 +1667,7 @@ class _SignalBars extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     return Row(
       key: Key('sig-$strength'),
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -1638,7 +1678,7 @@ class _SignalBars extends StatelessWidget {
             width: 3,
             height: 3.0 + i * 3,
             margin: const EdgeInsets.only(left: 2),
-            color: i <= strength ? RCColors.ink : RCColors.ax,
+            color: i <= strength ? c.ink : c.ax,
           ),
       ],
     );
@@ -1664,6 +1704,7 @@ class _WifiViewState extends State<_WifiView> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final store = widget.store;
     final shown = store.wifiMore
         ? store.wifiSaved
@@ -1678,28 +1719,32 @@ class _WifiViewState extends State<_WifiView> {
             IconButton(
               key: const Key('wifi-back'),
               onPressed: () => store.showView(DeviceView.main),
-              icon: const RCIcon(
+              icon: RCIcon(
                 RCIconKind.chevronLeft,
                 size: 18,
-                color: RCColors.ink,
+                color: c.ink,
               ),
-              color: RCColors.ink,
+              color: c.ink,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
             ),
             const SizedBox(width: 4),
-            const Text(
+            Text(
               'Wi-Fi 设置',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: c.label,
+              ),
             ),
           ],
         ),
         const SizedBox(height: 4),
-        const Align(
+        Align(
           alignment: Alignment.centerLeft,
           child: Text(
             '已保存',
-            style: TextStyle(fontSize: 12, color: RCColors.sec),
+            style: TextStyle(fontSize: 12, color: c.sec),
           ),
         ),
         for (final w in shown)
@@ -1717,7 +1762,7 @@ class _WifiViewState extends State<_WifiView> {
                       w.name,
                       style: TextStyle(
                         fontSize: 14,
-                        color: inRange ? RCColors.label : RCColors.sec,
+                        color: inRange ? c.label : c.sec,
                       ),
                     ),
                     if (store.wifiLast == w.name) ...[
@@ -1731,7 +1776,7 @@ class _WifiViewState extends State<_WifiView> {
                           : store.wifiScanDone
                           ? (inRange ? '' : '不在范围内')
                           : '—',
-                      style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                      style: TextStyle(fontSize: 12, color: c.sec),
                     ),
                     if (inRange) ...[
                       const SizedBox(width: 6),
@@ -1749,7 +1794,7 @@ class _WifiViewState extends State<_WifiView> {
               key: const Key('wmore'),
               onPressed: store.wifiMoreToggle,
               style: TextButton.styleFrom(
-                foregroundColor: RCColors.sec,
+                foregroundColor: c.sec,
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                 minimumSize: Size.zero,
                 textStyle: const TextStyle(fontSize: 12),
@@ -1761,12 +1806,12 @@ class _WifiViewState extends State<_WifiView> {
               ),
             ),
           ),
-        const Divider(height: 18, color: RCColors.sep),
-        const Align(
+        Divider(height: 18, color: c.sep),
+        Align(
           alignment: Alignment.centerLeft,
           child: Text(
             '可用网络',
-            style: TextStyle(fontSize: 12, color: RCColors.sec),
+            style: TextStyle(fontSize: 12, color: c.sec),
           ),
         ),
         const SizedBox(height: 4),
@@ -1775,7 +1820,7 @@ class _WifiViewState extends State<_WifiView> {
           child: Text(
             store.wifiStateText,
             key: const Key('wstate'),
-            style: const TextStyle(fontSize: 12, color: RCColors.sec),
+            style: TextStyle(fontSize: 12, color: c.sec),
           ),
         ),
         // 连接/密码错误就地展示（用户改密码即可重试，不靠一闪而过的提示）
@@ -1787,7 +1832,7 @@ class _WifiViewState extends State<_WifiView> {
               child: Text(
                 store.wifiError!,
                 key: const Key('wifi-error'),
-                style: const TextStyle(fontSize: 12, color: RCColors.danger),
+                style: TextStyle(fontSize: 12, color: c.danger),
               ),
             ),
           ),
@@ -1804,13 +1849,13 @@ class _WifiViewState extends State<_WifiView> {
           )
         else
           for (final r in store.wifiScanRes) ...[
-            _availRow(store, r),
-            if (store.wifiSelName == r.name) _joinForm(store, r),
+            _availRow(c, store, r),
+            if (store.wifiSelName == r.name) _joinForm(c, store, r),
           ],
         const SizedBox(height: 8),
-        const Text(
+        Text(
           '录音卡仅支持 2.4GHz 网络，此处只显示 2.4GHz 接入点',
-          style: TextStyle(fontSize: 11, color: RCColors.sec),
+          style: TextStyle(fontSize: 11, color: c.sec),
         ),
         const SizedBox(height: 10),
         SizedBox(
@@ -1818,8 +1863,8 @@ class _WifiViewState extends State<_WifiView> {
           child: OutlinedButton(
             onPressed: store.wifiScan,
             style: OutlinedButton.styleFrom(
-              foregroundColor: RCColors.ink,
-              side: const BorderSide(color: RCColors.ax),
+              foregroundColor: c.ink,
+              side: BorderSide(color: c.ax),
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 11),
             ),
@@ -1830,7 +1875,7 @@ class _WifiViewState extends State<_WifiView> {
     );
   }
 
-  Widget _availRow(DeviceStore store, WifiNet r) {
+  Widget _availRow(RCColorScheme c, DeviceStore store, WifiNet r) {
     final saved = store.wifiSaved.any((s) => s.name == r.name);
     final joining = store.wifiJoining && store.wifiJoinName == r.name;
     if (joining) {
@@ -1839,11 +1884,11 @@ class _WifiViewState extends State<_WifiView> {
         padding: const EdgeInsets.symmetric(vertical: 9),
         child: Row(
           children: [
-            Text(r.name, style: const TextStyle(fontSize: 14)),
+            Text(r.name, style: TextStyle(fontSize: 14, color: c.label)),
             const Spacer(),
-            const Text(
+            Text(
               '正在连接…',
-              style: TextStyle(fontSize: 12, color: RCColors.sec),
+              style: TextStyle(fontSize: 12, color: c.sec),
             ),
           ],
         ),
@@ -1858,14 +1903,14 @@ class _WifiViewState extends State<_WifiView> {
         padding: const EdgeInsets.symmetric(vertical: 9),
         child: Row(
           children: [
-            Text(r.name, style: const TextStyle(fontSize: 14)),
+            Text(r.name, style: TextStyle(fontSize: 14, color: c.label)),
             if (saved) ...[
               const SizedBox(width: 6),
               const _Chip('已保存', subtle: true),
             ],
             const Spacer(),
             if (r.lock) ...[
-              const RCIcon(RCIconKind.lock, size: 12, color: RCColors.sec),
+              RCIcon(RCIconKind.lock, size: 12, color: c.sec),
               const SizedBox(width: 5),
             ],
             _SignalBars(strength: r.signal),
@@ -1875,7 +1920,7 @@ class _WifiViewState extends State<_WifiView> {
     );
   }
 
-  Widget _joinForm(DeviceStore store, WifiNet r) {
+  Widget _joinForm(RCColorScheme c, DeviceStore store, WifiNet r) {
     final verifying = store.wifiJoining && store.wifiJoinName == r.name;
     return Padding(
       key: Key('wform-${r.name}'),
@@ -1885,13 +1930,17 @@ class _WifiViewState extends State<_WifiView> {
         children: [
           Text(
             r.name,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: c.label,
+            ),
           ),
           const SizedBox(height: 6),
           if (verifying)
-            const Text(
+            Text(
               '正在验证连接可行性…',
-              style: TextStyle(fontSize: 12, color: RCColors.sec),
+              style: TextStyle(fontSize: 12, color: c.sec),
             )
           else ...[
             SizedBox(
@@ -1900,7 +1949,7 @@ class _WifiViewState extends State<_WifiView> {
                 key: const Key('wifi-pwd'),
                 controller: _pwdCtrl,
                 obscureText: true,
-                style: const TextStyle(fontSize: 14),
+                style: TextStyle(fontSize: 14, color: c.label),
                 decoration: InputDecoration(
                   hintText: '输入网络密码',
                   isDense: true,
@@ -1910,7 +1959,15 @@ class _WifiViewState extends State<_WifiView> {
                   ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: RCColors.sep),
+                    borderSide: BorderSide(color: c.sep),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: c.sep),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: c.label),
                   ),
                 ),
               ),
@@ -1922,8 +1979,8 @@ class _WifiViewState extends State<_WifiView> {
                   key: const Key('wifi-cancel'),
                   onPressed: store.wifiCancelPick,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: RCColors.ink,
-                    side: const BorderSide(color: RCColors.ax),
+                    foregroundColor: c.ink,
+                    side: BorderSide(color: c.ax),
                     shape: const StadiumBorder(),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -1937,8 +1994,8 @@ class _WifiViewState extends State<_WifiView> {
                   key: const Key('wifi-connect'),
                   onPressed: () => store.wifiJoinNew(_pwdCtrl.text),
                   style: FilledButton.styleFrom(
-                    backgroundColor: RCColors.label,
-                    foregroundColor: Colors.white,
+                    backgroundColor: c.label,
+                    foregroundColor: c.onLabel,
                     shape: const StadiumBorder(),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -1964,6 +2021,7 @@ class _ButtonConfigView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final config = agentConfig;
     return Column(
       key: const Key('btn-config-view'),
@@ -1975,72 +2033,83 @@ class _ButtonConfigView extends StatelessWidget {
             IconButton(
               key: const Key('btn-cfg-back'),
               onPressed: () => store.showView(DeviceView.main),
-              icon: const RCIcon(
+              icon: RCIcon(
                 RCIconKind.chevronLeft,
                 size: 18,
-                color: RCColors.ink,
+                color: c.ink,
               ),
-              color: RCColors.ink,
+              color: c.ink,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
             ),
             const SizedBox(width: 4),
-            const Text(
+            Text(
               '按键行为设置',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: c.label,
+              ),
             ),
           ],
         ),
         const SizedBox(height: 4),
-        const Text(
+        Text(
           '配置点一机 V1 物理按键触发的动作；未开启持续录音时触发「语音任务」将自动开启临时录音并在完成后关闭。',
-          style: TextStyle(fontSize: 12, height: 1.45, color: RCColors.sec),
+          style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
         ),
         const SizedBox(height: 12),
         if (config == null)
-          const Text(
+          Text(
             '暂无按键配置上下文',
-            style: TextStyle(fontSize: 13, color: RCColors.sec),
+            style: TextStyle(fontSize: 13, color: c.sec),
           )
         else
           ListenableBuilder(
             listenable: config,
-            builder: (context, _) => Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _gestureSection(
-                  key: const Key('btn-cfg-click'),
-                  gesture: 'click',
-                  title: '单击',
-                  current: config.dyjClickAction,
-                  onPick: (a) => unawaited(config.setDyjButtonAction('click', a)),
-                ),
-                const SizedBox(height: 12),
-                _gestureSection(
-                  key: const Key('btn-cfg-long'),
-                  gesture: 'long_press',
-                  title: '长按',
-                  current: config.dyjLongPressAction,
-                  onPick: (a) =>
-                      unawaited(config.setDyjButtonAction('long_press', a)),
-                ),
-                const SizedBox(height: 12),
-                _gestureSection(
-                  key: const Key('btn-cfg-double'),
-                  gesture: 'double_click',
-                  title: '双击',
-                  current: config.dyjDoubleClickAction,
-                  onPick: (a) =>
-                      unawaited(config.setDyjButtonAction('double_click', a)),
-                ),
-              ],
-            ),
+            builder: (context, _) {
+              final rc = context.rc;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _gestureSection(
+                    rc: rc,
+                    key: const Key('btn-cfg-click'),
+                    gesture: 'click',
+                    title: '单击',
+                    current: config.dyjClickAction,
+                    onPick: (a) => unawaited(config.setDyjButtonAction('click', a)),
+                  ),
+                  const SizedBox(height: 12),
+                  _gestureSection(
+                    rc: rc,
+                    key: const Key('btn-cfg-long'),
+                    gesture: 'long_press',
+                    title: '长按',
+                    current: config.dyjLongPressAction,
+                    onPick: (a) =>
+                        unawaited(config.setDyjButtonAction('long_press', a)),
+                  ),
+                  const SizedBox(height: 12),
+                  _gestureSection(
+                    rc: rc,
+                    key: const Key('btn-cfg-double'),
+                    gesture: 'double_click',
+                    title: '双击',
+                    current: config.dyjDoubleClickAction,
+                    onPick: (a) =>
+                        unawaited(config.setDyjButtonAction('double_click', a)),
+                  ),
+                ],
+              );
+            },
           ),
       ],
     );
   }
 
   Widget _gestureSection({
+    required RCColorScheme rc,
     required Key key,
     required String gesture,
     required String title,
@@ -2051,9 +2120,9 @@ class _ButtonConfigView extends StatelessWidget {
       key: key,
       padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(
-        color: RCColors.bg,
+        color: rc.isDark ? const Color(0xFF222226) : rc.bg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: RCColors.sep),
+        border: Border.all(color: rc.sep),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2062,15 +2131,16 @@ class _ButtonConfigView extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13.5,
                   fontWeight: FontWeight.w700,
+                  color: rc.label,
                 ),
               ),
               const Spacer(),
               Text(
                 current.shortLabel,
-                style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                style: TextStyle(fontSize: 12, color: rc.sec),
               ),
             ],
           ),
@@ -2090,10 +2160,10 @@ class _ButtonConfigView extends StatelessWidget {
                       vertical: 6,
                     ),
                     decoration: BoxDecoration(
-                      color: current == act ? RCColors.label : RCColors.card,
+                      color: current == act ? rc.label : rc.card,
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(
-                        color: current == act ? RCColors.label : RCColors.sep,
+                        color: current == act ? rc.label : rc.sep,
                       ),
                     ),
                     child: Text(
@@ -2101,7 +2171,7 @@ class _ButtonConfigView extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: current == act ? Colors.white : RCColors.ink,
+                        color: current == act ? rc.onLabel : rc.ink,
                       ),
                     ),
                   ),
@@ -2120,18 +2190,25 @@ class _Chip extends StatelessWidget {
   final bool subtle;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-    decoration: BoxDecoration(
-      color: subtle ? const Color(0xFFF0F0EC) : const Color(0xFFE8F5EA),
-      borderRadius: BorderRadius.circular(999),
-    ),
-    child: Text(
-      label,
-      style: TextStyle(
-        fontSize: 10,
-        color: subtle ? RCColors.ink : RCColors.okInk,
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: subtle
+            ? (c.isDark ? const Color(0xFF242428) : const Color(0xFFF0F0EC))
+            : (c.isDark
+                  ? c.ok.withValues(alpha: 0.16)
+                  : const Color(0xFFE8F5EA)),
+        borderRadius: BorderRadius.circular(999),
       ),
-    ),
-  );
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          color: subtle ? c.ink : c.okInk,
+        ),
+      ),
+    );
+  }
 }

@@ -250,6 +250,7 @@ ThemeData _buildTheme(RCColorScheme scheme) {
     scaffoldBackgroundColor: scheme.bg,
     colorScheme: base.colorScheme.copyWith(
       primary: scheme.label,
+      onPrimary: scheme.onLabel,
       secondary: scheme.ok,
       surface: scheme.card,
       onSurface: scheme.label,

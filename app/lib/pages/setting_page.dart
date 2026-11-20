@@ -18,8 +18,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart' show deleteDatabase, getDatabasesPath;
 
 import '../core/config/remote/model_gateway_config.dart';
 import '../core/device/card_gateway.dart';
@@ -59,6 +61,8 @@ class SettingPage extends StatefulWidget {
     this.crashStore,
     this.accountHttpClient,
     this.apiBaseOverride,
+    this.liveAudioDir,
+    this.databasesDirOverride,
   });
 
   final SettingsStore? settings;
@@ -92,6 +96,12 @@ class SettingPage extends StatefulWidget {
 
   /// 可选覆盖 API 基址（测试或特殊网关用；为空时取 `agentConfig.customApiBase` 或环境默认网关）。
   final String? apiBaseOverride;
+
+  /// 可选覆盖实时/本机录音 `live_audio/` 目录（测试验证账号注销清理用；生产默认取 ApplicationSupport/live_audio）。
+  final Directory? liveAudioDir;
+
+  /// 可选覆盖 SQLite `getDatabasesPath()` 目录（测试验证账号注销删除 `memory_index.db` / `health_signals.db` 用）。
+  final Directory? databasesDirOverride;
 
   @override
   State<SettingPage> createState() => _SettingPageState();
@@ -219,6 +229,12 @@ class _SettingPageState extends State<SettingPage> {
       // 忽略本地目录清理异常
     }
     try {
+      // 先在 appStore 清空后重跑空语料 reindex，确保自定义路径/FFI SQLite FTS 索引立即擦空
+      await memSearch?.reindex();
+    } on Object {
+      // 忽略索引重建异常
+    }
+    try {
       await memSearch?.close();
     } on Object {
       // 忽略索引关闭异常
@@ -228,21 +244,57 @@ class _SettingPageState extends State<SettingPage> {
     } on Object {
       // 忽略健康库关闭异常
     }
+
+    Future<void> deleteSqliteArtifactsInDir(String dirPath) async {
+      for (final dbBase in const ['memory_index.db', 'health_signals.db']) {
+        for (final suffix in const ['', '-wal', '-shm', '-journal']) {
+          final f = File(p.join(dirPath, '$dbBase$suffix'));
+          try {
+            if (await f.exists()) {
+              await f.delete();
+            }
+          } on Object {
+            // 忽略单文件删除失败
+          }
+        }
+      }
+    }
+
+    if (widget.liveAudioDir != null) {
+      try {
+        if (await widget.liveAudioDir!.exists()) {
+          await widget.liveAudioDir!.delete(recursive: true);
+        }
+      } on Object {
+        // 忽略注入目录删除失败
+      }
+    }
+    if (widget.databasesDirOverride != null) {
+      await deleteSqliteArtifactsInDir(widget.databasesDirOverride!.path);
+    }
+
     final isFlutterTest = Platform.environment.containsKey('FLUTTER_TEST');
     if (!isFlutterTest) {
       try {
+        final dbDirPath = await getDatabasesPath();
+        for (final dbBase in const ['memory_index.db', 'health_signals.db']) {
+          try {
+            await deleteDatabase(p.join(dbDirPath, dbBase));
+          } on Object {
+            // 回退到直接删除文件及 wal/shm
+          }
+        }
+        await deleteSqliteArtifactsInDir(dbDirPath);
+      } on Object {
+        // 无 sqflite 平台通道时忽略
+      }
+      try {
         final supportDir = await getApplicationSupportDirectory();
-        for (final dbName in const [
-          'memory_index.db',
-          'memory_index.db-wal',
-          'memory_index.db-shm',
-          'health_signals.db',
-          'health_signals.db-wal',
-          'health_signals.db-shm',
-        ]) {
-          final f = File('${supportDir.path}/$dbName');
-          if (await f.exists()) {
-            await f.delete();
+        await deleteSqliteArtifactsInDir(supportDir.path);
+        for (final sub in const ['live_audio', 'recordings']) {
+          final dir = Directory(p.join(supportDir.path, sub));
+          if (await dir.exists()) {
+            await dir.delete(recursive: true);
           }
         }
       } on Object {

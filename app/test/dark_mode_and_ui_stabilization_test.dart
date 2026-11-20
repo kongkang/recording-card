@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:recording_card/core/device/card_gateway.dart';
 import 'package:recording_card/core/models/record.dart';
 import 'package:recording_card/core/models/recording.dart';
 import 'package:recording_card/core/models/summary.dart';
@@ -14,6 +15,7 @@ import 'package:recording_card/core/storage/storage.dart';
 import 'package:recording_card/core/store/agent_config_store.dart';
 import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/core/store/device_store.dart';
+import 'package:recording_card/core/theme/rc_icons.dart';
 import 'package:recording_card/core/theme/tokens.dart';
 import 'package:recording_card/data/seed.dart';
 import 'package:recording_card/pages/app_shell.dart';
@@ -23,6 +25,7 @@ import 'package:recording_card/services/auth/auth.dart';
 import 'package:recording_card/services/auth_service.dart';
 import 'package:recording_card/services/memory/local_memory_index.dart';
 import 'package:recording_card/services/memory/memory_indexer.dart';
+import 'package:recording_card/services/memory/memory_search_scope.dart';
 import 'package:recording_card/services/memory/memory_search_service.dart';
 import 'package:recording_card/services/recordings/recording_pipeline.dart';
 import 'package:recording_card/services/recordings/recording_store.dart';
@@ -382,6 +385,156 @@ void main() {
         (playerContainer.decoration! as BoxDecoration).color,
         RCColorScheme.dark.card,
       );
+    },
+  );
+
+  testWidgets(
+    '1c. StatusSheetOverlay in Dark Mode has zero hardcoded RCColors.label/ink/card/bg or light hex fills across all views',
+    (tester) async {
+      expect(
+        buildRCDarkTheme().colorScheme.onPrimary,
+        RCColorScheme.dark.onLabel,
+      );
+
+      final model = SummaryModel();
+      final store = AppStore(
+        events: seedEvents,
+        generator: await model.generator(),
+        loadPersistedState: false,
+      );
+      final gw = FakeCardGateway(
+        devices: const [
+          CardDevice(
+            id: 'dev-v2',
+            name: 'DYJV2_001',
+            rssi: -45,
+          ),
+        ],
+        connectResult: const CardSnapshot(
+          batteryLevel: 85,
+          isCharging: false,
+          wifiOpen: false,
+          recording: false,
+          fwVersion: '2.1.0',
+          fwVersionCode: 21,
+          wifiVersion: '1.4.0',
+          wifiVersionCode: 14,
+          deviceName: 'DYJV2_001',
+          deviceId: 'dev-v2',
+          deviceKind: DeviceKind.dyjV1,
+          capabilities: HardwareCapabilities(
+            realtimeAudio: true,
+            hasOnboardStorage: true,
+            hasFileSync: true,
+            hasWifiConfig: true,
+            hasCameraMedia: true,
+            hasPhysicalRecordToggle: false,
+            hasRemoteRecordControl: true,
+            hasMarkButton: true,
+            hasConfigurableButtons: true,
+            otaMode: 'dual',
+          ),
+        ),
+        wifiCredentials: const [CardWifiCredential(ssid: 'Office_2.4G')],
+        wifiNetworks: const [
+          CardWifiNetwork(ssid: 'Office_2.4G', rssi: -50, secured: true),
+          CardWifiNetwork(ssid: 'Guest_2.4G', rssi: -68, secured: true),
+        ],
+        mainOta: const CardOtaInfo(
+          version: '2.3.0',
+          versionCode: 23,
+          url: 'https://example.test/fw.bin',
+        ),
+      );
+      final dev = DeviceStore(gateway: gw);
+      final agentCfg = AgentConfigStore(store: InMemoryStore());
+      addTearDown(agentCfg.dispose);
+      addTearDown(dev.dispose);
+      addTearDown(store.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: testTheme(),
+          darkTheme: _darkTestTheme(),
+          themeMode: ThemeMode.dark,
+          home: AppShell(store: store, device: dev, agentConfig: agentCfg),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      void assertSheetDarkClean(String viewName) {
+        final sheetFinder = find.byKey(const Key('sheet-card'));
+        expect(sheetFinder, findsOneWidget, reason: '$viewName sheet visible');
+        final forbiddenFg = <Color>{RCColors.label, RCColors.ink};
+        final forbiddenBg = <Color>{
+          RCColors.card,
+          RCColors.bg,
+          const Color(0xFFF0F0EC),
+          const Color(0xFFF5F5F2),
+          const Color(0xFFE8F5EA),
+        };
+        for (final t in tester.widgetList<Text>(
+          find.descendant(of: sheetFinder, matching: find.byType(Text)),
+        )) {
+          final col = t.style?.color;
+          if (col != null) {
+            expect(
+              forbiddenFg.contains(col),
+              isFalse,
+              reason: '$viewName Text "${t.data}" uses dark-hostile $col',
+            );
+          }
+        }
+        for (final ico in tester.widgetList<RCIcon>(
+          find.descendant(of: sheetFinder, matching: find.byType(RCIcon)),
+        )) {
+          expect(
+            forbiddenFg.contains(ico.color),
+            isFalse,
+            reason: '$viewName RCIcon ${ico.kind} uses dark-hostile ${ico.color}',
+          );
+        }
+        for (final cnt in tester.widgetList<Container>(
+          find.descendant(of: sheetFinder, matching: find.byType(Container)),
+        )) {
+          final dec = cnt.decoration;
+          final bg = cnt.color ?? (dec is BoxDecoration ? dec.color : null);
+          if (bg != null) {
+            expect(
+              forbiddenBg.contains(bg),
+              isFalse,
+              reason: '$viewName Container uses hardcoded light surface $bg',
+            );
+          }
+        }
+      }
+
+      // 1) _ConnectView（未连接扫描态）
+      dev.openSheet();
+      await tester.pumpAndSettle();
+      assertSheetDarkClean('_ConnectView');
+
+      // 2) _MainView（已连接主视图）
+      await dev.connectTo(gw.devices.first);
+      await tester.pumpAndSettle();
+      assertSheetDarkClean('_MainView');
+
+      // 3) _WifiView（Wi-Fi 配网视图 + 展开密码输入框）
+      dev.showView(DeviceView.wifi);
+      await tester.pumpAndSettle();
+      dev.wifiPick('Guest_2.4G');
+      await tester.pumpAndSettle();
+      assertSheetDarkClean('_WifiView');
+
+      // 4) _FirmwareView（固件更新视图）
+      dev.showView(DeviceView.upg);
+      await tester.pumpAndSettle();
+      assertSheetDarkClean('_FirmwareView');
+
+      // 5) _ButtonConfigView（按键行为配置视图）
+      dev.showView(DeviceView.btn);
+      await tester.pumpAndSettle();
+      assertSheetDarkClean('_ButtonConfigView');
     },
   );
 
@@ -1012,6 +1165,34 @@ void main() {
       cancelModel.release();
       await tester.pump(const Duration(milliseconds: 50));
       expect(cancelStore.summaryById(genId), isNull);
+
+      // 验证经 dismissFailed(card.id) 取消在途生成卡片时：同样停止计时器并加入 _cancelledSummaryIds，完成回调不篡改状态或落盘
+      final dismissModel = SummaryModel(autoReply: false);
+      final dismissKv = InMemoryStore();
+      final dismissStore = AppStore(
+        events: [realEv],
+        generator: await dismissModel.generator(),
+        jsonStore: JsonStore(store: dismissKv),
+        loadPersistedState: false,
+      );
+      addTearDown(dismissStore.dispose);
+      dismissStore.startSummary();
+      dismissStore.selRange('today');
+      dismissStore.genSummary();
+      await tester.pump();
+      final generatingCard = dismissStore.summaries.first;
+      expect(generatingCard.state, SummaryState.generating);
+      // 模拟 SummaryResultPage 移除该在途卡片并调用 dismissFailed
+      dismissStore.summaries = const [];
+      dismissStore.dismissFailed(generatingCard.id);
+      await tester.pump();
+      final elapsedAfterDismiss = dismissStore.genElapsedSeconds;
+      await tester.pump(const Duration(seconds: 4));
+      expect(dismissStore.genElapsedSeconds, elapsedAfterDismiss);
+      dismissModel.release();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(generatingCard.state, SummaryState.generating);
+      expect(dismissStore.summaryById(generatingCard.id), isNull);
     },
   );
 
@@ -1125,6 +1306,29 @@ void main() {
   testWidgets(
     '3b. Setting 关于录音卡 displays readLastCrash() diagnostic summary & 注销账号 handles 404 honestly then wipes on 200',
     (tester) async {
+      sqfliteFfiInit();
+      final tmp = Directory.systemTemp.createTempSync('rc_acct_wipe_');
+      addTearDown(() {
+        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+      });
+      final recDir = Directory('${tmp.path}/recordings')
+        ..createSync(recursive: true);
+      final liveAudioDir = Directory('${tmp.path}/live_audio');
+      final liveSessionDir = Directory('${liveAudioDir.path}/ses-live-1')
+        ..createSync(recursive: true);
+      final liveWavFile = File('${liveSessionDir.path}/audio.wav')
+        ..writeAsBytesSync(encodeWav(Float32List(1600), sampleRate: 16000));
+      File('${liveSessionDir.path}/session.json')
+          .writeAsStringSync('{"id":"ses-live-1"}');
+
+      final dbDir = Directory('${tmp.path}/databases')
+        ..createSync(recursive: true);
+      final memDbPath = '${dbDir.path}/memory_index.db';
+      final healthDbFile = File('${dbDir.path}/health_signals.db')
+        ..writeAsBytesSync([1, 2, 3, 4]);
+      final healthWalFile = File('${dbDir.path}/health_signals.db-wal')
+        ..writeAsBytesSync([5, 6]);
+
       final kv = InMemoryStore();
       await kv.setString(
         lastCrashKey,
@@ -1135,22 +1339,95 @@ void main() {
       final auth = signedIn!.auth;
       addTearDown(auth.dispose);
 
-      const demoEv = RecordEvent(
-        id: 'ev-to-wipe',
-        dayOffset: 0,
-        title: '待注销清理记录',
-        brief: '注销成功后应被清空',
-        longText: '',
-        time: '10:00',
-        dur: '1分00秒',
-        speakers: '1',
-        mark: '',
-        srcMap: '来源 10:00—10:01',
-        dialog: [TurnLine('1', '敏感本地对话', '来源 10:00—10:01')],
-        raw: [],
+      final recStore = RecordingStore(
+        root: recDir,
+        jsonStore: JsonStore(store: InMemoryStore()),
       );
-      final appStore = AppStore(events: [demoEv], loadPersistedState: false);
+      final recSubDir = Directory('${recDir.path}/WIPE_001.WAV')
+        ..createSync(recursive: true);
+      final recWavFile = File('${recSubDir.path}/audio.wav')
+        ..writeAsBytesSync(encodeWav(Float32List(1600), sampleRate: 16000));
+      final nowMs = DateTime(2026, 11, 19, 10, 0).millisecondsSinceEpoch;
+      final model = SummaryModel();
+      final appStore = AppStore(loadPersistedState: false);
+      appStore.attachPipeline(
+        pipeline: RecordingPipeline(
+          gateway: FakeCardGateway(),
+          store: recStore,
+          engine: _NoopEngine(),
+          models: _NoopModels(),
+        ),
+        store: recStore,
+        generator: await model.generator(),
+      );
       addTearDown(appStore.dispose);
+
+      late MemorySearchService memService;
+      await tester.runAsync(() async {
+        await recStore.save(
+          RecordingFile(
+            deviceName: 'WIPE_001.WAV',
+            session: 'ses-wipe',
+            seq: 1,
+            startAtMs: nowMs,
+            apmPath: '',
+            wavPath: recWavFile.path,
+            durationMs: 5000,
+            stage: RecordingStage.ready,
+            turns: const [
+              PolishedTurn(
+                id: 'wt1',
+                startMs: 0,
+                endMs: 4000,
+                speakerLabel: '1',
+                text: '敏感本地对话测试内容',
+                srcUtteranceIds: ['wu1'],
+              ),
+            ],
+            utterances: const [
+              RawUtterance(
+                id: 'wu1',
+                sliceId: 'ws1',
+                startMs: 0,
+                endMs: 4000,
+                text: '敏感本地对话测试内容',
+              ),
+            ],
+            segments: [
+              SegmentRecord(
+                id: 'ev-to-wipe',
+                sessionId: 'ses-wipe',
+                index: 0,
+                startAtMs: nowMs,
+                endAtMs: nowMs + 5000,
+                title: '待注销清理记录',
+                brief: '敏感本地对话测试内容',
+                longText: '敏感本地对话测试内容',
+                status: SegmentStatus.closed,
+                turnIds: const ['wt1'],
+              ),
+            ],
+            createdAtMs: nowMs,
+          ),
+        );
+        await appStore.refreshFromStore();
+
+        memService = MemorySearchService(
+          index: LocalMemoryIndex(
+            factory: databaseFactoryFfi,
+            path: () async => memDbPath,
+          ),
+          corpus: () => MemoryCorpus(
+            events: appStore.eventsWithResolvedSpeakers(),
+            summaries: appStore.summariesWithResolvedSpeakers(),
+          ),
+          chat: (_) async => '',
+        );
+        await memService.reindex();
+        final preHits = await memService.search('敏感本地对话');
+        expect(preHits, isNotEmpty);
+      });
+      addTearDown(() => tester.runAsync(memService.close));
 
       var nextStatus = 404;
       final deleteRequests = <http.Request>[];
@@ -1164,13 +1441,18 @@ void main() {
           theme: testTheme(),
           home: StoreScope(
             store: appStore,
-            child: Scaffold(
-              body: SettingPage(
-                agentConfig: AgentConfigStore(store: InMemoryStore()),
-                authService: auth,
-                crashStore: kv,
-                accountHttpClient: accountClient,
-                apiBaseOverride: 'https://api.example.test',
+            child: MemorySearchScope(
+              service: memService,
+              child: Scaffold(
+                body: SettingPage(
+                  agentConfig: AgentConfigStore(store: InMemoryStore()),
+                  authService: auth,
+                  crashStore: kv,
+                  accountHttpClient: accountClient,
+                  apiBaseOverride: 'https://api.example.test',
+                  liveAudioDir: liveAudioDir,
+                  databasesDirOverride: dbDir,
+                ),
               ),
             ),
           ),
@@ -1220,15 +1502,34 @@ void main() {
       expect(find.textContaining('privacy@reai.chat'), findsOneWidget);
       expect(auth.isSignedIn, isTrue);
       expect(appStore.events, isNotEmpty);
+      expect(liveWavFile.existsSync(), isTrue);
+      expect(healthDbFile.existsSync(), isTrue);
 
-      // 点击「重试」且服务端返回 200：擦除 OAuth 令牌并清空本机全部记录
+      // 点击「重试」且服务端返回 200：擦除 OAuth 令牌并清空本机全部记录、SQLite 库与 live_audio WAV
       nextStatus = 200;
       await tester.tap(find.byKey(const Key('account-delete-retry')));
+      await tester.pump(const Duration(milliseconds: 350));
+      for (var i = 0; i < 60; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 15)),
+        );
+        await tester.pump(const Duration(milliseconds: 20));
+        if (!auth.isSignedIn && !healthWalFile.existsSync()) break;
+      }
       await tester.pumpAndSettle();
 
       expect(deleteRequests.length, 2);
       expect(auth.isSignedIn, isFalse);
       expect(appStore.events, isEmpty);
+      expect(recWavFile.existsSync(), isFalse);
+      expect(liveWavFile.existsSync(), isFalse);
+      expect(File(memDbPath).existsSync(), isFalse);
+      expect(healthDbFile.existsSync(), isFalse);
+      expect(healthWalFile.existsSync(), isFalse);
+      final postHits = await tester.runAsync(
+        () => memService.search('敏感本地对话'),
+      );
+      expect(postHits, isEmpty);
     },
   );
 }
