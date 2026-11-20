@@ -63,6 +63,8 @@ class SpeakerClusterer {
     this.threshold = 0.62,
     this.mergeThreshold = 0.70,
     this.minClusterSpeechMs = 2500,
+    this.shortSliceMinClusterSpeechMs = 1200,
+    this.shortSliceThresholdMs = 90000,
     this.maxSpeakers = 6,
   });
 
@@ -72,12 +74,21 @@ class SpeakerClusterer {
   /// 两个簇质心相似度达到这个值就合并（同一人不同片段）。
   final double mergeThreshold;
 
-  /// 总语音时长低于这个值的簇判为噪声，成员标未区分。
+  /// 长文件总语音时长低于这个值的簇判为噪声，成员标未区分。
   final int minClusterSpeechMs;
+
+  /// 短切片（总语音/切片 `<= 90s`）的小簇阈值（1200ms），避免 1.5s 简短回应被抹成未区分。
+  final int shortSliceMinClusterSpeechMs;
+
+  /// 短切片判定阈值（默认 90 秒）。
+  final int shortSliceThresholdMs;
 
   final int maxSpeakers;
 
-  SpeakerClusterResult cluster(List<SpeakerSample> samples) {
+  SpeakerClusterResult cluster(
+    List<SpeakerSample> samples, {
+    int? audioDurationMs,
+  }) {
     final normalized = <_NormSample>[];
     final unknowns = <int>{};
     for (var i = 0; i < samples.length; i++) {
@@ -148,10 +159,21 @@ class SpeakerClusterer {
       }
     }
 
-    // 小簇判噪声
+    // 小簇判噪声：短切片（<= 90s）自适应采用 1200ms，保留简短应答；长文件维持 2500ms 抗杂音。
+    final totalClusterSpeechMs = clusters.fold<int>(
+      0,
+      (sum, c) => sum + c.totalMs,
+    );
+    final isShortSlice = audioDurationMs != null
+        ? (audioDurationMs <= shortSliceThresholdMs &&
+              totalClusterSpeechMs <= shortSliceThresholdMs)
+        : (totalClusterSpeechMs <= shortSliceThresholdMs);
+    final effectiveMinSpeechMs = isShortSlice
+        ? math.min(minClusterSpeechMs, shortSliceMinClusterSpeechMs)
+        : minClusterSpeechMs;
     final small = <int>{};
     for (var c = 0; c < clusters.length; c++) {
-      if (clusters[c].totalMs < minClusterSpeechMs) small.add(c);
+      if (clusters[c].totalMs < effectiveMinSpeechMs) small.add(c);
     }
     // 只剩一个簇时不判噪声（单人录音也可能话很少）
     if (clusters.length == 1) small.clear();

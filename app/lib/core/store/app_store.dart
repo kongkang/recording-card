@@ -168,17 +168,29 @@ class AppStore extends ChangeNotifier {
 
   bool selMode = false;
   final Set<String> selIds = {};
+  String? activeQuickRange; // 'today' | 'week' | 'month' | null
   SummaryCard? pend; // 勾选模式挂起的 Action Card
   List<SummaryCard> summaries = [];
   String? openCardId; // 展开态卡片（互斥）
 
   List<RouteEntry> subStack = []; // 路由栈：总结↔记录互跳统一历史栈
 
-  /// 生成计时（真实墙钟，用于"已生成 N 秒"）
+  /// 生成计时（真实墙钟，用于"已生成 N 秒"；同时结合 500ms ticker 兼容测试 FakeAsync）
   Stopwatch? _genWatch;
   Timer? _genTicker;
+  int _genTickHalfSeconds = 0;
   double _genProgress = 0;
   String _genStep = '';
+  int _genEpoch = 0;
+  final Set<String> _cancelledSummaryIds = {};
+
+  /// 详情页合并气泡上下文：当用户对多句合并后的单气泡取消勾选「同改其余」时，整段气泡的所有句下标同步改名，不拆裂气泡。
+  ({String eventId, int firstTurnIndex, List<int> turnIndices})?
+  _pendingMergedBubbleTurns;
+
+  /// 串行化异步会话持久化，防止高频连续调用乱序落盘覆盖最新状态。
+  Future<void> _persistChain = Future<void>.value();
+  Future<void> get pendingPersist => _persistChain;
 
   static const pageLabels = {
     'sum': '总结',
@@ -544,6 +556,105 @@ class AppStore extends ChangeNotifier {
     }
     loading = false;
     notifyListeners();
+  }
+
+  /// 跨自然日恢复前台时刷新日期归组（防止昨天的记录在午夜后仍显示为「今天」）。
+  Future<void> onCalendarDayRollover({int daysElapsed = 1}) async {
+    if (_disposed || daysElapsed <= 0) return;
+    if (_recordingStore != null) {
+      await refreshFromStore();
+      return;
+    }
+    if (events.isEmpty) return;
+    events = [
+      for (final e in events)
+        RecordEvent(
+          id: e.id,
+          dayOffset: e.dayOffset + daysElapsed,
+          title: e.title,
+          brief: e.brief,
+          longText: e.longText,
+          time: e.time,
+          dur: e.dur,
+          speakers: e.speakers,
+          mark: e.mark,
+          srcMap: e.srcMap,
+          dialog: e.dialog,
+          raw: e.raw,
+          live: e.live,
+          note: e.note,
+          photos: e.photos,
+          mergedSliceCount: e.mergedSliceCount,
+        ),
+    ];
+    notifyListeners();
+  }
+
+  /// 原始音频被用户确认清理后，同步清空同源 `RecordingFile` 的 `wavPath`，防止共享同一录音文件的兄弟话题分段残留陈旧可播状态。
+  Future<void> markRawAudioDeleted({
+    String? fileId,
+    String? deviceName,
+    String? wavPath,
+  }) async {
+    var updated = false;
+    final matchedFiles = <RecordingFile>[];
+    for (final f in recordingFiles) {
+      final hit =
+          (fileId != null && fileId.isNotEmpty && f.id == fileId) ||
+          (deviceName != null &&
+              deviceName.isNotEmpty &&
+              f.deviceName == deviceName) ||
+          (wavPath != null && wavPath.isNotEmpty && f.wavPath == wavPath);
+      if (hit && f.wavPath != null) {
+        f.wavPath = null;
+        matchedFiles.add(f);
+        updated = true;
+      }
+    }
+    for (final view in segmentViews.values) {
+      final f = view.file;
+      final hit =
+          (fileId != null && fileId.isNotEmpty && f.id == fileId) ||
+          (deviceName != null &&
+              deviceName.isNotEmpty &&
+              f.deviceName == deviceName) ||
+          (wavPath != null && wavPath.isNotEmpty && f.wavPath == wavPath);
+      if (hit && f.wavPath != null) {
+        f.wavPath = null;
+        if (!matchedFiles.any((m) => m.deviceName == f.deviceName)) {
+          matchedFiles.add(f);
+        }
+        updated = true;
+      }
+      for (final child in view.mergedChildren) {
+        final cf = child.file;
+        final cHit =
+            (fileId != null && fileId.isNotEmpty && cf.id == fileId) ||
+            (deviceName != null &&
+                deviceName.isNotEmpty &&
+                cf.deviceName == deviceName) ||
+            (wavPath != null && wavPath.isNotEmpty && cf.wavPath == wavPath);
+        if (cHit && cf.wavPath != null) {
+          cf.wavPath = null;
+          if (!matchedFiles.any((m) => m.deviceName == cf.deviceName)) {
+            matchedFiles.add(cf);
+          }
+          updated = true;
+        }
+      }
+    }
+    if (_recordingStore != null && matchedFiles.isNotEmpty) {
+      for (final f in matchedFiles) {
+        try {
+          await _recordingStore!.save(f);
+        } on Object catch (e) {
+          debugPrint('[store] 更新已清理音频元数据失败：$e');
+        }
+      }
+    }
+    if (updated && !_disposed) {
+      notifyListeners();
+    }
   }
 
   /// 重新读取本地录音清单（同步设备后调用）。
@@ -1688,9 +1799,13 @@ class AppStore extends ChangeNotifier {
   }
 
   // ── 勾选式总结 ─────────────────────────────────────────
+  static bool isSilentPlaceholderEvent(RecordEvent e) =>
+      e.speakers.trim() == '无语音' && e.dialog.isEmpty && e.raw.isEmpty;
+
   void startSummary() {
     selMode = true;
     selIds.clear();
+    activeQuickRange = null;
     openCardId = null;
     pend = SummaryCard(
       id: 'act${DateTime.now().millisecondsSinceEpoch}',
@@ -1702,6 +1817,7 @@ class AppStore extends ChangeNotifier {
 
   void cancelSummary() {
     selMode = false;
+    activeQuickRange = null;
     pend = null;
     // 取消只丢弃挂起的草稿卡，历史已完成的总结卡必须保留
     summaries = summaries
@@ -1718,7 +1834,9 @@ class AppStore extends ChangeNotifier {
   }
 
   bool inRange(RecordEvent e, String r) {
-    if (e.live) return false; // 整理中的分段未定稿，不参与总结勾选
+    if (e.live || isSilentPlaceholderEvent(e)) {
+      return false; // 整理中的分段或纯静音无语音占位不参与快捷全选
+    }
     if (r == 'today') return e.dayOffset == 0;
     if (r == 'week') return e.dayOffset <= mondayOffset;
     final n = DateTime.now();
@@ -1727,6 +1845,7 @@ class AppStore extends ChangeNotifier {
   }
 
   void selRange(String r) {
+    activeQuickRange = r;
     selIds
       ..clear()
       ..addAll(events.where((e) => inRange(e, r)).map((e) => e.id));
@@ -1734,6 +1853,7 @@ class AppStore extends ChangeNotifier {
   }
 
   void selNone() {
+    activeQuickRange = null;
     selIds.clear();
     notifyListeners();
   }
@@ -1741,6 +1861,7 @@ class AppStore extends ChangeNotifier {
   void toggleSel(String id) {
     final event = eventByIdOrNull(id);
     if (event != null && event.live) return;
+    activeQuickRange = null;
     selIds.contains(id) ? selIds.remove(id) : selIds.add(id);
     notifyListeners();
   }
@@ -1756,8 +1877,10 @@ class AppStore extends ChangeNotifier {
     final picked = events.where((e) => selIds.contains(e.id)).toList();
     if (picked.isEmpty) return;
     selMode = false;
+    activeQuickRange = null;
     final card = pend;
     if (card == null) return;
+    _cancelledSummaryIds.remove(card.id);
     card
       ..state = SummaryState.generating
       ..progress = 0
@@ -1773,13 +1896,16 @@ class AppStore extends ChangeNotifier {
     SummaryCard card,
     List<RecordEvent> sources,
   ) async {
+    final myEpoch = ++_genEpoch;
     _genProgress = 0;
     _genStep = '解析来源内容…';
+    _genTickHalfSeconds = 0;
     _genWatch = Stopwatch()..start();
     _genTicker?.cancel();
     // 每 500ms 刷新一次"已生成 N 秒"，只做展示计时，不伪造阶段推进
     _genTicker = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      notifyListeners();
+      _genTickHalfSeconds++;
+      if (!_disposed) notifyListeners();
     });
     card.progress = 0;
     notifyListeners();
@@ -1793,12 +1919,24 @@ class AppStore extends ChangeNotifier {
         sources,
         speakerResolver: displaySpeaker,
         onProgress: (progress, step) {
+          if (_disposed ||
+              _cancelledSummaryIds.contains(card.id) ||
+              _genEpoch != myEpoch ||
+              summaryById(card.id) == null) {
+            return;
+          }
           _genProgress = progress.clamp(0, 1);
           _genStep = step;
           card.progress = _genProgress * 100;
           notifyListeners();
         },
       );
+      if (_disposed ||
+          _cancelledSummaryIds.contains(card.id) ||
+          _genEpoch != myEpoch ||
+          summaryById(card.id) == null) {
+        return;
+      }
       card
         ..state = SummaryState.done
         ..progress = 100
@@ -1816,6 +1954,12 @@ class AppStore extends ChangeNotifier {
             .join('；');
       _persist();
     } on Object catch (e) {
+      if (_disposed ||
+          _cancelledSummaryIds.contains(card.id) ||
+          _genEpoch != myEpoch ||
+          summaryById(card.id) == null) {
+        return;
+      }
       final message = e is SummaryGenerationException ? e.message : '生成失败：$e';
       // 失败不产出任何内容：卡片停在 failed，页面展示原因与重试入口
       card
@@ -1823,11 +1967,41 @@ class AppStore extends ChangeNotifier {
         ..error = message
         ..progress = 100;
     } finally {
-      _genTicker?.cancel();
-      _genTicker = null;
-      _genWatch?.stop();
-      notifyListeners();
+      if (_genEpoch == myEpoch) {
+        _genTicker?.cancel();
+        _genTicker = null;
+        _genWatch?.stop();
+      }
+      if (!_disposed) notifyListeners();
     }
+  }
+
+  /// 取消正在生成中的总结卡：立即移除生成态卡片并弹栈返回，在途响应返回后自动忽略。
+  void cancelGeneratingSummary([String? summaryId]) {
+    final targetId =
+        summaryId ??
+        (pend?.state == SummaryState.generating ? pend?.id : stackTop?.id);
+    if (targetId == null || targetId.isEmpty) return;
+    final card = summaryById(targetId);
+    if (card != null && card.state == SummaryState.done) return;
+    _cancelledSummaryIds.add(targetId);
+    _genEpoch++;
+    _genTicker?.cancel();
+    _genTicker = null;
+    _genWatch?.stop();
+    summaries = [
+      for (final s in summaries)
+        if (s.id != targetId) s,
+    ];
+    if (pend?.id == targetId) pend = null;
+    if (openCardId == targetId) openCardId = null;
+    if (subStack.isNotEmpty &&
+        stackTop?.type == 'sum' &&
+        stackTop?.id == targetId) {
+      subStack = subStack.sublist(0, subStack.length - 1);
+    }
+    _persist();
+    notifyListeners();
   }
 
   /// 失败后重试：复用同一张卡。
@@ -1840,6 +2014,7 @@ class AppStore extends ChangeNotifier {
       if (e != null) sources.add(e);
     }
     if (sources.isEmpty) return;
+    _cancelledSummaryIds.remove(card.id);
     card
       ..state = SummaryState.generating
       ..error = null
@@ -1848,15 +2023,26 @@ class AppStore extends ChangeNotifier {
     _runGeneration(card, sources);
   }
 
-  /// 放弃失败的总结卡。
+  /// 放弃失败或已取消的总结卡（同步停止在途生成状态与计时器）。
   void dismissFailed(String summaryId) {
+    _cancelledSummaryIds.add(summaryId);
     summaries = [
       for (final s in summaries)
-        if (!(s.id == summaryId && s.state == SummaryState.failed)) s,
+        if (!(s.id == summaryId &&
+            (s.state == SummaryState.failed ||
+                s.state == SummaryState.generating)))
+          s,
     ];
+    if (pend?.id == summaryId) pend = null;
     if (openCardId == summaryId) openCardId = null;
     if (subStack.isNotEmpty && stackTop?.id == summaryId) {
       subStack = subStack.sublist(0, subStack.length - 1);
+    }
+    if (summaries.every((s) => s.state != SummaryState.generating)) {
+      _genEpoch++;
+      _genTicker?.cancel();
+      _genTicker = null;
+      _genWatch?.stop();
     }
     _persist();
     notifyListeners();
@@ -1866,14 +2052,26 @@ class AppStore extends ChangeNotifier {
     if (sources.isEmpty) return '';
     final days = sources.map((e) => e.dayOffset).toSet().toList()..sort();
     if (days.length == 1) {
-      final times = sources.map((e) => e.time).toList()..sort();
+      final times =
+          sources
+              .map((e) => e.time.trim())
+              .where((t) => t.isNotEmpty)
+              .toList()
+            ..sort();
+      if (times.isEmpty) {
+        return '${dayLabel(days.first)} · ${sources.length} 条记录';
+      }
+      if (times.first == times.last) {
+        return '${dayLabel(days.first)} ${times.first} · ${sources.length} 条记录';
+      }
       return '${dayLabel(days.first)} ${times.first}–${times.last} · ${sources.length} 条记录';
     }
     return '跨 ${dayLabel(days.last)} 至 ${dayLabel(days.first)} · ${sources.length} 条记录';
   }
 
   // 生成进度文案（真实计时 + 估算）
-  int get genElapsedSeconds => _genWatch?.elapsed.inSeconds ?? 0;
+  int get genElapsedSeconds =>
+      math.max(_genWatch?.elapsed.inSeconds ?? 0, _genTickHalfSeconds ~/ 2);
   String genElapsedText() => '已生成 $genElapsedSeconds 秒';
   String genEtaText() {
     final card = stackTop == null ? null : summaryById(stackTop!.id);
@@ -1882,7 +2080,8 @@ class AppStore extends ChangeNotifier {
       GenConst.minEstimateSeconds,
       count * GenConst.secondsPerSource,
     );
-    final remain = math.max(0, estimate - genElapsedSeconds);
+    final remain = estimate - genElapsedSeconds;
+    if (remain <= 0) return '正在收尾整理…';
     return '预计还需 $remain 秒';
   }
 
@@ -2106,7 +2305,23 @@ class AppStore extends ChangeNotifier {
     return null;
   }
 
-  /// 快捷命名：支持仅改本句 / 同改其余同类说话人，以及记住声纹（入常用 5 槽位或人物库）与记录最近使用名称。
+  void setPendingMergedBubbleTurns(
+    String eventId,
+    int firstTurnIndex,
+    List<int> turnIndices,
+  ) {
+    _pendingMergedBubbleTurns = (
+      eventId: eventId,
+      firstTurnIndex: firstTurnIndex,
+      turnIndices: List<int>.unmodifiable(turnIndices),
+    );
+  }
+
+  void clearPendingMergedBubbleTurns() {
+    _pendingMergedBubbleTurns = null;
+  }
+
+  /// 快捷命名：支持仅改本句（或本合并气泡） / 同改其余同类说话人，以及记住声纹（入常用 5 槽位或人物库并回溯历史会话声纹）与记录最近使用名称。
   Future<({bool saved, bool frequentFull, PersonVoiceProfile? profile})>
   applyQuickSpeakerNaming({
     required RecordEvent event,
@@ -2115,6 +2330,7 @@ class AppStore extends ChangeNotifier {
     required String newName,
     bool rememberVoiceprint = true,
     bool applyToOtherMatching = true,
+    List<int>? mergedTurnIndices,
     List<double>? sampleEmbedding,
     String? sampleDeviceLabel,
     String? sampleSceneLabel,
@@ -2124,12 +2340,27 @@ class AppStore extends ChangeNotifier {
       return (saved: false, frequentFull: false, profile: null);
     }
 
+    final pendingBubble = _pendingMergedBubbleTurns;
+    final effectiveBubbleTurns =
+        mergedTurnIndices ??
+        ((pendingBubble != null &&
+                pendingBubble.eventId == event.id &&
+                pendingBubble.firstTurnIndex == turnIndex)
+            ? pendingBubble.turnIndices
+            : null);
+
     final slot = normalizeSpeakerSlot(rawSpeaker);
     final view = segmentViewFor(event.id);
     voiceprintStore.recordRecentName(clean, notify: false);
 
     if (!applyToOtherMatching) {
-      _turnSpeakerOverrides['turn:${event.id}:$turnIndex'] = clean;
+      if (effectiveBubbleTurns != null && effectiveBubbleTurns.isNotEmpty) {
+        for (final idx in effectiveBubbleTurns) {
+          _turnSpeakerOverrides['turn:${event.id}:$idx'] = clean;
+        }
+      } else {
+        _turnSpeakerOverrides['turn:${event.id}:$turnIndex'] = clean;
+      }
     } else if (!isUnclusteredSpeaker(slot)) {
       _turnSpeakerOverrides['turn:${event.id}:$turnIndex'] = clean;
       final sesId = view?.file.session.trim() ?? '';
@@ -2173,9 +2404,17 @@ class AppStore extends ChangeNotifier {
     var frequentFull = false;
     if (rememberVoiceprint) {
       var centroid = sampleEmbedding;
+      SpeakerProfileStore? pStore;
+      if (_recordingStore != null) {
+        try {
+          pStore = SpeakerProfileStore(root: await _recordingStore!.root());
+        } on Object {
+          pStore = null;
+        }
+      }
       if ((centroid == null || centroid.isEmpty) &&
           view != null &&
-          _recordingStore != null &&
+          pStore != null &&
           view.file.session.isNotEmpty &&
           !isUnclusteredSpeaker(slot)) {
         final matchNum = RegExp(r'(\d+)$').firstMatch(slot);
@@ -2183,9 +2422,6 @@ class AppStore extends ChangeNotifier {
             ? (int.tryParse(matchNum.group(1)!) ?? 1) - 1
             : 0;
         try {
-          final pStore = SpeakerProfileStore(
-            root: await _recordingStore!.root(),
-          );
           final set = await pStore.load(view.file.session);
           centroid = set.byIndex(clusterIdx)?.centroid;
         } on Object {
@@ -2204,8 +2440,60 @@ class AppStore extends ChangeNotifier {
       if (!hadSlot && !savedProfile.isInFrequentSlot) {
         frequentFull = true;
       }
+
+      // 回溯历史会话声纹质心（>= 0.72 确认更新历史说话人别名；[0.48, 0.72) 记录弱提示）
+      final refVectors = <List<double>>[
+        for (final s in savedProfile.samples)
+          if (s.embedding.isNotEmpty) s.embedding,
+      ];
+      if (pStore != null && refVectors.isNotEmpty) {
+        final curSes = view?.file.session.trim() ?? '';
+        final candidateSessions = <String>{
+          for (final f in recordingFiles)
+            if (f.session.trim().isNotEmpty) f.session.trim(),
+          for (final v in segmentViews.values)
+            if (v.file.session.trim().isNotEmpty) v.file.session.trim(),
+        };
+        for (final otherSes in candidateSessions) {
+          if (!applyToOtherMatching && otherSes == curSes) continue;
+          try {
+            final otherSet = await pStore.load(otherSes);
+            for (final sp in otherSet.profiles) {
+              if (sp.centroid.isEmpty) continue;
+              var bestSim = 0.0;
+              for (final vec in refVectors) {
+                final sim = VoiceprintLibraryStore.cosineSimilarity(
+                  vec,
+                  sp.centroid,
+                );
+                if (sim > bestSim) bestSim = sim;
+              }
+              final otherSlot = '说话人 ${sp.index + 1}';
+              if (bestSim >= 0.72) {
+                _speakerAliases['session:$otherSes:$otherSlot'] = clean;
+                for (final ev in events) {
+                  if (segmentViewFor(ev.id)?.file.session.trim() == otherSes) {
+                    _speakerAliases['event:${ev.id}:$otherSlot'] = clean;
+                  }
+                }
+              } else if (bestSim >= 0.48) {
+                voiceprintStore.recordFuzzyHint(
+                  session: otherSes,
+                  speakerSlot: otherSlot,
+                  candidateName: clean,
+                );
+              }
+            }
+          } on Object {
+            // 忽略单个损坏会话档案
+          }
+        }
+      }
     }
 
+    if (_disposed) {
+      return (saved: false, frequentFull: false, profile: savedProfile);
+    }
     _persist();
     notifyListeners();
     return (saved: true, frequentFull: frequentFull, profile: savedProfile);
@@ -2393,6 +2681,157 @@ class AppStore extends ChangeNotifier {
     return out;
   }
 
+  /// 生成已套用用户说话人命名与单句覆盖的记录视图，供本机记忆检索索引（使命名后的如「老陈」可直接检索）。
+  List<RecordEvent> eventsWithResolvedSpeakers() {
+    if (_speakerAliases.isEmpty && _turnSpeakerOverrides.isEmpty) {
+      return events;
+    }
+    return [
+      for (final e in events)
+        RecordEvent(
+          id: e.id,
+          dayOffset: e.dayOffset,
+          title: applySpeakerAliasesToText(e.title, [e]),
+          brief: applySpeakerAliasesToText(e.brief, [e]),
+          longText: applySpeakerAliasesToText(e.longText, [e]),
+          time: e.time,
+          dur: e.dur,
+          speakers: displaySpeakersSummary(e),
+          mark: e.mark,
+          srcMap: e.srcMap,
+          dialog: [
+            for (var i = 0; i < e.dialog.length; i++)
+              TurnLine(
+                displayTurnSpeaker(
+                  e,
+                  i,
+                  e.dialog[i].spk,
+                  includeGuessSuffix: false,
+                ),
+                applySpeakerAliasesToText(e.dialog[i].text, [e]),
+                e.dialog[i].src,
+              ),
+          ],
+          raw: [
+            for (var i = 0; i < e.raw.length; i++)
+              TurnLine(
+                e.dialog.isEmpty
+                    ? displayTurnSpeaker(
+                        e,
+                        i,
+                        e.raw[i].spk,
+                        includeGuessSuffix: false,
+                      )
+                    : displaySpeaker(
+                        e,
+                        e.raw[i].spk,
+                        includeGuessSuffix: false,
+                      ),
+                applySpeakerAliasesToText(e.raw[i].text, [e]),
+                e.raw[i].src,
+              ),
+          ],
+          live: e.live,
+          note: e.note,
+          photos: e.photos,
+          mergedSliceCount: e.mergedSliceCount,
+        ),
+    ];
+  }
+
+  /// 生成已套用用户说话人别名的总结视图，供本机记忆检索索引。
+  List<SummaryCard> summariesWithResolvedSpeakers() {
+    if (_speakerAliases.isEmpty) return summaries;
+    return [
+      for (final s in summaries)
+        if (s.state != SummaryState.done)
+          s
+        else
+          (() {
+            final srcEvents = [
+              for (final id in s.srcIds)
+                if (eventByIdOrNull(id) != null) eventByIdOrNull(id)!,
+            ];
+            if (srcEvents.isEmpty) return s;
+            final copy = SummaryCard.fromJson(s.toJson());
+            if (copy.overview != null) {
+              copy.overview = applySpeakerAliasesToText(
+                copy.overview!,
+                srcEvents,
+              );
+            }
+            copy.todos = [
+              for (final t in copy.todos)
+                applySpeakerAliasesToText(t, srcEvents),
+            ];
+            copy.fullText = applySpeakerAliasesToText(copy.fullText, srcEvents);
+            copy.points = [
+              for (final p in copy.points)
+                InfoPoint(
+                  applySpeakerAliasesToText(p.title, srcEvents),
+                  applySpeakerAliasesToText(p.detail, srcEvents),
+                  p.sources,
+                ),
+            ];
+            return copy;
+          })(),
+    ];
+  }
+
+  /// 注销账号或清空本机数据时彻底擦除全部本地录音、分段、总结、声纹与路由状态。
+  Future<void> wipeAllLocalData() async {
+    _genEpoch++;
+    _genTicker?.cancel();
+    _genTicker = null;
+    _genWatch?.stop();
+    selMode = false;
+    activeQuickRange = null;
+    selIds.clear();
+    pend = null;
+    openCardId = null;
+    subStack = [];
+    summaries = [];
+    events = [];
+    recordingFiles = const [];
+    segmentViews = const {};
+    _mergedIdRedirects = const {};
+    eventPhotos = {};
+    _speakerAliases = {};
+    _turnSpeakerOverrides = {};
+    _restoringState = true;
+    try {
+      voiceprintStore.restoreJson(null);
+    } finally {
+      _restoringState = false;
+    }
+    if (_recordingStore != null) {
+      try {
+        final rootDir = await _recordingStore!.root();
+        if (await rootDir.exists()) {
+          await for (final entity in rootDir.list()) {
+            try {
+              await entity.delete(recursive: true);
+            } on Object {
+              // 忽略单个文件占用异常
+            }
+          }
+        }
+        await _recordingStore!.loadAll(refresh: true);
+      } on Object catch (e) {
+        debugPrint('[store] 清理本地录音目录异常：$e');
+      }
+    }
+    if (_json != null || _loadPersisted) {
+      try {
+        final js = await _jsonStore();
+        await js.remove('route');
+      } on Object catch (e) {
+        debugPrint('[store] 清理会话持久化异常：$e');
+      }
+    }
+    if (!_disposed) notifyListeners();
+  }
+
   // ── 会话持久化（对应原型 sessionStorage rc-route-v1） ──
   Map<String, dynamic> exportState() => {
     'stack': [
@@ -2479,16 +2918,17 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 落盘：导航栈 + 已完成的总结卡。写失败不影响交互（下次再写）。
+  /// 落盘：导航栈 + 已完成的总结卡。串行队列保证快速连续修改绝不乱序覆盖，写失败不影响交互。
   void _persist() {
     if (!_loadPersisted) return;
-    unawaited(() async {
+    final snapshot = exportState();
+    _persistChain = _persistChain.then((_) async {
       try {
         final store = await _jsonStore();
-        await store.write('route', exportState());
+        await store.write('route', snapshot);
       } on Object catch (e) {
         debugPrint('[store] 会话持久化失败：$e');
       }
-    }());
+    });
   }
 }

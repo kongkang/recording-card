@@ -1,10 +1,127 @@
 /// 总结卡片（Action Card）模型 —— 状态机 pending → generating → done。
 library;
 
+import 'dart:math' as math;
+
 import '../../services/transcribe/utterance_builder.dart';
 import 'record.dart';
 
 enum SummaryState { pending, generating, done, failed }
+
+/// 判断一条记录是否为纯静音占位卡片（无有效对话与原始转写，且标记为无语音/未识别到语音）。
+bool isSilentPlaceholderEvent(RecordEvent e) {
+  if (e.dialog.isNotEmpty || e.raw.isNotEmpty) return false;
+  final spk = e.speakers.trim();
+  final title = e.title.trim();
+  return spk == '无语音' || title == '未识别到语音';
+}
+
+/// 解析形如 `14:20—14:35`、`14:20—14:35 · 15m`、`14:20 · 18分40秒`、`14:20 · 15m` 的起止日内秒数区间。
+(int, int)? parseSourceClockWindow(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return null;
+
+  int clockToSec(RegExpMatch m, {required bool end}) {
+    final h = int.tryParse(m.group(1)!) ?? 0;
+    final min = int.tryParse(m.group(2)!) ?? 0;
+    final sec = m.group(3) != null
+        ? (int.tryParse(m.group(3)!) ?? 0)
+        : (end ? 59 : 0);
+    return h * 3600 + min * 60 + sec;
+  }
+
+  // 1) 显式起止时钟区间（如 "14:20—14:35"、"14:20—14:35 · 15m"、"来源 14:20—14:38"）
+  final rangeMatch = RegExp(
+    r'(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:[—–\-~]|至|to)\s*(\d{1,2}):(\d{2})(?::(\d{2}))?',
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (rangeMatch != null) {
+    final h1 = int.tryParse(rangeMatch.group(1)!) ?? 0;
+    final m1 = int.tryParse(rangeMatch.group(2)!) ?? 0;
+    final s1 = int.tryParse(rangeMatch.group(3) ?? '0') ?? 0;
+    final h2 = int.tryParse(rangeMatch.group(4)!) ?? 0;
+    final m2 = int.tryParse(rangeMatch.group(5)!) ?? 0;
+    final s2 = rangeMatch.group(6) != null
+        ? (int.tryParse(rangeMatch.group(6)!) ?? 0)
+        : 59;
+    final startSec = h1 * 3600 + m1 * 60 + s1;
+    var endSec = h2 * 3600 + m2 * 60 + s2;
+    if (endSec < startSec) endSec += 86400;
+    return (startSec, endSec);
+  }
+
+  // 2) 兼容两个独立时钟串的情况
+  final clocks = RegExp(r'(\d{1,2}):(\d{2})(?::(\d{2}))?').allMatches(text).toList();
+  if (clocks.isEmpty) return null;
+  if (clocks.length >= 2) {
+    final startSec = clockToSec(clocks[0], end: false);
+    var endSec = clockToSec(clocks[1], end: true);
+    if (endSec < startSec) endSec += 86400;
+    return (startSec, endSec);
+  }
+
+  // 3) 起始时钟 + 时长描述（如 "14:20 · 18分40秒"、"14:20 · 15m"、"14:20 · 1小时5分"）
+  final firstClock = clocks.first;
+  final startSec = clockToSec(firstClock, end: false);
+  final hasStartSec = firstClock.group(3) != null;
+  final tail = text.substring(firstClock.end);
+  final durSec = parseDurationSeconds(tail);
+  if (durSec == null || durSec <= 0) return null;
+
+  final rawEnd = startSec + durSec;
+  // 若起始时间仅精确到分钟（HH:mm），将该结束分钟末尾（:59）纳入容差，防秒级截断漏图
+  final endSec = hasStartSec
+      ? rawEnd
+      : math.max(rawEnd, (rawEnd ~/ 60) * 60 + 59);
+  return (startSec, endSec);
+}
+
+/// 判断日内时钟秒数 [sec]（`0..86399`）是否落在 [window] 内；兼容跨零点窗口（`window.$2 >= 86400`）。
+bool isClockSecondInWindow(int sec, (int, int) window) {
+  if (sec >= window.$1 && sec <= window.$2) return true;
+  if (window.$2 >= 86400) {
+    final shifted = sec + 86400;
+    if (shifted >= window.$1 && shifted <= window.$2) return true;
+  }
+  return false;
+}
+
+/// 解析中文或英文简写时长字符串为秒数（如 `18分40秒`、`15m`、`1小时05分`、`45s`）。
+int? parseDurationSeconds(String raw) {
+  final s = raw.trim();
+  if (s.isEmpty) return null;
+  var total = 0;
+  var matched = false;
+
+  final hourMatch = RegExp(
+    r'(\d+)\s*(?:小时|时|hours?|hrs?|h(?![a-z]))',
+    caseSensitive: false,
+  ).firstMatch(s);
+  if (hourMatch != null) {
+    total += (int.tryParse(hourMatch.group(1)!) ?? 0) * 3600;
+    matched = true;
+  }
+
+  final minMatch = RegExp(
+    r'(\d+)\s*(?:分钟|分|minutes?|mins?|m(?![a-z]))',
+    caseSensitive: false,
+  ).firstMatch(s);
+  if (minMatch != null) {
+    total += (int.tryParse(minMatch.group(1)!) ?? 0) * 60;
+    matched = true;
+  }
+
+  final secMatch = RegExp(
+    r'(\d+)\s*(?:秒钟?|seconds?|secs?|s(?![a-z]))',
+    caseSensitive: false,
+  ).firstMatch(s);
+  if (secMatch != null) {
+    total += int.tryParse(secMatch.group(1)!) ?? 0;
+    matched = true;
+  }
+
+  return matched && total > 0 ? total : null;
+}
 
 /// 将记录按时间从早到晚排序（天数偏移大→小、同日时刻小→大）。
 List<RecordEvent> sortEventsChronological(Iterable<RecordEvent> events) {
@@ -68,7 +185,9 @@ String stitchPolishedFullText(
   String Function(RecordEvent event, int turnIndex, String rawSpeaker)?
   turnSpeakerResolver,
 }) {
-  final ordered = sortEventsChronological(events);
+  final ordered = sortEventsChronological(
+    events.where((e) => !isSilentPlaceholderEvent(e)),
+  );
   if (ordered.isEmpty) return '';
   final blocks = <String>[];
   for (final e in ordered) {
@@ -121,8 +240,11 @@ String stitchPolishedFullText(
 class SourceRef {
   final String eventId;
   final String label; // 记录标题
-  final String range; // "14:20—14:27"
+  final String range; // "14:20—14:27" 或 "14:20 · 18分40秒"
   const SourceRef(this.eventId, this.label, this.range);
+
+  /// 解析当前溯源范围对应的日内秒数时间窗。
+  (int, int)? get clockWindow => parseSourceClockWindow(range);
 }
 
 class InfoPoint {
@@ -152,12 +274,16 @@ class SummaryCard {
   List<MapBranch> structure = const [];
   List<InfoPoint> points = const [];
   List<String> todos = const [];
+  Set<int> checkedTodos = <int>{};
   String? srcDesc;
   String? markdown;
   String fullText = '';
 
   /// 生成失败时的可展示原因（failed 态使用；不编造成功内容）。
   String? error;
+
+  /// 用户是否已主动取消生成中的任务。
+  bool cancelled = false;
 
   SummaryCard({required this.id, required this.time, this.state = SummaryState.pending});
 
@@ -203,6 +329,8 @@ class SummaryCard {
               }
           ],
           'todos': todos,
+          if (checkedTodos.isNotEmpty)
+            'doneTodos': (checkedTodos.toList()..sort()),
           'srcDesc': srcDesc,
           'md': markdown,
           if (fullText.trim().isNotEmpty) 'ft': fullText,
@@ -232,6 +360,10 @@ class SummaryCard {
         )
     ];
     c.todos = (j['todos'] as List? ?? []).cast<String>();
+    c.checkedTodos = {
+      for (final idx in (j['doneTodos'] as List? ?? const []))
+        if (idx is num) idx.toInt(),
+    };
     c.srcDesc = j['srcDesc'] as String?;
     c.markdown = j['md'] as String?;
     c.fullText = (j['ft'] as String?) ?? '';

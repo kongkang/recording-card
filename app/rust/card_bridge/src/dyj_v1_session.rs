@@ -13,7 +13,7 @@ use btleplug::api::{
     Central as _, CentralEvent, CharPropFlags, Characteristic, Peripheral as _, ScanFilter,
     WriteType,
 };
-use btleplug::platform::{Adapter, Peripheral};
+use btleplug::platform::{Adapter, Peripheral, PeripheralId};
 use futures::stream::StreamExt;
 use reai_dyj_sdk::audio::{self, AdpcmDecoder, AmrWbDecoder, PcmChunk};
 use reai_dyj_sdk::error::{Result as SdkResult, SdkError};
@@ -150,6 +150,78 @@ pub fn legacy_firmware_error(version: Option<&str>) -> String {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DyjTtsError {
+    Unsupported { code: Option<u32>, message: String },
+    Other(String),
+}
+
+/// 识别点一机 V1 `tts.speak` 的前向兼容错误：
+/// `0.8.14` 等尚未内置 `tts.speak` 的固件按协议 §6 返回 `code=1001`（未知命令），
+/// 归一为干净的 `Unsupported` 且绝不污染/断开当前 BLE 会话。
+pub fn classify_tts_speak_error(err: &SdkError, fw_version: &str) -> DyjTtsError {
+    let ver_label = if fw_version.trim().is_empty() {
+        "unknown"
+    } else {
+        fw_version.trim()
+    };
+    match err {
+        SdkError::Device { code, msg } => {
+            let low = msg.to_ascii_lowercase();
+            if *code == 1001
+                || low.contains("unknown command")
+                || low.contains("unsupported")
+                || low.contains("not implemented")
+                || msg.contains("未知命令")
+                || msg.contains("不支持")
+            {
+                DyjTtsError::Unsupported {
+                    code: Some(*code),
+                    message: format!(
+                        "unsupported: 点一机固件（v{ver_label}）暂不支持 tts.speak 语音播报（code={code}: {msg}）"
+                    ),
+                }
+            } else {
+                DyjTtsError::Other(err.to_string())
+            }
+        }
+        other => DyjTtsError::Other(other.to_string()),
+    }
+}
+
+/// 解码实时音频块中的 AMR-WB 帧序列（兼容 DTX SID mode 9 / SPEECH_LOST mode 14 / NO_DATA mode 15）。
+pub fn decode_realtime_amr_wb_payload(amr: &mut AmrWbDecoder, payload: &[u8]) -> Vec<i16> {
+    let mut samples = Vec::new();
+    let mut rest = payload;
+    while !rest.is_empty() {
+        let mode = (rest[0] >> 3) as usize & 0x0F;
+        let frame_len = if mode <= 8 {
+            1 + audio::WB_PAYLOAD_BYTES[mode]
+        } else if mode == 9 {
+            6
+        } else if mode == 14 || mode == 15 {
+            1
+        } else {
+            break;
+        };
+        if rest.len() < frame_len {
+            break;
+        }
+        let (one, remainder) = rest.split_at(frame_len);
+        if mode <= 8 {
+            if let Some(pcm) = amr.decode(one) {
+                samples.extend(pcm);
+            } else {
+                samples.extend(std::iter::repeat_n(0i16, audio::AMR_WB_FRAME_SAMPLES));
+            }
+        } else {
+            samples.extend(std::iter::repeat_n(0i16, audio::AMR_WB_FRAME_SAMPLES));
+        }
+        rest = remainder;
+    }
+    samples
+}
+
 pub struct DyjV1Session {
     name: String,
     peripheral: Peripheral,
@@ -204,12 +276,13 @@ impl DyjV1Session {
 
     /// 连接点一机 V1（复用统一扫描适配器），自动规避 `< 0.8.0` FF12 无 Notify 死锁并完成 `proto.hello`。
     ///
-    /// 针对真机 RPA 随机地址轮换：先尝试 `id_hint` 对应外设（4s 短超时，失败即显式 `disconnect` 取消挂起连接），
-    /// 随后立即开启实时事件扫描等待本轮窗口内真正广播出的同名设备再连（14s 超时），避免命中 btleplug 缓存中的过期旧外设。
+    /// 优先通过 `unified_scan` 缓存的 `PeripheralId` 零重扫直连（解决点一机 V1 间歇广播静默窗口内盲扫 5s 超时），
+    /// 仅当缓存未命中或 RPA 地址已轮换导致直连失败时，才降级进入实时广播事件扫描。
     pub async fn connect(
         adapter: &Adapter,
         id_hint: &str,
         name: &str,
+        cached_peripheral_id: Option<&PeripheralId>,
         connecting_slot: Option<&Mutex<Option<Peripheral>>>,
     ) -> std::result::Result<(Arc<Self>, Value), String> {
         struct SlotGuard<'a>(Option<&'a Mutex<Option<Peripheral>>>);
@@ -222,8 +295,14 @@ impl DyjV1Session {
         }
         let _guard = SlotGuard(connecting_slot);
 
-        let peripheral =
-            Self::connect_peripheral_with_rescan(adapter, id_hint, name, connecting_slot).await?;
+        let peripheral = Self::connect_peripheral_with_rescan(
+            adapter,
+            id_hint,
+            name,
+            cached_peripheral_id,
+            connecting_slot,
+        )
+        .await?;
 
         let discover_res =
             tokio::time::timeout(Duration::from_secs(8), peripheral.discover_services()).await;
@@ -393,19 +472,7 @@ impl DyjV1Session {
                         if discontinuous {
                             amr.reset();
                         }
-                        let mut rest = frame.payload.as_slice();
-                        while !rest.is_empty() {
-                            let mode = (rest[0] >> 3) as usize & 0x0F;
-                            if mode > 8 || rest.len() < 1 + audio::WB_PAYLOAD_BYTES[mode] {
-                                break;
-                            }
-                            let (one, remainder) =
-                                rest.split_at(1 + audio::WB_PAYLOAD_BYTES[mode]);
-                            if let Some(pcm) = amr.decode(one) {
-                                samples.extend(pcm);
-                            }
-                            rest = remainder;
-                        }
+                        samples = decode_realtime_amr_wb_payload(&mut amr, &frame.payload);
                     } else {
                         if discontinuous {
                             adpcm.reset();
@@ -557,13 +624,34 @@ impl DyjV1Session {
         adapter: &Adapter,
         id_hint: &str,
         name: &str,
+        cached_peripheral_id: Option<&PeripheralId>,
         connecting_slot: Option<&Mutex<Option<Peripheral>>>,
     ) -> std::result::Result<Peripheral, String> {
         let trimmed_name = name.trim();
         let mut last_err: Option<String> = None;
+        let mut tried_id: Option<String> = None;
 
-        // 1) 若刚刚扫到精确 ID，用 4 秒短超时尝试直连；若设备发生 RPA 轮换或已离线，立刻 cancel 掉，转入实时扫描。
-        if !id_hint.is_empty() {
+        // 1) 优先使用 unified_scan 缓存的精确 PeripheralId 零重扫直连（无需枚举 peripherals 或调 properties()，
+        //    避免点一机 V1 间歇广播静默窗口内盲目重扫导致 5s 超时）。
+        if let Some(pid) = cached_peripheral_id {
+            tried_id = Some(pid.to_string());
+            if let Ok(cached) = adapter.peripheral(pid).await {
+                match Self::try_connect_candidate(
+                    &cached,
+                    name,
+                    Duration::from_secs(5),
+                    connecting_slot,
+                )
+                .await
+                {
+                    Ok(()) => return Ok(cached),
+                    Err(e) => last_err = Some(e),
+                }
+            }
+        }
+
+        // 2) 若缓存未命中但传入了非空 id_hint（且未在步骤 1 尝试过同一外设），用 4 秒短超时尝试直连。
+        if !id_hint.is_empty() && tried_id.as_deref() != Some(id_hint) {
             if let Ok(peripherals) = adapter.peripherals().await {
                 if let Some(cached) = peripherals
                     .into_iter()
@@ -586,7 +674,7 @@ impl DyjV1Session {
             }
         }
 
-        // 2) 只认「本轮扫描实时收到广播事件」的外设，彻底避开 btleplug 缓存里的过期 RPA UUID。
+        // 3) 兜底：仅当缓存未命中或直连失败（如 RPA 轮换）时，开启实时扫描等待广播同名设备再连。
         let mut events = adapter
             .events()
             .await
@@ -1124,6 +1212,18 @@ impl DyjV1Session {
         self.request_idem("led.clear", json!({}), Duration::from_secs(5))
             .await
     }
+
+    /// 前向兼容调用点一机 V1 `tts.speak`（如未来固件内置端侧 TTS 扬声器播报）。
+    /// 在 `0.8.14` 等尚未实现的固件上，设备按协议返回 `code=1001`（未知命令），由调用方映射为干净的 `unsupported` 错误。
+    pub async fn tts_speak(&self, text: &str, interrupt: Option<bool>) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        params.insert("text".into(), json!(text));
+        if let Some(intr) = interrupt {
+            params.insert("interrupt".into(), json!(intr));
+        }
+        self.request("tts.speak", Value::Object(params), Duration::from_secs(8))
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -1194,5 +1294,51 @@ mod tests {
             }
             _ => panic!("expected response"),
         }
+    }
+
+    #[test]
+    fn classifies_v1_0_8_14_tts_speak_unknown_command_as_clean_unsupported() {
+        let unsupported = classify_tts_speak_error(
+            &SdkError::Device {
+                code: 1001,
+                msg: "unknown command: tts.speak".into(),
+            },
+            "0.8.14",
+        );
+        assert!(matches!(
+            unsupported,
+            DyjTtsError::Unsupported { code: Some(1001), ref message }
+                if message.starts_with("unsupported:") && message.contains("0.8.14")
+        ));
+
+        // 非 1001 的临时错误（如 3001 设备忙或网络超时）保持为可重试错误，不误标为永久 unsupported
+        let busy = classify_tts_speak_error(
+            &SdkError::Device {
+                code: 3001,
+                msg: "audio device busy".into(),
+            },
+            "0.9.0",
+        );
+        assert!(matches!(busy, DyjTtsError::Other(_)));
+    }
+
+    #[test]
+    fn realtime_amr_wb_decoder_preserves_dtx_sid_and_speech_lost_samples() {
+        let speech_frame: [u8; 33] = [
+            0x14, 0x50, 0x46, 0x0c, 0x15, 0x17, 0x57, 0x22, 0x71, 0x71, 0x42, 0x0a, 0x16, 0x97,
+            0x72, 0xbf, 0xbc, 0x56, 0xc6, 0x4e, 0x4c, 0x46, 0xc7, 0xdf, 0xd4, 0x4f, 0x56, 0xd6,
+            0x55, 0x16, 0x5b, 0xc4, 0x50,
+        ];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&speech_frame);
+        payload.extend_from_slice(&[0x4C, 1, 2, 3, 4, 5]); // mode 9 SID
+        payload.push(0x74); // mode 14 SPEECH_LOST
+        payload.push(0x7C); // mode 15 NO_DATA
+        payload.extend_from_slice(&speech_frame);
+
+        let mut amr = AmrWbDecoder::new();
+        let samples = decode_realtime_amr_wb_payload(&mut amr, &payload);
+        assert_eq!(samples.len(), 5 * 320);
+        assert!(samples[320..4 * 320].iter().all(|&s| s == 0));
     }
 }

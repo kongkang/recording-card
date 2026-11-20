@@ -154,21 +154,33 @@ class RollingCleanSegmentService {
     int? wallClockNowMs,
   }) {
     if (!isReady || files.isEmpty) return false;
-    final groups = SegmentProjection.collectSpeechGroups(files);
-    if (groups.isEmpty) return false;
+    final rawGroups = SegmentProjection.collectSpeechGroups(files);
+    if (rawGroups.isEmpty) return false;
+    final validGroups = <({ProjectedSpeechGroup group, List<_TimedUnit> units})>[
+      for (final g in rawGroups)
+        () {
+          final u = _extractUnits(g);
+          return (group: g, units: u);
+        }(),
+    ].where((e) => e.units.isNotEmpty).toList();
+    if (validGroups.isEmpty) return false;
+
     final nowMs = wallClockNowMs ?? _now().millisecondsSinceEpoch;
-    for (var i = 0; i < groups.length; i++) {
-      final units = _extractUnits(groups[i]);
-      if (units.isEmpty) continue;
-      final existing = state.rollingByAnchor[groups[i].anchorSegmentId];
+    for (var i = 0; i < validGroups.length; i++) {
+      final entry = validGroups[i];
+      final units = entry.units;
+      final existing = state.rollingByAnchor[entry.group.anchorSegmentId];
       final uncovered = _uncoveredUnits(units, existing);
       if (uncovered.isEmpty) continue;
+      final isLastGroup = i == validGroups.length - 1;
       final hasLaterGroup =
-          i + 1 < groups.length &&
-          (groups[i + 1].startAtMs - units.last.absEndMs) >= _silenceTriggerMs;
+          !isLastGroup &&
+          (validGroups[i + 1].units.first.absStartMs - units.last.absEndMs) >=
+              _silenceTriggerMs;
       if (_shouldProcessGroup(
         groupUnits: units,
         uncovered: uncovered,
+        isLastGroup: isLastGroup,
         hasLaterGroup: hasLaterGroup,
         forceRecleanAll: false,
         sessionJustEnded: false,
@@ -188,17 +200,27 @@ class RollingCleanSegmentService {
     int? wallClockNowMs,
     void Function(String status)? onProgress,
   }) async {
-    var state = await topicStore.load();
-    if (forceRecleanAll) {
-      state = state.withoutRollingRuns();
-      await topicStore.save(state);
-    }
+    var state = forceRecleanAll
+        ? await topicStore.readModifyWrite(
+            (current) => current.withoutRollingRuns(),
+          )
+        : await topicStore.load();
     if (!isReady || files.isEmpty) {
       return RollingCleanResult(state: state);
     }
 
-    final groups = SegmentProjection.collectSpeechGroups(files);
-    if (groups.isEmpty) {
+    final rawGroups = SegmentProjection.collectSpeechGroups(files);
+    if (rawGroups.isEmpty) {
+      return RollingCleanResult(state: state);
+    }
+    final validGroups = <({ProjectedSpeechGroup group, List<_TimedUnit> units})>[
+      for (final g in rawGroups)
+        () {
+          final u = _extractUnits(g);
+          return (group: g, units: u);
+        }(),
+    ].where((e) => e.units.isNotEmpty).toList();
+    if (validGroups.isEmpty) {
       return RollingCleanResult(state: state);
     }
 
@@ -208,10 +230,9 @@ class RollingCleanSegmentService {
     var skippedRuns = 0;
     Object? lastError;
 
-    for (var i = 0; i < groups.length; i++) {
-      final group = groups[i];
-      final units = _extractUnits(group);
-      if (units.isEmpty) continue;
+    for (var i = 0; i < validGroups.length; i++) {
+      final group = validGroups[i].group;
+      final units = validGroups[i].units;
 
       final existingRun = forceRecleanAll
           ? null
@@ -222,12 +243,15 @@ class RollingCleanSegmentService {
         continue;
       }
 
+      final isLastGroup = i == validGroups.length - 1;
       final hasLaterGroup =
-          i + 1 < groups.length &&
-          (groups[i + 1].startAtMs - units.last.absEndMs) >= _silenceTriggerMs;
+          !isLastGroup &&
+          (validGroups[i + 1].units.first.absStartMs - units.last.absEndMs) >=
+              _silenceTriggerMs;
       if (!_shouldProcessGroup(
         groupUnits: units,
         uncovered: uncovered,
+        isLastGroup: isLastGroup,
         hasLaterGroup: hasLaterGroup,
         forceRecleanAll: forceRecleanAll,
         sessionJustEnded: sessionJustEnded,
@@ -281,8 +305,9 @@ class RollingCleanSegmentService {
           coveredUtteranceEndMs: coveredEndMs,
           coveredUtteranceIds: coveredIds,
         );
-        state = state.withRollingRun(updatedRun);
-        await topicStore.save(state);
+        state = await topicStore.readModifyWrite(
+          (latest) => latest.withRollingRun(updatedRun),
+        );
         evaluatedRuns++;
       }
     }
@@ -299,6 +324,7 @@ class RollingCleanSegmentService {
   bool _shouldProcessGroup({
     required List<_TimedUnit> groupUnits,
     required List<_TimedUnit> uncovered,
+    required bool isLastGroup,
     required bool hasLaterGroup,
     required bool forceRecleanAll,
     required bool sessionJustEnded,
@@ -310,8 +336,12 @@ class RollingCleanSegmentService {
     if (spanMs >= cycleMs) return true;
     if (_cleanOnSilenceGap) {
       if (hasLaterGroup) return true;
-      final elapsedSinceLastSpeech = nowMs - groupUnits.last.absEndMs;
-      if (elapsedSinceLastSpeech >= _silenceTriggerMs) return true;
+      // 仅对最后一组在途语音检查距今静默时间；已闭合且后继停顿仅 30s..59s 的历史组
+      // 严格维持纯声学分段，不误调云端模型。
+      if (isLastGroup) {
+        final elapsedSinceLastSpeech = nowMs - groupUnits.last.absEndMs;
+        if (elapsedSinceLastSpeech >= _silenceTriggerMs) return true;
+      }
     }
     return false;
   }

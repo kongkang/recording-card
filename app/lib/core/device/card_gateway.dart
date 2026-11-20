@@ -760,27 +760,85 @@ class RealtimeAudioEvent {
 
 enum RealtimeAudioKind { open, audio, gap, closed }
 
-/// 硬件按键事件（点一机 V1 `button.event` / 第三方按键手势事件）。
+/// 硬件按键事件（录音卡 V2 `BTN_CLICK` / 点一机 V1 `button.event` / 第三方按键手势事件）。
 class HardwareButtonEvent {
   const HardwareButtonEvent({
     required this.gesture,
+    this.rawGesture,
+    this.button,
+    this.action,
     this.durationMs,
     this.deviceTs = 0,
     required this.receivedAtMs,
   });
 
-  factory HardwareButtonEvent.fromEvent(Map<String, dynamic> event) =>
-      HardwareButtonEvent(
-        gesture: '${event['gesture'] ?? ''}',
-        durationMs: (event['durationMs'] as num?)?.toInt(),
-        deviceTs: (event['deviceTs'] as num?)?.toInt() ?? 0,
-        receivedAtMs:
-            (event['receivedAtMs'] as num?)?.toInt() ??
-            DateTime.now().millisecondsSinceEpoch,
-      );
+  /// 归一化硬件原始手势名（如 V2 `single -> click`、`double -> double_click`、
+  /// `long -> long_press`、`long_release -> long_press_end`）。
+  static String normalizeGesture(String raw) {
+    final clean = raw.trim();
+    return switch (clean) {
+      'single' => 'click',
+      'double' => 'double_click',
+      'long' => 'long_press',
+      'long_release' => 'long_press_end',
+      _ => clean,
+    };
+  }
 
-  /// `'down' | 'up' | 'click' | 'double_click' | 'long_press_start' | 'long_press_end'`
+  factory HardwareButtonEvent.fromEvent(Map<String, dynamic> event) {
+    final btnField = event['button'];
+    final nested = btnField is Map
+        ? Map<String, dynamic>.from(btnField)
+        : const <String, dynamic>{};
+    final rawCandidate =
+        event['rawGesture'] ??
+        nested['gesture'] ??
+        nested['key'] ??
+        event['gesture'] ??
+        event['type'];
+    final rawGestureStr = rawCandidate?.toString().trim();
+    final gestureSource =
+        (event['gesture'] ??
+                nested['gesture'] ??
+                nested['key'] ??
+                event['type'] ??
+                '')
+            .toString();
+    final normalized = normalizeGesture(gestureSource);
+    final resolvedButton = switch (btnField) {
+      final String s when s.trim().isNotEmpty => s.trim(),
+      _ =>
+        (nested['name'] ?? nested['button'] ?? event['buttonId'])
+            ?.toString()
+            .trim(),
+    };
+    final resolvedAction = (event['action'] ?? nested['action'])
+        ?.toString()
+        .trim();
+    return HardwareButtonEvent(
+      gesture: normalized,
+      rawGesture: (rawGestureStr != null && rawGestureStr.isNotEmpty)
+          ? rawGestureStr
+          : (normalized.isNotEmpty ? normalized : null),
+      button: (resolvedButton != null && resolvedButton.isNotEmpty)
+          ? resolvedButton
+          : null,
+      action: (resolvedAction != null && resolvedAction.isNotEmpty)
+          ? resolvedAction
+          : null,
+      durationMs: (event['durationMs'] as num?)?.toInt(),
+      deviceTs: (event['deviceTs'] as num?)?.toInt() ?? 0,
+      receivedAtMs:
+          (event['receivedAtMs'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  /// `'down' | 'up' | 'click' | 'double_click' | 'long_press' | 'long_press_start' | 'long_press_end'`
   final String gesture;
+  final String? rawGesture;
+  final String? button;
+  final String? action;
   final int? durationMs;
   final int deviceTs;
   final int receivedAtMs;
@@ -977,8 +1035,20 @@ typedef _FreeDart = void Function(ffi.Pointer<Utf8>);
 typedef _VersionNative = ffi.Pointer<Utf8> Function();
 typedef _VersionDart = ffi.Pointer<Utf8> Function();
 
+typedef FfiCardGateway = RealCardGateway;
+
+typedef TestBridgeDispatch =
+    void Function(
+      String kind,
+      Map<String, dynamic>? payload,
+      void Function(Map<String, dynamic> event) emit,
+    );
+
 /// FFI 真实网关。
 class RealCardGateway implements CardGateway {
+  /// 文件下载无进度停滞超时阈值（只要字节进度持续推进即自动续期，彻底规避 10m 硬上限误杀）。
+  static const Duration downloadInactivityTimeout = Duration(seconds: 75);
+
   RealCardGateway._(ffi.DynamicLibrary lib)
     : _command = lib
           .lookup<ffi.NativeFunction<_CommandNative>>('card_bridge_command')
@@ -988,9 +1058,22 @@ class RealCardGateway implements CardGateway {
           .asFunction(),
       _version = lib
           .lookup<ffi.NativeFunction<_VersionNative>>('card_bridge_version')
-          .asFunction() {
+          .asFunction(),
+      _testDispatch = null,
+      _downloadWatchdogTimeout = downloadInactivityTimeout {
     _callable = ffi.NativeCallable<_CbNative>.listener(_onEvent);
   }
+
+  @visibleForTesting
+  RealCardGateway.forTesting({
+    required TestBridgeDispatch dispatch,
+    Duration downloadWatchdogTimeout = downloadInactivityTimeout,
+  }) : _command = null,
+       _free = null,
+       _version = null,
+       _testDispatch = dispatch,
+       _downloadWatchdogTimeout = downloadWatchdogTimeout,
+       _callable = null;
 
   static RealCardGateway? _instance;
 
@@ -1036,10 +1119,15 @@ class RealCardGateway implements CardGateway {
     throw last ?? StateError('libcard_bridge.dylib 未打进应用包');
   }
 
-  final _CommandDart _command;
-  final _FreeDart _free;
-  final _VersionDart _version;
-  late final ffi.NativeCallable<_CbNative> _callable;
+  final _CommandDart? _command;
+  final _FreeDart? _free;
+  final _VersionDart? _version;
+  final TestBridgeDispatch? _testDispatch;
+  final Duration _downloadWatchdogTimeout;
+  late final ffi.NativeCallable<_CbNative>? _callable;
+
+  /// 是否绑定真实原生 FFI 动态库（区分单元测试注入桩）。
+  bool get isNativeFfi => _testDispatch == null;
 
   final Map<int, StreamController<Map<String, dynamic>>> _pending = {};
   int _ticket = 0;
@@ -1050,9 +1138,37 @@ class RealCardGateway implements CardGateway {
   bool get available => true;
 
   String get bridgeVersion {
-    final ptr = _version();
+    final ver = _version;
+    if (ver == null) return 'card_bridge/test';
+    final ptr = ver();
     if (ptr == ffi.nullptr) return '';
     return ptr.toDartString();
+  }
+
+  void _invokeRawCommand(
+    int ticket,
+    String kind,
+    Map<String, dynamic>? payload,
+  ) {
+    final testDispatch = _testDispatch;
+    if (testDispatch != null) {
+      scheduleMicrotask(() {
+        testDispatch(kind, payload, (decoded) => _deliverDecoded(ticket, decoded));
+      });
+      return;
+    }
+    final cmd = _command!;
+    final callable = _callable!;
+    final kindPtr = kind.toNativeUtf8();
+    final payloadPtr = (payload == null || payload.isEmpty)
+        ? ffi.nullptr
+        : jsonEncode(payload).toNativeUtf8();
+    try {
+      cmd(kindPtr, payloadPtr, callable.nativeFunction, ticket);
+    } finally {
+      malloc.free(kindPtr);
+      if (payloadPtr != ffi.nullptr) malloc.free(payloadPtr);
+    }
   }
 
   Future<T> _serial<T>(Future<T> Function() action) {
@@ -1097,21 +1213,14 @@ class RealCardGateway implements CardGateway {
       _pending.remove(ticket);
     };
 
-    final kindPtr = kind.toNativeUtf8();
-    final payloadPtr = (payload == null || payload.isEmpty)
-        ? ffi.nullptr
-        : jsonEncode(payload).toNativeUtf8();
     try {
-      _command(kindPtr, payloadPtr, _callable.nativeFunction, ticket);
+      _invokeRawCommand(ticket, kind, payload);
     } catch (e) {
       _pending.remove(ticket);
       timer?.cancel();
       controller
         ..addError(CardException(CardErrorKind.unknown, '调用桥失败：$e'))
         ..close();
-    } finally {
-      malloc.free(kindPtr);
-      if (payloadPtr != ffi.nullptr) malloc.free(payloadPtr);
     }
 
     return controller.stream.transform(
@@ -1141,6 +1250,150 @@ class RealCardGateway implements CardGateway {
     });
   }
 
+  static bool _didDownloadProgressAdvance(
+    Map<String, dynamic> progress, {
+    required int? lastBytes,
+    required double? lastPercent,
+    required int? lastPoll,
+    required void Function(int? nextBytes, double? nextPercent, int? nextPoll)
+    updateTrackers,
+  }) {
+    final rawBytes =
+        progress['bytesWritten'] ??
+        progress['sent'] ??
+        progress['bytes'] ??
+        progress['receivedBytes'];
+    if (rawBytes is num) {
+      final b = rawBytes.toInt();
+      if (lastBytes == null || b > lastBytes) {
+        updateTrackers(b, lastPercent, lastPoll);
+        return true;
+      }
+      return false;
+    }
+    final rawPct = progress['percent'] ?? progress['percentage'];
+    if (rawPct is num) {
+      final p = rawPct.toDouble();
+      if (lastPercent == null || p > lastPercent) {
+        updateTrackers(lastBytes, p, lastPoll);
+        return true;
+      }
+      return false;
+    }
+    final rawPoll = progress['poll'];
+    if (rawPoll is num) {
+      final poll = rawPoll.toInt();
+      if (lastPoll == null || poll > lastPoll) {
+        updateTrackers(lastBytes, lastPercent, poll);
+        return true;
+      }
+      return false;
+    }
+    return false;
+  }
+
+  /// 带进度续期的空闲看门狗命令执行器：
+  /// 每次收到真实推进的下载进度即重置 [inactivityTimeout]（默认 75s），
+  /// 仅当完全无进度停滞达到阈值才判定超时，防止 BLE 大文件在 10m 临界点被 Dart 提前中断而固件删源。
+  Future<Map<String, dynamic>> _onceWithProgressWatchdog(
+    String kind,
+    Map<String, dynamic>? payload, {
+    Duration? inactivityTimeout,
+  }) {
+    final idleLimit = inactivityTimeout ?? _downloadWatchdogTimeout;
+    return _serial(() async {
+      final ticket = ++_ticket;
+      final controller = StreamController<Map<String, dynamic>>(sync: true);
+      _pending[ticket] = controller;
+
+      final completer = Completer<Map<String, dynamic>>();
+      Timer? watchdog;
+      StreamSubscription<Map<String, dynamic>>? sub;
+      int? lastBytes;
+      double? lastPercent;
+      int? lastPoll;
+
+      void armWatchdog() {
+        watchdog?.cancel();
+        watchdog = Timer(idleLimit, () {
+          _pending.remove(ticket);
+          if (!completer.isCompleted) {
+            completer.completeError(
+              CardException.timeout(
+                '$kind 传输停滞超时（连续 ${idleLimit.inSeconds}s 无进度）',
+              ),
+            );
+          }
+        });
+      }
+
+      armWatchdog();
+
+      sub = controller.stream.listen(
+        (json) {
+          if (json['ok'] != true) {
+            watchdog?.cancel();
+            if (!completer.isCompleted) {
+              completer.completeError(_error(kind, json['error']?.toString()));
+            }
+            return;
+          }
+          if (json['final'] == true) {
+            watchdog?.cancel();
+            if (!completer.isCompleted) {
+              completer.complete(json);
+            }
+            return;
+          }
+          final progress = json['progress'];
+          if (progress is Map) {
+            final map = Map<String, dynamic>.from(progress);
+            final advanced = _didDownloadProgressAdvance(
+              map,
+              lastBytes: lastBytes,
+              lastPercent: lastPercent,
+              lastPoll: lastPoll,
+              updateTrackers: (b, p, poll) {
+                lastBytes = b;
+                lastPercent = p;
+                lastPoll = poll;
+              },
+            );
+            if (advanced) {
+              armWatchdog();
+            }
+          }
+        },
+        onError: (Object err, StackTrace st) {
+          watchdog?.cancel();
+          if (!completer.isCompleted) {
+            completer.completeError(err, st);
+          }
+        },
+        onDone: () {
+          watchdog?.cancel();
+          if (!completer.isCompleted) {
+            completer.completeError(
+              CardException(CardErrorKind.unknown, '$kind 未返回终态即结束'),
+            );
+          }
+        },
+      );
+
+      try {
+        _invokeRawCommand(ticket, kind, payload);
+        return await completer.future;
+      } finally {
+        watchdog?.cancel();
+        _pending.remove(ticket);
+        unawaited(sub.cancel());
+        if (!controller.isClosed) {
+          unawaited(controller.close());
+        }
+      }
+    });
+  }
+
   /// 直接读取纯内存态或非串口指令，避免被耗时 BLE 串行队列（snapshot / ota.info）饥饿阻塞。
   Future<Map<String, dynamic>> _onceFast(
     String kind, [
@@ -1163,16 +1416,7 @@ class RealCardGateway implements CardGateway {
     final ticket = ++_ticket;
     _pending[ticket] = controller;
 
-    final kindPtr = kind.toNativeUtf8();
-    final payloadPtr = (payload == null || payload.isEmpty)
-        ? ffi.nullptr
-        : jsonEncode(payload).toNativeUtf8();
-    try {
-      _command(kindPtr, payloadPtr, _callable.nativeFunction, ticket);
-    } finally {
-      malloc.free(kindPtr);
-      if (payloadPtr != ffi.nullptr) malloc.free(payloadPtr);
-    }
+    _invokeRawCommand(ticket, kind, payload);
 
     await for (final json in controller.stream) {
       if (json['ok'] != true) {
@@ -1193,6 +1437,9 @@ class RealCardGateway implements CardGateway {
       return CardException(CardErrorKind.device, text);
     }
     final lower = text.toLowerCase();
+    if (lower.startsWith('unsupported') || lower.contains('unsupported:')) {
+      return CardException(CardErrorKind.device, text);
+    }
     if (lower.contains('disconnect') || text.contains('未连接')) {
       return CardException.disconnected(text);
     }
@@ -1227,6 +1474,21 @@ class RealCardGateway implements CardGateway {
 
   static Map<String, dynamic>? lastDeviceErrorDetail;
 
+  void _deliverDecoded(int ticket, Map<String, dynamic> decoded) {
+    final controller = _pending[ticket];
+    if (controller == null) return;
+    final detail = decoded['detail'];
+    if (detail is Map<String, dynamic>) {
+      lastDeviceErrorDetail = detail;
+      debugPrint('[card] 设备错误详情：$detail');
+    }
+    if (!controller.isClosed) controller.add(decoded);
+    if (decoded['final'] == true) {
+      _pending.remove(ticket);
+      if (!controller.isClosed) controller.close();
+    }
+  }
+
   void _onEvent(int ticket, ffi.Pointer<Utf8> json) {
     StreamController<Map<String, dynamic>>? controller;
     try {
@@ -1234,16 +1496,7 @@ class RealCardGateway implements CardGateway {
       controller = _pending[ticket];
       if (controller == null) return;
       final decoded = jsonDecode(text) as Map<String, dynamic>;
-      final detail = decoded['detail'];
-      if (detail is Map<String, dynamic>) {
-        lastDeviceErrorDetail = detail;
-        debugPrint('[card] 设备错误详情：$detail');
-      }
-      if (!controller.isClosed) controller.add(decoded);
-      if (decoded['final'] == true) {
-        _pending.remove(ticket);
-        if (!controller.isClosed) controller.close();
-      }
+      _deliverDecoded(ticket, decoded);
     } catch (e) {
       if (controller != null && !controller.isClosed) {
         controller.addError(CardException(CardErrorKind.unknown, '桥回包解析失败：$e'));
@@ -1251,7 +1504,7 @@ class RealCardGateway implements CardGateway {
         controller.close();
       }
     } finally {
-      _free(json);
+      _free?.call(json);
     }
   }
 
@@ -1417,12 +1670,7 @@ class RealCardGateway implements CardGateway {
       },
     );
 
-    final kindPtr = 'realtime.open'.toNativeUtf8();
-    try {
-      _command(kindPtr, ffi.nullptr, _callable.nativeFunction, ticket);
-    } finally {
-      malloc.free(kindPtr);
-    }
+    _invokeRawCommand(ticket, 'realtime.open', null);
     return controller.stream;
   }
 
@@ -1478,10 +1726,10 @@ class RealCardGateway implements CardGateway {
 
   @override
   Future<CardDownload> download(String name, String dir) async {
-    final json = await _once('download', {
+    final json = await _onceWithProgressWatchdog('download', {
       'name': name,
       'dir': dir,
-    }, const Duration(minutes: 10));
+    });
     return CardDownload.fromJson(
       (json['data'] as Map<String, dynamic>?) ?? const {},
     );
@@ -1489,9 +1737,9 @@ class RealCardGateway implements CardGateway {
 
   @override
   Future<CardDownload> takeOldestFile(String dir) async {
-    final json = await _once('file.takeOldest', {
+    final json = await _onceWithProgressWatchdog('file.takeOldest', {
       'dir': dir,
-    }, const Duration(minutes: 10));
+    });
     return CardDownload.fromJson(
       (json['data'] as Map<String, dynamic>?) ?? const {},
     );
@@ -1745,12 +1993,13 @@ class UnsupportedCardGateway implements CardGateway {
 CardGateway realOrUnsupported() =>
     RealCardGateway.maybe() ?? const UnsupportedCardGateway();
 
-/// 命令转发网关：每条 BLE 命令"发出"和"返回"都回调一次 [onActivity]。
+/// 命令转发网关：每条 BLE 命令"发出"和"返回"以及实时音频收包都回调 [onActivity]。
 class ActivityGateway implements CardGateway {
-  ActivityGateway(this._inner, this.onActivity);
+  ActivityGateway(this._inner, this.onActivity, {this.onRealtimeError});
 
   final CardGateway _inner;
   final void Function() onActivity;
+  final void Function(Object error)? onRealtimeError;
 
   Future<T> _run<T>(Future<T> Function() action) async {
     onActivity();
@@ -1805,7 +2054,23 @@ class ActivityGateway implements CardGateway {
   @override
   Stream<RealtimeAudioEvent> realtimeAudio() {
     onActivity();
-    return _inner.realtimeAudio();
+    return _inner.realtimeAudio().transform(
+      StreamTransformer<
+        RealtimeAudioEvent,
+        RealtimeAudioEvent
+      >.fromHandlers(
+        handleData: (event, sink) {
+          if (event.kind == RealtimeAudioKind.audio) {
+            onActivity();
+          }
+          sink.add(event);
+        },
+        handleError: (error, stackTrace, sink) {
+          onRealtimeError?.call(error);
+          sink.addError(error, stackTrace);
+        },
+      ),
+    );
   }
 
   @override

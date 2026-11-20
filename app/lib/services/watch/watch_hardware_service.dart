@@ -182,7 +182,7 @@ class WatchPendingSlicePayload {
       return v is num ? v.toInt() : fallback;
     }
 
-    final rawMarks = raw['marksMs'];
+    final rawMarks = raw['marksMs'] ?? raw['marksOffsetMs'];
     final marks = rawMarks is List
         ? List<int>.unmodifiable([
             for (final item in rawMarks)
@@ -230,6 +230,7 @@ class WatchPendingSlicePayload {
       gapCount: gapCount,
       isFinal: isFinal,
       sliceKeyOverride: 'watch_$safeSliceId',
+      marksMs: marksMs,
     );
   }
 }

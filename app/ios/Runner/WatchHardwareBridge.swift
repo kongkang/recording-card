@@ -1,8 +1,9 @@
 import Flutter
 import Foundation
-import HealthKit
 import WatchConnectivity
+#if canImport(WatchRecorderCore)
 import WatchRecorderCore
+#endif
 
 /// 独立硬件级「Apple Watch」原生桥接：
 /// - 在主工程 `Runner` 内激活 `WCSession.default`（同一套软件，`WKCompanionAppBundleIdentifier = com.reai.recordingcard`）；
@@ -16,7 +17,6 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
     private var channel: FlutterMethodChannel?
     private let stateLock = NSLock()
     private let fileQueue = DispatchQueue(label: "com.reai.recordingcard.watch.files", qos: .userInitiated)
-    private let healthStore = HKHealthStore()
 
     private var latestSnapshot: WatchStatusSnapshot?
     private var pendingSlices: [PendingWatchSlice] = []
@@ -31,7 +31,59 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         let wavPath: String
         let gapCount: Int
         let isFinal: Bool
+        let offlineRecorded: Bool
         let marksOffsetMs: [Int64]
+
+        private enum CodingKeys: String, CodingKey {
+            case sliceId
+            case sessionId
+            case sliceIndex
+            case startAtMs
+            case durationMs
+            case wavPath
+            case gapCount
+            case isFinal
+            case offlineRecorded
+            case marksOffsetMs
+        }
+
+        init(
+            sliceId: String,
+            sessionId: String,
+            sliceIndex: Int,
+            startAtMs: Int64,
+            durationMs: Int64,
+            wavPath: String,
+            gapCount: Int,
+            isFinal: Bool,
+            offlineRecorded: Bool = true,
+            marksOffsetMs: [Int64]
+        ) {
+            self.sliceId = sliceId
+            self.sessionId = sessionId
+            self.sliceIndex = sliceIndex
+            self.startAtMs = startAtMs
+            self.durationMs = durationMs
+            self.wavPath = wavPath
+            self.gapCount = gapCount
+            self.isFinal = isFinal
+            self.offlineRecorded = offlineRecorded
+            self.marksOffsetMs = marksOffsetMs
+        }
+
+        init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.sliceId = try c.decode(String.self, forKey: .sliceId)
+            self.sessionId = try c.decode(String.self, forKey: .sessionId)
+            self.sliceIndex = try c.decode(Int.self, forKey: .sliceIndex)
+            self.startAtMs = try c.decode(Int64.self, forKey: .startAtMs)
+            self.durationMs = try c.decode(Int64.self, forKey: .durationMs)
+            self.wavPath = try c.decode(String.self, forKey: .wavPath)
+            self.gapCount = try c.decodeIfPresent(Int.self, forKey: .gapCount) ?? 0
+            self.isFinal = try c.decodeIfPresent(Bool.self, forKey: .isFinal) ?? false
+            self.offlineRecorded = try c.decodeIfPresent(Bool.self, forKey: .offlineRecorded) ?? true
+            self.marksOffsetMs = try c.decodeIfPresent([Int64].self, forKey: .marksOffsetMs) ?? []
+        }
 
         func toDictionary() -> [String: Any] {
             [
@@ -43,6 +95,7 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
                 "wavPath": wavPath,
                 "gapCount": gapCount,
                 "isFinal": isFinal,
+                "offlineRecorded": offlineRecorded,
                 "marksMs": marksOffsetMs.map { NSNumber(value: $0) },
             ]
         }
@@ -152,41 +205,10 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
 
         if session.isReachable {
             noteWatchContact()
-            result(currentStatusDictionary())
-            return
         }
-
-        // 手表处于后台/息屏不可直连态时，尝试通过 HealthKit 运动会话冷唤醒手表 App（带 2.5s 超时保护）。
-        guard HKHealthStore.isHealthDataAvailable() else {
-            result(currentStatusDictionary())
-            return
-        }
-        let finishLock = NSLock()
-        var didFinish = false
-        let finishOnce: () -> Void = { [weak self] in
-            finishLock.lock()
-            let already = didFinish
-            didFinish = true
-            finishLock.unlock()
-            guard !already else { return }
-            DispatchQueue.main.async {
-                guard let self else {
-                    result([:])
-                    return
-                }
-                result(self.currentStatusDictionary())
-            }
-        }
-
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 2.5) {
-            finishOnce()
-        }
-        let config = HKWorkoutConfiguration()
-        config.activityType = .mindAndBody
-        config.locationType = .indoor
-        healthStore.startWatchApp(with: config) { _, _ in
-            finishOnce()
-        }
+        // 指令已通过 sendMessage / updateApplicationContext / transferUserInfo 可靠排队投递，
+        // 严禁伪造 HKWorkoutConfiguration 调用 startWatchApp（违反 App Review 2.5.4 / 5.1.3）。
+        result(currentStatusDictionary())
     }
 
     private func sendCommandToWatch(_ command: WatchControlCommand, pushContext: Bool) {
@@ -286,7 +308,11 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         guard session.activationState == .activated else { return }
         let ack = WatchControlCommand(action: .ackSlice, sessionId: sessionId, sliceId: sliceId).toDictionary()
         if session.isReachable {
-            session.sendMessage(ack, replyHandler: nil, errorHandler: nil)
+            session.sendMessage(ack, replyHandler: nil) { _ in
+                guard WCSession.isSupported(),
+                      WCSession.default.activationState == .activated else { return }
+                WCSession.default.transferUserInfo(ack)
+            }
         } else {
             session.transferUserInfo(ack)
         }
@@ -516,6 +542,8 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         let declaredDurationMs = parsed?.durationMs ?? 0
         let marksOffsetMs = parsed?.marksOffsetMs ?? []
         let gapCount = parsed?.gapCount ?? 0
+        let isFinal = (meta["isFinal"] as? Bool) ?? parsed?.isFinal ?? false
+        let offlineRecorded = (meta["offlineRecorded"] as? Bool) ?? parsed?.offlineRecorded ?? true
         let wavName = parsed?.canonicalWavFileName ?? WavFileCodec.liveWatchWavFileName(
             sessionId: sessionId,
             sliceIndex: sliceIndex
@@ -541,6 +569,16 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
                     sourceURL: stagedURL,
                     destinationURL: wavURL
                 )
+                let wavAttrs = try fm.attributesOfItem(atPath: wavURL.path)
+                let wavBytes = (wavAttrs[.size] as? NSNumber)?.int64Value ?? 0
+                guard wavBytes > Int64(WavFileCodec.headerByteCount) else {
+                    try? fm.removeItem(at: wavURL)
+                    throw NSError(
+                        domain: "RCWatchTranscoder",
+                        code: -5,
+                        userInfo: [NSLocalizedDescriptionKey: "转码后 WAV 文件为空"]
+                    )
+                }
                 let durationMs = declaredDurationMs > 0 ? declaredDurationMs : transcodedMs
                 let entry = PendingWatchSlice(
                     sliceId: sliceId,
@@ -550,10 +588,12 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
                     durationMs: max(1, durationMs),
                     wavPath: wavURL.path,
                     gapCount: gapCount,
-                    isFinal: true,
+                    isFinal: isFinal,
+                    offlineRecorded: offlineRecorded,
                     marksOffsetMs: marksOffsetMs
                 )
                 self?.upsertPendingSlice(entry)
+                // 仅在 16kHz PCM WAV 成功落盘并写入 pending_ingest.json 后才回发 .ackSlice 通知手表删原始 .m4a
                 self?.sendSliceAckToWatch(sliceId: sliceId, sessionId: sessionId)
                 let payload = entry.toDictionary()
                 DispatchQueue.main.async {

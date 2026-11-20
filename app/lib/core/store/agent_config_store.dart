@@ -1155,6 +1155,16 @@ class AgentConfigStore extends ChangeNotifier {
     await _save();
   }
 
+  /// 注销账号或重置本机配置时删除持久化的 Agent 配置并重新加载默认值。
+  Future<void> resetAll() async {
+    try {
+      await _json.remove(_storageKey);
+    } catch (_) {
+      // 忽略重置单个键异常
+    }
+    await load();
+  }
+
   Future<void> _save() async {
     await _json.write(_storageKey, {
       'cloudEnabled': cloudEnabled,

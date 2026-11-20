@@ -2,6 +2,8 @@ import Foundation
 
 /// 手表端本地持久化账本：支撑「离线暂存、重连补推、崩溃恢复、已传清理」。
 public final class WatchManifestStore {
+    public static let defaultAckTimeoutMs: Int64 = 180_000
+
     private let lock = NSLock()
     private let fileManager: FileManager
     public let recordingsDirectory: URL
@@ -76,17 +78,36 @@ public final class WatchManifestStore {
         guard let idx = entries.firstIndex(where: { $0.sliceId == sliceId }) else { return }
         if entries[idx].transferState != .synced {
             entries[idx].transferState = .pending
+            entries[idx].deliveredAtMs = nil
             entries[idx].lastError = error
             try saveToDiskLocked()
         }
     }
 
-    /// 手机确认收到或 `transferFile` 成功后标记已同步，并删除手表本地音频文件以释放空间。
+    /// `WCSessionFileTransfer` 传输完成但尚未收到 iPhone `.ackSlice`（WAV 转码落盘确认）：
+    /// 仅标记 `awaitingAck` 防止并发重复上传，**绝不提前删除本地 `.m4a`**。
+    public func markDeliveredPendingAck(
+        sliceId: String,
+        nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let idx = entries.firstIndex(where: { $0.sliceId == sliceId }) else { return }
+        if entries[idx].transferState != .synced {
+            entries[idx].transferState = .awaitingAck
+            entries[idx].deliveredAtMs = nowMs
+            entries[idx].lastError = nil
+            try saveToDiskLocked()
+        }
+    }
+
+    /// 收到手机端 `.ackSlice`（WAV 转码落盘成功）后标记已同步，并安全删除手表本地音频文件以释放空间。
     public func markSyncedAndDeleteLocalAudio(sliceId: String) throws {
         lock.lock()
         defer { lock.unlock() }
         guard let idx = entries.firstIndex(where: { $0.sliceId == sliceId }) else { return }
         entries[idx].transferState = .synced
+        entries[idx].deliveredAtMs = nil
         entries[idx].lastError = nil
         let targetURL = recordingsDirectory.appendingPathComponent(entries[idx].fileName, isDirectory: false)
         if fileManager.fileExists(atPath: targetURL.path) {
@@ -95,16 +116,33 @@ public final class WatchManifestStore {
         try saveToDiskLocked()
     }
 
-    /// 进程重启后若有处于 `transferring` 但系统队列已不存在的记录，恢复为 `pending` 待重传。
-    public func resetStaleTransferring(activeSliceIds: Set<String>) throws {
+    /// 进程重启或同步冲刷时，恢复孤立的 `transferring` 记录与超时未收到 `.ackSlice` 的 `awaitingAck` 记录为 `pending` 待重传。
+    public func resetStaleTransferring(
+        activeSliceIds: Set<String>,
+        nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
+        ackTimeoutMs: Int64 = defaultAckTimeoutMs
+    ) throws {
         lock.lock()
         defer { lock.unlock() }
         var changed = false
         for idx in entries.indices {
-            if entries[idx].transferState == .transferring,
-               !activeSliceIds.contains(entries[idx].sliceId) {
-                entries[idx].transferState = .pending
-                changed = true
+            switch entries[idx].transferState {
+            case .transferring:
+                if !activeSliceIds.contains(entries[idx].sliceId) {
+                    entries[idx].transferState = .pending
+                    entries[idx].deliveredAtMs = nil
+                    changed = true
+                }
+            case .awaitingAck:
+                let deliveredAt = entries[idx].deliveredAtMs ?? 0
+                if !activeSliceIds.contains(entries[idx].sliceId),
+                   (deliveredAt <= 0 || nowMs - deliveredAt >= ackTimeoutMs) {
+                    entries[idx].transferState = .pending
+                    entries[idx].deliveredAtMs = nil
+                    changed = true
+                }
+            case .pending, .synced:
+                break
             }
         }
         if changed {
