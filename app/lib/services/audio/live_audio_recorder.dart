@@ -240,11 +240,12 @@ class LiveAudioRecorder extends ChangeNotifier {
   LiveAudioRecorder({
     required CardGateway gateway,
     Directory? baseDir,
-    this.sliceDuration = const Duration(minutes: 1),
+    Duration? sliceDuration = const Duration(minutes: 1),
     this.onSliceReady,
     DateTime Function()? clock,
   }) : _gateway = gateway,
        _baseDirOverride = baseDir,
+       _sliceDuration = sliceDuration,
        _clock = clock ?? DateTime.now;
 
   final CardGateway _gateway;
@@ -260,8 +261,27 @@ class LiveAudioRecorder extends ChangeNotifier {
   static const int minManualFlushBytes =
       defaultSampleRate * bytesPerSample ~/ 2;
 
-  /// 滚动切片时长（验证期默认 1 分钟；传 null 则只在停录时整体封口）。
-  final Duration? sliceDuration;
+  Duration? _sliceDuration;
+
+  /// 滚动切片时长（默认 1 分钟，可通过 [setSliceDuration] 实时修改；传 null 则只在停录时整体封口）。
+  Duration? get sliceDuration => _sliceDuration;
+
+  /// 动态调整实时切片窗口；若缩小时当前缓冲已满新阈值，立即按新上限切分并保留剩余采样。
+  void setSliceDuration(Duration? next) {
+    final normalized = (next != null && next <= Duration.zero) ? null : next;
+    if (_sliceDuration == normalized) return;
+    _sliceDuration = normalized;
+    final session = _session;
+    if (normalized != null && session != null && !_stopping) {
+      _slicer.flushIfExceeds(
+        sliceDuration: normalized,
+        sampleRate: session.sampleRate,
+        onSliceFlush: (pcmBytes) =>
+            _sealSliceBytes(pcmBytes, isFinal: false),
+      );
+    }
+    notifyListeners();
+  }
 
   /// 每满一片（或停录冲刷尾片）立即回调上层送入本地 ASR。
   void Function(LiveAudioSlice slice)? onSliceReady;
@@ -821,6 +841,35 @@ class SoftBoundaryPcmSlicer {
     _sawActiveSpeech = false;
     _oddByte = null;
     _totalAlignedSamples = 0;
+  }
+
+  /// 动态调小 [sliceDuration] 时，按新上限立即切出已满分片，保留剩余尾部采样与 `_oddByte`。
+  void flushIfExceeds({
+    required Duration sliceDuration,
+    required int sampleRate,
+    required void Function(Uint8List pcmBytes) onSliceFlush,
+  }) {
+    if (sliceDuration <= Duration.zero || sampleRate <= 0) return;
+    final hardMaxSamples =
+        (sliceDuration.inMilliseconds * sampleRate ~/ 1000).clamp(1, 1 << 30);
+    final hardMaxBytes = hardMaxSamples * 2;
+    if (_pcm.length < hardMaxBytes) return;
+    final raw = _pcm.takeBytes();
+    final alignedLen = raw.length & ~1;
+    if (raw.length > alignedLen && _oddByte == null) {
+      _oddByte = raw.last;
+    }
+    var offset = 0;
+    while (alignedLen - offset >= hardMaxBytes) {
+      onSliceFlush(Uint8List.sublistView(raw, offset, offset + hardMaxBytes));
+      offset += hardMaxBytes;
+    }
+    if (offset < alignedLen) {
+      _pcm.add(Uint8List.sublistView(raw, offset, alignedLen));
+    }
+    _frameFill = 0;
+    _quietRunFrames = 0;
+    _sawActiveSpeech = _pcm.length > 0 && _sawActiveSpeech;
   }
 
   /// 取出当前缓冲中的偶数字节采样数据。

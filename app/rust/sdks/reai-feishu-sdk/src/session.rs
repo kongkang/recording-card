@@ -43,6 +43,7 @@ fn capabilities() -> SdkCapabilities {
         has_remote_record_control: true,
         has_voice_key: false,
         has_mark_button: false,
+        has_configurable_buttons: false,
         ota_mode: "none",
     }
 }

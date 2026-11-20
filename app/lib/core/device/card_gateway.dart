@@ -221,7 +221,7 @@ class HardwareCapabilities {
     otaMode: 'none',
   );
 
-  /// Omi 量产版 / Friend Pendant：BLE 实时 Opus/PCM/uLaw/LC3 流 + 按键手势 + 板载存储同步。
+  /// Omi 量产版 / Friend Pendant：BLE 实时 Opus/PCM/uLaw/LC3 流 + 按键手势（禁长按防 3s 关机）+ 板载存储同步。
   static const omiCv1 = HardwareCapabilities(
     realtimeAudio: true,
     hasOnboardStorage: true,
@@ -231,6 +231,7 @@ class HardwareCapabilities {
     hasPhysicalRecordToggle: true,
     hasRemoteRecordControl: true,
     hasMarkButton: true,
+    hasConfigurableButtons: true,
     otaMode: 'none',
   );
 
@@ -1079,12 +1080,15 @@ class RealCardGateway implements CardGateway {
 
   static RealCardGateway? maybe() {
     if (_instance != null) return _instance;
+    const envLib = String.fromEnvironment('RC_CARD_BRIDGE_LIB');
     // 依次整体尝试「打开 + 符号查找」：
-    // ① 进程符号表——iOS 静态链接直连；
-    // ② libcard_bridge.dylib——iOS 动态库兜底；
-    // ③ libcard_bridge.so——Android jniLibs。注意 System.loadLibrary 走 RTLD_LOCAL，
+    // ① 测试/桌面显式指定路径（`RC_CARD_BRIDGE_LIB`）；
+    // ② 进程符号表——iOS 静态链接直连；
+    // ③ libcard_bridge.dylib——iOS/macOS 动态库兜底；
+    // ④ libcard_bridge.so——Android jniLibs。注意 System.loadLibrary 走 RTLD_LOCAL，
     //    dlopen(NULL)(=process()) 看不到它的符号，必须显式 dlopen 拿到库自身句柄。
     final openers = <ffi.DynamicLibrary Function()>[
+      if (envLib.isNotEmpty) () => ffi.DynamicLibrary.open(envLib),
       ffi.DynamicLibrary.process,
       () => ffi.DynamicLibrary.open('libcard_bridge.dylib'),
       () => ffi.DynamicLibrary.open('libcard_bridge.so'),

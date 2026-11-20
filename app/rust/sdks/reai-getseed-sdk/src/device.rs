@@ -47,6 +47,7 @@ impl GetSeedSdkDriver {
             has_remote_record_control: false,
             has_voice_key: false,
             has_mark_button: false,
+            has_configurable_buttons: false,
             ota_mode: "none",
         }
     }

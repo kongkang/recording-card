@@ -140,7 +140,7 @@ impl HardwareCapabilities {
             has_physical_record_toggle: caps.has_physical_record_toggle,
             has_remote_record_control: caps.has_remote_record_control,
             has_mark_button: caps.has_mark_button,
-            has_configurable_buttons: false,
+            has_configurable_buttons: caps.has_configurable_buttons,
             ota_mode: caps.ota_mode,
         }
     }
@@ -301,7 +301,7 @@ mod tests {
                 .expect("omi uuid only");
         assert_eq!(ko, DeviceKind::OmiCv1);
         assert!(co.realtime_audio && co.has_file_sync && co.has_remote_record_control);
-        assert!(co.has_mark_button && !co.has_wifi_config);
+        assert!(co.has_mark_button && co.has_configurable_buttons && !co.has_wifi_config);
         assert!(name_omi.starts_with("Omi-"));
 
         let (_, kf, _) = classify_ble_advertisement(

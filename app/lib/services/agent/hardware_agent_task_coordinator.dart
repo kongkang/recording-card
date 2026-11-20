@@ -232,21 +232,42 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
 
   void _onHardwareButtonEvent(HardwareButtonEvent ev) {
     if (_disposed) return;
-    final action = _agentConfig.dyjActionForGesture(ev.gesture);
-    _emitButtonToast(_formatButtonToast(ev, action));
+    final normalizedGesture = switch (ev.gesture) {
+      'single_tap' => 'click',
+      'double_tap' => 'double_click',
+      _ => ev.gesture,
+    };
+    if (_device.activeKind == DeviceKind.omiCv1 &&
+        normalizedGesture.startsWith('long_press')) {
+      // Omi 固件长按约 3 秒直接硬关机，彻底忽略一切长按手势防误触
+      return;
+    }
+    final normalizedEv = normalizedGesture == ev.gesture
+        ? ev
+        : HardwareButtonEvent(
+            gesture: normalizedGesture,
+            receivedAtMs: ev.receivedAtMs,
+            durationMs: ev.durationMs,
+            deviceTs: ev.deviceTs,
+          );
+    final action = _agentConfig.buttonActionForDevice(
+      _device.activeKind,
+      normalizedGesture,
+    );
+    _emitButtonToast(_formatButtonToast(normalizedEv, action));
 
     // 按下瞬间若正在播报 TTS，立即静默打断并锚定回声隔离水位，防止前 600ms 按住说话被外放声污染
-    if (_agentChat.isSpeaking && ev.gesture != 'up') {
+    if (_agentChat.isSpeaking && normalizedGesture != 'up') {
       unawaited(_agentChat.interruptSpeech());
       _lastTtsEndedAtMs = ev.receivedAtMs;
     }
 
-    if (ev.gesture == 'down') {
+    if (normalizedGesture == 'down') {
       _lastDownAtMs = ev.receivedAtMs;
       return;
     }
 
-    if (ev.gesture == 'long_press_end' || ev.gesture == 'up') {
+    if (normalizedGesture == 'long_press_end' || normalizedGesture == 'up') {
       unawaited(
         _enqueue(() async {
           final active = _activeVoice;
@@ -260,7 +281,7 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
 
     if (action == HardwareButtonAction.none) return;
 
-    if (ev.gesture == 'long_press_start') {
+    if (normalizedGesture == 'long_press_start') {
       if (action == HardwareButtonAction.agentVoice) {
         final downTs = _lastDownAtMs;
         final fallbackDur = (ev.durationMs != null && ev.durationMs! > 0)
@@ -287,9 +308,9 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       return;
     }
 
-    if (ev.gesture == 'click' ||
-        ev.gesture == 'double_click' ||
-        ev.gesture == 'long_press') {
+    if (normalizedGesture == 'click' ||
+        normalizedGesture == 'double_click' ||
+        normalizedGesture == 'long_press') {
       if (action == HardwareButtonAction.agentVoice) {
         final triggerMs = ev.receivedAtMs;
         unawaited(
@@ -330,6 +351,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
   Future<void> _executeImmediateAction(HardwareButtonAction action) async {
     switch (action) {
       case HardwareButtonAction.mark:
+        if (_liveAudio.isRunning) {
+          _liveAudio.recordMark();
+        }
+        if (_device.isPhoneRecording) {
+          _device.recordPhoneMark();
+        }
         final err = await _device.markNow();
         _setStatus(
           HardwareAgentPhase.idle,

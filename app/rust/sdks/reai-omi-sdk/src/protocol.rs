@@ -287,6 +287,11 @@ pub fn extract_len_prefixed_frames(payload: &[u8], out: &mut Vec<Vec<u8>>) {
     }
 }
 
+/// 解码 Omi 按键手势。
+///
+/// Omi 量产版固件在 Zephyr GPIO 层写死长按约 3 秒直接硬件关机且无 BLE 配置开关，
+/// 按压过程中也不会上报 <3s 的长按时长，因此彻底禁用长按（码 3 及释放 5 均返回 `None`），
+/// 仅开放 `single_tap`（1）与 `double_tap`（2）。
 pub fn decode_button_gesture(value: &[u8]) -> Option<&'static str> {
     let code = match value.len() {
         0 => return None,
@@ -296,7 +301,6 @@ pub fn decode_button_gesture(value: &[u8]) -> Option<&'static str> {
     match code {
         1 => Some("single_tap"),
         2 => Some("double_tap"),
-        3 => Some("long_press_start"),
         _ => None,
     }
 }
@@ -375,5 +379,11 @@ mod tests {
         let (ts, frames) = extract_ring_encoded_frames(&rec);
         assert_eq!(ts, Some(1_730_000_000));
         assert_eq!(frames, vec![vec![11, 22, 33], vec![44, 55]]);
+
+        assert_eq!(decode_button_gesture(&[1, 0, 0, 0]), Some("single_tap"));
+        assert_eq!(decode_button_gesture(&[2, 0, 0, 0]), Some("double_tap"));
+        assert_eq!(decode_button_gesture(&[3, 0, 0, 0]), None);
+        assert_eq!(decode_button_gesture(&[5, 0, 0, 0]), None);
+        assert_eq!(decode_button_gesture(&[]), None);
     }
 }

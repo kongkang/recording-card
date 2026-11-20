@@ -1790,8 +1790,8 @@ async fn release_device() -> Value {
 
 pub(crate) fn normalize_button_gesture(raw: &str) -> &'static str {
     match raw.trim() {
-        "single" | "click" => "click",
-        "double" | "double_click" => "double_click",
+        "single" | "single_tap" | "click" => "click",
+        "double" | "double_tap" | "double_click" => "double_click",
         "long" | "long_press" => "long_press",
         "long_release" | "long_press_end" => "long_press_end",
         "long_press_start" => "long_press_start",
@@ -1799,6 +1799,30 @@ pub(crate) fn normalize_button_gesture(raw: &str) -> &'static str {
         "up" => "up",
         _ => "click",
     }
+}
+
+/// 将第三方外设 SDK 推送的按键事件归一化为桥接 `button` 事件 JSON。
+///
+/// Omi 等外设长按会触发硬件关机，因此屏蔽所有 `long*`/`long_press*` 手势，仅放行安全手势并补齐 `receivedAtMs`。
+pub(crate) fn map_external_button_event_to_json(gesture: &str, received_at_ms: u64) -> Option<Value> {
+    let trimmed = gesture.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("long_press")
+        || trimmed == "long"
+        || trimmed == "long_release"
+    {
+        return None;
+    }
+    let normalized = normalize_button_gesture(trimmed);
+    if normalized.starts_with("long_press") {
+        return None;
+    }
+    Some(json!({
+        "kind": "button",
+        "gesture": normalized,
+        "rawGesture": trimmed,
+        "receivedAtMs": received_at_ms,
+    }))
 }
 
 pub(crate) fn map_card_v2_button_event_to_json(
@@ -2099,10 +2123,14 @@ fn spawn_external_event_pump(device: &Arc<dyn RecorderDevice>) -> tokio::task::J
                             "kind": "voice_key",
                             "pressed": pressed,
                         }),
-                        SdkDeviceEvent::Button { gesture } => json!({
-                            "kind": "button",
-                            "gesture": gesture,
-                        }),
+                        SdkDeviceEvent::Button { gesture } => {
+                            let received_at_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0);
+                            map_external_button_event_to_json(&gesture, received_at_ms)
+                                .unwrap_or(Value::Null)
+                        }
                         SdkDeviceEvent::Disconnected => json!({
                             "kind": "disconnected",
                         }),
@@ -5831,6 +5859,21 @@ mod tests {
         assert_eq!(long_release["gesture"], "long_press_end");
         assert_eq!(long_release["rawGesture"], "long_release");
         assert_eq!(normalize_button_gesture("long"), "long_press");
+        assert_eq!(normalize_button_gesture("single_tap"), "click");
+        assert_eq!(normalize_button_gesture("double_tap"), "double_click");
+
+        let ext_click = map_external_button_event_to_json("single_tap", 1_700_000_020_000).unwrap();
+        assert_eq!(ext_click["kind"], "button");
+        assert_eq!(ext_click["gesture"], "click");
+        assert_eq!(ext_click["rawGesture"], "single_tap");
+        assert_eq!(ext_click["receivedAtMs"], 1_700_000_020_000u64);
+
+        let ext_double = map_external_button_event_to_json("double_tap", 1_700_000_021_000).unwrap();
+        assert_eq!(ext_double["gesture"], "double_click");
+        assert!(map_external_button_event_to_json("long_press_start", 1_700_000_022_000).is_none());
+        assert!(map_external_button_event_to_json("long_press", 1_700_000_023_000).is_none());
+        assert!(map_external_button_event_to_json("long", 1_700_000_024_000).is_none());
+        assert!(map_external_button_event_to_json("", 1_700_000_025_000).is_none());
     }
 
     #[test]
