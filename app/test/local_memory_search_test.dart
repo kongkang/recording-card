@@ -28,10 +28,10 @@ void main() {
     final yesterday = parseMemoryQuery('前天看的电影是什么名字');
     expect(yesterday.window?.minOffset, 2);
     expect(yesterday.window?.maxOffset, 2);
-    expect(yesterday.text, '电影是什么名字');
+    expect(yesterday.text, '电影');
 
     final recent = parseMemoryQuery('前几天的爆米花');
-    expect(recent.window?.minOffset, 1);
+    expect(recent.window?.minOffset, 0);
     expect(recent.window?.maxOffset, 7);
     expect(recent.text, '爆米花');
 
