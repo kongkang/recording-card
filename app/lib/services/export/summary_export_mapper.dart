@@ -137,38 +137,49 @@ ExportDocument exportDocumentFromSummary(
   );
 
   if (transcriptMode == TranscriptExportMode.aiOptimized) {
-    final resolvedFull = card.resolvedFullText(
-      orderedEvents,
-      speakerResolver: speakerResolver,
-      turnSpeakerResolver: turnSpeakerResolver,
-      preferResolvedTurns: preferResolvedTurns,
-      aliasTextTransformer: aliasTextTransformer,
-    );
-    if (resolvedFull.isNotEmpty) {
-      sections.add(
-        ExportSection(
-          heading: '全文（AI 智能优化版）',
-          body: resolvedFull,
-        ),
-      );
-    }
+    var addedAnyEventTranscript = false;
     for (final e in orderedEvents) {
       final eventImages = photosForEvent(e);
+      if (isSilentPlaceholderEvent(e) && eventImages.isEmpty) continue;
       final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
       final turnLines = <String>[
         for (var ti = 0; ti < turns.length; ti++)
           if (cleanSpokenFillers(turns[ti].text).isNotEmpty)
-            '${turns[ti].src.replaceFirst('来源 ', '')} · ${resolveSpk(e, turns[ti].spk, ti)}：${cleanSpokenFillers(turns[ti].text)}',
+            '${turns[ti].src.replaceFirst('来源 ', '').trim()} · ${resolveSpk(e, turns[ti].spk, ti)}：${transformText(cleanSpokenFillers(turns[ti].text))}',
       ];
-      final fallback = (e.longText.trim().isNotEmpty ? e.longText : e.brief)
-          .trim();
+      final fallback = isSilentPlaceholderEvent(e)
+          ? ''
+          : transformText(
+              (e.longText.trim().isNotEmpty ? e.longText : e.brief).trim(),
+            );
+      final bodyText = turnLines.isNotEmpty ? turnLines.join('\n') : fallback;
+      if (bodyText.isEmpty && eventImages.isEmpty) continue;
+      if (bodyText.isNotEmpty) addedAnyEventTranscript = true;
       sections.add(
         ExportSection(
           heading: '${e.time} · ${e.title}（${e.dur}）',
-          body: turnLines.isNotEmpty ? turnLines.join('\n') : fallback,
+          body: bodyText.isEmpty ? null : bodyText,
           images: eventImages,
         ),
       );
+    }
+    // 仅当 orderedEvents 为空（或无可用事件文本）时回退输出 card.fullText，避免同一批对话重复导出两遍
+    if (!addedAnyEventTranscript) {
+      final resolvedFull = card.resolvedFullText(
+        orderedEvents,
+        speakerResolver: speakerResolver,
+        turnSpeakerResolver: turnSpeakerResolver,
+        preferResolvedTurns: preferResolvedTurns,
+        aliasTextTransformer: aliasTextTransformer,
+      );
+      if (resolvedFull.isNotEmpty) {
+        sections.add(
+          ExportSection(
+            heading: '全文（AI 智能优化版）',
+            body: resolvedFull,
+          ),
+        );
+      }
     }
   } else {
     if (orderedEvents.isEmpty && card.fullText.trim().isNotEmpty) {
@@ -187,6 +198,7 @@ ExportDocument exportDocumentFromSummary(
     }
     for (final e in orderedEvents) {
       final eventImages = photosForEvent(e);
+      if (isSilentPlaceholderEvent(e) && eventImages.isEmpty) continue;
       final rawTurns = e.raw;
       final lines = <String>[];
       if (rawTurns.isNotEmpty) {
@@ -200,15 +212,16 @@ ExportDocument exportDocumentFromSummary(
           final t = e.dialog[ti];
           lines.add('${t.src} · ${resolveSpk(e, t.spk, ti)}：${t.text}');
         }
-      } else {
+      } else if (!isSilentPlaceholderEvent(e)) {
         final fallback = (e.longText.trim().isNotEmpty ? e.longText : e.brief)
             .trim();
         if (fallback.isNotEmpty) lines.add(fallback);
       }
+      if (lines.isEmpty && eventImages.isEmpty) continue;
       sections.add(
         ExportSection(
           heading: '${e.time} · ${e.title}（${e.dur}）',
-          body: lines.join('\n'),
+          body: lines.isEmpty ? null : lines.join('\n'),
           images: eventImages,
         ),
       );
