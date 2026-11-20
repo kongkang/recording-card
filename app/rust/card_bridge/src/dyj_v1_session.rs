@@ -24,8 +24,8 @@ use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
 
 pub const COMMAND_UUID: &str = "0000ff11-0000-1000-8000-00805f9b34fb";
 pub const DATA_UUID: &str = "0000ff12-0000-1000-8000-00805f9b34fb";
-/// 订阅 notify 后到首笔写之间的最小间隔（实机验证 Spreadtrum SC9832E 300ms 稳态最佳，过长反而易触发建连空窗断开）。
-const NOTIFY_SETTLE: Duration = Duration::from_millis(300);
+/// 订阅 notify 后到首笔写之间的最小间隔（`subscribe()` 已等蓝牙栈 CCCD ACK 返回，40ms 后立即发首包以避免落入 macOS LSTO=360ms 超时悬崖）。
+const NOTIFY_SETTLE: Duration = Duration::from_millis(40);
 const GATT_OP_TIMEOUT: Duration = Duration::from_secs(6);
 
 struct PendingMap(Mutex<HashMap<u64, mpsc::Sender<Frame>>>);
@@ -223,6 +223,35 @@ pub fn decode_realtime_amr_wb_payload(amr: &mut AmrWbDecoder, payload: &[u8]) ->
     samples
 }
 
+/// 将 outgoing `FF11` 控制帧按 ≤180 字节切分（适配 BLE 4.2 DLE / macOS 515 MTU，单 PDU 发送避免多次 RTT 落入 LSTO=360ms 超时），
+/// 并在 UTF-8 字符边界处截断。
+pub(crate) fn split_ble_mtu20_chunks(bytes: &[u8]) -> Vec<&[u8]> {
+    const MAX_CHUNK: usize = 180;
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+    if bytes.len() <= MAX_CHUNK {
+        return vec![bytes];
+    }
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        let mut out = Vec::with_capacity((bytes.len() / 160) + 1);
+        let mut start = 0usize;
+        while start < s.len() {
+            let mut end = (start + MAX_CHUNK).min(s.len());
+            while end > start && !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            if end == start {
+                return bytes.chunks(MAX_CHUNK).collect();
+            }
+            out.push(&bytes[start..end]);
+            start = end;
+        }
+        return out;
+    }
+    bytes.chunks(MAX_CHUNK).collect()
+}
+
 pub struct DyjV1Session {
     name: String,
     peripheral: Peripheral,
@@ -288,7 +317,7 @@ impl DyjV1Session {
     ) -> std::result::Result<(Arc<Self>, Value), String> {
         let mut attempt_cached = cached_peripheral_id;
         let mut attempt_id = id_hint;
-        for attempt in 0..4 {
+        for attempt in 0..5 {
             match Self::connect_once(
                 adapter,
                 attempt_id,
@@ -300,17 +329,17 @@ impl DyjV1Session {
             {
                 Ok(res) => return Ok(res),
                 Err(err)
-                    if attempt < 3
+                    if attempt < 4
                         && !err.starts_with("LEGACY_UPGRADE_REQUIRED|")
                         && !name.trim().is_empty() =>
                 {
                     log::warn!(
-                        "dyj_v1_session: 第 {} 轮连接 {name} 失败（{err}），2.0s 后清缓存重扫重试",
+                        "dyj_v1_session: 第 {} 轮连接 {name} 失败（{err}），0.8s 后清缓存重扫重试",
                         attempt + 1
                     );
                     attempt_cached = None;
                     attempt_id = "";
-                    tokio::time::sleep(Duration::from_millis(2000)).await;
+                    tokio::time::sleep(Duration::from_millis(800)).await;
                 }
                 Err(err) => return Err(err),
             }
@@ -345,10 +374,15 @@ impl DyjV1Session {
         .await?;
 
         let discover_res =
-            tokio::time::timeout(Duration::from_secs(8), peripheral.discover_services()).await;
-        if !matches!(discover_res, Ok(Ok(()))) {
+            tokio::time::timeout(Duration::from_secs(12), peripheral.discover_services()).await;
+        let discover_err = match discover_res {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => Some(format!("{e}")),
+            Err(_) => Some("12s timeout".to_string()),
+        };
+        if let Some(detail) = discover_err {
             let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
-            return Err("点一机 V1 服务发现失败，请重试连接".to_string());
+            return Err(format!("点一机 V1 服务发现失败（{detail}），请重试连接"));
         }
 
         let chars = peripheral.characteristics();
@@ -683,7 +717,7 @@ impl DyjV1Session {
                 match Self::try_connect_candidate(
                     &cached,
                     name,
-                    Duration::from_secs(3),
+                    Duration::from_secs(5),
                     connecting_slot,
                 )
                 .await
@@ -694,7 +728,7 @@ impl DyjV1Session {
             }
         }
 
-        // 2) 若缓存未命中但传入了非空 id_hint（且未在步骤 1 尝试过同一外设），用 4 秒短超时尝试直连。
+        // 2) 若缓存未命中但传入了非空 id_hint（且未在步骤 1 尝试过同一外设），用 5 秒超时尝试直连。
         if !id_hint.is_empty() && tried_id.as_deref() != Some(id_hint) {
             if let Ok(peripherals) = adapter.peripherals().await {
                 if let Some(cached) = peripherals
@@ -705,7 +739,7 @@ impl DyjV1Session {
                         match Self::try_connect_candidate(
                             &cached,
                             name,
-                            Duration::from_secs(4),
+                            Duration::from_secs(5),
                             connecting_slot,
                         )
                         .await
@@ -725,7 +759,7 @@ impl DyjV1Session {
             .map_err(|e| format!("点一机蓝牙事件流失败: {e}"))?;
         let _ = adapter.start_scan(ScanFilter::default()).await;
 
-        let scan_deadline = tokio::time::Instant::now() + Duration::from_secs(16);
+        let scan_deadline = tokio::time::Instant::now() + Duration::from_millis(7500);
         let mut fresh: Option<Peripheral> = None;
         loop {
             let now = tokio::time::Instant::now();
@@ -746,14 +780,14 @@ impl DyjV1Session {
                 _ => continue,
             };
             if let Ok(p) = adapter.peripheral(&id).await {
-                if Self::peripheral_matches_target(&p, id_hint, trimmed_name).await {
+                if Self::peripheral_matches_target(&p, "", trimmed_name).await {
                     fresh = Some(p);
                     break;
                 }
             }
         }
         let _ = adapter.stop_scan().await;
-        tokio::time::sleep(Duration::from_millis(120)).await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
 
         let Some(fresh_peripheral) = fresh else {
             return Err(last_err.unwrap_or_else(|| {
@@ -764,7 +798,7 @@ impl DyjV1Session {
         Self::try_connect_candidate(
             &fresh_peripheral,
             name,
-            Duration::from_secs(14),
+            Duration::from_secs(6),
             connecting_slot,
         )
         .await?;
@@ -777,16 +811,32 @@ impl DyjV1Session {
         } else {
             WriteType::WithoutResponse
         };
-        tokio::time::timeout(
-            Duration::from_secs(4),
-            self.peripheral.write(&self.cmd_char, bytes, write_type),
-        )
-        .await
-        .map_err(|_| SdkError::Timeout {
-            command: "ble.write".into(),
-            seconds: 4,
-        })?
-        .map_err(|e| SdkError::Ble(format!("write FF11: {e}")))
+        for chunk in split_ble_mtu20_chunks(bytes) {
+            let res = tokio::time::timeout(
+                Duration::from_secs(4),
+                self.peripheral.write(&self.cmd_char, chunk, write_type),
+            )
+            .await
+            .map_err(|_| SdkError::Timeout {
+                command: "ble.write".into(),
+                seconds: 4,
+            })?;
+            if let Err(e) = res {
+                let msg = format!("{e}");
+                let low = msg.to_ascii_lowercase();
+                if low.contains("peripheral not found")
+                    || low.contains("disconnected")
+                    || low.contains("not connected")
+                    || low.contains("channel closed")
+                {
+                    if !self.disconnected.swap(true, Ordering::SeqCst) {
+                        let _ = self.event_tx.send(DeviceEvent::Disconnected);
+                    }
+                }
+                return Err(SdkError::Ble(format!("write FF11: {msg}")));
+            }
+        }
+        Ok(())
     }
 
     async fn probe_legacy_version(
@@ -839,7 +889,7 @@ impl DyjV1Session {
                     | ProtocolInfo::FEATURE_REALTIME_AUDIO,
                 "auto_audio": false,
             });
-            let req_fut = session.request("proto.hello", params, Duration::from_secs(4));
+            let req_fut = session.request("proto.hello", params, Duration::from_millis(2200));
             let legacy_fut = Self::wait_legacy_unknown_cmd(legacy_rx);
             let outcome = tokio::select! {
                 res = req_fut => Some(res),
@@ -910,6 +960,14 @@ impl DyjV1Session {
                 }
                 Err(_) => {
                     self.pending.0.lock().unwrap().remove(&id);
+                    if !self.peripheral.is_connected().await.unwrap_or(true) {
+                        if !self.disconnected.swap(true, Ordering::SeqCst) {
+                            let _ = self.event_tx.send(DeviceEvent::Disconnected);
+                        }
+                        return Err(SdkError::Disconnected {
+                            command: cmd.to_string(),
+                        });
+                    }
                     return Err(SdkError::Timeout {
                         command: cmd.to_string(),
                         seconds: timeout.as_secs(),
@@ -992,17 +1050,17 @@ impl DyjV1Session {
         if let Some(s) = session {
             params.insert("session".into(), json!(s));
         }
-        self.request("record.start", Value::Object(params), Duration::from_secs(5))
+        self.request("record.start", Value::Object(params), Duration::from_secs(10))
             .await
     }
 
     pub async fn record_stop(&self) -> SdkResult<Value> {
-        self.request("record.stop", json!({}), Duration::from_secs(5))
+        self.request("record.stop", json!({}), Duration::from_secs(10))
             .await
     }
 
     pub async fn record_list(&self) -> SdkResult<Value> {
-        self.request_idem("record.list", json!({}), Duration::from_secs(10))
+        self.request_idem("record.list", json!({}), Duration::from_secs(12))
             .await
     }
 
@@ -1010,33 +1068,33 @@ impl DyjV1Session {
         self.request(
             "record.delete",
             json!({ "name": name }),
-            Duration::from_secs(5),
+            Duration::from_secs(10),
         )
         .await
     }
 
     pub async fn audio_capture_start(&self) -> SdkResult<Value> {
-        self.request("audio.capture.start", json!({}), Duration::from_secs(5))
+        self.request("audio.capture.start", json!({}), Duration::from_secs(8))
             .await
     }
 
     pub async fn audio_capture_stop(&self) -> SdkResult<Value> {
-        self.request("audio.capture.stop", json!({}), Duration::from_secs(5))
+        self.request("audio.capture.stop", json!({}), Duration::from_secs(8))
             .await
     }
 
     pub async fn audio_stream_start(&self) -> SdkResult<Value> {
-        self.request("audio.stream.start", json!({}), Duration::from_secs(5))
+        self.request("audio.stream.start", json!({}), Duration::from_secs(8))
             .await
     }
 
     pub async fn audio_stream_stop(&self) -> SdkResult<Value> {
-        self.request("audio.stream.stop", json!({}), Duration::from_secs(5))
+        self.request("audio.stream.stop", json!({}), Duration::from_secs(8))
             .await
     }
 
     pub async fn camera_status(&self) -> SdkResult<Value> {
-        self.request_idem("camera.status", json!({}), Duration::from_secs(5))
+        self.request_idem("camera.status", json!({}), Duration::from_secs(8))
             .await
     }
 
@@ -1083,7 +1141,7 @@ impl DyjV1Session {
         if let Some(b) = bssid {
             params.insert("bssid".into(), json!(b));
         }
-        self.request("wifi.connect", Value::Object(params), Duration::from_secs(35))
+        self.request("wifi.connect", Value::Object(params), Duration::from_secs(45))
             .await
     }
 
@@ -1092,12 +1150,12 @@ impl DyjV1Session {
         if let Some(s) = ssid {
             params.insert("ssid".into(), json!(s));
         }
-        self.request("wifi.forget", Value::Object(params), Duration::from_secs(5))
+        self.request("wifi.forget", Value::Object(params), Duration::from_secs(10))
             .await
     }
 
     pub async fn upload_config_get(&self) -> SdkResult<Value> {
-        self.request_idem("upload.config.get", json!({}), Duration::from_secs(5))
+        self.request_idem("upload.config.get", json!({}), Duration::from_secs(10))
             .await
     }
 
@@ -1113,10 +1171,10 @@ impl DyjV1Session {
         if let Some(t) = token {
             params.insert("token".into(), json!(t));
         }
-        self.request(
+        self.request_idem(
             "upload.config.set",
             Value::Object(params),
-            Duration::from_secs(5),
+            Duration::from_secs(12),
         )
         .await
     }
@@ -1126,12 +1184,12 @@ impl DyjV1Session {
             Some(n) => json!({ "name": n }),
             None => json!({}),
         };
-        self.request("upload.start", params, Duration::from_secs(5))
+        self.request("upload.start", params, Duration::from_secs(10))
             .await
     }
 
     pub async fn upload_status(&self) -> SdkResult<Value> {
-        self.request_idem("upload.status", json!({}), Duration::from_secs(5))
+        self.request_idem("upload.status", json!({}), Duration::from_secs(10))
             .await
     }
 
@@ -1198,7 +1256,7 @@ impl DyjV1Session {
         let params = epoch_ms
             .map(|t| json!({ "epoch_ms": t }))
             .unwrap_or_else(|| json!({}));
-        self.request("device.time", params, Duration::from_secs(5))
+        self.request("device.time", params, Duration::from_secs(10))
             .await
     }
 
@@ -1206,7 +1264,7 @@ impl DyjV1Session {
         self.request(
             "device.reboot",
             json!({ "confirm": confirm }),
-            Duration::from_secs(5),
+            Duration::from_secs(8),
         )
         .await
     }
@@ -1226,23 +1284,23 @@ impl DyjV1Session {
         self.request(
             "camera.record.start",
             Value::Object(params),
-            Duration::from_secs(5),
+            Duration::from_secs(10),
         )
         .await
     }
 
     pub async fn camera_record_stop(&self) -> SdkResult<Value> {
-        self.request("camera.record.stop", json!({}), Duration::from_secs(5))
+        self.request("camera.record.stop", json!({}), Duration::from_secs(10))
             .await
     }
 
     pub async fn camera_record_status(&self) -> SdkResult<Value> {
-        self.request_idem("camera.record.status", json!({}), Duration::from_secs(5))
+        self.request_idem("camera.record.status", json!({}), Duration::from_secs(8))
             .await
     }
 
     pub async fn sensor_status(&self) -> SdkResult<Value> {
-        self.request_idem("sensor.status", json!({}), Duration::from_secs(5))
+        self.request_idem("sensor.status", json!({}), Duration::from_secs(8))
             .await
     }
 
@@ -1251,7 +1309,7 @@ impl DyjV1Session {
             .filter(|ts| !ts.is_empty())
             .map(|ts| json!({ "types": ts }))
             .unwrap_or_else(|| json!({}));
-        self.request("sensor.read", params, Duration::from_secs(5))
+        self.request("sensor.read", params, Duration::from_secs(6))
             .await
     }
 
@@ -1270,13 +1328,13 @@ impl DyjV1Session {
         self.request(
             "sensor.stream.start",
             Value::Object(params),
-            Duration::from_secs(5),
+            Duration::from_secs(10),
         )
         .await
     }
 
     pub async fn sensor_stream_stop(&self) -> SdkResult<Value> {
-        self.request("sensor.stream.stop", json!({}), Duration::from_secs(5))
+        self.request("sensor.stream.stop", json!({}), Duration::from_secs(10))
             .await
     }
 
@@ -1321,18 +1379,18 @@ impl DyjV1Session {
         self.request(
             "vibrator.once",
             Value::Object(params),
-            Duration::from_secs(5),
+            Duration::from_secs(8),
         )
         .await
     }
 
     pub async fn vibrator_cancel(&self) -> SdkResult<Value> {
-        self.request("vibrator.cancel", json!({}), Duration::from_secs(5))
+        self.request("vibrator.cancel", json!({}), Duration::from_secs(8))
             .await
     }
 
     pub async fn volume_get(&self) -> SdkResult<Value> {
-        self.request_idem("volume.get", json!({}), Duration::from_secs(5))
+        self.request_idem("volume.get", json!({}), Duration::from_secs(8))
             .await
     }
 
@@ -1340,7 +1398,7 @@ impl DyjV1Session {
         self.request(
             "volume.set",
             json!({ "stream": stream, "value": value }),
-            Duration::from_secs(5),
+            Duration::from_secs(8),
         )
         .await
     }
@@ -1604,5 +1662,31 @@ mod tests {
         let samples = decode_realtime_amr_wb_payload(&mut amr, &payload);
         assert_eq!(samples.len(), 5 * 320);
         assert!(samples[320..4 * 320].iter().all(|&s| s == 0));
+    }
+
+    #[test]
+    fn splits_ff11_writes_into_utf8_safe_mtu20_chunks() {
+        let hello = format!(
+            "CMD:{{\"id\":1,\"cmd\":\"proto.hello\",\"params\":{{\"name\":\"recording-card\",\"feature_bits\":7,\"auto_audio\":false}}}}\r\n"
+        );
+        let ascii_chunks = split_ble_mtu20_chunks(hello.as_bytes());
+        assert_eq!(ascii_chunks.len(), 1);
+        assert!(ascii_chunks[0].len() <= 180);
+        assert_eq!(ascii_chunks[0], hello.as_bytes());
+
+        let long_cn = "测试点一机蓝牙语音控制".repeat(12);
+        let utf8_cmd = format!(
+            "CMD:{{\"id\":2,\"cmd\":\"tts.speak\",\"params\":{{\"text\":\"{long_cn}\"}}}}\r\n"
+        );
+        assert!(utf8_cmd.len() > 200);
+        let utf8_chunks = split_ble_mtu20_chunks(utf8_cmd.as_bytes());
+        assert!(utf8_chunks.len() >= 2);
+        let mut rebuilt_utf8 = String::new();
+        for ch in &utf8_chunks {
+            assert!(!ch.is_empty() && ch.len() <= 180);
+            let s = std::str::from_utf8(ch).expect("chunk must stay on valid UTF-8 boundary");
+            rebuilt_utf8.push_str(s);
+        }
+        assert_eq!(rebuilt_utf8, utf8_cmd);
     }
 }

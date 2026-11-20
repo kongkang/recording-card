@@ -661,7 +661,7 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
             out.ok(dyj_tts_speak(&active, &text, interrupt).await?);
         }
         "link.ping" => {
-            let active = active_device().await?;
+            let active = active_device_raw().await?;
             out.ok(link_ping(&active).await?);
         }
         "wifi.scan" => {
@@ -1533,24 +1533,8 @@ async fn connect_dyj_v1(
     let actual_id = device.peripheral().id().to_string();
     let actual_peripheral_id = device.peripheral().id();
     let mut initial_meta = DyjV1CachedMeta::default();
-    if let Some(did) = hello
-        .get("device_id")
-        .or_else(|| hello.get("deviceId"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-    {
-        initial_meta.device_id = Some(did.to_string());
-    }
-    if let Some(ver) = hello
-        .get("app_version")
-        .or_else(|| hello.get("fw_version"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-    {
-        initial_meta.fw_version = ver.to_string();
-        initial_meta.fw_version_code = version_code_from_semver(ver);
-    }
-    initial_meta.feature_bits = hello.get("feature_bits").and_then(Value::as_u64);
+    apply_dyj_v1_hello_to_meta(&mut initial_meta, &hello);
+    let initial_ver_code = initial_meta.fw_version_code;
     let dyn_caps = capabilities::dyj_v1_capabilities_for_firmware(
         initial_meta.fw_version_code,
         initial_meta.feature_bits,
@@ -1560,19 +1544,21 @@ async fn connect_dyj_v1(
     // 对时与按键模式检查异步延后执行，避免阻塞握手并挤占首包指令通道。
     let bg_device = Arc::downgrade(&device);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_millis(2500)).await;
         let Some(dev) = bg_device.upgrade() else {
             return;
         };
         if !dev.is_connected().await.unwrap_or(false) {
             return;
         }
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        if now_ms > 0 {
-            let _ = dev.device_time(Some(now_ms)).await;
+        if initial_ver_code == 0 || initial_ver_code >= 812 {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            if now_ms > 0 {
+                let _ = dev.device_time(Some(now_ms)).await;
+            }
         }
         dev.ensure_buttons_event_only().await;
     });
@@ -1752,8 +1738,94 @@ async fn connect_external_sdk(
     }))
 }
 
-async fn active_device() -> Result<ActiveDevice, BridgeError> {
+fn apply_dyj_v1_hello_to_meta(meta: &mut DyjV1CachedMeta, hello: &Value) {
+    if let Some(did) = hello
+        .get("device_id")
+        .or_else(|| hello.get("deviceId"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        meta.device_id = Some(did.to_string());
+    }
+    if let Some(ver) = hello
+        .get("app_version")
+        .or_else(|| hello.get("fw_version"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        meta.fw_version = ver.to_string();
+        meta.fw_version_code = version_code_from_semver(ver);
+    }
+    if let Some(bits) = hello.get("feature_bits").and_then(Value::as_u64) {
+        meta.feature_bits = Some(bits);
+    }
+}
+
+async fn active_device_raw() -> Result<ActiveDevice, BridgeError> {
     let guard = state().device.lock().await;
+    guard.as_ref().cloned().ok_or_else(BridgeError::disconnected)
+}
+
+async fn active_device() -> Result<ActiveDevice, BridgeError> {
+    let mut guard = state().device.lock().await;
+    if let Some(ActiveDevice::DyjV1 {
+        device,
+        name,
+        meta,
+        realtime_active,
+    }) = guard.as_ref()
+    {
+        if !device.is_connected().await.unwrap_or(false) {
+            let dev_name = name.clone();
+            let dev_meta = meta.clone();
+            let rt_flag = realtime_active.clone();
+            let _ = tokio::time::timeout(Duration::from_secs(2), device.disconnect()).await;
+            if let Some(pump) = state().event_pump.lock().await.take() {
+                pump.abort();
+            }
+            if let Some(stop) = state().realtime_stop.lock().expect("realtime lock").take() {
+                let _ = stop.send(());
+            }
+            rt_flag.store(false, Ordering::SeqCst);
+            let adapter = scan_adapter().await?;
+            let (new_dev, hello) = tokio::time::timeout(
+                Duration::from_secs(42),
+                DyjV1Session::connect(
+                    &adapter,
+                    "",
+                    &dev_name,
+                    None,
+                    Some(&state().connecting_peripheral),
+                ),
+            )
+            .await
+            .map_err(|_| BridgeError::disconnected())?
+            .map_err(|_| BridgeError::disconnected())?;
+            let actual_id = new_dev.peripheral().id().to_string();
+            let actual_pid = new_dev.peripheral().id();
+            {
+                let mut g = dev_meta.lock().unwrap();
+                apply_dyj_v1_hello_to_meta(&mut g, &hello);
+            }
+            *state().last_device_id.lock().expect("device id lock") = Some(actual_id.clone());
+            state().scan_cache.lock().expect("scan cache lock").insert(
+                actual_id,
+                CachedScanEntry {
+                    name: dev_name.clone(),
+                    kind: DeviceKind::DyjV1,
+                    peripheral_id: Some(actual_pid),
+                },
+            );
+            let pump = spawn_dyj_v1_event_pump(&new_dev);
+            *state().event_pump.lock().await = Some(pump);
+            *guard = Some(ActiveDevice::DyjV1 {
+                device: new_dev,
+                name: dev_name,
+                meta: dev_meta,
+                realtime_active: rt_flag,
+            });
+        }
+    }
     guard.as_ref().cloned().ok_or_else(BridgeError::disconnected)
 }
 
@@ -3232,7 +3304,11 @@ async fn list_device_files(active: &ActiveDevice) -> Result<Value, BridgeError> 
             Ok(device.list_files(None).await.and_then(to_value)?)
         }
         ActiveDevice::DyjV1 { device, meta, .. } => {
-            let agg = device.record_list().await?;
+            let (agg, active_dev) = dyj_call_with_reconnect(device, |d| async move {
+                d.record_list().await
+            })
+            .await
+            .map_err(|(e, _)| BridgeError::from(e))?;
             let items = agg
                 .get("items")
                 .and_then(Value::as_array)
@@ -3253,8 +3329,8 @@ async fn list_device_files(active: &ActiveDevice) -> Result<Value, BridgeError> 
             }
             // 兼顾已自动/手动上传并删源的云端暂存 .amr：3 秒内快速合并去重
             if let (Some(did), Some(origin)) = (
-                resolve_dyj_device_id(device, meta).await,
-                resolve_dyj_server_origin(device, None).await,
+                resolve_dyj_device_id(&active_dev, meta).await,
+                resolve_dyj_server_origin(&active_dev, None).await,
             ) {
                 if let Ok(server) = DyjV1ServerClient::new(&origin) {
                     if let Ok(Ok(remote)) =
@@ -3795,6 +3871,15 @@ async fn download_device_file(
                 let mut upload_polls: u64 = 0;
                 while tokio::time::Instant::now() < deadline {
                     tokio::time::sleep(Duration::from_millis(800)).await;
+                    if let Ok(list) = server.list_files(&did).await {
+                        if list
+                            .files
+                            .iter()
+                            .any(|f| f.name == clean_name && f.size > 0)
+                        {
+                            break;
+                        }
+                    }
                     if let Ok(st) = device.upload_status().await {
                         let uploading = st.get("uploading").and_then(Value::as_bool).unwrap_or(false);
                         if uploading {
@@ -3952,7 +4037,12 @@ async fn delete_device_file(active: &ActiveDevice, name: &str) -> Result<Value, 
 
 async fn camera_list(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
-        ActiveDevice::DyjV1 { device, .. } => Ok(device.camera_list().await?),
+        ActiveDevice::DyjV1 { device, .. } => {
+            let (v, _) = dyj_call_with_reconnect(device, |d| async move { d.camera_list().await })
+                .await
+                .map_err(|(e, _)| BridgeError::from(e))?;
+            Ok(v)
+        }
         _ => Ok(json!({"total": 0, "items": []})),
     }
 }
@@ -4205,19 +4295,78 @@ fn map_dyj_sdk_command_error(err: DyjV1SdkError, cmd: &str, meta: &Mutex<DyjV1Ca
     }
 }
 
-async fn dispatch_dyj_v1_command(kind: &str, payload: &Value) -> Result<Value, BridgeError> {
-    let active = active_device().await?;
-    let ActiveDevice::DyjV1 { device, meta, .. } = active else {
-        return Err(BridgeError {
-            message: format!("unsupported: 当前连接设备不支持点一机扩展命令 {kind}"),
-            detail: Some(json!({
-                "code": "unsupported",
-                "unsupported": true,
-                "command": kind,
-            })),
-        });
-    };
+fn is_recoverable_dyj_link_err(err: &DyjV1SdkError) -> bool {
+    match err {
+        DyjV1SdkError::Disconnected { .. } => true,
+        DyjV1SdkError::Ble(msg) => {
+            let low = msg.to_ascii_lowercase();
+            low.contains("disconnected")
+                || low.contains("peripheral not found")
+                || low.contains("not connected")
+                || low.contains("channel closed")
+        }
+        _ => false,
+    }
+}
 
+async fn should_retry_dyj_link_err(
+    device: &DyjV1Session,
+    err: &DyjV1SdkError,
+    try_idx: usize,
+) -> bool {
+    if try_idx >= 3 {
+        return false;
+    }
+    let broken = is_recoverable_dyj_link_err(err)
+        || (matches!(err, DyjV1SdkError::Timeout { .. })
+            && !device.is_connected().await.unwrap_or(true));
+    if broken {
+        let _ = tokio::time::timeout(Duration::from_secs(1), device.disconnect()).await;
+    }
+    broken
+}
+
+async fn dyj_call_with_reconnect<F, Fut>(
+    initial_dev: &Arc<DyjV1Session>,
+    op: F,
+) -> Result<(Value, Arc<DyjV1Session>), (DyjV1SdkError, Arc<Mutex<DyjV1CachedMeta>>)>
+where
+    F: Fn(Arc<DyjV1Session>) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, DyjV1SdkError>>,
+{
+    let mut cur_dev = initial_dev.clone();
+    let mut cur_meta: Option<Arc<Mutex<DyjV1CachedMeta>>> = None;
+    for try_idx in 0..4 {
+        match op(cur_dev.clone()).await {
+            Ok(v) => return Ok((v, cur_dev)),
+            Err(err) if should_retry_dyj_link_err(&cur_dev, &err, try_idx).await => {
+                if let Ok(ActiveDevice::DyjV1 { device, meta, .. }) = active_device().await {
+                    cur_dev = device;
+                    cur_meta = Some(meta);
+                    continue;
+                }
+                return Err((
+                    err,
+                    cur_meta.unwrap_or_else(|| Arc::new(Mutex::new(DyjV1CachedMeta::default()))),
+                ));
+            }
+            Err(err) => {
+                return Err((
+                    err,
+                    cur_meta.unwrap_or_else(|| Arc::new(Mutex::new(DyjV1CachedMeta::default()))),
+                ));
+            }
+        }
+    }
+    Err((
+        DyjV1SdkError::Disconnected {
+            command: "dyj".into(),
+        },
+        cur_meta.unwrap_or_else(|| Arc::new(Mutex::new(DyjV1CachedMeta::default()))),
+    ))
+}
+
+async fn dispatch_dyj_v1_command(kind: &str, payload: &Value) -> Result<Value, BridgeError> {
     let parse_types = || -> Option<Vec<String>> {
         payload
             .get("types")
@@ -4230,7 +4379,20 @@ async fn dispatch_dyj_v1_command(kind: &str, payload: &Value) -> Result<Value, B
             .filter(|v: &Vec<String>| !v.is_empty())
     };
 
-    let res: Result<Value, DyjV1SdkError> = match kind {
+    for try_idx in 0..4 {
+        let active = active_device().await?;
+        let ActiveDevice::DyjV1 { device, meta, .. } = active else {
+            return Err(BridgeError {
+                message: format!("unsupported: 当前连接设备不支持点一机扩展命令 {kind}"),
+                detail: Some(json!({
+                    "code": "unsupported",
+                    "unsupported": true,
+                    "command": kind,
+                })),
+            });
+        };
+
+        let res: Result<Value, DyjV1SdkError> = match kind {
         "dyj.device.info" => {
             let verbose = payload.get("verbose").and_then(Value::as_bool).unwrap_or(false);
             let info = device.device_info(verbose).await;
@@ -4370,7 +4532,14 @@ async fn dispatch_dyj_v1_command(kind: &str, payload: &Value) -> Result<Value, B
         }
     };
 
-    res.map_err(|e| map_dyj_sdk_command_error(e, kind, &meta))
+        if let Err(ref err) = res {
+            if should_retry_dyj_link_err(&device, err, try_idx).await {
+                continue;
+            }
+        }
+        return res.map_err(|e| map_dyj_sdk_command_error(e, kind, &meta));
+    }
+    Err(BridgeError::disconnected())
 }
 
 /// 轻量级非侵入式蓝牙存活检查（供录音期间 <=12s 快速断连保底接力使用，避免完整 snapshot 5 条命令抢占实时流）。
@@ -4500,9 +4669,15 @@ async fn camera_capture_and_fetch(
         }));
     }
 
+    let server = DyjV1ServerClient::new(&origin)?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
     while tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(400)).await;
+        if let Ok(list) = server.list_files(&did).await {
+            if list.files.iter().any(|f| f.name == name && f.size > 0) {
+                break;
+            }
+        }
         let Ok(st) = device.upload_status().await else {
             continue;
         };
@@ -4527,7 +4702,6 @@ async fn camera_capture_and_fetch(
         }
     }
 
-    let server = DyjV1ServerClient::new(&origin)?;
     let dir_path = Path::new(dir);
     let expected = (bytes > 0).then_some(bytes);
     let mut saved_res =
@@ -4604,7 +4778,9 @@ async fn wifi_scan(active: &ActiveDevice) -> Result<Value, BridgeError> {
             Ok(Value::Array(items))
         }
         ActiveDevice::DyjV1 { device, .. } => {
-            let agg = device.wifi_scan().await?;
+            let (agg, _) = dyj_call_with_reconnect(device, |d| async move { d.wifi_scan().await })
+                .await
+                .map_err(|(e, _)| BridgeError::from(e))?;
             let items = agg
                 .get("items")
                 .and_then(Value::as_array)
@@ -4914,7 +5090,16 @@ async fn upload_set_url(active: &ActiveDevice, url: &str) -> Result<Value, Bridg
         ActiveDevice::CardV2 { device, .. } => {
             Ok(device.set_wifi_upload_url(url).await.and_then(to_value)?)
         }
-        ActiveDevice::DyjV1 { device, .. } => Ok(device.upload_config_set(Some(url), None).await?),
+        ActiveDevice::DyjV1 { device, .. } => {
+            let url_owned = url.to_string();
+            let (v, _) = dyj_call_with_reconnect(device, move |d| {
+                let u = url_owned.clone();
+                async move { d.upload_config_set(Some(&u), None).await }
+            })
+            .await
+            .map_err(|(e, _)| BridgeError::from(e))?;
+            Ok(v)
+        }
         ActiveDevice::BoardV21 { .. }
         | ActiveDevice::External { .. }
         | ActiveDevice::CardV2DfuRecovery { .. } => Ok(json!({"url": url})),
@@ -4965,10 +5150,20 @@ async fn time_sync(active: &ActiveDevice) -> Result<Value, BridgeError> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
-            device
-                .device_time(Some(now_ms))
-                .await
-                .map_err(|e| map_dyj_sdk_command_error(e, "device.time", meta))
+            let (v, _) = dyj_call_with_reconnect(device, move |d| async move {
+                d.device_time(Some(now_ms)).await
+            })
+            .await
+            .map_err(|(e, retry_meta)| {
+                let empty_ver = retry_meta.lock().unwrap().fw_version.is_empty();
+                let use_meta = if empty_ver {
+                    meta.as_ref()
+                } else {
+                    retry_meta.as_ref()
+                };
+                map_dyj_sdk_command_error(e, "device.time", use_meta)
+            })?;
+            Ok(v)
         }
         ActiveDevice::BoardV21 { .. } => Ok(json!({"synced": true, "hostClock": true})),
         ActiveDevice::CardV2DfuRecovery { .. } => Ok(json!({"synced": false})),
@@ -5122,9 +5317,12 @@ async fn enter_dfu_mode_tolerating_reboot(device: &CardV2Device) -> Result<(), C
 }
 
 async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
-    let current_active = state().device.lock().await.clone();
-    if let Some(ActiveDevice::DyjV1 { device, .. }) = current_active {
-        return ota_main_dyj_v1(device, out).await;
+    let current_active = match active_device().await {
+        Ok(a) => Some(a),
+        Err(_) => state().device.lock().await.clone(),
+    };
+    if let Some(ActiveDevice::DyjV1 { device, name, .. }) = current_active {
+        return ota_main_dyj_v1(device, name, out).await;
     }
     if matches!(
         current_active,
@@ -5284,7 +5482,117 @@ async fn ota_main(payload: Value, out: Emitter) -> Result<(), BridgeError> {
     Ok(())
 }
 
-async fn ota_main_dyj_v1(device: Arc<DyjV1Session>, out: Emitter) -> Result<(), BridgeError> {
+enum RecoveredDyjOta {
+    Resume(Arc<DyjV1Session>),
+    Installing,
+    Failed(String),
+    TimedOut,
+}
+
+async fn recover_dyj_ota_after_disconnect(
+    dev_name: &str,
+    target_ver: &str,
+    target_code: u64,
+    deadline: tokio::time::Instant,
+    out: Emitter,
+) -> RecoveredDyjOta {
+    let mut idle_misses = 0u32;
+    while tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        let Ok(adapter) = scan_adapter().await else {
+            continue;
+        };
+        let Ok((re_dev, hello)) = DyjV1Session::connect(
+            &adapter,
+            "",
+            dev_name,
+            None,
+            Some(&state().connecting_peripheral),
+        )
+        .await
+        else {
+            continue;
+        };
+        let hello_ver = hello
+            .get("app_version")
+            .or_else(|| hello.get("fw_version"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if target_code > 0 && version_code_from_semver(hello_ver) >= target_code {
+            let _ = tokio::time::timeout(Duration::from_secs(2), re_dev.disconnect()).await;
+            return RecoveredDyjOta::Installing;
+        }
+        let Ok(st) = re_dev.ota_status().await else {
+            let _ = tokio::time::timeout(Duration::from_secs(2), re_dev.disconnect()).await;
+            continue;
+        };
+        match st.get("state").and_then(Value::as_str).unwrap_or("") {
+            "downloading" => {
+                let raw_pct = st.get("progress").and_then(Value::as_u64).unwrap_or(0);
+                let pct = 5 + ((raw_pct.min(100) * 65) / 100) as u8;
+                out.progress(json!({
+                    "stage": "downloading",
+                    "percent": pct,
+                    "text": "正在下载系统固件…",
+                    "version": target_ver,
+                }));
+                return RecoveredDyjOta::Resume(re_dev);
+            }
+            "verifying" | "installing" => {
+                out.progress(json!({
+                    "stage": "installing",
+                    "percent": 90,
+                    "text": "正在安装系统固件并重启设备…",
+                    "version": target_ver,
+                }));
+                let _ = tokio::time::timeout(Duration::from_secs(2), re_dev.disconnect()).await;
+                return RecoveredDyjOta::Installing;
+            }
+            "failed" => {
+                let err_msg = st
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("固件下载或校验失败")
+                    .to_string();
+                let _ = tokio::time::timeout(Duration::from_secs(2), re_dev.disconnect()).await;
+                return RecoveredDyjOta::Failed(err_msg);
+            }
+            _ => {
+                if let Ok(info) = re_dev.device_info(false).await {
+                    let info_code = info
+                        .get("version_code")
+                        .or_else(|| info.get("versionCode"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    let info_ver = info.get("version").and_then(Value::as_str).unwrap_or("");
+                    if target_code > 0
+                        && (info_code >= target_code
+                            || version_code_from_semver(info_ver) >= target_code)
+                    {
+                        let _ =
+                            tokio::time::timeout(Duration::from_secs(2), re_dev.disconnect()).await;
+                        return RecoveredDyjOta::Installing;
+                    }
+                }
+                let _ = tokio::time::timeout(Duration::from_secs(2), re_dev.disconnect()).await;
+                idle_misses += 1;
+                if idle_misses >= 3 {
+                    return RecoveredDyjOta::Failed(
+                        "升级过程中蓝牙断开且固件任务未在运行，请重试".to_string(),
+                    );
+                }
+            }
+        }
+    }
+    RecoveredDyjOta::TimedOut
+}
+
+async fn ota_main_dyj_v1(
+    mut device: Arc<DyjV1Session>,
+    dev_name: String,
+    out: Emitter,
+) -> Result<(), BridgeError> {
     out.progress(json!({
         "stage": "checking",
         "percent": 2,
@@ -5307,6 +5615,10 @@ async fn ota_main_dyj_v1(device: Arc<DyjV1Session>, out: Emitter) -> Result<(), 
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
+    let target_code = parsed
+        .get("versionCode")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     if parsed.get("needUpdate").and_then(Value::as_bool) != Some(true) {
         out.progress(json!({
             "stage": "done",
@@ -5407,6 +5719,35 @@ async fn ota_main_dyj_v1(device: Arc<DyjV1Session>, out: Emitter) -> Result<(), 
                     _ => {}
                 }
             }
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Ok(DyjV1Event::Disconnected)) | Ok(Err(_))
+                if !matches!(last_state.as_str(), "verifying" | "installing") && !seen_installing =>
+            {
+                match recover_dyj_ota_after_disconnect(
+                    &dev_name,
+                    &target_ver,
+                    target_code,
+                    deadline,
+                    out,
+                )
+                .await
+                {
+                    RecoveredDyjOta::Resume(new_dev) => {
+                        device = new_dev;
+                        events = device.subscribe_events();
+                        continue;
+                    }
+                    RecoveredDyjOta::Installing => break,
+                    RecoveredDyjOta::Failed(msg) => {
+                        out.fail(format!("点一机系统固件升级失败：{msg}"));
+                        return Ok(());
+                    }
+                    RecoveredDyjOta::TimedOut => {
+                        out.fail("升级过程中与点一机连接意外断开且恢复超时，请重连查看版本");
+                        return Ok(());
+                    }
+                }
+            }
             Ok(Ok(DyjV1Event::Disconnected)) => {
                 if seen_installing || matches!(last_state.as_str(), "verifying" | "installing") {
                     break;
@@ -5415,7 +5756,6 @@ async fn ota_main_dyj_v1(device: Arc<DyjV1Session>, out: Emitter) -> Result<(), 
                 return Ok(());
             }
             Ok(Ok(_)) => continue,
-            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
             Ok(Err(_)) => {
                 if seen_installing {
                     break;
