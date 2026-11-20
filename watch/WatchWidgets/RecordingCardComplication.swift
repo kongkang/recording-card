@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(WatchRecorderCore)
 import WatchRecorderCore
+#endif
 import WidgetKit
 
 struct RecordingCardComplicationEntry: TimelineEntry {

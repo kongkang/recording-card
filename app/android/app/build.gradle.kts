@@ -57,6 +57,14 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        val includeAllAbis = System.getenv("RC_ANDROID_ALL_ABIS") == "1" ||
+            project.findProperty("RC_ANDROID_ALL_ABIS")?.toString() == "1"
+        if (!includeAllAbis) {
+            ndk {
+                abiFilters += "arm64-v8a"
+            }
+        }
     }
 
     signingConfigs {

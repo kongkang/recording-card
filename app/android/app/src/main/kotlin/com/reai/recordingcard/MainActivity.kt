@@ -2,8 +2,10 @@ package com.reai.recordingcard
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -32,20 +34,31 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         private const val SPEECH_CHANNEL = "com.reai.recordingcard/agent_speech"
         private const val OAUTH_CHANNEL = "com.reai.recordingcard/oauth"
         private const val BLUETOOTH_CHANNEL = "com.reai.recordingcard/bluetooth"
+        private const val LIVE_ACTIVITY_CHANNEL = "com.reai.recordingcard/live_activity"
+        private const val BLE_PREFS = "rc_ble_perm_prefs"
+        private const val KEY_BLE_REQUESTED = "ble_perm_requested"
+
         private const val AUTH_REQUEST = 0x5243
         private const val REQ_AUDIO_PERM = 4091
+        private const val REQ_BLE_PERM = 4094
     }
 
     private var speechChannel: MethodChannel? = null
     private var systemSpeechBridge: SystemSpeechBridge? = null
+    private var phoneMicBridge: PhoneMicBridge? = null
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var ttsLanguageSupported = false
+    private var ttsUnavailableMessage: String = "当前设备系统语音播报暂不可用"
     private var pendingPermResult: MethodChannel.Result? = null
     private var pendingPermLocale: String = "zh-CN"
+    private var pendingBlePermResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+
         tts = TextToSpeech(this, this)
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
@@ -60,15 +73,23 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                 }
             }
 
-            @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String?) {
+            override fun onStop(utteranceId: String?, interrupted: Boolean) {
                 runOnUiThread {
                     speechChannel?.invokeMethod("onSpeakState", mapOf("speaking" to false))
                 }
             }
+
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) {
+                emitTtsFailure("系统语音播报失败")
+            }
+
+            override fun onError(utteranceId: String?, errorCode: Int) {
+                emitTtsFailure("系统语音播报失败（错误码 $errorCode）")
+            }
         })
 
-        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SPEECH_CHANNEL)
+        val channel = MethodChannel(messenger, SPEECH_CHANNEL)
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "startListening" -> {
@@ -81,8 +102,9 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                 }
                 "speak" -> {
                     val text = (call.argument<String>("text") ?: "").trim()
-                    if (text.isNotEmpty() && ttsReady) {
-                        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "os1-${System.currentTimeMillis()}")
+                    val locale = call.argument<String>("locale") ?: "zh-CN"
+                    if (text.isNotEmpty()) {
+                        speakWithTts(text, locale)
                     }
                     result.success(null)
                 }
@@ -97,12 +119,18 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         speechChannel = channel
 
         val sysSpeech = SystemSpeechBridge(this)
-        sysSpeech.register(flutterEngine.dartExecutor.binaryMessenger)
+        sysSpeech.register(messenger)
         systemSpeechBridge = sysSpeech
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BLUETOOTH_CHANNEL)
+        val micBridge = PhoneMicBridge(this)
+        micBridge.register(messenger)
+        phoneMicBridge = micBridge
+
+        MethodChannel(messenger, BLUETOOTH_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "status" -> result.success(blePermissionStatus())
+                    "request" -> requestBlePermissions(result)
                     "setKeepScreenOn" -> {
                         val enabled = call.argument<Boolean>("enabled") ?: false
                         runOnUiThread {
@@ -114,11 +142,66 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                             result.success(true)
                         }
                     }
+                    "setRecordingForeground" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        val title = call.argument<String>("title")
+                        val subtitle = call.argument<String>("subtitle")
+                        val useMic = call.argument<Boolean>("useMicrophone") ?: false
+                        if (useMic) {
+                            RecordingForegroundService.setMicrophoneActive(
+                                applicationContext,
+                                active = enabled,
+                                title = title,
+                                subtitle = subtitle,
+                            )
+                        } else {
+                            RecordingForegroundService.setConnectedDeviceActive(
+                                applicationContext,
+                                active = enabled,
+                                title = title,
+                                subtitle = subtitle,
+                            )
+                        }
+                        result.success(true)
+                    }
                     else -> result.notImplemented()
                 }
             }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OAUTH_CHANNEL)
+        MethodChannel(messenger, LIVE_ACTIVITY_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "capabilities" -> result.success(
+                        mapOf(
+                            "supportsLiveActivities" to false,
+                            "supportsDynamicIsland" to false,
+                            "supportsActionButton" to false,
+                            "areActivitiesEnabled" to false,
+                        ),
+                    )
+                    "start" -> {
+                        val title = call.argument<String>("title")
+                        val subtitle = call.argument<String>("subtitle")
+                        RecordingForegroundService.setConnectedDeviceActive(
+                            applicationContext,
+                            active = true,
+                            title = title,
+                            subtitle = subtitle,
+                        )
+                        result.success(null)
+                    }
+                    "stop" -> {
+                        RecordingForegroundService.setConnectedDeviceActive(
+                            applicationContext,
+                            active = false,
+                        )
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        MethodChannel(messenger, OAUTH_CHANNEL)
             .setMethodCallHandler { call, result ->
                 if (call.method != "authenticate") {
                     result.notImplemented()
@@ -139,6 +222,59 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             }
     }
 
+    private fun requiredBlePermissions(): Array<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+            )
+        } else {
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+    private fun areAllGranted(perms: Array<String>): Boolean =
+        perms.all { perm ->
+            ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED
+        }
+
+    private fun blePermissionStatus(): String {
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+            return "restricted"
+        }
+        val perms = requiredBlePermissions()
+        if (areAllGranted(perms)) {
+            return "granted"
+        }
+        val prefs = getSharedPreferences(BLE_PREFS, Context.MODE_PRIVATE)
+        val requestedBefore = prefs.getBoolean(KEY_BLE_REQUESTED, false)
+        val anyRationale = perms.any { perm ->
+            ActivityCompat.shouldShowRequestPermissionRationale(this, perm)
+        }
+        return if (!requestedBefore && !anyRationale) "notDetermined" else "denied"
+    }
+
+    private fun requestBlePermissions(result: MethodChannel.Result) {
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+            result.success("restricted")
+            return
+        }
+        val perms = requiredBlePermissions()
+        if (areAllGranted(perms)) {
+            result.success("granted")
+            return
+        }
+        if (pendingBlePermResult != null) {
+            result.success(blePermissionStatus())
+            return
+        }
+        pendingBlePermResult = result
+        getSharedPreferences(BLE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_BLE_REQUESTED, true)
+            .apply()
+        ActivityCompat.requestPermissions(this, perms, REQ_BLE_PERM)
+    }
+
     // FlutterActivity 继承 Activity，没有 registerForActivityResult。
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -156,9 +292,74 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     }
 
     override fun onInit(status: Int) {
-        ttsReady = status == TextToSpeech.SUCCESS
-        if (ttsReady) {
-            tts?.setLanguage(Locale.SIMPLIFIED_CHINESE)
+        if (status != TextToSpeech.SUCCESS) {
+            ttsReady = false
+            ttsLanguageSupported = false
+            ttsUnavailableMessage = "当前设备系统语音合成初始化失败"
+            return
+        }
+        val engine = tts
+        if (engine == null) {
+            ttsReady = false
+            ttsLanguageSupported = false
+            return
+        }
+        ttsReady = true
+        ttsLanguageSupported = configureTtsLanguage(engine, "zh-CN")
+    }
+
+    private fun configureTtsLanguage(engine: TextToSpeech, localeTag: String): Boolean {
+        val candidates = listOf(
+            Locale.forLanguageTag(localeTag),
+            Locale.SIMPLIFIED_CHINESE,
+            Locale.CHINA,
+        )
+        var lastResult = TextToSpeech.LANG_NOT_SUPPORTED
+        for (loc in candidates) {
+            if (loc.language.isNullOrBlank()) continue
+            val res = try {
+                engine.setLanguage(loc)
+            } catch (_: Throwable) {
+                TextToSpeech.LANG_NOT_SUPPORTED
+            }
+            lastResult = res
+            if (res != TextToSpeech.LANG_MISSING_DATA && res != TextToSpeech.LANG_NOT_SUPPORTED) {
+                return true
+            }
+        }
+        ttsUnavailableMessage = if (lastResult == TextToSpeech.LANG_MISSING_DATA) {
+            "系统语音合成缺少语音数据包，暂无法播报"
+        } else {
+            "当前系统语音合成不支持中文播报"
+        }
+        return false
+    }
+
+    private fun speakWithTts(text: String, localeTag: String) {
+        val engine = tts
+        if (!ttsReady || engine == null) {
+            emitTtsFailure(ttsUnavailableMessage)
+            return
+        }
+        ttsLanguageSupported = configureTtsLanguage(engine, localeTag)
+        if (!ttsLanguageSupported) {
+            emitTtsFailure(ttsUnavailableMessage)
+            return
+        }
+        val speakRes = try {
+            engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "os1-${System.currentTimeMillis()}")
+        } catch (_: Throwable) {
+            TextToSpeech.ERROR
+        }
+        if (speakRes == TextToSpeech.ERROR) {
+            emitTtsFailure("系统语音播报启动失败")
+        }
+    }
+
+    private fun emitTtsFailure(message: String) {
+        runOnUiThread {
+            speechChannel?.invokeMethod("onSpeakState", mapOf("speaking" to false))
+            speechChannel?.invokeMethod("onSpeechError", mapOf("message" to message))
         }
     }
 
@@ -186,6 +387,20 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (systemSpeechBridge?.onRequestPermissionsResult(requestCode, grantResults) == true) {
+            return
+        }
+        if (phoneMicBridge?.onRequestPermissionsResult(requestCode, grantResults) == true) {
+            return
+        }
+        if (requestCode == REQ_BLE_PERM) {
+            val res = pendingBlePermResult
+            pendingBlePermResult = null
+            if (res != null) {
+                val granted = grantResults.isNotEmpty() &&
+                    grantResults.all { it == PackageManager.PERMISSION_GRANTED } &&
+                    areAllGranted(requiredBlePermissions())
+                res.success(if (granted) "granted" else "denied")
+            }
             return
         }
         if (requestCode == REQ_AUDIO_PERM) {
@@ -273,6 +488,8 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        phoneMicBridge?.destroy()
+        phoneMicBridge = null
         systemSpeechBridge?.destroy()
         systemSpeechBridge = null
         recognizer?.destroy()

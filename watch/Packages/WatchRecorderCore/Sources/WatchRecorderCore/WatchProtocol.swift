@@ -214,6 +214,7 @@ public struct WatchStatusSnapshot: Codable, Equatable, Sendable {
 public enum WatchSliceTransferState: String, Codable, Sendable {
     case pending
     case transferring
+    case awaitingAck = "awaiting_ack"
     case synced
 }
 
@@ -230,11 +231,31 @@ public struct WatchSliceDescriptor: Codable, Equatable, Sendable, Identifiable {
     public let marksOffsetMs: [Int64]
     public let gapCount: Int
     public let offlineRecorded: Bool
+    public let isFinal: Bool
     public let byteSize: Int64
     public let codec: String
     public let fileName: String
     public var transferState: WatchSliceTransferState
+    public var deliveredAtMs: Int64?
     public var lastError: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case sliceId
+        case sessionId
+        case sliceIndex
+        case startAtMs
+        case durationMs
+        case marksOffsetMs
+        case gapCount
+        case offlineRecorded
+        case isFinal
+        case byteSize
+        case codec
+        case fileName
+        case transferState
+        case deliveredAtMs
+        case lastError
+    }
 
     public init(
         sliceId: String,
@@ -245,10 +266,12 @@ public struct WatchSliceDescriptor: Codable, Equatable, Sendable, Identifiable {
         marksOffsetMs: [Int64] = [],
         gapCount: Int = 0,
         offlineRecorded: Bool = false,
+        isFinal: Bool = false,
         byteSize: Int64,
         codec: String = "aac_m4a_16k_32k",
         fileName: String,
         transferState: WatchSliceTransferState = .pending,
+        deliveredAtMs: Int64? = nil,
         lastError: String? = nil
     ) {
         self.sliceId = sliceId
@@ -259,11 +282,32 @@ public struct WatchSliceDescriptor: Codable, Equatable, Sendable, Identifiable {
         self.marksOffsetMs = marksOffsetMs
         self.gapCount = gapCount
         self.offlineRecorded = offlineRecorded
+        self.isFinal = isFinal
         self.byteSize = byteSize
         self.codec = codec
         self.fileName = fileName
         self.transferState = transferState
+        self.deliveredAtMs = deliveredAtMs
         self.lastError = lastError
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.sliceId = try c.decode(String.self, forKey: .sliceId)
+        self.sessionId = try c.decode(String.self, forKey: .sessionId)
+        self.sliceIndex = try c.decode(Int.self, forKey: .sliceIndex)
+        self.startAtMs = try c.decode(Int64.self, forKey: .startAtMs)
+        self.durationMs = try c.decode(Int64.self, forKey: .durationMs)
+        self.marksOffsetMs = try c.decodeIfPresent([Int64].self, forKey: .marksOffsetMs) ?? []
+        self.gapCount = try c.decodeIfPresent(Int.self, forKey: .gapCount) ?? 0
+        self.offlineRecorded = try c.decodeIfPresent(Bool.self, forKey: .offlineRecorded) ?? false
+        self.isFinal = try c.decodeIfPresent(Bool.self, forKey: .isFinal) ?? false
+        self.byteSize = try c.decode(Int64.self, forKey: .byteSize)
+        self.codec = try c.decodeIfPresent(String.self, forKey: .codec) ?? "aac_m4a_16k_32k"
+        self.fileName = try c.decode(String.self, forKey: .fileName)
+        self.transferState = try c.decodeIfPresent(WatchSliceTransferState.self, forKey: .transferState) ?? .pending
+        self.deliveredAtMs = try c.decodeIfPresent(Int64.self, forKey: .deliveredAtMs)
+        self.lastError = try c.decodeIfPresent(String.self, forKey: .lastError)
     }
 
     public var canonicalWavFileName: String {
@@ -281,11 +325,15 @@ public struct WatchSliceDescriptor: Codable, Equatable, Sendable, Identifiable {
             "marksOffsetMs": marksOffsetMs.map { NSNumber(value: $0) },
             "gapCount": gapCount,
             "offlineRecorded": offlineRecorded,
+            "isFinal": isFinal,
             "byteSize": NSNumber(value: byteSize),
             "codec": codec,
             "fileName": fileName,
             "transferState": transferState.rawValue,
         ]
+        if let deliveredAtMs {
+            dict["deliveredAtMs"] = NSNumber(value: deliveredAtMs)
+        }
         if let lastError, !lastError.isEmpty {
             dict["lastError"] = lastError
         }
@@ -306,10 +354,12 @@ public struct WatchSliceDescriptor: Codable, Equatable, Sendable, Identifiable {
         let marksOffsetMs = rawMarks.map { $0.int64Value }
         let gapCount = (dict["gapCount"] as? NSNumber)?.intValue ?? 0
         let offlineRecorded = (dict["offlineRecorded"] as? Bool) ?? false
+        let isFinal = (dict["isFinal"] as? Bool) ?? false
         let byteSize = (dict["byteSize"] as? NSNumber)?.int64Value ?? 0
         let codec = (dict["codec"] as? String) ?? "aac_m4a_16k_32k"
         let stateRaw = (dict["transferState"] as? String) ?? WatchSliceTransferState.pending.rawValue
         let transferState = WatchSliceTransferState(rawValue: stateRaw) ?? .pending
+        let deliveredAtMs = (dict["deliveredAtMs"] as? NSNumber)?.int64Value
         let lastError = dict["lastError"] as? String
         return WatchSliceDescriptor(
             sliceId: sliceId,
@@ -320,10 +370,12 @@ public struct WatchSliceDescriptor: Codable, Equatable, Sendable, Identifiable {
             marksOffsetMs: marksOffsetMs,
             gapCount: gapCount,
             offlineRecorded: offlineRecorded,
+            isFinal: isFinal,
             byteSize: byteSize,
             codec: codec,
             fileName: fileName,
             transferState: transferState,
+            deliveredAtMs: deliveredAtMs,
             lastError: lastError
         )
     }

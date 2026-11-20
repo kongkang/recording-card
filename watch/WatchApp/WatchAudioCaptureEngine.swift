@@ -1,6 +1,8 @@
 import AVFoundation
 import Foundation
+#if canImport(WatchRecorderCore)
 import WatchRecorderCore
+#endif
 
 /// 手表端本地音频采集与 60s Ping-Pong 无缝滚动切片器。
 /// - 输出 16kHz / Mono / 32kbps AAC (.m4a)，约 240 KB/分钟；
@@ -133,7 +135,7 @@ final class WatchAudioCaptureEngine: NSObject, ObservableObject {
         tickTimer = nil
         interruptedWhileRecording = false
 
-        sealCurrentRecorder(durationOverrideMs: nil)
+        sealCurrentRecorder(durationOverrideMs: nil, isFinal: true)
         cleanupPrewarmed()
         isRecording = false
         currentSessionId = nil
@@ -204,7 +206,7 @@ final class WatchAudioCaptureEngine: NSObject, ObservableObject {
         let nextIndex = currentSliceIndex + 1
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
 
-        sealCurrentRecorder(durationOverrideMs: nil)
+        sealCurrentRecorder(durationOverrideMs: nil, isFinal: false)
         sliceElapsedSec = 0
         currentSliceIndex = nextIndex
         currentSliceMarksOffsetMs = []
@@ -278,7 +280,7 @@ final class WatchAudioCaptureEngine: NSObject, ObservableObject {
         currentSliceStartAtMs = startAtMs
     }
 
-    private func sealCurrentRecorder(durationOverrideMs: Int64?) {
+    private func sealCurrentRecorder(durationOverrideMs: Int64?, isFinal: Bool) {
         guard let recorder = currentRecorder else { return }
         recorder.stop()
         currentRecorder = nil
@@ -311,6 +313,7 @@ final class WatchAudioCaptureEngine: NSObject, ObservableObject {
             marksOffsetMs: currentSliceMarksOffsetMs,
             gapCount: currentSliceGaps,
             offlineRecorded: currentSliceRecordedOffline || !(isPhoneReachableProvider?() ?? false),
+            isFinal: isFinal,
             byteSize: byteSize,
             codec: "aac_m4a_16k_32k",
             fileName: fileName,
@@ -366,7 +369,7 @@ final class WatchAudioCaptureEngine: NSObject, ObservableObject {
         case .began:
             guard isRecording else { return }
             interruptedWhileRecording = true
-            sealCurrentRecorder(durationOverrideMs: nil)
+            sealCurrentRecorder(durationOverrideMs: nil, isFinal: false)
             cleanupPrewarmed()
             currentSliceGaps += 1
         case .ended:

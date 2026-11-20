@@ -326,7 +326,8 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
     let status = locationManager.authorizationStatus
     guard status == .authorizedAlways || status == .authorizedWhenInUse else { return }
     if status == .authorizedAlways {
-      locationManager.allowsBackgroundLocationUpdates = true
+      // startMonitoringSignificantLocationChanges 无需 UIBackgroundModes: location，
+      // 且在未声明该后台模式时设置 allowsBackgroundLocationUpdates = true 会触发 NSInternalInconsistencyException 崩溃。
       locationManager.pausesLocationUpdatesAutomatically = false
       locationManager.startMonitoringSignificantLocationChanges()
     }
