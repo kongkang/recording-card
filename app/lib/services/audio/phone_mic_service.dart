@@ -143,7 +143,6 @@ class PhoneMicRecorder {
   int _sessionStartedAtMs = 0;
   int _sliceIndex = 0;
   int _sliceStartSamples = 0;
-  int _ingestedSamples = 0;
   final SoftBoundaryPcmSlicer _slicer = SoftBoundaryPcmSlicer();
   final List<int> _sliceMarksMs = <int>[];
   bool _disposed = false;
@@ -168,7 +167,6 @@ class PhoneMicRecorder {
     _sessionId = 'phone-$_sessionStartedAtMs';
     _sliceIndex = 0;
     _sliceStartSamples = 0;
-    _ingestedSamples = 0;
     _slicer.clear();
     _sliceMarksMs.clear();
     ringBuffer.clear();
@@ -182,20 +180,27 @@ class PhoneMicRecorder {
       _sliceMarksMs.add(timestampMs);
       return;
     }
-    final relSamples = (_ingestedSamples - _sliceStartSamples).clamp(0, 1 << 30);
+    final relSamples = (_slicer.totalAlignedSamples - _sliceStartSamples).clamp(
+      0,
+      1 << 30,
+    );
     _sliceMarksMs.add(relSamples * 1000 ~/ sampleRate);
   }
 
   void ingestPcm(Uint8List pcmBytes) {
     if (!_running || _disposed || pcmBytes.isEmpty) return;
-    ringBuffer.append(pcmBytes, endTimestampMs: _clock().millisecondsSinceEpoch);
-    _ingestedSamples += pcmBytes.length ~/ bytesPerSample;
-    _slicer.append(
+    final aligned = _slicer.append(
       pcmBytes,
       sliceDuration: sliceDuration,
       sampleRate: sampleRate,
       onSliceFlush: (chunk) => _scheduleFlush(chunk, isFinal: false),
     );
+    if (aligned.isNotEmpty) {
+      ringBuffer.append(
+        aligned,
+        endTimestampMs: _clock().millisecondsSinceEpoch,
+      );
+    }
   }
 
   /// Timeline 下拉刷新触发：在**不停止**麦克风与灵动岛录音的前提下，
@@ -206,26 +211,28 @@ class PhoneMicRecorder {
       await _writeChain;
       return false;
     }
-    final chunk = _slicer.takeRemainingBytes();
+    final chunk = _slicer.takeRemainingBytes(clearOddByte: false);
     if (chunk.length < minManualFlushBytes) {
       await _writeChain;
       return false;
     }
     _scheduleFlush(chunk, isFinal: false);
     await _writeChain;
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.microtask(() {});
     return true;
   }
 
   Future<void> stop() async {
     if (!_running) return;
     _running = false;
-    final tail = _slicer.takeRemainingBytes();
+    final tail = _slicer.takeRemainingBytes(clearOddByte: true);
     if (tail.isNotEmpty) {
       _scheduleFlush(tail, isFinal: true);
     }
     await _writeChain;
-    await Future<void>.delayed(Duration.zero);
+    if (tail.isNotEmpty) {
+      await Future<void>.microtask(() {});
+    }
   }
 
   void _scheduleFlush(Uint8List pcm, {required bool isFinal}) {

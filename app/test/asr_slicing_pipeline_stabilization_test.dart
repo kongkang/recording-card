@@ -170,12 +170,12 @@ void main() {
   group('1. Energy-Valley Soft-Boundary Live Slicing & marksMs', () {
     late Directory tmp;
 
-    setUp(() async {
-      tmp = await Directory.systemTemp.createTemp('rc-soft-slice-');
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('rc-soft-slice-');
     });
 
-    tearDown(() async {
-      if (await tmp.exists()) await tmp.delete(recursive: true);
+    tearDown(() {
+      if (tmp.existsSync()) tmp.deleteSync(recursive: true);
     });
 
     test(
@@ -318,6 +318,93 @@ void main() {
         final f0 = readWavFile(slices[0].wavPath);
         final f1 = readWavFile(slices[1].wavPath);
         expect(f0.frames + f1.frames, 62 * _rate);
+      },
+    );
+
+    test(
+      'PhoneMicRecorder 奇数散字节跨 flushActiveSlice 不错位不丢采样',
+      () async {
+        final sliceDir = Directory('${tmp.path}/odd_phone_slices')
+          ..createSync(recursive: true);
+
+        final emitted = <LiveAudioSlice>[];
+        final startClock = DateTime.fromMillisecondsSinceEpoch(1795000200000);
+        final mic = PhoneMicRecorder(
+          sliceDuration: const Duration(seconds: 60),
+          sliceRootDir: () async => sliceDir,
+          clock: () => startClock,
+        );
+        addTearDown(mic.dispose);
+        final sub = mic.slices.listen(emitted.add);
+        addTearDown(sub.cancel);
+
+        // 构造确定性 16-bit LE 样本序列（共 16000 个样本 = 1.000s = 32000 字节），
+        // 故意在第 8000 个样本中间（第 16001 字节：低字节已到、高字节未到）劈成两半，
+        // 并在中间调用 flushActiveSlice()！
+        const totalSamples = 16000;
+        final fullPcm = Uint8List(totalSamples * 2);
+        final fullBd = ByteData.sublistView(fullPcm);
+        for (var i = 0; i < totalSamples; i++) {
+          final sampleVal = ((i * 37) % 20000) - 10000;
+          fullBd.setInt16(i * 2, sampleVal, Endian.little);
+        }
+
+        final oddPart1 = Uint8List.sublistView(fullPcm, 0, 16001); // 8000 samples + 1 low byte
+        final oddPart2 = Uint8List.sublistView(fullPcm, 16001); // 1 high byte + 7999 samples
+
+        await mic.start(startedAt: startClock);
+        mic.ingestPcm(oddPart1);
+        final flushed = await mic.flushActiveSlice();
+        expect(flushed, isTrue);
+        mic.ingestPcm(oddPart2);
+        await mic.stop();
+
+        expect(emitted.length, 2);
+        final wav0 = readWavFile(emitted[0].wavPath);
+        final wav1 = readWavFile(emitted[1].wavPath);
+        expect(wav0.frames, 8000);
+        expect(wav1.frames, 8000);
+        expect(wav0.frames + wav1.frames, totalSamples);
+
+        // 逐样本核对：跨 flushActiveSlice 边界的第 8000 号样本及后续所有样本绝无字节错位！
+        final recon = BytesBuilder(copy: false)
+          ..add(
+            Uint8List.sublistView(
+              wav0.bytes,
+              wav0.dataOffset,
+              wav0.dataOffset + wav0.dataLength,
+            ),
+          )
+          ..add(
+            Uint8List.sublistView(
+              wav1.bytes,
+              wav1.dataOffset,
+              wav1.dataOffset + wav1.dataLength,
+            ),
+          );
+        final reconBytes = recon.takeBytes();
+        expect(reconBytes.length, fullPcm.length);
+        final reconBd = ByteData.sublistView(reconBytes);
+        for (var i = 0; i < totalSamples; i++) {
+          expect(
+            reconBd.getInt16(i * 2, Endian.little),
+            fullBd.getInt16(i * 2, Endian.little),
+            reason: 'Sample #$i byte-shifted after odd-byte flushActiveSlice!',
+          );
+        }
+      },
+    );
+
+    testWidgets(
+      'PhoneMicRecorder 在 FakeAsync 组件测试内 start/stop 零挂起零残留 Timer',
+      (tester) async {
+        final startClock = DateTime.fromMillisecondsSinceEpoch(1795000300000);
+        final mic = PhoneMicRecorder(clock: () => startClock);
+        addTearDown(mic.dispose);
+        await mic.start(startedAt: startClock);
+        expect(await mic.flushActiveSlice(), isFalse);
+        await mic.stop();
+        await tester.pump();
       },
     );
 

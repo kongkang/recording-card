@@ -455,7 +455,7 @@ class LiveAudioRecorder extends ChangeNotifier {
   }
 
   void _sealCurrentSlice({required bool isFinal}) {
-    final pcmBytes = _slicer.takeRemainingBytes();
+    final pcmBytes = _slicer.takeRemainingBytes(clearOddByte: isFinal);
     if (pcmBytes.isEmpty) return;
     _sealSliceBytes(pcmBytes, isFinal: isFinal);
   }
@@ -807,8 +807,12 @@ class SoftBoundaryPcmSlicer {
   int _quietRunFrames = 0;
   bool _sawActiveSpeech = false;
   int? _oddByte;
+  int _totalAlignedSamples = 0;
 
   int get bufferedBytes => _pcm.length;
+
+  /// 当前会话已对齐接收的完整 16-bit 采样总数（包含跨奇数散字节重组完成的采样）。
+  int get totalAlignedSamples => _totalAlignedSamples;
 
   void clear() {
     _pcm.clear();
@@ -816,27 +820,33 @@ class SoftBoundaryPcmSlicer {
     _quietRunFrames = 0;
     _sawActiveSpeech = false;
     _oddByte = null;
+    _totalAlignedSamples = 0;
   }
 
-  Uint8List takeRemainingBytes() {
+  /// 取出当前缓冲中的偶数字节采样数据。
+  /// - 录音中途手动刷新（`clearOddByte: false`）保留尾部半帧单字节，确保后续到达的高字节不错位；
+  /// - 停录收尾（`clearOddByte: true`）清空半帧残余。
+  Uint8List takeRemainingBytes({bool clearOddByte = true}) {
     _frameFill = 0;
     _quietRunFrames = 0;
     _sawActiveSpeech = false;
-    _oddByte = null;
+    if (clearOddByte) {
+      _oddByte = null;
+    }
     final raw = _pcm.takeBytes();
     final evenLen = raw.length & ~1;
     if (evenLen <= 0) return Uint8List(0);
     return evenLen == raw.length ? raw : Uint8List.sublistView(raw, 0, evenLen);
   }
 
-  void append(
+  Uint8List append(
     Uint8List incoming, {
     required Duration sliceDuration,
     required int sampleRate,
     required void Function(Uint8List pcmBytes) onSliceFlush,
   }) {
     if (incoming.isEmpty || sliceDuration <= Duration.zero || sampleRate <= 0) {
-      return;
+      return Uint8List(0);
     }
 
     Uint8List aligned;
@@ -849,7 +859,7 @@ class SoftBoundaryPcmSlicer {
       if (evenLen < combined.length) {
         _oddByte = combined.last;
       }
-      if (evenLen <= 0) return;
+      if (evenLen <= 0) return Uint8List(0);
       aligned = evenLen == combined.length
           ? combined
           : Uint8List.sublistView(combined, 0, evenLen);
@@ -858,11 +868,13 @@ class SoftBoundaryPcmSlicer {
       if (evenLen < incoming.length) {
         _oddByte = incoming.last;
       }
-      if (evenLen <= 0) return;
+      if (evenLen <= 0) return Uint8List(0);
       aligned = evenLen == incoming.length
           ? incoming
           : Uint8List.sublistView(incoming, 0, evenLen);
     }
+
+    _totalAlignedSamples += aligned.length ~/ 2;
 
     final hardMaxSamples =
         (sliceDuration.inMilliseconds * sampleRate ~/ 1000).clamp(1, 1 << 30);
@@ -882,7 +894,7 @@ class SoftBoundaryPcmSlicer {
           offset = aligned.length;
         }
       }
-      return;
+      return aligned;
     }
 
     final frameSamples = math.max(160, sampleRate ~/ 20); // 50ms
@@ -951,6 +963,7 @@ class SoftBoundaryPcmSlicer {
         onSliceFlush(flushed);
       }
     }
+    return aligned;
   }
 
   static double _computeFrameAcRms(Uint8List frameBytes) {
