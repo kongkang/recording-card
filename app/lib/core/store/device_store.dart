@@ -74,7 +74,11 @@ class DeviceStore extends ChangeNotifier {
     WatchHardwareService? watchHardware,
     LegacyUpgradeController? legacyUpgrade,
     DateTime Function()? now,
+    @visibleForTesting Future<CardGateway?> Function()? nativeBridgeRecovery,
   }) : _bleGateway = gateway ?? realOrUnsupported(),
+       _allowNativeBridgeRecovery =
+           gateway == null || nativeBridgeRecovery != null,
+       _nativeBridgeRecovery = nativeBridgeRecovery,
        _permission = permission ?? const BluetoothPermission(),
        _ownsWatchHardware = watchHardware == null,
        _watchHardware = watchHardware ?? WatchHardwareService(),
@@ -105,7 +109,10 @@ class DeviceStore extends ChangeNotifier {
   final bool _autoStart;
   final DateTime Function() _now;
 
-  final CardGateway _bleGateway;
+  CardGateway _bleGateway;
+  final bool _allowNativeBridgeRecovery;
+  final Future<CardGateway?> Function()? _nativeBridgeRecovery;
+  Future<void>? _bridgeRecoveryInFlight;
   final bool _ownsWatchHardware;
   final WatchHardwareService _watchHardware;
   late final WatchCompositeCardGateway _gateway;
@@ -262,10 +269,41 @@ class DeviceStore extends ChangeNotifier {
       linkState == LinkState.connecting ||
       linkState == LinkState.reconnecting;
 
+  Future<void> _recoverNativeBridgeIfNeeded() {
+    if (_bleGateway.available || !_allowNativeBridgeRecovery) {
+      return Future<void>.value();
+    }
+    final existing = _bridgeRecoveryInFlight;
+    if (existing != null) return existing;
+    final task = () async {
+      try {
+        final recovered = _nativeBridgeRecovery != null
+            ? await _nativeBridgeRecovery()
+            : (RealCardGateway.maybe() ??
+                  await RealCardGateway.tryBindFromPlatformChannel());
+        if (recovered != null && recovered.available) {
+          _bleGateway = recovered;
+          _gateway.rebindBleGateway(recovered);
+        }
+      } on Object {
+        // 保底重绑失败时维持显式 Unsupported 状态
+      } finally {
+        _bridgeRecoveryInFlight = null;
+      }
+    }();
+    _bridgeRecoveryInFlight = task;
+    return task;
+  }
+
   /// 启动时核对一次：桥可用且已连着卡 → 已连接；否则未连接。
   Future<void> restoreLink() async {
     final epoch = ++_epoch;
     bleAuth = await _permission.status();
+    if (epoch != _epoch) return;
+    if (!_bleGateway.available && _allowNativeBridgeRecovery) {
+      await _recoverNativeBridgeIfNeeded();
+      if (epoch != _epoch) return;
+    }
     if (!_gateway.available) {
       linkState = LinkState.unsupported;
       linkError = '此设备不支持连接录音卡';
@@ -437,22 +475,46 @@ class DeviceStore extends ChangeNotifier {
   }
 
   /// 扫描附近硬件（DYJ / REAI_VB 前缀蓝牙硬件 + 开启联动后的已配对 Apple Watch）。
-  Future<void> startScan() async {
-    if (isLinkBusy || !_gateway.available) {
-      if (!_gateway.available) {
-        linkState = LinkState.unsupported;
-        linkError = '此设备不支持连接录音卡';
-        notifyListeners();
-      }
-      return; // 防重入：扫描中再点不重复发起（SDK 要求串行）
+  Future<void> startScan({bool userInitiated = false}) async {
+    if (linkState == LinkState.scanning || linkState == LinkState.connecting) {
+      return; // 防重入：扫描或建连中再点不重复发起（SDK 要求串行）
     }
+    if (!_bleGateway.available && _allowNativeBridgeRecovery) {
+      await _recoverNativeBridgeIfNeeded();
+    }
+    if (!_gateway.available) {
+      linkState = LinkState.unsupported;
+      linkError = '此设备不支持连接录音卡';
+      notifyListeners();
+      return;
+    }
+    final interruptReconnect = linkState == LinkState.reconnecting;
+    if (interruptReconnect && !userInitiated) {
+      return;
+    }
+
+    final epoch = ++_epoch;
+    if (interruptReconnect) {
+      _stopScanExpiryTimer();
+      _bleScanSeenAt = null;
+      _scanExpiredByTimer = false;
+      linkState = LinkState.scanning;
+      linkError = null;
+      discovered = const [];
+      notifyListeners();
+      await _releaseLink();
+      if (epoch != _epoch) return;
+    }
+
     // iOS 底层（Rust/CoreBluetooth）在扫描时会自己触发系统对话框，这里不阻塞等待；
     // Android 底层（droidplug / BluetoothLeScanner）不会自动申请运行时权限，若为 notDetermined
     // 必须先主动调用 request()，否则 startScan() 会直接抛 SecurityException。
     bleAuth = await _permission.status();
+    if (epoch != _epoch) return;
     if (bleAuth == BluetoothAuthorization.notDetermined &&
         defaultTargetPlatform == TargetPlatform.android) {
       bleAuth = await _permission.request();
+      if (epoch != _epoch) return;
     }
     if (!_watchHardware.availableForScan &&
         (bleAuth == BluetoothAuthorization.denied ||
@@ -465,7 +527,6 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
 
-    final epoch = ++_epoch;
     _stopScanExpiryTimer();
     _bleScanSeenAt = null;
     _scanExpiredByTimer = false;
@@ -473,6 +534,7 @@ class DeviceStore extends ChangeNotifier {
     linkError = null;
     discovered = const [];
     notifyListeners();
+    final scanStartedAt = DateTime.now();
     try {
       final list = await _gw.scan();
       if (epoch != _epoch) return;
@@ -500,6 +562,15 @@ class DeviceStore extends ChangeNotifier {
       _scheduleScanExpiryTimer();
     } on CardException catch (e) {
       if (epoch != _epoch) return;
+      final ble = _bleGateway;
+      if (ble is RealCardGateway && ble.isNativeFfi) {
+        final elapsed = DateTime.now().difference(scanStartedAt);
+        const minFeedback = Duration(milliseconds: 280);
+        if (elapsed < minFeedback) {
+          await Future<void>.delayed(minFeedback - elapsed);
+          if (epoch != _epoch) return;
+        }
+      }
       _stopScanExpiryTimer();
       _bleScanSeenAt = null;
       _scanExpiredByTimer = false;
@@ -539,6 +610,11 @@ class DeviceStore extends ChangeNotifier {
       connectedName = device.name;
       // 记住这台设备：掉线重连直接拿 id 直连，不靠扫描（已连接设备不广播）
       _lastDevice = device;
+      if (!_isDfuBootloaderName(device.name)) {
+        _lastKnownNormalCardV2Name = device.deviceKind == DeviceKind.cardV2
+            ? device.name
+            : null;
+      }
       linkState = LinkState.connected;
       linkError = null;
       _applySnapshot(snapshot);
@@ -630,6 +706,7 @@ class DeviceStore extends ChangeNotifier {
     _eventWatch = null;
     _stopSheetWatch();
     _lastDevice = null;
+    _lastKnownNormalCardV2Name = null;
     CardDisconnectReport? report;
     String? failure;
     try {
@@ -879,6 +956,9 @@ class DeviceStore extends ChangeNotifier {
 
   /// 上一次连接用的设备：掉线时直接拿它的 id 重连，不靠扫描。
   CardDevice? _lastDevice;
+
+  /// 最近一次在正常模式下确认过的 V2 广播名（即使中途掉入 DFU_DYJ 恢复模式也保留，防止多卡同场回连串卡）。
+  String? _lastKnownNormalCardV2Name;
 
   void _markLinkActivity() {
     _sinceLinkActivity = Duration.zero;
@@ -1173,6 +1253,11 @@ class DeviceStore extends ChangeNotifier {
     if ((connectedName == null || connectedName!.isEmpty) &&
         s.deviceName.isNotEmpty) {
       connectedName = s.deviceName;
+    }
+    if (s.effectiveKind == DeviceKind.cardV2 &&
+        s.deviceName.isNotEmpty &&
+        !_isDfuBootloaderName(s.deviceName)) {
+      _lastKnownNormalCardV2Name = s.deviceName;
     }
     // 固件版本只在快照真的带到时才覆盖：部分失败（如 BASE_INFO 没读到）若
     // 把 versionCode 抹成 0，「有可用更新」的比对会误判——设备明明比服务器新，
@@ -2350,6 +2435,10 @@ class DeviceStore extends ChangeNotifier {
             );
             _lastDevice = target;
             connectedName = target.name;
+            if (!_isDfuBootloaderName(target.name) &&
+                target.deviceKind == DeviceKind.cardV2) {
+              _lastKnownNormalCardV2Name = target.name;
+            }
             linkState = LinkState.connected;
             if (snap != null) _applySnapshot(snap);
             try {
@@ -2432,19 +2521,23 @@ class DeviceStore extends ChangeNotifier {
     required bool allowDfuFallback,
   }) {
     final normal = list.where((d) => !_isDfuBootloaderName(d.name)).toList();
-    final currentName = connectedName;
-    if (currentName != null &&
-        currentName.isNotEmpty &&
-        !_isDfuBootloaderName(currentName)) {
-      final hit = normal.where((d) => d.name == currentName).firstOrNull;
+    final expectedNormalName = [
+      connectedName,
+      _lastDevice?.name,
+      _lastKnownNormalCardV2Name,
+    ].whereType<String>().map((s) => s.trim()).firstWhere(
+      (s) => s.isNotEmpty && !_isDfuBootloaderName(s),
+      orElse: () => '',
+    );
+    if (expectedNormalName.isNotEmpty) {
+      final hit = normal
+          .where((d) => d.name == expectedNormalName)
+          .firstOrNull;
       if (hit != null) return hit;
-    }
-    final lastName = _lastDevice?.name;
-    if (lastName != null &&
-        lastName.isNotEmpty &&
-        !_isDfuBootloaderName(lastName)) {
-      final hit = normal.where((d) => d.name == lastName).firstOrNull;
-      if (hit != null) return hit;
+      // 多卡同场环境下绝不串连旁边其它 DYJV2 卡：正常重连循环等待本卡重启完成，
+      // 失败恢复态则只允许回连 DFU_DYJ Bootloader。
+      if (!allowDfuFallback) return null;
+      return list.where((d) => _isDfuBootloaderName(d.name)).firstOrNull;
     }
     final v2Hit = normal
         .where((d) => d.deviceKind == DeviceKind.cardV2)
@@ -2483,6 +2576,10 @@ class DeviceStore extends ChangeNotifier {
         );
         _lastDevice = target;
         connectedName = target.name;
+        if (!_isDfuBootloaderName(target.name) &&
+            target.deviceKind == DeviceKind.cardV2) {
+          _lastKnownNormalCardV2Name = target.name;
+        }
         linkState = LinkState.connected;
         if (snap != null) {
           _applySnapshot(snap);

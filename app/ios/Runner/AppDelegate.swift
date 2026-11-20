@@ -101,6 +101,19 @@ import AppIntents
         UIApplication.shared.isIdleTimerDisabled = enabled
         result(true)
       }
+    case "bridgeSymbols":
+      let cmdAddr = UInt64(rc_card_bridge_command_addr())
+      let freeAddr = UInt64(rc_card_bridge_free_string_addr())
+      let verAddr = UInt64(rc_card_bridge_version_addr())
+      if cmdAddr != 0 && freeAddr != 0 && verAddr != 0 {
+        result([
+          "command": String(cmdAddr),
+          "free": String(freeAddr),
+          "version": String(verAddr),
+        ])
+      } else {
+        result(nil)
+      }
 
     default:
       result(FlutterMethodNotImplemented)
