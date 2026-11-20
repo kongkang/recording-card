@@ -875,9 +875,25 @@ class DeviceEventBatch {
         ),
   ];
 
-  /// 点一机 V1 硬件按键拍照事件。
+  /// 点一机 V1 硬件按键拍照/录像分段事件。
   Iterable<Map<String, dynamic>> get cameraEvents =>
       events.where((e) => e['event']?['kind'] == 'camera');
+
+  /// 录音分段自动滚动事件（点一机 V1 `record.segment`）。
+  Iterable<Map<String, dynamic>> get recordSegmentEvents =>
+      events.where((e) => e['event']?['kind'] == 'record_segment');
+
+  /// 传感器实时采样推送事件（点一机 V1 `sensor.data`）。
+  Iterable<Map<String, dynamic>> get sensorEvents =>
+      events.where((e) => e['event']?['kind'] == 'sensor');
+
+  /// GNSS 定位推送事件（点一机 V1 `location.fix`）。
+  Iterable<Map<String, dynamic>> get locationEvents =>
+      events.where((e) => e['event']?['kind'] == 'location');
+
+  /// 端侧流式 ASR 识别事件（点一机 V1 `asr.partial` / `asr.final` / `asr.state` / `asr.error`）。
+  Iterable<Map<String, dynamic>> get asrEvents =>
+      events.where((e) => e['event']?['kind'] == 'asr');
 
   /// 蓝牙链路被动断开通知。
   Iterable<Map<String, dynamic>> get disconnectedEvents =>
@@ -2266,4 +2282,162 @@ class ActivityGateway implements CardGateway {
 
   @override
   Future<void> dispose() => _inner.dispose();
+}
+
+/// 点一机 V1 开放 SDK 扩展命令封装（基于 [CardGateway.invokeBridgeCommand]，不破坏现有网关抽象契约）。
+extension DyjV1HardwareCommands on CardGateway {
+  Future<Map<String, dynamic>> _dyjData(
+    String kind, [
+    Map<String, dynamic>? payload,
+    Duration timeout = const Duration(seconds: 20),
+  ]) async {
+    final res = await invokeBridgeCommand(kind, payload, timeout);
+    final raw = res['data'];
+    if (raw is Map<String, dynamic>) return raw;
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return res;
+  }
+
+  /// 按指定切片分钟数触发点一机 V1 本地分段录音（`record.start` + `segmentMin`）。
+  Future<Map<String, dynamic>> startRecordingSegment({
+    required int segmentMinutes,
+  }) => _dyjData('record.start', {'segmentMin': segmentMinutes});
+
+  Future<Map<String, dynamic>> dyjDeviceInfo({bool verbose = false}) =>
+      _dyjData('dyj.device.info', {'verbose': verbose});
+
+  Future<Map<String, dynamic>> dyjDeviceTime({int? epochMs}) => _dyjData(
+    'dyj.device.time',
+    epochMs == null ? null : {'epochMs': epochMs},
+  );
+
+  Future<Map<String, dynamic>> dyjDeviceReboot({bool confirm = false}) =>
+      _dyjData('dyj.device.reboot', {'confirm': confirm});
+
+  Future<Map<String, dynamic>> dyjOtaConfigGet() =>
+      _dyjData('dyj.ota.config.get');
+
+  Future<Map<String, dynamic>> dyjOtaConfigSet(String url) =>
+      _dyjData('dyj.ota.config.set', {'url': url});
+
+  Future<Map<String, dynamic>> dyjSensorStatus() =>
+      _dyjData('dyj.sensor.status');
+
+  Future<Map<String, dynamic>> dyjSensorRead({List<String>? types}) =>
+      _dyjData('dyj.sensor.read', types == null ? null : {'types': types});
+
+  Future<Map<String, dynamic>> dyjSensorStreamStart({
+    List<String>? types,
+    int intervalMs = 500,
+  }) => _dyjData('dyj.sensor.stream.start', {
+    'types': ?types,
+    'intervalMs': intervalMs,
+  });
+
+  Future<Map<String, dynamic>> dyjSensorStreamStop() =>
+      _dyjData('dyj.sensor.stream.stop');
+
+  Future<Map<String, dynamic>> dyjLocationStatus() =>
+      _dyjData('dyj.location.status');
+
+  Future<Map<String, dynamic>> dyjLocationGet({int timeoutS = 10}) => _dyjData(
+    'dyj.location.get',
+    {'timeoutS': timeoutS},
+    const Duration(seconds: 35),
+  );
+
+  Future<Map<String, dynamic>> dyjLocationStreamStart({
+    int minIntervalS = 5,
+  }) => _dyjData('dyj.location.stream.start', {'minIntervalS': minIntervalS});
+
+  Future<Map<String, dynamic>> dyjLocationStreamStop() =>
+      _dyjData('dyj.location.stream.stop');
+
+  Future<Map<String, dynamic>> dyjCameraStatus() =>
+      _dyjData('dyj.camera.status');
+
+  Future<Map<String, dynamic>> dyjCameraCapture() =>
+      _dyjData('dyj.camera.capture');
+
+  Future<Map<String, dynamic>> dyjCameraRecordStart({
+    int? maxS,
+    int? segmentS,
+  }) => _dyjData('dyj.camera.record.start', {
+    'maxS': ?maxS,
+    'segmentS': ?segmentS,
+  });
+
+  Future<Map<String, dynamic>> dyjCameraRecordStop() =>
+      _dyjData('dyj.camera.record.stop');
+
+  Future<Map<String, dynamic>> dyjCameraRecordStatus() =>
+      _dyjData('dyj.camera.record.status');
+
+  Future<Map<String, dynamic>> dyjCameraDelete(String name) =>
+      _dyjData('dyj.camera.delete', {'name': name});
+
+  Future<Map<String, dynamic>> dyjVibratorOnce({
+    int durationMs = 200,
+    int? amplitude,
+  }) => _dyjData('dyj.vibrator.once', {
+    'durationMs': durationMs,
+    'amplitude': ?amplitude,
+  });
+
+  Future<Map<String, dynamic>> dyjVibratorCancel() =>
+      _dyjData('dyj.vibrator.cancel');
+
+  Future<Map<String, dynamic>> dyjVolumeGet() => _dyjData('dyj.volume.get');
+
+  Future<Map<String, dynamic>> dyjVolumeSet(String stream, int value) =>
+      _dyjData('dyj.volume.set', {'stream': stream, 'value': value});
+
+  Future<Map<String, dynamic>> dyjLedStatus() => _dyjData('dyj.led.status');
+
+  Future<Map<String, dynamic>> dyjLedSet(
+    String pattern, {
+    String? brightness,
+    int? priority,
+    int? timeoutS,
+  }) => _dyjData('dyj.led.set', {
+    'pattern': pattern,
+    'brightness': ?brightness,
+    'priority': ?priority,
+    'timeoutS': ?timeoutS,
+  });
+
+  Future<Map<String, dynamic>> dyjLedClear() => _dyjData('dyj.led.clear');
+
+  Future<Map<String, dynamic>> dyjButtonBindGet() =>
+      _dyjData('dyj.button.bind.get');
+
+  Future<Map<String, dynamic>> dyjButtonBindSet(
+    String gesture,
+    String action,
+  ) => _dyjData('dyj.button.bind.set', {'gesture': gesture, 'action': action});
+
+  Future<Map<String, dynamic>> dyjAsrStatus() => _dyjData('dyj.asr.status');
+
+  Future<Map<String, dynamic>> dyjAsrConfigGet() =>
+      _dyjData('dyj.asr.config.get');
+
+  Future<Map<String, dynamic>> dyjAsrConfigSet({
+    bool? attach,
+    bool? partial,
+  }) => _dyjData('dyj.asr.config.set', {
+    'attach': ?attach,
+    'partial': ?partial,
+  });
+
+  Future<Map<String, dynamic>> dyjAsrStart({
+    String mode = 'continuous',
+    bool partial = true,
+    int maxS = 1800,
+  }) => _dyjData(
+    'dyj.asr.start',
+    {'mode': mode, 'partial': partial, 'maxS': maxS},
+    const Duration(seconds: 25),
+  );
+
+  Future<Map<String, dynamic>> dyjAsrStop() => _dyjData('dyj.asr.stop');
 }

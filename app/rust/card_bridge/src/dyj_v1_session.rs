@@ -24,7 +24,8 @@ use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
 
 pub const COMMAND_UUID: &str = "0000ff11-0000-1000-8000-00805f9b34fb";
 pub const DATA_UUID: &str = "0000ff12-0000-1000-8000-00805f9b34fb";
-const NOTIFY_SETTLE: Duration = Duration::from_millis(1600);
+/// 订阅 notify 后到首笔写之间的最小间隔（实机验证 Spreadtrum SC9832E 300ms 稳态最佳，过长反而易触发建连空窗断开）。
+const NOTIFY_SETTLE: Duration = Duration::from_millis(300);
 const GATT_OP_TIMEOUT: Duration = Duration::from_secs(6);
 
 struct PendingMap(Mutex<HashMap<u64, mpsc::Sender<Frame>>>);
@@ -277,8 +278,47 @@ impl DyjV1Session {
     /// 连接点一机 V1（复用统一扫描适配器），自动规避 `< 0.8.0` FF12 无 Notify 死锁并完成 `proto.hello`。
     ///
     /// 优先通过 `unified_scan` 缓存的 `PeripheralId` 零重扫直连（解决点一机 V1 间歇广播静默窗口内盲扫 5s 超时），
-    /// 仅当缓存未命中或 RPA 地址已轮换导致直连失败时，才降级进入实时广播事件扫描。
+    /// 若缓存命中旧 RPA 或 2.4GHz Wi-Fi 共存导致首连握手/写通道瞬断，自动清缓存按广播名重扫并重连一次。
     pub async fn connect(
+        adapter: &Adapter,
+        id_hint: &str,
+        name: &str,
+        cached_peripheral_id: Option<&PeripheralId>,
+        connecting_slot: Option<&Mutex<Option<Peripheral>>>,
+    ) -> std::result::Result<(Arc<Self>, Value), String> {
+        let mut attempt_cached = cached_peripheral_id;
+        let mut attempt_id = id_hint;
+        for attempt in 0..4 {
+            match Self::connect_once(
+                adapter,
+                attempt_id,
+                name,
+                attempt_cached,
+                connecting_slot,
+            )
+            .await
+            {
+                Ok(res) => return Ok(res),
+                Err(err)
+                    if attempt < 3
+                        && !err.starts_with("LEGACY_UPGRADE_REQUIRED|")
+                        && !name.trim().is_empty() =>
+                {
+                    log::warn!(
+                        "dyj_v1_session: 第 {} 轮连接 {name} 失败（{err}），2.0s 后清缓存重扫重试",
+                        attempt + 1
+                    );
+                    attempt_cached = None;
+                    attempt_id = "";
+                    tokio::time::sleep(Duration::from_millis(2000)).await;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        unreachable!()
+    }
+
+    async fn connect_once(
         adapter: &Adapter,
         id_hint: &str,
         name: &str,
@@ -328,6 +368,19 @@ impl DyjV1Session {
             return Err("点一机控制特征 (FF11) 不支持通知".to_string());
         }
 
+        let notifications = match tokio::time::timeout(
+            Duration::from_secs(5),
+            peripheral.notifications(),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => stream,
+            _ => {
+                let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+                return Err("建立点一机通知监听失败，请重试".to_string());
+            }
+        };
+
         match tokio::time::timeout(GATT_OP_TIMEOUT, peripheral.subscribe(&cmd_char)).await {
             Ok(Ok(())) => {}
             _ => {
@@ -357,19 +410,10 @@ impl DyjV1Session {
         };
 
         tokio::time::sleep(NOTIFY_SETTLE).await;
-
-        let notifications = match tokio::time::timeout(
-            Duration::from_secs(5),
-            peripheral.notifications(),
-        )
-        .await
-        {
-            Ok(Ok(stream)) => stream,
-            _ => {
-                let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
-                return Err("建立点一机通知监听失败，请重试".to_string());
-            }
-        };
+        if !peripheral.is_connected().await.unwrap_or(true) {
+            let _ = tokio::time::timeout(Duration::from_secs(2), peripheral.disconnect()).await;
+            return Err("点一机建连后瞬断，正在重试".to_string());
+        }
 
         let (frame_tx, mut frame_rx) = mpsc::channel::<String>(64);
         let (binary_tx, mut binary_rx) = mpsc::channel::<BinaryFrame>(256);
@@ -639,7 +683,7 @@ impl DyjV1Session {
                 match Self::try_connect_candidate(
                     &cached,
                     name,
-                    Duration::from_secs(5),
+                    Duration::from_secs(3),
                     connecting_slot,
                 )
                 .await
@@ -1126,6 +1170,11 @@ impl DyjV1Session {
             .await
     }
 
+    pub async fn ota_config_get(&self) -> SdkResult<Value> {
+        self.request_idem("ota.config.get", json!({}), Duration::from_secs(5))
+            .await
+    }
+
     pub async fn ota_config_set(&self, url: &str) -> SdkResult<Value> {
         self.request("ota.config.set", json!({ "url": url }), Duration::from_secs(5))
             .await
@@ -1150,6 +1199,221 @@ impl DyjV1Session {
             .map(|t| json!({ "epoch_ms": t }))
             .unwrap_or_else(|| json!({}));
         self.request("device.time", params, Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn device_reboot(&self, confirm: bool) -> SdkResult<Value> {
+        self.request(
+            "device.reboot",
+            json!({ "confirm": confirm }),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    pub async fn camera_record_start(
+        &self,
+        max_s: Option<u64>,
+        segment_s: Option<u64>,
+    ) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        if let Some(m) = max_s {
+            params.insert("max_s".into(), json!(m));
+        }
+        if let Some(seg) = segment_s {
+            params.insert("segment_s".into(), json!(seg));
+        }
+        self.request(
+            "camera.record.start",
+            Value::Object(params),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    pub async fn camera_record_stop(&self) -> SdkResult<Value> {
+        self.request("camera.record.stop", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn camera_record_status(&self) -> SdkResult<Value> {
+        self.request_idem("camera.record.status", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn sensor_status(&self) -> SdkResult<Value> {
+        self.request_idem("sensor.status", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn sensor_read(&self, types: Option<&[String]>) -> SdkResult<Value> {
+        let params = types
+            .filter(|ts| !ts.is_empty())
+            .map(|ts| json!({ "types": ts }))
+            .unwrap_or_else(|| json!({}));
+        self.request("sensor.read", params, Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn sensor_stream_start(
+        &self,
+        types: Option<&[String]>,
+        interval_ms: Option<u64>,
+    ) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        if let Some(ts) = types.filter(|ts| !ts.is_empty()) {
+            params.insert("types".into(), json!(ts));
+        }
+        if let Some(ms) = interval_ms {
+            params.insert("interval_ms".into(), json!(ms));
+        }
+        self.request(
+            "sensor.stream.start",
+            Value::Object(params),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    pub async fn sensor_stream_stop(&self) -> SdkResult<Value> {
+        self.request("sensor.stream.stop", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn location_status(&self) -> SdkResult<Value> {
+        self.request_idem("location.status", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn location_get(&self, timeout_s: Option<u64>) -> SdkResult<Value> {
+        let params = timeout_s
+            .map(|s| json!({ "timeout_s": s }))
+            .unwrap_or_else(|| json!({}));
+        self.request("location.get", params, Duration::from_secs(32))
+            .await
+    }
+
+    pub async fn location_stream_start(&self, min_interval_s: Option<u64>) -> SdkResult<Value> {
+        let params = min_interval_s
+            .map(|s| json!({ "min_interval_s": s }))
+            .unwrap_or_else(|| json!({}));
+        self.request("location.stream.start", params, Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn location_stream_stop(&self) -> SdkResult<Value> {
+        self.request("location.stream.stop", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn vibrator_once(
+        &self,
+        duration_ms: Option<u64>,
+        amplitude: Option<u8>,
+    ) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        if let Some(d) = duration_ms {
+            params.insert("duration_ms".into(), json!(d));
+        }
+        if let Some(a) = amplitude {
+            params.insert("amplitude".into(), json!(a));
+        }
+        self.request(
+            "vibrator.once",
+            Value::Object(params),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    pub async fn vibrator_cancel(&self) -> SdkResult<Value> {
+        self.request("vibrator.cancel", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn volume_get(&self) -> SdkResult<Value> {
+        self.request_idem("volume.get", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn volume_set(&self, stream: &str, value: i64) -> SdkResult<Value> {
+        self.request(
+            "volume.set",
+            json!({ "stream": stream, "value": value }),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    pub async fn led_status(&self) -> SdkResult<Value> {
+        let agg = self
+            .request_idem("led.status", json!({}), Duration::from_secs(10))
+            .await?;
+        let mut items = agg["items"].as_array().cloned().unwrap_or_default();
+        let meta = if items.is_empty() {
+            json!({})
+        } else {
+            items.remove(0)
+        };
+        Ok(json!({
+            "active": meta.get("active").cloned().unwrap_or(Value::Null),
+            "claims": items,
+            "total": agg["total"],
+        }))
+    }
+
+    pub async fn asr_status(&self) -> SdkResult<Value> {
+        self.request_idem("asr.status", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn asr_config_get(&self) -> SdkResult<Value> {
+        self.request_idem("asr.config.get", json!({}), Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn asr_config_set(
+        &self,
+        attach: Option<bool>,
+        partial: Option<bool>,
+    ) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        if let Some(a) = attach {
+            params.insert("attach".into(), json!(a));
+        }
+        if let Some(p) = partial {
+            params.insert("partial".into(), json!(p));
+        }
+        self.request(
+            "asr.config.set",
+            Value::Object(params),
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    pub async fn asr_start(
+        &self,
+        mode: Option<&str>,
+        partial: Option<bool>,
+        max_s: Option<u32>,
+    ) -> SdkResult<Value> {
+        let mut params = serde_json::Map::new();
+        if let Some(m) = mode {
+            params.insert("mode".into(), json!(m));
+        }
+        if let Some(p) = partial {
+            params.insert("partial".into(), json!(p));
+        }
+        if let Some(s) = max_s {
+            params.insert("max_s".into(), json!(s));
+        }
+        self.request("asr.start", Value::Object(params), Duration::from_secs(22))
+            .await
+    }
+
+    pub async fn asr_stop(&self) -> SdkResult<Value> {
+        self.request("asr.stop", json!({}), Duration::from_secs(5))
             .await
     }
 

@@ -4000,7 +4000,7 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                     switchKey: const Key('ext-getseed-switch'),
                     title: '得到 Get 笔记录音卡',
                     modelTag: 'GSC10',
-                    subtitle: '机身物理按键控录与打点，离线录音靠近手机自动同步',
+                    subtitle: '机身物理按键控录，支持蓝牙读取电量与离线录音同步（v0.2.5+ 固件受官方云端鉴权限制）',
                     enabled: getSeedOn,
                     connected: gsConn,
                     topRadius: 12,

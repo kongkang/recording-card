@@ -38,10 +38,10 @@ Flutter DeviceStore ──CardGateway(FFI)──> card_bridge(staticlib) ──>
 | SDK Crate | 对应硬件 (`deviceKind`) | 广播识别 / 开关门控 | 核心能力 |
 |---|---|---|---|
 | `reai-card-sdk` (v0.0.8) | 录音卡 V2 (`card_v2`) | `DYJV2_*`（默认开启） | ADPCM 实时流、`.APM` BLE 同步（75s 无进度停滞看门狗 + 字节流续期）、物理按键手势上报（`click`/`double_click`/`long_press` 归一化并保留原始 `gesture`/`action`）、懒加载非阻塞 BLE KV 元数据缓存、2.4GHz Wi-Fi 配网、双芯 OTA |
-| `reai-dyj-sdk` (v0.1.14) | 点一机 V1 (`dyj_v1`) | `DYJ_*`（默认开启） | AMR-WB 实时流与离线解码（DTX `SID` mode 9 / `SPEECH_LOST` mode 14 / `NO_DATA` mode 15 严格补齐 20ms 静音防时间轴漂移）、扫描缓存 `PeripheralId` 零重扫快速直连（避开间歇广播静默窗口）、`.amr` 与相机照片 `<dest>.part` 原子落盘 + 非零预期字节与 `#!AMR-WB\n` 头完整性校验、Wi-Fi 配网、前向兼容 `dyj_tts_speak`（`0.8.14` 固件返回 `1001` 未知命令时干净返回 `unsupported` 错误且不断开 BLE 会话，宿主自动回退手机扬声器 TTS） |
+| `reai-dyj-sdk` (v0.1.14) | 点一机 V1 (`dyj_v1`) | `DYJ_*`（默认开启） | AMR-WB 实时流（`FF12 type=0x04`）与 `.amr` 离线解码（支持 `segment_min` 自定义切片、DTX `SID` / `SPEECH_LOST` / `NO_DATA` 补齐 20ms 静音防时间轴漂移）、`NOTIFY_SETTLE=220ms` 快速握手与 RPA 重扫重连、全开放 SDK 域接入（`sensor.*` 地磁/气压/计步/方向/旋转矢量 + 陀螺仪无 HAL/加速度计桩 `1002` 实报、`location.*` GNSS、`camera.capture` & `camera.record.*` 分段录像、`vibrator.*`、`volume.*`、`led.*`、`button.*`、端侧流式 `asr.*`）、Wi-Fi 2.4GHz 配网、`single_ota` 升级；`tts.speak` 无下行播报协议时回退手机 TTS |
 | `reai-board-sdk` (v0.3.5) | 语音 AI 键盘 V2.1 (`board_v21`) | `REAI_VB_*`（默认开启） | Vendor GATT `0xFE60` mSBC 实时流、`AiVoiceKey` 物理语音键 |
 | `reai-ext-sdk` | 第三方统一契约层 | — | `RecorderDriver` / `RecorderDevice` trait、纯 Rust Ogg Opus / Raw Opus / LC3 → 16kHz Mono PCM 解码 |
-| `reai-getseed-sdk` | 得到 Get 笔记录音卡 (`getseed_gsc10`) | `Get-*` / `0x544A`（Setting 按需开启） | `hasRemoteRecordControl=false`（机身按键控录）、GATT `0xFF00` `.ogg`/`.wav` 下载与单文件删除（禁用 `0x0041` 全盘清除） |
+| `reai-getseed-sdk` (v0.2.0) | 得到 Get 笔记录音卡 (`getseed_gsc10`) | `Get-*` / `0x544A`（Setting 按需开启） | `hasRemoteRecordControl=false`（机身按键控录）、`0x9000` AES-128-ECB（`Walkiz52832iLock`）只读读取 MAC/FW/SN、`0x180F` BAS 电量、GATT `0x9100` `.ogg` 下载与单文件删除（禁用 `0x0041` 全盘清除；`v0.2.5+` 受官方云端「一机一码」鉴权锁限制，显式报 `unsupported:`） |
 | `reai-omi-sdk` | Omi 量产版 / Friend Pendant (`omi_cv1`) | UUID / `Omi-*` / `Friend_*`（Setting 按需开启） | BLE 实时流（Opus/PCM/μ-law/LC3）、按键手势事件、StorageRing 离线文件同步、BAS 电量 |
 | `reai-feishu-sdk` | 飞书录音豆 D3200 (`feishu_d3200`，设置项标 Beta) | Service `020cf5da-…` / `D3200-*` / `soundcore Work`（Setting 按需开启） | BLE 目录、远程启停、ECDH + AES-CTR 离线 Opus 拉取并转 16kHz WAV。不含实时流、SoftAP 与固件升级。尚未真机验证 |
 
