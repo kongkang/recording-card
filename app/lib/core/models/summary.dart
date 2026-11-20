@@ -76,6 +76,16 @@ bool isSilentPlaceholderEvent(RecordEvent e) {
   return (startSec, endSec);
 }
 
+/// 判断日内时钟秒数 [sec]（`0..86399`）是否落在 [window] 内；兼容跨零点窗口（`window.$2 >= 86400`）。
+bool isClockSecondInWindow(int sec, (int, int) window) {
+  if (sec >= window.$1 && sec <= window.$2) return true;
+  if (window.$2 >= 86400) {
+    final shifted = sec + 86400;
+    if (shifted >= window.$1 && shifted <= window.$2) return true;
+  }
+  return false;
+}
+
 /// 解析中文或英文简写时长字符串为秒数（如 `18分40秒`、`15m`、`1小时05分`、`45s`）。
 int? parseDurationSeconds(String raw) {
   final s = raw.trim();

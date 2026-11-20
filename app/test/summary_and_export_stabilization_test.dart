@@ -66,6 +66,18 @@ int _countOccurrences(String haystack, String needle) {
   return count;
 }
 
+class _ControlledStreamRenderer extends DocumentRenderer {
+  _ControlledStreamRenderer(this._stream);
+  final Stream<RenderedPdfPage> _stream;
+
+  @override
+  Stream<RenderedPdfPage> renderPdfPagesStream(
+    ExportDocument doc, {
+    bool preferMarkdown = false,
+    DocumentPageOptions? pageOptions,
+  }) => _stream;
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -1115,6 +1127,294 @@ void main() {
         expect(origin.left, closeTo(exportBtnRect.left, 1.0));
         expect(origin.top, closeTo(exportBtnRect.top, 1.0));
       }
+    });
+
+    test('streams each PDF page via immediate zlib FlateDecode to disk in O(1) memory before next page arrives', () async {
+      final tempDir = Directory.systemTemp.createTempSync('rc-pdf-o1-stream-');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+      final pdfPath = '${tempDir.path}/streamed_o1.pdf';
+
+      final controller = StreamController<RenderedPdfPage>();
+      final exporter = PdfExporter(
+        renderer: _ControlledStreamRenderer(controller.stream),
+      );
+      const doc = ExportDocument(
+        title: '流式零驻留PDF测试',
+        meta: '验证逐页即时压缩写盘',
+        overview: '不驻留未压缩RGB缓冲',
+      );
+
+      final writeFuture = exporter.write(doc, pdfPath);
+
+      // Push Page 1 (1080x1528x3 = 4,950,720 bytes raw RGB) while stream stays OPEN!
+      final rawPage1 = Uint8List(1080 * 1528 * 3)..fillRange(0, 1080 * 1528 * 3, 0xFA);
+      controller.add(RenderedPdfPage(width: 1080, height: 1528, rgbBytes: rawPage1));
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      // File MUST already exist on disk with compressed Page 1 written BEFORE Page 2 arrives!
+      final outFile = File(pdfPath);
+      expect(
+        outFile.existsSync(),
+        isTrue,
+        reason: 'PdfExporter.write must stream compressed page objects directly to disk per page',
+      );
+      final afterPage1Bytes = outFile.lengthSync();
+      expect(afterPage1Bytes, greaterThan(64));
+      expect(
+        afterPage1Bytes,
+        lessThan(200 * 1024),
+        reason: '4.95MB raw RGB page must be zlib-compressed on the fly (<200KB on disk)',
+      );
+
+      // Push Page 2 and close stream
+      final rawPage2 = Uint8List(1080 * 1528 * 3)..fillRange(0, 1080 * 1528 * 3, 0xEE);
+      controller.add(RenderedPdfPage(width: 1080, height: 1528, rgbBytes: rawPage2));
+      await controller.close();
+      await writeFuture;
+
+      final finalBytes = outFile.readAsBytesSync();
+      expect(finalBytes.length, greaterThan(afterPage1Bytes));
+      expect(finalBytes.length, lessThan(400 * 1024));
+      final pdfLatin = latin1.decode(finalBytes, allowInvalid: true);
+      expect(pdfLatin, startsWith('%PDF-1.4'));
+      expect(pdfLatin, contains('/Subtype /Image'));
+      expect(pdfLatin, contains('/ColorSpace /DeviceRGB'));
+      expect(pdfLatin, contains('/Filter /FlateDecode'));
+      expect(pdfLatin, contains('/Count 2'));
+      expect(pdfLatin, contains('/Info '));
+      expect(pdfLatin, contains('xref'));
+      expect(pdfLatin.trimRight(), endsWith('%%EOF'));
+
+      // Also verify buildPdfFromRenderedPageStream holds only compressed zlib chunks
+      final memBytes = await const PdfAssembler().buildPdfFromRenderedPageStream(
+        Stream<RenderedPdfPage>.fromIterable([
+          RenderedPdfPage(width: 1080, height: 1528, rgbBytes: rawPage1),
+          RenderedPdfPage(width: 1080, height: 1528, rgbBytes: rawPage2),
+        ]),
+        title: '流式零驻留PDF测试',
+        subject: '验证逐页即时压缩写盘',
+      );
+      final memLatin = latin1.decode(memBytes, allowInvalid: true);
+      expect(memLatin, contains('/Count 2'));
+      expect(memLatin, contains('/Filter /FlateDecode'));
+    });
+
+    testWidgets('unchecking partial or all todos never resurrects stale card.checkedTodos on hydration/restart', (
+      tester,
+    ) async {
+      // Simulate persisted SharedPreferences where user previously unchecked todo-0 (leaving only ['1'])
+      // and on a second card unchecked ALL todos (leaving empty list <String>[])
+      SharedPreferences.setMockInitialValues({
+        'rc-sum-todos-sum_uncheck_partial': <String>['1'],
+        'rc-sum-todos-sum_uncheck_all': <String>[],
+      });
+
+      final store = AppStore(events: seedEvents, loadPersistedState: false);
+      // Stale SummaryCard instances still carrying old checkedTodos = {0, 1} from earlier snapshot
+      final stalePartialCard = SummaryCard(
+        id: 'sum_uncheck_partial',
+        time: '18:00',
+        state: SummaryState.done,
+      )
+        ..srcIds = ['e1']
+        ..title = '部分取消勾选持久化测试'
+        ..todos = const ['待办一', '待办二', '待办三']
+        ..checkedTodos = <int>{0, 1};
+
+      final staleEmptyCard = SummaryCard(
+        id: 'sum_uncheck_all',
+        time: '18:05',
+        state: SummaryState.done,
+      )
+        ..srcIds = ['e1']
+        ..title = '全部取消勾选持久化测试'
+        ..todos = const ['待办一', '待办二', '待办三']
+        ..checkedTodos = <int>{0, 1};
+
+      store.summaries = [stalePartialCard, staleEmptyCard];
+
+      // 1) Mount sum_uncheck_partial: SharedPreferences ['1'] must override stale {0, 1} -> 1 / 3!
+      await tester.pumpWidget(
+        StoreScope(
+          store: store,
+          child: MaterialApp(
+            theme: buildRCTheme(),
+            home: const Scaffold(
+              body: SummaryResultPage(summaryId: 'sum_uncheck_partial'),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(
+        tester.widget<Text>(find.byKey(const Key('ix-done'))).data,
+        '已完成 1 / 3',
+        reason: 'Saved ["1"] in SharedPreferences must replace stale {0, 1}, not union with it',
+      );
+      expect(stalePartialCard.checkedTodos, <int>{1});
+
+      // Now uncheck the remaining todo-1 live in UI -> becomes 0 / 3, then remount with a fresh stale card {0, 1}!
+      await tester.tap(find.byKey(const Key('todo-1')));
+      await tester.pump();
+      expect(tester.widget<Text>(find.byKey(const Key('ix-done'))).data, '已完成 0 / 3');
+
+      final recreatedStalePartial = SummaryCard(
+        id: 'sum_uncheck_partial',
+        time: '18:00',
+        state: SummaryState.done,
+      )
+        ..srcIds = ['e1']
+        ..title = '部分取消勾选持久化测试'
+        ..todos = const ['待办一', '待办二', '待办三']
+        ..checkedTodos = <int>{0, 1};
+      store.summaries = [recreatedStalePartial, staleEmptyCard];
+
+      // 2) Switch to sum_uncheck_all: explicit saved [] must override stale {0, 1} -> 0 / 3!
+      await tester.pumpWidget(
+        StoreScope(
+          store: store,
+          child: MaterialApp(
+            theme: buildRCTheme(),
+            home: const Scaffold(
+              body: SummaryResultPage(summaryId: 'sum_uncheck_all'),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(
+        tester.widget<Text>(find.byKey(const Key('ix-done'))).data,
+        '已完成 0 / 3',
+        reason: 'Explicit empty [] in SharedPreferences must clear stale {0, 1}',
+      );
+      expect(staleEmptyCard.checkedTodos, isEmpty);
+
+      // 3) Switch back to recreatedStalePartial (which had stale {0, 1}): memory/prefs {} must win -> 0 / 3!
+      await tester.pumpWidget(
+        StoreScope(
+          store: store,
+          child: MaterialApp(
+            theme: buildRCTheme(),
+            home: const Scaffold(
+              body: SummaryResultPage(summaryId: 'sum_uncheck_partial'),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(
+        tester.widget<Text>(find.byKey(const Key('ix-done'))).data,
+        '已完成 0 / 3',
+        reason: 'In-memory empty {} must not resurrect stale card.checkedTodos {0, 1}',
+      );
+    });
+
+    testWidgets('matches post-midnight photos in cross-midnight (23:50—00:15) recordings for points & mind-map leaves', (
+      tester,
+    ) async {
+      const midnightEvent = RecordEvent(
+        id: 'e_midnight',
+        dayOffset: 1,
+        title: '跨零点上线复盘',
+        brief: '跨零点核对灰度指标与压测白板。',
+        longText: '跨零点核对灰度指标与压测白板。',
+        time: '23:50',
+        dur: '25分00秒',
+        speakers: 'A / B',
+        mark: '',
+        srcMap: '来源 23:50—00:15',
+        dialog: [TurnLine('A', '零点零五分压测白板指标正常。', '23:50—00:15')],
+        raw: [],
+      );
+      final store = AppStore(
+        events: const [midnightEvent],
+        loadPersistedState: false,
+      );
+      store.eventPhotos['e_midnight'] = const [
+        EventPhoto(
+          id: 'p_post_midnight',
+          path: '/nonexistent/post_midnight.jpg',
+          time: '00:05:20',
+          source: 'dyj_camera',
+        ),
+        EventPhoto(
+          id: 'p_pre_midnight',
+          path: '/nonexistent/pre_midnight.jpg',
+          time: '23:55:10',
+          source: 'dyj_camera',
+        ),
+        EventPhoto(
+          id: 'p_out_2am',
+          path: '/nonexistent/out_2am.jpg',
+          time: '02:10:00',
+          source: 'system_album',
+        ),
+      ];
+      final card = SummaryCard(
+        id: 'sum_midnight',
+        time: '00:20',
+        state: SummaryState.done,
+      )
+        ..srcIds = ['e_midnight']
+        ..title = '跨零点复盘总结'
+        ..overview = '灰度指标平稳通过。'
+        ..structure = const [
+          MapBranch('灰度指标', ['压测白板验证']),
+        ]
+        ..points = const [
+          InfoPoint(
+            '零点后压测白板确认',
+            '00:05 完成压测白板核对。',
+            [SourceRef('e_midnight', '跨零点上线复盘', '23:50 · 25分00秒')],
+          ),
+        ]
+        ..todos = const [];
+      store.summaries = [card];
+
+      await tester.pumpWidget(
+        StoreScope(
+          store: store,
+          child: MaterialApp(
+            theme: buildRCTheme(),
+            home: const Scaffold(
+              body: SummaryResultPage(summaryId: 'sum_midnight'),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // 1) Mind-map leaf matches post-midnight photo p_post_midnight (first in list, at 00:05:20 inside 23:50..00:15)!
+      expect(
+        find.byKey(const Key('mleaf-pic-e_midnight-p_post_midnight')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('mleaf-pic-e_midnight-p_out_2am')),
+        findsNothing,
+      );
+
+      // 2) InfoPoint matches BOTH p_post_midnight (00:05:20) and p_pre_midnight (23:55:10), while excluding p_out_2am (02:10:00)!
+      await tester.tap(find.byKey(const Key('stab-pt')));
+      await tester.pump();
+      expect(
+        find.byKey(const Key('sum-pt-photo-e_midnight-p_post_midnight')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('sum-pt-photo-e_midnight-p_pre_midnight')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('sum-pt-photo-e_midnight-p_out_2am')),
+        findsNothing,
+      );
     });
   });
 }

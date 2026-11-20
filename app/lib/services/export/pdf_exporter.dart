@@ -1,4 +1,4 @@
-/// PDF 导出 —— 「文本 → 流式逐页栅格化（即时释放 ui.Image）→ PDF 页面」。
+/// PDF 导出 —— 「文本 → 流式逐页栅格化（即时释放 ui.Image）→ 逐页即时 zlib 压缩流式落盘 PDF 1.4」。
 library;
 
 import 'dart:io';
@@ -17,7 +17,7 @@ class PdfExporter {
   final DocumentRenderer renderer;
   final PdfAssembler assembler;
 
-  /// 生成 PDF 并落盘，返回路径。
+  /// 生成 PDF 并直接逐页流式压缩写入 [path]，全程保持单页 `O(1)` 内存峰值，返回落盘路径。
   ///
   /// [pageOptions] 可覆盖默认 A4 排版参数（一般不用传）。
   Future<String> write(
@@ -25,25 +25,20 @@ class PdfExporter {
     String path, {
     DocumentPageOptions? pageOptions,
   }) async {
+    final file = File(path);
     final pageStream = renderer.renderPdfPagesStream(
       doc,
       pageOptions: pageOptions,
     );
-    final bytes = await assembler.buildPdfFromRenderedPageStream(
+    await assembler.writePdfFromRenderedPageStream(
       pageStream,
+      file,
       title: doc.safeTitle,
       subject: doc.meta.trim().isEmpty ? null : doc.meta.trim(),
     );
-    if (bytes.isEmpty) {
+    if (!await file.exists() || await file.length() == 0) {
       throw const ExportException('PDF 生成失败：输出内容为空');
     }
-    try {
-      final file = File(path);
-      await file.parent.create(recursive: true);
-      await file.writeAsBytes(bytes, flush: true);
-      return file.path;
-    } on Object catch (e, st) {
-      throw ExportException('PDF 文件写入失败，请检查存储空间后重试', cause: e, stackTrace: st);
-    }
+    return file.path;
   }
 }

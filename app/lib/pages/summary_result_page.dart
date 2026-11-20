@@ -54,6 +54,7 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
   final Map<int, bool> _ptOpen = {};
   final Set<int> _todosDone = {};
   String? _hydratedSummaryId;
+  int _todoMutationVersion = 0;
 
   @override
   void initState() {
@@ -69,31 +70,46 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
       _ptOpen.clear();
       _todosDone.clear();
       _hydratedSummaryId = null;
+      _todoMutationVersion++;
       _hydrateTodosFromMemoryAndPrefs(widget.summaryId);
     }
   }
 
   void _hydrateTodosFromMemoryAndPrefs(String summaryId) {
-    final mem = _memoryCheckedTodos[summaryId];
-    if (mem != null && mem.isNotEmpty) {
-      _todosDone.addAll(mem);
+    if (_memoryCheckedTodos.containsKey(summaryId)) {
+      _todosDone
+        ..clear()
+        ..addAll(_memoryCheckedTodos[summaryId]!);
     }
-    unawaited(_loadTodosFromPrefs(summaryId));
+    unawaited(_loadTodosFromPrefs(summaryId, _todoMutationVersion));
   }
 
-  Future<void> _loadTodosFromPrefs(String summaryId) async {
+  Future<void> _loadTodosFromPrefs(String summaryId, int versionAtStart) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getStringList(_prefsTodoKey(summaryId));
-      if (saved == null || !mounted || widget.summaryId != summaryId) return;
+      final key = _prefsTodoKey(summaryId);
+      if (!prefs.containsKey(key)) return;
+      final saved = prefs.getStringList(key) ?? const <String>[];
+      if (!mounted ||
+          widget.summaryId != summaryId ||
+          _todoMutationVersion != versionAtStart) {
+        return;
+      }
       final parsed = <int>{
         for (final s in saved)
           if (int.tryParse(s) != null) int.parse(s),
       };
-      if (parsed.isEmpty) return;
+      final store = StoreScope.of(context);
       setState(() {
-        _todosDone.addAll(parsed);
+        // SharedPreferences 中显式保存的列表（含空列表 []）为权威状态，直接覆盖而非合并旧值
+        _todosDone
+          ..clear()
+          ..addAll(parsed);
         _memoryCheckedTodos[summaryId] = Set<int>.from(_todosDone);
+        final card = store.summaryById(summaryId);
+        if (card != null) {
+          card.checkedTodos = Set<int>.from(_todosDone);
+        }
       });
     } on Object {
       // 无插件环境降级使用内存与 SummaryCard.checkedTodos
@@ -101,21 +117,20 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
   }
 
   void _syncTodosWithCard(SummaryCard card) {
+    if (_memoryCheckedTodos.containsKey(card.id)) {
+      final authoritative = _memoryCheckedTodos[card.id]!;
+      _todosDone
+        ..clear()
+        ..addAll(authoritative);
+      card.checkedTodos = Set<int>.from(authoritative);
+      _hydratedSummaryId = card.id;
+      return;
+    }
     if (_hydratedSummaryId != card.id) {
       _hydratedSummaryId = card.id;
-      if (card.checkedTodos.isNotEmpty) {
-        _todosDone.addAll(card.checkedTodos);
-      }
-      final mem = _memoryCheckedTodos[card.id];
-      if (mem != null && mem.isNotEmpty) {
-        _todosDone.addAll(mem);
-      }
-      if (_todosDone.isNotEmpty) {
-        card.checkedTodos = Set<int>.from(_todosDone);
-        _memoryCheckedTodos[card.id] = Set<int>.from(_todosDone);
-      }
-    } else if (card.checkedTodos.isNotEmpty && _todosDone.isEmpty) {
-      _todosDone.addAll(card.checkedTodos);
+      _todosDone
+        ..clear()
+        ..addAll(card.checkedTodos);
     }
   }
 
@@ -157,6 +172,7 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
 
   void toggleTodo(int i, SummaryCard card) {
     setState(() {
+      _todoMutationVersion++;
       _syncTodosWithCard(card);
       if (_todosDone.contains(i)) {
         _todosDone.remove(i);
@@ -566,7 +582,7 @@ class _ResultView extends StatelessWidget {
           chosen = active
               .where((p) {
                 final sec = _clockSeconds(p.time);
-                return sec != null && sec >= window.$1 && sec <= window.$2;
+                return sec != null && _isClockInWindow(sec, window);
               })
               .toList();
         }
@@ -600,7 +616,7 @@ class _ResultView extends StatelessWidget {
       final pSec = _clockSeconds(item.photo.time);
       if (evWindow != null &&
           pSec != null &&
-          (pSec < evWindow.$1 || pSec > evWindow.$2)) {
+          !_isClockInWindow(pSec, evWindow)) {
         continue;
       }
       final buf = StringBuffer()
@@ -655,6 +671,9 @@ class _ResultView extends StatelessWidget {
   }
 
   static (int, int)? _parseClockWindow(String raw) => parseSourceClockWindow(raw);
+
+  static bool _isClockInWindow(int sec, (int, int) window) =>
+      isClockSecondInWindow(sec, window);
 
   static int? _clockSeconds(String raw) {
     final m = RegExp(r'(\d{1,2}):(\d{2})(?::(\d{2}))?').firstMatch(raw);
