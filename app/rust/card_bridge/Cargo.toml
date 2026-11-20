@@ -22,7 +22,7 @@ reai-ext-sdk = { path = "../sdks/reai-ext-sdk" }
 reai-getseed-sdk = { path = "../sdks/reai-getseed-sdk" }
 reai-omi-sdk = { path = "../sdks/reai-omi-sdk" }
 reai-feishu-sdk = { path = "../sdks/reai-feishu-sdk" }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "io-util"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"

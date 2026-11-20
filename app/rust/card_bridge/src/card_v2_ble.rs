@@ -49,6 +49,7 @@ const MIN_PAGE_ADVANCE_BYTES: usize = 4096;
 pub enum CardV2ConnectOutcome {
     Connected {
         device: CardV2Device,
+        peripheral: Peripheral,
         id: String,
         name: String,
     },
@@ -492,7 +493,7 @@ pub(crate) async fn connect_card_v2_on_adapter(
         WriteType::WithoutResponse
     };
     let transport: SharedTransport = Arc::new(TimedCardV2BleTransport {
-        peripheral,
+        peripheral: peripheral.clone(),
         write,
         write_type,
     });
@@ -501,6 +502,7 @@ pub(crate) async fn connect_card_v2_on_adapter(
     {
         Ok(Ok(device)) => Ok(CardV2ConnectOutcome::Connected {
             device,
+            peripheral,
             id: actual_id,
             name: resolved_name,
         }),

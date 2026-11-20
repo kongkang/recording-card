@@ -26,6 +26,8 @@ import '../../services/watch/watch_hardware_service.dart';
 import '../device/card_gateway.dart';
 import '../platform/bluetooth_permission.dart';
 
+export '../device/card_gateway.dart' show HardwareButtonEvent;
+
 enum SyncState { idle, busy, done }
 
 /// 最近一次同步是谁触发的：自动（停止录音/后台）还是用户点同步行。
@@ -112,11 +114,15 @@ class DeviceStore extends ChangeNotifier {
   final bool _ownsLegacyUpgrade;
   late final LegacyUpgradeController legacyUpgrade;
 
-  /// 全部真实命令都经它转发：发出与返回都视为"蓝牙传输"，供看门狗顺延。
-  late final CardGateway _gw = ActivityGateway(_gateway, _markLinkActivity);
+  /// 全部真实命令与实时流收包都经它转发：发出、返回与收到音频帧都视为"蓝牙活动"，供看门狗顺延。
+  late final CardGateway _gw = ActivityGateway(
+    _gateway,
+    _markLinkActivity,
+    onRealtimeError: _onRealtimeStreamError,
+  );
 
-  /// 供其它服务复用同一条硬件链路（录音同步、诊断）。
-  CardGateway get gateway => _gateway;
+  /// 供其它服务复用同一条硬件链路（录音同步、实时流、诊断）。
+  CardGateway get gateway => _gw;
   WatchHardwareService get watchHardware => _watchHardware;
   Stream<LiveAudioSlice> get watchAudioSlices => _watchHardware.audioSlices;
 
@@ -847,7 +853,7 @@ class DeviceStore extends ChangeNotifier {
   //    不再广播，扫描找不到它，这正是"断了以后再也连不回去"的老根因。
   // 4. 重连成功回绿/橙；失败回灰「无设备」。
   static const heartbeatIdle = Duration(seconds: 30);
-  static const recordingHeartbeatIdle = Duration(seconds: 120);
+  static const recordingHeartbeatIdle = Duration(seconds: 10);
   static const _reconnectDelay = Duration(milliseconds: 400);
 
   /// 重连只发 connect（不再预拉快照），但桥内要先扫描（4s→6s 两档）再建链路，
@@ -855,6 +861,7 @@ class DeviceStore extends ChangeNotifier {
   static const _retryConnectTimeout = Duration(seconds: 25);
 
   Timer? _heartbeatTimer;
+  bool _watchdogProbing = false;
 
   /// 距离最近一次蓝牙传输过去了多久（由看门狗自己的节拍累加，用单调时钟）。
   ///
@@ -867,6 +874,14 @@ class DeviceStore extends ChangeNotifier {
 
   void _markLinkActivity() {
     _sinceLinkActivity = Duration.zero;
+  }
+
+  void _onRealtimeStreamError(Object error) {
+    if (!_autoStart || linkState != LinkState.connected || !isRecording) {
+      return;
+    }
+    if (fwUpdating || syncing) return;
+    unawaited(_watchdogProbe());
   }
 
   void _startHeartbeat() {
@@ -888,7 +903,8 @@ class DeviceStore extends ChangeNotifier {
     });
   }
 
-  /// 每 5 秒醒一次只为累计"空闲时长"；待机满 30 秒探一次，录音推流中降频到 120 秒探一次。
+  /// 每 5 秒醒一次累计空闲时长：待机满 30 秒探一次；录音中若超过 10 秒无命令/实时流包，
+  /// 发起轻量非侵入式链路存活探测，确保蓝牙意外失联 <=12s 内拉起本机麦克风保底接力。
   void _heartbeatTick() {
     if (linkState != LinkState.connected) return;
     // 固件升级/同步/录音命令链路忙：不插队，且这些动作本身已算活动
@@ -903,28 +919,74 @@ class DeviceStore extends ChangeNotifier {
   }
 
   Future<void> _watchdogProbe() async {
+    if (_watchdogProbing || linkState != LinkState.connected) return;
+    _watchdogProbing = true;
     final epoch = _epoch;
     // 先占位再发命令：探测期间又一步 tick 不该叠第二次探测
     _sinceLinkActivity = Duration.zero;
+    final probingWhileRecording = isRecording;
     try {
-      final snapshot = await _gw.snapshot();
-      if (epoch != _epoch) return;
-      _markLinkActivity();
-      _applySnapshot(snapshot);
-      notifyListeners();
+      final ble = _bleGateway;
+      if (probingWhileRecording &&
+          ble is RealCardGateway &&
+          ble.isNativeFfi &&
+          activeKind != DeviceKind.appleWatch) {
+        final ping = await _gw
+            .invokeBridgeCommand(
+              'link.ping',
+              null,
+              const Duration(seconds: 6),
+            )
+            .timeout(const Duration(seconds: 6));
+        if (epoch != _epoch) return;
+        _markLinkActivity();
+        final data = ping['data'];
+        final rec = data is Map<String, dynamic> ? data['record'] : null;
+        if (rec is Map<String, dynamic>) {
+          _applyRecordStatus(rec);
+          notifyListeners();
+        }
+      } else {
+        final probeTimeout = probingWhileRecording
+            ? const Duration(seconds: 6)
+            : _snapshotTimeout;
+        final snapshot = await _gw.snapshot().timeout(probeTimeout);
+        if (epoch != _epoch) return;
+        _markLinkActivity();
+        _applySnapshot(snapshot);
+        notifyListeners();
+      }
     } on CardException catch (e) {
       if (epoch != _epoch) return;
-      debugPrint('[watchdog] 探测失败（${e.kind}）：${e.message}');
-      // 先停表：重连只许试一次，不能被后续 tick 叠成无限重试
-      _heartbeatTimer?.cancel();
-      _heartbeatTimer = null;
-      // 判定掉线后先让桥真正释放旧链路，再重连。
-      // 只换 UI 状态不释放链路（以前的"假断开"）会让设备端继续认为已连接、
-      // 停止对外广播，重连也就扫不到它。
-      await _releaseLink();
+      await _handleWatchdogLinkLoss('（${e.kind}）：${e.message}', epoch);
+    } on TimeoutException {
       if (epoch != _epoch) return;
-      unawaited(_retryReconnect());
+      if (probingWhileRecording) {
+        await _handleWatchdogLinkLoss('（录音存活探测超时）', epoch);
+      }
+    } finally {
+      _watchdogProbing = false;
     }
+  }
+
+  Future<void> _handleWatchdogLinkLoss(String detail, int epoch) async {
+    debugPrint('[watchdog] 探测失败$detail');
+    // 先停表：重连只许试一次，不能被后续 tick 叠成无限重试
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    // 若录音待命保底已武装，立即启动手机「本机录音」无缝接力，不等待旧链路释放超时
+    if (_phoneStandbyArmed && !_phoneRecording && !_phoneRecordingBusy) {
+      final carrySec = _clockTicks;
+      _liveRecording = false;
+      _stopClock();
+      unawaited(_triggerPhoneFailover(carrySecOverride: carrySec));
+    }
+    // 判定掉线后先让桥真正释放旧链路，再重连。
+    // 只换 UI 状态不释放链路（以前的"假断开"）会让设备端继续认为已连接、
+    // 停止对外广播，重连也就扫不到它。
+    await _releaseLink();
+    if (epoch != _epoch) return;
+    unawaited(_retryReconnect());
   }
 
   /// 尽力释放桥里的 BLE 链路；失败只记日志，不阻断重连/断开流程。
@@ -1335,6 +1397,23 @@ class DeviceStore extends ChangeNotifier {
     } on Object {
       // 固件未实现或链路忙时静默跳过
     }
+  }
+
+  /// 前向兼容调用点一机 V1 端侧 TTS 语音播报（`dyj_tts_speak`）：
+  /// `0.8.14` 等尚未实现的固件会返回 `unsupported` 错误且保持蓝牙会话不断开，供上层回退手机 TTS。
+  Future<Map<String, dynamic>> speakDyjTts(
+    String text, {
+    bool? interrupt,
+  }) async {
+    if (!isConnected) throw CardException.disconnected();
+    return _gw.invokeBridgeCommand(
+      'dyj_tts_speak',
+      {
+        'text': text,
+        'interrupt': ?interrupt,
+      },
+      const Duration(seconds: 10),
+    );
   }
 
   // ── 电量 ───────────────────────────────────────────────────
