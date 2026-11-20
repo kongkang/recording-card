@@ -9,7 +9,8 @@ library;
 
 export 'document_layout.dart'
     show DocBlock, DocBlockKind, buildDocBlocks, buildDocBlocksFromMarkdown, stripInlineMarkdown;
-export 'document_renderer.dart' show DocumentPageOptions, DocumentRenderer, LongImageOptions;
+export 'document_renderer.dart'
+    show DocumentPageOptions, DocumentRenderer, LongImageOptions, RenderedPdfPage;
 export 'export_document.dart'
     show
         ExportDocument,
