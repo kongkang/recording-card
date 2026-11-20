@@ -369,19 +369,28 @@ class TopicSegmentationStore {
 
   final Future<Directory> Function() _resolveRoot;
   TopicSegmentationState? _cache;
-  Future<void> _mutex = Future<void>.value();
+  Future<void>? _mutex;
   int _tmpSeq = 0;
 
-  Future<T> _withLock<T>(Future<T> Function() action) {
-    final completer = Completer<T>();
-    _mutex = _mutex.then((_) async {
+  Future<T> _withLock<T>(Future<T> Function() action) async {
+    final prev = _mutex;
+    final gate = Completer<void>();
+    _mutex = gate.future;
+    if (prev != null) {
       try {
-        completer.complete(await action());
-      } on Object catch (e, st) {
-        completer.completeError(e, st);
+        await prev;
+      } on Object {
+        // 前序任务失败不阻塞后续队列
       }
-    });
-    return completer.future;
+    }
+    try {
+      return await action();
+    } finally {
+      if (identical(_mutex, gate.future)) {
+        _mutex = null;
+      }
+      gate.complete();
+    }
   }
 
   Future<File> _file() async {

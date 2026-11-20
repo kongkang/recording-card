@@ -230,6 +230,7 @@ class WatchPendingSlicePayload {
       gapCount: gapCount,
       isFinal: isFinal,
       sliceKeyOverride: 'watch_$safeSliceId',
+      marksMs: marksMs,
     );
   }
 }

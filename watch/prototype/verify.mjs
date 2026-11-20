@@ -481,6 +481,8 @@ if (pp && chromePath) {
     await pf.click('[data-testid="raw-audio-toggle"]');
     assert.equal(await pf.$eval('[data-testid="raw-audio-toggle"]', (el) => el.innerText.trim()), '❚❚');
     await pf.click('[data-testid="raw-audio-delete"]');
+    await pf.waitForSelector('[data-testid="raw-audio-delete-confirm"]');
+    await pf.click('[data-testid="raw-audio-delete-confirm"]');
     await pf.waitForSelector('[data-testid="raw-audio-cleared"]');
     check('E2E: Complication start, Compact/LockScreen Live Activity, slice ingestion & real WAV playback', true);
 

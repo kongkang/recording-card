@@ -1036,6 +1036,7 @@ Widget _stackTopPage(
     return SummaryResultPage(
       summaryId: top.id,
       showPaneBack: wide && store.showPaneBackSum,
+      onCancelGeneration: () => store.cancelGeneratingSummary(top.id),
     );
   }
   if (top.type == 'unc') {
@@ -1147,6 +1148,7 @@ class _NarrowLayout extends StatelessWidget {
                     child: Offstage(
                       offstage: e != store.subStack.last,
                       child: _subPage(
+                        store,
                         e,
                         agentConfig,
                         device,
@@ -1187,6 +1189,7 @@ class _NarrowLayout extends StatelessWidget {
 
   /// 栈内条目对应的页面（Navigator 页面渲染用；宽屏右栏仍走 _stackTopPage）
   static Widget _subPage(
+    AppStore store,
     RouteEntry e,
     AgentConfigStore agentConfig,
     DeviceStore device,
@@ -1195,7 +1198,11 @@ class _NarrowLayout extends StatelessWidget {
     HealthSignalController? healthSignals,
   ) {
     if (e.type == 'sum') {
-      return SummaryResultPage(summaryId: e.id, showPaneBack: false);
+      return SummaryResultPage(
+        summaryId: e.id,
+        showPaneBack: false,
+        onCancelGeneration: () => store.cancelGeneratingSummary(e.id),
+      );
     }
     if (e.type == 'unc') {
       return UnclassifiedPhotosPage(

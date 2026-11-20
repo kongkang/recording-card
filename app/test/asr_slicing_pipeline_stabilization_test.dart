@@ -1197,5 +1197,31 @@ void main() {
         isFalse,
       );
     });
+
+    testWidgets(
+      'TopicSegmentationStore 在 FakeAsync 内构造后跨 tester.runAsync 读写不发生跨 Zone 死锁',
+      (tester) async {
+        final dir = Directory.systemTemp.createTempSync('rc_topic_zone_');
+        addTearDown(() {
+          if (dir.existsSync()) dir.deleteSync(recursive: true);
+        });
+        final topicStore = TopicSegmentationStore(resolveRoot: () async => dir);
+        await tester.runAsync(() async {
+          final initial = await topicStore.load();
+          expect(initial.watermarkEndAtMs, 0);
+          await topicStore.readModifyWrite(
+            (cur) => TopicSegmentationState(
+              watermarkEndAtMs: 42000,
+              lockedRunKeys: cur.lockedRunKeys,
+              runsByKey: cur.runsByKey,
+              rollingByAnchor: cur.rollingByAnchor,
+              stageByTask: cur.stageByTask,
+            ),
+          );
+          final reloaded = await topicStore.load(refresh: true);
+          expect(reloaded.watermarkEndAtMs, 42000);
+        });
+      },
+    );
   });
 }

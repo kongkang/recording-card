@@ -206,11 +206,7 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
       return;
     }
     card.cancelled = true;
-    if (store.pend?.id == card.id) {
-      store.pend = null;
-    }
-    card.state = SummaryState.failed;
-    store.dismissFailed(card.id);
+    store.cancelGeneratingSummary(card.id);
   }
 
   void _tocGo(String secId) {
