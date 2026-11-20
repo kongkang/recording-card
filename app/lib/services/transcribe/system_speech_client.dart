@@ -244,12 +244,30 @@ class SystemSpeechClient {
     }
   }
 
+  Future<AsrResult> transcribeWavFile(
+    String wavPath, {
+    String language = 'auto',
+    Float32List? fallbackSamples,
+    int sampleRate = 16000,
+  }) => transcribeSamples(
+    fallbackSamples ?? Float32List(0),
+    sampleRate: sampleRate,
+    language: language,
+    wavPath: wavPath,
+  );
+
   Future<AsrResult> transcribeSamples(
     Float32List samples, {
     int sampleRate = 16000,
     String language = 'auto',
+    String? wavPath,
   }) async {
-    if (samples.isEmpty) {
+    final trimmedPath = wavPath?.trim() ?? '';
+    final existingFile = trimmedPath.isNotEmpty ? File(trimmedPath) : null;
+    final canUseDirectWav =
+        existingFile != null && await existingFile.exists();
+
+    if (samples.isEmpty && !canUseDirectWav) {
       return const AsrResult(
         text: '',
         tokens: [],
@@ -258,23 +276,36 @@ class SystemSpeechClient {
       );
     }
     if (_transcribeOverride != null) {
-      return _transcribeOverride(samples, sampleRate, language);
+      final effectiveSamples = samples.isNotEmpty
+          ? samples
+          : readWavFile(existingFile!.path).toSpeechFloat32();
+      return _transcribeOverride(effectiveSamples, sampleRate, language);
     }
     if (!_hasNativePlatform) {
       throw const AsrException('当前平台不支持系统内置离线语音识别');
     }
 
-    final audioMs = samples.length * 1000 ~/ sampleRate;
-    final wavBytes = encodeWav(samples, sampleRate: sampleRate);
-    final tmpFile = File(
-      '${Directory.systemTemp.path}/rc_sys_asr_${DateTime.now().microsecondsSinceEpoch}_${_seq++}.wav',
-    );
-    await tmpFile.writeAsBytes(wavBytes, flush: true);
+    final audioMs = samples.isNotEmpty
+        ? (samples.length * 1000 ~/ sampleRate)
+        : (readWavDurationMsSync(existingFile!.path) ?? 0);
+
+    File? tmpFile;
+    final String targetWavPath;
+    if (canUseDirectWav) {
+      targetWavPath = existingFile.path;
+    } else {
+      final wavBytes = encodeWav(samples, sampleRate: sampleRate);
+      tmpFile = File(
+        '${Directory.systemTemp.path}/rc_sys_asr_${DateTime.now().microsecondsSinceEpoch}_${_seq++}.wav',
+      );
+      await tmpFile.writeAsBytes(wavBytes, flush: true);
+      targetWavPath = tmpFile.path;
+    }
 
     try {
       final raw = await (_channel ?? _defaultChannel)
           .invokeMapMethod<Object?, Object?>('transcribeWav', {
-            'wavPath': tmpFile.path,
+            'wavPath': targetWavPath,
             'language': language,
           });
       if (raw == null) {
@@ -308,12 +339,14 @@ class SystemSpeechClient {
     } on MissingPluginException {
       throw const AsrException('系统语音识别通道未就绪');
     } finally {
-      try {
-        if (await tmpFile.exists()) {
-          await tmpFile.delete();
+      if (tmpFile != null) {
+        try {
+          if (await tmpFile.exists()) {
+            await tmpFile.delete();
+          }
+        } on Object {
+          // 清理临时 WAV 失败不阻塞主流程
         }
-      } on Object {
-        // 清理临时 WAV 失败不阻塞主流程
       }
     }
   }
@@ -371,12 +404,14 @@ class RoutingSpeechEngine implements SpeechEngine {
   Future<AsrResult> transcribe(
     Float32List samples, {
     int sampleRate = 16000,
+    String? wavPath,
   }) async {
     if (_activeIsSystem) {
       return systemSpeech.transcribeSamples(
         samples,
         sampleRate: sampleRate,
         language: _language,
+        wavPath: wavPath,
       );
     }
     return localEngine.transcribe(samples, sampleRate: sampleRate);

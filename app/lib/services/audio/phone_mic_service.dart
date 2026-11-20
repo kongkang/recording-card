@@ -8,7 +8,6 @@ library;
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -144,15 +143,11 @@ class PhoneMicRecorder {
   int _sessionStartedAtMs = 0;
   int _sliceIndex = 0;
   int _sliceStartSamples = 0;
-  final BytesBuilder _buffer = BytesBuilder(copy: false);
+  int _ingestedSamples = 0;
+  final SoftBoundaryPcmSlicer _slicer = SoftBoundaryPcmSlicer();
+  final List<int> _sliceMarksMs = <int>[];
   bool _disposed = false;
   Future<void> _writeChain = Future<void>.value();
-
-  int get _sliceByteLimit =>
-      (sliceDuration.inMilliseconds * bytesPerSecond ~/ 1000).clamp(
-        bytesPerSecond,
-        bytesPerSecond * 600,
-      );
 
   Future<Directory> _resolveDir() async {
     if (_sliceRootDir != null) {
@@ -173,74 +168,73 @@ class PhoneMicRecorder {
     _sessionId = 'phone-$_sessionStartedAtMs';
     _sliceIndex = 0;
     _sliceStartSamples = 0;
-    _buffer.clear();
+    _ingestedSamples = 0;
+    _slicer.clear();
+    _sliceMarksMs.clear();
     ringBuffer.clear();
     _running = true;
+  }
+
+  /// 记录一次当前本机录音切片内的物理/界面重点打点。
+  void recordMark({int? timestampMs}) {
+    if (!_running || _disposed) return;
+    if (timestampMs != null) {
+      _sliceMarksMs.add(timestampMs);
+      return;
+    }
+    final relSamples = (_ingestedSamples - _sliceStartSamples).clamp(0, 1 << 30);
+    _sliceMarksMs.add(relSamples * 1000 ~/ sampleRate);
   }
 
   void ingestPcm(Uint8List pcmBytes) {
     if (!_running || _disposed || pcmBytes.isEmpty) return;
     ringBuffer.append(pcmBytes, endTimestampMs: _clock().millisecondsSinceEpoch);
-    _buffer.add(pcmBytes);
-    final limit = _sliceByteLimit;
-    while (_buffer.length >= limit) {
-      final all = _buffer.takeBytes();
-      final chunk = Uint8List.sublistView(all, 0, limit);
-      final rest = all.length > limit
-          ? Uint8List.sublistView(all, limit)
-          : Uint8List(0);
-      if (rest.isNotEmpty) {
-        _buffer.add(rest);
-      }
-      _scheduleFlush(chunk, isFinal: false);
-    }
+    _ingestedSamples += pcmBytes.length ~/ bytesPerSample;
+    _slicer.append(
+      pcmBytes,
+      sliceDuration: sliceDuration,
+      sampleRate: sampleRate,
+      onSliceFlush: (chunk) => _scheduleFlush(chunk, isFinal: false),
+    );
   }
 
   /// Timeline 下拉刷新触发：在**不停止**麦克风与灵动岛录音的前提下，
   /// 将当前已缓冲的尾部 PCM（`>= 0.5s`）立即封口为一片正式 `.WAV` 并投递转写。
   Future<bool> flushActiveSlice() async {
     if (!_running || _disposed) return false;
-    if (_buffer.length < minManualFlushBytes) {
+    if (_slicer.bufferedBytes < minManualFlushBytes) {
       await _writeChain;
       return false;
     }
-    final raw = _buffer.takeBytes();
-    final evenLen = raw.length & ~1;
-    if (evenLen < minManualFlushBytes) {
-      if (raw.isNotEmpty) {
-        _buffer.add(raw);
-      }
+    final chunk = _slicer.takeRemainingBytes();
+    if (chunk.length < minManualFlushBytes) {
       await _writeChain;
       return false;
-    }
-    final chunk = evenLen == raw.length
-        ? raw
-        : Uint8List.sublistView(raw, 0, evenLen);
-    if (evenLen < raw.length) {
-      _buffer.add(Uint8List.sublistView(raw, evenLen));
     }
     _scheduleFlush(chunk, isFinal: false);
     await _writeChain;
+    await Future<void>.delayed(Duration.zero);
     return true;
   }
 
   Future<void> stop() async {
     if (!_running) return;
     _running = false;
-    final tail = _buffer.takeBytes();
-    final evenLen = tail.length & ~1;
-    if (evenLen > 0) {
-      final aligned = evenLen == tail.length
-          ? tail
-          : Uint8List.sublistView(tail, 0, evenLen);
-      _scheduleFlush(aligned, isFinal: true);
+    final tail = _slicer.takeRemainingBytes();
+    if (tail.isNotEmpty) {
+      _scheduleFlush(tail, isFinal: true);
     }
     await _writeChain;
+    await Future<void>.delayed(Duration.zero);
   }
 
   void _scheduleFlush(Uint8List pcm, {required bool isFinal}) {
     final sid = _sessionId ?? 'phone-${DateTime.now().millisecondsSinceEpoch}';
     final index = _sliceIndex++;
+    final marks = _sliceMarksMs.isEmpty
+        ? const <int>[]
+        : List<int>.unmodifiable(_sliceMarksMs);
+    _sliceMarksMs.clear();
     final samples = pcm.length ~/ bytesPerSample;
     final startAtMs =
         _sessionStartedAtMs + (_sliceStartSamples * 1000 ~/ sampleRate);
@@ -273,6 +267,7 @@ class PhoneMicRecorder {
           wavPath: finalFile.path,
           isFinal: isFinal,
           sliceKeyOverride: sliceKey,
+          marksMs: marks,
         ),
       );
     }).catchError((Object e, StackTrace st) {
