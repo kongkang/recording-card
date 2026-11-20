@@ -3,6 +3,8 @@
 /// 检索始终在手机上完成。没有命中时不调用模型，也不编造内容。
 library;
 
+import 'dart:math' as math;
+
 import 'local_memory_index.dart';
 import 'memory_chunk.dart';
 import 'memory_indexer.dart';
@@ -34,28 +36,34 @@ class MemorySearchService {
     required LocalMemoryIndex index,
     required MemoryCorpus Function() corpus,
     MemoryChat? chat,
+    DateTime Function()? clock,
   }) : _index = index,
        _corpus = corpus,
-       _chat = chat;
+       _chat = chat,
+       _clock = clock;
 
   final LocalMemoryIndex _index;
   final MemoryCorpus Function() _corpus;
   final MemoryChat? _chat;
+  final DateTime Function()? _clock;
 
   Future<void> reindex([MemoryCorpus? corpus]) {
     return _index.replaceAll(buildMemoryChunks(corpus ?? _corpus()));
   }
 
-  Future<List<MemoryHit>> search(String query, {int limit = 8}) async {
-    final parsed = parseMemoryQuery(query);
-    final window = parsed.window;
-    if (parsed.text.isEmpty && window == null) return const [];
+  Future<List<MemoryHit>> search(
+    String query, {
+    int limit = 8,
+    DateTime? now,
+  }) async {
+    final parsed = parseMemoryQuery(query, now: now ?? _clock?.call());
+    if (parsed.text.isEmpty && !parsed.hasFilter) return const [];
     return _searchIndexed(parsed, limit: limit);
   }
 
-  Future<MemoryAnswer> ask(String query) async {
-    final parsed = parseMemoryQuery(query.trim());
-    if (parsed.text.isEmpty && parsed.window == null) {
+  Future<MemoryAnswer> ask(String query, {DateTime? now}) async {
+    final parsed = parseMemoryQuery(query.trim(), now: now ?? _clock?.call());
+    if (parsed.text.isEmpty && !parsed.hasFilter) {
       return const MemoryAnswer(hits: [], text: '请输入要查找的内容。', fromModel: false);
     }
     await reindex();
@@ -105,27 +113,84 @@ class MemorySearchService {
   }) async {
     final minDay = parsed.window?.minOffset;
     final maxDay = parsed.window?.maxOffset;
+    final hourRange = parsed.hourRange;
+    final candidateLimit = math.max(limit * 4, 32);
+
     if (parsed.text.isEmpty) {
-      return _index.search(minDay: minDay, maxDay: maxDay, limit: limit);
+      final raw = await _index.search(
+        minDay: minDay,
+        maxDay: maxDay,
+        hourRange: hourRange,
+        limit: candidateLimit,
+      );
+      return _diversifyBySource(raw, limit: limit, maxPerSource: 1);
     }
+
     final phrase = ftsPhraseExpression(parsed.text);
     if (phrase != null) {
       final exact = await _index.search(
         match: phrase,
         minDay: minDay,
         maxDay: maxDay,
-        limit: limit,
+        hourRange: hourRange,
+        queryHint: parsed.text,
+        limit: candidateLimit,
       );
-      if (exact.isNotEmpty) return exact;
+      if (exact.isNotEmpty) {
+        return _diversifyBySource(exact, limit: limit, maxPerSource: 2);
+      }
     }
+
     final relaxed = ftsRelaxedExpression(parsed.text);
-    if (relaxed == null) return const [];
-    return _index.search(
+    if (relaxed == null) {
+      if (parsed.hasFilter) {
+        final raw = await _index.search(
+          minDay: minDay,
+          maxDay: maxDay,
+          hourRange: hourRange,
+          limit: candidateLimit,
+        );
+        return _diversifyBySource(raw, limit: limit, maxPerSource: 1);
+      }
+      return const [];
+    }
+    final loose = await _index.search(
       match: relaxed,
       minDay: minDay,
       maxDay: maxDay,
-      limit: limit,
+      hourRange: hourRange,
+      queryHint: parsed.text,
+      limit: candidateLimit,
     );
+    return _diversifyBySource(loose, limit: limit, maxPerSource: 2);
+  }
+
+  /// 防止 2 小时长会的几十个切片挤占全部返回槽位，优先保障不同来源覆盖度，有余量再回填同源高分片段。
+  List<MemoryHit> _diversifyBySource(
+    List<MemoryHit> candidates, {
+    required int limit,
+    required int maxPerSource,
+  }) {
+    if (candidates.length <= limit) return candidates;
+    final counts = <String, int>{};
+    final primary = <MemoryHit>[];
+    final overflow = <MemoryHit>[];
+    for (final hit in candidates) {
+      final key = '${hit.kind}:${hit.sourceId}';
+      final used = counts[key] ?? 0;
+      if (used < maxPerSource) {
+        counts[key] = used + 1;
+        primary.add(hit);
+        if (primary.length >= limit) return primary;
+      } else {
+        overflow.add(hit);
+      }
+    }
+    for (final hit in overflow) {
+      if (primary.length >= limit) break;
+      primary.add(hit);
+    }
+    return primary;
   }
 }
 
