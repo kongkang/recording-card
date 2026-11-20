@@ -3,6 +3,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -36,6 +37,8 @@ import 'status_sheet.dart';
 import 'summary_result_page.dart';
 import 'timeline_page.dart';
 import 'unclassified_photos_page.dart';
+
+const _desktopCommands = MethodChannel('com.reai.recordingcard/desktop');
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -114,6 +117,9 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    if (!Platform.environment.containsKey('FLUTTER_TEST')) {
+      _desktopCommands.setMethodCallHandler(_onDesktopCommand);
+    }
     if (widget.device == null) widget.onDeviceCreated?.call(_device);
     // 让 store 知道设备在不在：没连卡时下拉不要去取回录音，更不该报"整理中断"。
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
@@ -304,8 +310,17 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  Future<void> _onDesktopCommand(MethodCall call) async {
+    if (call.method == 'openSettings') {
+      widget.store.go(RootTab.setting);
+    }
+  }
+
   @override
   void dispose() {
+    if (!Platform.environment.containsKey('FLUTTER_TEST')) {
+      _desktopCommands.setMethodCallHandler(null);
+    }
     _agentConfig.removeListener(_syncAgentIslandConfig);
     _device.liveActivityService.onActionButtonAgent = null;
     _device.liveActivityService.onActionButtonToggle = null;

@@ -19,6 +19,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
+import 'dart:io' show File, Platform;
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
@@ -1004,6 +1005,7 @@ class RealCardGateway implements CardGateway {
       ffi.DynamicLibrary.process,
       () => ffi.DynamicLibrary.open('libcard_bridge.dylib'),
       () => ffi.DynamicLibrary.open('libcard_bridge.so'),
+      if (Platform.isMacOS) _openBundledMacBridge,
     ];
     for (final open in openers) {
       try {
@@ -1013,6 +1015,25 @@ class RealCardGateway implements CardGateway {
       } catch (_) {}
     }
     return null;
+  }
+
+  /// 桌面端把 `libcard_bridge.dylib` 放在可执行文件旁边，按绝对路径打开。
+  static ffi.DynamicLibrary _openBundledMacBridge() {
+    final exeDir = File(Platform.resolvedExecutable).parent;
+    final candidates = [
+      '${exeDir.path}/libcard_bridge.dylib',
+      '${exeDir.parent.path}/Frameworks/libcard_bridge.dylib',
+    ];
+    Object? last;
+    for (final path in candidates) {
+      if (!File(path).existsSync()) continue;
+      try {
+        return ffi.DynamicLibrary.open(path);
+      } catch (error) {
+        last = error;
+      }
+    }
+    throw last ?? StateError('libcard_bridge.dylib 未打进应用包');
   }
 
   final _CommandDart _command;
