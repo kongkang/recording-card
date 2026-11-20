@@ -154,9 +154,19 @@ import AppIntents
   }
 
   private func flushPending() {
+    // 授权探测用的 CBCentralManager 不能留着。它和 Rust 侧 btleplug 的管理器
+    // 会抢同一条无线电，命令通道会被关掉；杀掉 App 或重装都不会把这次占用清掉。
+    centralManager?.stopScan()
+    centralManager = nil
     guard let result = pendingResult else { return }
     pendingResult = nil
     result(statusText())
+  }
+
+  override func applicationDidEnterBackground(_ application: UIApplication) {
+    centralManager?.stopScan()
+    centralManager = nil
+    super.applicationDidEnterBackground(application)
   }
 
   // MARK: - 系统相册录音时段对齐导入（PhotoKit）

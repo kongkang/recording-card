@@ -318,7 +318,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('蓝牙通道已断开，请点重新扫描'), findsOneWidget);
+    expect(find.textContaining('蓝牙通道已断开'), findsOneWidget);
     final button = tester.widget<ButtonStyleButton>(
       find.byKey(const Key('dev-rescan')),
     );

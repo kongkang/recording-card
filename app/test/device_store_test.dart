@@ -113,7 +113,7 @@ void main() {
 
     await store.restoreLink();
     expect(store.linkState, LinkState.unsupported);
-    expect(store.linkError, '此设备不支持连接录音卡');
+    expect(store.linkError, contains('蓝牙模块没有载入'));
 
     await store.startScan();
     expect(store.linkState, LinkState.unsupported);

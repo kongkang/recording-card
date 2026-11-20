@@ -268,7 +268,7 @@ class DeviceStore extends ChangeNotifier {
     bleAuth = await _permission.status();
     if (!_gateway.available) {
       linkState = LinkState.unsupported;
-      linkError = '此设备不支持连接录音卡';
+      linkError = _friendlyScanError('此设备不支持连接录音卡');
       notifyListeners();
       return;
     }
@@ -442,7 +442,7 @@ class DeviceStore extends ChangeNotifier {
   Future<void> startScan({bool force = false}) async {
     if (!_gateway.available) {
       linkState = LinkState.unsupported;
-      linkError = '此设备不支持连接录音卡';
+      linkError = _friendlyScanError('此设备不支持连接录音卡');
       notifyListeners();
       return;
     }
@@ -521,8 +521,11 @@ class DeviceStore extends ChangeNotifier {
   }
 
   String _friendlyScanError(String message) {
-    if (message.contains('Channel closed')) {
-      return '蓝牙通道已断开，请点重新扫描';
+    if (message.contains('Channel closed') || message.contains('蓝牙通道已断开')) {
+      return '蓝牙通道已断开。杀掉 App 或重装都恢复不了，请先开关一次手机蓝牙，或把录音卡关机再开机后再扫描';
+    }
+    if (message.contains('此设备不支持连接录音卡')) {
+      return '蓝牙模块没有载入。重装同一个安装包也恢复不了，需要安装带蓝牙桥的新版本';
     }
     return message;
   }
