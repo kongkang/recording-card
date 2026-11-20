@@ -102,8 +102,6 @@ flutter:
     # 随包的 Silero VAD（644KB）；ASR 大模型运行时下载，不进仓库
     - assets/models/silero_vad.onnx
     - assets/models/silero_vad.LICENSE.txt
-    # 本地转写/声纹的测试音频（179KB，sherpa-onnx 官方 test_wavs）
-    - assets/spike/zh.wav
 
   # To add assets to your application, add an assets section, like this:
   # assets:

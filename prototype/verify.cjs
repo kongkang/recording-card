@@ -256,6 +256,13 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('[data-testid="rawline-e1-2"]', x => x.classList.contains('active')));
   await shot('detail-raw-audio');
   await p.click('[data-testid="raw-audio-delete"]');
+  assert(await p.$('[data-testid="raw-audio-delete-confirm"]'), '点击清理应先弹出内联二次确认');
+  assert(await p.$('[data-testid="raw-audio-delete-cancel"]'));
+  assert(await p.$('[data-testid="raw-audio-player"]'), '未点确认前不应删除音频');
+  await p.click('[data-testid="raw-audio-delete-cancel"]');
+  assert.equal(await p.$('[data-testid="raw-audio-delete-confirm"]'), null);
+  await p.click('[data-testid="raw-audio-delete"]');
+  await p.click('[data-testid="raw-audio-delete-confirm"]');
   assert(await p.$eval('[data-testid="raw-audio-cleared"]', x => x.innerText.includes('原始录音已清理')));
   assert.equal(await p.$('[data-testid="raw-audio-player"]'), null, '清理后不应假装还能播');
   await shot('raw-data');
@@ -1036,12 +1043,18 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   // 行为与健康信号已从 NC 落地；目标版仍保留圈地与生理信号的 TBC 入口
   await p.click('[data-testid="nav-setting"]');
   assert(await p.$('[data-testid="set-health-location"]'));
+  await p.$eval('[data-testid="set-health-location"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="set-health-location"]');
   assert(await p.$('[data-testid="health-sync-switch"]'));
   assert.equal(await p.$$eval('#p-setsub .nc-badge', x => x.length), 0);
   assert(await p.$('[data-testid="health-to-territory"]'), '目标版保留 GPS 圈地 TBC');
   assert(await p.$('[data-testid="health-to-bio-detail"]'), '目标版保留生理信号 TBC');
   await p.click('[data-testid="crumb-back"]');
+  await p.$eval('[data-testid="account-delete-entry"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="account-delete-entry"]');
+  assert(await p.$eval('#account-del-wrap', x => x.classList.contains('show')));
+  await p.click('[data-testid="account-delete-cancel"]');
+  assert(!(await p.$eval('#account-del-wrap', x => x.classList.contains('show'))));
 
   // 当前版本基线（current.html · App 已有功能）：零 TBC 标记、保持两栏底栏、无日出 AI 与目标版新项
   const pCur = await b.newPage();

@@ -103,6 +103,7 @@ class _DetailPageState extends State<DetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final store = StoreScope.of(context);
     final RecordEvent? e = store.eventByIdOrNull(widget.eventId);
     if (e == null) {
@@ -114,21 +115,25 @@ class _DetailPageState extends State<DetailPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
+              Icon(
                 Icons.description_outlined,
                 size: 36,
-                color: RCColors.ax,
+                color: c.ax,
               ),
               const SizedBox(height: 10),
-              const Text(
+              Text(
                 '这条记录已不在本机',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: c.label,
+                ),
               ),
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 '可能已被删除，或录音卡上的原文件已清理。',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 13, color: RCColors.sec),
+                style: TextStyle(fontSize: 13, color: c.sec),
               ),
               const SizedBox(height: 14),
               OutlinedButton(
@@ -152,168 +157,179 @@ class _DetailPageState extends State<DetailPage> {
         markableSpeakers.any((s) => s.currentAlias.isNotEmpty) ||
         store.hasTurnOverridesFor([e]);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (widget.showPaneBack)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              key: const Key('pb-detail'),
-              onPressed: store.goBack,
-              icon: const Icon(Icons.chevron_left, size: 18),
-              label: Text(widget.backLabel ?? '‹ 返回'),
-              style: TextButton.styleFrom(
-                foregroundColor: RCColors.sec,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
+    return ColoredBox(
+      color: c.bg,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (widget.showPaneBack)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: const Key('pb-detail'),
+                onPressed: store.goBack,
+                icon: const Icon(Icons.chevron_left, size: 18),
+                label: Text(widget.backLabel ?? '‹ 返回'),
+                style: TextButton.styleFrom(
+                  foregroundColor: c.sec,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  minimumSize: Size.zero,
+                  textStyle: const TextStyle(fontSize: 13),
                 ),
-                minimumSize: Size.zero,
-                textStyle: const TextStyle(fontSize: 13),
               ),
             ),
-          ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(22, 14, 22, 6),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                e.title,
-                key: const Key('dt-h3'),
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(22, 14, 22, 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  e.title,
+                  key: const Key('dt-h3'),
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: c.label,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 10,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(
-                    '${_dayLabel(e)} ${e.time} · ${e.dur}',
-                    key: const Key('dt-meta'),
-                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
-                  ),
-                  Text(
-                    speakerText,
-                    key: const Key('dt-speakers'),
-                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
-                  ),
-                  if (hasAnyTurns)
-                    InkWell(
-                      key: const Key('mark-speaker-btn'),
-                      borderRadius: BorderRadius.circular(999),
-                      onTap: () {
-                        final firstTurn = dialogOrRaw.firstWhere(
-                          (t) => t.spk.trim() != '无语音',
-                          orElse: () => dialogOrRaw.first,
-                        );
-                        final firstIdx = dialogOrRaw.indexOf(firstTurn);
-                        showQuickSpeakerSheet(
-                          context,
-                          store: store,
-                          event: e,
-                          turnIndex: firstIdx < 0 ? 0 : firstIdx,
-                          rawSpeaker: firstTurn.spk,
-                          sampleQuote: firstTurn.text,
-                        );
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2.5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: RCColors.card,
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: RCColors.sep),
-                        ),
-                        child: Text(
-                          hasMarkedSpeaker ? '编辑说话人' : '标记说话人',
-                          style: const TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                            color: RCColors.label,
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      '${_dayLabel(e)} ${e.time} · ${e.dur}',
+                      key: const Key('dt-meta'),
+                      style: TextStyle(fontSize: 12, color: c.sec),
+                    ),
+                    Text(
+                      speakerText,
+                      key: const Key('dt-speakers'),
+                      style: TextStyle(fontSize: 12, color: c.sec),
+                    ),
+                    if (hasAnyTurns)
+                      InkWell(
+                        key: const Key('mark-speaker-btn'),
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: () {
+                          final firstTurn = dialogOrRaw.firstWhere(
+                            (t) => t.spk.trim() != '无语音',
+                            orElse: () => dialogOrRaw.first,
+                          );
+                          final firstIdx = dialogOrRaw.indexOf(firstTurn);
+                          final safeIdx = firstIdx < 0 ? 0 : firstIdx;
+                          showQuickSpeakerSheet(
+                            context,
+                            store: store,
+                            event: e,
+                            turnIndex: safeIdx,
+                            rawSpeaker: firstTurn.spk,
+                            sampleQuote: firstTurn.text,
+                          );
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2.5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: c.card,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: c.sep),
+                          ),
+                          child: Text(
+                            hasMarkedSpeaker ? '编辑说话人' : '标记说话人',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: c.label,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  if (e.mark.isNotEmpty)
-                    Text(
-                      e.mark,
-                      style: const TextStyle(fontSize: 12, color: RCColors.ink),
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 22),
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: RCColors.sep)),
-          ),
-          child: Row(
-            children: [
-              _tabBtn('对话详情', 'dlg'),
-              _tabBtn('原始数据', 'raw'),
-              if (refs.isNotEmpty) _tabBtn('被引用总结 ${refs.length}', 'refs'),
-            ],
-          ),
-        ),
-        if (_tab == 'raw')
-          Builder(
-            builder: (context) {
-              final activeAudioView = (view != null && view.isMerged)
-                  ? view.mergedChildren[_selectedMergedSliceIdx.clamp(
-                      0,
-                      view.mergedChildren.length - 1,
-                    )]
-                  : view;
-              final clip = _audioClipFor(activeAudioView);
-              return Container(
-                key: const Key('raw-sticky-player'),
-                padding: const EdgeInsets.fromLTRB(22, 10, 22, 8),
-                decoration: const BoxDecoration(
-                  color: RCColors.bg,
-                  border: Border(bottom: BorderSide(color: RCColors.sep)),
+                    if (e.mark.isNotEmpty)
+                      Text(
+                        e.mark,
+                        style: TextStyle(fontSize: 12, color: c.ink),
+                      ),
+                  ],
                 ),
-                child: RawAudioPlayer(
-                  key: _playerKey,
-                  fileKey: activeAudioView?.file.deviceName ?? e.id,
-                  wavPath: activeAudioView?.file.wavPath,
-                  durationHintMs: activeAudioView?.file.durationMs,
-                  clipStartMs: clip.clipStartMs,
-                  clipEndMs: clip.clipEndMs,
-                  gapCountOverride: clip.gapCountOverride,
-                  padding: EdgeInsets.zero,
-                  onFilePositionChanged: (ms) {
-                    if (mounted && _activeFilePosMs != ms) {
-                      setState(() => _activeFilePosMs = ms);
-                    }
-                  },
-                ),
-              );
-            },
-          ),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(
-              22,
-              14,
-              22,
-              RCDims.pageBottomPad,
+              ],
             ),
-            children: [
-              ..._buildTab(store, e, refs, view),
-            ],
           ),
-        ),
-      ],
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 22),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: c.sep)),
+            ),
+            child: Row(
+              children: [
+                _tabBtn(c, '对话详情', 'dlg'),
+                _tabBtn(c, '原始数据', 'raw'),
+                if (refs.isNotEmpty) _tabBtn(c, '被引用总结 ${refs.length}', 'refs'),
+              ],
+            ),
+          ),
+          if (_tab == 'raw')
+            Builder(
+              builder: (context) {
+                final activeAudioView = (view != null && view.isMerged)
+                    ? view.mergedChildren[_selectedMergedSliceIdx.clamp(
+                        0,
+                        view.mergedChildren.length - 1,
+                      )]
+                    : view;
+                final clip = _audioClipFor(activeAudioView);
+                final currentWavPath = activeAudioView?.file.wavPath;
+                return Container(
+                  key: const Key('raw-sticky-player'),
+                  padding: const EdgeInsets.fromLTRB(22, 10, 22, 8),
+                  decoration: BoxDecoration(
+                    color: c.bg,
+                    border: Border(bottom: BorderSide(color: c.sep)),
+                  ),
+                  child: RawAudioPlayer(
+                    key: _playerKey,
+                    fileKey: activeAudioView?.file.deviceName ?? e.id,
+                    wavPath: currentWavPath,
+                    durationHintMs: activeAudioView?.file.durationMs,
+                    clipStartMs: clip.clipStartMs,
+                    clipEndMs: clip.clipEndMs,
+                    gapCountOverride: clip.gapCountOverride,
+                    padding: EdgeInsets.zero,
+                    onAudioDeleted: () => store.markRawAudioDeleted(
+                      fileId: activeAudioView?.file.id,
+                      deviceName: activeAudioView?.file.deviceName,
+                      wavPath: currentWavPath,
+                    ),
+                    onFilePositionChanged: (ms) {
+                      if (mounted && _activeFilePosMs != ms) {
+                        setState(() => _activeFilePosMs = ms);
+                      }
+                    },
+                  ),
+                );
+              },
+            ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(
+                22,
+                14,
+                22,
+                RCDims.pageBottomPad,
+              ),
+              children: [
+                ..._buildTab(c, store, e, refs, view),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -325,13 +341,13 @@ class _DetailPageState extends State<DetailPage> {
     return '${d.month}月${d.day}日 ${dow[d.weekday - 1]}';
   }
 
-  Widget _tabBtn(String label, String id) => Padding(
+  Widget _tabBtn(RCColorScheme c, String label, String id) => Padding(
     padding: const EdgeInsets.only(right: 18),
     child: TextButton(
       key: Key('det-tab-$id'),
       onPressed: () => setState(() => _tab = id),
       style: TextButton.styleFrom(
-        foregroundColor: _tab == id ? RCColors.label : RCColors.sec,
+        foregroundColor: _tab == id ? c.label : c.sec,
         padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 10),
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -347,6 +363,7 @@ class _DetailPageState extends State<DetailPage> {
   );
 
   List<Widget> _buildTab(
+    RCColorScheme c,
     AppStore store,
     RecordEvent e,
     List refs,
@@ -354,9 +371,9 @@ class _DetailPageState extends State<DetailPage> {
   ) {
     switch (_tab) {
       case 'dlg':
-        return _dialogWidgets(store, e, view);
+        return _dialogWidgets(c, store, e, view);
       case 'raw':
-        return _rawWidgets(store, e, view);
+        return _rawWidgets(c, store, e, view);
       case 'refs':
         return [
           for (final r in refs)
@@ -366,10 +383,10 @@ class _DetailPageState extends State<DetailPage> {
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Material(
-                    color: RCColors.card,
+                    color: c.card,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
-                      side: const BorderSide(color: RCColors.sep),
+                      side: BorderSide(color: c.sep),
                     ),
                     clipBehavior: Clip.antiAlias,
                     child: InkWell(
@@ -390,16 +407,17 @@ class _DetailPageState extends State<DetailPage> {
                                     r.title ?? '',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 15,
                                       fontWeight: FontWeight.w600,
+                                      color: c.label,
                                     ),
                                   ),
                                 ),
-                                const Icon(
+                                Icon(
                                   Icons.chevron_right,
                                   size: 16,
-                                  color: RCColors.ax,
+                                  color: c.ax,
                                 ),
                               ],
                             ),
@@ -411,25 +429,25 @@ class _DetailPageState extends State<DetailPage> {
                                     '${r.time} · 已选 ${r.srcIds.length} 片段',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 12,
-                                      color: RCColors.sec,
+                                      color: c.sec,
                                     ),
                                   ),
                                 ),
                                 if (picCount > 0) ...[
-                                  const Text(
+                                  Text(
                                     ' · ',
                                     style: TextStyle(
                                       fontSize: 12,
-                                      color: RCColors.sec,
+                                      color: c.sec,
                                     ),
                                   ),
                                   Text(
                                     '含 $picCount 张图片',
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 12,
-                                      color: RCColors.sec,
+                                      color: c.sec,
                                     ),
                                   ),
                                 ],
@@ -450,12 +468,20 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   List<Widget> _dialogWidgets(
+    RCColorScheme c,
     AppStore store,
     RecordEvent e,
     SegmentView? view,
   ) {
-    final lines = <({String spk, String text, String clock, int startSec, int endSec})>[];
-    if (view != null && view.turns.isNotEmpty) {
+    final eventAnchorSec = _secOfDayFromClock(e.time) ?? 0;
+    final hasEpochBase = view != null && view.file.startAtMs > 0;
+    final baseMidnightMs = hasEpochBase
+        ? _startOfDayEpochMs(view.file.startAtMs)
+        : 0;
+
+    final lines =
+        <({String spk, String text, String clock, int startSec, int endSec})>[];
+    if (hasEpochBase && view.turns.isNotEmpty) {
       for (final t in view.turns) {
         final ts = view.file.startAtMs + t.startMs;
         final te = view.file.startAtMs + t.endMs;
@@ -463,11 +489,11 @@ class _DetailPageState extends State<DetailPage> {
           spk: t.speakerLabel,
           text: t.text,
           clock: '${_hms(ts)}—${_hms(te)}',
-          startSec: _secOfDayFromEpoch(ts),
-          endSec: _secOfDayFromEpoch(te),
+          startSec: _monotonicSecFromEpoch(ts, baseMidnightMs),
+          endSec: _monotonicSecFromEpoch(te, baseMidnightMs),
         ));
       }
-    } else if (view != null && view.utterances.isNotEmpty) {
+    } else if (hasEpochBase && view.utterances.isNotEmpty) {
       for (final u in view.utterances) {
         final label = u.speakerLabel ?? '未区分';
         final ts = view.file.startAtMs + u.startMs;
@@ -476,19 +502,34 @@ class _DetailPageState extends State<DetailPage> {
           spk: label,
           text: u.text,
           clock: '${_hms(ts)}—${_hms(te)}',
-          startSec: _secOfDayFromEpoch(ts),
-          endSec: _secOfDayFromEpoch(te),
+          startSec: _monotonicSecFromEpoch(ts, baseMidnightMs),
+          endSec: _monotonicSecFromEpoch(te, baseMidnightMs),
         ));
       }
     } else {
+      var runningSec = eventAnchorSec;
       for (final l in e.dialog) {
         final rawClock = l.src.replaceFirst('来源 ', '');
-        final startSec =
-            _secOfDayFromClock(rawClock) ?? _secOfDayFromClock(e.time) ?? 0;
+        var startSec = _unwrapClockSec(
+          _secOfDayFromClock(rawClock) ?? runningSec,
+          eventAnchorSec,
+        );
+        while (startSec < runningSec - 6 * 3600) {
+          startSec += 86400;
+        }
         final tail = rawClock.contains('—')
             ? rawClock.split('—').last.trim()
             : rawClock;
-        final endSec = _secOfDayFromClock(tail) ?? startSec;
+        var endSec = _unwrapClockSec(
+          _secOfDayFromClock(tail) ?? startSec,
+          eventAnchorSec,
+        );
+        while (endSec < startSec) {
+          endSec += 86400;
+        }
+        if (endSec > runningSec) {
+          runningSec = endSec;
+        }
         lines.add((
           spk: l.spk,
           text: l.text,
@@ -502,9 +543,15 @@ class _DetailPageState extends State<DetailPage> {
     final activePhotos = store.activePhotosForEvent(e);
     final photoSecs = <int>[
       for (final p in activePhotos)
-        p.capturedAtMs != null
-            ? _secOfDayFromEpoch(p.capturedAtMs!)
-            : (_secOfDayFromClock(p.time) ?? _secOfDayFromClock(e.time) ?? 0),
+        if (hasEpochBase && p.capturedAtMs != null)
+          _monotonicSecFromEpoch(p.capturedAtMs!, baseMidnightMs)
+        else
+          _unwrapClockSec(
+            p.capturedAtMs != null
+                ? (_secOfDayFromClock(_hms(p.capturedAtMs!)) ?? eventAnchorSec)
+                : (_secOfDayFromClock(p.time) ?? eventAnchorSec),
+            eventAnchorSec,
+          ),
     ];
 
     String extractClockHead(String clock) {
@@ -513,7 +560,15 @@ class _DetailPageState extends State<DetailPage> {
     }
 
     // 同一说话人连续发言留在同一个气泡；短间隔拼成一段，停顿 >= 30 秒只在气泡内换段。
-    final meaningful = <({String spk, String text, String clock, int startSec, int endSec, int turnIndex})>[];
+    final meaningful =
+        <({
+          String spk,
+          String text,
+          String clock,
+          int startSec,
+          int endSec,
+          int turnIndex,
+        })>[];
     for (var turnIdx = 0; turnIdx < lines.length; turnIdx++) {
       final l = lines[turnIdx];
       if (!isMeaningfulSpeechText(l.text)) continue;
@@ -548,6 +603,7 @@ class _DetailPageState extends State<DetailPage> {
 
     final groups = <({
       int firstTurnIndex,
+      List<int> turnIndices,
       String rawSpk,
       String displaySpk,
       String avatarSpk,
@@ -556,9 +612,19 @@ class _DetailPageState extends State<DetailPage> {
       String startClock,
       int sortSec,
     })>[];
-    for (final bubble in bubbles) {
+    for (var bi = 0; bi < bubbles.length; bi++) {
+      final bubble = bubbles[bi];
+      final nextFirstIdx = bi + 1 < bubbles.length
+          ? bubbles[bi + 1].firstTurnIndex
+          : (1 << 30);
       final src = lineByIndex[bubble.firstTurnIndex];
       if (src == null) continue;
+      final turnIndices = <int>[
+        for (final m in meaningful)
+          if (m.turnIndex >= bubble.firstTurnIndex &&
+              m.turnIndex < nextFirstIdx)
+            m.turnIndex,
+      ];
       final displaySpk = lifeSpeakerLabel(
         store.displayTurnSpeaker(
           e,
@@ -569,6 +635,9 @@ class _DetailPageState extends State<DetailPage> {
       );
       groups.add((
         firstTurnIndex: bubble.firstTurnIndex,
+        turnIndices: turnIndices.isEmpty
+            ? <int>[bubble.firstTurnIndex]
+            : turnIndices,
         rawSpk: src.spk,
         displaySpk: displaySpk,
         avatarSpk: displaySpk,
@@ -582,14 +651,24 @@ class _DetailPageState extends State<DetailPage> {
     final entries = <({int sortSec, int order, Widget widget})>[];
     var order = 0;
     for (final g in groups) {
-      void openQuickSheet() => showQuickSpeakerSheet(
-        context,
-        store: store,
-        event: e,
-        turnIndex: g.firstTurnIndex,
-        rawSpeaker: g.rawSpk,
-        sampleQuote: g.paragraphs.join('\n'),
-      );
+      void openQuickSheet() {
+        store.setPendingMergedBubbleTurns(
+          e.id,
+          g.firstTurnIndex,
+          g.turnIndices,
+        );
+        unawaited(
+          showQuickSpeakerSheet(
+            context,
+            store: store,
+            event: e,
+            turnIndex: g.firstTurnIndex,
+            rawSpeaker: g.rawSpk,
+            sampleQuote: g.paragraphs.join('\n'),
+          ).whenComplete(store.clearPendingMergedBubbleTurns),
+        );
+      }
+
       entries.add((
         sortSec: g.sortSec,
         order: order++,
@@ -608,13 +687,14 @@ class _DetailPageState extends State<DetailPage> {
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _speakerColor(g.displaySpk),
+                    color: _speakerColor(g.displaySpk, isDark: c.isDark),
                   ),
                   child: Text(
                     _avatar(g.avatarSpk),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
+                      color: c.label,
                     ),
                   ),
                 ),
@@ -635,9 +715,7 @@ class _DetailPageState extends State<DetailPage> {
                               '${g.displaySpk} · ${g.startClock}',
                               style: TextStyle(
                                 fontSize: 11,
-                                color: g.canQuickName
-                                    ? RCColors.ink
-                                    : RCColors.sec,
+                                color: g.canQuickName ? c.ink : c.sec,
                                 fontWeight: g.canQuickName
                                     ? FontWeight.w500
                                     : FontWeight.w400,
@@ -646,10 +724,10 @@ class _DetailPageState extends State<DetailPage> {
                           ),
                           if (g.canQuickName) ...[
                             const SizedBox(width: 4),
-                            const Icon(
+                            Icon(
                               Icons.edit_outlined,
                               size: 11,
-                              color: RCColors.sec,
+                              color: c.sec,
                             ),
                           ],
                         ],
@@ -660,9 +738,9 @@ class _DetailPageState extends State<DetailPage> {
                       key: Key('turn-para-${e.id}-${g.firstTurnIndex}'),
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: RCColors.card,
+                        color: c.card,
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: RCColors.sep),
+                        border: Border.all(color: c.sep),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -674,7 +752,11 @@ class _DetailPageState extends State<DetailPage> {
                               key: Key(
                                 'turn-para-body-${e.id}-${g.firstTurnIndex}-$i',
                               ),
-                              style: const TextStyle(fontSize: 14, height: 1.5),
+                              style: TextStyle(
+                                fontSize: 14,
+                                height: 1.5,
+                                color: c.label,
+                              ),
                             ),
                           ],
                         ],
@@ -698,13 +780,14 @@ class _DetailPageState extends State<DetailPage> {
         final d = (l.startSec - sortSec).abs();
         if (bestDelta == null || d < bestDelta) {
           bestDelta = d;
-          nearestQuote = '${lifeSpeakerLabel(store.displaySpeaker(e, l.spk, includeGuessSuffix: false))}：${l.text}';
+          nearestQuote =
+              '${lifeSpeakerLabel(store.displaySpeaker(e, l.spk, includeGuessSuffix: false))}：${l.text}';
         }
       }
       entries.add((
         sortSec: sortSec,
         order: order++,
-        widget: _inlinePhotoCard(store, e, p, i, quoteText: nearestQuote),
+        widget: _inlinePhotoCard(c, store, e, p, i, quoteText: nearestQuote),
       ));
     }
 
@@ -714,7 +797,8 @@ class _DetailPageState extends State<DetailPage> {
     });
 
     final overviewText = e.longText.trim();
-    final joinedFirst = groups.isNotEmpty ? groups.first.paragraphs.join('\n') : '';
+    final joinedFirst =
+        groups.isNotEmpty ? groups.first.paragraphs.join('\n') : '';
     final showOverviewCard =
         groups.isNotEmpty &&
         isMeaningfulSpeechText(overviewText) &&
@@ -731,16 +815,16 @@ class _DetailPageState extends State<DetailPage> {
             key: const Key('detail-silent-empty'),
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: RCColors.card,
+              color: c.card,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: RCColors.sep),
+              border: Border.all(color: c.sep),
             ),
             child: Text(
               '这段时间没有识别到人声，可在「原始数据」回听原始录音。',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 height: 1.55,
-                color: RCColors.sec,
+                color: c.sec,
               ),
             ),
           ),
@@ -753,28 +837,28 @@ class _DetailPageState extends State<DetailPage> {
             width: double.infinity,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: RCColors.bg,
+              color: c.bg,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: RCColors.sep),
+              border: Border.all(color: c.sep),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   '阶段概述',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: RCColors.sec,
+                    color: c.sec,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   overviewText,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     height: 1.55,
-                    color: RCColors.ink,
+                    color: c.ink,
                   ),
                 ),
               ],
@@ -786,6 +870,7 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Widget _inlinePhotoCard(
+    RCColorScheme c,
     AppStore store,
     RecordEvent e,
     EventPhoto p,
@@ -804,9 +889,9 @@ class _DetailPageState extends State<DetailPage> {
           child: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: RCColors.card,
+              color: c.card,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: RCColors.sep),
+              border: Border.all(color: c.sep),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -829,14 +914,16 @@ class _DetailPageState extends State<DetailPage> {
                       child: hasFile
                           ? Image.file(File(p.path), fit: BoxFit.cover)
                           : ColoredBox(
-                              color: const Color(0xFFEAEAE4),
+                              color: c.isDark
+                                  ? const Color(0xFF242428)
+                                  : const Color(0xFFEAEAE4),
                               child: Center(
                                 child: Icon(
                                   p.source == 'dyj_camera'
                                       ? Icons.photo_camera_outlined
                                       : Icons.photo_outlined,
                                   size: 24,
-                                  color: RCColors.sec,
+                                  color: c.sec,
                                 ),
                               ),
                             ),
@@ -853,9 +940,9 @@ class _DetailPageState extends State<DetailPage> {
                         '$srcLabel · ${p.time}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: RCColors.sec,
+                          color: c.sec,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -869,15 +956,15 @@ class _DetailPageState extends State<DetailPage> {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: RCColors.bg,
+                            color: c.bg,
                             borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: RCColors.sep),
+                            border: Border.all(color: c.sep),
                           ),
-                          child: const Text(
+                          child: Text(
                             '不属于本段',
                             style: TextStyle(
                               fontSize: 11.5,
-                              color: RCColors.sec,
+                              color: c.sec,
                             ),
                           ),
                         ),
@@ -914,9 +1001,22 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
-  static int _secOfDayFromEpoch(int epochMs) {
+  static int _startOfDayEpochMs(int epochMs) {
     final d = DateTime.fromMillisecondsSinceEpoch(epochMs);
-    return d.hour * 3600 + d.minute * 60 + d.second;
+    return DateTime(d.year, d.month, d.day).millisecondsSinceEpoch;
+  }
+
+  /// 以录音起点当日零点为锚点计算单调递增秒数（跨午夜 `00:xx` 自动大于 `23:5x`）。
+  static int _monotonicSecFromEpoch(int epochMs, int baseMidnightMs) {
+    return ((epochMs - baseMidnightMs) / 1000).round();
+  }
+
+  /// 纯时钟字符串场景下处理跨午夜（例如起点 `23:50`，后续 `00:05` 自动 `+86400`）。
+  static int _unwrapClockSec(int rawSec, int anchorSec) {
+    if (anchorSec >= 18 * 3600 && rawSec < 12 * 3600) {
+      return rawSec + 86400;
+    }
+    return rawSec;
   }
 
   static int? _secOfDayFromClock(String raw) {
@@ -928,7 +1028,12 @@ class _DetailPageState extends State<DetailPage> {
     return h * 3600 + min * 60 + sec;
   }
 
-  List<Widget> _rawWidgets(AppStore store, RecordEvent e, SegmentView? view) {
+  List<Widget> _rawWidgets(
+    RCColorScheme c,
+    AppStore store,
+    RecordEvent e,
+    SegmentView? view,
+  ) {
     // 播放器已置顶吸顶在「原始数据」tab 顶部（raw-sticky-player），此处只滚句子流。
     final widgets = <Widget>[];
 
@@ -938,6 +1043,7 @@ class _DetailPageState extends State<DetailPage> {
         final parsedMs = _parseRelativeClockMs(l.src);
         widgets.add(
           _rawBubble(
+            c,
             '${_rawSpeakerLabel(store, e, l.spk)} · ${l.src}',
             l.text,
             bubbleKey: Key('raw-utt-$i'),
@@ -958,7 +1064,7 @@ class _DetailPageState extends State<DetailPage> {
           padding: const EdgeInsets.only(bottom: 10),
           child: Text(
             '连续 ${view.mergedChildren.length} 个无语音切片已合并展示，点选任一切片可在上方播放器回听对应原始音频：',
-            style: const TextStyle(fontSize: 12, color: RCColors.sec, height: 1.5),
+            style: TextStyle(fontSize: 12, color: c.sec, height: 1.5),
           ),
         ),
       );
@@ -967,11 +1073,13 @@ class _DetailPageState extends State<DetailPage> {
         final cStart = child.segment.startAtMs;
         final cEnd =
             child.segment.endAtMs ??
-            (cStart + (child.file.durationMs > 0 ? child.file.durationMs : 1000));
+            (cStart +
+                (child.file.durationMs > 0 ? child.file.durationMs : 1000));
         final durSec = ((cEnd - cStart) / 1000).round().clamp(1, 86400);
         final active = i == selectedIdx;
         widgets.add(
           _rawBubble(
+            c,
             '切片 ${i + 1} · ${_hms(cStart)}—${_hms(cEnd)} · $durSec 秒',
             child.file.deviceName,
             bubbleKey: Key('raw-merged-slice-$i'),
@@ -998,7 +1106,7 @@ class _DetailPageState extends State<DetailPage> {
           padding: const EdgeInsets.only(bottom: 10),
           child: Text(
             '连续 ${view.mergedChildren.length} 个分片已按 <30s 停顿自动合并，点击任一分片切换上方播放器回听对应原始 WAV：',
-            style: const TextStyle(fontSize: 12, color: RCColors.sec, height: 1.5),
+            style: TextStyle(fontSize: 12, color: c.sec, height: 1.5),
           ),
         ),
       );
@@ -1007,11 +1115,13 @@ class _DetailPageState extends State<DetailPage> {
         final cStart = child.segment.startAtMs;
         final cEnd =
             child.segment.endAtMs ??
-            (cStart + (child.file.durationMs > 0 ? child.file.durationMs : 1000));
+            (cStart +
+                (child.file.durationMs > 0 ? child.file.durationMs : 1000));
         final durSec = ((cEnd - cStart) / 1000).round().clamp(1, 86400);
         final active = i == selectedIdx;
         widgets.add(
           _rawBubble(
+            c,
             '分片 ${i + 1} · ${_hms(cStart)}—${_hms(cEnd)} · $durSec 秒',
             child.file.deviceName,
             bubbleKey: Key('raw-merged-slice-$i'),
@@ -1026,9 +1136,11 @@ class _DetailPageState extends State<DetailPage> {
         );
         for (final u in child.utterances) {
           final pos = _activeFilePosMs;
-          final uActive = active && pos != null && pos >= u.startMs && pos <= u.endMs;
+          final uActive =
+              active && pos != null && pos >= u.startMs && pos <= u.endMs;
           widgets.add(
             _rawBubble(
+              c,
               '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
               '${_hms(child.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
               u.text,
@@ -1057,9 +1169,9 @@ class _DetailPageState extends State<DetailPage> {
     if (view.slices.isEmpty) {
       if (view.utterances.isEmpty) {
         widgets.add(
-          const Text(
+          Text(
             '暂无原始转写（静音或模型未识别到语音）。',
-            style: TextStyle(fontSize: 13, color: RCColors.sec),
+            style: TextStyle(fontSize: 13, color: c.sec),
           ),
         );
       } else {
@@ -1068,6 +1180,7 @@ class _DetailPageState extends State<DetailPage> {
           final active = pos != null && pos >= u.startMs && pos <= u.endMs;
           widgets.add(
             _rawBubble(
+              c,
               '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
               '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
               u.text,
@@ -1097,10 +1210,10 @@ class _DetailPageState extends State<DetailPage> {
                 '[${_hms(view.file.startAtMs + slice.startMs)}—'
                 '${_hms(view.file.startAtMs + slice.endMs)}]',
                 key: Key('raw-slice-${slice.id}'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
-                  color: RCColors.sec,
+                  color: c.sec,
                 ),
               ),
             ),
@@ -1112,6 +1225,7 @@ class _DetailPageState extends State<DetailPage> {
         final active = pos != null && pos >= u.startMs && pos <= u.endMs;
         widgets.add(
           _rawBubble(
+            c,
             '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
             '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
             u.text,
@@ -1128,7 +1242,7 @@ class _DetailPageState extends State<DetailPage> {
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(
               '（静音约 $seconds 秒）',
-              style: const TextStyle(fontSize: 12, color: RCColors.ax),
+              style: TextStyle(fontSize: 12, color: c.ax),
             ),
           ),
         );
@@ -1138,16 +1252,20 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Widget _rawBubble(
+    RCColorScheme c,
     String meta,
     String text, {
     Key? bubbleKey,
     bool active = false,
     VoidCallback? onTap,
   }) {
+    final idleBg = c.isDark
+        ? const Color(0xFF161619)
+        : const Color(0xFFF6F6F2);
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Material(
-        color: active ? RCColors.card : const Color(0xFFF6F6F2),
+        color: active ? c.card : idleBg,
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           key: bubbleKey,
@@ -1158,7 +1276,7 @@ class _DetailPageState extends State<DetailPage> {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: active ? RCColors.label : Colors.transparent,
+                color: active ? c.label : (c.isDark ? c.sep : Colors.transparent),
                 width: 1.2,
               ),
             ),
@@ -1172,7 +1290,7 @@ class _DetailPageState extends State<DetailPage> {
                         meta,
                         style: TextStyle(
                           fontSize: 11,
-                          color: active ? RCColors.ink : RCColors.sec,
+                          color: active ? c.ink : c.sec,
                           fontWeight:
                               active ? FontWeight.w600 : FontWeight.w400,
                         ),
@@ -1184,12 +1302,19 @@ class _DetailPageState extends State<DetailPage> {
                             ? Icons.graphic_eq_rounded
                             : Icons.play_circle_outline_rounded,
                         size: 14,
-                        color: active ? RCColors.label : RCColors.ax,
+                        color: active ? c.label : c.ax,
                       ),
                   ],
                 ),
                 const SizedBox(height: 3),
-                Text(text, style: const TextStyle(fontSize: 14, height: 1.55)),
+                Text(
+                  text,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.55,
+                    color: c.ink,
+                  ),
+                ),
               ],
             ),
           ),
@@ -1240,13 +1365,20 @@ class _DetailPageState extends State<DetailPage> {
     return String.fromCharCode(cleaned.runes.first);
   }
 
-  static Color _speakerColor(String speaker) {
-    const colors = [
+  static Color _speakerColor(String speaker, {required bool isDark}) {
+    const lightColors = [
       Color(0xFFDDE9DD),
       Color(0xFFE8E8E4),
       Color(0xFFE3E6F0),
       Color(0xFFF0E6DD),
     ];
+    const darkColors = [
+      Color(0xFF1F3324),
+      Color(0xFF2B2B30),
+      Color(0xFF22293A),
+      Color(0xFF362A20),
+    ];
+    final colors = isDark ? darkColors : lightColors;
     final match = RegExp(r'\d+').firstMatch(speaker);
     final n = match != null
         ? int.tryParse(match.group(0)!) ?? 0

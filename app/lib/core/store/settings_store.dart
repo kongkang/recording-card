@@ -181,6 +181,20 @@ class SettingsStore extends ChangeNotifier {
   /// 取反（点整行/开关都走这里）。
   Future<void> toggle(String key) => setValue(key, !value(key));
 
+  /// 注销账号或重置本机偏好时清空全部已保存开关项并恢复默认。
+  Future<void> resetAll() async {
+    _values.clear();
+    _touched.clear();
+    for (final item in items) {
+      try {
+        await _store.remove(item.key);
+      } catch (_) {
+        // 忽略重置单个键异常
+      }
+    }
+    if (!_disposed) notifyListeners();
+  }
+
   @override
   void dispose() {
     _disposed = true;

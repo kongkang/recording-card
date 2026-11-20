@@ -65,19 +65,21 @@ class _BatteryIconState extends State<BatteryIcon>
   }
 
   // 电量未知（未连接/未回报）显示中性灰，不假装"电量低"
-  Color get _color {
-    if (widget.charging && widget.level <= 0) return RCColors.ok;
+  Color _color(RCColorScheme c) {
+    if (widget.charging && widget.level <= 0) return c.ok;
     return widget.level <= 0
-        ? RCColors.ax
+        ? c.ax
         : widget.level < 20
-        ? RCColors.danger
+        ? c.danger
         : widget.level < 40
-        ? const Color(0xFFFF9500)
-        : RCColors.ok;
+        ? c.warn
+        : c.ok;
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
+    final col = _color(c);
     final s = widget.scale;
     final maxFillWidth = 19 * s - 3.2 * s - 2.6 * s;
     final rawWidth = widget.charging && widget.level <= 0
@@ -105,7 +107,7 @@ class _BatteryIconState extends State<BatteryIcon>
                 width: 19 * s,
                 height: 11 * s,
                 decoration: BoxDecoration(
-                  border: Border.all(color: _color, width: 1.3),
+                  border: Border.all(color: col, width: 1.3),
                   borderRadius: BorderRadius.circular(3 * s),
                 ),
                 child: Align(
@@ -117,7 +119,7 @@ class _BatteryIconState extends State<BatteryIcon>
                       margin: EdgeInsets.all(1.6 * s),
                       width: fillWidth,
                       decoration: BoxDecoration(
-                        color: _color,
+                        color: col,
                         borderRadius: BorderRadius.circular(1 * s),
                       ),
                     ),
@@ -129,7 +131,7 @@ class _BatteryIconState extends State<BatteryIcon>
                   RCIconKind.bolt,
                   key: const Key('batt-bolt'),
                   size: 10.5 * s,
-                  color: RCColors.label,
+                  color: c.label,
                 ),
             ],
           ),
@@ -138,7 +140,7 @@ class _BatteryIconState extends State<BatteryIcon>
             width: 2 * s,
             height: 4.5 * s,
             decoration: BoxDecoration(
-              color: _color,
+              color: col,
               borderRadius: BorderRadius.circular(1 * s),
             ),
           ),
@@ -223,7 +225,7 @@ class _HwCapsuleState extends State<HwCapsule>
     super.dispose();
   }
 
-  Widget _dot({bool forceOk = false}) {
+  Widget _dot(RCColorScheme r, {bool forceOk = false}) {
     return Container(
       key: const Key('capsule-dot'),
       width: 7,
@@ -231,8 +233,8 @@ class _HwCapsuleState extends State<HwCapsule>
       decoration: BoxDecoration(
         // 蓝=掉线自动重连中；绿=正在运行（录音中/本机录音）；橙=已连接待机
         color: widget.reconnecting
-            ? RCColors.info
-            : ((forceOk || widget.recording) ? RCColors.ok : RCColors.warn),
+            ? r.info
+            : ((forceOk || widget.recording) ? r.ok : r.warn),
         shape: BoxShape.circle,
       ),
     );
@@ -273,9 +275,9 @@ class _HwCapsuleState extends State<HwCapsule>
                             curve: const Interval(0, 0.45),
                           ),
                         ),
-                        child: _dot(),
+                        child: _dot(r),
                       )
-                    : _dot()
+                    : _dot(r)
               else if (localRec)
                 FadeTransition(
                   opacity: Tween(begin: 0.35, end: 1.0).animate(
@@ -284,7 +286,7 @@ class _HwCapsuleState extends State<HwCapsule>
                       curve: const Interval(0, 0.45),
                     ),
                   ),
-                  child: _dot(forceOk: true),
+                  child: _dot(r, forceOk: true),
                 )
               else
                 Container(
@@ -293,15 +295,15 @@ class _HwCapsuleState extends State<HwCapsule>
                   height: 7,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    border: Border.all(color: RCColors.ax, width: 1.4),
+                    border: Border.all(color: r.ax, width: 1.4),
                   ),
                 ),
               const SizedBox(width: 6),
               if (widget.reconnecting)
-                const Text(
+                Text(
                   '连接中…',
-                  key: Key('capsule-retry'),
-                  style: TextStyle(fontSize: 12, color: RCColors.sec),
+                  key: const Key('capsule-retry'),
+                  style: TextStyle(fontSize: 12, color: r.sec),
                 )
               else if (widget.connected)
                 BatteryIcon(
@@ -310,16 +312,16 @@ class _HwCapsuleState extends State<HwCapsule>
                   charging: widget.charging,
                 )
               else if (localRec)
-                const Text(
+                Text(
                   '本机录音',
-                  key: Key('capsule-phone-rec'),
-                  style: TextStyle(fontSize: 12, color: RCColors.label),
+                  key: const Key('capsule-phone-rec'),
+                  style: TextStyle(fontSize: 12, color: r.label),
                 )
               else
-                const Text(
+                Text(
                   '无设备',
-                  key: Key('capsule-nodata'),
-                  style: TextStyle(fontSize: 12, color: RCColors.sec),
+                  key: const Key('capsule-nodata'),
+                  style: TextStyle(fontSize: 12, color: r.sec),
                 ),
             ],
           ),
@@ -406,7 +408,7 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay>
                   margin: EdgeInsets.fromLTRB(10, 10, 10, 10 + bottomInset),
                   padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
                   decoration: BoxDecoration(
-                    color: RCColors.card,
+                    color: context.rc.card,
                     borderRadius: BorderRadius.circular(18),
                   ),
                   child: SingleChildScrollView(
@@ -457,7 +459,7 @@ class _Row extends StatelessWidget {
               label,
               overflow: TextOverflow.ellipsis,
               maxLines: 1,
-              style: const TextStyle(fontSize: 14, color: RCColors.ink),
+              style: TextStyle(fontSize: 14, color: context.rc.ink),
             ),
           ),
           const SizedBox(width: 12),
@@ -1027,8 +1029,8 @@ class _MainView extends StatelessWidget {
             key: const Key('sheet-close'),
             onPressed: store.closeSheet,
             style: FilledButton.styleFrom(
-              backgroundColor: RCColors.label,
-              foregroundColor: Colors.white,
+              backgroundColor: context.rc.label,
+              foregroundColor: context.rc.onLabel,
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1226,8 +1228,8 @@ class _ConnectView extends StatelessWidget {
             key: const Key('dev-rescan'),
             onPressed: busy ? null : () => store.startScan(),
             style: FilledButton.styleFrom(
-              backgroundColor: RCColors.label,
-              foregroundColor: Colors.white,
+              backgroundColor: context.rc.label,
+              foregroundColor: context.rc.onLabel,
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1262,8 +1264,8 @@ class _ConnectView extends StatelessWidget {
             key: const Key('sheet-close'),
             onPressed: store.closeSheet,
             style: FilledButton.styleFrom(
-              backgroundColor: RCColors.label,
-              foregroundColor: Colors.white,
+              backgroundColor: context.rc.label,
+              foregroundColor: context.rc.onLabel,
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),

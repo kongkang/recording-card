@@ -98,7 +98,7 @@ class _GatewayModelTile extends StatelessWidget {
             Icon(
               selected ? Icons.radio_button_checked : Icons.radio_button_off,
               size: 18,
-              color: selected ? RCColors.ok : c.ax,
+              color: selected ? c.ok : c.ax,
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -107,9 +107,9 @@ class _GatewayModelTile extends StatelessWidget {
                 style: TextStyle(fontSize: 13.5, color: c.label),
               ),
             ),
-            const Text(
+            Text(
               '网关',
-              style: TextStyle(fontSize: 11, color: RCColors.okInk),
+              style: TextStyle(fontSize: 11, color: c.okInk),
             ),
           ],
         ),
@@ -188,10 +188,10 @@ class DeveloperTaskSection extends StatelessWidget {
     final store = StoreScope.maybeOf(context);
     final scheduler = store?.taskScheduler;
     if (scheduler == null) {
-      return const Text(
+      return Text(
         '定时任务还没有挂到当前页面。正式启动后会在这里列出短轮、中轮和长轮。',
-        key: Key('dev-task-unmounted'),
-        style: TextStyle(fontSize: 12, height: 1.45, color: RCColors.sec),
+        key: const Key('dev-task-unmounted'),
+        style: TextStyle(fontSize: 12, height: 1.45, color: context.rc.sec),
       );
     }
     return ListenableBuilder(
@@ -464,7 +464,7 @@ class _TaskEditDialogState extends State<_TaskEditDialog> {
               const SizedBox(height: 8),
               Text(
                 _error!,
-                style: const TextStyle(color: RCColors.danger, fontSize: 12),
+                style: TextStyle(color: context.rc.danger, fontSize: 12),
               ),
             ],
           ],
@@ -570,9 +570,9 @@ class _DeveloperReplaySectionState extends State<DeveloperReplaySection> {
               ),
               const SizedBox(height: 12),
               if (store == null)
-                const Text(
+                Text(
                   '当前为独立预览环境，无法操作本地录音库。',
-                  style: TextStyle(fontSize: 12, color: RCColors.sec),
+                  style: TextStyle(fontSize: 12, color: c.sec),
                 )
               else
                 ListenableBuilder(

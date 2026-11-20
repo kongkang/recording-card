@@ -243,8 +243,10 @@ class _HomeGateState extends State<_HomeGate> {
     );
     _memorySearch = MemorySearchService(
       index: LocalMemoryIndex(),
-      corpus: () =>
-          MemoryCorpus(events: _store.events, summaries: _store.summaries),
+      corpus: () => MemoryCorpus(
+        events: _store.eventsWithResolvedSpeakers(),
+        summaries: _store.summariesWithResolvedSpeakers(),
+      ),
       chat: (turns) => _modelGateway.chat([
         for (final turn in turns)
           ChatMessage(role: turn.role, content: turn.content),
@@ -322,21 +324,15 @@ class _HomeGateState extends State<_HomeGate> {
     Float32List samples, {
     int sampleRate = 16000,
   }) async {
-    final paths = await _models.resolve();
-    if (paths != null && !paths.usesSystemAsr && paths.canTranscribe) {
-      await _asr.load(
-        modelPath: paths.asrModelPath,
-        tokensPath: paths.tokensPath,
-      );
-      final res = await _asr.transcribe(samples, sampleRate: sampleRate);
-      return res.text.trim();
-    }
-    await _systemSpeech.requestAuthorization();
-    final res = await _systemSpeech.transcribeSamples(
+    return transcribeVoiceCommandWithDualFallback(
       samples,
       sampleRate: sampleRate,
+      systemSpeech: _systemSpeech,
+      localAsr: _asr.localEngine,
+      installer: _installer,
+      modelProvider: _models,
+      preferSenseVoice: _agentConfig.preferredAsrEngine == 'sensevoice',
     );
-    return res.text.trim();
   }
 
   Future<String?> _lookupExistingTranscript(int startMs, int endMs) async {
