@@ -66,6 +66,7 @@ class OrganizedSection {
     this.paragraphs = const [],
     this.summary = '',
     this.evidenceSliceIds = const [],
+    this.lowValue = false,
   });
 
   final String anchorId;
@@ -78,6 +79,7 @@ class OrganizedSection {
   final List<OrganizedParagraph> paragraphs;
   final String summary;
   final List<String> evidenceSliceIds;
+  final bool lowValue;
 
   Map<String, dynamic> toJson() => {
     'anchorId': anchorId,
@@ -90,6 +92,7 @@ class OrganizedSection {
     'paragraphs': [for (final p in paragraphs) p.toJson()],
     if (summary.isNotEmpty) 'summary': summary,
     if (evidenceSliceIds.isNotEmpty) 'evidenceSliceIds': evidenceSliceIds,
+    if (lowValue) 'lv': true,
   };
 
   factory OrganizedSection.fromJson(Map<String, dynamic> json) {
@@ -111,6 +114,7 @@ class OrganizedSection {
       ],
       summary: copy.summary,
       evidenceSliceIds: SectionCopy.evidenceSliceIds(json),
+      lowValue: json['lv'] == true || json['lowValue'] == true,
     );
   }
 
@@ -127,6 +131,7 @@ class OrganizedSection {
     startAtMs: startAtMs,
     endAtMs: endAtMs,
     evidenceSliceIds: evidenceSliceIds,
+    lowValue: lowValue,
   );
 }
 
@@ -203,6 +208,7 @@ class OrganizedPayload {
           ],
           summary: section.summary.isNotEmpty ? section.summary : section.brief,
           evidenceSliceIds: section.evidenceSliceIds,
+          lowValue: section.lowValue,
         ),
     ];
   }
@@ -260,19 +266,21 @@ class OrganizePassService {
     }
     final grouped = <String, List<OrganizedSection>>{};
     for (final section in sections) {
-      grouped.putIfAbsent(section.anchorId, () => []).add(section);
+      grouped.putIfAbsent(_dayKey(section.startAtMs), () => []).add(section);
     }
     final merged = <OrganizedSection>[];
     var calls = 0;
     var inputChars = 0;
     var outputChars = 0;
     for (final entry in grouped.entries) {
-      if (entry.value.length < 2) {
-        merged.addAll(entry.value);
+      final daySections = [...entry.value]
+        ..sort((a, b) => a.startAtMs.compareTo(b.startAtMs));
+      if (daySections.length < 2) {
+        merged.addAll(daySections);
         continue;
       }
       final chunks = _chunks(
-        entry.value,
+        daySections,
         overlapSections: overlapSections,
         overlapMinutes: overlapMinutes,
         overlapByMinutes: overlapByMinutes,
@@ -315,7 +323,7 @@ class OrganizePassService {
           );
         }
         outputChars += raw.length;
-        final parsed = _parse(raw, fresh, entry.key);
+        final parsed = _parse(raw, fresh, fresh.first.anchorId);
         if (parsed == null) {
           return OrganizePassResult(
             sections: const [],
@@ -336,18 +344,23 @@ class OrganizePassService {
     );
   }
 
+  static String _dayKey(int epochMs) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(epochMs).toLocal();
+    return '${dt.year}-${dt.month}-${dt.day}';
+  }
+
   String _systemPrompt(String prompt) {
     final style = prompt.trim().isEmpty
-        ? '把同一话题的相邻阶段合并成更连贯的长段。'
+        ? '把同一活动或专注状态的相邻阶段归拢成更连贯的沉浸式记录。'
         : prompt.trim();
     return '''
 $style
 
 你收到的是上一轮已经整理好的阶段，不是原始逐句转写。只依据这些阶段里的事实，不要编造新的事件、人名或结论。
 overlapContext 只用来衔接，不要原样重复输出。
-按内容或时间事件合并阶段，不要按逐词逐句或原始短切片切碎。
+把同处于一段连续工作/开发/学习/讨论状态的相邻阶段归拢合并为一条时间维度的沉浸记录；中间一两分钟的零碎分心插话若属同一工作时段可顺滑并入主记录；脱离主活动且无实质价值的 1~2 句碎语标为 "lowValue": true。严禁生成单字标题。
 只输出一个 JSON 对象，不要 Markdown：
-{"sections":[{"title":"","brief":"","summary":"","overview":"","sourceIndexes":[0],"paragraphs":[{"speaker":"","text":""}]}]}
+{"sections":[{"title":"","brief":"","summary":"","overview":"","lowValue":false,"sourceIndexes":[0],"paragraphs":[{"speaker":"","text":""}]}]}
 sourceIndexes 指向本次 sections 数组的下标。能合并的阶段放进同一个 sourceIndexes。
 若只返回 summary，将同时用作 brief 与 overview。不要把情绪或其他工程标记写进标题、摘要或段落。
 '''
@@ -477,9 +490,15 @@ sourceIndexes 指向本次 sections 数组的下标。能合并的阶段放进�
       final inheritedEvidence = <String>[
         for (final source in sources) ...source.evidenceSliceIds,
       ];
+      final resolvedAnchor = sources.first.anchorId.trim().isNotEmpty
+          ? sources.first.anchorId.trim()
+          : anchorId;
+      final isLowValue =
+          map['lowValue'] == true ||
+          (map['lowValue'] == null && sources.every((s) => s.lowValue));
       parsed.add(
         OrganizedSection(
-          anchorId: anchorId,
+          anchorId: resolvedAnchor,
           title: title.isEmpty ? sources.first.title : title,
           brief: brief.isEmpty ? sources.first.brief : brief,
           overview: overview.isEmpty ? sources.first.overview : overview,
@@ -494,6 +513,7 @@ sourceIndexes 指向本次 sections 数组的下标。能合并的阶段放进�
             map,
             fallback: inheritedEvidence,
           ),
+          lowValue: isLowValue,
         ),
       );
     }

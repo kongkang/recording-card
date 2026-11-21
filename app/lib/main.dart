@@ -235,6 +235,9 @@ class _HomeGateState extends State<_HomeGate> {
       generator: _summaries,
       status: _recordingStatus,
     );
+    _store.deferredBatchTranscription = true;
+    _syncTranscribeCycle();
+    _agentConfig.addListener(_syncTranscribeCycle);
     _agentChat = AgentChatController(
       appStore: _store,
       agentConfig: _agentConfig,
@@ -436,8 +439,15 @@ class _HomeGateState extends State<_HomeGate> {
     _wasSignedIn = signedIn;
   }
 
+  void _syncTranscribeCycle() {
+    _store.transcribeCycleMinutes = _agentConfig.transcribeCycleMinutes;
+    _recordingStatus.transcribeCycleMinutes =
+        _agentConfig.transcribeCycleMinutes;
+  }
+
   @override
   void dispose() {
+    _agentConfig.removeListener(_syncTranscribeCycle);
     _taskRunner?.stop();
     _scheduler?.dispose();
     _auth.removeListener(_onAuthChanged);

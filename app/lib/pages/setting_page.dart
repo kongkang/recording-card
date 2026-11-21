@@ -516,6 +516,10 @@ class _SettingPageState extends State<SettingPage> {
                     const _RowDivider(),
                     _photoAutoSyncRow(context),
                   ],
+                  if (group.title == '转录与清洗') ...<Widget>[
+                    const _RowDivider(),
+                    _transcribeCycleRow(context),
+                  ],
                 ],
               ),
             ],
@@ -585,6 +589,140 @@ class _SettingPageState extends State<SettingPage> {
         ),
       ),
     );
+  }
+
+  /// 批量转写与整理周期行（独立锚点 `set-transcribe-cycle`，不占用 `sw-0..sw-5`）。
+  Widget _transcribeCycleRow(BuildContext context) {
+    final c = context.rc;
+    return Semantics(
+      container: true,
+      button: true,
+      label: '批量转写与整理周期',
+      onTap: () => unawaited(_showTranscribeCycleSheet(context)),
+      child: ExcludeSemantics(
+        child: GestureDetector(
+          key: const Key('set-transcribe-cycle'),
+          behavior: HitTestBehavior.opaque,
+          onTap: () => unawaited(_showTranscribeCycleSheet(context)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: RCDims.settingRow),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Text(
+                          '批量转写与整理周期',
+                          style: TextStyle(
+                            fontSize: 15,
+                            height: 1.3,
+                            color: c.label,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '切片先静默存盘，到达周期或查看时统一转写归拢',
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.3,
+                            color: c.sec,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    _agent.transcribeCycleLabel,
+                    key: const Key('sv-transcribe-cycle'),
+                    style: TextStyle(fontSize: 13, color: c.sec),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.chevron_right, size: 18, color: c.ax),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showTranscribeCycleSheet(BuildContext context) async {
+    const options = <(int minutes, String title, String subtitle)>[
+      (15, '每 15 分钟（推荐）', '平衡电耗与信息及时性，查看或停录时也会立即补齐'),
+      (30, '每 30 分钟', '减少唤醒频次，适合长时间连续办公/会议'),
+      (60, '每 60 分钟', '最大程度节省电量，主要在查看或停录时汇总整理'),
+    ];
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: context.rc.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetCtx) {
+        final c = sheetCtx.rc;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '批量转写与整理周期',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: c.label,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '录音期间切片静默存盘，避免 1 分钟碎片；到达周期、切回查看或停止录音时统一转写并按活动归拢。',
+                  style: TextStyle(fontSize: 12.5, height: 1.4, color: c.sec),
+                ),
+                const SizedBox(height: 12),
+                for (final opt in options)
+                  ListTile(
+                    key: Key('cycle-opt-${opt.$1}'),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 6),
+                    title: Text(
+                      opt.$2,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: _agent.transcribeCycleMinutes == opt.$1
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                        color: c.label,
+                      ),
+                    ),
+                    subtitle: Text(
+                      opt.$3,
+                      style: TextStyle(fontSize: 12, color: c.sec),
+                    ),
+                    trailing: _agent.transcribeCycleMinutes == opt.$1
+                        ? const Icon(Icons.check_circle, color: RCColors.ok)
+                        : null,
+                    onTap: () => Navigator.of(sheetCtx).pop(opt.$1),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (picked == null) return;
+    await _agent.setTranscribeCycleMinutes(picked);
+    if (!context.mounted) return;
+    final appStore = StoreScope.maybeOf(context);
+    if (appStore != null) {
+      appStore.transcribeCycleMinutes = picked;
+    }
   }
 
   /// 拍照数据自动对齐开关行（独立锚点 `set-photo-import` / `sw-photo-sync`，不占用 `sw-0..sw-5`）。

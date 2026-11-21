@@ -389,7 +389,12 @@ class AgentConfigStore extends ChangeNotifier {
 
   // ── 开发者设置：连续录音清洗周期与层叠重叠策略 ─────────────
   /// 阶段清洗触发周期（分钟，支持 1..180 分钟，从分钟到小时可调）。
-  int cleanCycleMinutes = 10;
+  int cleanCycleMinutes = 15;
+
+  /// 录音静默切片落盘后的批量转写与归拢周期（分钟，支持 15 / 30 / 60 等，默认 15 分钟）。
+  int transcribeCycleMinutes = 15;
+
+  String get transcribeCycleLabel => '每 $transcribeCycleMinutes 分钟';
 
   /// 遇到 >=1 分钟静音空白或停止录音时自动提前收敛清洗。
   bool cleanOnSilenceGap = true;
@@ -671,6 +676,11 @@ class AgentConfigStore extends ChangeNotifier {
         10080,
       );
     }
+    if (data['transcribeCycleMinutes'] is num) {
+      transcribeCycleMinutes = (data['transcribeCycleMinutes'] as num)
+          .toInt()
+          .clamp(5, 180);
+    }
     if (data['cleanOnSilenceGap'] is bool) {
       cleanOnSilenceGap = data['cleanOnSilenceGap'] as bool;
     }
@@ -903,6 +913,15 @@ class AgentConfigStore extends ChangeNotifier {
   Future<void> setCleanCycleMinutes(int minutes) async {
     final next = minutes.clamp(1, 10080);
     if (next == cleanCycleMinutes) return;
+    cleanCycleMinutes = next;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setTranscribeCycleMinutes(int minutes) async {
+    final next = minutes.clamp(5, 180);
+    if (next == transcribeCycleMinutes && cleanCycleMinutes == next) return;
+    transcribeCycleMinutes = next;
     cleanCycleMinutes = next;
     notifyListeners();
     await _save();
@@ -1190,6 +1209,7 @@ class AgentConfigStore extends ChangeNotifier {
       'ctx': contextMode,
       'temp': temperature,
       'cleanCycleMinutes': cleanCycleMinutes,
+      'transcribeCycleMinutes': transcribeCycleMinutes,
       'cleanOnSilenceGap': cleanOnSilenceGap,
       'cleanOverlapMode': cleanOverlapMode,
       'cleanOverlapParagraphs': cleanOverlapParagraphs,

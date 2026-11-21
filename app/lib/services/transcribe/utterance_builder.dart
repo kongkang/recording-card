@@ -32,19 +32,38 @@ bool isMeaningfulSpeechText(String text) {
   return _meaningfulChar.hasMatch(cleaned);
 }
 
-/// 从有效语音中提取干净可读的短标题（彻底杜绝纯标点与「实时切片 #N」）。
+/// 统计字符串里的字母和数字有效字符数（忽略标点与空白）。
+int countMeaningfulChars(String text) {
+  final cleaned = text.replaceAll(_inlineSpecialTag, '').trim();
+  if (cleaned.isEmpty) return 0;
+  return _meaningfulChar.allMatches(cleaned).length;
+}
+
+/// 从有效语音中提取干净可读的短标题（彻底杜绝纯标点、单字标题如「我」与「实时切片 #N」）。
 String buildReadableFallbackTitle(
   String text, {
-  String fallback = '语音对话',
+  String fallback = '简短语音',
 }) {
   final stripped = text.replaceAll(_inlineSpecialTag, '').trim();
   if (!isMeaningfulSpeechText(stripped)) return fallback;
   final clauses = stripped
       .split(RegExp(r'[\n。！？!?，,；;]+'))
       .map((s) => s.trim())
-      .where(isMeaningfulSpeechText);
-  final first = clauses.isEmpty ? stripped : clauses.first;
-  return first.length <= 18 ? first : '${first.substring(0, 18)}…';
+      .where(isMeaningfulSpeechText)
+      .toList();
+  if (clauses.isEmpty) {
+    return countMeaningfulChars(stripped) < 3 ? fallback : stripped;
+  }
+  final totalMeaningful = countMeaningfulChars(clauses.join());
+  if (totalMeaningful < 3) return fallback;
+  var candidate = clauses.first;
+  var idx = 1;
+  while (countMeaningfulChars(candidate) < 2 && idx < clauses.length) {
+    candidate = '$candidate，${clauses[idx]}';
+    idx++;
+  }
+  if (countMeaningfulChars(candidate) < 2) return fallback;
+  return candidate.length <= 18 ? candidate : '${candidate.substring(0, 18)}…';
 }
 
 /// 优先使用 token 时间戳；不可用时按标点 + 比例兜底。

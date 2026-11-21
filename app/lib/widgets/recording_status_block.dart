@@ -83,7 +83,7 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
           RecordingPhase.recording =>
             recDetail != null && recDetail.isNotEmpty
                 ? '已录 ${_clock(widget.controller.elapsedSeconds)} · $recDetail'
-                : '已录 ${_clock(widget.controller.elapsedSeconds)} · 每满 1 分钟本地转写',
+                : '已录 ${_clock(widget.controller.elapsedSeconds)} · 每满 ${widget.controller.transcribeCycleMinutes} 分钟或查看时转写',
           RecordingPhase.syncing => widget.controller.detail ?? '正在整理最近一段…',
           RecordingPhase.transcribing =>
             recDetail != null && recDetail.isNotEmpty

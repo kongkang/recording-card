@@ -402,7 +402,12 @@ class RecordingPipeline {
     for (final session in liveSessions) {
       if (!session.coversCardFile(source)) continue;
       final hasLocalSlice = localFiles.any((f) {
-        if (f.stage != RecordingStage.ready) return false;
+        final hasLocalWav =
+            f.stage == RecordingStage.ready ||
+            (f.wavPath != null &&
+                f.wavPath!.isNotEmpty &&
+                File(f.wavPath!).existsSync());
+        if (!hasLocalWav) return false;
         if (session.sliceKeys.contains(f.deviceName)) return true;
         if (session.deviceSessionId != null &&
             session.deviceSessionId!.isNotEmpty &&
@@ -415,6 +420,52 @@ class RecordingPipeline {
       if (hasLocalSlice) return true;
     }
     return false;
+  }
+
+  /// 录音开启期间静默落盘：仅把刚封口的 WAV 切片登记进本地存储等待批量/按需转写，
+  /// 不立即触发 VAD / ASR / 声纹与时间轴碎片生成。
+  Future<RecordingFile> storeLiveSlicePending(LiveAudioSlice slice) {
+    final completer = Completer<RecordingFile>();
+    _liveSerial = _liveSerial.then((_) async {
+      await _waitUntilIdle();
+      _enterBusy();
+      try {
+        final existing = await store.load(slice.sliceKey);
+        final sessionKey = (slice.deviceSessionId != null &&
+                slice.deviceSessionId!.trim().isNotEmpty)
+            ? slice.deviceSessionId!.trim()
+            : slice.sessionId;
+        final file = existing ??
+            RecordingFile(
+              deviceName: slice.sliceKey,
+              session: sessionKey,
+              seq: slice.sliceIndex + 1,
+              startAtMs: slice.startAtMs,
+              timeSynced: true,
+              apmPath: slice.wavPath,
+              wavPath: slice.wavPath,
+              durationMs: slice.durationMs,
+              createdAtMs: DateTime.now().millisecondsSinceEpoch,
+              stage: RecordingStage.transcribing,
+            );
+        if (file.stage != RecordingStage.ready) {
+          file
+            ..apmPath = slice.wavPath
+            ..wavPath = slice.wavPath
+            ..durationMs = slice.durationMs
+            ..stage = RecordingStage.transcribing
+            ..segments = const []
+            ..error = null;
+          await store.save(file);
+        }
+        completer.complete(file);
+      } on Object catch (e, st) {
+        completer.completeError(e, st);
+      } finally {
+        _exitBusy();
+      }
+    });
+    return completer.future;
   }
 
   /// 录音开启期间：把刚封口的一份实时流 WAV 切片直接送入本地 VAD + SenseVoice 转写并落库。

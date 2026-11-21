@@ -81,7 +81,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late final DeviceStore _device = widget.device ?? DeviceStore();
   late final RecordingStatusController _recording =
       widget.recordingStatus ?? RecordingStatusController();
@@ -107,6 +107,7 @@ class _AppShellState extends State<AppShell> {
   StreamSubscription<LiveAudioSlice>? _watchSliceSub;
   bool _supportsDynamicIsland = false;
   bool _askedPhotoPermThisSession = false;
+  late RootTab _lastRootTab = widget.store.rootTab;
 
   bool get _resolvedSupportsDynamicIsland =>
       widget.supportsDynamicIslandOverride ?? _supportsDynamicIsland;
@@ -114,6 +115,8 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    widget.store.addListener(_onStoreTabChanged);
     if (widget.device == null) widget.onDeviceCreated?.call(_device);
     // 让 store 知道设备在不在：没连卡时下拉不要去取回录音，更不该报"整理中断"。
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
@@ -304,8 +307,31 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  void _onStoreTabChanged() {
+    final cur = widget.store.rootTab;
+    if (_lastRootTab != RootTab.timeline &&
+        cur == RootTab.timeline &&
+        widget.store.pendingLocalAudioCount > 0) {
+      unawaited(widget.store.transcribeAndOrganizePending(reason: 'tab-view'));
+    }
+    _lastRootTab = cur;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        widget.store.rootTab == RootTab.timeline &&
+        widget.store.pendingLocalAudioCount > 0) {
+      unawaited(
+        widget.store.transcribeAndOrganizePending(reason: 'view-resume'),
+      );
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    widget.store.removeListener(_onStoreTabChanged);
     _agentConfig.removeListener(_syncAgentIslandConfig);
     _device.liveActivityService.onActionButtonAgent = null;
     _device.liveActivityService.onActionButtonToggle = null;

@@ -643,7 +643,7 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('set-dynamic-island')), findsOneWidget);
 
-    // 3) Timeline 录音状态块严格展示 7x7 圆点与右对齐「每满 1 分钟本地转写」
+    // 3) Timeline 录音状态块严格展示 7x7 圆点与「每满 15 分钟或查看时转写」
     final rec = RecordingStatusController();
     addTearDown(rec.dispose);
     rec.startRecording();
@@ -659,6 +659,6 @@ void main() {
       tester.getSize(find.byKey(const Key('recording-status-dot'))),
       const Size(7, 7),
     );
-    expect(find.textContaining('每满 1 分钟本地转写'), findsOneWidget);
+    expect(find.textContaining('每满 15 分钟或查看时转写'), findsOneWidget);
   });
 }

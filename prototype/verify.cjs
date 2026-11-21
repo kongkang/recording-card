@@ -87,16 +87,15 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-testid="pics-e3"] .pcount', x => x.textContent.trim()), '4');
   assert.equal(await p.$('[data-testid="pics-e6"] .pcount'), null);
   const thumbBox = await p.$eval('[data-testid="pics-e3"] .pthumb', x => { const r = x.getBoundingClientRect(); return { w: r.width, h: r.height }; });
-  assert(Math.abs(thumbBox.w - thumbBox.h) < 0.5, '缩略图应为正方形');
+  assert(Math.abs(thumbBox.w - 45) <= 1 && Math.abs(thumbBox.w - thumbBox.h) < 0.5, '缩略图应为 45px 正方形');
   const stackH = await p.$eval('[data-testid="pics-e3"]', x => x.getBoundingClientRect().height);
-  const textH = await p.$eval('[data-testid="card-e3"] .pc-text', x => x.getBoundingClientRect().height);
-  assert(Math.abs(stackH - textH) <= 1, `缩略图应与标题时间同高：${stackH}/${textH}`);
+  assert(Math.abs(stackH - 45) <= 1, `缩略图容器应为 45px 高：${stackH}`);
   assert(await p.$eval('[data-testid="card-e3"] .pc-text h3', x => getComputedStyle(x).textOverflow === 'ellipsis' && getComputedStyle(x).whiteSpace === 'nowrap'));
   // 总结卡的图片计数：放在左下角时间与「已选 N 片段」之后（含 2 张 = e2 的两张），右侧仅保留箭头
   assert.equal(await p.$eval('[data-testid="card-sum-demo"] .sumphotos', x => x.textContent.trim()), '含 2 张图片');
   assert(await p.$eval('[data-testid="card-sum-demo"] .when', x => x.textContent.includes('已选 1 片段 · 含 2 张图片')));
   assert.equal(await p.$('[data-testid="card-sum-demo"] .sum-side .sumphotos'), null);
-  // 分组内倒序：日终产物（总结/睡前日记/未归类）在顶部，记录中间，做梦卡在底部
+  // 分组内倒序：日终产物（睡前日记/未归类）在顶部，总结按覆盖结尾时间内联插入，做梦卡在底部
   const dayKinds = await p.evaluate(() => {
     const out = []; let cur = null;
     [...document.querySelectorAll('#feed > *')].forEach(el => {
@@ -106,7 +105,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     return out;
   });
   assert.equal(dayKinds[0].day, '今天');
-  assert.deepEqual(dayKinds[0].kinds.slice(0, 3), ['summary', 'daily', 'unclassified'], '总结/睡前日记/未归类应在今天分组顶部');
+  assert.deepEqual(dayKinds[0].kinds.slice(0, 2), ['daily', 'unclassified'], '睡前日记/未归类应在今天分组顶部');
   assert.equal(dayKinds[0].kinds[dayKinds[0].kinds.length - 1], 'dream', '做梦卡是当天最早事件，应在倒序分组底部');
   assert.equal(dayKinds[1].kinds[0], 'daily', '睡前日记应在昨天分组顶部');
   assert(await p.$eval('[data-testid="card-dream-0"]', x => x.innerText.includes('做梦完成') && x.innerText.includes('知识库')));
@@ -121,10 +120,19 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$$eval('.nc-badge', x => x.length), 0, 'index.html 不再展示行为与健康信号 NC 徽标');
   assert(await p.$('[data-testid="set-health-location"]'), 'index.html 应包含定位与健康采集行');
   assert.equal(await p.$('[data-testid="nc-merge-panel"]'), null);
-  assert(await p.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
-  const sumTop = await p.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
   const e1Top = await p.$eval('[data-testid="card-e1"]', x => x.getBoundingClientRect().top);
-  assert(sumTop < e1Top, '总结卡应在当天记录上方');
+  const sumTop = await p.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
+  const e2Top = await p.$eval('[data-testid="card-e2"]', x => x.getBoundingClientRect().top);
+  assert(e1Top < sumTop && sumTop < e2Top, `总结卡应插入在覆盖结尾时间点（e1 之下、e2 之上）：e1=${e1Top}, sum=${sumTop}, e2=${e2Top}`);
+  // 无意义碎碎念折叠成紧凑胶囊，点击弹窗列明细并可跳入独立记录详情
+  assert(await p.$eval('[data-testid="trivial-cluster-0"]', x => x.innerText.includes('无意义碎碎念 · 2 段')));
+  assert.equal(await p.$('[data-testid="card-e_triv1"]'), null, '无意义碎碎念不得单独铺开为普通卡片');
+  await p.click('[data-testid="trivial-cluster-0"]');
+  assert(await p.$eval('#trivial-wrap', x => x.classList.contains('show')));
+  await p.click('[data-testid="trivial-item-e_triv1"]');
+  assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
+  assert(await p.$eval('#dt-h3', x => x.innerText.includes('我正在说话')));
+  await p.click('[data-testid="crumb-back"]');
   // 睡前日记：有趣叙事 + 点赞反馈 + 1~5 个待确认轻标注（点选后同步声纹与待标注计数）
   await p.evaluate(() => document.querySelector('[data-testid="card-daily-0"]').click());
   assert(await p.$eval('#p-diary', x => x.classList.contains('show')));
@@ -269,7 +277,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-f="summary"]', x => x.disabled), true);
   assert.equal(await p.$eval('[data-f="event"]', x => x.disabled), false);
   assert(await p.$eval('[data-f="event"]', x => x.classList.contains('on')));
-  assert.equal(await p.$$eval('#feed [data-sel]', x => x.length), 6);
+  assert.equal(await p.$$eval('#feed [data-sel]', x => x.length), await p.evaluate(() => EVENTS.filter(e => !isLowValueEvent(e)).length));
   await shot('summary-multiselect');
   const checkedCount = () => p.$$eval('[data-sel]:checked', x => x.length);
   // 范围计数按页面同一套日期语义推导（周一/月初跑脚本时硬编码会过期）
@@ -277,7 +285,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     const pred = r === 'today' ? (o) => o === 0
       : r === 'week' ? (o) => o <= (new Date().getDay() + 6) % 7
       : (o) => { const d = new Date(); d.setDate(d.getDate() - o); const n = new Date(); return d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear(); };
-    return EVENTS.filter(e => pred(e.off)).length;
+    return EVENTS.filter(e => pred(e.off) && !e.lowValue).length;
   }, r);
   await p.click('.rangebar .chip[data-r="today"]');
   assert.equal(await checkedCount(), await expCount('today'));
@@ -287,6 +295,26 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await checkedCount(), await expCount('month'));
   await p.click('.rangebar .chip[data-r="none"]');
   assert.equal(await checkedCount(), 0);
+  // 基于最近标记起点的滚动区间连选：「选到此处」（下滑）与「选择到这儿」（上滑）
+  await p.evaluate(() => window.scrollTo(0, 0));
+  await p.click('[data-testid="card-e7"]');
+  assert(await p.$('[data-testid="sel-anchor-badge-e7"]'), '点击后应展示起点徽标');
+  await p.evaluate(() => { window.scrollTo(0, 620); updateStickyRange(); });
+  await p.waitForSelector('[data-testid="sticky-select-bottom"].show', { timeout: 2000 });
+  assert(await p.$eval('[data-testid="sticky-select-bottom"]', x => x.innerText.includes('选到此处')));
+  await p.click('[data-testid="sticky-select-bottom"]');
+  assert((await checkedCount()) >= 3, '点选到此处应全选起点至当前可见最末记录');
+  assert(!(await p.$eval('[data-testid="sticky-select-bottom"]', x => x.classList.contains('show'))));
+  await p.click('.rangebar .chip[data-r="none"]');
+  await p.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await p.click('[data-testid="card-e6"]');
+  await p.evaluate(() => { window.scrollTo(0, 0); updateStickyRange(); });
+  await p.waitForSelector('[data-testid="sticky-select-top"].show', { timeout: 2000 });
+  assert(await p.$eval('[data-testid="sticky-select-top"]', x => x.innerText.includes('选择到这儿')));
+  await p.click('[data-testid="sticky-select-top"]');
+  assert((await checkedCount()) >= 3, '点选择到这儿应全选当前可见最顶记录至起点');
+  await p.click('.rangebar .chip[data-r="none"]');
+  await p.evaluate(() => window.scrollTo(0, 0));
   await p.click('.rangebar .chip[data-r="week"]');
   assert.equal(await checkedCount(), await expCount('week'));
   assert.equal(await p.$eval('#sel-count2', x => x.innerText), '已选 ' + (await expCount('week')) + ' 项');
@@ -452,7 +480,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
 
   // 取消总结：pending 卡移除，解锁 tab 回到全部
   await p.click('[data-testid="summary-start"]');
-  assert.equal(await p.$$eval('#feed [data-sel]', x => x.length), 6);
+  assert.equal(await p.$$eval('#feed [data-sel]', x => x.length), await p.evaluate(() => EVENTS.filter(e => !isLowValueEvent(e)).length));
   await p.click('#sumbar .btn.ghost');
   // demo 卡常驻；这里只关心本次生成的卡是否被取消
   assert.equal(await p.$$eval('.card[data-kind="summary"]:not([data-id="sum-demo"])', x => x.length), 1);
@@ -599,7 +627,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="set-cloud-model"]');
   await p.click('[data-testid="model-opt-qwen-max"]');
   assert(await p.$('[data-testid="temp-0.2"]'));
-  assert.equal(await p.$eval('[data-testid="tbc-ctx-fullday"]', x => x.innerText.trim()), 'TBC');
+  assert.equal(await p.$eval('[data-testid="fake-ctx-mode"]', x => x.innerText.trim()), 'F');
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), 'qwen-max');
   // 交叉反馈：每分钟自动关联系统相册照片（默认开启开关 + 关后重开弹权限弹窗）+ 灵动岛按机型隐藏
@@ -626,9 +654,10 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="set-prompts"]');
   assert(await p.$('[data-testid="agent-prompt-editor"]'));
   await p.click('[data-testid="preset-meeting"]');
+  assert.equal(await p.$eval('#sv-preset', x => x.innerText.trim()), '深度会议');
   await p.click('[data-testid="prompt-save"]');
   await p.click('[data-testid="crumb-back"]');
-  assert.equal(await p.$eval('#sv-preset', x => x.innerText.trim()), '深度会议');
+  assert.equal(await p.$eval('#sv-preset', x => x.innerText.trim()), '自定义');
   await p.click('[data-testid="set-extensions"]');
   assert.equal(await p.$eval('[data-testid="tbc-mcp"]', x => x.innerText.trim()), 'TBC');
   assert(await p.$('[data-testid="mcp-add-btn"]'));
@@ -639,9 +668,15 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="sw-sk-risk"]');
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$eval('#sv-ext', x => x.innerText.trim()), '已启用 6 项');
+  // 批量转写周期设置（默认每 15 分钟 → 切换 30 分钟）
+  assert.equal(await p.$eval('#sv-transcribe-cycle', x => x.innerText.trim()), '每 15 分钟');
+  await p.click('[data-testid="set-transcribe-cycle"]');
+  assert(await p.$eval('#cycle-wrap', x => x.classList.contains('show')));
+  await p.click('[data-testid="cycle-opt-30"]');
+  assert.equal(await p.$eval('#sv-transcribe-cycle', x => x.innerText.trim()), '每 30 分钟');
   // 开发者设置（清洗周期 + 层叠重叠上下文 + 存量重洗）
   await p.click('[data-testid="set-developer"]');
-  assert.equal(await p.$eval('[data-testid="dev-cycle-value"]', x => x.innerText.trim()), '10 分钟');
+  assert.equal(await p.$eval('[data-testid="dev-cycle-value"]', x => x.innerText.trim()), '15 分钟');
   await p.click('[data-testid="dev-cycle-preset-30"]');
   assert.equal(await p.$eval('[data-testid="dev-cycle-value"]', x => x.innerText.trim()), '30 分钟');
   await p.click('[data-testid="dev-overlap-mode-minutes"]');
@@ -1016,6 +1051,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   // 行为与健康信号已从 NC 落地；目标版仍保留圈地与生理信号的 TBC 入口
   await p.click('[data-testid="nav-setting"]');
   assert(await p.$('[data-testid="set-health-location"]'));
+  await p.$eval('[data-testid="set-health-location"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="set-health-location"]');
   assert(await p.$('[data-testid="health-sync-switch"]'));
   assert.equal(await p.$$eval('#p-setsub .nc-badge', x => x.length), 0);
@@ -1122,8 +1158,24 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$eval('#parity-wrap', x => x.classList.contains('show')));
   assert((await pCur.$$eval('#parity-list .p-item', x => x.length)) >= 9);
   await pCur.evaluate(() => closeParity());
-  assert(await pCur.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
+  // 当前版验证：总结卡内联位置 + 无意义碎碎念胶囊 + 批量转写周期设置 + 区间连选
+  const curE1Top = await pCur.$eval('[data-testid="card-e1"]', x => x.getBoundingClientRect().top);
+  const curSumTop = await pCur.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
+  const curE2Top = await pCur.$eval('[data-testid="card-e2"]', x => x.getBoundingClientRect().top);
+  assert(curE1Top < curSumTop && curSumTop < curE2Top, 'current.html 总结卡应在 e1 之下、e2 之上');
+  assert(await pCur.$eval('[data-testid="trivial-cluster-0"]', x => x.innerText.includes('无意义碎碎念 · 2 段')));
+  await pCur.click('[data-testid="summary-start"]');
+  await pCur.click('[data-testid="card-e7"]');
+  await pCur.evaluate(() => { window.scrollTo(0, 620); updateStickyRange(); });
+  await pCur.waitForSelector('[data-testid="sticky-select-bottom"].show', { timeout: 2000 });
+  await pCur.click('[data-testid="sticky-select-bottom"]');
+  assert(await pCur.$eval('#sel-count2', x => parseInt(x.innerText.replace(/\D/g, ''), 10) >= 3));
+  await pCur.click('#sumbar .btn.ghost');
   await pCur.click('[data-testid="nav-setting"]');
+  assert.equal(await pCur.$eval('#sv-transcribe-cycle', x => x.innerText.trim()), '每 15 分钟');
+  await pCur.click('[data-testid="set-transcribe-cycle"]');
+  await pCur.click('[data-testid="cycle-opt-30"]');
+  assert.equal(await pCur.$eval('#sv-transcribe-cycle', x => x.innerText.trim()), '每 30 分钟');
   assert.equal(await pCur.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
   await pCur.$eval('[data-testid="set-local-model"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="set-local-model"]');
