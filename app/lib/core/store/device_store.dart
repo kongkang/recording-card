@@ -12,12 +12,15 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
 import '../../services/audio/live_audio_recorder.dart';
 import '../../services/audio/pcm_ring_buffer.dart';
 import '../../services/audio/phone_mic_service.dart';
+import '../../services/device/oled_bitmap_renderer.dart';
 import '../../services/legacy_upgrade/legacy_upgrade_controller.dart';
 import '../../services/legacy_upgrade/legacy_upgrade_gateway.dart';
 import '../../services/legacy_upgrade/legacy_upgrade_models.dart';
@@ -26,6 +29,7 @@ import '../../services/platform/local_notification_service.dart';
 import '../../services/watch/watch_hardware_service.dart';
 import '../device/card_gateway.dart';
 import '../platform/bluetooth_permission.dart';
+import 'agent_config_store.dart';
 
 export '../device/card_gateway.dart' show HardwareButtonEvent;
 
@@ -75,6 +79,9 @@ class DeviceStore extends ChangeNotifier {
     LocalNotificationService? localNotifications,
     WatchHardwareService? watchHardware,
     LegacyUpgradeController? legacyUpgrade,
+    AgentConfigStore? agentConfig,
+    OledBitmapRenderer? oledRenderer,
+    Duration? oledHardwareEventDelay,
     DateTime Function()? now,
     @visibleForTesting List<Duration>? backgroundReconnectDelays,
     @visibleForTesting Future<CardGateway?> Function()? nativeBridgeRecovery,
@@ -95,6 +102,13 @@ class DeviceStore extends ChangeNotifier {
        _backgroundReconnectDelays =
            backgroundReconnectDelays ?? _defaultBackgroundReconnectDelays,
        _ownsLegacyUpgrade = legacyUpgrade == null,
+       _agentConfig = agentConfig,
+       _oledRenderer = oledRenderer ?? const FlutterOledBitmapRenderer(),
+       _oledHardwareEventDelay =
+           oledHardwareEventDelay ??
+           (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')
+               ? Duration.zero
+               : const Duration(milliseconds: 350)),
        _now = now ?? DateTime.now {
     _gateway = WatchCompositeCardGateway(
       bleGateway: _bleGateway,
@@ -137,6 +151,32 @@ class DeviceStore extends ChangeNotifier {
   final List<Duration> _backgroundReconnectDelays;
   final bool _ownsLegacyUpgrade;
   late final LegacyUpgradeController legacyUpgrade;
+  AgentConfigStore? _agentConfig;
+  final OledBitmapRenderer _oledRenderer;
+  final Duration _oledHardwareEventDelay;
+  Timer? _oledDelayTimer;
+  int _syncedControlsEpoch = -1;
+  int _shownConnectOledEpoch = -1;
+  DateTime? _lastHardwareRecordOledAt;
+
+  /// 录音卡 V2（CardV2）按键/拨杆 KV 配置写入状态（在「按键行为设置」页内就地展示）。
+  bool cardControlsSyncing = false;
+  String? cardControlsError;
+
+  bool get hasRecentHardwareRecordOledPrompt =>
+      _oledDelayTimer != null ||
+      (_lastHardwareRecordOledAt != null &&
+          _now().difference(_lastHardwareRecordOledAt!).abs() <
+              const Duration(seconds: 2));
+
+  /// 挂载 AgentConfigStore：连接录音卡时读取/初始化默认按键与拨杆绑定。
+  void attachAgentConfig(AgentConfigStore config) {
+    if (identical(_agentConfig, config)) return;
+    _agentConfig = config;
+    if (isConnected) {
+      unawaited(_syncCardControlsAndDisplayOnConnect(_epoch));
+    }
+  }
 
   /// 全部真实命令与实时流收包都经它转发：发出、返回与收到音频帧都视为"蓝牙活动"，供看门狗顺延。
   late final CardGateway _gw = ActivityGateway(
@@ -338,6 +378,7 @@ class DeviceStore extends ChangeNotifier {
       _applySnapshot(snapshot);
       await _reconcileRecordingOnConnect();
       if (epoch != _epoch) return;
+      unawaited(_syncCardControlsAndDisplayOnConnect(epoch));
       _startHeartbeat();
       if (sheetOpen) {
         _startSheetWatch();
@@ -672,6 +713,7 @@ class DeviceStore extends ChangeNotifier {
       _applySnapshot(snapshot);
       await _reconcileRecordingOnConnect();
       if (epoch != _epoch) return;
+      unawaited(_syncCardControlsAndDisplayOnConnect(epoch));
       _pendingPhoneFailover = false;
       _pendingFailoverCarrySec = 0;
       _eventSeq = 0;
@@ -765,6 +807,8 @@ class DeviceStore extends ChangeNotifier {
     _disconnectNotice = null;
     _pendingPostReconnectSync = false;
     _hwRecordingStartedAt = null;
+    _oledDelayTimer?.cancel();
+    _oledDelayTimer = null;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _eventWatch?.cancel();
@@ -804,6 +848,13 @@ class DeviceStore extends ChangeNotifier {
 
   void _resetLiveState() {
     _stopClock();
+    _oledDelayTimer?.cancel();
+    _oledDelayTimer = null;
+    _syncedControlsEpoch = -1;
+    _shownConnectOledEpoch = -1;
+    _lastHardwareRecordOledAt = null;
+    cardControlsSyncing = false;
+    cardControlsError = null;
     _hwRecordingStartedAt = null;
     _liveBattery = null;
     _liveCharging = null;
@@ -944,6 +995,7 @@ class DeviceStore extends ChangeNotifier {
     _liveRecording = recording;
     final carrySec = _clockTicks;
     _clockTicks = 0;
+    final reason = status['reason']?.toString().trim().toLowerCase() ?? '';
     if (!recording) {
       _stopClock();
       _hwRecordingStartedAt = null;
@@ -962,6 +1014,10 @@ class DeviceStore extends ChangeNotifier {
         if (!_phoneRecording && !_watchFailoverRecording) {
           unawaited(_liveActivityService.stopLocalRecordingActivity());
         }
+        if (activeCapabilities.hasOledDisplay &&
+            (reason == 'switch' || reason == 'button')) {
+          _scheduleHardwareRecordOledPrompt(recording: false, reason: reason);
+        }
       }
       return;
     }
@@ -974,6 +1030,10 @@ class DeviceStore extends ChangeNotifier {
       );
     }
     _syncLiveActivity();
+    if (activeCapabilities.hasOledDisplay &&
+        (reason == 'switch' || reason == 'button')) {
+      _scheduleHardwareRecordOledPrompt(recording: true, reason: reason);
+    }
   }
 
 
@@ -1182,6 +1242,7 @@ class DeviceStore extends ChangeNotifier {
     _applySnapshot(snapshot);
     await _reconcileRecordingOnConnect();
     if (epoch != _epoch) return;
+    unawaited(_syncCardControlsAndDisplayOnConnect(epoch));
     _pendingPhoneFailover = false;
     _pendingFailoverCarrySec = 0;
     _startHeartbeat();
@@ -1450,6 +1511,13 @@ class DeviceStore extends ChangeNotifier {
     String? reason,
   }) {
     final carrySec = _clockTicks;
+    _oledDelayTimer?.cancel();
+    _oledDelayTimer = null;
+    _syncedControlsEpoch = -1;
+    _shownConnectOledEpoch = -1;
+    _lastHardwareRecordOledAt = null;
+    cardControlsSyncing = false;
+    cardControlsError = null;
     final target = lostDevice ?? _lastDevice;
     final dropReason = reason ?? _inferUnexpectedDisconnectReason(message);
     _heartbeatTimer?.cancel();
@@ -1703,7 +1771,10 @@ class DeviceStore extends ChangeNotifier {
   ///
   /// 设备回包后立刻刷新快照，界面据 [isRecording] 切到「录音中 + 正计时」或
   /// 「未录音」；开启硬件录音后同步点亮灵动岛/锁屏实况，并将手机本机录音挂入零功耗待命保底。
-  Future<String?> toggleRecording() async {
+  Future<String?> toggleRecording() => setRecordingState(!isRecording);
+
+  /// 明确设置硬件录音开关状态：软件蓝牙开关优先于物理拨杆，保证操作一定成功。
+  Future<String?> setRecordingState(bool wantStart) async {
     if (!isConnected) return '录音卡未连接';
     if (!activeCapabilities.hasRemoteRecordControl) {
       recordingError = '该硬件仅支持通过机身物理按键启停录音';
@@ -1718,7 +1789,6 @@ class DeviceStore extends ChangeNotifier {
     }
     recordingBusy = true;
     recordingError = null;
-    final wantStart = !isRecording;
     if (!wantStart) {
       // 用户主动关闭硬件录音：先解除本机待命保底，防止误判为异常停录触发保底
       _phoneStandbyArmed = false;
@@ -1753,6 +1823,30 @@ class DeviceStore extends ChangeNotifier {
         _hwRecordingStartedAt ??= DateTime.now();
         _syncLiveActivity();
         unawaited(_prewarmStandbyMicPermission());
+        if (activeCapabilities.hasOledDisplay) {
+          unawaited(
+            showCardDisplayPrompt(
+              line1: '开始录音',
+              line2: '蓝牙开启',
+              timeoutMs: 3500,
+            ),
+          );
+        }
+      } else if (!wantStart && !isRecording) {
+        _phoneStandbyArmed = false;
+        _hwRecordingStartedAt = null;
+        if (!_phoneRecording && !_watchFailoverRecording) {
+          unawaited(_liveActivityService.stopLocalRecordingActivity());
+        }
+        if (activeCapabilities.hasOledDisplay) {
+          unawaited(
+            showCardDisplayPrompt(
+              line1: '停止录音',
+              line2: '已保存',
+              timeoutMs: 3500,
+            ),
+          );
+        }
       } else if (!wantStart) {
         _phoneStandbyArmed = false;
         _hwRecordingStartedAt = null;
@@ -1817,6 +1911,235 @@ class DeviceStore extends ChangeNotifier {
       );
     } on Object {
       // 固件未实现或链路忙时静默跳过
+    }
+  }
+
+  /// 在录音卡 72×40 OLED 屏幕上展示中文提示（best-effort，不阻塞主链路）。
+  Future<void> showCardDisplayPrompt({
+    required String line1,
+    String? line2,
+    int timeoutMs = 4000,
+    bool persistent = false,
+  }) async {
+    if (!isConnected || !activeCapabilities.hasOledDisplay) return;
+    final clean1 = line1.trim();
+    if (clean1.isEmpty) return;
+    final clean2 = line2?.trim() ?? '';
+    try {
+      final bitmap = await _oledRenderer.renderText(
+        line1: clean1,
+        line2: clean2.isEmpty ? null : clean2,
+      );
+      final lines = <String>[clean1, if (clean2.isNotEmpty) clean2];
+      await _gw
+          .invokeBridgeCommand(
+            'card_display.show',
+            <String, dynamic>{
+              'bitmapBase64': base64Encode(bitmap),
+              'lines': lines,
+              'persistent': persistent,
+              'timeoutMs': timeoutMs,
+            },
+            const Duration(seconds: 4),
+          )
+          .timeout(const Duration(seconds: 4));
+    } on Object {
+      // 固件未支持或链路忙时静默跳过
+    }
+  }
+
+  /// 清除录音卡 OLED 屏幕临时提示（恢复固件默认界面）。
+  Future<void> clearCardDisplay() async {
+    if (!isConnected || !activeCapabilities.hasOledDisplay) return;
+    try {
+      await _gw
+          .invokeBridgeCommand(
+            'card_display.clear',
+            const <String, dynamic>{},
+            const Duration(seconds: 3),
+          )
+          .timeout(const Duration(seconds: 3));
+    } on Object {
+      // 固件未支持或链路忙时静默跳过
+    }
+  }
+
+  void _scheduleHardwareRecordOledPrompt({
+    required bool recording,
+    required String reason,
+  }) {
+    final line1 = recording ? '开始录音' : '停止录音';
+    final line2 = reason == 'switch'
+        ? (recording ? '拨杆开启' : '拨杆关闭')
+        : (recording ? '按键开启' : '按键关闭');
+    _lastHardwareRecordOledAt = _now();
+    _oledDelayTimer?.cancel();
+    _oledDelayTimer = null;
+    if (_oledHardwareEventDelay <= Duration.zero) {
+      unawaited(
+        showCardDisplayPrompt(line1: line1, line2: line2, timeoutMs: 3500),
+      );
+      return;
+    }
+    _oledDelayTimer = Timer(_oledHardwareEventDelay, () {
+      _oledDelayTimer = null;
+      if (!isConnected) return;
+      unawaited(
+        showCardDisplayPrompt(line1: line1, line2: line2, timeoutMs: 3500),
+      );
+    });
+  }
+
+  Future<void> _syncCardControlsAndDisplayOnConnect(int epoch) async {
+    if (epoch != _epoch || !isConnected) return;
+    if (activeCapabilities.hasOledDisplay && _shownConnectOledEpoch != epoch) {
+      _shownConnectOledEpoch = epoch;
+      final shortId = connectedDisplayName.trim();
+      final line2 =
+          (shortId.isNotEmpty && shortId != '录音卡') ? shortId : null;
+      await showCardDisplayPrompt(
+        line1: '已连接',
+        line2: line2,
+        timeoutMs: 4000,
+      );
+      if (epoch != _epoch || !isConnected) return;
+    }
+    if (!activeCapabilities.hasConfigurableSwitch || _agentConfig == null) {
+      return;
+    }
+    if (_syncedControlsEpoch == epoch) return;
+    _syncedControlsEpoch = epoch;
+    cardControlsSyncing = true;
+    cardControlsError = null;
+    notifyListeners();
+    try {
+      final res = await _gw.invokeBridgeCommand(
+        'card_controls.get',
+        const <String, dynamic>{},
+        const Duration(seconds: 6),
+      );
+      if (epoch != _epoch || !isConnected) return;
+      if (res['supported'] == false) {
+        cardControlsError = null;
+        return;
+      }
+      const controlKeys = [
+        'btnSingle',
+        'btnDouble',
+        'btnLongPress',
+        'btnLongRelease',
+        'switchOn',
+        'switchOff',
+      ];
+      final deviceHasAny = controlKeys.any((k) {
+        final v = res[k]?.toString().trim().toLowerCase() ?? '';
+        return v.isNotEmpty && v != 'none';
+      });
+      final config = _agentConfig!;
+      if (!deviceHasAny || config.cardControlsUserConfigured) {
+        await _gw.invokeBridgeCommand(
+          'card_controls.set',
+          Map<String, dynamic>.from(config.cardFirmwareBindingsPayload()),
+          const Duration(seconds: 8),
+        );
+      } else {
+        await config.syncCardBindingsFromDevice(res);
+      }
+      cardControlsError = null;
+    } on CardException catch (e) {
+      if (epoch != _epoch) return;
+      cardControlsError = '读取/同步按键配置失败：${e.message}';
+    } on TimeoutException {
+      if (epoch != _epoch) return;
+      cardControlsError = '同步按键配置超时，可点击重置或重新切换重试';
+    } finally {
+      if (epoch == _epoch) {
+        cardControlsSyncing = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  /// 修改录音卡 V2 的单个物理按键/拨杆动作，先持久化本地偏好，连卡状态下立即写入固件。
+  Future<String?> applyCardControlAction(
+    AgentConfigStore config,
+    String input,
+    HardwareButtonAction action,
+  ) async {
+    await config.setCardControlAction(input, action);
+    if (!isConnected || !activeCapabilities.hasConfigurableSwitch) {
+      return null;
+    }
+    cardControlsSyncing = true;
+    cardControlsError = null;
+    notifyListeners();
+    try {
+      final payload = config.cardFirmwareSinglePayload(input, action);
+      if (payload.isNotEmpty) {
+        await _gw.invokeBridgeCommand(
+          'card_controls.set',
+          Map<String, dynamic>.from(payload),
+          const Duration(seconds: 6),
+        );
+      }
+      if (activeCapabilities.hasOledDisplay) {
+        unawaited(
+          showCardDisplayPrompt(
+            line1: '按键已设置',
+            line2: action.shortLabel,
+            timeoutMs: 2500,
+          ),
+        );
+      }
+      cardControlsError = null;
+      return null;
+    } on TimeoutException {
+      cardControlsError = '写入硬件按键设置超时，请重试';
+      return cardControlsError;
+    } on CardException catch (e) {
+      cardControlsError = '写入硬件失败：${e.message}';
+      return cardControlsError;
+    } finally {
+      cardControlsSyncing = false;
+      notifyListeners();
+    }
+  }
+
+  /// 将录音卡 V2 的按键与拨杆恢复为出厂推荐默认行为，并在已连接时下发到硬件。
+  Future<String?> resetCardControlsToDefaults(AgentConfigStore config) async {
+    await config.resetCardControlDefaults();
+    if (!isConnected || !activeCapabilities.hasConfigurableSwitch) {
+      return null;
+    }
+    cardControlsSyncing = true;
+    cardControlsError = null;
+    notifyListeners();
+    try {
+      await _gw.invokeBridgeCommand(
+        'card_controls.set',
+        Map<String, dynamic>.from(config.cardFirmwareBindingsPayload()),
+        const Duration(seconds: 6),
+      );
+      if (activeCapabilities.hasOledDisplay) {
+        unawaited(
+          showCardDisplayPrompt(
+            line1: '按键已重置',
+            line2: '已恢复默认',
+            timeoutMs: 2500,
+          ),
+        );
+      }
+      cardControlsError = null;
+      return null;
+    } on TimeoutException {
+      cardControlsError = '重置硬件按键超时，请重试';
+      return cardControlsError;
+    } on CardException catch (e) {
+      cardControlsError = '重置硬件失败：${e.message}';
+      return cardControlsError;
+    } finally {
+      cardControlsSyncing = false;
+      notifyListeners();
     }
   }
 
@@ -3463,6 +3786,8 @@ class DeviceStore extends ChangeNotifier {
     _watchFailoverClockTimer?.cancel();
     _autoReconnectTimer?.cancel();
     _heartbeatTimer?.cancel();
+    _oledDelayTimer?.cancel();
+    _oledDelayTimer = null;
     _eventWatch?.cancel();
     _stopSheetWatch();
     _stopScanExpiryTimer();

@@ -9,11 +9,14 @@ import 'package:flutter/foundation.dart';
 import '../device/card_gateway.dart';
 import '../storage/storage.dart';
 
-/// 点一机 V1 物理按键可绑定动作（固件事件上行，App 侧解释执行）。
+/// 硬件物理按键与侧边拨杆可绑定动作（固件事件上行或本地执行，App 侧解释/协同执行）。
 enum HardwareButtonAction {
   mark('mark', '打重点（Mark）', '重点'),
+  syncNow('sync_now', '立即同步数据', '同步'),
   agentVoice('agent_voice', '语音任务（发给 Agent）', '语音'),
   photoRecognize('photo_recognize', '拍照识别（发给 Agent）', '识图'),
+  recordStart('record_start', '开始录音', '开录'),
+  recordStop('record_stop', '结束录音', '停录'),
   recordToggle('record_toggle', '开关录音', '录音'),
   none('none', '无动作', '无');
 
@@ -22,6 +25,62 @@ enum HardwareButtonAction {
   final String code;
   final String label;
   final String shortLabel;
+
+  /// 点一机 V1 按钮可选动作（保持既有选项）。
+  static const List<HardwareButtonAction> dyjButtonOptions = [
+    mark,
+    agentVoice,
+    photoRecognize,
+    recordToggle,
+    none,
+  ];
+
+  /// 录音卡 V2 物理按钮可选动作。
+  static const List<HardwareButtonAction> cardButtonOptions = [
+    mark,
+    syncNow,
+    agentVoice,
+    recordStart,
+    recordStop,
+    recordToggle,
+    none,
+  ];
+
+  /// 录音卡 V2 侧边拨杆可选动作。
+  static const List<HardwareButtonAction> cardSwitchOptions = [
+    recordStart,
+    recordStop,
+    recordToggle,
+    mark,
+    syncNow,
+    agentVoice,
+    none,
+  ];
+
+  /// 映射为录音卡 V2 固件 KV 存储值。
+  ///
+  /// 注意：`syncNow` 写入 `'app_sync'`（而非固件自带的 `'sync_upload'`），
+  /// 避免在未配网情况下自动开启 ESP32 Wi-Fi 抢占 SD 卡；改为触发 App 侧实时切片/BLE 同步。
+  String toCardFirmwareWire() => switch (this) {
+    HardwareButtonAction.mark => 'record_mark',
+    HardwareButtonAction.syncNow => 'app_sync',
+    HardwareButtonAction.agentVoice => 'agent_voice',
+    HardwareButtonAction.recordStart => 'record_start',
+    HardwareButtonAction.recordStop => 'record_stop',
+    HardwareButtonAction.recordToggle => 'record_toggle',
+    HardwareButtonAction.photoRecognize || HardwareButtonAction.none => 'none',
+  };
+
+  static HardwareButtonAction fromCardFirmwareWire(String? raw) =>
+      switch (raw?.trim()) {
+        'record_mark' => HardwareButtonAction.mark,
+        'app_sync' || 'sync_now' || 'sync_upload' => HardwareButtonAction.syncNow,
+        'agent_voice' => HardwareButtonAction.agentVoice,
+        'record_start' => HardwareButtonAction.recordStart,
+        'record_stop' => HardwareButtonAction.recordStop,
+        'record_toggle' => HardwareButtonAction.recordToggle,
+        _ => HardwareButtonAction.none,
+      };
 
   static HardwareButtonAction fromCode(
     String? raw, {
@@ -332,6 +391,15 @@ class AgentConfigStore extends ChangeNotifier {
   HardwareButtonAction dyjDoubleClickAction =
       HardwareButtonAction.photoRecognize;
 
+  /// 录音卡 V2（CardV2）物理按钮与侧边拨杆默认行为：
+  /// 单击=重点、双击=立即同步数据、长按=调用 Agent、拨杆开=开始录音、拨杆关=结束录音。
+  HardwareButtonAction cardClickAction = HardwareButtonAction.mark;
+  HardwareButtonAction cardDoubleClickAction = HardwareButtonAction.syncNow;
+  HardwareButtonAction cardLongPressAction = HardwareButtonAction.agentVoice;
+  HardwareButtonAction cardSwitchOnAction = HardwareButtonAction.recordStart;
+  HardwareButtonAction cardSwitchOffAction = HardwareButtonAction.recordStop;
+  bool cardControlsUserConfigured = false;
+
   /// Omi 物理按键默认行为：固件写死长按约 3 秒直接关机且无配置项，故仅开放单击与双击（默认单击重点、双击启停录音）。
   HardwareButtonAction omiClickAction = HardwareButtonAction.mark;
   HardwareButtonAction omiDoubleClickAction = HardwareButtonAction.recordToggle;
@@ -347,11 +415,54 @@ class AgentConfigStore extends ChangeNotifier {
     _ => HardwareButtonAction.none,
   };
 
+  HardwareButtonAction cardActionForGesture(String gesture) => switch (gesture) {
+    'click' || 'single_tap' => cardClickAction,
+    'double_click' || 'double_tap' => cardDoubleClickAction,
+    'long_press' || 'long_press_start' || 'long_press_end' => cardLongPressAction,
+    'switch_on' => cardSwitchOnAction,
+    'switch_off' => cardSwitchOffAction,
+    _ => HardwareButtonAction.none,
+  };
+
+  bool get hasAnyCardControlAction =>
+      cardClickAction != HardwareButtonAction.none ||
+      cardDoubleClickAction != HardwareButtonAction.none ||
+      cardLongPressAction != HardwareButtonAction.none ||
+      cardSwitchOnAction != HardwareButtonAction.none ||
+      cardSwitchOffAction != HardwareButtonAction.none;
+
+  Map<String, String> cardFirmwareBindingsPayload() => {
+    'btnSingle': cardClickAction.toCardFirmwareWire(),
+    'btnDouble': cardDoubleClickAction.toCardFirmwareWire(),
+    'btnLongPress': cardLongPressAction.toCardFirmwareWire(),
+    'btnLongRelease': 'none',
+    'switchOn': cardSwitchOnAction.toCardFirmwareWire(),
+    'switchOff': cardSwitchOffAction.toCardFirmwareWire(),
+  };
+
+  Map<String, String> cardFirmwareSinglePayload(
+    String input,
+    HardwareButtonAction action,
+  ) {
+    final wire = action.toCardFirmwareWire();
+    return switch (input) {
+      'click' => {'btnSingle': wire},
+      'double_click' => {'btnDouble': wire},
+      'long_press' => {'btnLongPress': wire, 'btnLongRelease': 'none'},
+      'switch_on' => {'switchOn': wire},
+      'switch_off' => {'switchOff': wire},
+      _ => const {},
+    };
+  }
+
   /// 按当前硬件家族解析按键手势映射；Omi 明确禁用所有 `long_press*` 与无摄像头拍照动作。
   HardwareButtonAction buttonActionForDevice(
     DeviceKind? kind,
     String gesture,
   ) {
+    if (kind == DeviceKind.cardV2) {
+      return cardActionForGesture(gesture);
+    }
     if (kind == DeviceKind.omiCv1) {
       return switch (gesture) {
         'click' || 'single_tap' => omiClickAction,
@@ -364,6 +475,9 @@ class AgentConfigStore extends ChangeNotifier {
 
   String get dyjButtonSummary =>
       '单击${dyjClickAction.shortLabel} · 长按${dyjLongPressAction.shortLabel} · 双击${dyjDoubleClickAction.shortLabel}';
+
+  String get cardButtonSummary =>
+      '单击${cardClickAction.shortLabel} · 双击${cardDoubleClickAction.shortLabel} · 长按${cardLongPressAction.shortLabel} · 拨杆${cardSwitchOnAction.shortLabel}/${cardSwitchOffAction.shortLabel}';
 
   String get omiButtonSummary =>
       '单击${omiClickAction.shortLabel} · 双击${omiDoubleClickAction.shortLabel}（禁用长按）';
@@ -634,6 +748,39 @@ class AgentConfigStore extends ChangeNotifier {
         data['dyjBtnDouble'] as String,
         fallback: HardwareButtonAction.photoRecognize,
       );
+    }
+    if (data['cardBtnClick'] is String) {
+      cardClickAction = HardwareButtonAction.fromCode(
+        data['cardBtnClick'] as String,
+        fallback: HardwareButtonAction.mark,
+      );
+    }
+    if (data['cardBtnDouble'] is String) {
+      cardDoubleClickAction = HardwareButtonAction.fromCode(
+        data['cardBtnDouble'] as String,
+        fallback: HardwareButtonAction.syncNow,
+      );
+    }
+    if (data['cardBtnLong'] is String) {
+      cardLongPressAction = HardwareButtonAction.fromCode(
+        data['cardBtnLong'] as String,
+        fallback: HardwareButtonAction.agentVoice,
+      );
+    }
+    if (data['cardSwitchOn'] is String) {
+      cardSwitchOnAction = HardwareButtonAction.fromCode(
+        data['cardSwitchOn'] as String,
+        fallback: HardwareButtonAction.recordStart,
+      );
+    }
+    if (data['cardSwitchOff'] is String) {
+      cardSwitchOffAction = HardwareButtonAction.fromCode(
+        data['cardSwitchOff'] as String,
+        fallback: HardwareButtonAction.recordStop,
+      );
+    }
+    if (data['cardBtnUserConfigured'] is bool) {
+      cardControlsUserConfigured = data['cardBtnUserConfigured'] as bool;
     }
     if (data['omiBtnClick'] is String) {
       final parsed = HardwareButtonAction.fromCode(
@@ -1171,6 +1318,44 @@ class AgentConfigStore extends ChangeNotifier {
     await _save();
   }
 
+  Future<void> setCardControlAction(
+    String input,
+    HardwareButtonAction action,
+  ) async {
+    var changed = !cardControlsUserConfigured;
+    cardControlsUserConfigured = true;
+    switch (input) {
+      case 'click':
+        if (cardClickAction != action) {
+          cardClickAction = action;
+          changed = true;
+        }
+      case 'double_click':
+        if (cardDoubleClickAction != action) {
+          cardDoubleClickAction = action;
+          changed = true;
+        }
+      case 'long_press':
+        if (cardLongPressAction != action) {
+          cardLongPressAction = action;
+          changed = true;
+        }
+      case 'switch_on':
+        if (cardSwitchOnAction != action) {
+          cardSwitchOnAction = action;
+          changed = true;
+        }
+      case 'switch_off':
+        if (cardSwitchOffAction != action) {
+          cardSwitchOffAction = action;
+          changed = true;
+        }
+    }
+    if (!changed) return;
+    notifyListeners();
+    await _save();
+  }
+
   /// 配置 Omi 按键动作：拒绝长按（固件 3s 硬关机）与拍照动作（Omi 无摄像头）。
   Future<void> setOmiButtonAction(
     String gesture,
@@ -1192,6 +1377,60 @@ class AgentConfigStore extends ChangeNotifier {
       default:
         return;
     }
+    if (!changed) return;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> resetCardControlDefaults() async {
+    final changed =
+        cardClickAction != HardwareButtonAction.mark ||
+        cardDoubleClickAction != HardwareButtonAction.syncNow ||
+        cardLongPressAction != HardwareButtonAction.agentVoice ||
+        cardSwitchOnAction != HardwareButtonAction.recordStart ||
+        cardSwitchOffAction != HardwareButtonAction.recordStop ||
+        cardControlsUserConfigured;
+    cardClickAction = HardwareButtonAction.mark;
+    cardDoubleClickAction = HardwareButtonAction.syncNow;
+    cardLongPressAction = HardwareButtonAction.agentVoice;
+    cardSwitchOnAction = HardwareButtonAction.recordStart;
+    cardSwitchOffAction = HardwareButtonAction.recordStop;
+    cardControlsUserConfigured = false;
+    if (!changed) return;
+    notifyListeners();
+    await _save();
+  }
+
+  /// 从已连接录音卡回读既有绑定到 UI，保持 App 展示与设备真实 KV 一致。
+  Future<void> syncCardBindingsFromDevice(Map<String, dynamic> raw) async {
+    final nextClick = HardwareButtonAction.fromCardFirmwareWire(
+      raw['btnSingle'] as String?,
+    );
+    final nextDouble = HardwareButtonAction.fromCardFirmwareWire(
+      raw['btnDouble'] as String?,
+    );
+    final nextLong = HardwareButtonAction.fromCardFirmwareWire(
+      raw['btnLongPress'] as String?,
+    );
+    final nextSwitchOn = HardwareButtonAction.fromCardFirmwareWire(
+      raw['switchOn'] as String?,
+    );
+    final nextSwitchOff = HardwareButtonAction.fromCardFirmwareWire(
+      raw['switchOff'] as String?,
+    );
+    final changed =
+        cardClickAction != nextClick ||
+        cardDoubleClickAction != nextDouble ||
+        cardLongPressAction != nextLong ||
+        cardSwitchOnAction != nextSwitchOn ||
+        cardSwitchOffAction != nextSwitchOff ||
+        !cardControlsUserConfigured;
+    cardClickAction = nextClick;
+    cardDoubleClickAction = nextDouble;
+    cardLongPressAction = nextLong;
+    cardSwitchOnAction = nextSwitchOn;
+    cardSwitchOffAction = nextSwitchOff;
+    cardControlsUserConfigured = true;
     if (!changed) return;
     notifyListeners();
     await _save();
@@ -1239,6 +1478,12 @@ class AgentConfigStore extends ChangeNotifier {
       'dyjBtnClick': dyjClickAction.code,
       'dyjBtnLong': dyjLongPressAction.code,
       'dyjBtnDouble': dyjDoubleClickAction.code,
+      'cardBtnClick': cardClickAction.code,
+      'cardBtnDouble': cardDoubleClickAction.code,
+      'cardBtnLong': cardLongPressAction.code,
+      'cardSwitchOn': cardSwitchOnAction.code,
+      'cardSwitchOff': cardSwitchOffAction.code,
+      if (cardControlsUserConfigured) 'cardBtnUserConfigured': true,
       'omiBtnClick': omiClickAction.code,
       'omiBtnDouble': omiDoubleClickAction.code,
       'iphoneActionBehavior': iphoneActionButtonBehavior.code,

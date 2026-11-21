@@ -1025,16 +1025,18 @@ class _MainView extends StatelessWidget {
             listenable: agentConfig!,
             builder: (context, _) => _Row(
               keyName: 'btn-config',
-              label: '按键行为',
+              label: '按键行为设置',
               onTap: () => store.showView(DeviceView.btn),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Flexible(
                     child: Text(
-                      store.activeKind == DeviceKind.omiCv1
-                          ? agentConfig!.omiButtonSummary
-                          : agentConfig!.dyjButtonSummary,
+                      store.activeCapabilities.hasConfigurableSwitch
+                          ? agentConfig!.cardButtonSummary
+                          : (store.activeKind == DeviceKind.omiCv1
+                                ? agentConfig!.omiButtonSummary
+                                : agentConfig!.dyjButtonSummary),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
                       style: TextStyle(fontSize: 14, color: c.label),
@@ -2274,6 +2276,7 @@ class _ButtonConfigView extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.rc;
     final config = agentConfig;
+    final isCardControl = store.activeCapabilities.hasConfigurableSwitch;
     return Column(
       key: const Key('btn-config-view'),
       mainAxisSize: MainAxisSize.min,
@@ -2306,9 +2309,11 @@ class _ButtonConfigView extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          store.activeKind == DeviceKind.omiCv1
-              ? '配置 Omi 录音器物理按键动作。因固件写死长按约 3 秒直接关机且蓝牙不可改，已禁用长按交互以防误触关机；推荐将双击设为「语音任务」（双击开始说话、再双击发送）。'
-              : '配置点一机 V1 物理按键触发的动作；未开启持续录音时触发「语音任务」将自动开启临时录音并在完成后关闭。',
+          isCardControl
+              ? '配置录音卡物理按键与侧边拨杆触发的动作，修改后自动同步到硬件；若软件蓝牙开关与拨杆状态不一致，以软件蓝牙开关为准。'
+              : (store.activeKind == DeviceKind.omiCv1
+                    ? '配置 Omi 录音器物理按键动作。因固件写死长按约 3 秒直接关机且蓝牙不可改，已禁用长按交互以防误触关机；推荐将双击设为「语音任务」（双击开始说话、再双击发送）。'
+                    : '配置点一机 V1 物理按键触发的动作；未开启持续录音时触发「语音任务」将自动开启临时录音并在完成后关闭。'),
           style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
         ),
         const SizedBox(height: 12),
@@ -2319,84 +2324,233 @@ class _ButtonConfigView extends StatelessWidget {
           )
         else
           ListenableBuilder(
-            listenable: config,
+            listenable: Listenable.merge([config, store]),
             builder: (context, _) {
               final rc = context.rc;
+              final err = store.cardControlsError;
               final isOmi = store.activeKind == DeviceKind.omiCv1;
-              final allowedActions = [
-                for (final act in HardwareButtonAction.values)
-                  if (store.activeCapabilities.hasCameraMedia ||
-                      act != HardwareButtonAction.photoRecognize)
-                    act,
-              ];
+              final nonCardActions = isOmi
+                  ? HardwareButtonAction.dyjButtonOptions
+                        .where((a) => a != HardwareButtonAction.photoRecognize)
+                        .toList(growable: false)
+                  : HardwareButtonAction.dyjButtonOptions;
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _gestureSection(
-                    rc: rc,
-                    key: const Key('btn-cfg-click'),
-                    gesture: 'click',
-                    title: '单击',
-                    actions: allowedActions,
-                    current: isOmi
-                        ? config.omiClickAction
-                        : config.dyjClickAction,
-                    onPick: (a) => unawaited(
-                      isOmi
-                          ? config.setOmiButtonAction('click', a)
-                          : config.setDyjButtonAction('click', a),
+                  if (isCardControl && store.cardControlsSyncing)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          const SizedBox(
+                            width: 13,
+                            height: 13,
+                            child: CircularProgressIndicator(strokeWidth: 1.8),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '正在同步硬件按键设置…',
+                            style: TextStyle(fontSize: 12, color: rc.sec),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  if (!isOmi) ...[
-                    const SizedBox(height: 12),
+                  if (isCardControl && err != null && err.isNotEmpty)
+                    Container(
+                      key: const Key('btn-cfg-error'),
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: rc.danger.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: rc.danger.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Text(
+                        err,
+                        style: TextStyle(fontSize: 12, color: rc.danger),
+                      ),
+                    ),
+                  if (isCardControl) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '物理按钮',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: rc.sec,
+                        ),
+                      ),
+                    ),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-click'),
+                      gesture: 'click',
+                      title: '单击',
+                      actions: HardwareButtonAction.cardButtonOptions,
+                      current: config.cardClickAction,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'click', a),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-double'),
+                      gesture: 'double_click',
+                      title: '双击',
+                      actions: HardwareButtonAction.cardButtonOptions,
+                      current: config.cardDoubleClickAction,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(
+                          config,
+                          'double_click',
+                          a,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     _gestureSection(
                       rc: rc,
                       key: const Key('btn-cfg-long'),
                       gesture: 'long_press',
                       title: '长按',
-                      actions: allowedActions,
-                      current: config.dyjLongPressAction,
-                      onPick: (a) =>
-                          unawaited(config.setDyjButtonAction('long_press', a)),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  _gestureSection(
-                    rc: rc,
-                    key: const Key('btn-cfg-double'),
-                    gesture: 'double_click',
-                    title: '双击',
-                    actions: allowedActions,
-                    current: isOmi
-                        ? config.omiDoubleClickAction
-                        : config.dyjDoubleClickAction,
-                    onPick: (a) => unawaited(
-                      isOmi
-                          ? config.setOmiButtonAction('double_click', a)
-                          : config.setDyjButtonAction('double_click', a),
-                    ),
-                  ),
-                  if (isOmi) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      key: const Key('btn-cfg-omi-no-long'),
-                      padding: const EdgeInsets.all(11),
-                      decoration: BoxDecoration(
-                        color: rc.isDark
-                            ? const Color(0xFF222226)
-                            : rc.bg,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: rc.sep),
+                      actions: HardwareButtonAction.cardButtonOptions,
+                      current: config.cardLongPressAction,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'long_press', a),
                       ),
+                    ),
+                    const SizedBox(height: 14),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
                       child: Text(
-                        '不支持长按：Omi 硬件长按约 3 秒将直接触发关机',
+                        '侧边拨杆',
                         style: TextStyle(
                           fontSize: 12,
-                          height: 1.45,
+                          fontWeight: FontWeight.w700,
                           color: rc.sec,
                         ),
                       ),
                     ),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-switch_on'),
+                      gesture: 'switch_on',
+                      title: '拨杆打开',
+                      actions: HardwareButtonAction.cardSwitchOptions,
+                      current: config.cardSwitchOnAction,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'switch_on', a),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-switch_off'),
+                      gesture: 'switch_off',
+                      title: '拨杆关闭',
+                      actions: HardwareButtonAction.cardSwitchOptions,
+                      current: config.cardSwitchOffAction,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'switch_off', a),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      key: const Key('btn-cfg-reset-default'),
+                      onPressed: store.cardControlsSyncing
+                          ? null
+                          : () => unawaited(
+                              store.resetCardControlsToDefaults(config),
+                            ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: rc.ink,
+                        side: BorderSide(color: rc.sep),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      ),
+                      child: const Text(
+                        '恢复默认按键行为',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ] else ...[
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-click'),
+                      gesture: 'click',
+                      title: '单击',
+                      actions: nonCardActions,
+                      current: isOmi
+                          ? config.omiClickAction
+                          : config.dyjClickAction,
+                      onPick: (a) => unawaited(
+                        isOmi
+                            ? config.setOmiButtonAction('click', a)
+                            : config.setDyjButtonAction('click', a),
+                      ),
+                    ),
+                    if (!isOmi) ...[
+                      const SizedBox(height: 12),
+                      _gestureSection(
+                        rc: rc,
+                        key: const Key('btn-cfg-long'),
+                        gesture: 'long_press',
+                        title: '长按',
+                        actions: nonCardActions,
+                        current: config.dyjLongPressAction,
+                        onPick: (a) => unawaited(
+                          config.setDyjButtonAction('long_press', a),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-double'),
+                      gesture: 'double_click',
+                      title: '双击',
+                      actions: nonCardActions,
+                      current: isOmi
+                          ? config.omiDoubleClickAction
+                          : config.dyjDoubleClickAction,
+                      onPick: (a) => unawaited(
+                        isOmi
+                            ? config.setOmiButtonAction('double_click', a)
+                            : config.setDyjButtonAction('double_click', a),
+                      ),
+                    ),
+                    if (isOmi) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        key: const Key('btn-cfg-omi-no-long'),
+                        padding: const EdgeInsets.all(11),
+                        decoration: BoxDecoration(
+                          color: rc.isDark ? const Color(0xFF222226) : rc.bg,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: rc.sep),
+                        ),
+                        child: Text(
+                          '不支持长按：Omi 硬件长按约 3 秒将直接触发关机',
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.45,
+                            color: rc.sec,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ],
               );

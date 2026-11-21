@@ -36,8 +36,9 @@ use reai_board_sdk::kernel::sink::AudioFrameSink;
 use reai_board_sdk::{BoardConfig, BoardDevice, BoardEvent};
 use card_v2_ble::CardV2ConnectOutcome;
 use reai_card_sdk::{
-    DeviceEvent as CardV2Event, DfuPackage, DyjDevice as CardV2Device, OtaInfo, OtaModule,
-    SdkError as CardSdkError, NUS_SERVICE_UUID,
+    ButtonGesture, ControlAction, ControlInput, DeviceEvent as CardV2Event, DfuPackage,
+    DisplayShowRequest, DyjDevice as CardV2Device, OtaInfo, OtaModule, SdkError as CardSdkError,
+    SwitchPosition, DISPLAY_BITMAP_BYTES, DISPLAY_TIMEOUT_MAX_MS, NUS_SERVICE_UUID,
 };
 use reai_dyj_sdk::{
     ApClient as DyjV1ApClient, DeviceEvent as DyjV1Event, SdkError as DyjV1SdkError,
@@ -652,6 +653,22 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
             let mode = str_field(&payload, "mode");
             let active = active_device().await?;
             out.ok(dyj_led_hint(&active, &mode).await?);
+        }
+        "card_controls.get" => {
+            let active = active_device().await?;
+            out.ok(card_controls_get(&active).await?);
+        }
+        "card_controls.set" => {
+            let active = active_device().await?;
+            out.ok(card_controls_set(&active, &payload).await?);
+        }
+        "card_display.show" => {
+            let active = active_device().await?;
+            out.ok(card_display_show(&active, &payload).await?);
+        }
+        "card_display.clear" => {
+            let active = active_device().await?;
+            out.ok(card_display_clear(&active).await?);
         }
         "dyj_tts_speak" => {
             let text = str_field(&payload, "text");
@@ -1972,8 +1989,50 @@ pub(crate) fn map_card_v2_button_event_to_json(
         "gesture": normalized,
         "rawGesture": raw_gesture,
         "action": action,
+        "deviceAction": action,
+        "source": "card_v2_button",
         "receivedAtMs": received_at_ms,
     })
+}
+
+fn map_card_v2_event_to_json(event: CardV2Event, received_at_ms: u64) -> Option<Value> {
+    let value = match event {
+        CardV2Event::RecordStatus(status) => serde_json::to_value(&status)
+            .map(|v| json!({"kind": "record", "status": v}))
+            .unwrap_or(Value::Null),
+        CardV2Event::ToggleSwitch(sw) => {
+            let (position, gesture) = match sw.position {
+                SwitchPosition::On => ("on", "switch_on"),
+                SwitchPosition::Off => ("off", "switch_off"),
+            };
+            let action = sw.action.wire_name();
+            let switch_obj = serde_json::to_value(&sw).ok();
+            json!({
+                "kind": "toggle_switch",
+                "switch": switch_obj,
+                "position": position,
+                "gesture": gesture,
+                "action": action,
+                "deviceAction": action,
+                "source": "card_v2_switch",
+                "receivedAtMs": received_at_ms,
+            })
+        }
+        CardV2Event::Button(btn) => map_card_v2_button_event_to_json(&btn, received_at_ms),
+        CardV2Event::Power(power) => serde_json::to_value(&power)
+            .map(|v| json!({"kind": "power", "power": v}))
+            .unwrap_or(Value::Null),
+        CardV2Event::Sync(sync) => serde_json::to_value(&sync)
+            .map(|v| json!({"kind": "sync", "sync": v}))
+            .unwrap_or(Value::Null),
+        CardV2Event::UploadComplete(_) => json!({"kind": "upload_complete"}),
+        _ => return None,
+    };
+    if value.is_null() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn spawn_card_v2_event_pump(
@@ -1988,35 +2047,8 @@ fn spawn_card_v2_event_pump(
             tokio::select! {
                 recv_res = events.recv() => match recv_res {
                     Ok(event) => {
-                        let received_at_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0);
-                        let value = match event {
-                            CardV2Event::RecordStatus(status) => serde_json::to_value(&status)
-                                .map(|v| json!({"kind": "record", "status": v}))
-                                .unwrap_or(Value::Null),
-                            CardV2Event::ToggleSwitch(sw) => serde_json::to_value(&sw)
-                                .map(|v| json!({
-                                    "kind": "toggle_switch",
-                                    "switch": v,
-                                    "position": sw.position.wire_name(),
-                                    "action": sw.action.wire_name(),
-                                }))
-                                .unwrap_or_else(|_| json!({"kind": "toggle_switch"})),
-                            CardV2Event::Button(btn) => {
-                                map_card_v2_button_event_to_json(&btn, received_at_ms)
-                            }
-                            CardV2Event::Power(power) => serde_json::to_value(&power)
-                                .map(|v| json!({"kind": "power", "power": v}))
-                                .unwrap_or(Value::Null),
-                            CardV2Event::Sync(sync) => serde_json::to_value(&sync)
-                                .map(|v| json!({"kind": "sync", "sync": v}))
-                                .unwrap_or(Value::Null),
-                            CardV2Event::UploadComplete(_) => json!({"kind": "upload_complete"}),
-                            _ => continue,
-                        };
-                        if !value.is_null() {
+                        let received_at_ms = u64::try_from(now_unix_ms().max(0)).unwrap_or(0);
+                        if let Some(value) = map_card_v2_event_to_json(event, received_at_ms) {
                             state().events.lock().expect("events lock").push(value);
                         }
                     }
@@ -2746,11 +2778,25 @@ async fn record_start(
     match active {
         ActiveDevice::CardV2 { device, .. } => {
             ensure_sd_on_nrf(device).await;
-            let resp = match duration_secs.filter(|&d| d > 0) {
-                Some(secs) => device.start_recording_with_duration(secs).await?,
-                None => device.start_recording().await?,
+            let res = match duration_secs.filter(|&d| d > 0) {
+                Some(secs) => device.start_recording_with_duration(secs).await,
+                None => device.start_recording().await,
             };
-            Ok(to_value(resp)?)
+            match res {
+                Ok(resp) => Ok(to_value(resp)?),
+                Err(err) => {
+                    if device
+                        .record_status()
+                        .await
+                        .map(|s| s.is_recording)
+                        .unwrap_or(false)
+                    {
+                        Ok(json!({"code": 0, "alreadyRecording": true}))
+                    } else {
+                        Err(err.into())
+                    }
+                }
+            }
         }
         ActiveDevice::DyjV1 { device, .. } => {
             let _ = device.audio_capture_start().await;
@@ -2785,7 +2831,19 @@ async fn record_start(
 
 async fn record_stop(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
-        ActiveDevice::CardV2 { device, .. } => Ok(device.raw_command("RECORD_STOP", None).await?),
+        ActiveDevice::CardV2 { device, .. } => match device.stop_recording().await {
+            Ok(resp) => Ok(to_value(resp)?),
+            Err(err) => {
+                if matches!(
+                    device.record_status().await,
+                    Ok(status) if !status.is_recording
+                ) {
+                    Ok(json!({"code": 0, "alreadyStopped": true}))
+                } else {
+                    Err(err.into())
+                }
+            }
+        },
         ActiveDevice::DyjV1 {
             device,
             realtime_active,
@@ -4181,6 +4239,133 @@ async fn dyj_led_hint(active: &ActiveDevice, mode: &str) -> Result<Value, Bridge
         _ => device.led_clear().await.is_ok(),
     };
     Ok(json!({"ok": ok, "mode": mode}))
+}
+
+fn parse_card_control_updates(payload: &Value) -> Vec<(ControlInput, ControlAction)> {
+    const FIELD_SPECS: [(&str, &str, ControlInput); 6] = [
+        ("btnSingle", "btn_single", ControlInput::Button(ButtonGesture::Single)),
+        ("btnDouble", "btn_double", ControlInput::Button(ButtonGesture::Double)),
+        (
+            "btnLongPress",
+            "btn_long_press",
+            ControlInput::Button(ButtonGesture::LongPress),
+        ),
+        (
+            "btnLongRelease",
+            "btn_long_release",
+            ControlInput::Button(ButtonGesture::LongRelease),
+        ),
+        ("switchOn", "switch_on", ControlInput::Switch(SwitchPosition::On)),
+        ("switchOff", "switch_off", ControlInput::Switch(SwitchPosition::Off)),
+    ];
+    let mut updates = Vec::new();
+    for (camel, snake, input) in FIELD_SPECS {
+        let val = payload
+            .get(camel)
+            .or_else(|| payload.get(snake))
+            .and_then(Value::as_str);
+        if let Some(raw) = val {
+            updates.push((input, ControlAction::parse(raw.trim())));
+        }
+    }
+    updates
+}
+
+async fn card_controls_get(active: &ActiveDevice) -> Result<Value, BridgeError> {
+    let ActiveDevice::CardV2 { device, .. } = active else {
+        return Ok(json!({"supported": false}));
+    };
+    let bindings = device.control_bindings().await?;
+    Ok(json!({
+        "supported": true,
+        "btnSingle": bindings.button_single.wire_name(),
+        "btnDouble": bindings.button_double.wire_name(),
+        "btnLongPress": bindings.button_long_press.wire_name(),
+        "btnLongRelease": bindings.button_long_release.wire_name(),
+        "switchOn": bindings.switch_on.wire_name(),
+        "switchOff": bindings.switch_off.wire_name(),
+    }))
+}
+
+async fn card_controls_set(active: &ActiveDevice, payload: &Value) -> Result<Value, BridgeError> {
+    let ActiveDevice::CardV2 { device, .. } = active else {
+        return Ok(json!({"supported": false, "applied": false}));
+    };
+    let updates = parse_card_control_updates(payload);
+    for (input, action) in &updates {
+        device.set_control_action(*input, action.clone()).await?;
+    }
+    Ok(json!({
+        "supported": true,
+        "applied": true,
+        "written": updates.len(),
+    }))
+}
+
+fn build_card_display_show_request(payload: &Value) -> Result<DisplayShowRequest, BridgeError> {
+    let persistent = payload
+        .get("persistent")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let timeout_ms = payload
+        .get("timeoutMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(4000)
+        .clamp(1, u64::from(DISPLAY_TIMEOUT_MAX_MS)) as u32;
+
+    if let Some(b64) = payload
+        .get("bitmapBase64")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let bytes = BASE64
+            .decode(b64)
+            .map_err(|e| BridgeError::from(format!("OLED 位图 Base64 无效: {e}")))?;
+        if bytes.len() != DISPLAY_BITMAP_BYTES {
+            return Err(BridgeError::from(format!(
+                "OLED 位图长度必须为 {DISPLAY_BITMAP_BYTES} 字节，实际 {}",
+                bytes.len()
+            )));
+        }
+        return Ok(DisplayShowRequest::bitmap(bytes)
+            .persistent(persistent)
+            .timeout_ms(timeout_ms));
+    }
+
+    let lines: Vec<String> = payload
+        .get("lines")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    if lines.is_empty() {
+        return Err(BridgeError::from("card_display.show 需要 bitmapBase64 或 lines".to_string()));
+    }
+    Ok(DisplayShowRequest::text(lines)
+        .persistent(persistent)
+        .timeout_ms(timeout_ms))
+}
+
+async fn card_display_show(active: &ActiveDevice, payload: &Value) -> Result<Value, BridgeError> {
+    let ActiveDevice::CardV2 { device, .. } = active else {
+        return Ok(json!({"supported": false, "shown": false}));
+    };
+    let req = build_card_display_show_request(payload)?;
+    device.display_show(&req).await?;
+    Ok(json!({"supported": true, "shown": true}))
+}
+
+async fn card_display_clear(active: &ActiveDevice) -> Result<Value, BridgeError> {
+    let ActiveDevice::CardV2 { device, .. } = active else {
+        return Ok(json!({"supported": false, "cleared": false}));
+    };
+    device.display_clear().await?;
+    Ok(json!({"supported": true, "cleared": true}))
 }
 
 /// 点一机 V1 前向兼容端侧语音播报（`tts.speak`）：
@@ -6462,6 +6647,140 @@ mod tests {
             Some("D3200-C3A1".to_string())
         );
         assert!(now_unix_ms() > 0);
+    }
+
+    #[test]
+    fn maps_card_v2_button_and_toggle_switch_events() {
+        use reai_card_sdk::{ButtonEvent as CardButtonEvent, ToggleSwitchEvent};
+
+        let cases = [
+            (ButtonGesture::Single, "click", "single", ControlAction::RecordMark, "record_mark"),
+            (ButtonGesture::Double, "double_click", "double", ControlAction::Other("app_sync".into()), "app_sync"),
+            (ButtonGesture::LongPress, "long_press", "long_press", ControlAction::Other("agent_voice".into()), "agent_voice"),
+            (ButtonGesture::LongRelease, "long_press_end", "long_release", ControlAction::None, "none"),
+        ];
+        for (gesture, expected_norm, expected_raw, action, expected_act) in cases {
+            let mapped = map_card_v2_event_to_json(
+                CardV2Event::Button(CardButtonEvent { gesture, action }),
+                1_700_000_010_000,
+            )
+            .expect("mapped button");
+            assert_eq!(mapped["kind"], "button");
+            assert_eq!(mapped["gesture"], expected_norm);
+            assert_eq!(mapped["rawGesture"], expected_raw);
+            assert_eq!(mapped["deviceAction"], expected_act);
+            assert_eq!(mapped["source"], "card_v2_button");
+            assert_eq!(mapped["receivedAtMs"], 1_700_000_010_000u64);
+        }
+
+        let sw_on = map_card_v2_event_to_json(
+            CardV2Event::ToggleSwitch(ToggleSwitchEvent {
+                position: SwitchPosition::On,
+                action: ControlAction::RecordStart,
+            }),
+            1_700_000_020_000,
+        )
+        .expect("mapped switch on");
+        assert_eq!(sw_on["kind"], "toggle_switch");
+        assert_eq!(sw_on["position"], "on");
+        assert_eq!(sw_on["gesture"], "switch_on");
+        assert_eq!(sw_on["deviceAction"], "record_start");
+        assert_eq!(sw_on["source"], "card_v2_switch");
+
+        let sw_off = map_card_v2_event_to_json(
+            CardV2Event::ToggleSwitch(ToggleSwitchEvent {
+                position: SwitchPosition::Off,
+                action: ControlAction::RecordStop,
+            }),
+            1_700_000_030_000,
+        )
+        .expect("mapped switch off");
+        assert_eq!(sw_off["kind"], "toggle_switch");
+        assert_eq!(sw_off["position"], "off");
+        assert_eq!(sw_off["gesture"], "switch_off");
+        assert_eq!(sw_off["deviceAction"], "record_stop");
+    }
+
+    #[test]
+    fn parses_card_control_input_payload_keys() {
+        let updates = parse_card_control_updates(&json!({
+            "btnSingle": "record_mark",
+            "btnDouble": "app_sync",
+            "btn_long_press": "agent_voice",
+            "btnLongRelease": "none",
+            "switchOn": "record_start",
+            "switch_off": "record_stop",
+        }));
+        assert_eq!(updates.len(), 6);
+        assert_eq!(
+            updates[0],
+            (
+                ControlInput::Button(ButtonGesture::Single),
+                ControlAction::RecordMark
+            )
+        );
+        assert_eq!(
+            updates[1],
+            (
+                ControlInput::Button(ButtonGesture::Double),
+                ControlAction::Other("app_sync".into())
+            )
+        );
+        assert_eq!(
+            updates[2],
+            (
+                ControlInput::Button(ButtonGesture::LongPress),
+                ControlAction::Other("agent_voice".into())
+            )
+        );
+        assert_eq!(
+            updates[3],
+            (
+                ControlInput::Button(ButtonGesture::LongRelease),
+                ControlAction::None
+            )
+        );
+        assert_eq!(
+            updates[4],
+            (
+                ControlInput::Switch(SwitchPosition::On),
+                ControlAction::RecordStart
+            )
+        );
+        assert_eq!(
+            updates[5],
+            (
+                ControlInput::Switch(SwitchPosition::Off),
+                ControlAction::RecordStop
+            )
+        );
+    }
+
+    #[test]
+    fn decodes_display_show_request_bitmap_and_text() {
+        let valid_bytes = vec![0xA5u8; DISPLAY_BITMAP_BYTES];
+        let req_bmp = build_card_display_show_request(&json!({
+            "bitmapBase64": BASE64.encode(&valid_bytes),
+            "persistent": true,
+            "timeoutMs": 6500,
+        }))
+        .expect("bitmap req");
+        assert_eq!(req_bmp.bitmap.as_deref(), Some(valid_bytes.as_slice()));
+        assert!(req_bmp.persistent);
+        assert_eq!(req_bmp.timeout_ms, 6500);
+
+        let bad_len = build_card_display_show_request(&json!({
+            "bitmapBase64": BASE64.encode([1u8, 2, 3]),
+        }));
+        assert!(bad_len.is_err());
+
+        let req_txt = build_card_display_show_request(&json!({
+            "lines": ["DYJV2", "T4W25T"],
+            "timeoutMs": 0,
+        }))
+        .expect("text req");
+        assert_eq!(req_txt.lines, vec!["DYJV2", "T4W25T"]);
+        assert_eq!(req_txt.timeout_ms, 1);
     }
 
     #[test]

@@ -74,9 +74,19 @@ class FakeCardGateway implements CardGateway {
     this.failWifiOta,
     this.cameraPhotos = const [],
     this.fakeCapturedPhotoBytes,
+    Map<String, String>? initialCardControls,
   }) : _initialSnapshot = initialSnapshot,
        current = initialSnapshot,
-       savedCredentials = List<CardWifiCredential>.of(wifiCredentials);
+       savedCredentials = List<CardWifiCredential>.of(wifiCredentials),
+       cardControls = {
+         'btnSingle': 'none',
+         'btnDouble': 'none',
+         'btnLongPress': 'none',
+         'btnLongRelease': 'none',
+         'switchOn': 'none',
+         'switchOff': 'none',
+         ...?initialCardControls,
+       };
 
   final CardSnapshot? _initialSnapshot;
 
@@ -92,6 +102,15 @@ class FakeCardGateway implements CardGateway {
 
   /// 记录收到的 LED 提示模式（`dyj_led_hint`）。
   final List<String> ledHintModes = [];
+
+  /// 录音卡 V2（CardV2）物理按键与拨杆 KV 绑定状态（`card_controls.get`/`set`）。
+  final Map<String, String> cardControls;
+  int cardControlsGetCalls = 0;
+  final List<Map<String, dynamic>> cardControlsSetCalls = [];
+
+  /// 录音卡 V2（CardV2）OLED 屏幕调用记录（`card_display.show`/`clear`）。
+  final List<Map<String, dynamic>> displayShowCalls = [];
+  int displayClearCalls = 0;
 
   /// mark() 调用次数。
   int markCalls = 0;
@@ -449,13 +468,15 @@ class FakeCardGateway implements CardGateway {
     });
   }
 
-  /// 点一机 V1 物理按键手势事件（down / up / click / double_click / long_press_start / long_press_end）。
+  /// 物理按键手势事件（down / up / click / double_click / long_press_start / long_press_end）。
   void pushButtonEvent({
     String? gesture,
     String? type,
     int? durationMs,
     int deviceTs = 0,
     int? receivedAtMs,
+    String? deviceAction,
+    String? source,
   }) {
     _eventSeq++;
     deviceEvents.add({
@@ -465,6 +486,29 @@ class FakeCardGateway implements CardGateway {
         'gesture': gesture ?? type ?? 'click',
         'durationMs': durationMs,
         'deviceTs': deviceTs,
+        'receivedAtMs': receivedAtMs ?? DateTime.now().millisecondsSinceEpoch,
+        'deviceAction': ?deviceAction,
+        'source': ?source,
+      },
+    });
+  }
+
+  /// 录音卡 V2 侧边拨杆开关事件（`TOGGLE_SWITCH`）。
+  void pushToggleSwitchEvent({
+    required String position,
+    String? deviceAction,
+    int? receivedAtMs,
+  }) {
+    _eventSeq++;
+    final pos = position.trim().toLowerCase() == 'off' ? 'off' : 'on';
+    deviceEvents.add({
+      'seq': _eventSeq,
+      'event': {
+        'kind': 'toggle_switch',
+        'position': pos,
+        'gesture': 'switch_$pos',
+        'deviceAction': deviceAction ?? 'none',
+        'source': 'card_v2_switch',
         'receivedAtMs': receivedAtMs ?? DateTime.now().millisecondsSinceEpoch,
       },
     });
@@ -746,6 +790,39 @@ class FakeCardGateway implements CardGateway {
           'buttons': const [],
           'bindings': {'record': 'event_only'},
         };
+      case 'card_controls.get':
+        cardControlsGetCalls++;
+        return {
+          'supported': true,
+          ...cardControls,
+        };
+      case 'card_controls.set':
+        final copy = Map<String, dynamic>.from(payload ?? const {});
+        cardControlsSetCalls.add(copy);
+        for (final key in const [
+          'btnSingle',
+          'btnDouble',
+          'btnLongPress',
+          'btnLongRelease',
+          'switchOn',
+          'switchOff',
+        ]) {
+          if (copy[key] is String) {
+            cardControls[key] = (copy[key] as String).trim();
+          }
+        }
+        return {
+          'supported': true,
+          'applied': true,
+          'written': copy.length,
+        };
+      case 'card_display.show':
+        final copy = Map<String, dynamic>.from(payload ?? const {});
+        displayShowCalls.add(copy);
+        return {'supported': true, 'shown': true};
+      case 'card_display.clear':
+        displayClearCalls++;
+        return {'supported': true, 'cleared': true};
       case 'camera_capture_and_fetch':
         final bytes = fakeCapturedPhotoBytes;
         if (bytes != null) {
