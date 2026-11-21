@@ -4271,20 +4271,124 @@ fn parse_card_control_updates(payload: &Value) -> Vec<(ControlInput, ControlActi
     updates
 }
 
+const CARD_BUTTON_SWITCH_INPUTS: [ControlInput; 6] = [
+    ControlInput::Button(ButtonGesture::Single),
+    ControlInput::Button(ButtonGesture::Double),
+    ControlInput::Button(ButtonGesture::LongPress),
+    ControlInput::Button(ButtonGesture::LongRelease),
+    ControlInput::Switch(SwitchPosition::On),
+    ControlInput::Switch(SwitchPosition::Off),
+];
+
+const CARD_KV_WRITE_SETTLE: Duration = Duration::from_millis(180);
+const CARD_KV_PERSIST_RETRY_BACKOFFS: [Duration; 3] = [
+    Duration::from_millis(300),
+    Duration::from_millis(600),
+    Duration::from_millis(1000),
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CardControlOp {
+    Clear(ControlInput),
+    Set(ControlInput, ControlAction),
+}
+
+fn is_kv_persist_error(err: &CardSdkError) -> bool {
+    matches!(err, CardSdkError::Device { code: 4, .. })
+}
+
+fn plan_card_control_ops(
+    updates: &[(ControlInput, ControlAction)],
+    current_raw: &HashMap<ControlInput, Option<String>>,
+) -> (Vec<CardControlOp>, usize) {
+    let mut last_idx_by_input: HashMap<ControlInput, usize> = HashMap::new();
+    for (idx, (input, _)) in updates.iter().enumerate() {
+        last_idx_by_input.insert(*input, idx);
+    }
+
+    let mut clears = Vec::new();
+    let mut sets = Vec::new();
+    let mut skipped = 0usize;
+
+    for (idx, (input, action)) in updates.iter().enumerate() {
+        if last_idx_by_input.get(input).copied() != Some(idx) {
+            continue;
+        }
+        let existing_raw = current_raw.get(input).and_then(|v| v.as_deref());
+        if *action == ControlAction::None {
+            if existing_raw.is_none() {
+                skipped += 1;
+            } else {
+                clears.push(CardControlOp::Clear(*input));
+            }
+        } else if existing_raw.map(str::trim) == Some(action.wire_name()) {
+            skipped += 1;
+        } else {
+            sets.push(CardControlOp::Set(*input, action.clone()));
+        }
+    }
+
+    clears.extend(sets);
+    (clears, skipped)
+}
+
 async fn card_controls_get(active: &ActiveDevice) -> Result<Value, BridgeError> {
     let ActiveDevice::CardV2 { device, .. } = active else {
         return Ok(json!({"supported": false}));
     };
-    let bindings = device.control_bindings().await?;
+    let mut single = ControlAction::None;
+    let mut double = ControlAction::None;
+    let mut long_press = ControlAction::None;
+    let mut long_release = ControlAction::None;
+    let mut switch_on = ControlAction::None;
+    let mut switch_off = ControlAction::None;
+
+    for input in CARD_BUTTON_SWITCH_INPUTS {
+        let action = device.control_action(input).await?;
+        match input {
+            ControlInput::Button(ButtonGesture::Single) => single = action,
+            ControlInput::Button(ButtonGesture::Double) => double = action,
+            ControlInput::Button(ButtonGesture::LongPress) => long_press = action,
+            ControlInput::Button(ButtonGesture::LongRelease) => long_release = action,
+            ControlInput::Switch(SwitchPosition::On) => switch_on = action,
+            ControlInput::Switch(SwitchPosition::Off) => switch_off = action,
+            ControlInput::Charge(_) => {}
+        }
+    }
+
     Ok(json!({
         "supported": true,
-        "btnSingle": bindings.button_single.wire_name(),
-        "btnDouble": bindings.button_double.wire_name(),
-        "btnLongPress": bindings.button_long_press.wire_name(),
-        "btnLongRelease": bindings.button_long_release.wire_name(),
-        "switchOn": bindings.switch_on.wire_name(),
-        "switchOff": bindings.switch_off.wire_name(),
+        "btnSingle": single.wire_name(),
+        "btnDouble": double.wire_name(),
+        "btnLongPress": long_press.wire_name(),
+        "btnLongRelease": long_release.wire_name(),
+        "switchOn": switch_on.wire_name(),
+        "switchOff": switch_off.wire_name(),
     }))
+}
+
+fn build_kv_code4_error(
+    err: CardSdkError,
+    input: ControlInput,
+    action: &ControlAction,
+    written: usize,
+    cleared: usize,
+    skipped: usize,
+    reclaimed_cache: &[&'static str],
+) -> BridgeError {
+    BridgeError {
+        message: err.to_string(),
+        detail: Some(json!({
+            "command": "CONFIG_SET",
+            "code": 4,
+            "key": input.config_key(),
+            "value": action.wire_name(),
+            "written": written,
+            "cleared": cleared,
+            "skipped": skipped,
+            "reclaimedCache": reclaimed_cache,
+        })),
+    }
 }
 
 async fn card_controls_set(active: &ActiveDevice, payload: &Value) -> Result<Value, BridgeError> {
@@ -4292,13 +4396,195 @@ async fn card_controls_set(active: &ActiveDevice, payload: &Value) -> Result<Val
         return Ok(json!({"supported": false, "applied": false}));
     };
     let updates = parse_card_control_updates(payload);
-    for (input, action) in &updates {
-        device.set_control_action(*input, action.clone()).await?;
+    if updates.is_empty() {
+        return Ok(json!({
+            "supported": true,
+            "applied": true,
+            "written": 0,
+            "cleared": 0,
+            "skipped": 0,
+        }));
     }
+
+    let mut current_raw: HashMap<ControlInput, Option<String>> = HashMap::new();
+    for (input, _) in &updates {
+        if !current_raw.contains_key(input) {
+            let val = device.config_value(input.config_key()).await?;
+            current_raw.insert(*input, val);
+        }
+    }
+
+    let wants_long_release_non_none = updates
+        .iter()
+        .rev()
+        .find(|(input, _)| *input == ControlInput::Button(ButtonGesture::LongRelease))
+        .is_some_and(|(_, action)| *action != ControlAction::None);
+
+    let (ops, skipped) = plan_card_control_ops(&updates, &current_raw);
+    let mut written = 0usize;
+    let mut cleared = 0usize;
+    let mut reclaimed_long_release = false;
+    let mut reclaimed_cache: Vec<&'static str> = Vec::new();
+
+    for (idx, op) in ops.into_iter().enumerate() {
+        if idx > 0 {
+            tokio::time::sleep(CARD_KV_WRITE_SETTLE).await;
+        }
+        match op {
+            CardControlOp::Clear(input) => {
+                let mut res = device.clear_control_action(input).await;
+                if let Err(err) = &res {
+                    if is_kv_persist_error(err) {
+                        for delay in CARD_KV_PERSIST_RETRY_BACKOFFS {
+                            tokio::time::sleep(delay).await;
+                            res = device.clear_control_action(input).await;
+                            match &res {
+                                Ok(()) => break,
+                                Err(next) if is_kv_persist_error(next) => continue,
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                }
+                match res {
+                    Ok(()) => cleared += 1,
+                    Err(err) => {
+                        if is_kv_persist_error(&err) {
+                            return Err(BridgeError {
+                                message: err.to_string(),
+                                detail: Some(json!({
+                                    "command": "CONFIG_DEL",
+                                    "code": 4,
+                                    "key": input.config_key(),
+                                    "written": written,
+                                    "cleared": cleared,
+                                    "skipped": skipped,
+                                    "reclaimedCache": reclaimed_cache,
+                                })),
+                            });
+                        }
+                        return Err(err.into());
+                    }
+                }
+            }
+            CardControlOp::Set(input, action) => {
+                match device.set_control_action(input, action.clone()).await {
+                    Ok(()) => {
+                        written += 1;
+                        continue;
+                    }
+                    Err(err) if is_kv_persist_error(&err) => {}
+                    Err(err) => return Err(err.into()),
+                }
+
+                // 第 1 次重试前：仅退避等待 SoftDevice 闪存队列空闲
+                tokio::time::sleep(CARD_KV_PERSIST_RETRY_BACKOFFS[0]).await;
+                match device.set_control_action(input, action.clone()).await {
+                    Ok(()) => {
+                        written += 1;
+                        continue;
+                    }
+                    Err(err) if is_kv_persist_error(&err) => {}
+                    Err(err) => return Err(err.into()),
+                }
+
+                // 第 2 次重试前：若不需要长按松手绑定，释放可能由旧版写入 `"none"` 占用的槽位
+                if !wants_long_release_non_none && !reclaimed_long_release {
+                    reclaimed_long_release = true;
+                    if matches!(
+                        device
+                            .clear_config(ButtonGesture::LongRelease.config_key())
+                            .await,
+                        Ok(true)
+                    ) {
+                        reclaimed_cache.push(ButtonGesture::LongRelease.config_key());
+                    }
+                }
+                tokio::time::sleep(CARD_KV_PERSIST_RETRY_BACKOFFS[1]).await;
+                match device.set_control_action(input, action.clone()).await {
+                    Ok(()) => {
+                        written += 1;
+                        continue;
+                    }
+                    Err(err) if is_kv_persist_error(&err) => {}
+                    Err(err) => return Err(err.into()),
+                }
+
+                // 第 3 次重试前：若仍遇 code 4（高度疑似 16 槽已满），依次回收 App/SDK 自己的被动缓存键
+                let mut done = false;
+                if matches!(device.clear_config(BLE_WIFI_CRED_SUMMARY_KEY).await, Ok(true)) {
+                    reclaimed_cache.push(BLE_WIFI_CRED_SUMMARY_KEY);
+                    tokio::time::sleep(CARD_KV_WRITE_SETTLE).await;
+                    match device.set_control_action(input, action.clone()).await {
+                        Ok(()) => {
+                            written += 1;
+                            done = true;
+                        }
+                        Err(err) if is_kv_persist_error(&err) => {}
+                        Err(err) => return Err(err.into()),
+                    }
+                }
+                if done {
+                    continue;
+                }
+
+                if matches!(
+                    device
+                        .clear_config(reai_card_sdk::BLE_WIFI_VERSION_CONFIG_KEY)
+                        .await,
+                    Ok(true)
+                ) {
+                    reclaimed_cache.push(reai_card_sdk::BLE_WIFI_VERSION_CONFIG_KEY);
+                    tokio::time::sleep(CARD_KV_WRITE_SETTLE).await;
+                    match device.set_control_action(input, action.clone()).await {
+                        Ok(()) => {
+                            written += 1;
+                            continue;
+                        }
+                        Err(err) if is_kv_persist_error(&err) => {
+                            return Err(build_kv_code4_error(
+                                err,
+                                input,
+                                &action,
+                                written,
+                                cleared,
+                                skipped,
+                                &reclaimed_cache,
+                            ));
+                        }
+                        Err(err) => return Err(err.into()),
+                    }
+                }
+
+                tokio::time::sleep(CARD_KV_PERSIST_RETRY_BACKOFFS[2]).await;
+                match device.set_control_action(input, action.clone()).await {
+                    Ok(()) => {
+                        written += 1;
+                        continue;
+                    }
+                    Err(err) if is_kv_persist_error(&err) => {
+                        return Err(build_kv_code4_error(
+                            err,
+                            input,
+                            &action,
+                            written,
+                            cleared,
+                            skipped,
+                            &reclaimed_cache,
+                        ));
+                    }
+                    Err(err) => return Err(err.into()),
+                }
+            }
+        }
+    }
+
     Ok(json!({
         "supported": true,
         "applied": true,
-        "written": updates.len(),
+        "written": written,
+        "cleared": cleared,
+        "skipped": skipped,
     }))
 }
 
@@ -5059,7 +5345,132 @@ async fn sync_ble_wifi_creds_kv(
         .filter(|s| !s.is_empty())
         .collect();
     let encoded = encode_ssid_list_kv(&ssids);
+    if let Ok(Some(existing)) = device.config_value(BLE_WIFI_CRED_SUMMARY_KEY).await {
+        if existing == encoded {
+            return;
+        }
+    }
     let _ = device.set_config(BLE_WIFI_CRED_SUMMARY_KEY, &encoded).await;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CardV2AutoConnectOk {
+    ssid: String,
+    ip: Option<String>,
+}
+
+fn parse_autoconnect_ok_payload(val: &Value) -> Option<CardV2AutoConnectOk> {
+    let code = val.get("code").and_then(Value::as_i64).unwrap_or(0);
+    if code != 0 {
+        return None;
+    }
+    let ssid = val
+        .get("ssid")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_owned();
+    let ip = val
+        .get("ip")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    Some(CardV2AutoConnectOk { ssid, ip })
+}
+
+fn should_use_card_v2_autoconnect_for_saved_wifi(
+    password: &str,
+    ssid: &str,
+    saved_ssids: &[String],
+) -> bool {
+    let target = ssid.trim();
+    password.is_empty()
+        && !target.is_empty()
+        && saved_ssids.iter().any(|s| s.trim() == target)
+}
+
+async fn autoconnect_card_v2_wifi(
+    device: &CardV2Device,
+    out: Option<Emitter>,
+) -> Result<Option<CardV2AutoConnectOk>, CardSdkError> {
+    let mut events = device.subscribe_events();
+    match device.raw_command("WIFI_AUTOCONNECT", None).await {
+        Ok(val) => return Ok(parse_autoconnect_ok_payload(&val)),
+        Err(CardSdkError::Device { code: 1, .. }) => return Ok(None),
+        Err(CardSdkError::Timeout { .. }) => {}
+        Err(other) => return Err(other),
+    }
+
+    let started = tokio::time::Instant::now();
+    let mut deadline = started + Duration::from_secs(15);
+    let hard_cap = started + Duration::from_secs(35);
+
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, events.recv()).await {
+            Ok(Ok(CardV2Event::Sync(sync)))
+                if sync.state == Some(reai_card_sdk::SyncState::Connecting) =>
+            {
+                if sync.code.is_none() {
+                    deadline = hard_cap;
+                    if let Some(emitter) = out {
+                        if let Some(s) = sync
+                            .ssid
+                            .as_deref()
+                            .or(sync.message.as_deref())
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                        {
+                            emitter.progress(json!({
+                                "stage": "wifi",
+                                "percent": 8,
+                                "text": format!("正在自动连接已保存网络 {s}…"),
+                            }));
+                        }
+                    }
+                } else if sync.code == Some(0) {
+                    let ssid = sync
+                        .ssid
+                        .or(sync.message)
+                        .map(|s| s.trim().to_owned())
+                        .unwrap_or_default();
+                    let ip = sync
+                        .ip
+                        .map(|s| s.trim().to_owned())
+                        .filter(|s| !s.is_empty());
+                    return Ok(Some(CardV2AutoConnectOk { ssid, ip }));
+                } else if sync.code == Some(1) {
+                    return Ok(None);
+                }
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                return Err(CardSdkError::Disconnected);
+            }
+            Err(_) => break,
+        }
+    }
+
+    if let Ok(status) = device.wifi_status().await {
+        if status.connected {
+            return Ok(Some(CardV2AutoConnectOk {
+                ssid: status
+                    .ssid
+                    .map(|s| s.trim().to_owned())
+                    .unwrap_or_default(),
+                ip: status
+                    .ip
+                    .map(|s| s.trim().to_owned())
+                    .filter(|s| !s.is_empty()),
+            }));
+        }
+    }
+    Ok(None)
 }
 
 fn map_dyj_wifi_connect_result(ssid: &str, resp: Value) -> Result<Value, BridgeError> {
@@ -5084,6 +5495,37 @@ async fn wifi_connect(
     match active {
         ActiveDevice::CardV2 { device, .. } => {
             ensure_wifi_open_card_v2(device).await?;
+            if password.is_empty() {
+                if let Ok(status) = device.wifi_status().await {
+                    if status.connected
+                        && status.ssid.as_deref().map(str::trim) == Some(ssid.trim())
+                    {
+                        return Ok(json!({
+                            "code": 0,
+                            "message": "already connected",
+                            "ssid": ssid,
+                            "ip": status.ip,
+                        }));
+                    }
+                }
+                let creds = device.list_wifi_credentials().await.unwrap_or_default();
+                let saved_ssids: Vec<String> = creds.into_iter().map(|c| c.ssid).collect();
+                if should_use_card_v2_autoconnect_for_saved_wifi(password, ssid, &saved_ssids) {
+                    if let Some(ok) = autoconnect_card_v2_wifi(device, None).await? {
+                        if ok.ssid.is_empty() || ok.ssid.trim() == ssid.trim() {
+                            return Ok(json!({
+                                "code": 0,
+                                "message": "ok",
+                                "ssid": ssid,
+                                "ip": ok.ip,
+                            }));
+                        }
+                    }
+                    return Err(BridgeError::from(format!(
+                        "WIFI_SAVED_PASSWORD_REQUIRED|{ssid}|无法通过录音卡已保存凭据自动连上「{ssid}」，请重新输入密码连接"
+                    )));
+                }
+            }
             let connected = device.connect_wifi(ssid, password).await?;
             if let Ok(creds) = device.list_wifi_credentials().await {
                 sync_ble_wifi_creds_kv(device, &creds).await;
@@ -6033,10 +6475,8 @@ async fn ota_wifi(payload: Value, out: Emitter) -> Result<(), BridgeError> {
             let _ = device.open_wifi().await;
             let _ = device.wait_for_ap_ready(Duration::from_secs(6)).await;
         }
-        if esp32_rebooted {
-            if let Some(ssid) = prev_connected_ssid.as_deref() {
-                let _ = device.connect_wifi(ssid, "").await;
-            }
+        if esp32_rebooted && prev_connected_ssid.is_some() {
+            let _ = autoconnect_card_v2_wifi(&device, None).await;
         }
     }
 
@@ -6100,15 +6540,15 @@ async fn ota_wifi_with_device(
     let mut connected = status.as_ref().is_some_and(|s| s.connected);
     if !connected {
         let creds = device.list_wifi_credentials().await.unwrap_or_default();
-        for cred in creds.iter().filter(|c| !c.ssid.trim().is_empty()) {
+        let non_empty_count = creds.iter().filter(|c| !c.ssid.trim().is_empty()).count();
+        if non_empty_count > 0 {
             out.progress(json!({
                 "stage": "wifi",
                 "percent": 8,
-                "text": format!("正在自动连接已保存网络 {}…", cred.ssid),
+                "text": format!("正在自动连接已保存网络（共 {non_empty_count} 个）…"),
             }));
-            if device.connect_wifi(&cred.ssid, "").await.is_ok() {
+            if matches!(autoconnect_card_v2_wifi(device, Some(out)).await, Ok(Some(_))) {
                 connected = true;
-                break;
             }
         }
         if !connected {
@@ -7349,5 +7789,129 @@ mod tests {
             "wifiEnabled": true
         })));
         assert!(!extract_card_v2_wifi_open(&Value::Null));
+    }
+
+    #[test]
+    fn plans_card_control_ops_with_diff_clear_first_and_dedup() {
+        let updates = vec![
+            (ControlInput::Button(ButtonGesture::Single), ControlAction::RecordToggle),
+            (ControlInput::Button(ButtonGesture::Double), ControlAction::None),
+            (
+                ControlInput::Button(ButtonGesture::LongPress),
+                ControlAction::Other("agent_voice".into()),
+            ),
+            (
+                ControlInput::Button(ButtonGesture::LongRelease),
+                ControlAction::None,
+            ),
+            (ControlInput::Switch(SwitchPosition::On), ControlAction::RecordStart),
+            (ControlInput::Switch(SwitchPosition::Off), ControlAction::None),
+            // 重复键以最后一次为准
+            (ControlInput::Button(ButtonGesture::Single), ControlAction::RecordMark),
+        ];
+
+        let current_raw = HashMap::from([
+            // 已经一致 -> skip
+            (
+                ControlInput::Button(ButtonGesture::Single),
+                Some("record_mark".to_string()),
+            ),
+            // 未占槽 (None) 且目标是 None -> skip (不写 "none")
+            (ControlInput::Button(ButtonGesture::Double), None),
+            // 需要更新为 agent_voice -> Set
+            (
+                ControlInput::Button(ButtonGesture::LongPress),
+                Some("record_mark".to_string()),
+            ),
+            // 旧版残留的 "none" 占槽 -> Clear 释放槽位
+            (
+                ControlInput::Button(ButtonGesture::LongRelease),
+                Some("none".to_string()),
+            ),
+            // 未配置且要设为 record_start -> Set
+            (ControlInput::Switch(SwitchPosition::On), None),
+            // 旧绑定被改为 None -> Clear 释放槽位
+            (
+                ControlInput::Switch(SwitchPosition::Off),
+                Some("record_stop".to_string()),
+            ),
+        ]);
+
+        let (ops, skipped) = plan_card_control_ops(&updates, &current_raw);
+        assert_eq!(skipped, 2);
+        assert_eq!(
+            ops,
+            vec![
+                // Clear 必须排在 Set 之前以先释放槽位
+                CardControlOp::Clear(ControlInput::Button(ButtonGesture::LongRelease)),
+                CardControlOp::Clear(ControlInput::Switch(SwitchPosition::Off)),
+                CardControlOp::Set(
+                    ControlInput::Button(ButtonGesture::LongPress),
+                    ControlAction::Other("agent_voice".into()),
+                ),
+                CardControlOp::Set(
+                    ControlInput::Switch(SwitchPosition::On),
+                    ControlAction::RecordStart,
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn detects_kv_persist_code4_error() {
+        let code4 = CardSdkError::Device {
+            command: "CONFIG_SET".into(),
+            code: 4,
+            message: "persist failed".into(),
+        };
+        let code3 = CardSdkError::Device {
+            command: "CONFIG_GET".into(),
+            code: 3,
+            message: "not found".into(),
+        };
+        let timeout = CardSdkError::Timeout {
+            command: "CONFIG_SET".into(),
+            seconds: 10,
+        };
+        assert!(is_kv_persist_error(&code4));
+        assert!(!is_kv_persist_error(&code3));
+        assert!(!is_kv_persist_error(&timeout));
+    }
+
+    #[test]
+    fn parses_card_v2_autoconnect_payload_and_saved_ssid_routing() {
+        assert_eq!(
+            parse_autoconnect_ok_payload(&json!({
+                "code": 0,
+                "ssid": "Studio-2.4G",
+                "ip": "192.168.1.42"
+            })),
+            Some(CardV2AutoConnectOk {
+                ssid: "Studio-2.4G".to_string(),
+                ip: Some("192.168.1.42".to_string()),
+            })
+        );
+        assert_eq!(
+            parse_autoconnect_ok_payload(&json!({"code": 1, "message": "all_failed"})),
+            None
+        );
+        assert_eq!(parse_autoconnect_ok_payload(&json!({"code": 0})), None);
+
+        let saved = vec!["Studio-2.4G".to_string(), "HomeWiFi".to_string()];
+        assert!(should_use_card_v2_autoconnect_for_saved_wifi(
+            "",
+            "Studio-2.4G",
+            &saved
+        ));
+        assert!(!should_use_card_v2_autoconnect_for_saved_wifi(
+            "secret123",
+            "Studio-2.4G",
+            &saved
+        ));
+        assert!(!should_use_card_v2_autoconnect_for_saved_wifi(
+            "",
+            "Cafe-Open",
+            &saved
+        ));
     }
 }
