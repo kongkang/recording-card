@@ -146,6 +146,7 @@ void main() {
     // 2) 预设风格与提示词二级页：切预设 + 编辑保存提示词 → 摘要变「自定义」
     await tester.tap(find.byKey(const Key('set-prompts')));
     await tester.pump();
+    expect(find.text('日报与做梦'), findsNothing);
     await tester.tap(find.byKey(const Key('preset-todo')));
     await tester.pump();
     expect(agentConfig.presetId, 'todo');
@@ -163,9 +164,12 @@ void main() {
     await tester.pump();
     expect(tester.widget<Text>(find.byKey(const Key('sv-preset'))).data, '自定义');
 
-    // 3) 扩展能力二级页：添加自定义 MCP 服务并验证计数增加
+    // 3) 扩展能力二级页：添加自定义 MCP 服务并验证计数增加（内置未接线占位不展示）
     await tester.tap(find.byKey(const Key('set-extensions')));
     await tester.pump();
+    expect(find.text('同日连续上下文感知'), findsNothing);
+    expect(find.text('结构化行动项提取'), findsNothing);
+    expect(find.text('个人知识库 MCP'), findsNothing);
     await tester.scrollUntilVisible(
       find.byKey(const Key('mcp-add-btn')),
       300,
@@ -201,7 +205,7 @@ void main() {
     await tester.pump();
     expect(
       tester.widget<Text>(find.byKey(const Key('sv-ext'))).data,
-      contains('6 项'),
+      contains('4 项'),
     );
   });
 

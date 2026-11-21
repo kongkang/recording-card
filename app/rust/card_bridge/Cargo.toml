@@ -19,7 +19,6 @@ reai-card-sdk = { git = "https://github.com/ReAI-com/reai-card-sdk.git", rev = "
 reai-dyj-sdk = { git = "https://github.com/ReAI-com/dyj-v1-sdk.git" }
 reai-board-sdk = { git = "https://github.com/ReAI-com/reai-board-sdk.git", default-features = false, features = ["ble"] }
 reai-ext-sdk = { path = "../sdks/reai-ext-sdk" }
-reai-getseed-sdk = { path = "../sdks/reai-getseed-sdk" }
 reai-omi-sdk = { path = "../sdks/reai-omi-sdk" }
 reai-feishu-sdk = { path = "../sdks/reai-feishu-sdk" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "io-util"] }

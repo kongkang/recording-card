@@ -283,7 +283,6 @@ class _HomeGateState extends State<_HomeGate> {
     unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
     unawaited(
       _device.setExtHardwareEnabled(
-        getSeed: _agentConfig.getSeedLinkEnabled,
         omi: _agentConfig.omiLinkEnabled,
         feishu: _agentConfig.feishuLinkEnabled,
       ),

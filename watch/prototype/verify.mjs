@@ -577,7 +577,7 @@ if (pp && chromePath) {
     await pf.click('[data-testid="crumb-back"]');
     await pf.$eval('[data-testid="set-ext-hw"]', (el) => el.scrollIntoView({ block: 'center' }));
     await pf.click('[data-testid="set-ext-hw"]');
-    assert(await pf.$('[data-testid="ext-getseed-switch"]'));
+    assert.equal(await pf.$('[data-testid="ext-getseed-switch"]'), null);
     assert(await pf.$('[data-testid="ext-omi-switch"]'));
     assert.equal(
       await pf.evaluate(() => !document.getElementById('p-setsub').innerText.includes('SDK Crate') && document.documentElement.scrollWidth <= window.innerWidth),

@@ -250,7 +250,6 @@ dependencies = [
  "reai-dyj-sdk",
  "reai-ext-sdk",
  "reai-feishu-sdk",
- "reai-getseed-sdk",
  "reai-omi-sdk",
  "serde",
  "serde_json",
@@ -1647,22 +1646,6 @@ dependencies = [
  "reai-ext-sdk",
  "serde_json",
  "sha2",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "reai-getseed-sdk"
-version = "0.2.0"
-dependencies = [
- "aes",
- "async-trait",
- "btleplug",
- "chrono",
- "crc32fast",
- "futures",
- "reai-ext-sdk",
- "serde_json",
  "tokio",
  "uuid",
 ]
