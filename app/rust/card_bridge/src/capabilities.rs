@@ -72,6 +72,8 @@ impl DeviceKind {
                 has_configurable_switch: true,
                 has_oled_display: true,
                 has_standalone_realtime_stream: false,
+                has_device_restart: true,
+                has_device_shutdown: true,
                 ota_mode: "dual_chip",
             },
             Self::DyjV1 => HardwareCapabilities {
@@ -87,6 +89,8 @@ impl DeviceKind {
                 has_configurable_switch: false,
                 has_oled_display: false,
                 has_standalone_realtime_stream: true,
+                has_device_restart: true,
+                has_device_shutdown: false,
                 ota_mode: "single_ota",
             },
             Self::BoardV21 => HardwareCapabilities {
@@ -102,6 +106,8 @@ impl DeviceKind {
                 has_configurable_switch: false,
                 has_oled_display: false,
                 has_standalone_realtime_stream: true,
+                has_device_restart: false,
+                has_device_shutdown: false,
                 ota_mode: "none",
             },
             Self::OmiCv1 => HardwareCapabilities::from_sdk(OmiSdkDriver.default_capabilities()),
@@ -128,6 +134,8 @@ pub struct HardwareCapabilities {
     pub has_configurable_switch: bool,
     pub has_oled_display: bool,
     pub has_standalone_realtime_stream: bool,
+    pub has_device_restart: bool,
+    pub has_device_shutdown: bool,
     /// `"dual_chip"` | `"single_ota"` | `"none"`
     pub ota_mode: &'static str,
 }
@@ -147,6 +155,8 @@ impl HardwareCapabilities {
             has_configurable_switch: false,
             has_oled_display: false,
             has_standalone_realtime_stream: caps.realtime_audio,
+            has_device_restart: false,
+            has_device_shutdown: false,
             ota_mode: caps.ota_mode,
         }
     }
@@ -189,6 +199,8 @@ pub fn card_v2_dfu_recovery_capabilities() -> HardwareCapabilities {
         has_configurable_switch: false,
         has_oled_display: false,
         has_standalone_realtime_stream: false,
+        has_device_restart: false,
+        has_device_shutdown: false,
         ota_mode: "dual_chip",
     }
 }
@@ -294,19 +306,32 @@ mod tests {
                 && c2.has_configurable_switch
                 && c2.has_oled_display
                 && !c2.has_standalone_realtime_stream
+                && c2.has_device_restart
+                && c2.has_device_shutdown
         );
         assert_eq!(c2.ota_mode, "dual_chip");
 
         let (k1, c1) = classify_ble_name("DYJ_RA6BO5").expect("dyj v1");
         assert_eq!(k1, DeviceKind::DyjV1);
         assert!(c1.has_onboard_storage && c1.has_camera_media);
-        assert!(c1.has_remote_record_control && c1.has_configurable_buttons);
+        assert!(
+            c1.has_remote_record_control
+                && c1.has_configurable_buttons
+                && c1.has_device_restart
+                && !c1.has_device_shutdown
+        );
         assert_eq!(c1.ota_mode, "single_ota");
 
         let (kb, cb) = classify_ble_name("REAI_VB_A91C").expect("board v2.1");
         assert_eq!(kb, DeviceKind::BoardV21);
         assert!(cb.realtime_audio && cb.has_remote_record_control);
-        assert!(!cb.has_onboard_storage && !cb.has_file_sync && !cb.has_wifi_config);
+        assert!(
+            !cb.has_onboard_storage
+                && !cb.has_file_sync
+                && !cb.has_wifi_config
+                && !cb.has_device_restart
+                && !cb.has_device_shutdown
+        );
         assert_eq!(cb.ota_mode, "none");
 
         assert!(classify_ble_name("JBL Flip 6").is_none());
@@ -324,7 +349,13 @@ mod tests {
                 .expect("omi uuid only");
         assert_eq!(ko, DeviceKind::OmiCv1);
         assert!(co.realtime_audio && co.has_file_sync && co.has_remote_record_control);
-        assert!(co.has_mark_button && co.has_configurable_buttons && !co.has_wifi_config);
+        assert!(
+            co.has_mark_button
+                && co.has_configurable_buttons
+                && !co.has_wifi_config
+                && !co.has_device_restart
+                && !co.has_device_shutdown
+        );
         assert!(name_omi.starts_with("Omi-"));
 
         let (_, kf, _) = classify_ble_advertisement(
@@ -346,7 +377,13 @@ mod tests {
         assert_eq!(kb, DeviceKind::FeishuD3200);
         assert!(name_bean.starts_with("D3200-"));
         assert!(cb.has_file_sync && cb.has_remote_record_control && cb.has_physical_record_toggle);
-        assert!(!cb.realtime_audio && !cb.has_wifi_config && !cb.has_mark_button);
+        assert!(
+            !cb.realtime_audio
+                && !cb.has_wifi_config
+                && !cb.has_mark_button
+                && !cb.has_device_restart
+                && !cb.has_device_shutdown
+        );
         assert_eq!(cb.ota_mode, "none");
 
         let (kn, _) = classify_ble_name("D3200-C3A1").expect("feishu name");
@@ -362,7 +399,12 @@ mod tests {
         assert_eq!(dfu_name, "DFU_DYJ");
         assert_eq!(dfu_kind, DeviceKind::CardV2);
         assert_eq!(dfu_caps.ota_mode, "dual_chip");
-        assert!(!dfu_caps.realtime_audio && !dfu_caps.has_wifi_config);
+        assert!(
+            !dfu_caps.realtime_audio
+                && !dfu_caps.has_wifi_config
+                && !dfu_caps.has_device_restart
+                && !dfu_caps.has_device_shutdown
+        );
 
         let (dfu_uuid_only, dfu_uuid_kind, _) =
             classify_ble_advertisement("dfu-2", None, &[DFU_FE59_SERVICE_UUID], &empty)

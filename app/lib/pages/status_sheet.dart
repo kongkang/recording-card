@@ -473,6 +473,13 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay>
                         store: store,
                         agentConfig: widget.agentConfig,
                       ),
+                      DeviceView.more =>
+                        store.isConnected
+                            ? _MoreView(store: store)
+                            : _ConnectView(
+                                store: store,
+                                islandEnabled: widget.islandEnabled,
+                              ),
                     },
                   ),
                 ),
@@ -1032,11 +1039,12 @@ class _MainView extends StatelessWidget {
                 children: [
                   Flexible(
                     child: Text(
-                      store.activeCapabilities.hasConfigurableSwitch
-                          ? agentConfig!.cardButtonSummary
-                          : (store.activeKind == DeviceKind.omiCv1
-                                ? agentConfig!.omiButtonSummary
-                                : agentConfig!.dyjButtonSummary),
+                      agentConfig!.buttonConfiguredLabel(
+                        hasConfigurableSwitch:
+                            store.activeCapabilities.hasConfigurableSwitch,
+                        kind: store.activeKind,
+                      ),
+                      key: const Key('btn-config-val'),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
                       style: TextStyle(fontSize: 14, color: c.label),
@@ -1050,6 +1058,23 @@ class _MainView extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+          ),
+        if (store.activeCapabilities.hasMoreDeviceActions)
+          _Row(
+            keyName: 'more-row',
+            label: '更多',
+            onTap: () => store.showView(DeviceView.more),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                RCIcon(
+                  RCIconKind.chevronRight,
+                  key: const Key('rowchev-more'),
+                  size: 15,
+                  color: c.ax,
+                ),
+              ],
             ),
           ),
         if (store.devStateText.isNotEmpty)
@@ -2635,6 +2660,228 @@ class _ButtonConfigView extends StatelessWidget {
       ),
     );
   }
+}
+
+class _MoreView extends StatelessWidget {
+  const _MoreView({required this.store});
+
+  final DeviceStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final caps = store.activeCapabilities;
+    final busy = store.devicePowerBusy;
+    final err = store.devicePowerError;
+    return Column(
+      key: const Key('more-view'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            IconButton(
+              key: const Key('more-back'),
+              onPressed: busy ? null : () => store.showView(DeviceView.main),
+              icon: RCIcon(
+                RCIconKind.chevronLeft,
+                size: 18,
+                color: c.ink,
+              ),
+              color: c.ink,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              '更多',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: c.label,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '管理已连接硬件的重启与电源操作。',
+          style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+        ),
+        if (err != null && err.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(
+            err,
+            key: const Key('more-power-error'),
+            style: TextStyle(fontSize: 12, color: c.danger),
+          ),
+        ],
+        if (caps.hasDeviceRestart) ...[
+          const SizedBox(height: 12),
+          _PowerActionCard(
+            rc: c,
+            title: '重启设备',
+            description: '重新启动硬件以恢复异常录音状态，重启后将自动尝试重新连接。',
+            buttonKey: const Key('more-restart-btn'),
+            buttonLabel: busy ? '正在执行…' : '重启设备',
+            onPressed: busy ? null : () => _confirmRestart(context, store),
+          ),
+        ],
+        if (caps.hasDeviceShutdown) ...[
+          const SizedBox(height: 10),
+          _PowerActionCard(
+            rc: c,
+            title: '关机',
+            description: '关闭硬件电源并断开蓝牙连接，下次使用需通过机身按键开机。',
+            buttonKey: const Key('more-shutdown-btn'),
+            buttonLabel: busy ? '正在执行…' : '关机',
+            danger: true,
+            onPressed: busy ? null : () => _confirmShutdown(context, store),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _PowerActionCard extends StatelessWidget {
+  const _PowerActionCard({
+    required this.rc,
+    required this.title,
+    required this.description,
+    required this.buttonKey,
+    required this.buttonLabel,
+    required this.onPressed,
+    this.danger = false,
+  });
+
+  final RCColorScheme rc;
+  final String title;
+  final String description;
+  final Key buttonKey;
+  final String buttonLabel;
+  final VoidCallback? onPressed;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: rc.isDark ? const Color(0xFF222226) : rc.bg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: rc.sep),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: rc.label,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            description,
+            style: TextStyle(fontSize: 12, height: 1.45, color: rc.sec),
+          ),
+          const SizedBox(height: 10),
+          if (danger)
+            OutlinedButton(
+              key: buttonKey,
+              onPressed: onPressed,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: rc.danger,
+                side: BorderSide(color: rc.danger.withValues(alpha: 0.45)),
+                shape: const StadiumBorder(),
+                padding: const EdgeInsets.symmetric(vertical: 11),
+              ),
+              child: Text(buttonLabel),
+            )
+          else
+            FilledButton(
+              key: buttonKey,
+              onPressed: onPressed,
+              style: FilledButton.styleFrom(
+                backgroundColor: rc.label,
+                foregroundColor: rc.onLabel,
+                shape: const StadiumBorder(),
+                padding: const EdgeInsets.symmetric(vertical: 11),
+              ),
+              child: Text(buttonLabel),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<bool> _confirmPowerDialog(
+  BuildContext context, {
+  required String title,
+  required String content,
+  required Key cancelKey,
+  required Key confirmKey,
+  required String confirmLabel,
+  bool danger = false,
+}) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) {
+      final rc = ctx.rc;
+      return AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(
+            key: cancelKey,
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: confirmKey,
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: danger ? rc.danger : rc.label,
+              foregroundColor: danger ? Colors.white : rc.onLabel,
+            ),
+            child: Text(confirmLabel),
+          ),
+        ],
+      );
+    },
+  );
+  return ok == true;
+}
+
+Future<void> _confirmRestart(BuildContext context, DeviceStore store) async {
+  final ok = await _confirmPowerDialog(
+    context,
+    title: '重启硬件设备？',
+    content: '重启将暂时中断当前蓝牙连接与录音（约数秒），完成后将自动尝试重新连接。',
+    cancelKey: const Key('restart-cancel'),
+    confirmKey: const Key('restart-confirm'),
+    confirmLabel: '重启设备',
+  );
+  if (!ok) return;
+  await store.restartDevice();
+}
+
+Future<void> _confirmShutdown(BuildContext context, DeviceStore store) async {
+  final ok = await _confirmPowerDialog(
+    context,
+    title: '关闭硬件电源？',
+    content: '关机后将停止录音并断开蓝牙连接，再次使用需手动按机身按键开机。',
+    cancelKey: const Key('shutdown-cancel'),
+    confirmKey: const Key('shutdown-confirm'),
+    confirmLabel: '确认关机',
+    danger: true,
+  );
+  if (!ok) return;
+  await store.shutdownDevice();
 }
 
 class _Chip extends StatelessWidget {

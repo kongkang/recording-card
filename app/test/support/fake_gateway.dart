@@ -215,12 +215,16 @@ class FakeCardGateway implements CardGateway {
   CardException? failSyncStatus;
   CardException? failMainOta;
   CardException? failWifiOta;
+  CardException? failRestart;
+  CardException? failShutdown;
   CardSnapshot? postMainOtaSnapshot;
   CardSnapshot? postWifiOtaSnapshot;
   int? lastStartDurationSecs;
   bool? lastOtaWifiRestoreOpen;
   int openWifiCalls = 0;
   int closeWifiCalls = 0;
+  int restartCalls = 0;
+  int shutdownCalls = 0;
 
   @override
   Future<CardSnapshot> snapshot() async {
@@ -823,6 +827,14 @@ class FakeCardGateway implements CardGateway {
       case 'card_display.clear':
         displayClearCalls++;
         return {'supported': true, 'cleared': true};
+      case 'device.restart':
+        restartCalls++;
+        if (failRestart != null) throw failRestart!;
+        return {'ok': true, 'action': 'restart'};
+      case 'device.shutdown':
+        shutdownCalls++;
+        if (failShutdown != null) throw failShutdown!;
+        return {'ok': true, 'action': 'shutdown'};
       case 'camera_capture_and_fetch':
         final bytes = fakeCapturedPhotoBytes;
         if (bytes != null) {

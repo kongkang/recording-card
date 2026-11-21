@@ -432,6 +432,8 @@ void main() {
             hasRemoteRecordControl: true,
             hasMarkButton: true,
             hasConfigurableButtons: true,
+            hasDeviceRestart: true,
+            hasDeviceShutdown: true,
             otaMode: 'dual',
           ),
         ),
@@ -535,6 +537,11 @@ void main() {
       dev.showView(DeviceView.btn);
       await tester.pumpAndSettle();
       assertSheetDarkClean('_ButtonConfigView');
+
+      // 6) _MoreView（更多：重启/关机视图）
+      dev.showView(DeviceView.more);
+      await tester.pumpAndSettle();
+      assertSheetDarkClean('_MoreView');
     },
   );
 

@@ -670,6 +670,14 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
             let active = active_device().await?;
             out.ok(card_display_clear(&active).await?);
         }
+        "device.restart" => {
+            let active = active_device().await?;
+            out.ok(device_restart(&active).await?);
+        }
+        "device.shutdown" => {
+            let active = active_device().await?;
+            out.ok(device_shutdown(&active).await?);
+        }
         "dyj_tts_speak" => {
             let text = str_field(&payload, "text");
             let interrupt = payload.get("interrupt").and_then(Value::as_bool);
@@ -4723,6 +4731,47 @@ async fn dispatch_dyj_v1_command(kind: &str, payload: &Value) -> Result<Value, B
         return res.map_err(|e| map_dyj_sdk_command_error(e, kind, &meta));
     }
     Err(BridgeError::disconnected())
+}
+
+async fn device_restart(active: &ActiveDevice) -> Result<Value, BridgeError> {
+    match active {
+        ActiveDevice::CardV2 { device, .. } => {
+            let resp = device.restart().await?;
+            Ok(json!({
+                "ok": true,
+                "action": "restart",
+                "code": resp.code,
+                "message": resp.message,
+            }))
+        }
+        ActiveDevice::DyjV1 { device, meta, .. } => {
+            let resp = device
+                .device_reboot(true)
+                .await
+                .map_err(|e| map_dyj_sdk_command_error(e, "device.reboot", meta))?;
+            Ok(json!({
+                "ok": true,
+                "action": "restart",
+                "response": resp,
+            }))
+        }
+        _ => Err(BridgeError::from("当前硬件不支持远程重启".to_string())),
+    }
+}
+
+async fn device_shutdown(active: &ActiveDevice) -> Result<Value, BridgeError> {
+    match active {
+        ActiveDevice::CardV2 { device, .. } => {
+            let resp = device.shutdown().await?;
+            Ok(json!({
+                "ok": true,
+                "action": "shutdown",
+                "code": resp.code,
+                "message": resp.message,
+            }))
+        }
+        _ => Err(BridgeError::from("当前硬件不支持远程关机".to_string())),
+    }
 }
 
 /// 轻量级非侵入式蓝牙存活检查（供录音期间 <=12s 快速断连保底接力使用，避免完整 snapshot 5 条命令抢占实时流）。
