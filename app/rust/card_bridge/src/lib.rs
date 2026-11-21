@@ -28,7 +28,6 @@ use capabilities::{classify_ble_advertisement, DeviceKind};
 use dyj_v1_session::{parse_dyj_audio_filename, version_code_from_semver, DyjV1Session};
 use reai_ext_sdk::{RecorderDevice, RecorderSdkDriver, SdkDeviceEvent};
 use reai_feishu_sdk::FeishuSdkDriver;
-use reai_getseed_sdk::GetSeedSdkDriver;
 use reai_omi_sdk::OmiSdkDriver;
 use reai_board_sdk::kernel::audio::{
     AudioFrame, AudioStreamAction, AudioStreamScope, AudioTransport,
@@ -317,7 +316,7 @@ static STATE: OnceLock<BridgeState> = OnceLock::new();
 static VERSION: &str = concat!(
     "card_bridge/",
     env!("CARGO_PKG_VERSION"),
-    " card-v2/0.0.8 dyj-v1/0.1 board-v21/0.3 getseed/0.1 omi/0.1 feishu/0.1"
+    " card-v2/0.0.8 dyj-v1/0.1 board-v21/0.3 omi/0.1 feishu/0.1"
 );
 
 /// Android 直连 logcat 的零依赖检查点输出（不经 log crate，绕开 logger 初始化问题）。
@@ -1101,7 +1100,7 @@ async fn connect_device(payload: Value) -> Result<Value, BridgeError> {
             })?;
             connect_board_v21(&id, &name).await?
         }
-        DeviceKind::GetSeedGsc10 | DeviceKind::OmiCv1 | DeviceKind::FeishuD3200 => {
+        DeviceKind::OmiCv1 | DeviceKind::FeishuD3200 => {
             connect_external_sdk(&id, target_name.as_deref(), target_kind).await?
         }
     };
@@ -1668,7 +1667,6 @@ async fn connect_external_sdk(
     kind: DeviceKind,
 ) -> Result<Value, BridgeError> {
     let driver: &dyn RecorderSdkDriver = match kind {
-        DeviceKind::GetSeedGsc10 => &GetSeedSdkDriver,
         DeviceKind::OmiCv1 => &OmiSdkDriver,
         DeviceKind::FeishuD3200 => &FeishuSdkDriver,
         _ => {
@@ -6437,32 +6435,8 @@ mod tests {
     }
 
     #[test]
-    fn external_candidate_matcher_handles_rpa_for_getseed_omi_feishu() {
+    fn external_candidate_matcher_handles_rpa_for_omi_feishu() {
         let empty_mfd = HashMap::new();
-        assert_eq!(
-            matches_external_candidate(
-                &GetSeedSdkDriver,
-                "new-rpa-id",
-                "old-id",
-                Some("Get-A102"),
-                Some("Get-A102"),
-                &[],
-                &empty_mfd,
-            ),
-            Some("Get-A102".to_string())
-        );
-        assert_eq!(
-            matches_external_candidate(
-                &GetSeedSdkDriver,
-                "other-id",
-                "old-id",
-                Some("Get-A102"),
-                Some("Get-B999"),
-                &[],
-                &empty_mfd,
-            ),
-            None
-        );
         assert_eq!(
             matches_external_candidate(
                 &OmiSdkDriver,

@@ -341,11 +341,9 @@ class DeviceStore extends ChangeNotifier {
   /// - `REAI_VB_*`：语音 AI 键盘 V2.1
   static const deviceNamePrefix = 'DYJ';
 
-  bool _getSeedLinkEnabled = false;
   bool _omiLinkEnabled = false;
   bool _feishuLinkEnabled = false;
 
-  bool get getSeedLinkEnabled => _getSeedLinkEnabled;
   bool get omiLinkEnabled => _omiLinkEnabled;
   bool get feishuLinkEnabled => _feishuLinkEnabled;
 
@@ -356,7 +354,6 @@ class DeviceStore extends ChangeNotifier {
   static bool isOurDevice(
     CardDevice device, {
     bool allowWatch = true,
-    bool allowGetSeed = false,
     bool allowOmi = false,
     bool allowFeishu = false,
     bool listAll = false,
@@ -367,30 +364,23 @@ class DeviceStore extends ChangeNotifier {
     return switch (kind) {
       DeviceKind.cardV2 || DeviceKind.dyjV1 || DeviceKind.boardV21 => true,
       DeviceKind.appleWatch => allowWatch,
-      DeviceKind.getSeedGsc10 => allowGetSeed,
       DeviceKind.omiCv1 => allowOmi,
       DeviceKind.feishuD3200 => allowFeishu,
     };
   }
 
   Future<void> setExtHardwareEnabled({
-    bool? getSeed,
     bool? omi,
     bool? feishu,
   }) async {
-    final nextGetSeed = getSeed ?? _getSeedLinkEnabled;
     final nextOmi = omi ?? _omiLinkEnabled;
     final nextFeishu = feishu ?? _feishuLinkEnabled;
-    if (nextGetSeed == _getSeedLinkEnabled &&
-        nextOmi == _omiLinkEnabled &&
-        nextFeishu == _feishuLinkEnabled) {
+    if (nextOmi == _omiLinkEnabled && nextFeishu == _feishuLinkEnabled) {
       return;
     }
-    _getSeedLinkEnabled = nextGetSeed;
     _omiLinkEnabled = nextOmi;
     _feishuLinkEnabled = nextFeishu;
-    if ((!nextGetSeed && isConnected && activeKind == DeviceKind.getSeedGsc10) ||
-        (!nextOmi && isConnected && activeKind == DeviceKind.omiCv1) ||
+    if ((!nextOmi && isConnected && activeKind == DeviceKind.omiCv1) ||
         (!nextFeishu && isConnected && activeKind == DeviceKind.feishuD3200)) {
       await disconnectSafely();
     }
@@ -400,7 +390,6 @@ class DeviceStore extends ChangeNotifier {
             (d) => isOurDevice(
               d,
               allowWatch: watchHardware.linkEnabled,
-              allowGetSeed: _getSeedLinkEnabled,
               allowOmi: _omiLinkEnabled,
               allowFeishu: _feishuLinkEnabled,
             ),
@@ -544,7 +533,6 @@ class DeviceStore extends ChangeNotifier {
           if (isOurDevice(
             device,
             allowWatch: watchHardware.linkEnabled,
-            allowGetSeed: _getSeedLinkEnabled,
             allowOmi: _omiLinkEnabled,
             allowFeishu: _feishuLinkEnabled,
           ))

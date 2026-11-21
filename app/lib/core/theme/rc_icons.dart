@@ -353,11 +353,6 @@ class DeviceKindBadge extends StatelessWidget {
           const Color(0xFF2A456B),
           const Color(0xFF7CB4FF),
         ),
-        DeviceKind.getSeedGsc10 => (
-          const Color(0xFF2E2414),
-          const Color(0xFF59431F),
-          const Color(0xFFFFB74D),
-        ),
         DeviceKind.omiCv1 => (
           const Color(0xFF261C38),
           const Color(0xFF4A356E),
@@ -390,11 +385,6 @@ class DeviceKindBadge extends StatelessWidget {
         const Color(0xFFE8F2FF),
         const Color(0xFFBBD8FF),
         const Color(0xFF1456B8),
-      ),
-      DeviceKind.getSeedGsc10 => (
-        const Color(0xFFFFF7E6),
-        const Color(0xFFFFD591),
-        const Color(0xFFAD6800),
       ),
       DeviceKind.omiCv1 => (
         const Color(0xFFF3EEFF),

@@ -194,72 +194,6 @@ void main() {
     expect(isLikely5GhzSsid('Office-2.4G'), isFalse);
   });
 
-  test('GetSeed v0.2.7 云端鉴权锁 unsupported 错误经 RealCardGateway 透传给 DeviceStore', () async {
-    final gw = RealCardGateway.forTesting(
-      dispatch: (kind, payload, emit) {
-        if (kind == 'snapshot') {
-          emit({
-            'ok': true,
-            'final': true,
-            'data': {
-              'deviceKind': 'getseed_gsc10',
-              'displayModel': 'Get笔记卡',
-              'deviceName': 'Get-A7769D',
-              'battery': {'level': 70, 'isCharging': false},
-              'state': {'wifiOpen': false, 'recording': false},
-              'info': {
-                'version': '0.2.7',
-                'versionCode': 0,
-                'deviceName': 'Get-A7769D',
-                'deviceId': 'GET25LA7769D',
-              },
-              'record': {'isRecording': false},
-            },
-          });
-        } else if (kind == 'files') {
-          emit({
-            'ok': false,
-            'final': true,
-            'error':
-                'unsupported: Get笔记卡当前固件 (v0.2.7) 已启用官方云端一机一码鉴权锁 (0x9000→0x9100)',
-          });
-        } else if (kind == 'events.pull') {
-          emit({
-            'ok': true,
-            'final': true,
-            'data': {'seq': 0, 'events': const []},
-          });
-        } else {
-          emit({'ok': true, 'final': true, 'data': const {}});
-        }
-      },
-    );
-
-    final store = DeviceStore(
-      gateway: gw,
-      autoStart: false,
-      phoneMicBackend: _IdlePhoneMic(),
-      liveActivityService: _StubLiveActivity(),
-      watchHardware: WatchHardwareService(backend: FakeWatchBridgeBackend()),
-    )..onManualBleSync = () async {
-        try {
-          await gw.files();
-          return null;
-        } on CardException catch (e) {
-          return e.message;
-        }
-      };
-
-    await store.refreshFromDevice();
-    await store.syncNow();
-
-    expect(store.activeKind, DeviceKind.getSeedGsc10);
-    expect(store.fwVersion, '0.2.7');
-    expect(store.syncError, contains('0x9000→0x9100'));
-    await gw.dispose();
-    store.dispose();
-  });
-
   testWidgets('Wi-Fi 配网面板选中疑似 5GHz 网络时显示 2.4GHz 频段提醒', (tester) async {
     final gw = FakeCardGateway(
       initialSnapshot: const CardSnapshot(
@@ -320,7 +254,7 @@ void main() {
     expect(find.byKey(const Key('wifi-5g-hint')), findsNothing);
   });
 
-  testWidgets('Setting 第三方硬件页展示诚实的 Get笔记卡说明', (tester) async {
+  testWidgets('Setting 第三方硬件页仅保留 Omi 与飞书录音豆（不含 Get 笔记卡蓝牙）', (tester) async {
     final cfg = AgentConfigStore();
     addTearDown(cfg.dispose);
     await tester.pumpWidget(
@@ -333,8 +267,8 @@ void main() {
         ),
       ),
     );
-    expect(find.byKey(const Key('ext-getseed-card')), findsOneWidget);
-    expect(find.textContaining('打点'), findsNothing);
-    expect(find.textContaining('v0.2.5+ 固件受官方云端鉴权限制'), findsOneWidget);
+    expect(find.byKey(const Key('ext-getseed-card')), findsNothing);
+    expect(find.byKey(const Key('ext-omi-card')), findsOneWidget);
+    expect(find.byKey(const Key('ext-feishu-card')), findsOneWidget);
   });
 }

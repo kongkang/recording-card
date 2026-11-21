@@ -289,30 +289,6 @@ class AgentConfigStore extends ChangeNotifier {
       wiring: 'partial',
       wiringNote: '部分接入：这个开关会同步相册自动对齐。清洗和总结不会把它当成工具去调用。',
     ),
-    AgentExtensionItem(
-      id: 'tl-hist',
-      kind: 'tool',
-      title: '同日连续上下文感知',
-      subtitle: '结合同日早些时候的录音片段理解代词与省略背景',
-      wiring: 'placeholder',
-      wiringNote: '未接入：清洗和总结都不会读取这个开关，也不会因此附带同日更早的录音。',
-    ),
-    AgentExtensionItem(
-      id: 'tl-todo',
-      kind: 'tool',
-      title: '结构化行动项提取',
-      subtitle: '从承诺与排期语句中提取可勾选待办事项',
-      wiring: 'placeholder',
-      wiringNote: '未接入：总结里的行动项来自总结提示词，不看这个开关。',
-    ),
-    AgentExtensionItem(
-      id: 'mcp-kb',
-      kind: 'mcp',
-      title: '个人知识库 MCP',
-      subtitle: 'local://knowledge-vault · 日报与做梦归档接口（规划接入）',
-      wiring: 'placeholder',
-      wiringNote: '未接入：没有 MCP 客户端。打开后也不会连接外部服务。',
-    ),
   ];
 
   static const Map<String, bool> _defaultExtensionStates = {
@@ -320,9 +296,6 @@ class AgentConfigStore extends ChangeNotifier {
     'sk-brief': true,
     'sk-risk': false,
     'tl-photo': true,
-    'tl-hist': true,
-    'tl-todo': true,
-    'mcp-kb': false,
   };
 
   static const String defaultAgentPrompt =
@@ -336,7 +309,6 @@ class AgentConfigStore extends ChangeNotifier {
   bool photoLinkEnabled = true;
   bool islandEnabled = true;
   bool watchLinkEnabled = false;
-  bool getSeedLinkEnabled = false;
   bool omiLinkEnabled = false;
   bool feishuLinkEnabled = false;
 
@@ -397,7 +369,6 @@ class AgentConfigStore extends ChangeNotifier {
       '单击${omiClickAction.shortLabel} · 双击${omiDoubleClickAction.shortLabel}（禁用长按）';
 
   int get enabledExtHardwareCount =>
-      (getSeedLinkEnabled ? 1 : 0) +
       (omiLinkEnabled ? 1 : 0) +
       (feishuLinkEnabled ? 1 : 0);
 
@@ -610,9 +581,6 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['watchLinkEnabled'] is bool) {
       watchLinkEnabled = data['watchLinkEnabled'] as bool;
     }
-    if (data['getSeedLinkEnabled'] is bool) {
-      getSeedLinkEnabled = data['getSeedLinkEnabled'] as bool;
-    }
     if (data['omiLinkEnabled'] is bool) {
       omiLinkEnabled = data['omiLinkEnabled'] as bool;
     }
@@ -820,12 +788,6 @@ class AgentConfigStore extends ChangeNotifier {
 
   Future<void> setWatchLinkEnabled(bool value) async {
     watchLinkEnabled = value;
-    notifyListeners();
-    await _save();
-  }
-
-  Future<void> setGetSeedLinkEnabled(bool value) async {
-    getSeedLinkEnabled = value;
     notifyListeners();
     await _save();
   }
@@ -1243,7 +1205,6 @@ class AgentConfigStore extends ChangeNotifier {
       'photoLinkEnabled': photoLinkEnabled,
       'islandEnabled': islandEnabled,
       'watchLinkEnabled': watchLinkEnabled,
-      'getSeedLinkEnabled': getSeedLinkEnabled,
       'omiLinkEnabled': omiLinkEnabled,
       'feishuLinkEnabled': feishuLinkEnabled,
       'healthSignalEnabled': healthSignalEnabled,

@@ -30,7 +30,6 @@ enum DeviceKind {
   cardV2('card_v2', '录音卡 V2'),
   dyjV1('dyj_v1', '点一机 V1'),
   boardV21('board_v21', '语音AI键盘 V2.1'),
-  getSeedGsc10('getseed_gsc10', 'Get笔记卡'),
   omiCv1('omi_cv1', 'Omi 录音器'),
   feishuD3200('feishu_d3200', '飞书录音豆'),
   appleWatch('apple_watch', 'Apple Watch');
@@ -55,9 +54,6 @@ enum DeviceKind {
     if (trimmed.startsWith('REAI_VB_')) {
       return DeviceKind.boardV21;
     }
-    if (trimmed.startsWith('GET-') || trimmed.startsWith('GETSEED')) {
-      return DeviceKind.getSeedGsc10;
-    }
     if (trimmed == 'OMI' ||
         trimmed.startsWith('OMI-') ||
         trimmed.startsWith('OMI_') ||
@@ -79,7 +75,7 @@ enum DeviceKind {
     return null;
   }
 
-  /// 剥离已知代际广播前缀（`DYJV2_`、`REAI_VB_`、`DYJ_`、`GET-`、`OMI-`/`OMI_`、`FRIEND_`），仅保留编号。
+  /// 剥离已知代际广播前缀（`DYJV2_`、`REAI_VB_`、`DYJ_`、`OMI-`/`OMI_`、`FRIEND_`），仅保留编号。
   /// 若剥离后为空或无已知前缀，则回退原名称（去除首尾空白）。
   static String bleShortId(String name) {
     final trimmed = name.trim();
@@ -89,7 +85,6 @@ enum DeviceKind {
       'DYJV2_',
       'REAI_VB_',
       'DYJ_',
-      'GET-',
       'OMI-',
       'OMI_',
       'OMI ',
@@ -114,8 +109,6 @@ enum DeviceKind {
         return DeviceKind.dyjV1;
       case 'board_v21':
         return DeviceKind.boardV21;
-      case 'getseed_gsc10':
-        return DeviceKind.getSeedGsc10;
       case 'omi_cv1':
         return DeviceKind.omiCv1;
       case 'feishu_d3200':
@@ -196,19 +189,6 @@ class HardwareCapabilities {
     otaMode: 'none',
   );
 
-  /// 得到 Get 笔记录音卡（GetSeed GSC10）：机身物理按键控录 + BLE Ogg Opus 文件同步。
-  static const getSeedGsc10 = HardwareCapabilities(
-    realtimeAudio: false,
-    hasOnboardStorage: true,
-    hasFileSync: true,
-    hasWifiConfig: false,
-    hasCameraMedia: false,
-    hasPhysicalRecordToggle: true,
-    hasRemoteRecordControl: false,
-    hasMarkButton: false,
-    otaMode: 'none',
-  );
-
   /// 飞书录音豆 D3200：BLE 拉取板载 Opus，本机解成 16kHz WAV。不含实时流、Wi-Fi 与固件升级。
   static const feishuD3200 = HardwareCapabilities(
     realtimeAudio: false,
@@ -253,7 +233,6 @@ class HardwareCapabilities {
     DeviceKind.cardV2 => cardV2,
     DeviceKind.dyjV1 => dyjV1,
     DeviceKind.boardV21 => boardV21,
-    DeviceKind.getSeedGsc10 => getSeedGsc10,
     DeviceKind.omiCv1 => omiCv1,
     DeviceKind.feishuD3200 => feishuD3200,
     DeviceKind.appleWatch => appleWatch,
