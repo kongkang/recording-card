@@ -31,6 +31,7 @@ import 'services/memory/memory_search_service.dart';
 import 'services/net/model_gateway.dart';
 import 'services/net/model_provider_store.dart';
 import 'services/polish/slice_polish_service.dart';
+import 'services/recordings/multi_track_reconciler.dart';
 import 'services/recordings/recording_pipeline.dart';
 import 'services/recordings/recording_store.dart';
 import 'services/schedule/cleaning_task_ids.dart';
@@ -253,6 +254,12 @@ class _HomeGateState extends State<_HomeGate> {
         agentConfig: _agentConfig,
       ),
       voiceprintStore: _store.voiceprintStore,
+      multiTrackReconciler: MultiTrackReconciler(
+        chat: _meteredChat,
+        modelResolver: () => _modelGateway.modelFor(ModelScene.polish),
+        ready: () => _modelGateway.readyFor(ModelScene.polish),
+      ),
+      bleDeviceLabelResolver: () => _device.activeRecordingDeviceLabel,
     );
     _store.attachPipeline(
       pipeline: _pipeline,
@@ -280,6 +287,11 @@ class _HomeGateState extends State<_HomeGate> {
     _store.photoSyncEnabled = () => _agentConfig.photoLinkEnabled;
     _store.deviceGateway = () => _device.gateway;
     _device.onManualBleSync = () => _store.syncRecordings();
+    _device.onBleReconnectedNeedSync = (_) => _store.syncAfterBleReconnect(
+      flushWatch: _device.flushWatchRecordingSlice,
+      flushPhone: _device.flushPhoneRecordingSlice,
+      pullBleFiles: _device.activeCapabilities.hasFileSync,
+    );
     unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
     unawaited(
       _device.setExtHardwareEnabled(

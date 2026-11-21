@@ -235,6 +235,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late DateTime _lastCalendarDay = DateUtils.dateOnly(_now());
   bool _supportsDynamicIsland = false;
   bool _askedPhotoPermThisSession = false;
+  bool _ownsBleReconnectSyncCb = false;
 
   DateTime _now() => (widget.clock ?? DateTime.now)();
 
@@ -285,12 +286,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
     widget.store.deviceConnected ??= () => _device.isConnected;
     widget.store.deviceRecording ??= () =>
-        _device.isRecording || _device.isPhoneRecording;
+        _device.isRecording ||
+        _device.isPhoneRecording ||
+        _device.isWatchFallbackRecording;
     widget.store.flushActiveRecordingSlice ??= () async {
       if (_liveAudio.isRunning) {
         return _liveAudio.flushActiveSlice();
       }
-      if (_device.isConnected && _device.activeKind == DeviceKind.appleWatch) {
+      if (_device.isWatchFallbackRecording ||
+          (_device.isConnected && _device.activeKind == DeviceKind.appleWatch)) {
         return _device.flushWatchRecordingSlice();
       }
       if (_device.isPhoneRecording) {
@@ -298,6 +302,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       }
       return false;
     };
+    if (_device.onBleReconnectedNeedSync == null) {
+      _ownsBleReconnectSyncCb = true;
+      _device.onBleReconnectedNeedSync = (_) => widget.store.syncAfterBleReconnect(
+        flushWatch: _device.flushWatchRecordingSlice,
+        flushPhone: _device.flushPhoneRecordingSlice,
+        pullBleFiles: _device.activeCapabilities.hasFileSync,
+      );
+    }
     widget.store.deviceHasCameraMedia ??= () =>
         _device.activeCapabilities.hasCameraMedia;
     widget.store.photoLibrary = _photoLib;
@@ -419,11 +431,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   /// （蓝牙文件拉取仅作为离线录音或流断档时的手动补传通道）。
   void _syncRecordingStatus() {
     final hwRecording = _device.isRecording;
+    final watchFailover = _device.isWatchFallbackRecording;
     final phoneRecording = _device.isPhoneRecording;
-    final recording = hwRecording || phoneRecording;
+    final recording = hwRecording || watchFailover || phoneRecording;
     if (recording) {
       if (hwRecording && _device.activeCapabilities.realtimeAudio) {
         _liveAudio.updateDeviceSessionId(_device.recordSession);
+        _liveAudio.updateSourceDeviceLabel(_device.activeRecordingDeviceLabel);
         if (!_liveAudio.isRunning) {
           unawaited(_liveAudio.start());
         }
@@ -439,12 +453,19 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         _recording.ensureRecording();
       }
       _recording.updateElapsed(
-        hwRecording ? _device.recSeconds : _device.phoneRecSeconds,
+        hwRecording
+            ? _device.recSeconds
+            : (watchFailover
+                  ? _device.watchFailoverRecSeconds
+                  : _device.phoneRecSeconds),
       );
     } else if (_wasRecording) {
       _wasRecording = false;
       unawaited(_onRecordingStopped());
       return;
+    } else if (_device.isPendingForegroundPhoneFailover &&
+        _recording.phase != RecordingPhase.idle) {
+      _recording.stopRecording();
     }
     _wasRecording = recording;
   }
@@ -462,11 +483,22 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     await _liveAudio.stop();
     final savedCount = await widget.store.finishLiveRecording();
     if (!mounted) return;
-    if (!_device.isRecording && !_device.isPhoneRecording) {
+    if (!_device.isRecording &&
+        !_device.isPhoneRecording &&
+        !_device.isWatchFallbackRecording) {
       _recording.stopRecording();
       if (savedCount > 0 || hadLiveSamples) {
         _device.noteSyncFinished(manual: false);
       }
+    }
+    if (_device.consumePendingPostReconnectSync() && _device.isConnected) {
+      unawaited(
+        widget.store.syncAfterBleReconnect(
+          flushWatch: _device.flushWatchRecordingSlice,
+          flushPhone: _device.flushPhoneRecordingSlice,
+          pullBleFiles: _device.activeCapabilities.hasFileSync,
+        ),
+      );
     }
   }
 
@@ -487,6 +519,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _device.handleAppResumed();
       final today = DateUtils.dateOnly(_now());
       final diffDays = today.difference(_lastCalendarDay).inDays;
       if (diffDays != 0) {
@@ -510,6 +543,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _agentConfig.removeListener(_syncAgentIslandConfig);
     _device.liveActivityService.onActionButtonAgent = null;
     _device.liveActivityService.onActionButtonToggle = null;
+    if (_ownsBleReconnectSyncCb) {
+      _device.onBleReconnectedNeedSync = null;
+    }
     if (_ownsHwAgent) _hwAgent.dispose();
     _liveSliceSub?.cancel();
     _phoneSliceSub?.cancel();
@@ -732,6 +768,98 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                         },
                       ),
                       ListenableBuilder(
+                        listenable: _device,
+                        builder: (context, _) {
+                          final notice = _device.disconnectNotice;
+                          if (notice == null ||
+                              notice.isEmpty ||
+                              _device.sheetOpen ||
+                              _device.isConnected) {
+                            return const SizedBox.shrink();
+                          }
+                          final c = context.rc;
+                          final headerH = wide
+                              ? RCDims.wideChrome
+                              : RCDims.narrowHeader;
+                          final topPad =
+                              MediaQuery.paddingOf(context).top + headerH + 6;
+                          return Positioned(
+                            top: topPad,
+                            left: 14,
+                            right: 14,
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                key: const Key('ble-disconnect-toast'),
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: _device.openSheet,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: c.isDark
+                                        ? const Color(0xF025211A)
+                                        : const Color(0xF5FFF8EB),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: c.warn.withValues(alpha: 0.45),
+                                    ),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        color: Color(0x22000000),
+                                        blurRadius: 10,
+                                        offset: Offset(0, 3),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        _device.isPendingForegroundPhoneFailover
+                                            ? Icons.mic_off_rounded
+                                            : Icons.bluetooth_disabled_rounded,
+                                        size: 16,
+                                        color: c.warn,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          notice,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            height: 1.35,
+                                            fontWeight: FontWeight.w500,
+                                            color: c.label,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      GestureDetector(
+                                        key: const Key('ble-disconnect-toast-close'),
+                                        behavior: HitTestBehavior.opaque,
+                                        onTap: _device.dismissDisconnectNotice,
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(4),
+                                          child: Icon(
+                                            Icons.close,
+                                            size: 16,
+                                            color: c.sec,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      ListenableBuilder(
                         listenable: _agentConfig,
                         builder: (context, _) => StatusSheetOverlay(
                           store: _device,
@@ -876,6 +1004,8 @@ class _Header extends StatelessWidget {
               connected: device.isConnected,
               recording: device.isRecording,
               phoneRecording: device.isPhoneRecording,
+              watchRecording: device.isWatchFallbackRecording,
+              pendingFailover: device.isPendingForegroundPhoneFailover,
               charging: device.isCharging,
               reconnecting: device.isReconnecting,
             ),

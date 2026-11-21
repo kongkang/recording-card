@@ -174,6 +174,8 @@ class HwCapsule extends StatefulWidget {
     this.reconnecting = false,
     this.charging = false,
     this.phoneRecording = false,
+    this.watchRecording = false,
+    this.pendingFailover = false,
   });
   final VoidCallback onTap;
   final int level;
@@ -193,6 +195,12 @@ class HwCapsule extends StatefulWidget {
   /// 本机麦克风是否在录音（无硬件也可独立运行）。
   final bool phoneRecording;
 
+  /// Apple Watch 是否正在进行断连保底录音。
+  final bool watchRecording;
+
+  /// 蓝牙断开后本机保底因后台受限挂起待恢复。
+  final bool pendingFailover;
+
   @override
   State<HwCapsule> createState() => _HwCapsuleState();
 }
@@ -203,7 +211,9 @@ class _HwCapsuleState extends State<HwCapsule>
 
   bool get _isRunning =>
       (widget.connected && widget.recording) ||
-      (!widget.connected && !widget.reconnecting && widget.phoneRecording);
+      (!widget.connected &&
+          !widget.reconnecting &&
+          (widget.phoneRecording || widget.watchRecording));
 
   @override
   void initState() {
@@ -234,16 +244,18 @@ class _HwCapsuleState extends State<HwCapsule>
     super.dispose();
   }
 
-  Widget _dot(RCColorScheme r, {bool forceOk = false}) {
+  Widget _dot(RCColorScheme r, {bool forceOk = false, Color? colorOverride}) {
     return Container(
       key: const Key('capsule-dot'),
       width: 7,
       height: 7,
       decoration: BoxDecoration(
-        // 蓝=掉线自动重连中；绿=正在运行（录音中/本机录音）；橙=已连接待机
-        color: widget.reconnecting
-            ? r.info
-            : ((forceOk || widget.recording) ? r.ok : r.warn),
+        // 蓝=掉线自动重连中；绿=正在运行（录音中/本机/手表录音）；橙=已连接待机/待接力
+        color:
+            colorOverride ??
+            (widget.reconnecting
+                ? r.info
+                : ((forceOk || widget.recording) ? r.ok : r.warn)),
         shape: BoxShape.circle,
       ),
     );
@@ -254,13 +266,19 @@ class _HwCapsuleState extends State<HwCapsule>
     final r = context.rc;
     // 重连中也算"有条链路在手"，只是数据暂时不可信
     final linked = widget.connected || widget.reconnecting;
-    final localRec = !linked && widget.phoneRecording;
+    final watchRec = !linked && widget.watchRecording;
+    final localRec = !linked && !watchRec && widget.phoneRecording;
+    final pendingRec = !linked && !watchRec && !localRec && widget.pendingFailover;
     return Semantics(
       label: linked
           ? (widget.reconnecting
                 ? '录音卡状态：连接中'
                 : (widget.recording ? '录音卡状态：已连接，录音中' : '录音卡状态：已连接，未录音'))
-          : (localRec ? '录音卡状态：本机录音中' : '录音卡状态：无设备'),
+          : (watchRec
+                ? '录音卡状态：手表保底录音中'
+                : (localRec
+                      ? '录音卡状态：本机录音中'
+                      : (pendingRec ? '录音卡状态：待恢复保底录音' : '录音卡状态：无设备'))),
       button: true,
       child: InkWell(
         key: const Key('hw-capsule'),
@@ -287,7 +305,7 @@ class _HwCapsuleState extends State<HwCapsule>
                         child: _dot(r),
                       )
                     : _dot(r)
-              else if (localRec)
+              else if (watchRec || localRec)
                 FadeTransition(
                   opacity: Tween(begin: 0.35, end: 1.0).animate(
                     CurvedAnimation(
@@ -297,6 +315,8 @@ class _HwCapsuleState extends State<HwCapsule>
                   ),
                   child: _dot(r, forceOk: true),
                 )
+              else if (pendingRec)
+                _dot(r, colorOverride: r.warn)
               else
                 Container(
                   key: const Key('capsule-off'),
@@ -320,11 +340,27 @@ class _HwCapsuleState extends State<HwCapsule>
                   scale: 0.9,
                   charging: widget.charging,
                 )
+              else if (watchRec)
+                Text(
+                  '手表录音',
+                  key: const Key('capsule-watch-rec'),
+                  style: TextStyle(fontSize: 12, color: r.label),
+                )
               else if (localRec)
                 Text(
                   '本机录音',
                   key: const Key('capsule-phone-rec'),
                   style: TextStyle(fontSize: 12, color: r.label),
+                )
+              else if (pendingRec)
+                Text(
+                  '待接力',
+                  key: const Key('capsule-failover-pending'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: r.warn,
+                    fontWeight: FontWeight.w600,
+                  ),
                 )
               else
                 Text(
@@ -486,7 +522,9 @@ class _Row extends StatelessWidget {
       ),
     );
     return onTap == null
-        ? row
+        ? (keyName != null
+              ? KeyedSubtree(key: Key(keyName!), child: row)
+              : row)
         : InkWell(
             key: keyName != null ? Key(keyName!) : null,
             onTap: onTap,
@@ -1121,8 +1159,13 @@ class _ConnectView extends StatelessWidget {
               height: 10,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: store.isPhoneRecording ? c.ok : null,
-                border: store.isPhoneRecording
+                color: (store.isPhoneRecording || store.isWatchFallbackRecording)
+                    ? c.ok
+                    : (store.isPendingForegroundPhoneFailover ? c.warn : null),
+                border:
+                    (store.isPhoneRecording ||
+                        store.isWatchFallbackRecording ||
+                        store.isPendingForegroundPhoneFailover)
                     ? null
                     : Border.all(color: c.ax, width: 1.4),
               ),
@@ -1173,8 +1216,144 @@ class _ConnectView extends StatelessWidget {
             ),
           ],
         ),
+        if (store.disconnectNotice != null &&
+            store.disconnectNotice!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            key: const Key('ble-disconnect-banner'),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: c.isDark
+                  ? const Color(0xFF262016)
+                  : const Color(0xFFFFF7E6),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: c.warn.withValues(alpha: 0.45)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  store.disconnectNotice!,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.4,
+                    fontWeight: FontWeight.w500,
+                    color: c.label,
+                  ),
+                ),
+                if (store.isBackgroundReconnectArmed) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    '后台自动重连已开启，设备回到附近将自动恢复并合并数据',
+                    style: TextStyle(fontSize: 11.5, color: c.sec),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
         Divider(height: 20, color: c.sep),
-        _PhoneRecRow(store: store, islandEnabled: islandEnabled),
+        if (store.isWatchFallbackRecording)
+          _Row(
+            keyName: 'watch-failover-row',
+            label: '手表保底',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          color: c.danger,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          'Apple Watch 接力录音中',
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                          style: TextStyle(fontSize: 13, color: c.label),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        store.watchFailoverClockText,
+                        softWrap: false,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: c.label,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                GestureDetector(
+                  key: const Key('watch-failover-toggle'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => unawaited(store.stopWatchFailoverRecording()),
+                  child: const RCSwitch(on: true, busy: false),
+                ),
+              ],
+            ),
+          )
+        else
+          _PhoneRecRow(store: store, islandEnabled: islandEnabled),
+        if (store.isPendingForegroundPhoneFailover &&
+            !store.isPhoneRecording &&
+            !store.isWatchFallbackRecording) ...[
+          const SizedBox(height: 8),
+          Container(
+            key: const Key('phone-failover-pending-banner'),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: c.isDark
+                  ? const Color(0xFF1F242D)
+                  : const Color(0xFFF3F6FC),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: c.sep),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '蓝牙断开时因系统后台限制未直接启用手机麦克风',
+                  style: TextStyle(fontSize: 12, color: c.sec),
+                ),
+                const SizedBox(height: 8),
+                FilledButton(
+                  key: const Key('phone-failover-resume-btn'),
+                  onPressed: store.phoneRecordingBusy
+                      ? null
+                      : () => unawaited(
+                          store.startPhoneRecording(
+                            forFailover: true,
+                            islandEnabled: islandEnabled,
+                          ),
+                        ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: c.label,
+                    foregroundColor: c.onLabel,
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(vertical: 9),
+                  ),
+                  child: const Text(
+                    '立即开启本机保底录音',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         Divider(height: 18, color: c.sep),
         Text(
           '连接录音卡',

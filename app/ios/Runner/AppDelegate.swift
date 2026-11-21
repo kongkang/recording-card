@@ -4,6 +4,7 @@ import Flutter
 import Photos
 import Speech
 import UIKit
+import UserNotifications
 
 #if canImport(AppIntents)
 import AppIntents
@@ -85,6 +86,9 @@ import AppIntents
     }
     if let agentSpeechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCAgentSpeech") {
       RCAgentSpeechBridge.shared.register(with: agentSpeechRegistrar.messenger())
+    }
+    if let localNotifRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCLocalNotifications") {
+      LocalNotificationBridge.shared.register(with: localNotifRegistrar.messenger())
     }
   }
 
@@ -466,7 +470,7 @@ final class RCAgentSpeechBridge: NSObject, AVSpeechSynthesizerDelegate {
       try session.setCategory(
         .playAndRecord,
         mode: .measurement,
-        options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .duckOthers]
+        options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .duckOthers, .mixWithOthers]
       )
       try session.setActive(true)
 
@@ -531,6 +535,15 @@ final class RCAgentSpeechBridge: NSObject, AVSpeechSynthesizerDelegate {
     recognitionTask = nil
 
     if wasListening {
+      if !PhoneMicBridge.shared.isCapturing {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(
+          .playAndRecord,
+          mode: .default,
+          options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers]
+        )
+        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+      }
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         if emitFinal && !captured.isEmpty {
@@ -616,6 +629,98 @@ final class RCAgentSpeechBridge: NSObject, AVSpeechSynthesizerDelegate {
   private func emitError(_ message: String) {
     DispatchQueue.main.async { [weak self] in
       self?.channel?.invokeMethod("onSpeechError", arguments: ["message": message])
+    }
+  }
+}
+
+/// 本地系统通知桥：蓝牙意外断连、自动切换 Watch/手机接力、后台受限待点开接力、重连成功提醒。
+final class LocalNotificationBridge: NSObject, UNUserNotificationCenterDelegate {
+  static let shared = LocalNotificationBridge()
+
+  private var channel: FlutterMethodChannel?
+
+  private override init() {
+    super.init()
+  }
+
+  func register(with messenger: FlutterBinaryMessenger) {
+    let ch = FlutterMethodChannel(
+      name: "com.reai.recordingcard/local_notifications",
+      binaryMessenger: messenger
+    )
+    ch.setMethodCallHandler { [weak self] call, result in
+      self?.handle(call, result: result)
+    }
+    channel = ch
+    let center = UNUserNotificationCenter.current()
+    if center.delegate == nil {
+      center.delegate = self
+    }
+  }
+
+  private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "requestPermission":
+      UNUserNotificationCenter.current().requestAuthorization(
+        options: [.alert, .sound, .badge]
+      ) { granted, _ in
+        DispatchQueue.main.async {
+          result(granted ? "granted" : "denied")
+        }
+      }
+    case "notify":
+      let args = call.arguments as? [String: Any] ?? [:]
+      let id = (args["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+      let reqId = (id?.isEmpty == false) ? id! : "rc_device_alert"
+      let title = (args["title"] as? String) ?? "录音卡"
+      let body = (args["body"] as? String) ?? ""
+      let urgent = (args["urgent"] as? Bool) ?? false
+      let center = UNUserNotificationCenter.current()
+      if center.delegate == nil {
+        center.delegate = self
+      }
+      center.getNotificationSettings { settings in
+        let auth = settings.authorizationStatus
+        guard auth == .authorized || auth == .provisional || auth == .ephemeral else {
+          DispatchQueue.main.async { result(false) }
+          return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        if #available(iOS 15.0, *) {
+          content.interruptionLevel = urgent ? .timeSensitive : .active
+        }
+        let req = UNNotificationRequest(identifier: reqId, content: content, trigger: nil)
+        center.add(req) { err in
+          DispatchQueue.main.async {
+            result(err == nil)
+          }
+        }
+      }
+    case "cancel":
+      let args = call.arguments as? [String: Any] ?? [:]
+      let id = (args["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+      let reqId = (id?.isEmpty == false) ? id! : "rc_device_alert"
+      let center = UNUserNotificationCenter.current()
+      center.removePendingNotificationRequests(withIdentifiers: [reqId])
+      center.removeDeliveredNotifications(withIdentifiers: [reqId])
+      result(true)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    if #available(iOS 14.0, *) {
+      completionHandler([.banner, .sound, .list])
+    } else {
+      completionHandler([.alert, .sound])
     }
   }
 }

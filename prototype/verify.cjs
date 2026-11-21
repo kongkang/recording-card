@@ -122,6 +122,11 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$('[data-testid="set-health-location"]'), 'index.html 应包含定位与健康采集行');
   assert.equal(await p.$('[data-testid="nc-merge-panel"]'), null);
   assert(await p.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
+  assert(await p.$eval('[data-testid="fork-card-demo"]', x => x.innerText.includes('录音卡 V2') && x.innerText.includes('手机本机')));
+  assert.equal(await p.$eval('[data-testid="nt-badge-fork-card"]', x => x.innerText.trim()), 'NT');
+  assert(await p.$('[data-testid="fork-col-ble"]'));
+  assert(await p.$('[data-testid="fork-col-phone"]'));
+  assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'fork card must not overflow 390px');
   const sumTop = await p.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
   const e1Top = await p.$eval('[data-testid="card-e1"]', x => x.getBoundingClientRect().top);
   assert(sumTop < e1Top, '总结卡应在当天记录上方');
@@ -520,10 +525,11 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     }
   });
   await p.click('[data-testid="crumb-back"]');
-  // 本地语音引擎：NT·1 入口、iOS 26+ 与 Android 原生/兼容三层适配（免下载优先）、国产 ROM / 仅 Bixby / iOS < 26 隐藏系统项并将本地首选设在第一选择
-  assert.equal(await p.$eval('[data-testid="nt-btn"]', x => x.innerText.trim()), 'NT·1');
+  // 本地语音引擎与多设备兜底：NT·2 入口
+  assert.equal(await p.$eval('[data-testid="nt-btn"]', x => x.innerText.trim()), 'NT·2');
   await p.click('[data-testid="nt-btn"]');
-  assert(await p.$eval('#nt-pop', x => !x.hidden && x.innerText.includes('Android 多品牌端侧 ASR')));
+  assert(await p.$eval('#nt-pop', x => !x.hidden && x.innerText.includes('Android 多品牌端侧 ASR') && x.innerText.includes('多设备断连兜底')));
+  assert(await p.$('[data-testid="nt-item-multi-device-failover"]'));
   await p.click('[data-testid="nt-item-android-asr"]');
   assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('系统转写') && !x.innerText.includes('Google')));
   assert(await p.$eval('[data-testid="nt-badge-local-sub"]', x => x.innerText.trim() === 'NT'));
@@ -1178,7 +1184,15 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert((await pCur.$$eval('#parity-list .p-item', x => x.length)) >= 9);
   await pCur.evaluate(() => closeParity());
   assert(await pCur.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
-  assert.equal(await pCur.$eval('[data-testid="nt-btn"]', x => x.innerText.trim()), 'NT·1');
+  assert(await pCur.$eval('[data-testid="fork-card-demo"]', x => x.innerText.includes('录音卡 V2') && x.innerText.includes('手机本机')));
+  assert.equal(await pCur.$eval('[data-testid="nt-badge-fork-card"]', x => x.innerText.trim()), 'NT');
+  assert(await pCur.$('[data-testid="fork-col-ble"]'));
+  assert(await pCur.$('[data-testid="fork-col-phone"]'));
+  assert.equal(await pCur.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  assert.equal(await pCur.$eval('[data-testid="nt-btn"]', x => x.innerText.trim()), 'NT·2');
+  await pCur.click('[data-testid="nt-btn"]');
+  assert(await pCur.$('[data-testid="nt-item-multi-device-failover"]'));
+  await pCur.click('[data-testid="nt-btn"]');
   await pCur.click('[data-testid="nav-setting"]');
   assert.equal(await pCur.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
   assert(await pCur.$eval('[data-testid="nt-badge-local-row"]', x => x.innerText.trim() === 'NT'));
@@ -1318,6 +1332,27 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="rec-toggle"]');
   assert.deepEqual(await pCur.evaluate(() => ({ hw: rec.on, phone: phoneRec.on, standby: phoneRec.standby })), { hw: true, phone: false, standby: true });
   assert(await pCur.$eval('#dyn-island', x => x.classList.contains('show') && x.innerText.includes('Apple Watch 录音中') && x.innerText.includes('锁屏实况')));
+  await pCur.click('[data-testid="rec-toggle"]');
+  await pCur.click('[data-testid="dev-disconnect"]');
+  await pCur.click('[data-testid="disconnect-confirm"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
+  await pCur.evaluate(() => closeSheet());
+  // 当前版验证：Watch 已启用联动时，BLE 意外断连优先 Watch 接力（Watch/手机互斥）+ 断连横幅 + 自动重连拉取合并
+  await pCur.click('[data-testid="hw-capsule"]');
+  await pCur.waitForSelector('[data-testid="dev-item-DYJV2_T4W25T"]', { timeout: 5000 });
+  await pCur.click('[data-testid="dev-item-DYJV2_T4W25T"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
+  await pCur.click('[data-testid="rec-toggle"]');
+  await pCur.click('[data-testid="hw-unexpected-drop-btn"]');
+  await pCur.waitForFunction(() => !conn.retrying && !conn.connected, { timeout: 4000 });
+  assert.deepEqual(await pCur.evaluate(() => ({ hw: rec.on, watch: watchFailover.on, phone: phoneRec.on })), { hw: false, watch: true, phone: false });
+  assert(await pCur.$eval('[data-testid="capsule-watch-rec"]', x => getComputedStyle(x).display !== 'none' && x.innerText.trim() === '手表录音'));
+  assert(await pCur.$eval('#dyn-island', x => x.classList.contains('show') && x.innerText.includes('Apple Watch 接力录音中')));
+  await pCur.click('[data-testid="hw-capsule"]');
+  assert(await pCur.$eval('[data-testid="ble-disconnect-banner"]', x => !x.hidden && x.innerText.includes('Apple Watch')));
+  await pCur.click('[data-testid="hw-auto-reconnect-btn"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 4000 });
+  assert.deepEqual(await pCur.evaluate(() => ({ conn: conn.connected, hw: rec.on, watch: watchFailover.on, phone: phoneRec.on })), { conn: true, hw: true, watch: false, phone: false });
   await pCur.click('[data-testid="rec-toggle"]');
   await pCur.click('[data-testid="dev-disconnect"]');
   await pCur.click('[data-testid="disconnect-confirm"]');
