@@ -1387,6 +1387,25 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$$eval('[data-testid^="health-item-"]', x => x.length), 6, '关闭开关不清空已展示的设计列表');
   await pCur.evaluate(() => { agCfg.healthSignalEnabled = true; syncSetSummary(); });
   await pCur.click('[data-testid="crumb-back"]');
+  // 当前版：Setting → 第三方数据接入（得到大脑 / Get 笔记 OpenAPI）
+  assert.equal(await pCur.$eval('#sv-extdata', x => x.innerText.trim()), '未配置');
+  await pCur.$eval('[data-testid="set-ext-data"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-ext-data"]');
+  await pCur.waitForSelector('[data-testid="getnote-import-other-switch"]', { timeout: 3000 });
+  assert.equal(await pCur.$eval('[data-testid="getnote-import-other-switch"]', x => x.getAttribute('aria-checked')), 'false');
+  await pCur.type('[data-testid="getnote-client-id-input"]', 'cli_demo_123');
+  await pCur.type('[data-testid="getnote-api-key-input"]', 'gk_live_demo_456');
+  await pCur.click('[data-testid="getnote-test-btn"]');
+  assert(await pCur.$eval('[data-testid="getnote-status-card"]', x => x.innerText.includes('已连接')));
+  await pCur.click('[data-testid="getnote-sync-btn"]');
+  assert(await pCur.$eval('[data-testid="getnote-status-card"]', x => x.innerText.includes('已导入 2 条')));
+  await pCur.click('[data-testid="getnote-import-other-switch"]');
+  assert.equal(await pCur.$eval('[data-testid="getnote-import-other-switch"]', x => x.getAttribute('aria-checked')), 'true');
+  await pCur.click('[data-testid="getnote-sync-btn"]');
+  assert(await pCur.$eval('[data-testid="getnote-status-card"]', x => x.innerText.includes('已导入 3 条')));
+  await pCur.click('[data-testid="crumb-back"]');
+  assert.equal(await pCur.$eval('#sv-extdata', x => x.innerText.trim()), '已导入 3 条');
+  await pCur.evaluate(() => { clearGetNoteProto(); });
   // 当前版宽屏全页面滚动到底部留白验证（Timeline / Setting / 总结详情 / 记录详情）
   await pCur.setViewport({ width: 900, height: 680, deviceScaleFactor: 2 });
   await pCur.click('[data-testid="nav-timeline"]');

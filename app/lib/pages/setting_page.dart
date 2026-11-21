@@ -33,6 +33,7 @@ import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/auth_service.dart';
+import '../services/external_data/getnote_sync_store.dart';
 import '../services/health/health_signal_controller.dart';
 import '../services/memory/memory_search_scope.dart';
 import '../services/net/model_provider_store.dart';
@@ -58,6 +59,7 @@ class SettingPage extends StatefulWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    this.getNoteStore,
     this.supportsDynamicIsland = false,
     this.crashStore,
     this.accountHttpClient,
@@ -86,6 +88,9 @@ class SettingPage extends StatefulWidget {
   /// 本机健康与位置采集。未注入时设置行仍可进入，子页提示服务未装载。
   final HealthSignalController? healthSignals;
 
+  /// 得到大脑 / Get 笔记 OpenAPI 同步控制器。
+  final GetNoteSyncStore? getNoteStore;
+
   /// 是否显示「灵动岛与操作按钮」（仅支持灵动岛机型显示）。
   final bool supportsDynamicIsland;
 
@@ -112,9 +117,20 @@ class _SettingPageState extends State<SettingPage> {
   /// 是否自建 store（自建的要自己 dispose，注入的归调用方）。
   late final bool _ownsStore = widget.settings == null;
   late final bool _ownsAgent = widget.agentConfig == null;
+  late final bool _ownsGetNoteStore =
+      widget.getNoteStore == null &&
+      Platform.environment.containsKey('FLUTTER_TEST');
 
   late SettingsStore _store;
   late AgentConfigStore _agent;
+  late final GetNoteSyncStore _getNoteStore =
+      widget.getNoteStore ??
+      (_ownsGetNoteStore
+          ? GetNoteSyncStore(
+              secureStore: InMemorySecureStore(),
+              prefsStore: InMemoryStore(),
+            )
+          : GetNoteSyncStore.instance);
   String? _photoImportHint;
   CrashRecord? _lastCrash;
   bool _deletingAccount = false;
@@ -158,6 +174,7 @@ class _SettingPageState extends State<SettingPage> {
     widget.authService?.addListener(_onStoreChanged);
     widget.device?.addListener(_onStoreChanged);
     widget.healthSignals?.addListener(_onStoreChanged);
+    unawaited(_getNoteStore.load());
     unawaited(_loadLastCrash());
   }
 
@@ -299,6 +316,7 @@ class _SettingPageState extends State<SettingPage> {
     try {
       await _store.resetAll();
       await _agent.resetAll();
+      await _getNoteStore.clearAll();
       await clearLastCrash(store: widget.crashStore);
     } on Object {
       // 忽略内存偏好清理异常
@@ -535,6 +553,7 @@ class _SettingPageState extends State<SettingPage> {
     if (_ownsStore) _store.dispose();
     _agent.removeListener(_onStoreChanged);
     if (_ownsAgent) _agent.dispose();
+    if (_ownsGetNoteStore) _getNoteStore.dispose();
     super.dispose();
   }
 
@@ -588,6 +607,7 @@ class _SettingPageState extends State<SettingPage> {
           modelManager: widget.modelManager,
           authService: widget.authService,
           healthSignals: widget.healthSignals,
+          getNoteStore: widget.getNoteStore,
           standalone: true,
         ),
       ),
@@ -824,6 +844,22 @@ class _SettingPageState extends State<SettingPage> {
                   value: _extHwSummaryText(),
                   valueKey: const Key('sv-exthw'),
                   onTap: () => _openSub(context, 'exthw'),
+                ),
+              ],
+            ),
+            const _GroupTitle(text: '第三方数据接入'),
+            _GroupCard(
+              children: <Widget>[
+                ListenableBuilder(
+                  listenable: _getNoteStore,
+                  builder: (context, _) => _navRow(
+                    context,
+                    keyName: 'set-ext-data',
+                    label: '得到大脑 / Get 笔记',
+                    value: _getNoteStore.summaryStatusText,
+                    valueKey: const Key('sv-extdata'),
+                    onTap: () => _openSub(context, 'extdata'),
+                  ),
                 ),
               ],
             ),

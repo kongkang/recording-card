@@ -362,6 +362,12 @@ class RecordingFile {
   /// 设备上的文件名（如 `059F19DF.APM`），去重键。
   final String deviceName;
 
+  /// 第三方外部平台（如得到大脑 OpenAPI）导入记录的设备文件名前缀。
+  static const String getNoteDevicePrefix = 'GETNOTE_';
+
+  /// 是否为外部平台导入条目（不经过本地转写、音频清理或连续语音分段合并）。
+  bool get isExternalImported => deviceName.startsWith(getNoteDevicePrefix);
+
   /// 设备会话号（8 位十六进制）；旧固件为空。
   final String session;
 
