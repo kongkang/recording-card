@@ -193,12 +193,14 @@ void main() {
         ),
       );
       expect(find.byKey(const Key('btn-config')), findsOneWidget);
-      expect(find.textContaining('禁用长按'), findsOneWidget);
+      expect(find.text('已设置 2 项'), findsOneWidget);
+      expect(find.textContaining('禁用长按'), findsNothing);
 
       await tester.tap(find.byKey(const Key('btn-config')));
       await tester.pump();
 
       expect(find.byKey(const Key('btn-config-view')), findsOneWidget);
+      expect(find.textContaining('禁用长按'), findsOneWidget);
       expect(find.byKey(const Key('btn-cfg-click')), findsOneWidget);
       expect(find.byKey(const Key('btn-cfg-double')), findsOneWidget);
       expect(find.byKey(const Key('btn-cfg-long')), findsNothing);

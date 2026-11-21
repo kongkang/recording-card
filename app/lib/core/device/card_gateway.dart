@@ -137,6 +137,8 @@ class HardwareCapabilities {
     this.hasConfigurableSwitch = false,
     this.hasOledDisplay = false,
     this.hasStandaloneRealtimeStream = false,
+    this.hasDeviceRestart = false,
+    this.hasDeviceShutdown = false,
     required this.otaMode,
   });
 
@@ -152,11 +154,14 @@ class HardwareCapabilities {
   final bool hasConfigurableSwitch;
   final bool hasOledDisplay;
   final bool hasStandaloneRealtimeStream;
+  final bool hasDeviceRestart;
+  final bool hasDeviceShutdown;
   final String otaMode; // 'dual_chip' | 'single_ota' | 'none'
 
   bool get hasDualChipOta => otaMode == 'dual_chip';
   bool get hasSingleOta => otaMode == 'single_ota';
   bool get hasOta => hasDualChipOta || hasSingleOta;
+  bool get hasMoreDeviceActions => hasDeviceRestart || hasDeviceShutdown;
 
   static const cardV2 = HardwareCapabilities(
     realtimeAudio: true,
@@ -171,6 +176,8 @@ class HardwareCapabilities {
     hasConfigurableSwitch: true,
     hasOledDisplay: true,
     hasStandaloneRealtimeStream: false,
+    hasDeviceRestart: true,
+    hasDeviceShutdown: true,
     otaMode: 'dual_chip',
   );
 
@@ -187,6 +194,8 @@ class HardwareCapabilities {
     hasConfigurableSwitch: false,
     hasOledDisplay: false,
     hasStandaloneRealtimeStream: true,
+    hasDeviceRestart: true,
+    hasDeviceShutdown: false,
     otaMode: 'single_ota',
   );
 
@@ -287,6 +296,14 @@ class HardwareCapabilities {
       hasStandaloneRealtimeStream: flag(
         'hasStandaloneRealtimeStream',
         fallback.hasStandaloneRealtimeStream,
+      ),
+      hasDeviceRestart: flag(
+        'hasDeviceRestart',
+        fallback.hasDeviceRestart,
+      ),
+      hasDeviceShutdown: flag(
+        'hasDeviceShutdown',
+        fallback.hasDeviceShutdown,
       ),
       otaMode: (json['otaMode'] as String?) ?? fallback.otaMode,
     );
@@ -1620,7 +1637,9 @@ class RealCardGateway implements CardGateway {
         : '';
     return switch (code) {
       -1 => '录音卡拒绝了这条命令，请重连后重试$suffix',
-      -2 => '录音卡拒绝了这条命令$suffix',
+      -2 => raw.contains('录音启动失败')
+          ? '录音卡启动录音失败，可在「更多」中重启设备后重试$suffix'
+          : '录音卡拒绝了这条命令$suffix',
       -3 => '录音卡当前状态不允许该操作，请稍后重试$suffix',
       1 when raw.contains('WIFI_CONNECT') =>
         detail.isNotEmpty

@@ -500,6 +500,44 @@ class AgentConfigStore extends ChangeNotifier {
   String get omiButtonSummary =>
       '单击${omiClickAction.shortLabel} · 双击${omiDoubleClickAction.shortLabel}（禁用长按）';
 
+  int get cardConfiguredButtonCount => [
+    cardClickAction,
+    cardDoubleClickAction,
+    cardLongPressAction,
+    cardSwitchOnAction,
+    cardSwitchOffAction,
+  ].where((a) => a != HardwareButtonAction.none).length;
+
+  int get dyjConfiguredButtonCount => [
+    dyjClickAction,
+    dyjLongPressAction,
+    dyjDoubleClickAction,
+  ].where((a) => a != HardwareButtonAction.none).length;
+
+  int get omiConfiguredButtonCount => [
+    omiClickAction,
+    omiDoubleClickAction,
+  ].where((a) => a != HardwareButtonAction.none).length;
+
+  int configuredButtonCount({
+    required bool hasConfigurableSwitch,
+    DeviceKind? kind,
+  }) {
+    if (hasConfigurableSwitch || kind == DeviceKind.cardV2) {
+      return cardConfiguredButtonCount;
+    }
+    if (kind == DeviceKind.omiCv1) {
+      return omiConfiguredButtonCount;
+    }
+    return dyjConfiguredButtonCount;
+  }
+
+  String buttonConfiguredLabel({
+    required bool hasConfigurableSwitch,
+    DeviceKind? kind,
+  }) =>
+      '已设置 ${configuredButtonCount(hasConfigurableSwitch: hasConfigurableSwitch, kind: kind)} 项';
+
   int get enabledExtHardwareCount =>
       (omiLinkEnabled ? 1 : 0) +
       (feishuLinkEnabled ? 1 : 0);

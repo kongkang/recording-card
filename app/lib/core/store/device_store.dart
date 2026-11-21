@@ -39,7 +39,7 @@ enum SyncState { idle, busy, done }
 /// 最近一次同步是谁触发的：自动（停止录音/后台）还是用户点同步行。
 enum SyncTrigger { auto, manual }
 
-enum DeviceView { main, upg, wifi, btn }
+enum DeviceView { main, upg, wifi, btn, more }
 
 /// 与录音卡的蓝牙连接状态：未连接时顶栏胶囊变灰，点开进扫描流程。
 enum LinkState {
@@ -84,6 +84,7 @@ class DeviceStore extends ChangeNotifier {
     SecureStore? wifiCredentialStore,
     OledBitmapRenderer? oledRenderer,
     Duration? oledHardwareEventDelay,
+    Duration? restartReconnectDelay,
     DateTime Function()? now,
     @visibleForTesting List<Duration>? backgroundReconnectDelays,
     @visibleForTesting Future<CardGateway?> Function()? nativeBridgeRecovery,
@@ -116,6 +117,11 @@ class DeviceStore extends ChangeNotifier {
            (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')
                ? Duration.zero
                : const Duration(milliseconds: 350)),
+       _restartReconnectDelay =
+           restartReconnectDelay ??
+           (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')
+               ? Duration.zero
+               : const Duration(seconds: 3)),
        _now = now ?? DateTime.now {
     _gateway = WatchCompositeCardGateway(
       bleGateway: _bleGateway,
@@ -162,6 +168,7 @@ class DeviceStore extends ChangeNotifier {
   final SecureStore _wifiCredentialStore;
   final OledBitmapRenderer _oledRenderer;
   final Duration _oledHardwareEventDelay;
+  final Duration _restartReconnectDelay;
   Timer? _oledDelayTimer;
   int _syncedControlsEpoch = -1;
   bool _controlsSyncInFlight = false;
@@ -172,6 +179,12 @@ class DeviceStore extends ChangeNotifier {
   /// 录音卡 V2（CardV2）按键/拨杆 KV 配置写入状态（在「按键行为设置」页内就地展示）。
   bool cardControlsSyncing = false;
   String? cardControlsError;
+
+  /// 硬件远程重启/关机命令执行状态（「更多」二级页内展示）。
+  String? _connectedDeviceId;
+  bool devicePowerBusy = false;
+  String? devicePowerError;
+  String _powerStatusText = '';
 
   bool get hasRecentHardwareRecordOledPrompt =>
       _oledDelayTimer != null ||
@@ -695,6 +708,7 @@ class DeviceStore extends ChangeNotifier {
     _stopScanExpiryTimer();
     linkState = LinkState.connecting;
     linkError = null;
+    _powerStatusText = '';
     notifyListeners();
     _markLinkActivity();
     try {
@@ -713,6 +727,7 @@ class DeviceStore extends ChangeNotifier {
       connectedName = device.name;
       // 记住这台设备：掉线重连直接拿 id 直连，不靠扫描（已连接设备不广播）
       _lastDevice = device;
+      _connectedDeviceId = device.id;
       _autoReconnectTarget = null;
       _stopBackgroundAutoReconnect();
       _disconnectNotice = null;
@@ -794,7 +809,7 @@ class DeviceStore extends ChangeNotifier {
   ///
   /// 顺序：停录音 → 关实时流 → 停同步 → 断开。跳过任一步都可能留下半截会话，
   /// 下次连接时设备状态与 App 对不上（这次 code -2 就吃过这个亏）。
-  Future<void> disconnectSafely() async {
+  Future<void> _prepareForHardwareTeardown() async {
     _phoneStandbyArmed = false;
     _pendingPhoneFailover = false;
     _autoReconnectTarget = null;
@@ -806,7 +821,7 @@ class DeviceStore extends ChangeNotifier {
       try {
         await _gw.stopRecording().timeout(const Duration(seconds: 5));
       } on Object {
-        // 停不下来也要继续断：不能因为一条命令失败就把用户卡在未断开状态
+        // 停不下来也要继续后续释放/电源命令，不能把用户卡在当前状态
       }
       _liveRecording = false;
     }
@@ -815,7 +830,244 @@ class DeviceStore extends ChangeNotifier {
     } on Object {
       // 同上
     }
+  }
+
+  Future<String?> _sendPowerCommand(
+    String command, {
+    required String timeoutMessage,
+  }) async {
+    try {
+      await _gw
+          .invokeBridgeCommand(
+            command,
+            const <String, dynamic>{},
+            const Duration(seconds: 10),
+          )
+          .timeout(const Duration(seconds: 10));
+      return null;
+    } on CardException catch (e) {
+      if (e.kind == CardErrorKind.disconnected) return null;
+      devicePowerError = e.message;
+      notifyListeners();
+      return devicePowerError;
+    } on TimeoutException {
+      devicePowerError = timeoutMessage;
+      notifyListeners();
+      return devicePowerError;
+    } on Object catch (e) {
+      devicePowerError = '$e';
+      notifyListeners();
+      return devicePowerError;
+    }
+  }
+
+  Future<void> disconnectSafely() async {
+    await _prepareForHardwareTeardown();
     await disconnectDevice();
+  }
+
+  /// 远程重启已连接硬件，并在重启后自动尝试重连回同一台设备。
+  Future<String?> restartDevice() async {
+    if (!isConnected) {
+      return '当前未连接设备';
+    }
+    if (!activeCapabilities.hasDeviceRestart) {
+      return '当前硬件不支持远程重启';
+    }
+    if (devicePowerBusy) {
+      return '正在执行上一条电源命令，请稍候';
+    }
+    final targetId = _lastDevice?.id ?? _connectedDeviceId ?? '';
+    final targetName =
+        _lastDevice?.name ?? connectedName ?? activeModelLabel;
+    final targetKind = _lastDevice?.deviceKind ?? activeKind;
+    final targetCaps = _lastDevice?.capabilities ?? activeCapabilities;
+    final fallbackTarget =
+        _lastDevice ??
+        (targetId.isNotEmpty
+            ? CardDevice(
+                id: targetId,
+                name: targetName,
+                kind: targetKind,
+                capabilities: targetCaps,
+              )
+            : null);
+
+    devicePowerBusy = true;
+    devicePowerError = null;
+    notifyListeners();
+    try {
+      await _prepareForHardwareTeardown();
+      if (!_phoneRecording && !_watchFailoverRecording) {
+        unawaited(_liveActivityService.stopLocalRecordingActivity());
+      }
+      final cmdError = await _sendPowerCommand(
+        'device.restart',
+        timeoutMessage: '重启命令超时，请重试',
+      );
+      if (cmdError != null) return cmdError;
+
+      final epoch = ++_epoch;
+      _oledDelayTimer?.cancel();
+      _oledDelayTimer = null;
+      _heartbeatTimer?.cancel();
+      _heartbeatTimer = null;
+      _eventWatch?.cancel();
+      _eventWatch = null;
+      _stopSheetWatch();
+      try {
+        await _gw.disconnect().timeout(const Duration(seconds: 5));
+      } on Object {
+        // 忽略旧链路释放异常，继续进入自动重连
+      }
+      if (epoch != _epoch || _disposed) return null;
+
+      _resetLiveState();
+      recordingError = null;
+      view = DeviceView.main;
+      connectedName = targetName;
+      linkState = LinkState.reconnecting;
+      linkError = null;
+      _powerStatusText = '设备正在重启，等待自动重连…';
+      notifyListeners();
+
+      if (_restartReconnectDelay > Duration.zero) {
+        await Future<void>.delayed(_restartReconnectDelay);
+        if (epoch != _epoch || _disposed) return null;
+      }
+
+      for (var attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) {
+          final retryWait = _restartReconnectDelay > Duration.zero
+              ? const Duration(seconds: 2)
+              : Duration.zero;
+          if (retryWait > Duration.zero) {
+            await Future<void>.delayed(retryWait);
+            if (epoch != _epoch || _disposed) return null;
+          }
+        }
+        var scanned = const <CardDevice>[];
+        try {
+          scanned = await _gw.scan();
+        } on Object {
+          scanned = const <CardDevice>[];
+        }
+        if (epoch != _epoch || _disposed) return null;
+
+        CardDevice? candidate;
+        if (targetId.isNotEmpty) {
+          candidate = scanned.where((d) => d.id == targetId).firstOrNull;
+        }
+        candidate ??= targetName.isNotEmpty
+            ? scanned
+                  .where((d) => d.name == targetName && d.deviceKind == targetKind)
+                  .firstOrNull
+            : null;
+        candidate ??= fallbackTarget;
+        if (candidate == null) continue;
+
+        try {
+          _markLinkActivity();
+          var snap = await _gw
+              .connect(
+                candidate.id,
+                name: candidate.name,
+                deviceKind: candidate.deviceKind.code,
+              )
+              .timeout(_retryConnectTimeout);
+          if (epoch != _epoch || _disposed) return null;
+          snap ??= await _gw.snapshot().timeout(_snapshotTimeout);
+          if (epoch != _epoch || _disposed) return null;
+
+          _markLinkActivity();
+          activeKind = candidate.deviceKind;
+          activeCapabilities = candidate.resolvedCapabilities;
+          activeModelLabel = candidate.modelLabel;
+          connectedName = candidate.name;
+          _lastDevice = candidate;
+          _connectedDeviceId = candidate.id;
+          if (!_isDfuBootloaderName(candidate.name)) {
+            _lastKnownNormalCardV2Name = candidate.deviceKind == DeviceKind.cardV2
+                ? candidate.name
+                : null;
+          }
+          linkState = LinkState.connected;
+          linkError = null;
+          recordingError = null;
+          devicePowerError = null;
+          _applySnapshot(snap);
+          await _reconcileRecordingOnConnect();
+          if (epoch != _epoch || _disposed) return null;
+          _eventSeq = 0;
+          _startHeartbeat();
+          if (sheetOpen) {
+            _startSheetWatch();
+          }
+          unawaited(_afterConnect(epoch));
+          _powerStatusText = '设备已重启并重新连接';
+          notifyListeners();
+          return null;
+        } on Object {
+          await _releaseLink();
+          if (epoch != _epoch || _disposed) return null;
+        }
+      }
+
+      if (epoch == _epoch && !_disposed) {
+        linkState = LinkState.disconnected;
+        connectedName = null;
+        _powerStatusText = '';
+        linkError = '设备已重启，请点击重新连接';
+        notifyListeners();
+        return linkError;
+      }
+      return null;
+    } finally {
+      devicePowerBusy = false;
+      if (!_disposed) {
+        notifyListeners();
+      }
+    }
+  }
+
+  /// 远程关闭硬件电源并安全断开蓝牙连接。
+  Future<String?> shutdownDevice() async {
+    if (!isConnected) {
+      return '当前未连接设备';
+    }
+    if (!activeCapabilities.hasDeviceShutdown) {
+      return '当前硬件不支持远程关机';
+    }
+    if (devicePowerBusy) {
+      return '正在执行上一条电源命令，请稍候';
+    }
+
+    devicePowerBusy = true;
+    devicePowerError = null;
+    notifyListeners();
+    try {
+      await _prepareForHardwareTeardown();
+      final cmdError = await _sendPowerCommand(
+        'device.shutdown',
+        timeoutMessage: '关机命令超时，请重试',
+      );
+      if (cmdError != null) return cmdError;
+
+      view = DeviceView.main;
+      recordingError = null;
+      await disconnectDevice();
+      if (!_disposed) {
+        linkError = null;
+        _powerStatusText = '';
+        notifyListeners();
+      }
+      return null;
+    } finally {
+      devicePowerBusy = false;
+      if (!_disposed) {
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> disconnectDevice() async {
@@ -877,6 +1129,9 @@ class DeviceStore extends ChangeNotifier {
     _lastHardwareRecordOledAt = null;
     cardControlsSyncing = false;
     cardControlsError = null;
+    _connectedDeviceId = null;
+    devicePowerError = null;
+    _powerStatusText = '';
     _hwRecordingStartedAt = null;
     _liveBattery = null;
     _liveCharging = null;
@@ -1254,6 +1509,7 @@ class DeviceStore extends ChangeNotifier {
     activeModelLabel = device.modelLabel;
     connectedName = device.name;
     _lastDevice = device;
+    _connectedDeviceId = device.id;
     if (!_isDfuBootloaderName(device.name)) {
       _lastKnownNormalCardV2Name = device.deviceKind == DeviceKind.cardV2
           ? device.name
@@ -1541,6 +1797,9 @@ class DeviceStore extends ChangeNotifier {
     _lastHardwareRecordOledAt = null;
     cardControlsSyncing = false;
     cardControlsError = null;
+    _connectedDeviceId = null;
+    devicePowerError = null;
+    _powerStatusText = '';
     final target = lostDevice ?? _lastDevice;
     final dropReason = reason ?? _inferUnexpectedDisconnectReason(message);
     _heartbeatTimer?.cancel();
@@ -1634,6 +1893,9 @@ class DeviceStore extends ChangeNotifier {
       _liveBattery = null;
     }
     _liveCharging = s.isCharging;
+    if (s.deviceId.isNotEmpty) {
+      _connectedDeviceId = s.deviceId;
+    }
     if ((connectedName == null || connectedName!.isEmpty) &&
         s.deviceName.isNotEmpty) {
       connectedName = s.deviceName;
@@ -1812,6 +2074,7 @@ class DeviceStore extends ChangeNotifier {
     }
     recordingBusy = true;
     recordingError = null;
+    _powerStatusText = '';
     if (!wantStart) {
       // 用户主动关闭硬件录音：先解除本机待命保底，防止误判为异常停录触发保底
       _phoneStandbyArmed = false;
@@ -2847,6 +3110,7 @@ class DeviceStore extends ChangeNotifier {
     if (recordingBusy) return;
     recordingBusy = true;
     recordingError = null;
+    _powerStatusText = '';
     notifyListeners();
     try {
       await _gw.stopRecording().timeout(const Duration(seconds: 6));
@@ -3206,6 +3470,9 @@ class DeviceStore extends ChangeNotifier {
     if (v == DeviceView.upg) {
       unawaited(checkFirmware());
     }
+    if (v == DeviceView.more) {
+      devicePowerError = null;
+    }
     if (v == DeviceView.btn &&
         isConnected &&
         activeCapabilities.hasConfigurableSwitch &&
@@ -3252,8 +3519,9 @@ class DeviceStore extends ChangeNotifier {
     return fwAvailable ? '有可用更新' : '已是最新';
   }
 
-  /// 升级完成后的设备状态行（无更新时为空，不占位）。
+  /// 升级完成后的设备状态行（无更新时为空，不占位；若有重启状态提示优先展示）。
   String get devStateText {
+    if (_powerStatusText.isNotEmpty) return _powerStatusText;
     if (fwStage != FwStage.done) return '';
     return '已更新到 $fwVersionText';
   }
