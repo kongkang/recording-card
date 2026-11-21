@@ -1,275 +1,676 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-Hans">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>常见录音卡怎么选 · 2026年11月商业对照</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>常见录音设备怎么比：硬件、市场与选品条件</title>
 <style>
-:root{--bg:#f3efe6;--paper:#fffdf8;--ink:#1c1915;--muted:#5e5850;--line:#e4dccf;--green:#0f7a45;--red:#b42318;--amber:#8a5a00;--gray:#5c6570;--ours:#e7f5ec;--accent:#1f3d32}
-*{box-sizing:border-box}html{scroll-behavior:smooth}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",sans-serif;font-size:16px;line-height:1.65}
-.wrap{max-width:1080px;margin:0 auto;padding:28px 20px 72px}
-header.hero{background:var(--accent);color:#f7f3ea;border-radius:22px;padding:32px 28px 26px}
-.eyebrow{letter-spacing:.12em;font-size:12px;opacity:.75;margin:0 0 8px}
-h1{font-family:"Songti SC","Noto Serif SC",serif;font-size:34px;line-height:1.25;margin:0 0 12px}
-h2{font-family:"Songti SC","Noto Serif SC",serif;font-size:26px;margin:0 0 8px}
-h3{font-size:18px;margin:0 0 6px}
-.hero p{margin:0;max-width:46rem;color:#efe7d8}
-.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
-.meta span{border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:4px 10px;font-size:12px}
-nav.toc{position:sticky;top:0;z-index:5;display:flex;gap:8px;flex-wrap:wrap;background:rgba(243,239,230,.94);padding:12px 0;margin-top:8px}
-nav.toc a,.scenes button,.print-btn{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:999px;padding:7px 12px;text-decoration:none;font-size:13px;cursor:pointer}
-.scenes button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
-.scenes{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 10px}
-.scene,.card,article.product,.note{background:var(--paper);border:1px solid var(--line);border-radius:16px}
-.scene{border-left:4px solid var(--green);padding:12px 14px;margin-bottom:8px}
-section{margin:28px 0}.lead,.why,.foot{color:var(--muted)}
-.legend{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:14px}
-.legend div{display:flex;gap:8px;align-items:flex-start;font-size:13px}
-.scroller{overflow-x:auto;border:1px solid var(--line);border-radius:16px;background:var(--paper)}
-table{width:100%;border-collapse:collapse;background:var(--paper);min-width:760px}
-th,td{border-bottom:1px solid var(--line);padding:10px 8px;text-align:center;vertical-align:middle;font-size:13px}
-th{font-size:12px;color:var(--muted);background:#faf7f1}
-td.name,th.name{text-align:left;position:sticky;left:0;background:#fffdf8;min-width:150px;z-index:1}
-tr.ours td{background:var(--ours)}tr.ours td.name{background:#dff3e6;font-weight:700}
-.dot{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:700}
-.ok{background:var(--green)}.no{background:var(--red)}.mid{background:var(--amber)}.unk{background:var(--gray)}
-.hint{display:block;color:var(--muted);font-size:11px;margin-top:3px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-article.product{padding:14px 14px 8px;break-inside:avoid}
-article.product.ours{border-color:var(--green);box-shadow:inset 3px 0 0 var(--green)}
-ul{margin:8px 0 12px;padding-left:1.15em}
-.src{font-size:13px;color:var(--muted)}.src a{color:#1d4e89}
-.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
-.kpi{background:rgba(255,255,255,.08);border-radius:12px;padding:10px 12px}
-.kpi b{display:block;font-size:18px}
-@media(max-width:800px){h1{font-size:28px}.legend,.grid,.kpis{grid-template-columns:1fr}.wrap{padding:16px 12px 48px}header.hero{padding:22px 16px}}
-@page{size:A4;margin:12mm 11mm 14mm}
-@media print{table{min-width:0;font-size:9px}th,td{padding:4px 3px}.dot{width:16px;height:16px;font-size:10px}.hint{font-size:8px}
-body{background:#fff;font-size:11.5px}.wrap{max-width:none;padding:0}
-nav.toc,.scenes,.print-btn,.noprint{display:none!important}
-header.hero{border-radius:0}.scene{display:block!important}
-th,td.name,th.name{position:static}.scroller{overflow:visible}
-a{color:inherit;text-decoration:none}
-article.product,.scene,tr{break-inside:avoid}h2,h3{break-after:avoid}
-*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+:root {
+  --ink:#1c1915; --muted:#5e584f; --line:#e4ddd0; --paper:#f6f3ec; --card:#fffdf9;
+  --good:#0e7a43; --bad:#b42318; --warn:#8a5b00; --unk:#5f5a54;
+  --goodbg:#e6f4eb; --badbg:#fdecea; --warnbg:#fff3d6; --unkbg:#f0eee8;
+  --mark:#e8f2ea;
+}
+* { box-sizing:border-box; }
+html { font-size:16px; }
+body {
+  margin:0; color:var(--ink); background:var(--paper);
+  font-family:"Iowan Old Style","Palatino Linotype",Palatino,"Songti SC","Noto Serif SC","Source Han Serif SC",serif;
+  line-height:1.65;
+}
+.wrap { max-width:1080px; margin:0 auto; padding:28px 20px 72px; }
+header.top { border-top:8px solid var(--ink); padding-top:18px; }
+.kicker { font-family:"Avenir Next","PingFang SC","Noto Sans SC",sans-serif; letter-spacing:.12em; font-size:12px; color:var(--muted); margin:0 0 8px; }
+h1 { font-size:34px; line-height:1.25; font-weight:650; margin:0 0 10px; letter-spacing:-.02em; }
+.lede { font-size:18px; margin:0 0 14px; }
+.meta { font-family:"Avenir Next","PingFang SC","Noto Sans SC",sans-serif; color:var(--muted); font-size:13px; }
+h2 { font-size:24px; margin:36px 0 8px; line-height:1.3; }
+h3 { font-size:18px; margin:22px 0 6px; }
+p { margin:8px 0; }
+ul, ol { margin:8px 0 8px 1.2em; padding:0; }
+li { margin:4px 0; }
+a { color:#1d4e39; }
+.note, .callout {
+  background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin:12px 0;
+}
+.callout strong { font-family:"Avenir Next","PingFang SC","Noto Sans SC",sans-serif; }
+.legend { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.tag {
+  display:inline-flex; align-items:center; gap:4px; border-radius:999px;
+  padding:1px 8px; font-family:"Avenir Next","PingFang SC","Noto Sans SC",sans-serif;
+  font-size:12px; line-height:1.7; white-space:nowrap; font-weight:650;
+}
+.good { background:var(--goodbg); color:var(--good); }
+.bad { background:var(--badbg); color:var(--bad); }
+.warn { background:var(--warnbg); color:var(--warn); }
+.unk { background:var(--unkbg); color:var(--unk); }
+td .tag { margin-bottom:2px; }
+small, .fine { color:var(--muted); font-size:12.5px; }
+.toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
+button {
+  font-family:"Avenir Next","PingFang SC","Noto Sans SC",sans-serif;
+  border:1px solid var(--line); background:var(--card); color:var(--ink);
+  border-radius:999px; padding:7px 12px; font-size:13px; cursor:pointer;
+}
+button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+.bars { margin:10px 0 4px; }
+.bar-row { display:grid; grid-template-columns:92px 1fr 92px; gap:8px; align-items:center; margin:6px 0; font-family:"Avenir Next","PingFang SC","Noto Sans SC",sans-serif; font-size:13px; }
+.track { background:#ebe6dc; height:10px; border-radius:99px; overflow:hidden; }
+.fill { display:block; height:100%; background:#1d4e39; border-radius:99px; }
+.scroller { overflow-x:auto; border:1px solid var(--line); border-radius:12px; background:var(--card); margin:10px 0 6px; }
+table { border-collapse:collapse; width:100%; min-width:920px; }
+th, td { border-bottom:1px solid var(--line); text-align:left; vertical-align:top; padding:8px 8px; font-size:13px; line-height:1.45; }
+th {
+  font-family:"Avenir Next","PingFang SC","Noto Sans SC",sans-serif;
+  font-size:12px; letter-spacing:.02em; background:#f3efe6; position:sticky; top:0;
+}
+td:first-child, th:first-child { position:sticky; left:0; background:#fffdf9; min-width:108px; z-index:1; }
+th:first-child { background:#f3efe6; z-index:2; }
+.name { font-weight:700; }
+.sub { display:block; font-weight:450; color:var(--muted); font-size:12px; }
+caption { caption-side:bottom; text-align:left; padding:8px; color:var(--muted); font-size:12px; }
+.fit { display:grid; grid-template-columns:1fr; gap:8px; }
+@media (min-width:760px) { .fit { grid-template-columns:1fr 1fr; } }
+.fit article { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
+.fit h3 { margin:0 0 4px; font-size:16px; }
+.sources li { font-size:13px; }
+footer { margin-top:28px; color:var(--muted); font-size:12.5px; }
+body[data-view="hw"] .view-deal,
+body[data-view="hw"] .view-ajazz,
+body[data-view="deal"] .view-hw,
+body[data-view="deal"] .view-ajazz,
+body[data-view="ajazz"] .view-hw,
+body[data-view="dingtalk"] .view-hw,
+body[data-view="thin"] .view-deal,
+body[data-view="thin"] .view-ajazz,
+body[data-view="local"] .view-hw,
+body[data-view="local"] .view-ajazz { display:none; }
+body[data-view="dingtalk"] tbody tr,
+body[data-view="thin"] tbody tr,
+body[data-view="local"] tbody tr { opacity:.38; }
+body[data-view="dingtalk"] tbody tr.keep-dt,
+body[data-view="thin"] tbody tr.keep-thin,
+body[data-view="local"] tbody tr.keep-local { opacity:1; }
+body[data-view="local"] tbody tr.keep-maybe { opacity:.88; }
+@media (max-width:640px) {
+  h1 { font-size:28px; }
+  .bar-row { grid-template-columns:72px 1fr 64px; }
+}
+@page { size: A4; margin: 14mm 12mm 16mm 12mm; }
+@media print {
+  body { background:#fff; font-size:10.5pt; }
+  .wrap { max-width:none; padding:0; }
+  .noprint { display:none !important; }
+  a { color:inherit; text-decoration:none; }
+  h1 { font-size:20pt; }
+  h2 { font-size:14pt; break-after:avoid; }
+  h3 { break-after:avoid; }
+  .view-hw, .view-deal, .view-ajazz, .always { display:block !important; }
+  tbody tr { opacity:1 !important; }
+  .scroller { overflow:visible; border:0; border-radius:0; }
+  table { min-width:0; width:100%; }
+  th, td { font-size:8pt; padding:3px 4px; overflow-wrap:anywhere; word-break:break-word; }
+  thead { display: table-header-group; }
+  th { font-size:7.5pt; line-height:1.25; }
+  th, td:first-child, th:first-child { position:static; }
+  tr, .callout, .fit article { break-inside:avoid; }
+  .tag { border:0.4pt solid currentColor; }
+  header.top { border-top-width:4pt; }
 }
 </style>
 </head>
-<body>
+<body data-view="all">
 <div class="wrap">
-<header class="hero">
-<p class="eyebrow">商业对照 · 2026年11月21日 · 供合作评估，不是实验室报告</p>
-<h1>常见录音卡怎么选</h1>
-<p>客户要的是市面上常见录音卡的商业横评：开放不开放，接口能不能调用，自己的 AI 能不能下令开始录音，费用和录音时长怎么算，以及能不能接进录音卡 App。音质、外观和麦克风个数不在这次比较里。那些需要同场试听，不能靠宣传页分胜负。</p>
-<div class="kpis">
-<div class="kpi"><b>六项加一项</b>开放、接口、AI 开录、费用、时长、适配，外加默认数据是否留在本机。</div>
-<div class="kpi"><b>十款热销参照</b>按公开零售额和渠道可见度选取，不编造未经审计的出货名次。</div>
-<div class="kpi"><b>录音卡 App</b>作为对照基准。优势只写公开做得到、并且能被断网验收的部分。</div>
-</div>
+<header class="top">
+<p class="kicker">买方备忘 · 2026年11月21日核对</p>
+<h1>常见录音设备怎么比</h1>
+<p class="lede">十款市面上常被放在一起的录音卡、录音环和录音豆，加上录音卡 App。先比摸得着的硬件和卖得动不动，再比买回去之后谁管软件、钱怎么收、谈话会不会默认出门。</p>
+<p class="meta">绿色只表示这一格对买方有利，不表示这款产品全面更好。克重和毫安用数字，不打成胜负符号。写不出公开数字的格子标未知，不补想象值。</p>
 </header>
 
-<div class="bar"></div>
-<nav class="toc" aria-label="目录">
-<a href="#how">怎么读</a>
-<a href="#pick">十款从哪来</a>
-<a href="#table">总表</a>
-<a href="#dims">分项说明</a>
-<a href="#ours">什么时候选我们</a>
-<a href="#each">十款短评</a>
-<a href="#src">依据</a>
-<button class="print-btn" type="button" onclick="window.print()">打印或存 PDF</button>
-</nav>
-
-<section id="how">
-<h2>符号只回答一件事</h2>
-<p class="lead">绿色圆勾不是「这款全面更好」。它只表示：就这一项而言，对「录音要进自己的系统、数据默认留在身边」更有利。销量和适合不是一回事。钉钉可以在时长上打勾，同时在开放上打叉。</p>
-<div class="card legend">
-<div><span class="dot ok">✓</span><span><b>做得到。</b>公开资料写明了，不是推测。</span></div>
-<div><span class="dot mid">!</span><span><b>做了一半。</b>官方 App、会员接口或合作伙伴计划可用，但开关不在客户自己的系统里。</span></div>
-<div><span class="dot no">✕</span><span><b>公开路径做不到。</b>能力停在品牌自己的 App 和云上。</span></div>
-<div><span class="dot unk">?</span><span><b>资料不够。</b>没写清的续航、接口或是否本地处理，不写成有，也不写成没有。</span></div>
+<div class="legend" aria-label="符号说明">
+<span class="tag good">✓ 这一项对买方有利</span>
+<span class="tag bad">✕ 这一项做不到，或对买方不利</span>
+<span class="tag warn">⚠ 有条件、口径打架，或只对一部分人有利</span>
+<span class="tag unk">？ 公开资料没写清</span>
 </div>
-<div class="scenes noprint" role="group" aria-label="场景">
-<button type="button" class="on" data-scene="own">录音要留在自己手里</button>
-<button type="button" data-scene="suite">团队已经用钉钉或飞书</button>
-<button type="button" data-scene="budget">先要便宜地把字转出来</button>
+
+<div class="toolbar noprint" role="toolbar" aria-label="筛选">
+<button type="button" data-view="all" class="on">全部</button>
+<button type="button" data-view="hw">只看硬件与市场</button>
+<button type="button" data-view="deal">只看买后条件</button>
+<button type="button" data-view="ajazz">黑爵选品</button>
+<button type="button" data-view="dingtalk">全员钉钉</button>
+<button type="button" data-view="thin">只比轻薄</button>
+<button type="button" data-view="local">数据是否出门</button>
 </div>
-<div class="scene" id="scene-own"><b>录音要进自己的系统。</b>看三列：自己的 AI 能不能下令开录，数据默认出不离设备，第二年还要不要为「把声音变成字」续费。三列同时占优的是录音卡 App。别人可以有更长的电池，或更熟的办公套件，但不把录音开关和原文交出来。</div>
-<div class="scene" id="scene-suite" hidden><b>纪要的终点就是钉钉待办或飞书文档。</b>继续用钉钉 A1 或飞书录音豆更省事。为了「更开放」换掉已经买好的套件，并不划算。开放是一种需求，不是所有团队的需求。</div>
-<div class="scene" id="scene-budget" hidden><b>只想少花钱、尽快看到文字。</b>纽曼这一档更便宜，并宣称转写不再另收费。它适合先把声音变成字。它不适合「字和声音不能出公司」，也不适合接到自己的业务系统。便宜和开放不是同一件事。</div>
-</section>
+<p id="sceneNote" class="note noprint"></p>
 
-<section id="pick">
-<h2>这十款不是一份虚构名次</h2>
-<p>国内没有一份公开、经过审计的「录音卡单品出货前十」。能核对的是零售监测和品牌公布的结果。奥维云网对 2026 年一季度线上录音笔的监测里，零售额大约 1.4 亿元；平台电商、专业电商和内容电商都有量。品牌零售额前五是钉钉、科大讯飞、PLAUD、安克、纽曼，合计超过一半。商品层面，钉钉 A1、安克的 AI 录音设备、出门问问 TicNote 被点名为前列。</p>
-<p>下面十款因此是「现在会被拿来比较的常见录音卡」：零售额领先品牌里的代表机，加上 2026 年已经在渠道里绕不开的新品。新品会标明，不把它们说成另一个季度冠军。录音卡 App 不参与这个名次，只放在第一行做对照。</p>
-<ul>
-<li>钉钉 A1：一季度品牌零售额第一，也是单品热度的中心。公开售价青春版 499 元、旗舰版 799 元，此后渠道价会浮动。</li>
-<li>钉钉 A1 Pro：2026 年 4 月的长续航款，售价 1299 元。用来比「一块电可以录多久」。</li>
-<li>科大讯飞 AI 录音卡、AI 录音环：品牌零售额第二。录音卡约 2026 年 6 月、录音环为 2026 年 10 月。</li>
-<li>PLAUD Note Pro：品牌零售额第三，也是全球被引用最多的卡片。官网价 189 美元。</li>
-<li>安克与飞书的录音豆：品牌零售额第四，售价 899 元，走办公套件。</li>
-<li>纽曼智能录音卡：品牌零售额第五。纽曼同时卖大量传统录音笔，这里只看智能卡片，不把笔形机的续航算到卡片上。</li>
-<li>出门问问 TicNote：商品榜前排。国内成交多在千元上下，促销会降到九百元档。</li>
-<li>得到 AI 录音卡：知识服务渠道里讨论很密。标准版公开价 699 元，礼盒讨论价常见 888 元。</li>
-<li>追觅 D·NOTE：2026 年的商务名片卡，8GB 版 899 元、64GB 版 999 元。没有进入一季度品牌前五。</li>
-</ul>
-</section>
+<h2>先把名次说清楚</h2>
+<p>这十款不是审计后的销量前十。公开能核到的是奥维云网对「录音笔」这个大类的线上零售额，里面既有新的录音卡，也有卖了很多年的传统笔。品牌份额不能直接写成某一张卡卖了多少台。</p>
+<p>2026 年第一季度，这个大类线上零售额约 1.4 亿元，零售量约 39.4 万台，均价约 361 元。品牌零售额前五是：钉钉约 3243.9 万元、占 22.83%；科大讯飞约 1497.5 万元、占 10.54%；PLAUD 约 1037.6 万元、占 7.3%；安克约 917.7 万元、占 6.5%；纽曼约 790.91 万元、占 5.6%。前五合计过半，后面很长的尾巴没有被公开点名。</p>
+<div class="bars" aria-label="2026年第一季度线上录音笔品牌零售额份额">
+<div class="bar-row"><span>钉钉</span><span class="track"><span class="fill" style="width:22.83%"></span></span><span>22.83%</span></div>
+<div class="bar-row"><span>科大讯飞</span><span class="track"><span class="fill" style="width:10.54%"></span></span><span>10.54%</span></div>
+<div class="bar-row"><span>PLAUD</span><span class="track"><span class="fill" style="width:7.3%"></span></span><span>7.3%</span></div>
+<div class="bar-row"><span>安克</span><span class="track"><span class="fill" style="width:6.5%"></span></span><span>6.5%</span></div>
+<div class="bar-row"><span>纽曼</span><span class="track"><span class="fill" style="width:5.6%"></span></span><span>5.6%</span></div>
+</div>
+<p class="fine">横条长度按全市场 100% 画，不是按前五重新归一。来源：界面新闻转述奥维云网，2026 年第一季度线上监测。</p>
+<p>这个第一名并不稳。2026 年 4 月，线上零售额约 7302.7 万元，钉钉仍是第一，但份额降到约 17.8%；讯飞约 8.4%；安克约 6.2%，是当月前排里少数份额还在涨的老品牌。内容电商当月占到零售额约 42.3%，品牌数从 63 个翻到 125 个。直播间已经能改写榜单，一份季度份额不能当成全年结论。</p>
+<p>读份额时再留三个折扣。钉钉的钱主要在 A1 系列，4 月报道里 A1 系列新品占了钉钉品牌额约 64%，但仍是一个系列，不是单一 SKU。纽曼的 5.6% 里有大量传统笔，不能算到 X1 这张卡上。安克的 6.5% 也不等于录音豆一只卖了这么多。出门问问、得到、追觅没有出现在这两份公开前五里，热度不等于零售额。</p>
 
-<section id="table">
-<h2>一张表看完</h2>
-<p class="lead">手机上左右滑动，第一列会固定。绿底一行是录音卡 App，方便对着看，不表示其他格子自动判负。每个符号的理由写在表后的分项说明里，不把技术参数塞进格子。</p>
-<div class="scroller">
+<h2>电池和录音时长不是同一个数</h2>
+<p>毫安时大，通常更能录得久，但不是正比。麦克风颗数、有没有屏幕、待机和连续录音是否分开计，都会改这个比例。钉钉 A1 约 660 毫安时，标称连续录音约 45 小时。讯飞录音卡约 210 毫安时，上架稿写至高约 30 小时。PLAUD Note Pro 约 500 毫安时，增强模式约 30 小时、耐力模式约 50 小时，耐力模式把拾音距离从约 5 米收到约 3 米。钉钉 A1 Pro 标称约 2980 毫安时、连续录音约 180 小时，代价是它已经不是一张轻薄卡，实测约 96 克，而且兼做充电宝。</p>
+<p>所以表里电池和小时分两列。只拿小时数宣布「谁更耐用」，会把充电宝和名片比成一种东西。</p>
+<h2 class="view-hw" id="scene-thin">硬件与货架</h2>
+<p class="view-hw">这一张表只回答：它长什么样、有多重、电有多大、能标称录多久、卖多少钱、在公开榜上站在哪、用什么充电。录音卡 App 没有公开的克重、厚度和毫安，这些格子留空，不拿软件去跟 30 克的卡比轻重。</p>
+<div class="scroller view-hw">
 <table>
+<caption>表 A1 · 形态、重量、尺寸、电池与标称连续录音。尺寸单位为毫米。电池为毫安时。</caption>
 <thead><tr>
-<th class="name">产品</th><th>开放程度</th><th>API 调用</th><th>AI 能否开录</th><th>费用能否算清</th><th>录音时长</th><th>适配录音卡 App</th><th>默认留在本机</th>
+<th>产品</th><th>形态</th><th>重量</th><th>尺寸</th><th>电池</th><th>连续录音</th>
 </tr></thead>
 <tbody>
-<tr class="ours"><td class="name">录音卡 App<span class="hint">对照基准</span></td><td><span class="dot ok">✓</span></td><td><span class="dot ok">✓</span></td><td><span class="dot ok">✓</span></td><td><span class="dot ok">✓</span></td><td><span class="dot mid">!</span></td><td><span class="dot ok">✓</span></td><td><span class="dot ok">✓</span></td></tr>
-<tr><td class="name">钉钉 A1<span class="hint">零售热度领先</span></td><td><span class="dot no">✕</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot ok">✓</span></td><td><span class="dot no">✕</span></td><td><span class="dot no">✕</span></td></tr>
-<tr><td class="name">钉钉 A1 Pro<span class="hint">长续航新品</span></td><td><span class="dot no">✕</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot ok">✓</span></td><td><span class="dot no">✕</span></td><td><span class="dot no">✕</span></td></tr>
-<tr><td class="name">讯飞 AI 录音卡<span class="hint">品牌第二</span></td><td><span class="dot no">✕</span></td><td><span class="dot mid">!</span></td><td><span class="dot unk">?</span></td><td><span class="dot mid">!</span></td><td><span class="dot unk">?</span></td><td><span class="dot no">✕</span></td><td><span class="dot no">✕</span></td></tr>
-<tr><td class="name">讯飞 AI 录音环<span class="hint">2026年10月</span></td><td><span class="dot no">✕</span></td><td><span class="dot mid">!</span></td><td><span class="dot unk">?</span></td><td><span class="dot mid">!</span></td><td><span class="dot ok">✓</span></td><td><span class="dot no">✕</span></td><td><span class="dot no">✕</span></td></tr>
-<tr><td class="name">PLAUD Note Pro<span class="hint">全球参照物</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot ok">✓</span></td><td><span class="dot no">✕</span></td><td><span class="dot no">✕</span></td></tr>
-<tr><td class="name">飞书 × 安克录音豆<span class="hint">办公套件</span></td><td><span class="dot no">✕</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot no">✕</span></td><td><span class="dot no">✕</span></td></tr>
-<tr><td class="name">出门问问 TicNote<span class="hint">商品榜前排</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot unk">?</span></td><td><span class="dot mid">!</span></td><td><span class="dot ok">✓</span></td><td><span class="dot no">✕</span></td><td><span class="dot mid">!</span></td></tr>
-<tr><td class="name">得到 AI 录音卡<span class="hint">笔记入口</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td><td><span class="dot no">✕</span></td><td><span class="dot mid">!</span></td><td><span class="dot ok">✓</span></td><td><span class="dot mid">!</span></td><td><span class="dot mid">!</span></td></tr>
-<tr><td class="name">追觅 D·NOTE<span class="hint">商务名片卡</span></td><td><span class="dot unk">?</span></td><td><span class="dot unk">?</span></td><td><span class="dot unk">?</span></td><td><span class="dot mid">!</span></td><td><span class="dot ok">✓</span></td><td><span class="dot no">✕</span></td><td><span class="dot no">✕</span></td></tr>
-<tr><td class="name">纽曼智能录音卡<span class="hint">价格带</span></td><td><span class="dot no">✕</span></td><td><span class="dot unk">?</span></td><td><span class="dot unk">?</span></td><td><span class="dot ok">✓</span></td><td><span class="dot unk">?</span></td><td><span class="dot no">✕</span></td><td><span class="dot unk">?</span></td></tr>
-</tbody></table></div>
-<p class="foot">时长的绿勾只表示「公开连续录音能覆盖一个工作日以上」，不是音质结论。费用的绿勾表示「把声音变成字，不必按月买额度」。警告表示硬件买断之后，仍有分钟数或会员。</p>
-</section>
-
-<section id="dims">
-<h2>分项说明</h2>
-
-<h3>1. 开放程度</h3>
-<p>卖得好的卡片，开放的通常是「在它的 App 里，把纪要送进钉钉待办、飞书文档或得到笔记」。客户要的开放是另一件事：自己的系统能不能决定怎么连这张卡，录音落在谁的库里，转写交给哪一个模型。</p>
-<p>钉钉、飞书、讯飞把硬件当成自家服务的入口，这一项是红叉。PLAUD 对合作伙伴开放转写能力，得到对笔记开放读取，TicNote 对会员开放技能接口，所以是警告：门开了一条缝，钥匙仍在品牌手里。追觅没有公开足够的开放说明，标未知。纽曼把能力放在自家 App 里，没有把设备交给外部，标红叉。</p>
-<p>录音卡 App 这一项是绿勾。配套软件和设备连接按 AGPL-3.0 开源。律所要归档、门店要质检、个人要把录音收进自己的知识库，可以按自己的流程改，而不是只换一套皮肤。开源的意义不是「谁都能看见代码」这句话本身，而是客户不必等品牌排期，才能做一个自己的按钮、自己的归档规则、自己的权限。</p>
-
-<h3>2. API 调用</h3>
-<p>有 API，和有「设备 API」，不是一回事。钉钉、飞书的开放平台可以写文档、拉待办、管组织；讯飞的开放平台可以调用语音能力；得到的开放接口可以让助手读取已经生成的笔记；PLAUD 的开发者接口可以提交音频、取回转写，但要先成为合作伙伴，而且音频要先交到 PLAUD。TicNote 的技能接口挂在会员方案上。</p>
-<p>这些接口都有商业价值，发生的时间却都在录音结束之后，或者发生在品牌云里面。它们不能代替「这张卡现在开始录」。表上因此多数是警告，不是红叉：接口存在，只是调用的对象不是客户手里的录音动作。纽曼和追觅没有核对到公开接口，标未知，不直接判死。</p>
-<p>录音卡 App 把扫描、连接、开始、停止、打点、取回文件、读取电量和状态，交给上层系统调用。业务系统可以在进会议室、接到约定场景、或由人在软件里确认之后开录。调用方可以是客户自己的 AI，也可以是客户自己的业务流程。这是绿勾的含义。</p>
-
-<h3>3. AI 能不能驱动录音开始</h3>
-<p>这一项问的不是「品牌自己的助手聪不聪明」，而是「客户自己的 AI 能不能通过接口按下录音，而不是只能等硬件上那一个写死的键」。</p>
-<p>得到的公开用法是拨动卡片上的开关；它的笔记接口可以读取录音形成的笔记，但不能代替开录，所以是红叉。钉钉、飞书、PLAUD 的官方 App 可以完成录音，外部 AI 没有一条公开、可自由使用的开录接口，所以是警告：人可以在官方 App 里开，客户自己的 AI 不行。讯飞两款、TicNote、追觅、纽曼的公开资料没有把「外部能否开录」写清楚，标未知。</p>
-<p>录音卡 App 不把开录写死在一个物理键上。上层软件可以用接口开始和停止。物理键仍然留着，用来打重点或在不打开手机时操作，但它不是唯一的门。对希望「让 AI 在该听的时候才听」的团队，这是本质差别：录音是一项可以被调用的能力，不是一只只能手动拨动的开关。</p>
-
-<h3>4. 费用</h3>
-<p>硬件一口价是最小的一张账单。第二张是转写分钟，第三张是纪要篇数、云空间和会员到期后的保底额度。第一年赠送看起来便宜，第二年才看清这张卡是不是还属于自己。</p>
-<ul>
-<li>钉钉 A1 旗舰版公开发售 799 元，并给出每月约 1000 分钟免费转写和 10GB 云空间。后来的渠道页面也出现过每月 1300 分钟的写法。专业版、高级版另有年费。A1 Pro 1299 元，购买后 6 个月、每月 1500 分钟。</li>
-<li>讯飞 AI 录音卡公开标价约 999 元。权益帖里常见的写法是首年不限时，其后降到每月 1800 分钟，三年后每月 300 分钟。录音环标准版 1299 元、听见会员版 1099 元，会员版附一年权益，次年基础会员或高级会员大约 198 元或 518 元。这些是渠道和发布口径，购买页会改。</li>
-<li>PLAUD Note Pro 官网 189 美元，免费每月 300 分钟。要多用，Pro 大约每年 99.99 美元、每月 1200 分钟，不限量大约每年 239.99 美元。</li>
-<li>飞书录音豆 899 元。绑定后 6 个月，每月额外 1200 分钟和 25 篇纪要；之后回到每月 300 分钟和很少的纪要篇数，不够就买飞书会员。</li>
-<li>TicNote 设备用户常见每月约 600 分钟免费。专业版按年大约 578 元。得到非会员每月约 600 分钟，会员期内不限时；续费帖常见每年两三百元，另有更高的专家方案。</li>
-<li>追觅自带每月 300 分钟，专业方案在选购指南里约每年 599 元，下单前要以会员页为准。</li>
-<li>纽曼是费用上的另一个绿勾：品牌宣称 App 里的转写、总结和思维导图不再另收费，硬件本身也在百元到数百元。这是真金白银的优点。它换不来开放，也换不来「可以证明处理发生在本机」。</li>
-</ul>
-<p>录音卡 App 把两张账单拆开。录音和默认识别不拿每月分钟数当门票：转写用本机模型完成，不续费，已经录下来的声音也不会变回「听得见、看不懂」。需要更强的整理时，再选择把文字送去云端，按这次整理付费。客户为智能整理付钱，不为「取回自己的原文」付钱。</p>
-
-<h3>5. 录音时长</h3>
-<p>时长要拆开。一块电池能连续录多久，是硬件题，我们不贬低别人的数字：钉钉 A1 公开连续录音约 45 小时、待机约 60 天；A1 Pro 公开 180 小时、待机约 180 天；PLAUD Note Pro 在增强模式约 30 小时、耐力模式约 50 小时；TicNote 约 20 到 25 小时；得到约 35 小时；追觅约 30 小时；讯飞录音环约 20 小时。飞书录音豆单只约 8 小时，放回充电盒大约 32 小时，所以是警告：全天佩戴要靠盒子接力。讯飞录音卡和纽曼卡片没有核对到统一的官方小时数，标未知，不用笔形机的数字顶上。</p>
-<p>另一张时长账单是云端允许转写多久。电池还有电，额度用完，卡片就退回普通录音机，文字要等下个月。一天开会超过免费分钟数的人，额度才是上限。</p>
-<p>录音卡 App 在小时数上是警告，不是绿勾。我们不拿一块未作为统一宣传口径的电池时长，去和 180 小时比。能说清的是：录音按硬件电量继续，不按转写套餐掐断；回到手机后的片段会整理成可以检索的一条记录。若客户把「半年不充电」放在第一位，A1 Pro 现在更合适。若客户把「录完就能在自己的系统里变成文字，而且不按月清零」放在第一位，小时数就不是唯一的时长。</p>
-
-<h3>6. 和录音卡 App 的适配</h3>
-<p>适配不是「能不能导出一份文档」。适配是：这张卡能不能成为录音卡 App 的录音器，由这个 App 或上层 AI 连接、开始、停止、打点，把音频拿回来，在本机转写，放进同一条时间轴。</p>
-<p>按这个标准，钉钉、讯飞、PLAUD、飞书录音豆、TicNote、追觅、纽曼都是红叉。它们的录音动作和账号停在各自的 App 里。得到是警告：笔记文字可以通过开放接口读取，这能做事后归档，但接不上开录，也接不上本机音频时间轴。PLAUD 的合作伙伴接口同样拿不回「音频从不离开设备」这条链路，所以适配仍是红叉。</p>
-<p>录音卡 App 自身是绿勾。这不是循环论证。它的意思是：客户不用先把录音交给另一家云，再想办法导出来。硬件、手机和上层系统在同一条链路里。</p>
-
-<h3>7. 默认情况下，数据留不留在本机</h3>
-<p>敏感行业在意的往往不是隐私政策里的「不用于训练」。他们在意这段音频有没有离开过设备和手机。品牌承诺「模型供应商用完即弃」，仍然意味着音频曾经被送出去。验收可以很朴素：拔掉网络，转写还在不在。</p>
-<p>钉钉、讯飞、PLAUD、飞书录音豆、追觅的主路径都要到品牌云上才出文字，标红叉。PLAUD 写明转写由 OpenAI、Google 或 Microsoft 处理，并约定不保留、不用于训练。这是负责任的云处理，不是本地处理，两者不要写成同一件事。TicNote 有端侧完成基础转写的说法，复杂整理仍走云端，标警告。得到的转写和「发芽」等能力属于得到大脑服务，公开资料没有「断网仍可完整转写」的承诺，也标警告。纽曼宣称转写不另收费，但没有说明是不是在本机完成，标未知。</p>
-<p>录音卡 App 的默认路径经得起断网这项验收。音频留在本机，转写用本地模型完成，文字也留在本机。只有用户主动要求云端润色或总结时，才会上行完成这件事所需的文字；音频默认不上传。这不是把所有智能都关在门外，而是把「必须出门」和「可以留在家里」分开。模型还没准备好时，音频排队等待，不会用一段编造的文字填上空洞，也不会偷偷改走云端。</p>
-</section>
-
-<section id="ours">
-<h2>什么时候选录音卡 App，什么时候不要选</h2>
-<div class="grid">
-<article class="product ours">
-<h3>适合</h3>
-<ul>
-<li>录音要进客户自己的系统，而不是进某一家办公套件。</li>
-<li>希望自己的 AI 或业务流程能够开始和停止录音，而不是只能拨硬件上的一个键。</li>
-<li>默认不希望音频和转写文字离开设备。断网之后，转写仍然要在。</li>
-<li>不能接受「免费分钟用完，卡片就只剩下一堆听不完的声音」。</li>
-<li>不同部门的归档、权限和调用方式不一样，需要按场景改，而不是等一个统一模板。</li>
-</ul>
-</article>
-<article class="product">
-<h3>不适合，或者不该拿我们当第一选择</h3>
-<ul>
-<li>全员已经在钉钉或飞书里办公，纪要必须直接变成待办和文档。这时 A1 或录音豆更顺。</li>
-<li>第一要求是单块电池连续录音一百小时以上。A1 Pro 的公开数字目前更长。我们不把未公布的小时数写成卖点。</li>
-<li>需要边说边把字幕投到会议室大屏。那是在线转写的主场。我们的路径是录完、回到自己的设备里再整理，不把「实时字幕」说成已经做好。</li>
-<li>只想要最低硬件价格，并且可以接受数据进品牌 App。纽曼的价格和它宣称的免费转写更对口。</li>
-</ul>
-</article>
+<tr class="keep-dt">
+<td><span class="name">钉钉 A1</span><span class="sub">青春版 / 旗舰版</span></td>
+<td>磁吸卡片。旗舰版有小彩屏，青春版没有</td>
+<td>约 40.8 克。拆解实测约 40.7 克</td>
+<td>厚度约 3.8。长宽各稿不统一，本表不填单一数字</td>
+<td>660。拆解铭牌 3.85 伏 660</td>
+<td>约 45 小时。待机约 60 天</td>
+</tr>
+<tr class="keep-dt">
+<td><span class="name">钉钉 A1 Pro</span><span class="sub">反向充电</span></td>
+<td>带触控屏的厚卡，兼充电宝。不是轻薄卡</td>
+<td>官方约 95 克。实测约 95.9 克</td>
+<td>官方约 102 × 71.5 × 6.4。实测约 102.0 × 72.0，最厚约 7.55</td>
+<td>宣传 2980。铭牌 3.92 伏 2905、11.39 瓦时。电芯另见约 2925</td>
+<td>约 180 小时。待机约 180 天</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">讯飞 AI 录音卡</span></td>
+<td>银行卡大小，机身自带磁铁，0.95 英寸屏</td>
+<td>约 33 克。实测约 32.6 克</td>
+<td>85.6 × 54 × 4</td>
+<td>210</td>
+<td>上架稿至高约 30 小时。更早开售稿写过约 20 小时，表内采用上架数字并注明</td>
+</tr>
+<tr>
+<td><span class="name">讯飞 AI 录音环</span><span class="sub">2026 年 10 月</span></td>
+<td>圆环，可展开当手机支架</td>
+<td>约 35 克</td>
+<td>直径约 61，厚约 6</td>
+<td><span class="tag unk">？</span> 未公开</td>
+<td>约 20 小时。另有资料写约 21 至 22 小时。可存约 500 小时是容量口径，不是电池</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">PLAUD Note Pro</span></td>
+<td>信用卡大小，有屏。磁铁在壳上，裸机不吸手机</td>
+<td>30 克</td>
+<td>85.6 × 54.1 × 2.99</td>
+<td>500</td>
+<td>增强模式至高约 30 小时，拾音约 5 米。耐力模式至高约 50 小时，拾音约 3 米。待机约 60 天</td>
+</tr>
+<tr>
+<td><span class="name">飞书 × 安克录音豆</span><span class="sub">D3200</span></td>
+<td>领夹豆加充电舱，不是卡</td>
+<td>豆约 10 克。含舱约 48 克，实测整套约 46.3 克</td>
+<td>豆径 23.2，厚约 13.45。舱约 60 × 60 × 8</td>
+<td>豆 90，舱 400</td>
+<td>豆约 8 小时，加舱约 32 小时。开实时转写的体验文写过约 6 / 24 小时</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">出门问问 TicNote</span></td>
+<td>薄卡，要磁吸皮套才好贴手机</td>
+<td>参数页 29 克。拆解实测约 28.9 克</td>
+<td>86 × 55 × 3</td>
+<td>470。铭牌 3.8 伏</td>
+<td>公开稿在 20 小时以上到约 25 小时之间。待机约 20 天</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">得到 GetSeed</span></td>
+<td>薄卡，需磁吸卡套</td>
+<td>官方 28.4 克。实测约 28.9 克</td>
+<td>85.6 × 54 × 3.1</td>
+<td>400。拆解为 3.8 伏 400。有转载写 480，本表不采用</td>
+<td>官方约 35 小时，待机约 60 天。商品页有人填 30 小时，以设备文档为准</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">追觅 D·NOTE</span></td>
+<td>录音名片，可用 NFC 传电子名片</td>
+<td>约 30 克</td>
+<td>商品参数页 86 × 54 × 3.49</td>
+<td><span class="tag unk">？</span> 未核到</td>
+<td>至高约 30 小时</td>
+</tr>
+<tr>
+<td><span class="name">纽曼 X1</span></td>
+<td>稍厚的磁吸卡</td>
+<td>品牌侧口径 36 克</td>
+<td>品牌侧口径 91.6 × 57 × 5.1</td>
+<td>品牌侧口径 400。未见本轮拆解铭牌</td>
+<td>品牌侧口径约 33 小时</td>
+</tr>
+<tr class="keep-local">
+<td><span class="name">录音卡 App</span><span class="sub">软件，不是一张固定的卡</span></td>
+<td>随接入的硬件变化</td>
+<td><span class="tag unk">？</span> 不填空数</td>
+<td><span class="tag unk">？</span> 不填空数</td>
+<td><span class="tag unk">？</span> 不填空数</td>
+<td>随所配硬件。这里不写统一小时数</td>
+</tr>
+</tbody>
+</table>
 </div>
-<p>这四条限制是故意写明的。一份只说自己全绿的横评，客户带不进会议室。录音卡 App 的优势集中在控制权、费用结构和数据默认留在身边。续航竞赛、办公套件的现成按钮、实时字幕，不是这次要争的第一名。</p>
-</section>
 
-<section id="each">
-<h2>十款分别适合谁</h2>
-<div class="grid">
-<article class="product"><h3>钉钉 A1</h3><p class="why">青春版 499 元，旗舰版 799 元。旗舰约 45 小时、64GB，六麦，磁吸在手机上录通话和现场。</p><p>适合已经用钉钉的团队。录音、转写、纪要和待办在一个套件里，采购理由很硬。不适合要把录音留给自己系统的团队：开放和默认本地都是红叉，接口只覆盖钉钉里的办公对象。每月免费分钟从约 1000 到 1300 不等，重度使用仍要看会员。</p></article>
-<article class="product"><h3>钉钉 A1 Pro</h3><p class="why">1299 元。公开连续录音约 180 小时，待机约 180 天，还能给手机应急充电。</p><p>它赢在「不用想电量」。赠送 6 个月、每月 1500 分钟，之后回到钉钉的权益体系。若客户的问题是出差一周不充电，它是现在公开规格里最强的一张。若客户的问题是数据不能出设备、AI 要自己下开录指令，它和 A1 是同一类答案。</p></article>
-<article class="product"><h3>讯飞 AI 录音卡</h3><p class="why">约 999 元，2026 年中上市。转写走讯飞听见或录音笔 App。</p><p>讯飞的语音品牌和方言、行业词积累，是它的购买理由。费用结构要看第二年和第三年：首年往往慷慨，之后降到每月 1800 分钟，再往后常见每月 300 分钟。卡片连续录音小时数本次没有核对到统一官方数字，所以时长是未知，不用老款录音笔的数字填上。外部能否开录，同样未知。</p></article>
-<article class="product"><h3>讯飞 AI 录音环</h3><p class="why">2026 年 10 月。标准版 1299 元，听见会员版 1099 元。约 20 小时，可磁吸在手机背面，还能当支架。</p><p>它是「贴在手机上」这个形态的新一轮设计，不是一季度销量冠军。软件仍在讯飞自己的 App 和会员里。对已经信任讯飞转写的人，这是顺手的硬件。对要求断网验收的人，它不是答案。</p></article>
-<article class="product"><h3>PLAUD Note Pro</h3><p class="why">官网 189 美元。约 30 或 50 小时，64GB，能在通话和现场之间切换。免费每月 300 分钟。</p><p>它是这个品类的全球参照物，硬件完成度高，合作伙伴也能调用转写。调用的前提是音频先到 PLAUD，再由约定零保留的模型供应商处理。对跨境团队、愿意为订阅付费的专业人士，这是成熟选择。对「音频不能出门」和「要接进录音卡 App」，它过不了。</p></article>
-<article class="product"><h3>飞书 × 安克录音豆</h3><p class="why">899 元。单只约 8 小时，充电盒大约 32 小时，机身存储 8GB。</p><p>适合飞书已经是工作台的公司。录音进妙记，纪要进知识库，加密和账号权属写得清楚。6 个月的加量结束后，免费额度会明显变瘦。它没有把豆子的录音开关开放给外部 AI，数据默认在飞书云上。个人用户甚至可以把它当云盘用，这恰恰说明终点是飞书，不是本机。</p></article>
-<article class="product"><h3>出门问问 TicNote</h3><p class="why">国内多在千元上下，促销可到九百元档。约 20 到 25 小时，64GB。设备用户每月约 600 分钟。</p><p>它在商品榜上靠前，会员里还有技能接口，说明品牌愿意让一部分能力被调用。公开说法里，基础转写可以在端侧做，复杂整理走云。因此「默认留在本机」只给警告，不给绿勾，也不给红叉。没有核对到外部 AI 直接开录的接口。</p></article>
-<article class="product"><h3>得到 AI 录音卡</h3><p class="why">标准版 699 元起，礼盒讨论价常见 888 元。约 35 小时，64GB。非会员每月约 600 分钟。</p><p>它的开放在笔记，不在录音键。助手可以读取已经生成的笔记，这对「外脑」类用法有用。开录仍从硬件开关开始，笔记接口不能创建这段录音。转写和后续的点评、发芽，属于得到大脑的服务。可以事后取文字，不能把它当成录音卡 App 的一只本地录音器。</p></article>
-<article class="product"><h3>追觅 D·NOTE</h3><p class="why">899 元起，64GB 版 999 元。约 30 小时，主打在线转写和电子名片。</p><p>适合展会、拜访、需要顺手交换联系方式的商务场景。每月 300 分钟的免费额度决定了它更像「带 AI 的名片」，不是全天录音的基础设施。开放接口、外部开录都没有足够公开资料，标未知。转写是在线的，数据默认不留在本机。</p></article>
-<article class="product"><h3>纽曼智能录音卡</h3><p class="why">品牌零售额第五，智能卡价格在百元到数百元。具体小时数未单列。</p><p>它是费用上最值得认真对待的对照：品牌宣称转写、总结、思维导图不再另收费。对预算敏感、只想尽快看到文字的人，这是合理的第一眼。公开资料没有设备接口，也没有说明处理是否发生在本机。便宜要买，敏感内容先问清文字生成时网络能不能拔掉。</p></article>
+<div class="scroller view-hw">
+<table>
+<caption>表 A2 · 存储、价格、公开零售位置、充电。价格是上市或页面常见标价，促销会变。</caption>
+<thead><tr>
+<th>产品</th><th>存储</th><th>参考价</th><th>零售位置</th><th>充电</th>
+</tr></thead>
+<tbody>
+<tr class="keep-dt">
+<td><span class="name">钉钉 A1</span></td>
+<td>青春版报道 32GB。旗舰版导购常见 64GB。以下单页为准</td>
+<td>青春版 499 元。旗舰版 799 元。大促常下探</td>
+<td>钉钉品牌 2026 年第一季度零售额第一，约 22.83%。4 月仍第一，约 17.8%。不是这一张卡的份额</td>
+<td>Type-C。可磁吸贴手机</td>
+</tr>
+<tr class="keep-dt">
+<td><span class="name">钉钉 A1 Pro</span></td>
+<td><span class="tag unk">？</span> 本轮未核到统一容量</td>
+<td>1299 元</td>
+<td>算在钉钉品牌里，没有单独份额</td>
+<td>USB-C 进和出，无线输出最高约 7.5 瓦。已过新国标 3C。反向充电使它更接近充电宝</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">讯飞 AI 录音卡</span></td>
+<td>16GB</td>
+<td>999 元</td>
+<td>讯飞品牌第一季度第二，约 10.54%，含录音笔。4 月约 8.4%</td>
+<td>Type-C，另支持手机反向无线充</td>
+</tr>
+<tr>
+<td><span class="name">讯飞 AI 录音环</span></td>
+<td>未单列 GB。宣传可存约 500 小时录音</td>
+<td>标准版 1299 元。听见会员版 1099 元</td>
+<td>上市晚于第一季度，计入讯飞，不单列</td>
+<td><span class="tag unk">？</span> 接口类型本轮未核清</td>
+</tr>
+<tr class="keep-thin keep-maybe">
+<td><span class="name">PLAUD Note Pro</span></td>
+<td>64GB</td>
+<td>官网 189 美元。2026 年 11 月有促销页写到 149.99 美元，截止日以页面为准</td>
+<td>品牌第一季度第三，约 7.3%。这是国内录音笔大类，不是全球出货</td>
+<td>机身是 4 针专用磁吸口，必须用原装线。线的另一头是 USB-C。官网规格页曾写成 USB-C，和支持页冲突，本表采信支持页</td>
+</tr>
+<tr>
+<td><span class="name">飞书 × 安克录音豆</span></td>
+<td>8GB</td>
+<td>上市价 899 元</td>
+<td>安克品牌第一季度第四，约 6.5%。4 月约 6.2%。不等于这颗豆的销量</td>
+<td>豆放进舱里充。体验文测得有线功率约 1.5 瓦</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">出门问问 TicNote</span></td>
+<td>64GB。另有更厚的企微版，容量和重量都不同，不并入本行</td>
+<td>国内讨论常见约 999 元起，促销可到九百内。没有统一常价</td>
+<td>不在上述公开前五</td>
+<td>磁吸触点，不是 Type-C 直插机身</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">得到 GetSeed</span></td>
+<td>64GB</td>
+<td>标准版有约 699 元的转述。电商页常见约 888 元。礼盒和更长会员会更贵</td>
+<td>不在上述公开前五</td>
+<td>磁吸 Pogo pin。官方约 1.5 小时充满</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">追觅 D·NOTE</span></td>
+<td>8GB 版与 64GB 版</td>
+<td>8GB 首发 899 元，64GB 999 元。发布稿另有日常价 1199 元的说法</td>
+<td>不在上述公开前五。首发一小时预订超过 1000，是预约不是销量</td>
+<td>Pogo pin 专用线</td>
+</tr>
+<tr>
+<td><span class="name">纽曼 X1</span></td>
+<td>常见 16GB、32GB。推广页还写过 64GB</td>
+<td>公开价不统一，讨论多在数百元。不采信推广页里的评价条数</td>
+<td>纽曼第一季度第五，约 5.6%。主体仍是传统笔</td>
+<td>品牌侧称 Type-C</td>
+</tr>
+<tr class="keep-local">
+<td><span class="name">录音卡 App</span></td>
+<td>随硬件</td>
+<td>软件按开源方式使用。硬件售价未作为零售单品公开</td>
+<td><span class="tag unk">？</span> 无公开零售额，不能和钉钉比份额</td>
+<td>随硬件</td>
+</tr>
+</tbody>
+</table>
 </div>
-</section>
+<p class="view-hw fine">轻薄这一组，只把大约 3 毫米、30 克上下的卡标出来：讯飞录音卡、PLAUD Note Pro、TicNote、GetSeed、追觅 D·NOTE。钉钉 A1 厚约 3.8 毫米，但约 41 克，比这组重一截。A1 Pro、录音环、录音豆和纽曼 X1 不放进「只比轻薄」。录音卡 App 没有硬件数字，不参加这一轮。</p>
+<h2 class="view-deal" id="scene-local">买回去之后</h2>
+<p class="view-deal">硬件决定好不好带。这一张表决定：文件进谁的软件、第二年还要不要付钱、谈话默认会不会离开设备、自己的程序能不能把录音打开。录音卡 App 在开放、调用和默认本机这几格有利，同时在上一张表里没有零售份额，也没有公开的轻薄和续航。</p>
+<div class="scroller view-deal">
+<table>
+<caption>表 B · 开放、调用、谁来按开始、费用、数据默认去哪、软件归谁。符号只评这一列。</caption>
+<thead><tr>
+<th>产品</th><th>开放程度</th><th>能否调用</th><th>AI 开录</th><th>转写费用</th><th>默认去哪</th><th>软件归谁</th>
+</tr></thead>
+<tbody>
+<tr class="keep-dt">
+<td><span class="name">钉钉 A1</span></td>
+<td><span class="tag bad">✕</span><br>收在钉钉里。企业版能统一采购和加密，不等于交给别人改</td>
+<td><span class="tag bad">✕</span><br>没有面向第三方的公开设备接口</td>
+<td><span class="tag bad">✕</span><br>硬件按键开录</td>
+<td><span class="tag warn">⚠</span><br>硬件一次买。转写按月赠送，额度随版本和活动变，超出走会员</td>
+<td><span class="tag bad">✕</span><br>转写走钉钉云</td>
+<td>钉钉</td>
+</tr>
+<tr class="keep-dt">
+<td><span class="name">钉钉 A1 Pro</span></td>
+<td><span class="tag bad">✕</span><br>同上，并且多了充电宝认证</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag bad">✕</span><br>硬件按键开录</td>
+<td><span class="tag warn">⚠</span><br>附送 6 个月，每月 1500 分钟。之后未见买断承诺</td>
+<td><span class="tag bad">✕</span><br>转写走钉钉云</td>
+<td>钉钉</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">讯飞 AI 录音卡</span></td>
+<td><span class="tag bad">✕</span><br>收在讯飞录音笔或听见</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag bad">✕</span><br>硬件按键开录</td>
+<td><span class="tag warn">⚠</span><br>上架报道写第一年不限量。之后常见按年会员，不把「永远免费」写死</td>
+<td><span class="tag bad">✕</span><br>转写走讯飞云</td>
+<td>科大讯飞</td>
+</tr>
+<tr>
+<td><span class="name">讯飞 AI 录音环</span></td>
+<td><span class="tag bad">✕</span><br>标准版配录音笔 App，会员版配听见</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag bad">✕</span><br>机身长按开录</td>
+<td><span class="tag warn">⚠</span><br>会员版首年权益高。次年约 198 元或 518 元等档位来自媒体，以下单页为准</td>
+<td><span class="tag bad">✕</span><br>转写走讯飞云</td>
+<td>科大讯飞</td>
+</tr>
+<tr class="keep-thin keep-maybe">
+<td><span class="name">PLAUD Note Pro</span></td>
+<td><span class="tag warn">⚠</span><br>个人用户没有公开通用接口。合作方可以申请设备 SDK</td>
+<td><span class="tag warn">⚠</span><br>合作 SDK 能配对、管录音会话、传文件。转写 API 默认走 PLAUD 云，也可以改走自己的转写</td>
+<td><span class="tag warn">⚠</span><br>合作方可以管录音会话。普通买家仍是机身按键，外加每月 300 分钟的入门额度</td>
+<td><span class="tag warn">⚠</span><br>含每月 300 分钟。更高额度另订阅。有评测把不限量转写写成大约每月 20 美元、按年付</td>
+<td><span class="tag warn">⚠</span><br>默认进 PLAUD 云。合作方可以把音频留在自己的流程</td>
+<td>PLAUD。合作后可以部分留在自己的应用</td>
+</tr>
+<tr>
+<td><span class="name">飞书 × 安克录音豆</span></td>
+<td><span class="tag bad">✕</span><br>软件在飞书</td>
+<td><span class="tag bad">✕</span><br>录音进飞书，不是开放硬件</td>
+<td><span class="tag bad">✕</span><br>设备按键开录</td>
+<td><span class="tag warn">⚠</span><br>约 6 个月每月 1200 分钟，另有基础额度。之后走飞书会员</td>
+<td><span class="tag bad">✕</span><br>转写和纪要在飞书</td>
+<td>飞书。硬件品牌是安克</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">出门问问 TicNote</span></td>
+<td><span class="tag bad">✕</span><br>自家 App 加会员档</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag bad">✕</span><br>硬件按键开录</td>
+<td><span class="tag warn">⚠</span><br>免费档每月额度有限。专业版、商务版另付</td>
+<td><span class="tag bad">✕</span><br>转写上云。港澳售卖页曾写服务器在新加坡</td>
+<td>出门问问</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">得到 GetSeed</span></td>
+<td><span class="tag bad">✕</span><br>收在得到大脑</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag bad">✕</span><br>拨钮开录，不连 App 也能录，但整理在得到</td>
+<td><span class="tag warn">⚠</span><br>购机送若干个月会员，期内转写放宽。非会员额度和续费价变动大</td>
+<td><span class="tag bad">✕</span><br>录音结束后倾向同步到云端知识库</td>
+<td>得到</td>
+</tr>
+<tr class="keep-thin">
+<td><span class="name">追觅 D·NOTE</span></td>
+<td><span class="tag bad">✕</span><br>自家 App</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag bad">✕</span><br>一键在设备上开录</td>
+<td><span class="tag warn">⚠</span><br>上市稿附了会员套餐。具体档位本轮未逐条核价</td>
+<td><span class="tag warn">⚠</span><br>卖点是在线转写。是否允许长期只留本地，未见独立说明</td>
+<td>追觅</td>
+</tr>
+<tr>
+<td><span class="name">纽曼 X1</span></td>
+<td><span class="tag warn">⚠</span><br>仍是自家「纽曼 AI 语记」，不是可改的公开接口</td>
+<td><span class="tag unk">？</span><br>推广页称 App 能启停。未见开发者文档，本报告不把它当成已核实接口</td>
+<td><span class="tag unk">？</span><br>同上，只见于品牌推广页</td>
+<td><span class="tag good">✓</span><br>品牌称转写、总结不另收费、不限次数。这是宣传口径，不是第三方审计</td>
+<td><span class="tag unk">？</span><br>推广页同时写云端备份。默认是否必须上传，未核清</td>
+<td>纽曼</td>
+</tr>
+<tr class="keep-local">
+<td><span class="name">录音卡 App</span></td>
+<td><span class="tag good">✓</span><br>调用方式公开。代码按 GNU AGPL-3.0 放出。闭源再分发有许可义务，贴牌要单独确认，不是「怎么用都没约束」</td>
+<td><span class="tag good">✓</span><br>可以按自己的流程取录音、转写和文本。固件本身不在这句承诺里</td>
+<td><span class="tag good">✓</span><br>软件可以发起录音，不把「开始」写死成单一按键流程</td>
+<td><span class="tag good">✓</span><br>默认在本机转写，不按分钟把音频送到云端。若另行打开云端文字处理，费用另计，且不应把音频本身传上去</td>
+<td><span class="tag good">✓</span><br>默认音频和文本都留在本机</td>
+<td>可以留在自己的应用里</td>
+</tr>
+</tbody>
+</table>
+</div>
 
-<section id="src">
+<h2 class="view-ajazz" id="scene-ajazz">若站在黑爵这边选品</h2>
+<p class="view-ajazz">黑爵（AJAZZ）是外设品牌，2009 年 8 月 28 日由林峰创立，官网 a-jazz.com。对外主体常见深圳市黑爵同创电子科技有限公司。产品是键盘、鼠标、耳机和周边，渠道包括国内电商、线下和跨境。它有客户端驱动、网页驱动和自研 Hub。价格带从约 99 元的磁轴键盘，到数百元的带屏键盘；2026 年在售的星闪鼠标大约一百多元、六十克上下。耳机已经是它的品类，不是空白。</p>
+<p class="view-ajazz">外设买家习惯一次买断，详情页用克重、尺寸和接口做决定。录音卡如果只拿「谁的 AI 更开放」去卖，会错过黑爵真正会问的问题。下面这些是选品或合作时通常会加进去、而上一版报告没单列的条件。</p>
+<div class="scroller view-ajazz">
+<table>
+<caption>表 C · 外设品牌选品。有利指对黑爵这种卖硬件、要自己入口的品牌有利，不是对所有终端用户有利。</caption>
+<thead><tr>
+<th>产品</th><th>参数齐</th><th>价格带</th><th>充电</th><th>能否换标</th><th>订阅归谁</th><th>入口归谁</th>
+</tr></thead>
+<tbody>
+<tr class="keep-dt">
+<td><span class="name">钉钉 A1</span></td>
+<td><span class="tag warn">⚠</span><br>重量、厚度、电池、小时、充电清楚。长宽和两版存储不完全一致</td>
+<td><span class="tag good">✓</span><br>499 元正落在带内。799 元贴着上限</td>
+<td><span class="tag good">✓</span><br>Type-C，和手机共用线</td>
+<td><span class="tag bad">✕</span><br>这是钉钉的硬件，不是白牌</td>
+<td><span class="tag bad">✕</span><br>续费在钉钉</td>
+<td><span class="tag bad">✕</span><br>顾客进钉钉待办。全员钉钉的公司会喜欢，外设品牌会失去入口</td>
+</tr>
+<tr class="keep-dt">
+<td><span class="name">钉钉 A1 Pro</span></td>
+<td><span class="tag warn">⚠</span><br>重量和尺寸有官方与实测两套。存储未核清。电池有三套毫安数字</td>
+<td><span class="tag bad">✕</span><br>1299 元，高于黑爵大多数键鼠</td>
+<td><span class="tag warn">⚠</span><br>是 Type-C，但反向充电要按充电宝做 3C 和售后</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag bad">✕</span><br>续费在钉钉</td>
+<td><span class="tag bad">✕</span><br>同样进钉钉</td>
+</tr>
+<tr>
+<td><span class="name">讯飞 AI 录音卡</span></td>
+<td><span class="tag good">✓</span><br>重量、尺寸、电池、存储、小时、充电都能写上页面。小时有过口径变化</td>
+<td><span class="tag warn">⚠</span><br>999 元，刚越出约 800 的外设带</td>
+<td><span class="tag good">✓</span><br>Type-C，另有无线充</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag bad">✕</span><br>第一年之后常见讯飞会员</td>
+<td><span class="tag warn">⚠</span><br>进讯飞录音笔或听见，不是钉钉，也不是黑爵自己的 App</td>
+</tr>
+<tr>
+<td><span class="name">讯飞 AI 录音环</span></td>
+<td><span class="tag warn">⚠</span><br>尺寸和重量有。电池毫安没有</td>
+<td><span class="tag bad">✕</span><br>1099 至 1299 元</td>
+<td><span class="tag unk">？</span><br>充电口未核清，详情页先不要写死</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag bad">✕</span><br>会员版就是订阅入口</td>
+<td><span class="tag warn">⚠</span><br>进讯飞。支架功能会和手机壳、支架配件抢货架</td>
+</tr>
+<tr class="keep-maybe">
+<td><span class="name">PLAUD Note Pro</span></td>
+<td><span class="tag good">✓</span><br>官网规格齐，适合做详情页</td>
+<td><span class="tag bad">✕</span><br>189 美元，不是百元外设</td>
+<td><span class="tag bad">✕</span><br>专用 4 针线。丢线就是一次售后，也不能和手机线混用</td>
+<td><span class="tag bad">✕</span><br>合作 SDK 不等于可以换上黑爵 Logo 零售</td>
+<td><span class="tag bad">✕</span><br>转写额度在 PLAUD</td>
+<td><span class="tag warn">⚠</span><br>默认是 PLAUD。合作方可以自己做 App，但要申请，而且全球站和国内办公套件不是同一条路</td>
+</tr>
+<tr>
+<td><span class="name">飞书 × 安克录音豆</span></td>
+<td><span class="tag good">✓</span><br>豆和舱的重量、电池、小时、存储都有公开数字</td>
+<td><span class="tag warn">⚠</span><br>899 元，略高于约 800</td>
+<td><span class="tag warn">⚠</span><br>不靠一根 Type-C 插在豆上，售后对象是舱和豆两件套</td>
+<td><span class="tag bad">✕</span><br>安克做硬件，飞书做软件，没有留给第三方的牌子</td>
+<td><span class="tag bad">✕</span><br>续费在飞书</td>
+<td><span class="tag bad">✕</span><br>顾客进飞书。和钉钉是同一类问题</td>
+</tr>
+<tr>
+<td><span class="name">出门问问 TicNote</span></td>
+<td><span class="tag good">✓</span><br>重量、尺寸、470 毫安时、64GB 都有。小时在 20 到 25 之间，页面要写范围</td>
+<td><span class="tag warn">⚠</span><br>常在千元上下，促销才进带内</td>
+<td><span class="tag bad">✕</span><br>磁吸触点，多一条专用线</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag bad">✕</span><br>会员在 TicNote</td>
+<td><span class="tag warn">⚠</span><br>进出门问问。不绑钉钉或飞书，也不归渠道商</td>
+</tr>
+<tr>
+<td><span class="name">得到 GetSeed</span></td>
+<td><span class="tag good">✓</span><br>官方设备文档写全了重量、尺寸、400 毫安时、35 小时、64GB 和充电方式</td>
+<td><span class="tag warn">⚠</span><br>699 元的转述落在带内。常见约 888 元的页面价贴边或越出</td>
+<td><span class="tag bad">✕</span><br>Pogo pin，还要卡套才能吸上手机</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag bad">✕</span><br>价值在得到会员和知识库</td>
+<td><span class="tag warn">⚠</span><br>进得到。适合知识产品，不适合键鼠店铺的独立入口</td>
+</tr>
+<tr>
+<td><span class="name">追觅 D·NOTE</span></td>
+<td><span class="tag warn">⚠</span><br>重量、尺寸、小时、存储有。毫安没有。尺寸来自商品参数页</td>
+<td><span class="tag warn">⚠</span><br>899 至 999 元，或更高的日常价口径</td>
+<td><span class="tag bad">✕</span><br>Pogo pin 专用线</td>
+<td><span class="tag bad">✕</span></td>
+<td><span class="tag warn">⚠</span><br>有会员套餐，利润归谁要在合同里写明</td>
+<td><span class="tag warn">⚠</span><br>进追觅自己的 App。NFC 名片是差异点，也是另一套售后</td>
+</tr>
+<tr>
+<td><span class="name">纽曼 X1</span></td>
+<td><span class="tag warn">⚠</span><br>数字齐，但来自品牌推广页，没有拆解铭牌。详情页要标注口径</td>
+<td><span class="tag good">✓</span><br>数百元，和键鼠同一货架</td>
+<td><span class="tag good">✓</span><br>品牌侧称 Type-C</td>
+<td><span class="tag bad">✕</span><br>纽曼自己的牌子和 App</td>
+<td><span class="tag good">✓</span><br>若「不另收费」属实，利润只在硬件。仍须核验，不能直接写进合同</td>
+<td><span class="tag warn">⚠</span><br>进纽曼语记。不进钉钉，也不归黑爵</td>
+</tr>
+<tr class="keep-local">
+<td><span class="name">录音卡 App</span></td>
+<td><span class="tag bad">✕</span><br>克重、厚度、毫安、统一小时数都没有公开值。不能直接当详情页</td>
+<td><span class="tag unk">？</span><br>硬件售价未公开，无法判断落不落在带内</td>
+<td><span class="tag unk">？</span><br>随最终出货的那张卡。选品时必须先定接口</td>
+<td><span class="tag warn">⚠</span><br>软件流程可以按自己的品牌接。外观、包装和认证仍要看供货，不是已经贴好的零售包装</td>
+<td><span class="tag good">✓</span><br>默认没有必须交给第三方的按分钟转写费。若自己做会员，入口在自己这边</td>
+<td><span class="tag good">✓</span><br>可以留在自己的应用，不把顾客送进钉钉或飞书</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="view-ajazz">
+<h3>选品时还会问、但参数表放不下的事</h3>
+<ul>
+<li><strong>海外页能不能独立卖。</strong> 黑爵有跨境。钉钉、飞书、得到的价值绑在国内办公或知识库上，海外详情页会突然变短。PLAUD 反过来，国内份额不是第一，但产品页和美元标价是按全球站写的。录音卡 App 不依赖某一家国内办公套件，硬件认证和上架仍要自己做。</li>
+<li><strong>别和自家耳机抢同一个理由。</strong> 耳机已经覆盖「开会听得清」。录音设备要回答的是「散会后文字在谁手里」。若答案是「在钉钉里」，黑爵只是帮别人获客。</li>
+<li><strong>退货算在谁头上。</strong> 转写不准、必须安装别人的 App、磁铁吸不住、专用线丢了，差评都在店铺。先看软件归谁，再看麦有几颗。</li>
+<li><strong>通话录音要写进页面。</strong> 能录电话是卖点，也是合规和退货理由。不能只写在脚注里。</li>
+<li><strong>磁吸壳是配件还是缺陷。</strong> PLAUD、得到、TicNote 需要套或环。讯飞卡和 A1 Pro 宣称机身自带磁铁。黑爵擅长做周边，这可以是加价，也可以是「为什么不能直接吸」的差评。</li>
+<li><strong>28 到 40 克的卡、约 96 克的 Pro、10 克的豆、35 克的环，不是同一件商品。</strong> 鼠标用户会称克重。不要在一个链接里混卖。</li>
+<li><strong>先试销再开模。</strong> 开模适合已经知道要做 30 克的卡，还是 96 克的充电宝卡之后。可改的软件可以用来试「顾客要不要自己的入口」，不能代替结构、电池和认证。</li>
+<li><strong>渠道已经变了。</strong> 2026 年 4 月，内容电商占录音笔线上零售额约 42%。直播间比的是多少克、充一次管多久、第二年还要不要钱。参数写不全的产品会先在这里出问题。</li>
+<li><strong>固件和售后谁说了算。</strong> 外设品牌靠自己的驱动和自己的维修。录音开关和转写如果都在别人的 App 里，客服话术也得跟着别人改。</li>
+</ul>
+<p>按这个清单看，黑爵不该先问「哪张卡的 AI 更强」。更该先去掉三类：价格远高于自己的货架、专用充电线会增加售后、以及顾客一定会被带进钉钉或飞书。剩下的候选里，再看参数能不能写全、转写费进不进自己的口袋、谈话默认出不出设备。</p>
+<p>录音卡 App 过了后半段：入口可以留在自己这边，默认转写不必把音频送去云端，软件也能发起录音。它没过前半段：没有可刊登的克重、厚度、毫安和零售价，也不能假装已经有一份黑爵包装。它适合作为「先把软件入口试清楚」的合作对象，不适合直接当成一张已经量产的 30 克卡片去上架。</p>
+</div>
+
+<h2 class="always" id="scene-dingtalk">什么时候选哪一款</h2>
+<div class="fit">
+<article><h3>钉钉 A1</h3><p>公司已经在用钉钉，预算大约五百到八百，要一张真能贴在手机上的卡。不要为了开放接口或本地数据买它。青春版和旗舰版的屏幕、存储、每月转写额度都不一样，采购清单要写明版本。</p></article>
+<article><h3>钉钉 A1 Pro</h3><p>在意一次充电管很久，并且接受它约 96 克、最厚可以到约 7.6 毫米，还能给手机补一点电。不要把它放进「谁更轻」的比较。反向充电已经走过充电宝认证，仿做要单独算责任。</p></article>
+<article><h3>讯飞 AI 录音卡</h3><p>在意方言和讯飞的转写，接受 999 元和之后可能出现的会员。规格相对齐，充电是 Type-C。它不是开放硬件。</p></article>
+<article><h3>讯飞 AI 录音环</h3><p>希望录音设备顺便当支架，接受 2026 年 10 月才上市、电池毫安未公开、价格在一千元以上。会员版买的是听见的一年权益，第二年价格要在下单前问清。</p></article>
+<article><h3>PLAUD Note Pro</h3><p>要一张公开规格最齐的薄卡，团队也有能力申请它的合作 SDK。不适合把专用充电线和美元订阅当成普通外设。个人用户今天没有一个公开的通用接口。</p></article>
+<article><h3>飞书 × 安克录音豆</h3><p>要夹在衣服上，而不是放进卡包。软件在飞书。10 克是豆的重量，整套大约 48 克。不要和卡片比厚度。</p></article>
+<article><h3>TicNote</h3><p>要大约 3 毫米、64GB 的薄卡，接受磁吸皮套、专用触点和会员。它不在公开的品牌零售额前五里。</p></article>
+<article><h3>得到 GetSeed</h3><p>已经在用得到，想要轻，接受卡套和 Pogo 线。官方文档的硬件数字比较齐。价值在知识库，不在开放接口。</p></article>
+<article><h3>追觅 D·NOTE</h3><p>要一张带电子名片的薄卡。毫安未核到，充电是专用针，价格在九百到一千附近。预约量不是销量。</p></article>
+<article><h3>纽曼 X1</h3><p>预算在数百元，而且被「转写不另收费」吸引。尺寸、电池和 33 小时来自品牌推广页，本报告没有拆解佐证。品牌份额不能算到这张卡上。</p></article>
+<article><h3>录音卡 App</h3><p>要把录音交到自己的流程里，并且在意谈话默认不出设备。软件可以发起录音，转写默认可在本机完成。不要用它参加克重、厚度、续航小时和零售份额的比赛。许可是 AGPL-3.0，闭源产品化要单独谈。</p></article>
+<article><h3>全员钉钉</h3><p>若流程必须停在钉钉待办里，选 A1 或 A1 Pro。其他卡更轻、更开放，也补不上这个流程。若公司用的是飞书，同理看录音豆，而不是强行改用钉钉的卡。</p></article>
+</div>
+
+<h2>录音卡 App 实际强在哪，又输在哪</h2>
+<p>强项只有在完整比较之后才看得清，而且只强在一部分人在乎的地方。</p>
+<ul>
+<li><strong>入口可以自己定。</strong> 不同客户要把录音接到自己的助手、自己的档案或自己的审批里时，不必先成为某一家办公软件的硬件合作方。PLAUD 对合作方提供了相近的设备能力，但要申请，默认转写仍是它的云。</li>
+<li><strong>谈话可以默认留在本机。</strong> 转写不必先把音频送到云端。这是在意「这段话不要出公司」的人会买的理由，不是所有人的第一理由。要钉钉纪要的人不会为这一点放弃 A1。</li>
+<li><strong>开始录音可以由软件发起。</strong> 适合定时、按场景或由自己的助手打开，而不是只认机身上的一个键。纽曼的推广页也这么说，但没有公开文档，不能并列为同一等级。</li>
+</ul>
+<p>输的地方同样具体。没有公开克重、厚度、毫安和统一续航，不能和 2.99 毫米、30 克、45 小时放在同一格里宣布更轻或更久。没有奥维零售额，不能说比钉钉更好卖。若客户明天就要在电商搜到现货，并且和钉钉或飞书打通，录音卡 App 不是那个答案。轻薄和续航最终看那张出货的卡，软件解决不了电池。</p>
+
 <h2>依据和边界</h2>
-<div class="note">
-<p>价格、赠送分钟和会员档会随活动改写。表内数字是 2026 年 11 月 21 日前能公开核对的口径，决策前以当时的商品页为准。标未知的项目没有足够证据，本报告不下结论。</p>
-<p>零售额来自奥维云网经由公开报道转述的 2026 年一季度线上监测，不是本报告自行统计的出货量。没有写进公开资料的成本、测试和私下沟通，都不进入这张表。全球卡片的出货与订阅规模，采用品牌在公开报道中的口径。</p>
-<ol class="src">
-<li><a href="https://www.jiemian.com/article/14417912.html">界面新闻：2026 年一季度线上录音笔市场，奥维云网零售监测</a></li>
-<li><a href="https://finance.sina.com.cn/roll/2026-11-03/doc-inixmswc8749781.shtml">新浪财经，2026-11-03：钉钉 A1 的渠道销量与后续硬件</a></li>
-<li><a href="https://finance.sina.com.cn/roll/2026-11-14/doc-iniytnhv2647589.shtml">新浪财经，2026-11-14：PLAUD 出货与订阅的公开口径</a></li>
-<li><a href="https://www.pingwest.com/w/307652">品玩：钉钉 A1 旗舰版 799 元、45 小时、每月 1000 分钟</a></li>
-<li><a href="https://www.dingtalk.com.hk/purchase/dingtalk-a1">钉钉香港购买页：旗舰版 45 小时、64GB、660mAh 的规格转述</a></li>
-<li><a href="http://news.pconline.com.cn/2142/21425311.html">太平洋科技：A1 Pro，1299 元，连续录音 180 小时</a></li>
-<li><a href="https://support.plaud.ai/hc/en-us/articles/63440001909913-How-your-data-is-used-in-AI-processing-for-v4-0-x-or-later">PLAUD：转写由哪几家模型供应商处理、是否用于训练</a></li>
-<li><a href="https://docs.plaud.ai/documentation/embedded_sdk/transcription_api">PLAUD 开发者文档：转写接口需合作伙伴资格</a></li>
-<li><a href="https://www.laxis.com/zh/blog/best-ai-voice-recorder/">Laxis，2026-11-16：PLAUD、TicNote 等官网价格与时长核对</a></li>
-<li><a href="https://www.feishu.cn/content/article/7597268954498763996">飞书：录音豆时长、加密与 6 个月加量权益</a></li>
-<li><a href="https://www.52audio.com/archives/288520.html">我爱音频网：得到录音卡 35 小时、64GB、会员与非会员分钟</a></li>
-<li><a href="https://www.npmjs.com/package/@getnote/mcp">得到大脑开放接口：可读取笔记，语音笔记不能由接口创建</a></li>
-<li><a href="https://www.ticnote.cn/zh/membership">TicNote 会员页：分钟数、年费与技能接口所在档位</a></li>
-<li><a href="https://www.ithome.com/0/951/091.htm">IT之家：追觅 D·NOTE，899 元起，30 小时，在线转写</a></li>
-<li><a href="https://www.iyiou.com/news/202610231144269">亿欧：讯飞 AI 录音环，1099 与 1299 元，约 20 小时</a></li>
-<li><a href="https://post.smzdm.com/p/a5rxeqw8/">什么值得买社区对讯飞新款权益阶梯的交叉整理</a></li>
-<li><a href="https://newsmy.com/newsinfo/11371416.html">纽曼：数码录音笔与智能 AI 录音笔的产品线区分</a></li>
-</ol>
-<p class="foot">录音卡 App 的四项绿勾，对应已经公开的产品原则：连接与控制可按场景改，SDK 与配套应用以 AGPL-3.0 开源；默认转写在本机完成；音频默认不上传；只有用户主动做云端整理时才上行必要文字。小时数不在绿勾之列。</p>
-</div>
-</section>
-<p class="foot">录音卡 · 商业对照 · 2026年11月21日。彩色可交互版为本页；打印或「存储为 PDF」得到同一份内容的静态版。</p>
+<ul class="sources">
+<li>市场：界面新闻转述奥维云网《2026年Q1线上录音笔市场总结》（零售额约 1.4 亿元，品牌份额）；维科号转述奥维云网 2026 年 4 月月报（零售额约 7302.7 万元，内容电商约 42.3%）。</li>
+<li>钉钉 A1：我爱音频网上市稿（约 40.8 克、厚约 3.8 毫米、约 45 小时）；新浪财经对青春版的报道（660 毫安、32GB、499 元）；拆解铭牌 3.85 伏 660 毫安时、实测约 40.7 克。旗舰版 64GB 见于导购，与青春版存储不要混写。</li>
+<li>钉钉 A1 Pro：IT之家发售稿，1299 元、2980 毫安时、约 180 小时；智东西尺寸约 102 × 71.5 × 6.4 毫米、约 95 克；充电头网实测约 102.0 × 72.0 毫米、最厚约 7.55 毫米、约 95.9 克，铭牌 3.92 伏 2905 毫安时。</li>
+<li>讯飞录音卡：IT之家 2026 年 9 月上架稿，85.6 × 54 × 4 毫米、约 33 克、210 毫安时、16GB、至高约 30 小时、999 元。6 月开售稿曾写约 20 小时。我爱音频网实测约 32.6 克。</li>
+<li>讯飞录音环：凤凰网、深圳湾，2026 年 10 月，直径约 61 毫米、厚约 6 毫米、约 35 克、约 20 小时；标准版 1299 元，听见会员版 1099 元。</li>
+<li>PLAUD Note Pro：plaud.ai 产品页，189 美元、85.6 × 54.1 × 2.99 毫米、30 克、500 毫安时、64GB、30/50 小时；支持页《Charge the device》写明 4 针专用线，2026 年 11 月 20 日更新。开发者文档写合作 SDK 可管录音会话；帮助中心写个人用户没有公开通用 API。</li>
+<li>录音豆：IT之家，899 元、约 10 克、含舱约 48 克、8 小时 / 32 小时。豆径、毫安和 8GB 见于体验与评测稿。我爱音频网实测整套约 46.3 克。</li>
+<li>TicNote：什么值得买参数页 86 × 55 × 3 毫米、29 克、64GB；拆解铭牌 470 毫安时，实测约 28.9 克。小时数在 20 小时以上到约 25 小时之间。</li>
+<li>GetSeed：得到设备文档，85.6 × 54 × 3.1 毫米、28.4 克、400 毫安时、约 35 小时、64GB、磁吸 Pogo pin。实测约 28.9 克。价格随会员捆绑变化。</li>
+<li>追觅 D·NOTE：IT之家，约 30 克、约 30 小时、8GB 899 元 / 64GB 999 元。尺寸来自商品参数页。毫安未核到。</li>
+<li>纽曼 X1：尺寸、36 克、400 毫安时、约 33 小时和「转写不另收费」来自品牌推广页的重复口径，本报告未找到拆解铭牌，整行降权。</li>
+<li>黑爵：官网品牌介绍，2009 年 8 月 28 日创立，键盘、鼠标、耳机与周边，国内电商、线下和跨境；驱动页含客户端、网页端和 Hub。约 99 元磁轴键盘见于 2026 年 11 月的公开对比稿。星闪鼠标 AJ159 NLP 见于 IT之家，149 元、约 61 克。</li>
+</ul>
+<p>本报告不把软文里的「十万条评价」「全球出货」换算成销量，也不把第一季度份额写成单品名次。电商页面会改价、改存储和改赠送分钟，采购以当天下单页为准。录音卡 App 一行只写已经公开的软件边界，不补硬件空数。</p>
+<footer>核对日期 2026 年 11 月 21 日。符号在黑白打印时仍可辨认。这是买方比较，不是广告页。</footer>
 </div>
 <script>
-document.querySelectorAll(".scenes button").forEach(function(btn){
-  btn.addEventListener("click", function(){
-    document.querySelectorAll(".scenes button").forEach(function(b){ b.classList.remove("on"); });
-    btn.classList.add("on");
-    ["own","suite","budget"].forEach(function(id){
-      var el = document.getElementById("scene-"+id);
-      if(!el) return;
-      el.hidden = id !== btn.getAttribute("data-scene");
+(function () {
+  var notes = {
+    all: "硬件、买后条件和黑爵选品都留着。绿色只表示这一格对买方有利。",
+    hw: "只看摸得着的东西：形态、克重、电池、价格和公开榜上的位置。",
+    deal: "只看买回去之后：谁管软件、钱按不按月收、录音能不能被自己的程序打开。",
+    ajazz: "按外设品牌选品来看：价格带、充电线、能不能换标、订阅进谁的口袋、顾客会不会被带进钉钉或飞书。开放和本地转写只是其中两格。",
+    dingtalk: "全公司已经在钉钉里办公时，A1 和 A1 Pro 的短板可以忍，因为待办不用再搬一次。其他卡更轻，也进不了这个流程。",
+    thin: "只比大约 3 毫米、30 克上下的卡。A1 Pro 大约 96 克，不在这一组。录音卡 App 没有公开克重，这一轮空着。",
+    local: "在意谈话不要默认出门时，看「音频默认去哪」。多数产品为了转写会把音频送到各自的云。录音卡 App 默认在本机。PLAUD 的合作方可以改道，普通买家的默认路径仍是它的云。"
+  };
+  function setView(v, scroll) {
+    document.body.setAttribute("data-view", v);
+    var note = document.getElementById("sceneNote");
+    note.textContent = notes[v] || notes.all;
+    var buttons = document.querySelectorAll(".toolbar button");
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].className = buttons[i].getAttribute("data-view") === v ? "on" : "";
+    }
+    if (!scroll) return;
+    var target = null;
+    if (v === "hw" || v === "thin") target = document.getElementById("scene-thin");
+    if (v === "deal" || v === "local") target = document.getElementById("scene-local");
+    if (v === "ajazz") target = document.getElementById("scene-ajazz");
+    if (v === "dingtalk") target = document.getElementById("scene-dingtalk");
+    if (target && target.scrollIntoView) target.scrollIntoView({behavior: "smooth", block: "start"});
+  }
+  var buttons = document.querySelectorAll(".toolbar button");
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].addEventListener("click", function () {
+      setView(this.getAttribute("data-view"), true);
     });
-  });
-});
+  }
+  setView("all", false);
+})();
 </script>
-</body></html>
+</body>
+</html>
