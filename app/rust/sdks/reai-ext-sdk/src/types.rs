@@ -109,12 +109,30 @@ pub struct SdkFileEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SdkSavedFilePart {
+    pub path: PathBuf,
+    pub bytes_written: u64,
+    pub original_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_synced: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SdkSavedFile {
     pub path: PathBuf,
     pub bytes_written: u64,
     pub original_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_synced: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<SdkSavedFilePart>,
 }
 
 /// 统一实时音频帧：所有设备 SDK 对外只输出 16kHz / 16bit / 单声道 PCM。

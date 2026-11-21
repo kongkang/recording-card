@@ -243,7 +243,7 @@ class _TimelinePageState extends State<TimelinePage> {
                           await store.refreshSummariesOnly();
                           return;
                         }
-                        final message = await store.syncRecordings();
+                        final message = await store.pullToRefresh();
                         if (message != null &&
                             message.isNotEmpty &&
                             context.mounted) {

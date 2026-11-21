@@ -89,6 +89,7 @@ class PipelineSyncResult {
     required this.failed,
     required this.failures,
     this.error,
+    this.pausedForLiveRecording = false,
   });
 
   final int downloaded;
@@ -97,6 +98,7 @@ class PipelineSyncResult {
   final int failed;
   final List<String> failures;
   final String? error;
+  final bool pausedForLiveRecording;
 
   bool get hasFailure => failed > 0 || error != null;
 }
@@ -377,10 +379,18 @@ class RecordingPipeline {
   final SegmentBuildService? segments;
 
   bool _busy = false;
+  bool _syncYieldRequested = false;
   Completer<void>? _busyDone;
   Future<void> _liveSerial = Future<void>.value();
 
   bool get isBusy => _busy;
+
+  /// 当现场开录/保底切片抢占同一蓝牙链路时，通知进行中的离线 [sync] 在当前文件落盘后礼让暂停。
+  bool requestSyncPauseForLiveRecording() {
+    if (!_busy) return false;
+    _syncYieldRequested = true;
+    return true;
+  }
 
   void _enterBusy() {
     _busy = true;
@@ -1057,6 +1067,7 @@ class RecordingPipeline {
   /// 把整卡录音都拉下来（BLE 很慢）。生产不传 = 处理全部新文件。
   Future<PipelineSyncResult> sync({
     void Function(PipelineProgress progress)? onProgress,
+    Future<void> Function(RecordingFile file)? onFileReady,
     int? maxFiles,
     bool smallestFirst = false,
     int minFileSize = 0,
@@ -1064,6 +1075,7 @@ class RecordingPipeline {
     if (_busy) {
       throw const PipelineException('同步已在进行中');
     }
+    _syncYieldRequested = false;
     _enterBusy();
     try {
       onProgress?.call(
@@ -1083,7 +1095,16 @@ class RecordingPipeline {
       if (smallestFirst) {
         apms.sort((a, b) => a.size.compareTo(b.size));
       } else {
-        apms.sort((a, b) => _startSecond(b).compareTo(_startSecond(a)));
+        apms.sort((a, b) {
+          final aRing = _omiRingStartSeq(a);
+          final bRing = _omiRingStartSeq(b);
+          // Omi Ring Buffer 推进删除是 FIFO 游标：必须按起始编号升序拉取与推进，
+          // 否则先删后段或跳过前段会错推设备读指针。
+          if (aRing != null && bRing != null) {
+            return aRing.compareTo(bRing);
+          }
+          return _startSecond(b).compareTo(_startSecond(a));
+        });
       }
       if (maxFiles != null && apms.length > maxFiles) {
         apms = apms.take(maxFiles).toList();
@@ -1108,10 +1129,17 @@ class RecordingPipeline {
       var ready = 0;
       var skipped = 0;
       var failed = 0;
+      var pausedForLiveRecording = false;
+      var ringAdvancementBlocked = false;
       final failures = <String>[];
 
       for (var i = 0; i < apms.length; i++) {
+        if (_syncYieldRequested) {
+          pausedForLiveRecording = true;
+          break;
+        }
         final source = apms[i];
+        final isRingChunk = _omiRingStartSeq(source) != null;
         final existing = await store.load(source.name);
         if (existing != null && existing.stage == RecordingStage.ready) {
           skipped++;
@@ -1129,10 +1157,22 @@ class RecordingPipeline {
             fileIndex: i,
             fileTotal: apms.length,
             onProgress: onProgress,
+            allowRingDelete: !ringAdvancementBlocked,
+            onPartReady: onFileReady,
           );
           if (didDownload) downloaded++;
           if (file.stage == RecordingStage.ready) ready++;
+          if (isRingChunk && !didDownload && file.stage == RecordingStage.queued) {
+            ringAdvancementBlocked = true;
+          }
+          if (onFileReady != null &&
+              (didDownload || file.stage == RecordingStage.ready)) {
+            await onFileReady(file);
+          }
         } on Object catch (e) {
+          if (isRingChunk) {
+            ringAdvancementBlocked = true;
+          }
           failed++;
           failures.add('${source.name}: $e');
           file
@@ -1148,8 +1188,10 @@ class RecordingPipeline {
         skipped: skipped,
         failed: failed,
         failures: failures,
+        pausedForLiveRecording: pausedForLiveRecording,
       );
     } finally {
+      _syncYieldRequested = false;
       _exitBusy();
     }
   }
@@ -1398,6 +1440,8 @@ class RecordingPipeline {
     required int fileIndex,
     required int fileTotal,
     void Function(PipelineProgress progress)? onProgress,
+    bool allowRingDelete = true,
+    Future<void> Function(RecordingFile file)? onPartReady,
   }) async {
     void report(
       PipelineStage stage, {
@@ -1419,6 +1463,8 @@ class RecordingPipeline {
     }
 
     var didDownload = false;
+    var hasAuthoritativeStartAt = (source?.startAtSec != null) || file.timeSynced;
+    final extraChildFiles = <RecordingFile>[];
     final dir = await store.dirFor(file.deviceName);
     if (!await dir.exists()) await dir.create(recursive: true);
 
@@ -1445,24 +1491,138 @@ class RecordingPipeline {
       }
       report(
         PipelineStage.downloading,
-        text: '正在取回 ${pipelineTimeLabel(file)} 这段（${fileIndex + 1}/$fileTotal）',
+        text: '正在取回（${fileIndex + 1}/$fileTotal）',
       );
       file
         ..stage = RecordingStage.downloading
         ..error = null;
       await store.save(file);
       final download = await gateway.download(file.deviceName, dir.path);
-      file.apmPath = download.path.isEmpty
-          ? '${dir.path}/${file.deviceName}'
-          : download.path;
+      final firstPart = download.parts.isNotEmpty ? download.parts.first : null;
+      final effectivePath = (firstPart != null && firstPart.path.isNotEmpty)
+          ? firstPart.path
+          : (download.path.isEmpty
+                ? '${dir.path}/${file.deviceName}'
+                : download.path);
+      file.apmPath = effectivePath;
+      final resolvedStartAtSec = download.startAtSec ?? firstPart?.startAtSec;
+      final resolvedTimeSynced = download.timeSynced ?? firstPart?.timeSynced;
+      if (resolvedStartAtSec != null) {
+        file.startAtMs = resolvedStartAtSec * 1000;
+        file.timeSynced = resolvedTimeSynced ?? true;
+        hasAuthoritativeStartAt = true;
+      } else if (resolvedTimeSynced == false) {
+        file.timeSynced = false;
+      }
+      if (download.parts.length > 1) {
+        for (var k = 1; k < download.parts.length; k++) {
+          final part = download.parts[k];
+          if (part.path.isEmpty) continue;
+          final partName = '${file.deviceName}#p$k';
+          final existingChild = await store.load(partName);
+          if (existingChild != null &&
+              existingChild.stage == RecordingStage.ready) {
+            continue;
+          }
+          final child =
+              existingChild ??
+              RecordingFile(
+                deviceName: partName,
+                session: file.session,
+                seq: file.seq + k,
+                startAtMs: part.startAtSec != null
+                    ? part.startAtSec! * 1000
+                    : file.startAtMs,
+                timeSynced: part.timeSynced ?? (part.startAtSec != null),
+                apmPath: part.path,
+                createdAtMs: DateTime.now().millisecondsSinceEpoch,
+                stage: RecordingStage.downloading,
+                sourceLane: file.sourceLane,
+                sourceDeviceLabel: file.sourceDeviceLabel,
+              );
+          child.apmPath = part.path;
+          if (part.startAtSec != null) {
+            child.startAtMs = part.startAtSec! * 1000;
+            child.timeSynced = part.timeSynced ?? true;
+          }
+          await store.save(child);
+          extraChildFiles.add(child);
+        }
+      }
       didDownload = true;
       await store.save(file);
+      if (allowRingDelete &&
+          source != null &&
+          _omiRingStartSeq(source) != null) {
+        try {
+          await gateway.deleteFile(source.name);
+        } on Object catch (e) {
+          debugPrint('[pipeline] 推进 Omi 环形缓存失败：${source.name}: $e');
+        }
+      }
     }
+
+    await _processLocalFileStages(
+      file,
+      source: source,
+      hasAuthoritativeStartAt: hasAuthoritativeStartAt,
+      fileIndex: fileIndex,
+      fileTotal: fileTotal,
+      onProgress: onProgress,
+    );
+    for (final child in extraChildFiles) {
+      await _processLocalFileStages(
+        child,
+        source: null,
+        hasAuthoritativeStartAt: child.timeSynced,
+        fileIndex: fileIndex,
+        fileTotal: fileTotal,
+        onProgress: onProgress,
+      );
+      if (onPartReady != null && child.stage == RecordingStage.ready) {
+        await onPartReady(child);
+      }
+    }
+    return didDownload;
+  }
+
+  Future<void> _processLocalFileStages(
+    RecordingFile file, {
+    CardFile? source,
+    required bool hasAuthoritativeStartAt,
+    required int fileIndex,
+    required int fileTotal,
+    void Function(PipelineProgress progress)? onProgress,
+  }) async {
+    void report(
+      PipelineStage stage, {
+      int? sliceIndex,
+      int? sliceTotal,
+      String text = '',
+    }) {
+      onProgress?.call(
+        PipelineProgress(
+          stage: stage,
+          fileIndex: fileIndex,
+          fileTotal: fileTotal,
+          fileName: file.deviceName,
+          sliceIndex: sliceIndex,
+          sliceTotal: sliceTotal,
+          text: text,
+        ),
+      );
+    }
+
+    final dir = await store.dirFor(file.deviceName);
+    if (!await dir.exists()) await dir.create(recursive: true);
 
     // 2) 转码（16k/16bit/mono）
     final wavPath = file.wavPath ?? '${file.apmPath}.wav';
     if (!await File(wavPath).exists()) {
-      report(PipelineStage.transcoding, text: '正在转换 ${pipelineTimeLabel(file)} 这段');
+      report(
+        PipelineStage.transcoding,
+        text: '正在转换（${fileIndex + 1}/$fileTotal）',
+      );
       file
         ..stage = RecordingStage.transcoding
         ..error = null
@@ -1470,8 +1630,10 @@ class RecordingPipeline {
       await store.save(file);
       final audio = await gateway.transcode(file.apmPath, wavPath);
       file.durationMs = (audio.durationSecs * 1000).round();
-      // start_at 缺失时，created_at 是结束时间，反推起点
-      if (source != null && source.startAtSec == null) {
+      // start_at 缺失时，created_at 是结束时间，反推起点；绝不覆盖 download 带回的权威起点
+      if (!hasAuthoritativeStartAt &&
+          source != null &&
+          source.startAtSec == null) {
         final endSec = source.createdAtSec;
         file.startAtMs = endSec != null
             ? endSec * 1000 - file.durationMs
@@ -1490,14 +1652,14 @@ class RecordingPipeline {
         ..stage = RecordingStage.transcoding
         ..error = '本地模型未就绪：$e';
       await store.save(file);
-      return didDownload;
+      return;
     }
     if (paths == null || !paths.canTranscribe) {
       file
         ..stage = RecordingStage.transcoding
         ..error = '本地转写模型未就绪';
       await store.save(file);
-      return didDownload;
+      return;
     }
 
     final wav = readWavFile(wavPath);
@@ -1506,7 +1668,7 @@ class RecordingPipeline {
         ..stage = RecordingStage.ready
         ..error = null;
       await store.save(file);
-      return didDownload;
+      return;
     }
 
     Float32List? rawSamples;
@@ -1528,7 +1690,10 @@ class RecordingPipeline {
 
     // 4) VAD 切片（含 30s 声学能量兜底，对齐 ingestLiveSlice）
     if (file.slices.isEmpty) {
-      report(PipelineStage.slicing, text: '正在切分 ${pipelineTimeLabel(file)} 这段');
+      report(
+        PipelineStage.slicing,
+        text: '正在切分（${fileIndex + 1}/$fileTotal）',
+      );
       await engine.loadVad(paths.vadPath);
       final conditioned = ensureConditioned();
       final spans = await engine.detectSpeech(conditioned);
@@ -1593,7 +1758,7 @@ class RecordingPipeline {
           ..stage = RecordingStage.ready
           ..error = null;
         await store.save(file);
-        return didDownload;
+        return;
       }
     }
 
@@ -1606,9 +1771,9 @@ class RecordingPipeline {
       await store.save(file);
       report(
         PipelineStage.transcribing,
-        text: '${pipelineTimeLabel(file)} 这段已取回；自动转录已关闭',
+        text: '已取回（${fileIndex + 1}/$fileTotal）；自动转录已关闭',
       );
-      return didDownload;
+      return;
     }
 
     // 5) 逐片本地转写（单次信号预处理复用，每片完成立即落盘）
@@ -1629,7 +1794,7 @@ class RecordingPipeline {
         PipelineStage.transcribing,
         sliceIndex: i,
         sliceTotal: total,
-        text: '正在转写 ${pipelineTimeLabel(file)} 这段（${i + 1}/$total）',
+        text: '正在转写（${i + 1}/$total）',
       );
       try {
         final sliceSamples =
@@ -1675,12 +1840,12 @@ class RecordingPipeline {
         ..stage = RecordingStage.ready
         ..error = null;
       await store.save(file);
-      return didDownload;
+      return;
     }
 
     // 6) 声纹聚类（关闭开关或模型缺失则统一「未区分」）
     if (file.utterances.isNotEmpty) {
-      report(PipelineStage.labeling, text: '正在整理 ${pipelineTimeLabel(file)} 说话人');
+      report(PipelineStage.labeling, text: '正在整理说话人');
       if (_speakerLabel && paths.canLabelSpeakers) {
         await _labelSpeakers(
           file,
@@ -1709,8 +1874,8 @@ class RecordingPipeline {
         ..stage = RecordingStage.ready
         ..error = null;
       await store.save(file);
-      report(PipelineStage.done, text: '${pipelineTimeLabel(file)} 这段处理完成');
-      return didDownload;
+      report(PipelineStage.done, text: '处理完成（${fileIndex + 1}/$fileTotal）');
+      return;
     }
 
     // 7) 云端窗口润色：失败不推翻本地数据，只标 stale 供界面提示
@@ -1719,7 +1884,7 @@ class RecordingPipeline {
         polisher != null &&
         polisher.configured &&
         file.utterances.isNotEmpty) {
-      report(PipelineStage.polishing, text: '正在润色 ${pipelineTimeLabel(file)} 这段');
+      report(PipelineStage.polishing, text: '正在润色整理');
       file
         ..stage = RecordingStage.polishing
         ..error = null;
@@ -1742,7 +1907,7 @@ class RecordingPipeline {
     // 8) 阶段总结/话题分段：云端失败时由协调器用原文兜底，不丢段
     final segmenter = segments;
     if (segmenter != null && file.segments.isEmpty) {
-      report(PipelineStage.summarizing, text: '正在整理 ${pipelineTimeLabel(file)} 分段');
+      report(PipelineStage.summarizing, text: '正在整理话题分段');
       file
         ..stage = RecordingStage.summarizing
         ..error = null;
@@ -1764,8 +1929,7 @@ class RecordingPipeline {
       ..stage = RecordingStage.ready
       ..error = null;
     await store.save(file);
-    report(PipelineStage.done, text: '${pipelineTimeLabel(file)} 这段处理完成');
-    return didDownload;
+    report(PipelineStage.done, text: '处理完成（${fileIndex + 1}/$fileTotal）');
   }
 
   List<SegmentRecord> _buildDeterministicFileSegments(RecordingFile file) {
@@ -2023,6 +2187,17 @@ class RecordingPipeline {
           ? bleLabel
           : '蓝牙设备',
     );
+  }
+
+  static final RegExp _omiRingNameRe = RegExp(
+    r'^OMI_RING_(\d+)_(\d+)\.WAV$',
+    caseSensitive: false,
+  );
+
+  static int? _omiRingStartSeq(CardFile file) {
+    final m = _omiRingNameRe.firstMatch(file.name);
+    if (m == null) return null;
+    return int.tryParse(m.group(1)!);
   }
 
   static int _startSecond(CardFile file) =>

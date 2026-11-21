@@ -450,6 +450,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         unawaited(_liveAudio.stop());
       }
       if (!_wasRecording) {
+        if (widget.store.pauseOfflineSyncForLiveRecording()) {
+          _device.markPendingPostReconnectSync();
+        }
         widget.store.onLiveRecordingStarted();
         _recording.startRecording();
         unawaited(_ensurePhotoPermissionOnRecordStart());

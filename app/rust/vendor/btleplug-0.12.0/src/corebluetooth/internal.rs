@@ -26,11 +26,12 @@ use futures::sink::SinkExt;
 use futures::stream::{Fuse, StreamExt};
 use log::{error, trace, warn};
 use objc2::{ClassType, msg_send_id};
-use objc2::{rc::Retained, runtime::AnyObject};
+use objc2::{rc::Retained, runtime::{AnyObject, ProtocolObject}};
 use objc2_core_bluetooth::{
     CBCentralManager, CBCentralManagerScanOptionAllowDuplicatesKey, CBCharacteristic,
     CBCharacteristicProperties, CBCharacteristicWriteType, CBDescriptor, CBManager,
-    CBManagerAuthorization, CBManagerState, CBPeripheral, CBPeripheralState, CBService, CBUUID,
+    CBManagerAuthorization, CBManagerState, CBPeripheral, CBPeripheralDelegate, CBPeripheralState,
+    CBService, CBUUID,
 };
 use objc2_foundation::{NSArray, NSData, NSMutableDictionary, NSNumber};
 use std::{
@@ -274,6 +275,7 @@ pub enum CoreBluetoothReply {
     ReadRssi(i16),
     Connected,
     ServicesDiscovered(BTreeSet<Service>),
+    Peripherals(Vec<Uuid>),
     State(CBPeripheralState),
     Ok,
     Err(String),
@@ -613,6 +615,10 @@ pub enum CoreBluetoothMessage {
     },
     ReadRssi {
         peripheral_uuid: Uuid,
+        future: CoreBluetoothReplyStateShared,
+    },
+    RetrieveConnectedPeripherals {
+        services: Vec<Uuid>,
         future: CoreBluetoothReplyStateShared,
     },
 }
@@ -1160,6 +1166,15 @@ impl CoreBluetoothInternal {
     fn connect_peripheral(&mut self, peripheral_uuid: Uuid, fut: CoreBluetoothReplyStateShared) {
         trace!("Trying to connect peripheral!");
         if let Some(p) = self.peripherals.get_mut(&peripheral_uuid) {
+            let cb_state = unsafe { p.peripheral.state() };
+            if cb_state == CBPeripheralState::Connected {
+                trace!("Peripheral already connected in CoreBluetooth; reusing link");
+                let proto: &ProtocolObject<dyn CBPeripheralDelegate> =
+                    ProtocolObject::from_ref(&*self.delegate);
+                unsafe { p.peripheral.setDelegate(Some(proto)) };
+                fut.lock().unwrap().set_reply(CoreBluetoothReply::Connected);
+                return;
+            }
             trace!("Connecting peripheral!");
             if let Some(prev) = p.connected_future_state.replace(fut) {
                 prev.lock()
@@ -1172,6 +1187,39 @@ impl CoreBluetoothInternal {
                 .unwrap()
                 .set_reply(CoreBluetoothReply::Err("Peripheral not found".into()));
         }
+    }
+
+    async fn retrieve_connected_peripherals(
+        &mut self,
+        services: Vec<Uuid>,
+        fut: CoreBluetoothReplyStateShared,
+    ) {
+        if services.is_empty() {
+            fut.lock()
+                .unwrap()
+                .set_reply(CoreBluetoothReply::Peripherals(Vec::new()));
+            return;
+        }
+        let service_uuids: Vec<Retained<CBUUID>> =
+            services.into_iter().map(uuid_to_cbuuid).collect();
+        let array = NSArray::from_vec(service_uuids);
+        let connected = unsafe { self.manager.retrieveConnectedPeripheralsWithServices(&array) };
+        let mut found_uuids = Vec::new();
+        for cbperipheral in connected {
+            let id = unsafe { cbperipheral.identifier() };
+            let uuid = nsuuid_to_uuid(&id);
+            let local_name = unsafe { cbperipheral.name() }.map(|n| n.to_string());
+            if unsafe { cbperipheral.state() } == CBPeripheralState::Connected {
+                let proto: &ProtocolObject<dyn CBPeripheralDelegate> =
+                    ProtocolObject::from_ref(&*self.delegate);
+                unsafe { cbperipheral.setDelegate(Some(proto)) };
+            }
+            self.on_discovered_peripheral(cbperipheral, local_name).await;
+            found_uuids.push(uuid);
+        }
+        fut.lock()
+            .unwrap()
+            .set_reply(CoreBluetoothReply::Peripherals(found_uuids));
     }
 
     async fn disconnect_peripheral(
@@ -1765,6 +1813,9 @@ impl CoreBluetoothInternal {
                     }
                     CoreBluetoothMessage::ReadRssi{peripheral_uuid, future} => {
                         self.read_rssi(peripheral_uuid, future)
+                    }
+                    CoreBluetoothMessage::RetrieveConnectedPeripherals{services, future} => {
+                        self.retrieve_connected_peripherals(services, future).await
                     }
                 };
             }

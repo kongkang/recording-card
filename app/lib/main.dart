@@ -296,6 +296,7 @@ class _HomeGateState extends State<_HomeGate> {
     _store.photoSyncEnabled = () => _agentConfig.photoLinkEnabled;
     _store.deviceGateway = () => _device.gateway;
     _device.attachAgentConfig(_agentConfig);
+    _device.isExternalBleSyncBusy = () => _pipeline.isBusy;
     _device.onManualBleSync = () => _store.syncRecordings();
     _device.onBleReconnectedNeedSync = (_) => _store.syncAfterBleReconnect(
       flushWatch: _device.flushWatchRecordingSlice,
