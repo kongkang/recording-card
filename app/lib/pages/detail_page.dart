@@ -389,8 +389,12 @@ class _DetailPageState extends State<DetailPage> {
                         view.mergedChildren.length - 1,
                       )]
                     : view;
-                final clip = _audioClipFor(activeAudioView);
                 final currentWavPath = activeAudioView?.file.wavPath;
+                if (activeAudioView?.file.isExternalImported == true &&
+                    (currentWavPath == null || currentWavPath.isEmpty)) {
+                  return const SizedBox.shrink();
+                }
+                final clip = _audioClipFor(activeAudioView);
                 return Container(
                   key: const Key('raw-sticky-player'),
                   padding: const EdgeInsets.fromLTRB(22, 10, 22, 8),
@@ -1363,6 +1367,8 @@ class _DetailPageState extends State<DetailPage> {
           ),
         );
       } else {
+        final hasAudioFile =
+            view.file.wavPath != null && view.file.wavPath!.isNotEmpty;
         for (final u in view.utterances) {
           final pos = _activeFilePosMs;
           final active = pos != null && pos >= u.startMs && pos <= u.endMs;
@@ -1374,7 +1380,7 @@ class _DetailPageState extends State<DetailPage> {
               u.text,
               bubbleKey: Key('raw-utt-${u.id}'),
               active: active,
-              onTap: () => _seekRawAudio(u.startMs),
+              onTap: hasAudioFile ? () => _seekRawAudio(u.startMs) : null,
             ),
           );
         }

@@ -311,6 +311,7 @@ class MultiTrackReconciler {
 
     final candidates = <_SegmentCandidate>[];
     for (final file in files) {
+      if (file.isExternalImported) continue;
       if (file.stage != RecordingStage.ready && file.segments.isEmpty) continue;
       final lane = file.resolvedSourceLane;
       for (final seg in file.segments) {

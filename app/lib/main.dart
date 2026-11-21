@@ -21,6 +21,7 @@ import 'services/ai/summary_generator.dart';
 import 'services/analysis/chat_completion.dart';
 import 'services/audio/recording_status.dart';
 import 'services/auth_service.dart';
+import 'services/external_data/getnote_sync_store.dart';
 import 'services/health/health_signal_collector.dart';
 import 'services/health/health_signal_controller.dart';
 import 'services/health/health_signal_models.dart';
@@ -83,6 +84,11 @@ Future<void> main() async {
     }
   } catch (_) {
     // 密钥库临时不可用时继续启动。请求层读取失败会如实返回，不能切回外脑。
+  }
+  try {
+    await GetNoteSyncStore.instance.load();
+  } catch (_) {
+    // 密钥库或偏好临时不可用时不阻塞冷启动。
   }
   runApp(RecordingCardApp(settings: settings, agentConfig: agentConfig));
 }

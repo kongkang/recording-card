@@ -65,6 +65,10 @@ class SegmentProjection {
     var i = 0;
     while (i < rawViews.length) {
       final head = rawViews[i];
+      if (head.file.isExternalImported) {
+        i++;
+        continue;
+      }
       if (_isMergeableSilent(head)) {
         var j = i + 1;
         while (j < rawViews.length &&
@@ -247,6 +251,7 @@ class SegmentProjection {
   /// 2. `turns` 与 `utterances` 均为空；
   /// 3. 若带有非「流中断 N 次」的物理打点 `mark`（例如用户单击物理键标记），绝不吞并。
   static bool _isMergeableSilent(SegmentView v) {
+    if (v.file.isExternalImported) return false;
     if (v.file.stage != RecordingStage.ready) return false;
     if (v.segment.status == SegmentStatus.live) return false;
     if (v.turns.isNotEmpty || v.utterances.isNotEmpty) return false;
@@ -284,6 +289,7 @@ class SegmentProjection {
   }
 
   static bool _isMergeableSpeech(SegmentView v) {
+    if (v.file.isExternalImported) return false;
     if (_isMergeableSilent(v)) return false;
     if (v.segment.status != SegmentStatus.closed) return false;
     return v.turns.isNotEmpty || v.utterances.isNotEmpty;
@@ -1147,8 +1153,11 @@ class SegmentProjection {
     ];
 
     final isReadySilent = _isMergeableSilent(view);
+    final isExternal = file.isExternalImported;
     final speakers = segment.speakerCount > 0 && segment.speakerLabels.isNotEmpty
-        ? '${segment.speakerLabels.join(' / ')}（推测）'
+        ? (isExternal
+              ? segment.speakerLabels.join(' / ')
+              : '${segment.speakerLabels.join(' / ')}（推测）')
         : (isReadySilent ? '无语音' : '未区分');
 
     // 用户可见路径不展示「总结未完成 / 清洗未完成 / 时间未校准 / 部分内容未润色」等错误徽标。
@@ -1208,9 +1217,13 @@ class SegmentProjection {
       dur: _duration(endMs - startMs),
       speakers: speakers,
       mark: segment.mark ?? '',
-      srcMap: mergedSliceCount > 1
-          ? '来源 ${_hm(startMs)}—${_hm(endMs)} · $mergedSliceCount 个分片'
-          : '来源 ${_hm(startMs)}—${_hm(endMs)}',
+      srcMap: isExternal
+          ? (endMs > startMs
+                ? '来源 得到大脑 · ${_hm(startMs)}—${_hm(endMs)}'
+                : '来源 得到大脑 · ${_hm(startMs)}')
+          : (mergedSliceCount > 1
+                ? '来源 ${_hm(startMs)}—${_hm(endMs)} · $mergedSliceCount 个分片'
+                : '来源 ${_hm(startMs)}—${_hm(endMs)}'),
       dialog: dialog,
       raw: raw,
       live: segment.status == SegmentStatus.live,

@@ -18,6 +18,7 @@ import '../../core/theme/tokens.dart';
 import '../../services/audio/voice_sample_capture.dart';
 import '../../services/auth/oauth_config.dart';
 import '../../services/auth_service.dart';
+import '../../services/external_data/getnote_sync_store.dart';
 import '../../services/health/health_signal_controller.dart';
 import '../../services/memory/memory_search_scope.dart';
 import '../../services/net/api_exception.dart';
@@ -29,6 +30,7 @@ import '../../services/watch/watch_hardware_service.dart';
 import '../../widgets/rc_switch.dart';
 import '../../widgets/store_scope.dart';
 import 'developer_schedule_section.dart';
+import 'getnote_sync_body.dart';
 import 'health_signal_body.dart';
 import 'memory_search_body.dart';
 
@@ -42,18 +44,20 @@ class SettingSubPage extends StatelessWidget {
     this.modelProviders,
     this.authService,
     this.healthSignals,
+    this.getNoteStore,
     this.showPaneBack = false,
     this.standalone = false,
   });
 
   final String
-  subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'dev'
+  subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extdata' | 'health' | 'dev'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
   final ModelProviderStore? modelProviders;
   final AuthService? authService;
   final HealthSignalController? healthSignals;
+  final GetNoteSyncStore? getNoteStore;
   final bool showPaneBack;
   final bool standalone;
 
@@ -68,6 +72,7 @@ class SettingSubPage extends StatelessWidget {
     'island' => '灵动岛与操作按钮',
     'watch' => 'Apple Watch 联动',
     'exthw' => '第三方硬件联动',
+    'extdata' => '得到大脑 / Get 笔记',
     'health' => '行为与健康信号',
     'dev' => '开发者设置',
     _ => '设置详情',
@@ -199,6 +204,9 @@ class SettingSubPage extends StatelessWidget {
                     'exthw' => _ExtHardwareLinkBody(
                       config: agentConfig,
                       device: device,
+                    ),
+                    'extdata' => GetNoteSyncBody(
+                      store: getNoteStore ?? GetNoteSyncStore.instance,
                     ),
                     'health' =>
                       healthSignals == null

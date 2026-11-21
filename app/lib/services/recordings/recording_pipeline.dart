@@ -183,6 +183,7 @@ class RecordingPipeline {
     var fixed = 0;
 
     for (final file in files) {
+      if (file.isExternalImported) continue;
       var changed = false;
       final cleanUtterances = [
         for (final u in file.utterances)
