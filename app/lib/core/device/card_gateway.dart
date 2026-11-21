@@ -1576,7 +1576,8 @@ class RealCardGateway implements CardGateway {
 
   CardException _error(String kind, String? message) {
     var text = message ?? '未知错误';
-    if (text.startsWith('LEGACY_UPGRADE_REQUIRED|')) {
+    if (text.startsWith('LEGACY_UPGRADE_REQUIRED|') ||
+        text.startsWith('WIFI_SAVED_PASSWORD_REQUIRED|')) {
       return CardException(CardErrorKind.device, text);
     }
     final lower = text.toLowerCase();
@@ -1618,27 +1619,43 @@ class RealCardGateway implements CardGateway {
     return CardException(CardErrorKind.device, _friendlyDeviceError(text));
   }
 
+  @visibleForTesting
+  static String friendlyDeviceErrorForTest(String raw) =>
+      _friendlyDeviceError(raw);
+
   static String _friendlyDeviceError(String raw) {
     final match = RegExp(r'code[:\s]*(-?\d+)').firstMatch(raw);
     final code = match == null ? null : int.tryParse(match.group(1)!);
     if (code == null) return raw;
     final suffix = '（设备错误码 $code）';
+    final detailMatch = RegExp(r'\):\s*(.+)$').firstMatch(raw);
+    final rawDetail = detailMatch?.group(1)?.trim() ?? '';
+    final detail =
+        rawDetail.isNotEmpty &&
+            rawDetail.toLowerCase() != 'unknown device error'
+        ? rawDetail
+        : '';
     return switch (code) {
       -1 => '录音卡拒绝了这条命令，请重连后重试$suffix',
       -2 => raw.contains('录音启动失败')
           ? '录音卡启动录音失败，可在「更多」中重启设备后重试$suffix'
           : '录音卡拒绝了这条命令$suffix',
       -3 => '录音卡当前状态不允许该操作，请稍后重试$suffix',
+      1 when raw.contains('WIFI_CONNECT') =>
+        detail.isNotEmpty
+            ? 'Wi-Fi 连接失败（$detail）$suffix'
+            : 'Wi-Fi 连接失败，请确认密码正确且路由器为 2.4GHz 频段$suffix',
+      1 => detail.isNotEmpty ? '$detail$suffix' : '录音卡返回错误$suffix',
+      4 =>
+        raw.contains('CONFIG_SET')
+            ? '录音卡保存按键配置失败，可能是设备闪存繁忙或配置槽位已满，请重试$suffix'
+            : '录音卡保存配置失败，请稍后重试$suffix',
       3001 => '点一机忙碌或存储空间不足$suffix',
       3003 => '点一机尚未连接 Wi-Fi，请先配网后再试$suffix',
       3401 => '点一机需要开启系统定位开关后才能扫描 Wi-Fi$suffix',
       _ => '录音卡返回错误$suffix',
     };
   }
-
-  @visibleForTesting
-  static String friendlyDeviceErrorForTest(String raw) =>
-      _friendlyDeviceError(raw);
 
   static Map<String, dynamic>? lastDeviceErrorDetail;
 
@@ -1974,7 +1991,7 @@ class RealCardGateway implements CardGateway {
   Future<void> connectWifi(String ssid, String password) => _once(
     'wifi.connect',
     {'ssid': ssid, 'password': password},
-    const Duration(seconds: 40),
+    const Duration(seconds: 55),
   );
 
   @override

@@ -29,6 +29,7 @@ import '../../services/platform/local_notification_service.dart';
 import '../../services/watch/watch_hardware_service.dart';
 import '../device/card_gateway.dart';
 import '../platform/bluetooth_permission.dart';
+import '../storage/secure_store.dart';
 import 'agent_config_store.dart';
 
 export '../device/card_gateway.dart' show HardwareButtonEvent;
@@ -80,6 +81,7 @@ class DeviceStore extends ChangeNotifier {
     WatchHardwareService? watchHardware,
     LegacyUpgradeController? legacyUpgrade,
     AgentConfigStore? agentConfig,
+    SecureStore? wifiCredentialStore,
     OledBitmapRenderer? oledRenderer,
     Duration? oledHardwareEventDelay,
     Duration? restartReconnectDelay,
@@ -104,6 +106,11 @@ class DeviceStore extends ChangeNotifier {
            backgroundReconnectDelays ?? _defaultBackgroundReconnectDelays,
        _ownsLegacyUpgrade = legacyUpgrade == null,
        _agentConfig = agentConfig,
+       _wifiCredentialStore =
+           wifiCredentialStore ??
+           ((!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST'))
+               ? InMemorySecureStore()
+               : KeychainSecureStore()),
        _oledRenderer = oledRenderer ?? const FlutterOledBitmapRenderer(),
        _oledHardwareEventDelay =
            oledHardwareEventDelay ??
@@ -158,11 +165,14 @@ class DeviceStore extends ChangeNotifier {
   final bool _ownsLegacyUpgrade;
   late final LegacyUpgradeController legacyUpgrade;
   AgentConfigStore? _agentConfig;
+  final SecureStore _wifiCredentialStore;
   final OledBitmapRenderer _oledRenderer;
   final Duration _oledHardwareEventDelay;
   final Duration _restartReconnectDelay;
   Timer? _oledDelayTimer;
   int _syncedControlsEpoch = -1;
+  bool _controlsSyncInFlight = false;
+  int _controlsSyncSeq = 0;
   int _shownConnectOledEpoch = -1;
   DateTime? _lastHardwareRecordOledAt;
 
@@ -391,14 +401,17 @@ class DeviceStore extends ChangeNotifier {
       _applySnapshot(snapshot);
       await _reconcileRecordingOnConnect();
       if (epoch != _epoch) return;
-      unawaited(_syncCardControlsAndDisplayOnConnect(epoch));
       _startHeartbeat();
       if (sheetOpen) {
         _startSheetWatch();
-        unawaited(prefetchSummaryInfo());
-      } else if (_autoStart) {
-        unawaited(prefetchSummaryInfo());
       }
+      unawaited(
+        _afterConnect(
+          epoch,
+          includeRefresh: false,
+          includePrefetch: sheetOpen || _autoStart,
+        ),
+      );
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       // 未连接是正常初始态，不算错误；其它错误如实呈现
@@ -728,7 +741,6 @@ class DeviceStore extends ChangeNotifier {
       _applySnapshot(snapshot);
       await _reconcileRecordingOnConnect();
       if (epoch != _epoch) return;
-      unawaited(_syncCardControlsAndDisplayOnConnect(epoch));
       _pendingPhoneFailover = false;
       _pendingFailoverCarrySec = 0;
       _eventSeq = 0;
@@ -765,14 +777,22 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 连上后的收尾：若快照缺失关键状态则补拉一次，并立刻预取概要与版本检查。
-  Future<void> _afterConnect(int epoch) async {
+  /// 连上后的收尾：若快照缺失关键状态则补拉一次，再串行同步按键配置，最后预取概要与版本检查。
+  Future<void> _afterConnect(
+    int epoch, {
+    bool includeRefresh = true,
+    bool includePrefetch = true,
+  }) async {
     if (epoch != _epoch || !isConnected) return;
-    if (_fwVersionCode == 0 || _liveBattery == null) {
+    if (includeRefresh && (_fwVersionCode == 0 || _liveBattery == null)) {
       await refreshFromDevice();
-      if (epoch != _epoch) return;
+      if (epoch != _epoch || !isConnected) return;
     }
-    await prefetchSummaryInfo();
+    await _syncCardControlsAndDisplayOnConnect(epoch);
+    if (epoch != _epoch || !isConnected) return;
+    if (includePrefetch) {
+      await prefetchSummaryInfo();
+    }
   }
 
   Future<bool> _autoReconnectAfterLegacyUpgrade(CardDevice updated) async {
@@ -978,7 +998,6 @@ class DeviceStore extends ChangeNotifier {
           _applySnapshot(snap);
           await _reconcileRecordingOnConnect();
           if (epoch != _epoch || _disposed) return null;
-          unawaited(_syncCardControlsAndDisplayOnConnect(epoch));
           _eventSeq = 0;
           _startHeartbeat();
           if (sheetOpen) {
@@ -1104,6 +1123,8 @@ class DeviceStore extends ChangeNotifier {
     _oledDelayTimer?.cancel();
     _oledDelayTimer = null;
     _syncedControlsEpoch = -1;
+    _controlsSyncInFlight = false;
+    _controlsSyncSeq++;
     _shownConnectOledEpoch = -1;
     _lastHardwareRecordOledAt = null;
     cardControlsSyncing = false;
@@ -1499,7 +1520,6 @@ class DeviceStore extends ChangeNotifier {
     _applySnapshot(snapshot);
     await _reconcileRecordingOnConnect();
     if (epoch != _epoch) return;
-    unawaited(_syncCardControlsAndDisplayOnConnect(epoch));
     _pendingPhoneFailover = false;
     _pendingFailoverCarrySec = 0;
     _startHeartbeat();
@@ -1771,6 +1791,8 @@ class DeviceStore extends ChangeNotifier {
     _oledDelayTimer?.cancel();
     _oledDelayTimer = null;
     _syncedControlsEpoch = -1;
+    _controlsSyncInFlight = false;
+    _controlsSyncSeq++;
     _shownConnectOledEpoch = -1;
     _lastHardwareRecordOledAt = null;
     cardControlsSyncing = false;
@@ -2254,7 +2276,16 @@ class DeviceStore extends ChangeNotifier {
     });
   }
 
-  Future<void> _syncCardControlsAndDisplayOnConnect(int epoch) async {
+  /// 重新向录音卡同步当前按键与拨杆行为配置（失败后手动一键重试入口）。
+  Future<void> retryCardControlsSync() async {
+    if (!isConnected || !activeCapabilities.hasConfigurableSwitch) return;
+    await _syncCardControlsAndDisplayOnConnect(_epoch, force: true);
+  }
+
+  Future<void> _syncCardControlsAndDisplayOnConnect(
+    int epoch, {
+    bool force = false,
+  }) async {
     if (epoch != _epoch || !isConnected) return;
     if (activeCapabilities.hasOledDisplay && _shownConnectOledEpoch != epoch) {
       _shownConnectOledEpoch = epoch;
@@ -2271,8 +2302,11 @@ class DeviceStore extends ChangeNotifier {
     if (!activeCapabilities.hasConfigurableSwitch || _agentConfig == null) {
       return;
     }
-    if (_syncedControlsEpoch == epoch) return;
-    _syncedControlsEpoch = epoch;
+    if ((!force && _syncedControlsEpoch == epoch) || _controlsSyncInFlight) {
+      return;
+    }
+    _controlsSyncInFlight = true;
+    final syncToken = ++_controlsSyncSeq;
     cardControlsSyncing = true;
     cardControlsError = null;
     notifyListeners();
@@ -2280,10 +2314,11 @@ class DeviceStore extends ChangeNotifier {
       final res = await _gw.invokeBridgeCommand(
         'card_controls.get',
         const <String, dynamic>{},
-        const Duration(seconds: 6),
+        const Duration(seconds: 8),
       );
       if (epoch != _epoch || !isConnected) return;
       if (res['supported'] == false) {
+        _syncedControlsEpoch = epoch;
         cardControlsError = null;
         return;
       }
@@ -2301,23 +2336,32 @@ class DeviceStore extends ChangeNotifier {
       });
       final config = _agentConfig!;
       if (!deviceHasAny || config.cardControlsUserConfigured) {
-        await _gw.invokeBridgeCommand(
-          'card_controls.set',
-          Map<String, dynamic>.from(config.cardFirmwareBindingsPayload()),
-          const Duration(seconds: 8),
-        );
+        final diff = config.cardFirmwareBindingsDiff(res);
+        if (diff.isNotEmpty) {
+          await _gw.invokeBridgeCommand(
+            'card_controls.set',
+            Map<String, dynamic>.from(diff),
+            const Duration(seconds: 20),
+          );
+          if (epoch != _epoch || !isConnected) return;
+        }
       } else {
         await config.syncCardBindingsFromDevice(res);
+        if (epoch != _epoch || !isConnected) return;
       }
+      _syncedControlsEpoch = epoch;
       cardControlsError = null;
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       cardControlsError = '读取/同步按键配置失败：${e.message}';
     } on TimeoutException {
       if (epoch != _epoch) return;
-      cardControlsError = '同步按键配置超时，可点击重置或重新切换重试';
+      cardControlsError = '同步按键配置超时，可点击重置或重试同步';
     } finally {
-      if (epoch == _epoch) {
+      if (syncToken == _controlsSyncSeq) {
+        _controlsSyncInFlight = false;
+      }
+      if (epoch == _epoch && syncToken == _controlsSyncSeq) {
         cardControlsSyncing = false;
         notifyListeners();
       }
@@ -2343,7 +2387,7 @@ class DeviceStore extends ChangeNotifier {
         await _gw.invokeBridgeCommand(
           'card_controls.set',
           Map<String, dynamic>.from(payload),
-          const Duration(seconds: 6),
+          const Duration(seconds: 12),
         );
       }
       if (activeCapabilities.hasOledDisplay) {
@@ -2382,7 +2426,7 @@ class DeviceStore extends ChangeNotifier {
       await _gw.invokeBridgeCommand(
         'card_controls.set',
         Map<String, dynamic>.from(config.cardFirmwareBindingsPayload()),
-        const Duration(seconds: 6),
+        const Duration(seconds: 20),
       );
       if (activeCapabilities.hasOledDisplay) {
         unawaited(
@@ -2393,6 +2437,7 @@ class DeviceStore extends ChangeNotifier {
           ),
         );
       }
+      _syncedControlsEpoch = _epoch;
       cardControlsError = null;
       return null;
     } on TimeoutException {
@@ -3428,6 +3473,12 @@ class DeviceStore extends ChangeNotifier {
     if (v == DeviceView.more) {
       devicePowerError = null;
     }
+    if (v == DeviceView.btn &&
+        isConnected &&
+        activeCapabilities.hasConfigurableSwitch &&
+        (cardControlsError != null || _syncedControlsEpoch != _epoch)) {
+      unawaited(_syncCardControlsAndDisplayOnConnect(_epoch, force: true));
+    }
     notifyListeners();
   }
 
@@ -3876,6 +3927,9 @@ class DeviceStore extends ChangeNotifier {
   }
 
   // ── Wi-Fi：设备扫描 + 设备凭据 + 真实连接 ──────────────────
+  static const String _wifiPasswordsStorageKey = 'rc_wifi_passwords_v1';
+  Map<String, String>? _wifiPasswordsCache;
+
   List<SavedWifi> wifiSaved = const [];
   String? wifiLast;
   bool wifiMore = false;
@@ -3895,6 +3949,47 @@ class DeviceStore extends ChangeNotifier {
 
   /// 设备端 Wi-Fi 模块状态；未知时界面显示"读取失败 + 重试"，不冒充已关闭。
   bool get wifiKnownOpen => deviceWifiOpen != null;
+
+  Future<Map<String, String>> _ensureWifiPasswordsLoaded() async {
+    final cached = _wifiPasswordsCache;
+    if (cached != null) return cached;
+    final raw = await _wifiCredentialStore.readJson(_wifiPasswordsStorageKey);
+    final loaded = <String, String>{};
+    if (raw != null) {
+      for (final entry in raw.entries) {
+        final ssid = entry.key.trim();
+        final pwd = entry.value is String ? entry.value as String : '';
+        if (ssid.isNotEmpty && pwd.isNotEmpty) {
+          loaded[ssid] = pwd;
+        }
+      }
+    }
+    return _wifiPasswordsCache = loaded;
+  }
+
+  Future<void> _saveWifiPassword(String ssid, String password) async {
+    final cleanSsid = ssid.trim();
+    if (cleanSsid.isEmpty || password.isEmpty) return;
+    final cache = Map<String, String>.from(await _ensureWifiPasswordsLoaded());
+    if (cache[cleanSsid] == password) return;
+    cache[cleanSsid] = password;
+    _wifiPasswordsCache = cache;
+    await _wifiCredentialStore.writeJson(_wifiPasswordsStorageKey, cache);
+  }
+
+  Future<void> _removeSavedWifiPassword(String ssid) async {
+    final cleanSsid = ssid.trim();
+    if (cleanSsid.isEmpty) return;
+    final cache = Map<String, String>.from(await _ensureWifiPasswordsLoaded());
+    if (!cache.containsKey(cleanSsid)) return;
+    cache.remove(cleanSsid);
+    _wifiPasswordsCache = cache;
+    if (cache.isEmpty) {
+      await _wifiCredentialStore.delete(_wifiPasswordsStorageKey);
+    } else {
+      await _wifiCredentialStore.writeJson(_wifiPasswordsStorageKey, cache);
+    }
+  }
 
   Future<void> wifiRetry() async {
     await refreshFromDevice();
@@ -3918,6 +4013,7 @@ class DeviceStore extends ChangeNotifier {
     wifiStateText = '正在扫描附近网络…';
     notifyListeners();
     try {
+      await _ensureWifiPasswordsLoaded();
       // 设备侧 Wi-Fi 模块需先开启
       if (deviceWifiOpen != true) {
         await _gw.openWifi();
@@ -3954,20 +4050,40 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 连接已保存网络：设备端凭据由固件自己管理，这里直接下发连接命令。
+  /// 连接已保存网络：优先读取本机 Keychain 缓存的密码，否则由底层走设备已保存凭据自动连接；失败时展开密码输入框便于重输。
   Future<void> wifiConnectSaved(String n) async {
     if (wifiJoining || !wifiInRange(n)) return;
     wifiJoining = true;
     wifiJoinName = n;
     wifiError = null;
     notifyListeners();
+    var usedPwd = '';
     try {
-      await _gw.connectWifi(n, '');
+      final cache = _wifiPasswordsCache ?? await _ensureWifiPasswordsLoaded();
+      usedPwd = cache[n.trim()] ?? cache[n] ?? '';
+      await _gw.connectWifi(n, usedPwd);
       wifiLast = n;
       wifiStateText = '$n 连接成功';
+      wifiSelName = null;
     } on CardException catch (e) {
-      wifiError = e.message;
-      wifiStateText = '连接 $n 失败：${e.message}';
+      final rawMsg = e.message;
+      const savedPrefix = 'WIFI_SAVED_PASSWORD_REQUIRED|';
+      if (rawMsg.startsWith(savedPrefix)) {
+        final parts = rawMsg.split('|');
+        final friendly = parts.length >= 3
+            ? parts.sublist(2).join('|')
+            : '无法通过录音卡已保存凭据自动连上「$n」，请重新输入密码连接';
+        wifiSelName = n;
+        wifiError = friendly;
+        wifiStateText = '请输入 $n 的密码后连接';
+      } else if (usedPwd.isEmpty && rawMsg.contains('设备错误码 1')) {
+        wifiSelName = n;
+        wifiError = '无法通过已保存凭据自动连接「$n」，请重新输入密码连接（设备错误码 1）';
+        wifiStateText = '请输入 $n 的密码后连接';
+      } else {
+        wifiError = rawMsg;
+        wifiStateText = '连接 $n 失败：$rawMsg';
+      }
     }
     wifiJoining = false;
     wifiJoinName = '';
@@ -3987,7 +4103,7 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 连接新网络：密码留空视为失败（设备侧会拒绝），错误就地提示可重试。
+  /// 连接新网络：密码留空视为失败（设备侧会拒绝），成功后把密码安全写入本机 Keychain 供下次一键直连。
   Future<void> wifiJoinNew(String pwd) async {
     final sel = wifiSelName;
     if (sel == null) return;
@@ -4002,6 +4118,7 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
     try {
       await _gw.connectWifi(sel, pwd);
+      await _saveWifiPassword(sel, pwd);
       wifiLast = sel;
       wifiStateText = '$sel 连接成功';
       wifiSelName = null;
@@ -4015,10 +4132,11 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 忘记一个已保存网络（设备端删除 + 本地刷新）。
+  /// 忘记一个已保存网络（设备端删除 + 本机 Keychain 清除）。
   Future<void> wifiForget(String ssid) async {
     try {
       await _gw.forgetWifi(ssid);
+      await _removeSavedWifiPassword(ssid);
       wifiSaved = wifiSaved.where((w) => w.name != ssid).toList();
       if (wifiLast == ssid) wifiLast = null;
       notifyListeners();

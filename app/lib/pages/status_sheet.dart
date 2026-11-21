@@ -2395,9 +2395,38 @@ class _ButtonConfigView extends StatelessWidget {
                           color: rc.danger.withValues(alpha: 0.35),
                         ),
                       ),
-                      child: Text(
-                        err,
-                        style: TextStyle(fontSize: 12, color: rc.danger),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              err,
+                              style: TextStyle(fontSize: 12, color: rc.danger),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton(
+                            key: const Key('btn-cfg-retry'),
+                            onPressed: store.cardControlsSyncing
+                                ? null
+                                : () => unawaited(store.retryCardControlsSync()),
+                            style: TextButton.styleFrom(
+                              foregroundColor: rc.danger,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text(
+                              '重试',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   if (isCardControl) ...[

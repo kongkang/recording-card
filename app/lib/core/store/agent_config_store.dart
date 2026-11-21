@@ -440,6 +440,24 @@ class AgentConfigStore extends ChangeNotifier {
     'switchOff': cardSwitchOffAction.toCardFirmwareWire(),
   };
 
+  /// 计算当前 App 目标绑定与设备端读回 KV 之间的差异（空/`null` 归一为 `'none'`），仅下发需变更的键。
+  Map<String, String> cardFirmwareBindingsDiff(
+    Map<String, dynamic> deviceRaw,
+  ) {
+    final desired = cardFirmwareBindingsPayload();
+    final diff = <String, String>{};
+    for (final entry in desired.entries) {
+      final curRaw =
+          deviceRaw[entry.key]?.toString().trim().toLowerCase() ?? '';
+      final curNorm = curRaw.isEmpty ? 'none' : curRaw;
+      final targetNorm = entry.value.trim().toLowerCase();
+      if (curNorm != targetNorm) {
+        diff[entry.key] = entry.value;
+      }
+    }
+    return diff;
+  }
+
   Map<String, String> cardFirmwareSinglePayload(
     String input,
     HardwareButtonAction action,
