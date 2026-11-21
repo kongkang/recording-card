@@ -267,6 +267,36 @@ void main() {
     expect(controller.statusMessage, contains('Health Connect'));
   });
 
+  test('采集通道在开启或关闭时抛错会安全回滚并提示原因', () async {
+    final dir = await Directory.systemTemp.createTemp('rc-health-err-');
+    addTearDown(() => dir.delete(recursive: true));
+    final config = AgentConfigStore(store: InMemoryStore());
+    addTearDown(config.dispose);
+    await config.load();
+    final collector = _FakeCollector(drafts: const [])
+      ..setCollectionActiveError = StateError('health_collection_failed');
+    final controller = HealthSignalController(
+      store: HealthSignalStore(
+        factory: databaseFactoryFfi,
+        path: () async => '${dir.path}/health.db',
+      ),
+      collector: collector,
+      config: config,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.setEnabled(true);
+    expect(controller.enabled, isFalse);
+    expect(config.healthSignalEnabled, isFalse);
+    expect(controller.busy, isFalse);
+    expect(controller.statusMessage, contains('健康采集通道不可用'));
+
+    await config.setHealthSignalEnabled(true);
+    await controller.setEnabled(false);
+    expect(controller.enabled, isFalse);
+    expect(controller.statusMessage, contains('健康采集通道不可用'));
+  });
+
   group('设置页健康信号', () {
     late Directory dir;
     late AgentConfigStore config;
@@ -472,6 +502,7 @@ class _FakeCollector implements HealthSignalCollector {
   List<HealthSignalDraft> drafts;
   bool active = false;
   int catchUps = 0;
+  Object? setCollectionActiveError;
 
   @override
   Future<HealthPlatformInfo> info() async {
@@ -499,6 +530,9 @@ class _FakeCollector implements HealthSignalCollector {
     required int intervalMs,
     required int phaseMs,
   }) async {
+    if (setCollectionActiveError != null) {
+      throw setCollectionActiveError!;
+    }
     this.active = active;
   }
 

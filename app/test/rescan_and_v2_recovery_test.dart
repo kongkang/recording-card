@@ -84,6 +84,7 @@ void main() {
     expect(device.linkState, LinkState.disconnected);
     expect(find.byKey(const Key('dev-scan-empty')), findsOneWidget);
     expect(find.text('蓝牙扫描通道异常中断，请点击「重新扫描」重试'), findsOneWidget);
+    expect(find.text('请先开关一次手机蓝牙，或把录音卡关机再开机后重试'), findsOneWidget);
 
     final rescanBtn = tester.widget<OutlinedButton>(
       find.byKey(const Key('dev-rescan')),
@@ -296,6 +297,7 @@ void main() {
 
     expect(device.linkState, LinkState.unsupported);
     expect(find.text('此设备不支持连接录音卡'), findsOneWidget);
+    expect(find.text('重装当前安装包无法恢复，请安装包含蓝牙桥的真机版本'), findsOneWidget);
 
     allowRecover = true;
     await tester.tap(find.byKey(const Key('dev-rescan')));

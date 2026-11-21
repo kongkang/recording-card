@@ -1092,6 +1092,18 @@ Future<void> _confirmDisconnect(BuildContext context, DeviceStore store) async {
   await store.disconnectSafely();
 }
 
+String _scanFailureHint(String error) {
+  if (error.contains('蓝牙扫描通道异常中断') ||
+      error.contains('蓝牙通道') ||
+      error.contains('Channel closed')) {
+    return '请先开关一次手机蓝牙，或把录音卡关机再开机后重试';
+  }
+  if (error.contains('蓝牙模块没有载入') || error.contains('不支持连接录音卡')) {
+    return '重装当前安装包无法恢复，请安装包含蓝牙桥的真机版本';
+  }
+  return '请确认录音卡已开机，并放在手机附近';
+}
+
 /// 未连接视图：搜索并连接附近的录音卡，并支持无硬件独立开启「本机录音」。
 class _ConnectView extends StatelessWidget {
   const _ConnectView({
@@ -1258,7 +1270,7 @@ class _ConnectView extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                '请确认录音卡已开机，并放在手机附近',
+                _scanFailureHint(store.linkError!),
                 style: TextStyle(fontSize: 12, color: c.sec),
               ),
             ],
