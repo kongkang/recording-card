@@ -794,4 +794,222 @@ void main() {
       expect(packed[oledBitmapBytes - 1], 1 << 7);
     },
   );
+
+  test(
+    'Case 8: 重连时设备 KV 已匹配用户配置时跳过 card_controls.set（0 次闪存写入），仅部分差异时下发差异键',
+    () async {
+      final cfg = AgentConfigStore(store: InMemoryStore());
+      await cfg.load();
+      // 模拟用户已有自定义配置
+      await cfg.setCardControlAction('double_click', HardwareButtonAction.recordToggle);
+      expect(cfg.cardControlsUserConfigured, isTrue);
+
+      // 8a) 设备 KV 与用户配置完全一致（且 btnLongRelease 未占用）-> 0 次写入
+      final matchedGw = FakeCardGateway(
+        initialSnapshot: _cardV2Snapshot(),
+        initialCardControls: const {
+          'btnSingle': 'record_mark',
+          'btnDouble': 'record_toggle',
+          'btnLongPress': 'agent_voice',
+          'switchOn': 'record_start',
+          'switchOff': 'record_stop',
+        },
+      );
+      final matchedStore = DeviceStore(gateway: matchedGw, agentConfig: cfg);
+      addTearDown(matchedStore.dispose);
+
+      await matchedStore.restoreLink();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(matchedGw.cardControlsGetCalls, 1);
+      expect(matchedGw.cardControlsSetCalls, isEmpty);
+      expect(matchedStore.cardControlsError, isNull);
+
+      // 8b) 仅 btnDouble 与 switchOff 不一致 -> 仅下发这 2 个差异键，且不下发 btnLongRelease:'none'
+      final partialGw = FakeCardGateway(
+        initialSnapshot: _cardV2Snapshot(),
+        initialCardControls: const {
+          'btnSingle': 'record_mark',
+          'btnDouble': 'app_sync',
+          'btnLongPress': 'agent_voice',
+          'switchOn': 'record_start',
+          'switchOff': 'none',
+        },
+      );
+      final partialStore = DeviceStore(gateway: partialGw, agentConfig: cfg);
+      addTearDown(() {
+        partialStore.dispose();
+        cfg.dispose();
+      });
+
+      await partialStore.restoreLink();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(partialGw.cardControlsGetCalls, 1);
+      expect(partialGw.cardControlsSetCalls.length, 1);
+      expect(partialGw.cardControlsSetCalls.single, {
+        'btnDouble': 'record_toggle',
+        'switchOff': 'record_stop',
+      });
+      expect(partialStore.cardControlsError, isNull);
+    },
+  );
+
+  testWidgets(
+    'Case 9: 连接期 card_controls.set 返回 code 4 时展示友好提示与重试按钮，进入页面或点击重试可恢复并清错',
+    (tester) async {
+      final cfg = AgentConfigStore(store: InMemoryStore());
+      await cfg.load();
+
+      var failNextSet = true;
+      late FakeCardGateway gw;
+      gw = FakeCardGateway(initialSnapshot: _cardV2Snapshot())
+        ..onBridgeCommand = (kind, payload) async {
+          switch (kind) {
+            case 'card_display.show':
+              gw.displayShowCalls.add(Map<String, dynamic>.from(payload ?? const {}));
+              return {'supported': true, 'shown': true};
+            case 'card_controls.get':
+              gw.cardControlsGetCalls++;
+              return {'supported': true, ...gw.cardControls};
+            case 'card_controls.set':
+              if (failNextSet) {
+                throw CardException(
+                  CardErrorKind.device,
+                  RealCardGateway.friendlyDeviceErrorForTest(
+                    'device rejected `CONFIG_SET` (code 4): persist failed',
+                  ),
+                );
+              }
+              final copy = Map<String, dynamic>.from(payload ?? const {});
+              gw.cardControlsSetCalls.add(copy);
+              copy.forEach((k, v) {
+                if (v is String) gw.cardControls[k] = v;
+              });
+              return {'supported': true, 'applied': true, 'written': copy.length};
+            default:
+              return {};
+          }
+        };
+
+      final device = DeviceStore(gateway: gw, agentConfig: cfg);
+      addTearDown(() {
+        device.dispose();
+        cfg.dispose();
+      });
+
+      await device.restoreLink();
+      await tester.pump();
+      expect(device.cardControlsError, contains('设备错误码 4'));
+      expect(device.cardControlsError, contains('配置槽位已满'));
+
+      device.openSheet();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: testTheme(),
+          home: Scaffold(
+            body: Stack(
+              children: [
+                StatusSheetOverlay(store: device, agentConfig: cfg),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      // 首次点进按键行为设置且硬件仍报错 -> 页面内保留错误横幅与「重试」按钮
+      await tester.tap(find.byKey(const Key('btn-config')));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byKey(const Key('btn-cfg-error')), findsOneWidget);
+      expect(find.byKey(const Key('btn-cfg-retry')), findsOneWidget);
+      expect(find.textContaining('设备错误码 4'), findsOneWidget);
+
+      // 修复后点「重试」-> 成功同步、清零错误栏
+      failNextSet = false;
+      await tester.tap(find.byKey(const Key('btn-cfg-retry')));
+      await tester.pump();
+      await tester.pump();
+
+      expect(device.cardControlsError, isNull);
+      expect(find.byKey(const Key('btn-cfg-error')), findsNothing);
+      expect(gw.cardControls['btnSingle'], 'record_mark');
+      expect(gw.cardControls['switchOn'], 'record_start');
+    },
+  );
+
+  test(
+    'Case 10: Wi-Fi Keychain 密码持久化复用、忘记网络清除、无缓存返回需要密码时自动展开输入框，及 error code 1/4 文案校验',
+    () async {
+      // 10a) 友好错误文案覆盖 CONFIG_SET code 4 与 WIFI_CONNECT code 1
+      final code4Msg = RealCardGateway.friendlyDeviceErrorForTest(
+        'device rejected `CONFIG_SET` (code 4): persist failed',
+      );
+      expect(code4Msg, contains('保存按键配置失败'));
+      expect(code4Msg, contains('设备错误码 4'));
+
+      final code1WifiMsg = RealCardGateway.friendlyDeviceErrorForTest(
+        'device rejected `WIFI_CONNECT` (code 1): auth failed',
+      );
+      expect(code1WifiMsg, contains('Wi-Fi 连接失败'));
+      expect(code1WifiMsg, contains('auth failed'));
+      expect(code1WifiMsg, contains('设备错误码 1'));
+
+      // 10b) wifiJoinNew 后连接已保存网络复用 Keychain 密码；forgetWifi 清除缓存
+      final credStore = InMemorySecureStore();
+      final gw = FakeCardGateway(
+        initialSnapshot: _cardV2Snapshot(),
+        wifiCredentials: const [CardWifiCredential(ssid: 'LegacySaved')],
+        wifiNetworks: const [
+          CardWifiNetwork(ssid: 'Office-2.4G', rssi: -52, secured: true),
+          CardWifiNetwork(ssid: 'LegacySaved', rssi: -58, secured: true),
+        ],
+      );
+      final store1 = DeviceStore(gateway: gw, wifiCredentialStore: credStore);
+      await store1.restoreLink();
+      await store1.wifiScan();
+
+      store1.wifiPick('Office-2.4G');
+      await store1.wifiJoinNew('super-secret-88');
+      expect(store1.wifiLast, 'Office-2.4G');
+      store1.dispose();
+
+      // 重建 DeviceStore（共享同一个 SecureStore）验证跨会话持久化密码复用
+      final store2 = DeviceStore(gateway: gw, wifiCredentialStore: credStore);
+      addTearDown(store2.dispose);
+      await store2.restoreLink();
+      await store2.wifiScan();
+
+      gw.lastWifiPassword = null;
+      await store2.wifiConnectSaved('Office-2.4G');
+      expect(gw.lastWifiSsid, 'Office-2.4G');
+      expect(gw.lastWifiPassword, 'super-secret-88');
+      expect(store2.wifiError, isNull);
+
+      // 忘记网络应清理本地密码缓存
+      await store2.wifiForget('Office-2.4G');
+      expect(await credStore.readJson('rc_wifi_passwords_v1'), isNull);
+
+      // 10c) 无本地密码的旧保存网络若无法自动连上（WIFI_SAVED_PASSWORD_REQUIRED 或 code 1），展开密码输入框
+      gw.failWifiConnect = CardException(
+        CardErrorKind.device,
+        'WIFI_SAVED_PASSWORD_REQUIRED|LegacySaved|无法通过录音卡已保存凭据自动连上「LegacySaved」，请重新输入密码连接',
+      );
+      await store2.wifiConnectSaved('LegacySaved');
+      expect(store2.wifiSelName, 'LegacySaved');
+      expect(store2.wifiError, contains('请重新输入密码连接'));
+
+      gw.failWifiConnect = CardException(
+        CardErrorKind.device,
+        RealCardGateway.friendlyDeviceErrorForTest(
+          'device rejected `WIFI_CONNECT` (code 1): connect failed',
+        ),
+      );
+      store2.wifiCancelPick();
+      await store2.wifiConnectSaved('LegacySaved');
+      expect(store2.wifiSelName, 'LegacySaved');
+      expect(store2.wifiError, contains('设备错误码 1'));
+    },
+  );
 }
