@@ -46,6 +46,7 @@ class _DetailPageState extends State<DetailPage> {
       GlobalKey<RawAudioPlayerState>();
   int? _activeFilePosMs;
   int _selectedMergedSliceIdx = 0;
+  bool _showForkCompare = false;
 
   @override
   void didUpdateWidget(covariant DetailPage oldWidget) {
@@ -53,6 +54,7 @@ class _DetailPageState extends State<DetailPage> {
     if (oldWidget.eventId != widget.eventId) {
       _activeFilePosMs = null;
       _selectedMergedSliceIdx = 0;
+      _showForkCompare = false;
     }
   }
 
@@ -148,6 +150,7 @@ class _DetailPageState extends State<DetailPage> {
     }
     final refs = store.doneSummariesReferencing(e.id);
     final view = store.segmentViewFor(e.id);
+    final sibling = store.siblingForkEventFor(e.id);
     final speakerText = lifeSpeakerLabel(store.displaySpeakersSummary(e));
     final dialogOrRaw = e.dialog.isNotEmpty ? e.dialog : e.raw;
     final hasAnyTurns =
@@ -211,6 +214,36 @@ class _DetailPageState extends State<DetailPage> {
                       key: const Key('dt-speakers'),
                       style: TextStyle(fontSize: 12, color: c.sec),
                     ),
+                    if (e.sourceDeviceLabel != null &&
+                        e.sourceDeviceLabel!.trim().isNotEmpty)
+                      Container(
+                        key: const Key('dt-device-label'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: c.isDark
+                              ? const Color(0xFF1D2838)
+                              : const Color(0xFFEEF4FF),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: c.isDark
+                                ? const Color(0xFF2D4363)
+                                : const Color(0xFFC8DCFF),
+                          ),
+                        ),
+                        child: Text(
+                          e.sourceDeviceLabel!.trim(),
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: c.isDark
+                                ? const Color(0xFF93C5FD)
+                                : const Color(0xFF1D4ED8),
+                          ),
+                        ),
+                      ),
                     if (hasAnyTurns)
                       InkWell(
                         key: const Key('mark-speaker-btn'),
@@ -258,6 +291,79 @@ class _DetailPageState extends State<DetailPage> {
                       ),
                   ],
                 ),
+                if (sibling != null) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    key: const Key('detail-fork-banner'),
+                    padding: const EdgeInsets.fromLTRB(12, 9, 12, 6),
+                    decoration: BoxDecoration(
+                      color: c.isDark
+                          ? const Color(0xFF1B2433)
+                          : const Color(0xFFF3F6FC),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: c.sep),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '同时间段检测到来自「${sibling.sourceDeviceLabel ?? '另一设备'}」的不同内容记录',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.4,
+                            fontWeight: FontWeight.w500,
+                            color: c.label,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: [
+                            TextButton(
+                              key: const Key('detail-fork-compare-toggle'),
+                              onPressed: () => setState(
+                                () => _showForkCompare = !_showForkCompare,
+                              ),
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                textStyle: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              child: Text(
+                                _showForkCompare ? '收起对照' : '展开双列对照',
+                              ),
+                            ),
+                            TextButton(
+                              key: const Key('detail-fork-switch'),
+                              onPressed: () => store.openDetail(sibling.id),
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                textStyle: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              child: const Text('查看另一路 ›'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -324,11 +430,93 @@ class _DetailPageState extends State<DetailPage> {
                 RCDims.pageBottomPad,
               ),
               children: [
+                if (sibling != null && _showForkCompare)
+                  _buildForkComparePanel(c, e, sibling),
                 ..._buildTab(c, store, e, refs, view),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildForkComparePanel(
+    RCColorScheme c,
+    RecordEvent current,
+    RecordEvent sibling,
+  ) {
+    Widget column(RecordEvent item, {required bool withLeftBorder}) {
+      final turns = item.dialog.isNotEmpty ? item.dialog : item.raw;
+      final preview = turns.take(6).toList();
+      final devLabel = (item.sourceDeviceLabel ?? '').trim().isNotEmpty
+          ? item.sourceDeviceLabel!.trim()
+          : (item.sourceLane == 'ble' ? '蓝牙硬件' : '伴随设备');
+      return Container(
+        padding: const EdgeInsets.all(10),
+        decoration: withLeftBorder
+            ? BoxDecoration(border: Border(left: BorderSide(color: c.sep)))
+            : null,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: c.isDark
+                    ? const Color(0xFF1E293B)
+                    : const Color(0xFFEEF5FF),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                devLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                  color: c.label,
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            if (preview.isEmpty)
+              Text(
+                item.brief.trim().isNotEmpty ? item.brief.trim() : '暂无转写内容',
+                style: TextStyle(fontSize: 12, color: c.sec, height: 1.4),
+              )
+            else
+              for (final t in preview) ...[
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 5),
+                  child: Text(
+                    t.text,
+                    style: TextStyle(fontSize: 12, color: c.ink, height: 1.4),
+                  ),
+                ),
+              ],
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Container(
+        key: const Key('detail-fork-compare-panel'),
+        decoration: BoxDecoration(
+          color: c.card,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: c.sep),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: column(current, withLeftBorder: false)),
+            Expanded(child: column(sibling, withLeftBorder: true)),
+          ],
+        ),
       ),
     );
   }

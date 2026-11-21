@@ -215,11 +215,14 @@ class WatchPendingSlicePayload {
   final bool offlineRecorded;
   final List<int> marksMs;
 
-  LiveAudioSlice toLiveAudioSlice() {
+  LiveAudioSlice toLiveAudioSlice({String watchName = 'Apple Watch'}) {
     final safeSession = sessionId.isNotEmpty ? sessionId : 'watch';
     final safeSliceId = sliceId.isNotEmpty
         ? sliceId
         : '${safeSession}_$sliceIndex';
+    final resolvedLabel = watchName.trim().isEmpty || watchName.trim() == '我的手表'
+        ? 'Apple Watch'
+        : watchName.trim();
     return LiveAudioSlice(
       sessionId: 'watch_$safeSession',
       deviceSessionId: safeSession,
@@ -231,6 +234,8 @@ class WatchPendingSlicePayload {
       isFinal: isFinal,
       sliceKeyOverride: 'watch_$safeSliceId',
       marksMs: marksMs,
+      sourceLane: 'watch',
+      sourceDeviceLabel: resolvedLabel,
     );
   }
 }
@@ -892,7 +897,7 @@ class WatchHardwareService extends ChangeNotifier {
       _receivedSlices.removeRange(50, _receivedSlices.length);
     }
     _persistHistorySync();
-    _audioSlicesCtrl.add(p.toLiveAudioSlice());
+    _audioSlicesCtrl.add(p.toLiveAudioSlice(watchName: _status.watchName));
     await _backend.ackConsumedSlice(p.sliceId);
     if (!_disposed) {
       notifyListeners();

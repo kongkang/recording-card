@@ -56,6 +56,8 @@ class LiveAudioSlice {
     this.isFinal = false,
     this.sliceKeyOverride,
     this.marksMs = const [],
+    this.sourceLane,
+    this.sourceDeviceLabel,
   });
 
   final String sessionId;
@@ -86,6 +88,12 @@ class LiveAudioSlice {
 
   /// 切片内物理打点时间列表（相对切片起点毫秒或 Unix 毫秒时间戳）。
   final List<int> marksMs;
+
+  /// 采集通路标识：`'ble'` | `'watch'` | `'phone'`（空值按前缀兜底推断）。
+  final String? sourceLane;
+
+  /// 人类可读来源设备名（如「录音卡 V2 · T4W25T」「Apple Watch」「手机本机」）。
+  final String? sourceDeviceLabel;
 
   /// 作为 RecordingStore 的唯一键（可读且稳定）。
   String get sliceKey {
@@ -300,6 +308,7 @@ class LiveAudioRecorder extends ChangeNotifier {
 
   LiveSession? _session;
   String? _pendingDeviceSessionId;
+  String _sourceDeviceLabel = '蓝牙设备';
   int _writtenSamples = 0;
   bool _stopping = false;
 
@@ -342,6 +351,14 @@ class LiveAudioRecorder extends ChangeNotifier {
     if (s == null || _pendingDeviceSessionId == null) return;
     if (s.deviceSessionId == _pendingDeviceSessionId) return;
     _session = s.copyWith(deviceSessionId: _pendingDeviceSessionId);
+  }
+
+  /// 更新当前蓝牙实时录音的展示设备名称（透传写入切片与 `RecordingFile` 来源标签）。
+  void updateSourceDeviceLabel(String? label) {
+    final trimmed = label?.trim();
+    if (trimmed != null && trimmed.isNotEmpty) {
+      _sourceDeviceLabel = trimmed;
+    }
   }
 
   Future<Directory> _baseDir() async {
@@ -512,6 +529,8 @@ class LiveAudioRecorder extends ChangeNotifier {
       gapCount: gaps,
       isFinal: isFinal,
       marksMs: marks,
+      sourceLane: 'ble',
+      sourceDeviceLabel: _sourceDeviceLabel,
     );
 
     final updatedKeys = [...session.sliceKeys, slice.sliceKey];

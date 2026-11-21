@@ -178,6 +178,11 @@ class TimelinePage extends StatelessWidget {
                                   ),
                                   final UnclassifiedPhotosCard u =>
                                     _UnclassifiedPhotosCardView(card: u),
+                                  final ForkedEventPair fp =>
+                                    _ForkedEventCardView(
+                                      pair: fp,
+                                      store: store,
+                                    ),
                                   final RecordEvent e => _EventCardView(
                                     event: e,
                                     store: store,
@@ -659,6 +664,253 @@ class _EventCardView extends StatelessWidget {
                   ),
                 ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 同一时段多路并发但语义不同（如手表/手机在会议室 + 蓝牙外出通话）的双列分叉卡。
+class _ForkedEventCardView extends StatelessWidget {
+  const _ForkedEventCardView({required this.pair, required this.store});
+
+  final ForkedEventPair pair;
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final headerBg = c.isDark
+        ? const Color(0xFF1D2430)
+        : const Color(0xFFF3F6FC);
+    return Padding(
+      key: Key('timeline-item-${pair.forkGroupId}'),
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Container(
+        key: Key('fork-card-${pair.forkGroupId}'),
+        decoration: BoxDecoration(
+          color: c.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: c.sep),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              key: Key('fork-header-${pair.forkGroupId}'),
+              color: headerBg,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              child: Row(
+                children: [
+                  Icon(Icons.call_split_rounded, size: 14, color: c.info),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '双路并发 · 内容不同已保留',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: c.label,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    pair.time,
+                    style: TextStyle(fontSize: 11.5, color: c.sec),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, thickness: 1, color: c.sep),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _ForkBranchColumn(
+                    key: Key('fork-col-left-${pair.left.id}'),
+                    event: pair.left,
+                    store: store,
+                    isLeft: true,
+                    withLeftBorder: false,
+                  ),
+                ),
+                Expanded(
+                  child: _ForkBranchColumn(
+                    key: Key('fork-col-right-${pair.right.id}'),
+                    event: pair.right,
+                    store: store,
+                    isLeft: false,
+                    withLeftBorder: true,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ForkBranchColumn extends StatelessWidget {
+  const _ForkBranchColumn({
+    super.key,
+    required this.event,
+    required this.store,
+    required this.isLeft,
+    required this.withLeftBorder,
+  });
+
+  final RecordEvent event;
+  final AppStore store;
+  final bool isLeft;
+  final bool withLeftBorder;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final picked = store.selMode && store.selIds.contains(event.id);
+    final devLabel = (event.sourceDeviceLabel ?? '').trim().isNotEmpty
+        ? event.sourceDeviceLabel!.trim()
+        : (isLeft ? '蓝牙硬件' : '手机本机');
+    final badgeBg = isLeft
+        ? (c.isDark ? const Color(0xFF172738) : const Color(0xFFEEF5FF))
+        : (c.isDark ? const Color(0xFF1B2B23) : const Color(0xFFECF9F2));
+    final badgeFg = isLeft
+        ? (c.isDark ? const Color(0xFF8CC4FF) : const Color(0xFF0F4C81))
+        : (c.isDark ? const Color(0xFF7BE0AD) : const Color(0xFF126B3F));
+
+    return InkWell(
+      onTap: () {
+        if (store.selMode && !event.live) {
+          store.toggleSel(event.id);
+        } else if (!event.live) {
+          store.openDetail(event.id, fresh: true);
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+        decoration: withLeftBorder
+            ? BoxDecoration(border: Border(left: BorderSide(color: c.sep)))
+            : null,
+        child: SelectionMarker(
+          checked: picked,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Flexible(
+                    child: Container(
+                      key: Key('fork-dev-${event.id}'),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: badgeBg,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        devLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                          color: badgeFg,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (store.selMode && !event.live) ...[
+                    const SizedBox(width: 4),
+                    GestureDetector(
+                      key: Key('chk-${event.id}'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => store.toggleSel(event.id),
+                      child: Container(
+                        width: 18,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: picked ? c.ok : c.ax,
+                            width: 1.5,
+                          ),
+                          color: picked ? c.ok : Colors.transparent,
+                        ),
+                        child: picked
+                            ? const Icon(
+                                Icons.check,
+                                size: 12,
+                                color: Colors.white,
+                              )
+                            : null,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                event.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                  color: c.label,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                '${event.time} · ${event.dur}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: c.sec),
+              ),
+              if (event.brief.trim().isNotEmpty) ...[
+                const SizedBox(height: 5),
+                Text(
+                  event.brief.trim(),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, height: 1.4, color: c.ink),
+                ),
+              ],
+              if (!event.live) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: InkWell(
+                    key: Key('fork-detail-${event.id}'),
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => store.openDetail(event.id, fresh: true),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2,
+                      ),
+                      child: Text(
+                        '详情 ›',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: c.label,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

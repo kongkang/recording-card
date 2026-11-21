@@ -2,6 +2,9 @@ package com.reai.recordingcard
 
 import android.Manifest
 import android.app.Activity
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,6 +17,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.view.WindowManager
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -35,6 +39,9 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         private const val OAUTH_CHANNEL = "com.reai.recordingcard/oauth"
         private const val BLUETOOTH_CHANNEL = "com.reai.recordingcard/bluetooth"
         private const val LIVE_ACTIVITY_CHANNEL = "com.reai.recordingcard/live_activity"
+        private const val LOCAL_NOTIF_CHANNEL = "com.reai.recordingcard/local_notifications"
+        private const val ALERT_CHANNEL_ID = "rc_device_alerts"
+        private const val ALERT_NOTIF_ID = 4201
         private const val BLE_PREFS = "rc_ble_perm_prefs"
         private const val KEY_BLE_REQUESTED = "ble_perm_requested"
 
@@ -242,6 +249,86 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                     AUTH_REQUEST,
                 )
             }
+
+        MethodChannel(messenger, LOCAL_NOTIF_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "requestPermission" -> {
+                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                            ContextCompat.checkSelfPermission(
+                                this,
+                                Manifest.permission.POST_NOTIFICATIONS,
+                            ) == PackageManager.PERMISSION_GRANTED
+                        ) {
+                            result.success("granted")
+                        } else {
+                            result.success("denied")
+                        }
+                    }
+                    "notify" -> {
+                        val id = call.argument<String>("id") ?: "rc_device_alert"
+                        val title = call.argument<String>("title") ?: "录音卡"
+                        val body = call.argument<String>("body") ?: ""
+                        val urgent = call.argument<Boolean>("urgent") ?: false
+                        result.success(showDeviceAlertNotification(id, title, body, urgent))
+                    }
+                    "cancel" -> {
+                        val id = call.argument<String>("id") ?: "rc_device_alert"
+                        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                        nm?.cancel(id, ALERT_NOTIF_ID)
+                        result.success(true)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun showDeviceAlertNotification(
+        tag: String,
+        title: String,
+        body: String,
+        urgent: Boolean,
+    ): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return false
+        }
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val existing = nm.getNotificationChannel(ALERT_CHANNEL_ID)
+            if (existing == null) {
+                val ch = NotificationChannel(
+                    ALERT_CHANNEL_ID,
+                    "设备连接与兜底提醒",
+                    NotificationManager.IMPORTANCE_HIGH,
+                ).apply {
+                    description = "蓝牙意外断连、自动切换兜底设备与重连恢复提醒"
+                }
+                nm.createNotificationChannel(ch)
+            }
+        }
+        val launchIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        val pendingIntent = PendingIntent.getActivity(this, 0, launchIntent, piFlags)
+        val notif = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(if (urgent) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        nm.notify(tag, ALERT_NOTIF_ID, notif)
+        return true
     }
 
     private fun requiredBlePermissions(): Array<String> =

@@ -33,6 +33,7 @@ import '../transcribe/speech_models.dart';
 import '../transcribe/system_speech_client.dart';
 import '../transcribe/utterance_builder.dart';
 import '../transcribe/wav_io.dart';
+import 'multi_track_reconciler.dart';
 import 'network_policy.dart';
 import 'recording_store.dart';
 import 'speaker_profile_store.dart';
@@ -143,10 +144,14 @@ class RecordingPipeline {
     this.rollingCleaner,
     TopicSegmentationStore? topicStore,
     this.voiceprintStore,
+    this.multiTrackReconciler,
+    MultiTrackReconciliationStore? reconciliationStore,
+    this.bleDeviceLabelResolver,
     this.network = const NetworkPolicy(),
     this.liveAudioBaseDir,
     this.skipLegacyCloudPolishWhenRollingActive = true,
-  }) : _topicStore = topicStore;
+  }) : _topicStore = topicStore,
+       _reconciliationStore = reconciliationStore;
 
   final bool skipLegacyCloudPolishWhenRollingActive;
 
@@ -158,10 +163,18 @@ class RecordingPipeline {
   final FastTopicSegmentAgent? topicAgent;
   final RollingCleanSegmentService? rollingCleaner;
   final VoiceprintLibraryStore? voiceprintStore;
+  final MultiTrackReconciler? multiTrackReconciler;
+  final String? Function()? bleDeviceLabelResolver;
   TopicSegmentationStore? _topicStore;
+  MultiTrackReconciliationStore? _reconciliationStore;
 
   TopicSegmentationStore get topicStore =>
       _topicStore ??= TopicSegmentationStore(resolveRoot: store.root);
+
+  MultiTrackReconciliationStore get reconciliationStore =>
+      _reconciliationStore ??= MultiTrackReconciliationStore(
+        resolveRoot: store.root,
+      );
 
   /// 清理本地存量“仅孤立标点幻觉（如 `。`）”与历史 `实时切片 #N` 标题，一次性幂等清洗落盘。
   Future<int> sanitizeLegacyDirtyRecordings() async {
@@ -399,6 +412,9 @@ class RecordingPipeline {
   }
 
   /// 判断卡端 `.APM` 是否已被本机无断档实时流切片覆盖并落库（避免慢速蓝牙重复拉取）。
+  ///
+  /// 注意：仅 `ble` 路实时流可以覆盖卡端 `.APM` 文件；手表（`watch_`）或手机兜底（`LIVE_PHONE_`）
+  /// 切片**绝不允许**跳过蓝牙卡离线文件的拉取，确保断连回连后仍拉回完整数据参与比对合并。
   bool _isCoveredByLiveSlices(
     CardFile source,
     List<LiveSession> liveSessions,
@@ -408,11 +424,13 @@ class RecordingPipeline {
       if (!session.coversCardFile(source)) continue;
       final hasLocalSlice = localFiles.any((f) {
         if (f.stage != RecordingStage.ready) return false;
+        if (f.resolvedSourceLane != RecordingSourceLane.ble) return false;
         if (session.sliceKeys.contains(f.deviceName)) return true;
         if (session.deviceSessionId != null &&
             session.deviceSessionId!.isNotEmpty &&
             f.session == session.deviceSessionId &&
-            f.deviceName.startsWith('LIVE_')) {
+            f.deviceName.startsWith('LIVE_') &&
+            !f.deviceName.startsWith('LIVE_PHONE_')) {
           return true;
         }
         return f.session == session.id;
@@ -420,6 +438,16 @@ class RecordingPipeline {
       if (hasLocalSlice) return true;
     }
     return false;
+  }
+
+  /// 对本地所有已落盘的多路录音执行时间重叠对齐、去重合并与语义分叉判定，并落盘决策表。
+  Future<MultiTrackReconciliationState> reconcileMultiTrack() async {
+    final files = await store.loadAll(refresh: true);
+    final prev = await reconciliationStore.load();
+    final reconciler = multiTrackReconciler ?? MultiTrackReconciler();
+    final next = await reconciler.reconcile(files, previous: prev);
+    await reconciliationStore.save(next);
+    return next;
   }
 
   /// 录音开启期间：把刚封口的一份实时流 WAV 切片直接送入本地 VAD + SenseVoice 转写并落库。
@@ -460,6 +488,21 @@ class RecordingPipeline {
             slice.deviceSessionId!.trim().isNotEmpty)
         ? slice.deviceSessionId!.trim()
         : slice.sessionId;
+    final resolvedLane = slice.sourceLane ??
+        (slice.sliceKey.toUpperCase().startsWith('LIVE_PHONE_')
+            ? RecordingSourceLane.phone.code
+            : (slice.sliceKey.toUpperCase().startsWith('WATCH_')
+                  ? RecordingSourceLane.watch.code
+                  : RecordingSourceLane.ble.code));
+    final resolvedLabel = slice.sourceDeviceLabel?.trim().isNotEmpty == true
+        ? slice.sourceDeviceLabel!.trim()
+        : (resolvedLane == RecordingSourceLane.phone.code
+              ? '手机本机'
+              : (resolvedLane == RecordingSourceLane.watch.code
+                    ? 'Apple Watch'
+                    : (bleDeviceLabelResolver?.call()?.trim().isNotEmpty == true
+                          ? bleDeviceLabelResolver!.call()!.trim()
+                          : '蓝牙设备')));
     final file = existing ??
         RecordingFile(
           deviceName: slice.sliceKey,
@@ -472,11 +515,15 @@ class RecordingPipeline {
           durationMs: slice.durationMs,
           createdAtMs: DateTime.now().millisecondsSinceEpoch,
           stage: RecordingStage.transcribing,
+          sourceLane: resolvedLane,
+          sourceDeviceLabel: resolvedLabel,
         );
     file
       ..apmPath = slice.wavPath
       ..wavPath = slice.wavPath
       ..durationMs = slice.durationMs
+      ..sourceLane ??= resolvedLane
+      ..sourceDeviceLabel ??= resolvedLabel
       ..error = null;
     await store.save(file);
 
@@ -1889,6 +1936,7 @@ class RecordingPipeline {
     final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final startSec = source.startAtSec;
     final endSec = source.createdAtSec ?? nowSec;
+    final bleLabel = bleDeviceLabelResolver?.call()?.trim();
     return RecordingFile(
       deviceName: source.name,
       session: source.session ?? source.name,
@@ -1898,6 +1946,10 @@ class RecordingPipeline {
       apmPath: '',
       createdAtMs: DateTime.now().millisecondsSinceEpoch,
       stage: RecordingStage.queued,
+      sourceLane: RecordingSourceLane.ble.code,
+      sourceDeviceLabel: (bleLabel != null && bleLabel.isNotEmpty)
+          ? bleLabel
+          : '蓝牙设备',
     );
   }
 
