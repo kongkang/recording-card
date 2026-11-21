@@ -64,6 +64,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
     required this.ok,
     required this.okInk,
     required this.danger,
+    this.warn = RCColors.warn,
+    this.info = RCColors.info,
   });
 
   /// 浅色：与 [RCColors] 常量一一对应（值相同，便于老代码平滑迁移）。
@@ -79,6 +81,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
     ok: RCColors.ok,
     okInk: RCColors.okInk,
     danger: RCColors.danger,
+    warn: RCColors.warn,
+    info: RCColors.info,
   );
 
   /// 深色：背景近黑、正文高对比、分隔线弱化。
@@ -97,6 +101,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
     ok: Color(0xFF30D158),
     okInk: Color(0xFF6FDD8B),
     danger: Color(0xFFFF453A),
+    warn: Color(0xFFFF9F0A),
+    info: Color(0xFF0A84FF),
   );
 
   /// 当前亮度（供需要按亮/暗做微调的组件判断）。
@@ -132,6 +138,12 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
   /// 警示色。
   final Color danger;
 
+  /// 待机/提醒橙色。
+  final Color warn;
+
+  /// 状态信息蓝色。
+  final Color info;
+
   bool get isDark => brightness == Brightness.dark;
 
   /// 开关轨道颜色：开 = 墨色（原型 `.sw.on{background:var(--label)}`），关 = 弱化灰。
@@ -139,6 +151,9 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
 
   /// 开关滑块颜色：浅色轨道上用白，深色模式的开态轨道是近白，滑块反过来用底色。
   Color get switchThumb => isDark ? bg : Colors.white;
+
+  /// 主操作实心按钮（背景为 `label`）上的前景文字色。
+  Color get onLabel => isDark ? bg : Colors.white;
 
   @override
   RCColorScheme copyWith({
@@ -153,6 +168,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
     Color? ok,
     Color? okInk,
     Color? danger,
+    Color? warn,
+    Color? info,
   }) {
     return RCColorScheme(
       brightness: brightness ?? this.brightness,
@@ -166,6 +183,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
       ok: ok ?? this.ok,
       okInk: okInk ?? this.okInk,
       danger: danger ?? this.danger,
+      warn: warn ?? this.warn,
+      info: info ?? this.info,
     );
   }
 
@@ -184,6 +203,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
       ok: Color.lerp(ok, other.ok, t)!,
       okInk: Color.lerp(okInk, other.okInk, t)!,
       danger: Color.lerp(danger, other.danger, t)!,
+      warn: Color.lerp(warn, other.warn, t)!,
+      info: Color.lerp(info, other.info, t)!,
     );
   }
 }
@@ -229,6 +250,7 @@ ThemeData _buildTheme(RCColorScheme scheme) {
     scaffoldBackgroundColor: scheme.bg,
     colorScheme: base.colorScheme.copyWith(
       primary: scheme.label,
+      onPrimary: scheme.onLabel,
       secondary: scheme.ok,
       surface: scheme.card,
       onSurface: scheme.label,

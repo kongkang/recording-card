@@ -18,44 +18,48 @@ void main() {
       expect(slices, isEmpty);
     });
 
-    test('按静音切：每片 45~90 秒、不重叠、顺序单调', () {
-      // 每 25 秒说 20 秒、静音 5 秒
+    test('按静音切：每片落在 SenseVoice 最佳窗口（<= 35 秒）、不重叠、顺序单调', () {
+      // 每 14 秒说 12 秒、静音 2 秒
       final speech = <SpeechSpan>[];
       for (var i = 0; i < 8; i++) {
-        final base = _s(i * 25);
-        speech.add(SpeechSpan(base, base + _s(20)));
+        final base = _s(i * 14);
+        speech.add(SpeechSpan(base, base + _s(12)));
       }
       final slices = planner.plan(
         speech: speech,
-        totalSamples: _s(200),
+        totalSamples: _s(120),
         sampleRate: _rate,
       );
 
       expect(slices, isNotEmpty);
       var previousEnd = 0;
-      for (final s in slices) {
+      for (var i = 0; i < slices.length; i++) {
+        final s = slices[i];
         final seconds = s.length / _rate;
-        expect(seconds, greaterThanOrEqualTo(30));
-        expect(seconds, lessThanOrEqualTo(90));
+        if (i < slices.length - 1) {
+          expect(seconds, greaterThanOrEqualTo(25));
+        }
+        expect(seconds, lessThanOrEqualTo(35));
         expect(s.startSample, greaterThanOrEqualTo(previousEnd));
         expect(s.endSample, greaterThan(s.startSample));
         previousEnd = s.endSample;
       }
-      // 覆盖到最后一段语音
+      // 覆盖到最后一段语音，且最后一片保留尾部真实静音
       expect(slices.last.endSample, greaterThanOrEqualTo(speech.last.endSample));
+      expect(slices.last.silenceAfterSamples, _s(120) - speech.last.endSample);
     });
 
-    test('连续说话超过 90 秒：硬切且片间不重叠', () {
+    test('连续说话超过 35 秒：硬切且片间不重叠', () {
       final slices = planner.plan(
         speech: [SpeechSpan(0, _s(300))],
         totalSamples: _s(300),
         sampleRate: _rate,
       );
 
-      expect(slices.length, greaterThanOrEqualTo(4));
+      expect(slices.length, greaterThanOrEqualTo(9));
       var previousEnd = 0;
       for (final s in slices) {
-        expect(s.length, lessThanOrEqualTo(90 * _rate));
+        expect(s.length, lessThanOrEqualTo(35 * _rate));
         expect(s.startSample, greaterThanOrEqualTo(previousEnd));
         previousEnd = s.endSample;
       }

@@ -655,6 +655,8 @@ void main() {
         .first;
     final cycle = find.byKey(const Key('dev-cycle-preset-30'));
     await tester.scrollUntilVisible(cycle, 200, scrollable: devScroll);
+    await tester.ensureVisible(cycle);
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('dev-cycle-value')), findsOneWidget);
     expect(
       tester.widget<Text>(find.byKey(const Key('dev-cycle-value'))).data,
@@ -666,7 +668,11 @@ void main() {
     expect(cfg.cleanCycleMinutes, 30);
     expect(find.text('30 分钟'), findsWidgets);
 
-    await tester.tap(find.byKey(const Key('dev-overlap-mode-minutes')));
+    final overlapMin = find.byKey(const Key('dev-overlap-mode-minutes'));
+    await tester.scrollUntilVisible(overlapMin, 200, scrollable: devScroll);
+    await tester.ensureVisible(overlapMin);
+    await tester.pumpAndSettle();
+    await tester.tap(overlapMin);
     await tester.pump();
     expect(cfg.cleanOverlapMode, 'minutes');
 

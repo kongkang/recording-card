@@ -8,7 +8,6 @@ library;
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -18,6 +17,97 @@ import 'live_audio_recorder.dart';
 import 'pcm_ring_buffer.dart';
 
 enum PhoneMicPermission { granted, denied, notDetermined }
+
+enum PhoneMicErrorKind { backgroundRestricted, audioBusy, permissionDenied, other }
+
+class PhoneMicStartException implements Exception {
+  const PhoneMicStartException({
+    required this.kind,
+    required this.userMessage,
+    this.osStatus,
+  });
+
+  final PhoneMicErrorKind kind;
+  final String userMessage;
+  final int? osStatus;
+
+  factory PhoneMicStartException.fromPlatform(PlatformException e) {
+    final code = e.code.trim();
+    final rawMsg = (e.message ?? '').trim();
+    int? osStatus;
+    if (e.details is Map && (e.details as Map)['osStatus'] is num) {
+      osStatus = ((e.details as Map)['osStatus'] as num).toInt();
+    } else {
+      final match = RegExp(r'OSStatus[^\d-]*(-?\d+)').firstMatch(rawMsg);
+      if (match != null) {
+        osStatus = int.tryParse(match.group(1)!);
+      }
+    }
+
+    if (code == 'phone_mic_background_restricted' ||
+        osStatus == 560557684 ||
+        rawMsg.contains('560557684')) {
+      return PhoneMicStartException(
+        kind: code == 'phone_mic_audio_busy'
+            ? PhoneMicErrorKind.audioBusy
+            : PhoneMicErrorKind.backgroundRestricted,
+        userMessage: rawMsg.isNotEmpty && !rawMsg.contains('OSStatus')
+            ? rawMsg
+            : '系统限制后台直接启用手机麦克风，请切回应用自动开启本机录音',
+        osStatus: osStatus ?? 560557684,
+      );
+    }
+    if (code == 'phone_mic_audio_busy' ||
+        osStatus == 561017449 ||
+        rawMsg.contains('561017449')) {
+      return PhoneMicStartException(
+        kind: PhoneMicErrorKind.audioBusy,
+        userMessage: rawMsg.isNotEmpty && !rawMsg.contains('OSStatus')
+            ? rawMsg
+            : '手机麦克风正被其他通话或语音应用占用，释放后将自动重试',
+        osStatus: osStatus ?? 561017449,
+      );
+    }
+    if (rawMsg.contains('权限')) {
+      return PhoneMicStartException(
+        kind: PhoneMicErrorKind.permissionDenied,
+        userMessage: rawMsg,
+        osStatus: osStatus,
+      );
+    }
+    return PhoneMicStartException(
+      kind: PhoneMicErrorKind.other,
+      userMessage: rawMsg.isNotEmpty
+          ? rawMsg
+          : '本机录音暂时无法启动，请重试',
+      osStatus: osStatus,
+    );
+  }
+
+  static PhoneMicStartException? tryParse(Object error) {
+    if (error is PhoneMicStartException) return error;
+    if (error is PlatformException) return PhoneMicStartException.fromPlatform(error);
+    final raw = error.toString();
+    if (raw.contains('560557684') || raw.contains('phone_mic_background_restricted')) {
+      return const PhoneMicStartException(
+        kind: PhoneMicErrorKind.backgroundRestricted,
+        userMessage: '系统限制后台直接启用手机麦克风，请切回应用自动开启本机录音',
+        osStatus: 560557684,
+      );
+    }
+    if (raw.contains('561017449') || raw.contains('phone_mic_audio_busy')) {
+      return const PhoneMicStartException(
+        kind: PhoneMicErrorKind.audioBusy,
+        userMessage: '手机麦克风正被其他通话或语音应用占用，释放后将自动重试',
+        osStatus: 561017449,
+      );
+    }
+    return null;
+  }
+
+  @override
+  String toString() => userMessage;
+}
 
 abstract interface class PhoneMicBackend {
   Future<PhoneMicPermission> checkPermission();
@@ -35,11 +125,15 @@ class PlatformPhoneMicBackend implements PhoneMicBackend {
     MethodChannel channel = const MethodChannel(
       'com.reai.recordingcard/phone_mic',
     ),
+    this.onAppBecameActive,
+    this.onAudioInterruptionEnded,
   }) : _channel = channel {
     _channel.setMethodCallHandler(_handleIncoming);
   }
 
   final MethodChannel _channel;
+  VoidCallback? onAppBecameActive;
+  VoidCallback? onAudioInterruptionEnded;
   void Function(Uint8List)? _onPcm;
   void Function(String)? _onError;
 
@@ -59,6 +153,10 @@ class PlatformPhoneMicBackend implements PhoneMicBackend {
       case 'error':
         final msg = '${call.arguments ?? '本机录音采集异常'}';
         _onError?.call(msg);
+      case 'appBecameActive':
+        onAppBecameActive?.call();
+      case 'audioInterruptionEnded':
+        onAudioInterruptionEnded?.call();
     }
   }
 
@@ -93,7 +191,13 @@ class PlatformPhoneMicBackend implements PhoneMicBackend {
   }) async {
     _onPcm = onPcm;
     _onError = onError;
-    await _channel.invokeMethod<void>('start');
+    try {
+      await _channel.invokeMethod<void>('start');
+    } on PlatformException catch (e) {
+      _onPcm = null;
+      _onError = null;
+      throw PhoneMicStartException.fromPlatform(e);
+    }
   }
 
   @override
@@ -110,13 +214,16 @@ class PlatformPhoneMicBackend implements PhoneMicBackend {
   }
 }
 
-/// 将本机麦克风 16kHz 16-bit mono PCM 实时切为标准 1 分钟 `.WAV` 切片。
+/// 将本机麦克风 16kHz 16-bit mono PCM 实时切为可配置窗口（默认 1 分钟）的标准 `.WAV` 切片。
 class PhoneMicRecorder {
   PhoneMicRecorder({
-    this.sliceDuration = const Duration(minutes: 1),
+    Duration sliceDuration = const Duration(minutes: 1),
     Future<Directory> Function()? sliceRootDir,
     DateTime Function()? clock,
-  }) : _sliceRootDir = sliceRootDir,
+  }) : _sliceDuration = sliceDuration >= const Duration(seconds: 1)
+           ? sliceDuration
+           : const Duration(seconds: 1),
+       _sliceRootDir = sliceRootDir,
        _clock = clock ?? DateTime.now;
 
   static const int sampleRate = 16000;
@@ -126,7 +233,25 @@ class PhoneMicRecorder {
   /// 手动下拉刷新最小切分阈值：至少累积 0.5 秒（16000 字节）才封口一片。
   static const int minManualFlushBytes = bytesPerSecond ~/ 2;
 
-  final Duration sliceDuration;
+  Duration _sliceDuration;
+  Duration get sliceDuration => _sliceDuration;
+
+  /// 动态调整本机录音切片窗口（最小 1 秒）；若缩小时已超阈值则立即切分已满片段。
+  void setSliceDuration(Duration next) {
+    final normalized = next >= const Duration(seconds: 1)
+        ? next
+        : const Duration(seconds: 1);
+    if (_sliceDuration == normalized) return;
+    _sliceDuration = normalized;
+    if (_running && !_disposed) {
+      _slicer.flushIfExceeds(
+        sliceDuration: _sliceDuration,
+        sampleRate: sampleRate,
+        onSliceFlush: (chunk) => _scheduleFlush(chunk, isFinal: false),
+      );
+    }
+  }
+
   final Future<Directory> Function()? _sliceRootDir;
   final DateTime Function() _clock;
 
@@ -144,15 +269,17 @@ class PhoneMicRecorder {
   int _sessionStartedAtMs = 0;
   int _sliceIndex = 0;
   int _sliceStartSamples = 0;
-  final BytesBuilder _buffer = BytesBuilder(copy: false);
+  final SoftBoundaryPcmSlicer _slicer = SoftBoundaryPcmSlicer();
+  final List<int> _sliceMarksMs = <int>[];
   bool _disposed = false;
   Future<void> _writeChain = Future<void>.value();
 
-  int get _sliceByteLimit =>
-      (sliceDuration.inMilliseconds * bytesPerSecond ~/ 1000).clamp(
-        bytesPerSecond,
-        bytesPerSecond * 600,
-      );
+  /// 等待当前已封口切片的异步落盘与广播流投递完成（仅供测试做确定性断言，不中断录音）。
+  @visibleForTesting
+  Future<void> get pendingSliceWrites async {
+    await _writeChain;
+    await Future<void>.microtask(() {});
+  }
 
   Future<Directory> _resolveDir() async {
     if (_sliceRootDir != null) {
@@ -173,26 +300,39 @@ class PhoneMicRecorder {
     _sessionId = 'phone-$_sessionStartedAtMs';
     _sliceIndex = 0;
     _sliceStartSamples = 0;
-    _buffer.clear();
+    _slicer.clear();
+    _sliceMarksMs.clear();
     ringBuffer.clear();
     _running = true;
   }
 
+  /// 记录一次当前本机录音切片内的物理/界面重点打点。
+  void recordMark({int? timestampMs}) {
+    if (!_running || _disposed) return;
+    if (timestampMs != null) {
+      _sliceMarksMs.add(timestampMs);
+      return;
+    }
+    final relSamples = (_slicer.totalAlignedSamples - _sliceStartSamples).clamp(
+      0,
+      1 << 30,
+    );
+    _sliceMarksMs.add(relSamples * 1000 ~/ sampleRate);
+  }
+
   void ingestPcm(Uint8List pcmBytes) {
     if (!_running || _disposed || pcmBytes.isEmpty) return;
-    ringBuffer.append(pcmBytes, endTimestampMs: _clock().millisecondsSinceEpoch);
-    _buffer.add(pcmBytes);
-    final limit = _sliceByteLimit;
-    while (_buffer.length >= limit) {
-      final all = _buffer.takeBytes();
-      final chunk = Uint8List.sublistView(all, 0, limit);
-      final rest = all.length > limit
-          ? Uint8List.sublistView(all, limit)
-          : Uint8List(0);
-      if (rest.isNotEmpty) {
-        _buffer.add(rest);
-      }
-      _scheduleFlush(chunk, isFinal: false);
+    final aligned = _slicer.append(
+      pcmBytes,
+      sliceDuration: sliceDuration,
+      sampleRate: sampleRate,
+      onSliceFlush: (chunk) => _scheduleFlush(chunk, isFinal: false),
+    );
+    if (aligned.isNotEmpty) {
+      ringBuffer.append(
+        aligned,
+        endTimestampMs: _clock().millisecondsSinceEpoch,
+      );
     }
   }
 
@@ -200,47 +340,41 @@ class PhoneMicRecorder {
   /// 将当前已缓冲的尾部 PCM（`>= 0.5s`）立即封口为一片正式 `.WAV` 并投递转写。
   Future<bool> flushActiveSlice() async {
     if (!_running || _disposed) return false;
-    if (_buffer.length < minManualFlushBytes) {
+    if (_slicer.bufferedBytes < minManualFlushBytes) {
       await _writeChain;
       return false;
     }
-    final raw = _buffer.takeBytes();
-    final evenLen = raw.length & ~1;
-    if (evenLen < minManualFlushBytes) {
-      if (raw.isNotEmpty) {
-        _buffer.add(raw);
-      }
+    final chunk = _slicer.takeRemainingBytes(clearOddByte: false);
+    if (chunk.length < minManualFlushBytes) {
       await _writeChain;
       return false;
-    }
-    final chunk = evenLen == raw.length
-        ? raw
-        : Uint8List.sublistView(raw, 0, evenLen);
-    if (evenLen < raw.length) {
-      _buffer.add(Uint8List.sublistView(raw, evenLen));
     }
     _scheduleFlush(chunk, isFinal: false);
     await _writeChain;
+    await Future<void>.microtask(() {});
     return true;
   }
 
   Future<void> stop() async {
     if (!_running) return;
     _running = false;
-    final tail = _buffer.takeBytes();
-    final evenLen = tail.length & ~1;
-    if (evenLen > 0) {
-      final aligned = evenLen == tail.length
-          ? tail
-          : Uint8List.sublistView(tail, 0, evenLen);
-      _scheduleFlush(aligned, isFinal: true);
+    final tail = _slicer.takeRemainingBytes(clearOddByte: true);
+    if (tail.isNotEmpty) {
+      _scheduleFlush(tail, isFinal: true);
     }
     await _writeChain;
+    if (tail.isNotEmpty) {
+      await Future<void>.microtask(() {});
+    }
   }
 
   void _scheduleFlush(Uint8List pcm, {required bool isFinal}) {
     final sid = _sessionId ?? 'phone-${DateTime.now().millisecondsSinceEpoch}';
     final index = _sliceIndex++;
+    final marks = _sliceMarksMs.isEmpty
+        ? const <int>[]
+        : List<int>.unmodifiable(_sliceMarksMs);
+    _sliceMarksMs.clear();
     final samples = pcm.length ~/ bytesPerSample;
     final startAtMs =
         _sessionStartedAtMs + (_sliceStartSamples * 1000 ~/ sampleRate);
@@ -273,6 +407,9 @@ class PhoneMicRecorder {
           wavPath: finalFile.path,
           isFinal: isFinal,
           sliceKeyOverride: sliceKey,
+          marksMs: marks,
+          sourceLane: 'phone',
+          sourceDeviceLabel: '手机本机',
         ),
       );
     }).catchError((Object e, StackTrace st) {

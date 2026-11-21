@@ -48,7 +48,7 @@ impl Adapter {
             ));
         }
         debug!("Adapter connected");
-        let manager = Arc::new(AdapterManager::default());
+        let manager: Arc<AdapterManager<Peripheral>> = Arc::new(AdapterManager::default());
 
         let manager_clone = manager.clone();
         let adapter_sender_clone = adapter_sender.clone();
@@ -61,15 +61,22 @@ impl Adapter {
                         advertisement_name,
                         event_receiver,
                     } => {
+                        let id = uuid.into();
+                        let (prev_local, prev_adv) = manager_clone
+                            .peripheral(&id)
+                            .map(|p| p.cached_names())
+                            .unwrap_or((None, None));
                         manager_clone.add_peripheral(Peripheral::new(
                             uuid,
-                            local_name,
-                            advertisement_name,
+                            local_name.filter(|s| !s.trim().is_empty()).or(prev_local),
+                            advertisement_name
+                                .filter(|s| !s.trim().is_empty())
+                                .or(prev_adv),
                             Arc::downgrade(&manager_clone),
                             event_receiver,
                             adapter_sender_clone.clone(),
                         ));
-                        manager_clone.emit(CentralEvent::DeviceDiscovered(uuid.into()));
+                        manager_clone.emit(CentralEvent::DeviceDiscovered(id));
                     }
                     CoreBluetoothEvent::DeviceUpdated {
                         uuid,

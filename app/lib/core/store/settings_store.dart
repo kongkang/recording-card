@@ -58,25 +58,8 @@ class SettingsStore extends ChangeNotifier {
 
   /// 分组与顺序（UI 渲染、测试锚点 `sw-<索引>` 都以它为准）。
   ///
-  /// 默认值按原型：前 5 个开，「仅使用 Wi-Fi 同步」关。
+  /// 默认值：自动转录/清洗/说话人开，「仅使用 Wi-Fi 同步」关。
   static const List<SettingsGroup> groups = <SettingsGroup>[
-    SettingsGroup(
-      title: '录音',
-      items: <SettingsSwitchItem>[
-        SettingsSwitchItem(
-          key: 'rc.set.record.continuous',
-          label: '持续录音',
-          defaultValue: true,
-          semanticLabel: '持续录音开关',
-        ),
-        SettingsSwitchItem(
-          key: 'rc.set.record.mark',
-          label: '标记重要对话',
-          defaultValue: true,
-          semanticLabel: '标记重要对话开关',
-        ),
-      ],
-    ),
     SettingsGroup(
       title: '转录与清洗',
       items: <SettingsSwitchItem>[
@@ -113,7 +96,7 @@ class SettingsStore extends ChangeNotifier {
     ),
   ];
 
-  /// 全部开关按 UI 顺序扁平化（索引 0..5 = 测试锚点 `sw-0`…`sw-5`）。
+  /// 全部开关按 UI 顺序扁平化（索引 0..3 = 测试锚点 `sw-0`…`sw-3`）。
   static List<SettingsSwitchItem> get items => <SettingsSwitchItem>[
     for (final g in groups) ...g.items,
   ];
@@ -180,6 +163,20 @@ class SettingsStore extends ChangeNotifier {
 
   /// 取反（点整行/开关都走这里）。
   Future<void> toggle(String key) => setValue(key, !value(key));
+
+  /// 注销账号或重置本机偏好时清空全部已保存开关项并恢复默认。
+  Future<void> resetAll() async {
+    _values.clear();
+    _touched.clear();
+    for (final item in items) {
+      try {
+        await _store.remove(item.key);
+      } catch (_) {
+        // 忽略重置单个键异常
+      }
+    }
+    if (!_disposed) notifyListeners();
+  }
 
   @override
   void dispose() {

@@ -25,12 +25,15 @@ import '../polish/slice_polish_service.dart';
 import '../segment/fast_topic_segment_agent.dart';
 import '../segment/rolling_clean_segment_service.dart';
 import '../segment/segment_build_service.dart';
+import '../transcribe/local_asr_service.dart';
 import '../transcribe/slice_planner.dart';
 import '../transcribe/speaker_clusterer.dart';
 import '../transcribe/speech_engine.dart';
 import '../transcribe/speech_models.dart';
+import '../transcribe/system_speech_client.dart';
 import '../transcribe/utterance_builder.dart';
 import '../transcribe/wav_io.dart';
+import 'multi_track_reconciler.dart';
 import 'network_policy.dart';
 import 'recording_store.dart';
 import 'speaker_profile_store.dart';
@@ -132,7 +135,7 @@ class RecordingPipeline {
     required this.models,
     this.settings,
     this.agentConfig,
-    this.language = 'zh',
+    this.language = 'auto',
     this.slicePlanner = const SlicePlanner(),
     this.clusterer = const SpeakerClusterer(),
     this.polish,
@@ -141,9 +144,16 @@ class RecordingPipeline {
     this.rollingCleaner,
     TopicSegmentationStore? topicStore,
     this.voiceprintStore,
+    this.multiTrackReconciler,
+    MultiTrackReconciliationStore? reconciliationStore,
+    this.bleDeviceLabelResolver,
     this.network = const NetworkPolicy(),
     this.liveAudioBaseDir,
-  }) : _topicStore = topicStore;
+    this.skipLegacyCloudPolishWhenRollingActive = true,
+  }) : _topicStore = topicStore,
+       _reconciliationStore = reconciliationStore;
+
+  final bool skipLegacyCloudPolishWhenRollingActive;
 
   final CardGateway gateway;
   final RecordingStore store;
@@ -153,10 +163,18 @@ class RecordingPipeline {
   final FastTopicSegmentAgent? topicAgent;
   final RollingCleanSegmentService? rollingCleaner;
   final VoiceprintLibraryStore? voiceprintStore;
+  final MultiTrackReconciler? multiTrackReconciler;
+  final String? Function()? bleDeviceLabelResolver;
   TopicSegmentationStore? _topicStore;
+  MultiTrackReconciliationStore? _reconciliationStore;
 
   TopicSegmentationStore get topicStore =>
       _topicStore ??= TopicSegmentationStore(resolveRoot: store.root);
+
+  MultiTrackReconciliationStore get reconciliationStore =>
+      _reconciliationStore ??= MultiTrackReconciliationStore(
+        resolveRoot: store.root,
+      );
 
   /// 清理本地存量“仅孤立标点幻觉（如 `。`）”与历史 `实时切片 #N` 标题，一次性幂等清洗落盘。
   Future<int> sanitizeLegacyDirtyRecordings() async {
@@ -165,6 +183,7 @@ class RecordingPipeline {
     var fixed = 0;
 
     for (final file in files) {
+      if (file.isExternalImported) continue;
       var changed = false;
       final cleanUtterances = [
         for (final u in file.utterances)
@@ -394,6 +413,9 @@ class RecordingPipeline {
   }
 
   /// 判断卡端 `.APM` 是否已被本机无断档实时流切片覆盖并落库（避免慢速蓝牙重复拉取）。
+  ///
+  /// 注意：仅 `ble` 路实时流可以覆盖卡端 `.APM` 文件；手表（`watch_`）或手机兜底（`LIVE_PHONE_`）
+  /// 切片**绝不允许**跳过蓝牙卡离线文件的拉取，确保断连回连后仍拉回完整数据参与比对合并。
   bool _isCoveredByLiveSlices(
     CardFile source,
     List<LiveSession> liveSessions,
@@ -402,6 +424,7 @@ class RecordingPipeline {
     for (final session in liveSessions) {
       if (!session.coversCardFile(source)) continue;
       final hasLocalSlice = localFiles.any((f) {
+        if (f.resolvedSourceLane != RecordingSourceLane.ble) return false;
         final hasLocalWav =
             f.stage == RecordingStage.ready ||
             (f.wavPath != null &&
@@ -412,7 +435,8 @@ class RecordingPipeline {
         if (session.deviceSessionId != null &&
             session.deviceSessionId!.isNotEmpty &&
             f.session == session.deviceSessionId &&
-            f.deviceName.startsWith('LIVE_')) {
+            f.deviceName.startsWith('LIVE_') &&
+            !f.deviceName.startsWith('LIVE_PHONE_')) {
           return true;
         }
         return f.session == session.id;
@@ -435,6 +459,22 @@ class RecordingPipeline {
                 slice.deviceSessionId!.trim().isNotEmpty)
             ? slice.deviceSessionId!.trim()
             : slice.sessionId;
+        final resolvedLane = slice.sourceLane ??
+            (slice.sliceKey.toUpperCase().startsWith('LIVE_PHONE_')
+                ? RecordingSourceLane.phone.code
+                : (slice.sliceKey.toUpperCase().startsWith('WATCH_')
+                      ? RecordingSourceLane.watch.code
+                      : RecordingSourceLane.ble.code));
+        final resolvedLabel = slice.sourceDeviceLabel?.trim().isNotEmpty == true
+            ? slice.sourceDeviceLabel!.trim()
+            : (resolvedLane == RecordingSourceLane.phone.code
+                  ? '手机本机'
+                  : (resolvedLane == RecordingSourceLane.watch.code
+                        ? 'Apple Watch'
+                        : (bleDeviceLabelResolver?.call()?.trim().isNotEmpty ==
+                                  true
+                              ? bleDeviceLabelResolver!.call()!.trim()
+                              : '蓝牙设备')));
         final file = existing ??
             RecordingFile(
               deviceName: slice.sliceKey,
@@ -447,6 +487,8 @@ class RecordingPipeline {
               durationMs: slice.durationMs,
               createdAtMs: DateTime.now().millisecondsSinceEpoch,
               stage: RecordingStage.transcribing,
+              sourceLane: resolvedLane,
+              sourceDeviceLabel: resolvedLabel,
             );
         if (file.stage != RecordingStage.ready) {
           file
@@ -454,6 +496,8 @@ class RecordingPipeline {
             ..wavPath = slice.wavPath
             ..durationMs = slice.durationMs
             ..stage = RecordingStage.transcribing
+            ..sourceLane = resolvedLane
+            ..sourceDeviceLabel = resolvedLabel
             ..segments = const []
             ..error = null;
           await store.save(file);
@@ -466,6 +510,16 @@ class RecordingPipeline {
       }
     });
     return completer.future;
+  }
+
+  /// 对本地所有已落盘的多路录音执行时间重叠对齐、去重合并与语义分叉判定，并落盘决策表。
+  Future<MultiTrackReconciliationState> reconcileMultiTrack() async {
+    final files = await store.loadAll(refresh: true);
+    final prev = await reconciliationStore.load();
+    final reconciler = multiTrackReconciler ?? MultiTrackReconciler();
+    final next = await reconciler.reconcile(files, previous: prev);
+    await reconciliationStore.save(next);
+    return next;
   }
 
   /// 录音开启期间：把刚封口的一份实时流 WAV 切片直接送入本地 VAD + SenseVoice 转写并落库。
@@ -506,6 +560,21 @@ class RecordingPipeline {
             slice.deviceSessionId!.trim().isNotEmpty)
         ? slice.deviceSessionId!.trim()
         : slice.sessionId;
+    final resolvedLane = slice.sourceLane ??
+        (slice.sliceKey.toUpperCase().startsWith('LIVE_PHONE_')
+            ? RecordingSourceLane.phone.code
+            : (slice.sliceKey.toUpperCase().startsWith('WATCH_')
+                  ? RecordingSourceLane.watch.code
+                  : RecordingSourceLane.ble.code));
+    final resolvedLabel = slice.sourceDeviceLabel?.trim().isNotEmpty == true
+        ? slice.sourceDeviceLabel!.trim()
+        : (resolvedLane == RecordingSourceLane.phone.code
+              ? '手机本机'
+              : (resolvedLane == RecordingSourceLane.watch.code
+                    ? 'Apple Watch'
+                    : (bleDeviceLabelResolver?.call()?.trim().isNotEmpty == true
+                          ? bleDeviceLabelResolver!.call()!.trim()
+                          : '蓝牙设备')));
     final file = existing ??
         RecordingFile(
           deviceName: slice.sliceKey,
@@ -518,11 +587,15 @@ class RecordingPipeline {
           durationMs: slice.durationMs,
           createdAtMs: DateTime.now().millisecondsSinceEpoch,
           stage: RecordingStage.transcribing,
+          sourceLane: resolvedLane,
+          sourceDeviceLabel: resolvedLabel,
         );
     file
       ..apmPath = slice.wavPath
       ..wavPath = slice.wavPath
       ..durationMs = slice.durationMs
+      ..sourceLane ??= resolvedLane
+      ..sourceDeviceLabel ??= resolvedLabel
       ..error = null;
     await store.save(file);
 
@@ -571,15 +644,27 @@ class RecordingPipeline {
     }
 
     final wav = readWavFile(slice.wavPath);
+    Float32List? rawSamples;
+    Float32List? conditionedFull;
+    bool? needsConditioning;
+    Float32List ensureRaw() => rawSamples ??= wav.toFloat32();
+    Float32List ensureConditioned() =>
+        conditionedFull ??= conditionSpeechSamples(
+          ensureRaw(),
+          sampleRate: wav.sampleRate,
+        );
+    bool canReuseSliceWavDirectly() =>
+        !(needsConditioning ??= needsSignalConditioning(
+          ensureRaw(),
+          sampleRate: wav.sampleRate,
+        ));
+    final sliceSamplesById = <String, Float32List>{};
+
     var usedAcousticFallback = false;
     if (wav.frames > 0 && file.slices.isEmpty) {
       report(PipelineStage.slicing, '正在切分第 ${slice.sliceIndex + 1} 片实时录音');
       await engine.loadVad(paths.vadPath);
-      final rawSamples = wav.toFloat32();
-      final conditioned = conditionSpeechSamples(
-        rawSamples,
-        sampleRate: wav.sampleRate,
-      );
+      final conditioned = ensureConditioned();
       final spans = await engine.detectSpeech(conditioned);
       var planned = slicePlanner.plan(
         speech: spans,
@@ -589,7 +674,7 @@ class RecordingPipeline {
       // 兜底：若 VAD 未检出区间，但去直流后存在明显高于底噪的声学能量，
       // 按 30 秒窗口直接送入 SenseVoice 由 ASR 模型自身判定是否有人声。
       if (planned.isEmpty &&
-          hasAcousticSpeechCandidate(rawSamples, sampleRate: wav.sampleRate)) {
+          hasAcousticSpeechCandidate(ensureRaw(), sampleRate: wav.sampleRate)) {
         usedAcousticFallback = true;
         final chunkSamples = wav.sampleRate * 30;
         final fallback = <PlannedSlice>[];
@@ -621,6 +706,9 @@ class RecordingPipeline {
           wav.sliceWav(plan.startSample, plan.endSample),
           flush: true,
         );
+        final cs = plan.startSample.clamp(0, conditioned.length);
+        final ce = plan.endSample.clamp(cs, conditioned.length);
+        sliceSamplesById[id] = Float32List.sublistView(conditioned, cs, ce);
         slices.add(
           AudioSlice(
             id: id,
@@ -653,6 +741,7 @@ class RecordingPipeline {
         tokensPath: paths.tokensPath,
         language: language,
       );
+      final conditioned = ensureConditioned();
       final total = file.slices.length;
       for (var i = 0; i < total; i++) {
         final sub = file.slices[i];
@@ -664,8 +753,14 @@ class RecordingPipeline {
           PipelineStage.transcribing,
           '正在本地转写第 ${slice.sliceIndex + 1} 片（${i + 1}/$total）',
         );
-        final subWav = readWavFile(sub.wavPath);
-        final result = await engine.transcribe(subWav.toSpeechFloat32());
+        final subSamples =
+            sliceSamplesById[sub.id] ??
+            _sliceConditionedView(conditioned, sub, wav.sampleRate);
+        final result = await _transcribeSliceAudio(
+          subSamples,
+          sampleRate: wav.sampleRate,
+          directWavPath: canReuseSliceWavDirectly() ? sub.wavPath : null,
+        );
         final utterances = buildUtterancesFromAsr(
           sliceId: sub.id,
           sliceStartMs: sub.startMs,
@@ -695,7 +790,12 @@ class RecordingPipeline {
     if (file.utterances.isNotEmpty) {
       report(PipelineStage.labeling, '正在推测说话人');
       if (_speakerLabel && paths.canLabelSpeakers) {
-        await _labelSpeakers(file, paths.speakerEmbeddingPath!);
+        await _labelSpeakers(
+          file,
+          paths.speakerEmbeddingPath!,
+          conditionedFull: conditionedFull,
+          fullSampleRate: wav.sampleRate,
+        );
       } else {
         file.utterances = [
           for (final u in file.utterances) u.copyWith(speakerLabel: '未区分'),
@@ -714,10 +814,82 @@ class RecordingPipeline {
     return file;
   }
 
+  Future<AsrResult> _transcribeSliceAudio(
+    Float32List conditionedSamples, {
+    required int sampleRate,
+    String? directWavPath,
+  }) {
+    final activeEngine = engine;
+    if (activeEngine is RoutingSpeechEngine && directWavPath != null) {
+      return activeEngine.transcribe(
+        conditionedSamples,
+        sampleRate: sampleRate,
+        wavPath: directWavPath,
+      );
+    }
+    return activeEngine.transcribe(conditionedSamples, sampleRate: sampleRate);
+  }
+
+  static Float32List _sliceConditionedView(
+    Float32List conditionedFull,
+    AudioSlice sub,
+    int sampleRate,
+  ) {
+    final s = (sub.startMs * sampleRate ~/ 1000).clamp(
+      0,
+      conditionedFull.length,
+    );
+    final e = (sub.endMs * sampleRate ~/ 1000).clamp(s, conditionedFull.length);
+    if (e > s) {
+      return Float32List.sublistView(conditionedFull, s, e);
+    }
+    if (sub.wavPath.isNotEmpty && File(sub.wavPath).existsSync()) {
+      return readWavFile(sub.wavPath).toSpeechFloat32();
+    }
+    return Float32List(0);
+  }
+
+  static String? _resolveSliceMark(RecordingFile file, LiveAudioSlice slice) {
+    final parts = <String>[];
+    if (slice.marksMs.isNotEmpty) {
+      final timeLabels = <String>[];
+      for (final m in slice.marksMs) {
+        final absMs = m >= 1000000000000
+            ? m
+            : (file.startAtMs + m.clamp(0, 86400000));
+        if (absMs > 0) {
+          final dt = DateTime.fromMillisecondsSinceEpoch(absMs);
+          final hh = dt.hour.toString().padLeft(2, '0');
+          final mm = dt.minute.toString().padLeft(2, '0');
+          final label = '$hh:$mm';
+          if (!timeLabels.contains(label)) timeLabels.add(label);
+        }
+      }
+      if (timeLabels.isEmpty) {
+        parts.add('重点打点');
+      } else if (slice.marksMs.length > 1) {
+        parts.add('重点打点 ${slice.marksMs.length} 处 · ${timeLabels.join(' / ')}');
+      } else {
+        parts.add('重点打点 · ${timeLabels.single}');
+      }
+    }
+    if (slice.gapCount > 0) {
+      parts.add('流中断 ${slice.gapCount} 次');
+    }
+    if (parts.isNotEmpty) {
+      return parts.join(' · ');
+    }
+    final existingMark = file.segments.isNotEmpty
+        ? (file.segments.first.mark ?? '').trim()
+        : '';
+    return existingMark.isNotEmpty ? existingMark : null;
+  }
+
   SegmentRecord _buildLocalSliceSegment(
     RecordingFile file,
     LiveAudioSlice slice,
   ) {
+    final resolvedMark = _resolveSliceMark(file, slice);
     final utterances = [
       for (final u in file.utterances)
         if (isMeaningfulSpeechText(u.text)) u,
@@ -747,7 +919,7 @@ class RecordingPipeline {
         longText: '本段未检测到有效人声，原始录音已保存在本机，可在详情「原始数据」回听。',
         status: SegmentStatus.closed,
         sliceIds: sliceIds,
-        mark: slice.gapCount > 0 ? '流中断 ${slice.gapCount} 次' : null,
+        mark: resolvedMark,
       );
     }
 
@@ -770,7 +942,7 @@ class RecordingPipeline {
         longText: '本段未检测到有效人声，原始录音已保存在本机，可在详情「原始数据」回听。',
         status: SegmentStatus.closed,
         sliceIds: sliceIds,
-        mark: slice.gapCount > 0 ? '流中断 ${slice.gapCount} 次' : null,
+        mark: resolvedMark,
       );
     }
 
@@ -804,7 +976,7 @@ class RecordingPipeline {
       speakerCount: speakers.length,
       status: SegmentStatus.closed,
       sliceIds: sliceIds,
-      mark: slice.gapCount > 0 ? '流中断 ${slice.gapCount} 次' : null,
+      mark: resolvedMark,
     );
   }
 
@@ -1337,16 +1509,57 @@ class RecordingPipeline {
       return didDownload;
     }
 
-    // 4) VAD 切片
+    Float32List? rawSamples;
+    Float32List? conditionedFull;
+    bool? needsConditioning;
+    Float32List ensureRaw() => rawSamples ??= wav.toFloat32();
+    Float32List ensureConditioned() =>
+        conditionedFull ??= conditionSpeechSamples(
+          ensureRaw(),
+          sampleRate: wav.sampleRate,
+        );
+    bool canReuseSliceWavDirectly() =>
+        !(needsConditioning ??= needsSignalConditioning(
+          ensureRaw(),
+          sampleRate: wav.sampleRate,
+        ));
+    final sliceSamplesById = <String, Float32List>{};
+    var usedAcousticFallback = false;
+
+    // 4) VAD 切片（含 30s 声学能量兜底，对齐 ingestLiveSlice）
     if (file.slices.isEmpty) {
       report(PipelineStage.slicing, text: '正在切分 ${pipelineTimeLabel(file)} 这段');
       await engine.loadVad(paths.vadPath);
-      final spans = await engine.detectSpeech(wav.toSpeechFloat32());
-      final planned = slicePlanner.plan(
+      final conditioned = ensureConditioned();
+      final spans = await engine.detectSpeech(conditioned);
+      var planned = slicePlanner.plan(
         speech: spans,
         totalSamples: wav.frames,
         sampleRate: wav.sampleRate,
       );
+      if (planned.isEmpty &&
+          hasAcousticSpeechCandidate(ensureRaw(), sampleRate: wav.sampleRate)) {
+        usedAcousticFallback = true;
+        final chunkSamples = wav.sampleRate * 30;
+        final fallback = <PlannedSlice>[];
+        var idx = 0;
+        for (var s = 0; s < wav.frames; s += chunkSamples) {
+          final e = (s + chunkSamples < wav.frames)
+              ? s + chunkSamples
+              : wav.frames;
+          if (e > s) {
+            fallback.add(
+              PlannedSlice(
+                index: idx++,
+                startSample: s,
+                endSample: e,
+                silenceAfterSamples: e < wav.frames ? 0 : (wav.frames - e),
+              ),
+            );
+          }
+        }
+        planned = fallback;
+      }
       final sliceDir = Directory('${dir.path}/slices');
       if (!await sliceDir.exists()) await sliceDir.create(recursive: true);
       final slices = <AudioSlice>[];
@@ -1357,6 +1570,9 @@ class RecordingPipeline {
           wav.sliceWav(plan.startSample, plan.endSample),
           flush: true,
         );
+        final cs = plan.startSample.clamp(0, conditioned.length);
+        final ce = plan.endSample.clamp(cs, conditioned.length);
+        sliceSamplesById[id] = Float32List.sublistView(conditioned, cs, ce);
         slices.add(
           AudioSlice(
             id: id,
@@ -1395,12 +1611,13 @@ class RecordingPipeline {
       return didDownload;
     }
 
-    // 5) 逐片本地转写（每片完成立即落盘）
+    // 5) 逐片本地转写（单次信号预处理复用，每片完成立即落盘）
     await engine.load(
       modelPath: paths.asrModelPath,
       tokensPath: paths.tokensPath,
       language: language,
     );
+    final conditioned = ensureConditioned();
     final total = file.slices.length;
     for (var i = 0; i < total; i++) {
       final slice = file.slices[i];
@@ -1415,8 +1632,14 @@ class RecordingPipeline {
         text: '正在转写 ${pipelineTimeLabel(file)} 这段（${i + 1}/$total）',
       );
       try {
-        final sliceWav = readWavFile(slice.wavPath);
-        final result = await engine.transcribe(sliceWav.toSpeechFloat32());
+        final sliceSamples =
+            sliceSamplesById[slice.id] ??
+            _sliceConditionedView(conditioned, slice, wav.sampleRate);
+        final result = await _transcribeSliceAudio(
+          sliceSamples,
+          sampleRate: wav.sampleRate,
+          directWavPath: canReuseSliceWavDirectly() ? slice.wavPath : null,
+        );
         final utterances = buildUtterancesFromAsr(
           sliceId: slice.id,
           sliceStartMs: slice.startMs,
@@ -1445,12 +1668,26 @@ class RecordingPipeline {
         throw PipelineException('切片 ${slice.id} 转写失败：$e');
       }
     }
+    if (usedAcousticFallback && file.utterances.isEmpty) {
+      file.slices = [];
+      await store.save(file);
+      file
+        ..stage = RecordingStage.ready
+        ..error = null;
+      await store.save(file);
+      return didDownload;
+    }
 
     // 6) 声纹聚类（关闭开关或模型缺失则统一「未区分」）
     if (file.utterances.isNotEmpty) {
       report(PipelineStage.labeling, text: '正在整理 ${pipelineTimeLabel(file)} 说话人');
       if (_speakerLabel && paths.canLabelSpeakers) {
-        await _labelSpeakers(file, paths.speakerEmbeddingPath!);
+        await _labelSpeakers(
+          file,
+          paths.speakerEmbeddingPath!,
+          conditionedFull: conditionedFull,
+          fullSampleRate: wav.sampleRate,
+        );
       } else {
         file.utterances = [
           for (final u in file.utterances)
@@ -1458,6 +1695,22 @@ class RecordingPipeline {
         ];
       }
       await store.save(file);
+    }
+
+    // 当已挂载新一代滚动清洗引擎（rollingCleaner）时，跳过旧版逐文件云端窗口润色与云端分段总结，
+    // 直接落地干净的本地确定性分段，消除同一段录音被云端大模型重复处理 3 次！
+    final deferCloudToRolling =
+        skipLegacyCloudPolishWhenRollingActive && rollingCleaner != null;
+    if (deferCloudToRolling) {
+      if (file.segments.isEmpty) {
+        file.segments = _buildDeterministicFileSegments(file);
+      }
+      file
+        ..stage = RecordingStage.ready
+        ..error = null;
+      await store.save(file);
+      report(PipelineStage.done, text: '${pipelineTimeLabel(file)} 这段处理完成');
+      return didDownload;
     }
 
     // 7) 云端窗口润色：失败不推翻本地数据，只标 stale 供界面提示
@@ -1515,12 +1768,138 @@ class RecordingPipeline {
     return didDownload;
   }
 
-  Future<void> _labelSpeakers(RecordingFile file, String embeddingPath) async {
+  List<SegmentRecord> _buildDeterministicFileSegments(RecordingFile file) {
+    final meaningful = [
+      for (final u in file.utterances)
+        if (isMeaningfulSpeechText(u.text)) u,
+    ]..sort((a, b) => a.startMs.compareTo(b.startMs));
+
+    if (meaningful.isEmpty) {
+      if (file.slices.isEmpty) return const [];
+      final endMs = file.startAtMs + (file.durationMs > 0 ? file.durationMs : 1000);
+      return [
+        SegmentRecord(
+          id: 'seg-${file.id}-0',
+          sessionId: file.session,
+          index: 0,
+          startAtMs: file.startAtMs,
+          endAtMs: endMs,
+          title: '未识别到语音',
+          brief: '本段未检测到有效人声，原始录音已保存在本机。',
+          longText: '本段未检测到有效人声，原始录音已保存在本机，可在详情「原始数据」回听。',
+          status: SegmentStatus.closed,
+          sliceIds: [for (final s in file.slices) s.id],
+        ),
+      ];
+    }
+
+    // 若单文件内部出现 >= 60s 长静音，先按声学边界拆成独立分段，便于 RollingClean 按段承接
+    final groups = <List<RawUtterance>>[
+      [meaningful.first],
+    ];
+    for (var i = 1; i < meaningful.length; i++) {
+      final prev = groups.last.last;
+      final curr = meaningful[i];
+      if (curr.startMs - prev.endMs >= 60 * 1000) {
+        groups.add([curr]);
+      } else {
+        groups.last.add(curr);
+      }
+    }
+
+    final out = <SegmentRecord>[];
+    for (var gi = 0; gi < groups.length; gi++) {
+      final group = groups[gi];
+      var mergedText = '';
+      for (final u in group) {
+        final clean = cleanSpokenFillers(u.text);
+        final piece = (clean.isNotEmpty && isMeaningfulSpeechText(clean))
+            ? clean
+            : u.text.trim();
+        if (!isMeaningfulSpeechText(piece)) continue;
+        mergedText = mergedText.isEmpty
+            ? piece
+            : joinPolishedUtterances(mergedText, piece);
+      }
+      if (!isMeaningfulSpeechText(mergedText)) continue;
+      final speakers = <String>{
+        for (final u in group)
+          if ((u.speakerLabel ?? '').trim().isNotEmpty &&
+              u.speakerLabel != '未区分')
+            u.speakerLabel!.trim(),
+      }.toList()..sort();
+      final sliceIds = <String>{
+        for (final u in group)
+          if (u.sliceId.isNotEmpty) u.sliceId,
+      }.toList();
+      final segStart = groups.length == 1
+          ? file.startAtMs
+          : file.startAtMs + group.first.startMs;
+      final segEnd = groups.length == 1
+          ? file.startAtMs +
+                (file.durationMs > 0 ? file.durationMs : group.last.endMs)
+          : file.startAtMs + group.last.endMs;
+      final brief = mergedText.length <= 68
+          ? mergedText
+          : '${mergedText.substring(0, 68)}…';
+      final longText = mergedText.length <= 120
+          ? mergedText
+          : '${mergedText.substring(0, 120)}…';
+      out.add(
+        SegmentRecord(
+          id: 'seg-${file.id}-$gi',
+          sessionId: file.session,
+          index: gi,
+          startAtMs: segStart,
+          endAtMs: segEnd > segStart ? segEnd : segStart + 1000,
+          title: buildReadableFallbackTitle(mergedText, fallback: '语音片段'),
+          brief: brief,
+          longText: longText,
+          speakerLabels: speakers,
+          speakerCount: speakers.length,
+          status: SegmentStatus.closed,
+          sliceIds: sliceIds.isNotEmpty
+              ? sliceIds
+              : [for (final s in file.slices) s.id],
+          fallback: true,
+        ),
+      );
+    }
+    return out;
+  }
+
+  Future<void> _labelSpeakers(
+    RecordingFile file,
+    String embeddingPath, {
+    Float32List? conditionedFull,
+    int fullSampleRate = 16000,
+  }) async {
     await engine.loadSpeakerEmbedding(embeddingPath);
     final cache = <String, WavPcm>{};
     final pcmCache = <String, Float32List>{};
     final samples = <SpeakerSample>[];
     for (final utterance in file.utterances) {
+      if (conditionedFull != null && conditionedFull.isNotEmpty) {
+        final startFrame = (utterance.startMs * fullSampleRate / 1000).round();
+        final endFrame = (utterance.endMs * fullSampleRate / 1000).round();
+        final start = startFrame.clamp(0, conditionedFull.length);
+        final end = endFrame.clamp(start, conditionedFull.length);
+        if (end - start >= fullSampleRate * 6 ~/ 10) {
+          final vector = await engine.embedSpeaker(
+            Float32List.sublistView(conditionedFull, start, end),
+          );
+          if (vector.isNotEmpty) {
+            samples.add(
+              SpeakerSample(
+                id: utterance.id,
+                embedding: vector,
+                durationMs: utterance.durationMs,
+              ),
+            );
+          }
+        }
+        continue;
+      }
       AudioSlice? slice;
       for (final s in file.slices) {
         if (s.id == utterance.sliceId) {
@@ -1549,7 +1928,10 @@ class RecordingPipeline {
       );
     }
 
-    final cluster = clusterer.cluster(samples);
+    final cluster = clusterer.cluster(
+      samples,
+      audioDurationMs: file.durationMs > 0 ? file.durationMs : null,
+    );
     final byId = {for (final a in cluster.assignments) a.id: a};
 
     // 会话级编号：一次连续录音会横跨多个设备文件，同一个人的编号要跨文件稳定。
@@ -1626,6 +2008,7 @@ class RecordingPipeline {
     final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final startSec = source.startAtSec;
     final endSec = source.createdAtSec ?? nowSec;
+    final bleLabel = bleDeviceLabelResolver?.call()?.trim();
     return RecordingFile(
       deviceName: source.name,
       session: source.session ?? source.name,
@@ -1635,6 +2018,10 @@ class RecordingPipeline {
       apmPath: '',
       createdAtMs: DateTime.now().millisecondsSinceEpoch,
       stage: RecordingStage.queued,
+      sourceLane: RecordingSourceLane.ble.code,
+      sourceDeviceLabel: (bleLabel != null && bleLabel.isNotEmpty)
+          ? bleLabel
+          : '蓝牙设备',
     );
   }
 

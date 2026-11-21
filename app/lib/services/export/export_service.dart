@@ -1,18 +1,9 @@
 /// 导出编排 —— 对外唯一入口：一站式完成「生成文件 → 调起系统分享面板」。
 ///
-/// 用法（主线在总结结果页的导出菜单里各选项调用一次）：
-/// ```dart
-/// final result = await ExportService().export(
-///   ExportFormat.pdf,
-///   document,               // SummaryCard → ExportDocument，由页面层负责转换
-///   captureKey: _captureKey, // 图片导出用；其它格式可传 null（仍需显式传）
-/// );
-/// // result.path 为落盘路径，result.shareLabel 为格式名（用于提示文案）
-/// ```
-///
 /// 文件落到 `临时目录/exports/`：
-/// - 临时目录由系统回收，不需要额外权限（iOS 沙盒 / Android 应用私有缓存），
-///   分享面板拿到的是 file URI，接收方应用可正常读取；
+/// - 临时目录由系统回收，不需要额外权限（iOS 沙盒 / Android 应用私有缓存）；
+/// - iPadOS / macOS 的 `UIActivityViewController` popover 强制要求非空 `sharePositionOrigin`，
+///   调用方传入触发按钮的 [shareAnchorKey] 或 [sharePositionOrigin] 即可对全部 4 种格式生效；
 /// - 分享前会清理 `exports/` 里 3 天前的旧产物，避免缓存无限膨胀。
 ///
 /// 失败一律抛 [ExportException]（中文 message），不吞异常、不做静默降级。
@@ -104,7 +95,8 @@ class ExportService {
         _markdownExporter = markdownExporter ?? const MarkdownExporter(),
         _wordExporter = wordExporter ?? const WordExporter(),
         _clock = clock ?? DateTime.now,
-        _outputDirectoryProvider = outputDirectoryProvider ?? _defaultOutputDirectory,
+        _outputDirectoryProvider =
+            outputDirectoryProvider ?? _defaultOutputDirectory,
         _shareLauncher = shareLauncher ?? SharePlus.instance.share;
 
   final PdfExporter _pdfExporter;
@@ -123,11 +115,15 @@ class ExportService {
 
   /// 导出并调起系统分享面板。
   ///
-  /// [captureKey] 必传但可为 null：只有图片格式会用到它（页面截图锚点）。
+  /// - [captureKey]：图片导出截图用的 `RepaintBoundary` key（可选）。
+  /// - [shareAnchorKey] / [sharePositionOrigin]：系统分享面板在 iPadOS / macOS 上的弹出锚点，
+  ///   应对所有导出格式传入页头「导出」按钮的 GlobalKey 或矩形，防止 iPadOS Popover 崩溃。
   Future<ExportResult> export(
     ExportFormat format,
     ExportDocument doc, {
-    required GlobalKey? captureKey,
+    GlobalKey? captureKey,
+    GlobalKey? shareAnchorKey,
+    Rect? sharePositionOrigin,
   }) async {
     if (doc.isEmpty) {
       throw const ExportException('没有可导出的内容');
@@ -172,7 +168,12 @@ class ExportService {
     }
 
     // 3) 调起系统分享面板
-    await _share(format, doc, path, length, captureKey);
+    final resolvedOrigin = _resolveShareOrigin(
+      explicitOrigin: sharePositionOrigin,
+      shareAnchorKey: shareAnchorKey,
+      captureKey: captureKey,
+    );
+    await _share(format, doc, path, length, resolvedOrigin);
     return ExportResult(path: path, shareLabel: format.label);
   }
 
@@ -182,14 +183,13 @@ class ExportService {
     ExportDocument doc,
     String path,
     int length,
-    GlobalKey? captureKey,
+    Rect? shareOrigin,
   ) async {
     final params = ShareParams(
       files: <XFile>[XFile(path, mimeType: format.mimeType, length: length)],
       title: doc.safeTitle,
       subject: doc.safeTitle,
-      // iPad / macOS 上分享面板是 popover，需要锚点；拿不到锚点时不传（系统会居中弹出）
-      sharePositionOrigin: _anchorRect(captureKey),
+      sharePositionOrigin: shareOrigin,
     );
     try {
       await _shareLauncher(params);
@@ -202,14 +202,31 @@ class ExportService {
     }
   }
 
-  /// 用 captureKey 的渲染框算分享锚点（iPad popover 位置）。
-  Rect? _anchorRect(GlobalKey? captureKey) {
-    final context = captureKey?.currentContext;
+  Rect? _resolveShareOrigin({
+    Rect? explicitOrigin,
+    GlobalKey? shareAnchorKey,
+    GlobalKey? captureKey,
+  }) {
+    if (explicitOrigin != null &&
+        explicitOrigin.width > 0 &&
+        explicitOrigin.height > 0) {
+      return explicitOrigin;
+    }
+    final fromAnchor = _anchorRect(shareAnchorKey);
+    if (fromAnchor != null) return fromAnchor;
+    return _anchorRect(captureKey);
+  }
+
+  /// 用 GlobalKey 的渲染框计算非空分享锚点（iPadOS UIPopoverPresentationController 必填）。
+  Rect? _anchorRect(GlobalKey? key) {
+    final context = key?.currentContext;
     if (context == null) return null;
     final box = context.findRenderObject();
-    if (box is! RenderBox || !box.hasSize) return null;
+    if (box is! RenderBox || !box.hasSize || box.size.isEmpty) return null;
     final origin = box.localToGlobal(Offset.zero);
-    return origin & box.size;
+    final rect = origin & box.size;
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return rect;
   }
 
   /// 输出目录：`临时目录/exports/`，并顺带清理过期产物。

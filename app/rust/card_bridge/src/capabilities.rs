@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use reai_ext_sdk::{RecorderSdkDriver, SdkCapabilities};
 use reai_feishu_sdk::FeishuSdkDriver;
-use reai_getseed_sdk::GetSeedSdkDriver;
 use reai_omi_sdk::OmiSdkDriver;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -19,8 +18,6 @@ pub enum DeviceKind {
     DyjV1,
     /// 语音 AI 键盘 V2.1（`reai-board-sdk`，广播前缀 `REAI_VB_`）
     BoardV21,
-    /// 得到 Get 笔记录音卡 GSC10（`reai-getseed-sdk`）
-    GetSeedGsc10,
     /// Omi 量产版 / Friend Pendant（`reai-omi-sdk`）
     OmiCv1,
     /// 飞书录音豆 / soundcore Work D3200（`reai-feishu-sdk`）
@@ -33,7 +30,6 @@ impl DeviceKind {
             Self::CardV2 => "card_v2",
             Self::DyjV1 => "dyj_v1",
             Self::BoardV21 => "board_v21",
-            Self::GetSeedGsc10 => "getseed_gsc10",
             Self::OmiCv1 => "omi_cv1",
             Self::FeishuD3200 => "feishu_d3200",
         }
@@ -44,7 +40,6 @@ impl DeviceKind {
             Self::CardV2 => "录音卡 V2",
             Self::DyjV1 => "点一机 V1",
             Self::BoardV21 => "语音AI键盘 V2.1",
-            Self::GetSeedGsc10 => "Get笔记卡",
             Self::OmiCv1 => "Omi 录音器",
             Self::FeishuD3200 => "飞书录音豆",
         }
@@ -55,7 +50,6 @@ impl DeviceKind {
             Some("card_v2") => return Some(Self::CardV2),
             Some("dyj_v1") => return Some(Self::DyjV1),
             Some("board_v21") => return Some(Self::BoardV21),
-            Some("getseed_gsc10") => return Some(Self::GetSeedGsc10),
             Some("omi_cv1") => return Some(Self::OmiCv1),
             Some("feishu_d3200") => return Some(Self::FeishuD3200),
             _ => {}
@@ -101,9 +95,6 @@ impl DeviceKind {
                 has_configurable_buttons: false,
                 ota_mode: "none",
             },
-            Self::GetSeedGsc10 => {
-                HardwareCapabilities::from_sdk(GetSeedSdkDriver.default_capabilities())
-            }
             Self::OmiCv1 => HardwareCapabilities::from_sdk(OmiSdkDriver.default_capabilities()),
             Self::FeishuD3200 => {
                 HardwareCapabilities::from_sdk(FeishuSdkDriver.default_capabilities())
@@ -140,13 +131,33 @@ impl HardwareCapabilities {
             has_physical_record_toggle: caps.has_physical_record_toggle,
             has_remote_record_control: caps.has_remote_record_control,
             has_mark_button: caps.has_mark_button,
-            has_configurable_buttons: false,
+            has_configurable_buttons: caps.has_configurable_buttons,
             ota_mode: caps.ota_mode,
         }
     }
 }
 
 const DFU_FE59_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000fe59_0000_1000_8000_00805f9b34fb);
+
+/// 按点一机 V1 实机协商的版本码与 `feature_bits` 动态裁剪能力矩阵。
+///
+/// - `< 0.8.8`（`version_code` in `1..808`）固件无 `camera.*` 域，`has_camera_media = false`；
+/// - `>= 0.8.8`（或未知 `0`）保留 `has_camera_media = true`。
+pub fn dyj_v1_capabilities_for_firmware(
+    fw_version_code: u64,
+    feature_bits: Option<u64>,
+) -> HardwareCapabilities {
+    let mut caps = DeviceKind::DyjV1.capabilities();
+    if fw_version_code > 0 && fw_version_code < 808 {
+        caps.has_camera_media = false;
+    }
+    if let Some(bits) = feature_bits {
+        if bits & 0x04 == 0 {
+            caps.realtime_audio = false;
+        }
+    }
+    caps
+}
 
 /// V2 录音卡 Bootloader 恢复模式（`DFU_DYJ` / `0xFE59`）能力裁剪：仅允许固件恢复升级。
 pub fn card_v2_dfu_recovery_capabilities() -> HardwareCapabilities {
@@ -187,8 +198,8 @@ fn classify_proprietary_name(trimmed: &str) -> Option<(DeviceKind, HardwareCapab
     }
 }
 
-fn external_drivers() -> [&'static dyn RecorderSdkDriver; 3] {
-    [&GetSeedSdkDriver, &OmiSdkDriver, &FeishuSdkDriver]
+fn external_drivers() -> [&'static dyn RecorderSdkDriver; 2] {
+    [&OmiSdkDriver, &FeishuSdkDriver]
 }
 
 /// 根据 BLE 广播名称识别支持的录音硬件。
@@ -252,7 +263,6 @@ pub fn classify_ble_advertisement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reai_getseed_sdk::protocol::MFG_ID_GETSEED;
     use reai_omi_sdk::protocol::{SVC_FRIEND_PENDANT_UUID, SVC_OMI_AUDIO_UUID};
 
     #[test]
@@ -280,28 +290,17 @@ mod tests {
     }
 
     #[test]
-    fn classifies_getseed_and_omi_by_name_uuid_and_manufacturer_data() {
+    fn classifies_omi_and_feishu_by_name_and_uuid() {
         let empty = HashMap::new();
 
-        let (kg, cg) = classify_ble_name("Get-A102").expect("getseed name");
-        assert_eq!(kg, DeviceKind::GetSeedGsc10);
-        assert!(!cg.realtime_audio && cg.has_onboard_storage && cg.has_file_sync);
-        assert!(!cg.has_remote_record_control && !cg.has_wifi_config);
-        assert_eq!(cg.ota_mode, "none");
-
-        let mut mfd = HashMap::new();
-        mfd.insert(MFG_ID_GETSEED, vec![0x01, 0x02]);
-        let (name_mfd, kmfd, _) =
-            classify_ble_advertisement("uuid-1234", None, &[], &mfd).expect("getseed mfd");
-        assert_eq!(kmfd, DeviceKind::GetSeedGsc10);
-        assert!(name_mfd.contains("1234"));
+        assert!(classify_ble_name("Get-A102").is_none());
 
         let (name_omi, ko, co) =
             classify_ble_advertisement("dead-beef-5678", None, &[SVC_OMI_AUDIO_UUID], &empty)
                 .expect("omi uuid only");
         assert_eq!(ko, DeviceKind::OmiCv1);
         assert!(co.realtime_audio && co.has_file_sync && co.has_remote_record_control);
-        assert!(co.has_mark_button && !co.has_wifi_config);
+        assert!(co.has_mark_button && co.has_configurable_buttons && !co.has_wifi_config);
         assert!(name_omi.starts_with("Omi-"));
 
         let (_, kf, _) = classify_ble_advertisement(
@@ -346,5 +345,14 @@ mod tests {
                 .expect("dfu recovery uuid only");
         assert_eq!(dfu_uuid_only, "DFU_DYJ");
         assert_eq!(dfu_uuid_kind, DeviceKind::CardV2);
+
+        let caps_087 = dyj_v1_capabilities_for_firmware(807, Some(31));
+        assert!(!caps_087.has_camera_media);
+        assert!(caps_087.realtime_audio);
+        let caps_0815 = dyj_v1_capabilities_for_firmware(815, Some(255));
+        assert!(caps_0815.has_camera_media);
+        assert!(caps_0815.realtime_audio);
+        let caps_unknown = dyj_v1_capabilities_for_firmware(0, None);
+        assert!(caps_unknown.has_camera_media);
     }
 }

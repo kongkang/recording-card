@@ -343,6 +343,38 @@ class SegmentRecord {
   );
 }
 
+/// 采集源通路（最多两路并行：蓝牙硬件路 `ble` vs 手表/手机伴随路 `watch`/`phone`）。
+enum RecordingSourceLane {
+  ble('ble', '蓝牙设备'),
+  watch('watch', 'Apple Watch'),
+  phone('phone', '手机本机');
+
+  const RecordingSourceLane(this.code, this.defaultLabel);
+
+  final String code;
+  final String defaultLabel;
+
+  /// 是否属于伴随兜底通路（手表与手机同属一路，不形成三路）。
+  bool get isCompanion => this == watch || this == phone;
+
+  /// 权威权重（蓝牙硬件最贴近配戴/通话场景 > 手表 > 手机本机）。
+  int get authorityWeight => switch (this) {
+    RecordingSourceLane.ble => 3,
+    RecordingSourceLane.watch => 2,
+    RecordingSourceLane.phone => 1,
+  };
+
+  static RecordingSourceLane? tryParse(String? raw) {
+    final normalized = raw?.trim().toLowerCase();
+    return switch (normalized) {
+      'ble' => RecordingSourceLane.ble,
+      'watch' => RecordingSourceLane.watch,
+      'phone' => RecordingSourceLane.phone,
+      _ => null,
+    };
+  }
+}
+
 /// 一条设备录音文件的完整本地状态（一份 JSON 落盘）。
 class RecordingFile {
   RecordingFile({
@@ -363,10 +395,18 @@ class RecordingFile {
     this.polishedThroughSlice = -1,
     this.polishStale = false,
     this.error,
+    this.sourceLane,
+    this.sourceDeviceLabel,
   });
 
   /// 设备上的文件名（如 `059F19DF.APM`），去重键。
   final String deviceName;
+
+  /// 第三方外部平台（如得到大脑 OpenAPI）导入记录的设备文件名前缀。
+  static const String getNoteDevicePrefix = 'GETNOTE_';
+
+  /// 是否为外部平台导入条目（不经过本地转写、音频清理或连续语音分段合并）。
+  bool get isExternalImported => deviceName.startsWith(getNoteDevicePrefix);
 
   /// 设备会话号（8 位十六进制）；旧固件为空。
   final String session;
@@ -399,6 +439,30 @@ class RecordingFile {
   /// 本地入库时间（同步时刻），用于保留策略与排障。
   final int createdAtMs;
 
+  /// 采集源通路标识（`'ble'` | `'watch'` | `'phone'`）与来源设备名（可空，缺省从名称前缀推断）。
+  String? sourceLane;
+  String? sourceDeviceLabel;
+
+  RecordingSourceLane get resolvedSourceLane {
+    final parsed = RecordingSourceLane.tryParse(sourceLane);
+    if (parsed != null) return parsed;
+    final upper = deviceName.trim().toUpperCase();
+    if (upper.startsWith('LIVE_PHONE_') || session.startsWith('phone-')) {
+      return RecordingSourceLane.phone;
+    }
+    if (upper.startsWith('WATCH_') || session.startsWith('watch_')) {
+      return RecordingSourceLane.watch;
+    }
+    return RecordingSourceLane.ble;
+  }
+
+  String get resolvedSourceDeviceLabel {
+    final trimmed = sourceDeviceLabel?.trim();
+    if (trimmed != null && trimmed.isNotEmpty) return trimmed;
+    if (isExternalImported) return '得到大脑';
+    return resolvedSourceLane.defaultLabel;
+  }
+
   String get id => 'rec-${deviceName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '')}';
 
   Map<String, dynamic> toJson() => {
@@ -420,6 +484,9 @@ class RecordingFile {
     if (polishStale) 'ps': true,
     'cr': createdAtMs,
     if (error != null) 'err': error,
+    if (sourceLane != null && sourceLane!.isNotEmpty) 'lane': sourceLane,
+    if (sourceDeviceLabel != null && sourceDeviceLabel!.isNotEmpty)
+      'devLbl': sourceDeviceLabel,
   };
 
   factory RecordingFile.fromJson(Map<String, dynamic> j) => RecordingFile(
@@ -455,5 +522,7 @@ class RecordingFile {
     polishStale: j['ps'] == true,
     createdAtMs: (j['cr'] as num?)?.toInt() ?? 0,
     error: j['err'] as String?,
+    sourceLane: j['lane'] as String?,
+    sourceDeviceLabel: j['devLbl'] as String?,
   );
 }

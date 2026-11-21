@@ -330,6 +330,7 @@ void main() {
         startAtMs: 1_794_758_400_000,
         durationMs: 1_000,
         wavPath: wavFile.path,
+        marksMs: const [420],
       ),
     );
     await tester.pump();
@@ -338,6 +339,7 @@ void main() {
     expect(env.store.ingestedSlices.length, 1);
     expect(env.store.ingestedSlices.first.wavPath, wavFile.path);
     expect(env.store.ingestedSlices.first.sliceKeyOverride, 'watch_slice-w1');
+    expect(env.store.ingestedSlices.first.marksMs, const [420]);
     expect(env.watchBackend.ackedSliceIds, contains('slice-w1'));
 
     // 3) 录音期间模拟翻腕息屏（reachable=false）-> 保持手表已连接与录音中，绝不误切手机保底

@@ -7,6 +7,7 @@
 /// - 离线 / 未登录 / 模型失败时保留物理声学合并结果，不编造 AI 主题文本，也不锁死重试机会。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -385,12 +386,38 @@ class TopicSegmentationState {
 }
 
 /// 原子持久化 `_topic_segmentation.json`，存放在录音根目录，不被 `RecordingStore.loadAll` 当作录音目录。
+///
+/// 内置异步串行化互斥队列与 `readModifyWrite` 原子读-改-写：
+/// 确保 `clean.short` 与 `clean.medium` / `clean.long` 并发落盘时绝不互相覆盖或触发 `.tmp` 竞态。
 class TopicSegmentationStore {
   TopicSegmentationStore({required Future<Directory> Function() resolveRoot})
     : _resolveRoot = resolveRoot;
 
   final Future<Directory> Function() _resolveRoot;
   TopicSegmentationState? _cache;
+  Future<void>? _mutex;
+  int _tmpSeq = 0;
+
+  Future<T> _withLock<T>(Future<T> Function() action) async {
+    final prev = _mutex;
+    final gate = Completer<void>();
+    _mutex = gate.future;
+    if (prev != null) {
+      try {
+        await prev;
+      } on Object {
+        // 前序任务失败不阻塞后续队列
+      }
+    }
+    try {
+      return await action();
+    } finally {
+      if (identical(_mutex, gate.future)) {
+        _mutex = null;
+      }
+      gate.complete();
+    }
+  }
 
   Future<File> _file() async {
     final root = await _resolveRoot();
@@ -398,7 +425,7 @@ class TopicSegmentationStore {
     return File('${root.path}/_topic_segmentation.json');
   }
 
-  Future<TopicSegmentationState> load({bool refresh = false}) async {
+  Future<TopicSegmentationState> _loadUnlocked({required bool refresh}) async {
     final cached = _cache;
     if (!refresh && cached != null) return cached;
     try {
@@ -417,19 +444,37 @@ class TopicSegmentationStore {
     return _cache!;
   }
 
-  Future<void> save(TopicSegmentationState state) async {
+  Future<void> _saveUnlocked(TopicSegmentationState state) async {
     _cache = state;
     final f = await _file();
-    final tmp = File('${f.path}.tmp');
+    final tmp = File('${f.path}.tmp.${++_tmpSeq}');
     await tmp.writeAsString(jsonEncode(state.toJson()), flush: true);
     await tmp.rename(f.path);
   }
 
-  Future<void> clear() async {
+  Future<TopicSegmentationState> load({bool refresh = false}) =>
+      _withLock(() => _loadUnlocked(refresh: refresh));
+
+  Future<void> save(TopicSegmentationState state) =>
+      _withLock(() => _saveUnlocked(state));
+
+  Future<void> clear() => _withLock(() async {
     _cache = const TopicSegmentationState.empty();
     final f = await _file();
     if (await f.exists()) await f.delete();
-  }
+  });
+
+  /// 原子读-改-写：在同一互斥锁临界区内读取最新状态、应用变更并持久化落盘。
+  Future<TopicSegmentationState> readModifyWrite(
+    FutureOr<TopicSegmentationState> Function(TopicSegmentationState current)
+    updater, {
+    bool refresh = false,
+  }) => _withLock(() async {
+    final current = await _loadUnlocked(refresh: refresh);
+    final next = await updater(current);
+    await _saveUnlocked(next);
+    return next;
+  });
 }
 
 class TopicSegmentEvaluationResult {
@@ -580,16 +625,16 @@ class FastTopicSegmentAgent {
       try {
         final sections = await _segmentByTopic(run);
         if (sections.isNotEmpty) {
-          state = state.withRun(
-            TopicRunSegmentation(
-              runKey: run.runKey,
-              startAtMs: run.startAtMs,
-              endAtMs: run.endAtMs,
-              sections: sections,
-              evaluatedAtMs: _now().millisecondsSinceEpoch,
-            ),
+          final evaluatedRun = TopicRunSegmentation(
+            runKey: run.runKey,
+            startAtMs: run.startAtMs,
+            endAtMs: run.endAtMs,
+            sections: sections,
+            evaluatedAtMs: _now().millisecondsSinceEpoch,
           );
-          await store.save(state);
+          state = await store.readModifyWrite(
+            (latest) => latest.withRun(evaluatedRun),
+          );
           evaluated++;
         }
       } catch (e) {

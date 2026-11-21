@@ -148,11 +148,52 @@ void main() {
 
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
-    expect(device.linkState, LinkState.disconnected, reason: '只重试一次');
+    expect(device.linkState, LinkState.disconnected, reason: '快速重连只重试一次');
     expect(find.text('无设备'), findsOneWidget);
     expect(find.byKey(const Key('capsule-off')), findsOneWidget);
-    expect(gw.connectCalls, 2, reason: '一次成功连接 + 一次失败重连，不再多试');
+    expect(gw.connectCalls, 2, reason: '一次成功连接 + 一次快速失败重连');
     expect(gw.disconnectCalls, 2,
         reason: '判定掉线释放一次；重连失败后再清一次半开连接');
+    expect(device.isBackgroundReconnectArmed, isTrue);
+    device.dispose();
+  });
+
+  testWidgets('断连后挂起后台自动重连：硬件回到附近自动恢复连接并触发离线补拉', (tester) async {
+    final gw = FakeCardGateway(initialSnapshot: _snap(), devices: const [_card]);
+    final device = DeviceStore(
+      gateway: gw,
+      autoStart: true,
+      backgroundReconnectDelays: const [Duration(seconds: 15)],
+    );
+    await device.restoreLink();
+    await device.connectTo(_card);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final syncedDevices = <CardDevice>[];
+    device.onBleReconnectedNeedSync = (d) async => syncedDevices.add(d);
+
+    gw.failSnapshot = CardException.disconnected();
+    gw.failConnect = CardException.disconnected();
+    for (var s = 0; s < 30; s += 5) {
+      await tester.pump(const Duration(seconds: 5));
+    }
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(device.linkState, LinkState.disconnected);
+    expect(device.isBackgroundReconnectArmed, isTrue);
+    expect(device.disconnectNotice, isNotNull);
+
+    // 设备回到蓝牙范围，15 秒退避到期后自动直连恢复并回调补拉数据
+    gw.failSnapshot = null;
+    gw.failConnect = null;
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pump();
+    expect(device.isConnected, isTrue);
+    expect(device.isBackgroundReconnectArmed, isFalse);
+    expect(device.disconnectNotice, isNull);
+    expect(syncedDevices, hasLength(1));
+    expect(syncedDevices.single.id, _card.id);
+    device.dispose();
   });
 }

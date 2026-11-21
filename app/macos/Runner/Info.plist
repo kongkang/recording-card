@@ -22,8 +22,22 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>CFBundleDisplayName</key>
+	<string>录音卡</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>$(PRODUCT_COPYRIGHT)</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>录音卡需要使用麦克风，在没有连接硬件时用本机继续录音。</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>录音卡需要使用蓝牙，扫描并连接录音卡、点一机和语音键盘。</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>录音卡需要使用蓝牙，扫描并连接录音卡、点一机和语音键盘。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>录音卡需要访问本地网络，用于登录回调和设备快传。</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>

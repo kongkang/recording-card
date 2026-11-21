@@ -5,8 +5,10 @@
 library;
 
 import 'dart:convert';
+import 'dart:math' as math;
 
 import '../analysis/chat_completion.dart';
+import '../recordings/cleaned_dialogue.dart';
 import '../segment/fast_topic_segment_agent.dart';
 import '../segment/section_copy.dart';
 
@@ -449,31 +451,20 @@ sourceIndexes 指向本次 sections 数组的下标。能合并的阶段放进�
       final endAt = sources
           .map((s) => s.endAtMs)
           .reduce((a, b) => a > b ? a : b);
-      final sharedIds = <String>[
+      final sourceParagraphs = <OrganizedParagraph>[
         for (final source in sources)
           for (final paragraph in source.paragraphs)
-            ...paragraph.srcUtteranceIds,
+            if (paragraph.text.trim().isNotEmpty) paragraph,
       ];
-      final paragraphs = <OrganizedParagraph>[];
       final rawParagraphs = map['paragraphs'];
-      if (rawParagraphs is List) {
-        for (final paragraph in rawParagraphs) {
-          if (paragraph is! Map) continue;
-          final text = '${paragraph['text'] ?? ''}'.trim();
-          if (text.isEmpty) continue;
-          paragraphs.add(
-            OrganizedParagraph(
-              speaker: '${paragraph['speaker'] ?? ''}'.trim().isEmpty
-                  ? '未区分'
-                  : '${paragraph['speaker']}'.trim(),
-              text: text,
-              startAtMs: startAt,
-              endAtMs: endAt,
-              srcUtteranceIds: paragraphs.isEmpty ? sharedIds : const [],
-            ),
-          );
-        }
-      }
+      final paragraphs = rawParagraphs is List
+          ? _alignOutputParagraphs(
+              rawParagraphs: rawParagraphs,
+              sourceParagraphs: sourceParagraphs,
+              fallbackStartAtMs: startAt,
+              fallbackEndAtMs: endAt,
+            )
+          : const <OrganizedParagraph>[];
       final fallbackParagraphs = paragraphs.isEmpty
           ? [
               for (final source in sources)
@@ -529,6 +520,239 @@ sourceIndexes 指向本次 sections 数组的下标。能合并的阶段放进�
     if (start < 0 || end <= start) return null;
     return body.substring(start, end + 1);
   }
+
+  /// 将模型合并后的输出段落单调对齐回 `sourceParagraphs`，精确保留每段的起止时间戳与 `srcUtteranceIds`。
+  static List<OrganizedParagraph> _alignOutputParagraphs({
+    required List<dynamic> rawParagraphs,
+    required List<OrganizedParagraph> sourceParagraphs,
+    required int fallbackStartAtMs,
+    required int fallbackEndAtMs,
+  }) {
+    final drafts = <({String speaker, String text, List<int> explicitIdx})>[];
+    for (final item in rawParagraphs) {
+      if (item is! Map) continue;
+      final text = '${item['text'] ?? ''}'.trim();
+      if (text.isEmpty) continue;
+      final spkRaw = '${item['speaker'] ?? ''}'.trim();
+      final speaker = spkRaw.isEmpty ? '未区分' : spkRaw;
+      final explicit = <int>[
+        for (final n in (item['sourceParagraphIndexes'] as List? ?? const []))
+          if (n is num) n.toInt(),
+      ].where((i) => i >= 0 && i < sourceParagraphs.length).toList();
+      drafts.add((speaker: speaker, text: text, explicitIdx: explicit));
+    }
+    if (drafts.isEmpty) return const [];
+
+    final m = drafts.length;
+    final k = sourceParagraphs.length;
+    if (k == 0) {
+      return _proportionalFallbackParagraphs(
+        drafts,
+        fallbackStartAtMs,
+        fallbackEndAtMs,
+      );
+    }
+
+    if (m == 1) {
+      final d = drafts.single;
+      final matched = d.explicitIdx.isNotEmpty
+          ? [for (final i in d.explicitIdx) sourceParagraphs[i]]
+          : sourceParagraphs;
+      return [
+        _buildAlignedParagraph(
+          speaker: d.speaker,
+          text: d.text,
+          matchedSources: matched,
+        ),
+      ];
+    }
+
+    // 正常合并场景（k >= m）：用单调连续划分 DP 将 [0..k-1] 划分为 m 段，最大化文本与说话人相似度
+    if (k >= m) {
+      final outGrams = [for (final d in drafts) _charFeatures(d.text)];
+      final srcGrams = [for (final s in sourceParagraphs) _charFeatures(s.text)];
+      final outSpk = [for (final d in drafts) lifeSpeakerLabel(d.speaker)];
+      final srcSpk = [
+        for (final s in sourceParagraphs) lifeSpeakerLabel(s.speaker),
+      ];
+
+      double spanScore(int outIdx, int sStart, int sEnd) {
+        if (drafts[outIdx].explicitIdx.isNotEmpty) {
+          final expFirst = drafts[outIdx].explicitIdx.first;
+          final expLast = drafts[outIdx].explicitIdx.last;
+          if (sStart == expFirst && sEnd == expLast) return 100.0;
+        }
+        final unionSrc = <String>{};
+        var spkMatches = 0;
+        for (var r = sStart; r <= sEnd; r++) {
+          unionSrc.addAll(srcGrams[r]);
+          if (outSpk[outIdx].isNotEmpty && outSpk[outIdx] == srcSpk[r]) {
+            spkMatches++;
+          }
+        }
+        final og = outGrams[outIdx];
+        var overlap = 0;
+        for (final g in og) {
+          if (unionSrc.contains(g)) overlap++;
+        }
+        final denom = og.length + unionSrc.length;
+        final dice = denom == 0 ? 0.0 : (2.0 * overlap) / denom;
+        final spkRatio = spkMatches / (sEnd - sStart + 1);
+        return dice * 2.0 + spkRatio * 0.45;
+      }
+
+      // dp[i][j] = 前 i 个输出段覆盖前 j 个源段的最大得分（i in 1..m, j in i..k）
+      const negInf = -1e12;
+      final dp = List.generate(m + 1, (_) => List<double>.filled(k + 1, negInf));
+      final split = List.generate(m + 1, (_) => List<int>.filled(k + 1, 0));
+      dp[0][0] = 0.0;
+      for (var i = 1; i <= m; i++) {
+        final maxJ = k - (m - i);
+        for (var j = i; j <= maxJ; j++) {
+          var bestPrev = i - 1;
+          var bestVal = negInf;
+          for (var p = i - 1; p < j; p++) {
+            final cand = dp[i - 1][p] + spanScore(i - 1, p, j - 1);
+            if (cand > bestVal) {
+              bestVal = cand;
+              bestPrev = p;
+            }
+          }
+          dp[i][j] = bestVal;
+          split[i][j] = bestPrev;
+        }
+      }
+
+      final ranges = List<(int, int)>.filled(m, (0, 0));
+      var curEnd = k;
+      for (var i = m; i >= 1; i--) {
+        final prev = split[i][curEnd];
+        ranges[i - 1] = (prev, curEnd - 1);
+        curEnd = prev;
+      }
+
+      return [
+        for (var i = 0; i < m; i++)
+          _buildAlignedParagraph(
+            speaker: drafts[i].speaker,
+            text: drafts[i].text,
+            matchedSources: sourceParagraphs.sublist(
+              ranges[i].$1,
+              ranges[i].$2 + 1,
+            ),
+          ),
+      ];
+    }
+
+    // 罕见扩拆场景（m > k）：按顺序映射并在共享同一源段的多个输出段内部按字数比例切分时间
+    final assignedSrc = List<int>.generate(
+      m,
+      (i) => ((i * k) ~/ m).clamp(0, k - 1),
+    );
+    final result = <OrganizedParagraph>[];
+    var i = 0;
+    while (i < m) {
+      final srcIdx = assignedSrc[i];
+      var j = i;
+      while (j + 1 < m && assignedSrc[j + 1] == srcIdx) {
+        j++;
+      }
+      final src = sourceParagraphs[srcIdx];
+      if (i == j) {
+        result.add(
+          _buildAlignedParagraph(
+            speaker: drafts[i].speaker,
+            text: drafts[i].text,
+            matchedSources: [src],
+          ),
+        );
+      } else {
+        final subDrafts = drafts.sublist(i, j + 1);
+        final subParas = _proportionalFallbackParagraphs(
+          subDrafts,
+          src.startAtMs,
+          src.endAtMs > src.startAtMs ? src.endAtMs : src.startAtMs + 1000,
+          sharedUtteranceIds: src.srcUtteranceIds,
+        );
+        result.addAll(subParas);
+      }
+      i = j + 1;
+    }
+    return result;
+  }
+
+  static OrganizedParagraph _buildAlignedParagraph({
+    required String speaker,
+    required String text,
+    required List<OrganizedParagraph> matchedSources,
+  }) {
+    final startMs = matchedSources
+        .map((s) => s.startAtMs)
+        .reduce((a, b) => a < b ? a : b);
+    final rawEndMs = matchedSources
+        .map((s) => s.endAtMs)
+        .reduce((a, b) => a > b ? a : b);
+    final endMs = rawEndMs > startMs ? rawEndMs : startMs + 200;
+    final ids = <String>{
+      for (final s in matchedSources) ...s.srcUtteranceIds,
+    }.toList();
+    return OrganizedParagraph(
+      speaker: speaker,
+      text: text,
+      startAtMs: startMs,
+      endAtMs: endMs,
+      srcUtteranceIds: ids,
+    );
+  }
+
+  static List<OrganizedParagraph> _proportionalFallbackParagraphs(
+    List<({String speaker, String text, List<int> explicitIdx})> drafts,
+    int startAtMs,
+    int endAtMs, {
+    List<String> sharedUtteranceIds = const [],
+  }) {
+    final weights = [
+      for (final d in drafts) math.max(1, d.text.runes.length),
+    ];
+    final totalW = weights.fold<int>(0, (a, b) => a + b);
+    final span = math.max(drafts.length * 200, endAtMs - startAtMs);
+    var cursor = startAtMs;
+    final out = <OrganizedParagraph>[];
+    for (var i = 0; i < drafts.length; i++) {
+      final isLast = i == drafts.length - 1;
+      final dur = math.max(200, (span * weights[i] / totalW).round());
+      final segEnd = isLast
+          ? math.max(cursor + 1, startAtMs + span)
+          : cursor + dur;
+      out.add(
+        OrganizedParagraph(
+          speaker: drafts[i].speaker,
+          text: drafts[i].text,
+          startAtMs: cursor,
+          endAtMs: segEnd,
+          srcUtteranceIds: sharedUtteranceIds,
+        ),
+      );
+      cursor = segEnd;
+    }
+    return out;
+  }
+
+  static Set<String> _charFeatures(String text) {
+    final clean = text
+        .replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '')
+        .toLowerCase();
+    if (clean.isEmpty) return const {};
+    final runes = clean.runes.toList();
+    final set = <String>{};
+    for (var i = 0; i < runes.length; i++) {
+      set.add(String.fromCharCode(runes[i]));
+      if (i + 1 < runes.length) {
+        set.add(String.fromCharCodes([runes[i], runes[i + 1]]));
+      }
+    }
+    return set;
+  }
 }
 
 class _Chunk {
@@ -544,35 +768,39 @@ Future<void> writeStageOverlay({
   required List<OrganizedSection> sections,
   required int evaluatedAtMs,
 }) async {
-  var state = await store.load();
   final byAnchor = <String, List<OrganizedSection>>{};
   for (final section in sections) {
     byAnchor.putIfAbsent(section.anchorId, () => []).add(section);
   }
-  for (final entry in byAnchor.entries) {
-    final startAt = entry.value
-        .map((s) => s.startAtMs)
-        .reduce((a, b) => a < b ? a : b);
-    final endAt = entry.value
-        .map((s) => s.endAtMs)
-        .reduce((a, b) => a > b ? a : b);
-    final covered = <String>{
-      for (final section in entry.value)
-        for (final paragraph in section.paragraphs)
-          ...paragraph.srcUtteranceIds,
-    };
-    state = state.withStageRun(
-      taskId,
-      TopicRunSegmentation(
-        runKey: entry.key,
-        startAtMs: startAt,
-        endAtMs: endAt,
-        sections: [for (final section in entry.value) section.toTopicSection()],
-        evaluatedAtMs: evaluatedAtMs,
-        coveredUtteranceEndMs: endAt,
-        coveredUtteranceIds: covered,
-      ),
-    );
-  }
-  await store.save(state);
+  await store.readModifyWrite((current) {
+    var state = current;
+    for (final entry in byAnchor.entries) {
+      final startAt = entry.value
+          .map((s) => s.startAtMs)
+          .reduce((a, b) => a < b ? a : b);
+      final endAt = entry.value
+          .map((s) => s.endAtMs)
+          .reduce((a, b) => a > b ? a : b);
+      final covered = <String>{
+        for (final section in entry.value)
+          for (final paragraph in section.paragraphs)
+            ...paragraph.srcUtteranceIds,
+      };
+      state = state.withStageRun(
+        taskId,
+        TopicRunSegmentation(
+          runKey: entry.key,
+          startAtMs: startAt,
+          endAtMs: endAt,
+          sections: [
+            for (final section in entry.value) section.toTopicSection(),
+          ],
+          evaluatedAtMs: evaluatedAtMs,
+          coveredUtteranceEndMs: endAt,
+          coveredUtteranceIds: covered,
+        ),
+      );
+    }
+    return state;
+  });
 }

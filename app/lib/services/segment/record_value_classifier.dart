@@ -8,6 +8,7 @@ library;
 import 'dart:math' as math;
 
 import '../../core/models/record.dart';
+import '../../core/models/summary.dart';
 import '../transcribe/utterance_builder.dart';
 
 class RecordValueClassifier {
@@ -72,19 +73,24 @@ class RecordValueClassifier {
   ];
 
   static final RegExp _fallbackTitles = RegExp(
-    r'^(?:简短语音|语音片段|最新片段|录音片段|阶段话题|阶段整理|录音整理|未识别到语音)$',
+    r'^(?:简短语音|语音片段|最新片段|录音片段|阶段话题|阶段整理|录音整理|未识别到语音|实时切片\s*#?\d*)$',
   );
 
   /// 是否为无语音事件。
   static bool isSilentEvent(RecordEvent e) =>
       e.speakers == '无语音' || e.title == '未识别到语音';
 
-  /// 保护条件：正在整理中、有有效照片、或带有非「流中断 N 次」的物理打点均不得折叠。
+  /// 保护条件：正在整理中、外部导入记录（GetNote 等）、带非「流中断 N 次」物理打点、
+  /// 以及带有效照片的常规说话片段均不得折叠；纯静音片段附带的照片走「未归类图片」分拣，允许折叠。
   static bool isProtectedFromFolding(
     RecordEvent e, {
     required bool hasActivePhotos,
   }) {
-    if (e.live || hasActivePhotos) return true;
+    if (e.live) return true;
+    if (e.id.startsWith('getnote-')) return true;
+    if (hasActivePhotos && !isSilentEvent(e) && !isSilentPlaceholderEvent(e)) {
+      return true;
+    }
     final mk = e.mark.trim();
     if (mk.isNotEmpty && !_gapMarkPattern.hasMatch(mk)) {
       return true;
@@ -135,7 +141,7 @@ class RecordValueClassifier {
     if (isProtectedFromFolding(e, hasActivePhotos: hasActivePhotos)) {
       return false;
     }
-    if (e.lowValue || isSilentEvent(e)) return true;
+    if (e.lowValue || isSilentEvent(e) || isFragmentRecord(e)) return true;
 
     final hasTextBody =
         e.dialog.isNotEmpty ||
@@ -170,14 +176,14 @@ class RecordValueClassifier {
       return true;
     }
 
-    // 若多句原始转写已经过结构化提炼（拥有独立标题、互相区分的摘要与详述），
-    // 且并非空口水词，尊重该总结结论不强行折叠。
+    // 若记录已经过结构化提炼（拥有独立有意义标题与摘要、与原话并非简单复读），
+    // 且并非空口水词，尊重该整理结论不强行折叠。
     final briefClean = _stripToMeaningful(e.brief);
     final longClean = _stripToMeaningful(e.longText);
     final dialogClean = _stripToMeaningful(
       e.dialog.map((t) => t.text).join(' '),
     );
-    final hasDistinctCuratedSummary =
+    final hasDistinctMultiRawSummary =
         e.raw.length >= 2 &&
         briefClean.length >= 4 &&
         longClean.length >= 4 &&
@@ -185,7 +191,16 @@ class RecordValueClassifier {
         !_fallbackTitles.hasMatch(e.title.trim()) &&
         dialogClean != briefClean &&
         !dialogClean.contains(briefClean);
-    if (hasDistinctCuratedSummary) {
+    final hasCuratedMetadata =
+        !_fallbackTitles.hasMatch(e.title.trim()) &&
+        titleMeaningful.length >= 4 &&
+        briefClean.length >= 4 &&
+        titleMeaningful != dialogClean &&
+        !dialogClean.contains(titleMeaningful) &&
+        dialogClean != briefClean &&
+        !dialogClean.contains(briefClean) &&
+        !briefClean.contains(dialogClean);
+    if (hasDistinctMultiRawSummary || hasCuratedMetadata) {
       var withoutFillers = cleanedRaw;
       for (final filler in _fillerWords) {
         withoutFillers = withoutFillers.replaceAll(filler, '');

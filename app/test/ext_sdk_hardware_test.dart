@@ -1,13 +1,12 @@
-// 第一轮第三方硬件 SDK 包装层（Get笔记卡 GetSeed GSC10 + Omi 录音器 CV1）全链路验收：
+// 第三方硬件 SDK 包装层（Omi 录音器 CV1 + 飞书录音豆 D3200）全链路验收：
 //
-// 1. 默认关闭「第三方硬件联动」开关时，扫描严格保持 ReAI 原生 3 款硬件基线，隐藏 Get-A102 与 Omi-7F20；
-// 2. 在 Setting →「硬件设备联动 → 第三方硬件联动」开启联动后，胶囊扫描按 RSSI 展示 5 款设备，
-//    并按 DeviceKind.bleShortId 正确剥离 Get- / Omi- 前缀与对应品类标签；
-// 3. 连接 Get笔记卡后，StatusSheet 展示「机身按键控录」(Key('rec-physical-only'))、隐藏远程录音开关
-//    与 Wi-Fi / 固件更新行、隐藏本机录音行；调用 toggleRecording() 拒绝发送远控指令；
-//    识别 .ogg / .opus / .wav 为可转写音频文件；
-// 4. 连接 Omi 录音器后，StatusSheet 展示统一录音开关、手动同步行，隐藏 Wi-Fi / 固件更新行，
-//    支持远程开关与物理按键事件双向联动，充电/满电显示均不出现「%」或「已充满」。
+// 1. 默认关闭「第三方硬件联动」开关时，扫描严格保持 ReAI 原生 3 款硬件基线，隐藏 Omi-7F20 与 D3200-C3A1，
+//    且不通过蓝牙识别 Get-A102；
+// 2. 在 Setting →「硬件设备联动 → 第三方硬件联动」开启联动后，胶囊扫描按 RSSI 展示对应设备，
+//    并按 DeviceKind.bleShortId 正确剥离 Omi- / D3200- 前缀与对应品类标签；
+// 3. 连接 Omi 录音器后，StatusSheet 展示统一录音开关、手动同步行，隐藏 Wi-Fi / 固件更新行，
+//    支持远程开关与物理按键事件双向联动，充电/满电显示均不出现「%」或「已充满」；
+// 4. 连接飞书录音豆后，远程录音开关与同步行可见，Wi-Fi 和固件行隐藏，识别 .ogg / .opus / .wav 音频文件。
 library;
 
 import 'dart:typed_data';
@@ -65,7 +64,6 @@ Future<({
   FakeCardGateway gateway,
 })> _pumpExtShell(
   WidgetTester tester, {
-  bool initialGetSeedEnabled = false,
   bool initialOmiEnabled = false,
   bool initialFeishuEnabled = false,
 }) async {
@@ -76,9 +74,6 @@ Future<({
     loadPersistedState: false,
   );
   final agentConfig = AgentConfigStore();
-  if (initialGetSeedEnabled) {
-    await agentConfig.setGetSeedLinkEnabled(true);
-  }
   if (initialOmiEnabled) {
     await agentConfig.setOmiLinkEnabled(true);
   }
@@ -94,10 +89,9 @@ Future<({
         kind: DeviceKind.cardV2,
       ),
       CardDevice(
-        id: 'getseed-1',
+        id: 'getseed-ignored',
         name: 'Get-A102',
         rssi: -52,
-        kind: DeviceKind.getSeedGsc10,
       ),
       CardDevice(
         id: 'omi-1',
@@ -131,7 +125,6 @@ Future<({
     phoneMicBackend: _StubPhoneMicBackend(),
   );
   await device.setExtHardwareEnabled(
-    getSeed: initialGetSeedEnabled,
     omi: initialOmiEnabled,
     feishu: initialFeishuEnabled,
   );
@@ -178,12 +171,12 @@ void main() {
       'v1',
       'kbd',
     ]);
-    expect(find.byKey(const Key('dev-item-getseed-1')), findsNothing);
+    expect(find.byKey(const Key('dev-item-getseed-ignored')), findsNothing);
     expect(find.byKey(const Key('dev-item-omi-1')), findsNothing);
     expect(find.byKey(const Key('dev-item-feishu-1')), findsNothing);
   });
 
-  testWidgets('在 Setting 开启第三方硬件联动后扫描发现 Get笔记卡 与 Omi 录音器', (
+  testWidgets('在 Setting 开启第三方硬件联动后扫描发现 Omi 录音器并移除 Get 笔记卡蓝牙入口', (
     tester,
   ) async {
     final env = await _pumpExtShell(tester);
@@ -204,77 +197,42 @@ void main() {
     await tester.tap(find.byKey(const Key('set-ext-hw')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('ext-getseed-card')), findsOneWidget);
+    expect(find.byKey(const Key('ext-getseed-card')), findsNothing);
+    expect(find.byKey(const Key('ext-getseed-switch')), findsNothing);
     expect(find.byKey(const Key('ext-omi-card')), findsOneWidget);
     expect(find.byKey(const Key('ext-feishu-card')), findsOneWidget);
     expect(find.byKey(const Key('ext-feishu-beta')), findsOneWidget);
     expect(find.text('Beta'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('ext-getseed-switch')));
-    await tester.pump();
     await tester.tap(find.byKey(const Key('ext-omi-switch')));
     await tester.pump();
-    expect(env.agentConfig.getSeedLinkEnabled, isTrue);
     expect(env.agentConfig.omiLinkEnabled, isTrue);
 
     await tester.tap(find.byKey(const Key('crumb-back')));
     await tester.pumpAndSettle();
     expect(
       tester.widget<Text>(find.byKey(const Key('sv-exthw'))).data,
-      '已开启 2 款',
+      '已开启 1 款',
     );
 
     await tester.tap(find.byKey(const Key('hw-capsule')));
     await tester.pump();
     await tester.pump();
 
+    expect(DeviceKind.fromBleName('Get-A102'), isNull);
     expect(env.device.discovered.map((d) => d.id).toList(), [
       'v2',
-      'getseed-1',
       'omi-1',
       'v1',
       'kbd',
     ]);
-    expect(find.byKey(const Key('dev-kind-getseed-1')), findsOneWidget);
+    expect(find.byKey(const Key('dev-item-getseed-ignored')), findsNothing);
     expect(find.byKey(const Key('dev-kind-omi-1')), findsOneWidget);
-    expect(find.text('Get笔记卡'), findsOneWidget);
     expect(find.text('Omi 录音器'), findsOneWidget);
-    expect(find.text('A102'), findsOneWidget);
     expect(find.text('7F20'), findsOneWidget);
   });
 
-  testWidgets('连接 Get笔记卡：显示机身按键控录并拒绝远程启停命令，识别 .ogg/.wav 音频文件', (
-    tester,
-  ) async {
-    final env = await _pumpExtShell(
-      tester,
-      initialGetSeedEnabled: true,
-    );
-
-    await tester.tap(find.byKey(const Key('hw-capsule')));
-    await tester.pump();
-    await tester.pump();
-
-    await tester.tap(find.byKey(const Key('dev-item-getseed-1')));
-    await tester.pump();
-    await tester.pump();
-
-    expect(env.device.isConnected, isTrue);
-    expect(env.device.activeKind, DeviceKind.getSeedGsc10);
-    expect(find.byKey(const Key('dev-header-kind')), findsOneWidget);
-    expect(find.text('Get笔记卡'), findsOneWidget);
-    expect(find.byKey(const Key('rec-physical-only')), findsOneWidget);
-    expect(find.text('机身按键控录'), findsOneWidget);
-    expect(find.byKey(const Key('rec-toggle')), findsNothing);
-    expect(find.byKey(const Key('sync-now')), findsOneWidget);
-    expect(find.byKey(const Key('wifi-row')), findsNothing);
-    expect(find.byKey(const Key('fw-update')), findsNothing);
-    expect(find.byKey(const Key('phone-rec-row')), findsNothing);
-
-    final err = await env.device.toggleRecording();
-    expect(err, '该硬件仅支持通过机身物理按键启停录音');
-    expect(env.gateway.recordCalls, isEmpty);
-
+  test('CardFile 识别 .ogg / .opus / .wav 音频扩展名', () {
     const oggFile = CardFile(name: '20261115_101500.ogg', size: 4096);
     const opusFile = CardFile(name: 'segment_001.opus', size: 2048);
     const wavFile = CardFile(name: 'clip.wav', size: 8192);

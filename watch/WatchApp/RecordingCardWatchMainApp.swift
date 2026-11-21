@@ -1,17 +1,7 @@
-import HealthKit
 import SwiftUI
 import WatchKit
 
-final class RecordingCardWatchDelegate: NSObject, WKApplicationDelegate {
-    func handle(_ workoutConfiguration: HKWorkoutConfiguration) {
-        Task { @MainActor in
-            await WatchSessionSyncEngine.shared.startRecording(
-                workoutConfig: workoutConfiguration,
-                sessionIdOverride: nil
-            )
-        }
-    }
-}
+final class RecordingCardWatchDelegate: NSObject, WKApplicationDelegate {}
 
 @main
 struct RecordingCardWatchMainApp: App {

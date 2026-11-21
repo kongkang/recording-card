@@ -50,15 +50,22 @@ void main() {
       find.byKey(const Key('model-row-sensevoice-small-int8')),
       findsOneWidget,
     );
-    expect(find.byKey(const Key('model-row-silero-vad')), findsOneWidget);
+    expect(find.byKey(const Key('model-row-silero-vad')), findsNothing);
     expect(
       find.byKey(const Key('model-row-campplus-embedding')),
       findsOneWidget,
     );
-    expect(find.textContaining('SenseVoice'), findsWidgets);
-    expect(find.textContaining('Silero VAD'), findsWidgets);
-    expect(find.textContaining('CAM++'), findsWidgets);
-    expect(find.text('模型下载服务未配置'), findsOneWidget);
+    expect(find.textContaining('SenseVoice'), findsNothing);
+    expect(find.textContaining('Silero VAD'), findsNothing);
+    expect(find.textContaining('CAM++'), findsNothing);
+    expect(find.text('下载服务暂不可用'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('local-engine-help')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('SenseVoice'), findsOneWidget);
+    expect(find.textContaining('Silero VAD'), findsOneWidget);
+    expect(find.textContaining('CAM++'), findsOneWidget);
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
     // 滚到底部确认下载按钮因未配置被禁用
     await tester.scrollUntilVisible(
       find.byKey(const Key('model-install-all')),
