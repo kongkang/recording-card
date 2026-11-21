@@ -396,7 +396,7 @@ void main() {
 
       // 模拟看门狗初次失败触发后台自动重连（先让第 1 次重连也失败以进入 500ms 退避等待）
       gw.failSnapshot = CardException.disconnected();
-      gw.failConnect = const CardException(CardErrorKind.bluetooth, 'busy');
+      gw.failConnect = const CardException(CardErrorKind.device, 'busy');
       await tester.pump(const Duration(seconds: 35));
       await tester.pump(const Duration(milliseconds: 200));
 
@@ -460,14 +460,14 @@ void main() {
         status: status,
         jsonStore: JsonStore(store: InMemoryStore()),
         loadPersistedState: false,
-      )
-        ..deviceConnected = () => true
-        ..photoSyncEnabled = () => false
-        ..attachPipeline(
-          pipeline: pipeline,
-          store: recStore,
-          status: status,
-        );
+      );
+      appStore.deviceConnected = () => true;
+      appStore.photoSyncEnabled = () => false;
+      appStore.attachPipeline(
+        pipeline: pipeline,
+        store: recStore,
+        status: status,
+      );
 
       final sw = Stopwatch()..start();
       final msg = await appStore.pullToRefresh(
