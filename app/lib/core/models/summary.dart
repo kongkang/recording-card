@@ -296,6 +296,12 @@ class SummaryCard {
   double progress = 0; // 0-100
   List<String> srcIds = const [];
 
+  /// 覆盖来源记录的最大结束时间戳（Unix ms），用于在 Timeline 插入对应结尾位置。
+  int? endAtMs;
+
+  /// 覆盖的时间区间文案（如「10:12–13:15」）。
+  String? rangeLabel;
+
   // done 后填充：
   String? title;
   String? subDesc; // 统计行
@@ -340,6 +346,9 @@ class SummaryCard {
         'id': id,
         'time': time,
         'srcIds': srcIds,
+        if (endAtMs != null) 'endAtMs': endAtMs,
+        if (rangeLabel != null && rangeLabel!.isNotEmpty)
+          'rangeLabel': rangeLabel,
         if (state == SummaryState.done) ...{
           'title': title,
           'subDesc': subDesc,
@@ -369,6 +378,8 @@ class SummaryCard {
   static SummaryCard fromJson(Map<String, dynamic> j) {
     final c = SummaryCard(id: j['id'] as String, time: j['time'] as String)
       ..srcIds = (j['srcIds'] as List).cast<String>()
+      ..endAtMs = (j['endAtMs'] as num?)?.toInt()
+      ..rangeLabel = j['rangeLabel'] as String?
       ..state = SummaryState.done;
     c.title = j['title'] as String?;
     c.subDesc = j['subDesc'] as String?;

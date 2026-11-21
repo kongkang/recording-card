@@ -75,6 +75,7 @@ class TopicSectionOverride {
     this.startAtMs = 0,
     this.endAtMs = 0,
     this.evidenceSliceIds = const [],
+    this.lowValue = false,
   });
 
   final String title;
@@ -89,6 +90,7 @@ class TopicSectionOverride {
   final int startAtMs;
   final int endAtMs;
   final List<String> evidenceSliceIds;
+  final bool lowValue;
 
   TopicSectionOverride copyWith({
     String? title,
@@ -103,6 +105,7 @@ class TopicSectionOverride {
     int? startAtMs,
     int? endAtMs,
     List<String>? evidenceSliceIds,
+    bool? lowValue,
   }) => TopicSectionOverride(
     title: title ?? this.title,
     brief: brief ?? this.brief,
@@ -116,6 +119,7 @@ class TopicSectionOverride {
     startAtMs: startAtMs ?? this.startAtMs,
     endAtMs: endAtMs ?? this.endAtMs,
     evidenceSliceIds: evidenceSliceIds ?? this.evidenceSliceIds,
+    lowValue: lowValue ?? this.lowValue,
   );
 
   Map<String, dynamic> toJson() => {
@@ -131,6 +135,7 @@ class TopicSectionOverride {
     if (startAtMs > 0) 'sa': startAtMs,
     if (endAtMs > 0) 'ea': endAtMs,
     if (evidenceSliceIds.isNotEmpty) 'ev': evidenceSliceIds,
+    if (lowValue) 'lv': true,
   };
 
   factory TopicSectionOverride.fromJson(Map<String, dynamic> j) =>
@@ -152,6 +157,7 @@ class TopicSectionOverride {
         evidenceSliceIds: [
           for (final s in (j['ev'] as List? ?? const [])) '$s',
         ],
+        lowValue: j['lv'] == true,
       );
 }
 
@@ -208,6 +214,7 @@ class TopicSegmentationState {
     this.runsByKey = const {},
     this.rollingByAnchor = const {},
     this.stageByTask = const {},
+    this.organizerVersion = 1,
   });
 
   const TopicSegmentationState.empty()
@@ -215,7 +222,8 @@ class TopicSegmentationState {
       lockedRunKeys = const {},
       runsByKey = const {},
       rollingByAnchor = const {},
-      stageByTask = const {};
+      stageByTask = const {},
+      organizerVersion = 1;
 
   /// 更高轮次覆盖短轮的顺序。只在该轮时间不早于短轮时，时间轴才改用它。
   static const List<String> higherStageOrder = ['clean.long', 'clean.medium'];
@@ -230,6 +238,9 @@ class TopicSegmentationState {
 
   /// 中轮 / 长轮再合并结果。外层 key 是任务 id，内层 key 是 anchorSegmentId。
   final Map<String, Map<String, TopicRunSegmentation>> stageByTask;
+
+  /// 整理代际版本（v2 支持跨停顿沉浸归拢与低价值碎碎念标注）。
+  final int organizerVersion;
 
   /// 时间轴采用的整理结果：更高轮次只有不旧于短轮时才盖住短轮。
   TopicRunSegmentation? displayRunForAnchor(String anchorId) {
@@ -265,6 +276,7 @@ class TopicSegmentationState {
       runsByKey: {...runsByKey, run.runKey: run},
       rollingByAnchor: rollingByAnchor,
       stageByTask: stageByTask,
+      organizerVersion: organizerVersion,
     );
   }
 
@@ -275,6 +287,7 @@ class TopicSegmentationState {
         runsByKey: runsByKey,
         rollingByAnchor: {...rollingByAnchor, run.runKey: run},
         stageByTask: stageByTask,
+        organizerVersion: organizerVersion,
       );
 
   TopicSegmentationState withStageRun(String taskId, TopicRunSegmentation run) {
@@ -289,8 +302,19 @@ class TopicSegmentationState {
         ...stageByTask,
         taskId: {...current, run.runKey: run},
       },
+      organizerVersion: organizerVersion,
     );
   }
+
+  TopicSegmentationState withOrganizerVersion(int version) =>
+      TopicSegmentationState(
+        watermarkEndAtMs: watermarkEndAtMs,
+        lockedRunKeys: lockedRunKeys,
+        runsByKey: runsByKey,
+        rollingByAnchor: rollingByAnchor,
+        stageByTask: stageByTask,
+        organizerVersion: version,
+      );
 
   TopicSegmentationState withoutRollingRuns() => const TopicSegmentationState();
 
@@ -310,6 +334,7 @@ class TopicSegmentationState {
             for (final run in task.value.entries) run.key: run.value.toJson(),
           },
       },
+    if (organizerVersion > 1) 'ov': organizerVersion,
   };
 
   factory TopicSegmentationState.fromJson(Map<String, dynamic> j) {
@@ -333,6 +358,7 @@ class TopicSegmentationState {
             ),
       },
       stageByTask: _parseStageMap(j['stages']),
+      organizerVersion: (j['ov'] as num?)?.toInt() ?? 1,
     );
   }
 

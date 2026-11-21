@@ -328,7 +328,7 @@ class HealthSamplingDevSection extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '健康采样间隔和相位会用于本机健康与位置采集，让取样落在窗口后半段，避开前半段转写。（录音切片长度已移至上方「实时录音切片窗口」统一管理，默认 1 分钟。）',
+                '切片默认静默落盘后按周期或查看时批量转写，健康采样间隔和相位会用于本机健康与位置采集，让取样落在窗口后半段。（录音切片长度可在上方「实时录音切片窗口」统一调整。）',
                 style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
               ),
               const SizedBox(height: 12),

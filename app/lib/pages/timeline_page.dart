@@ -1,7 +1,9 @@
 /// Timeline 页 —— 按日分组倒序；两行折叠卡；勾选模式（全选今日/本周/本月 + 底部操作栏）。
 library;
 
+import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -15,7 +17,9 @@ import '../widgets/recording_status_block.dart';
 import '../widgets/selection_marker.dart';
 import '../widgets/store_scope.dart';
 
-class TimelinePage extends StatelessWidget {
+enum _StickyRangeEdge { none, top, bottom }
+
+class TimelinePage extends StatefulWidget {
   const TimelinePage({
     super.key,
     this.asLeftPane = false,
@@ -29,11 +33,147 @@ class TimelinePage extends StatelessWidget {
   final RecordingStatusController? recordingStatus;
 
   @override
+  State<TimelinePage> createState() => _TimelinePageState();
+}
+
+class _TimelinePageState extends State<TimelinePage> {
+  final GlobalKey _viewportKey = GlobalKey();
+  final Map<String, GlobalKey> _itemKeys = <String, GlobalKey>{};
+
+  _StickyRangeEdge _stickyEdge = _StickyRangeEdge.none;
+  String? _stickyTargetId;
+  int _stickyCount = 0;
+  bool _rangeCheckScheduled = false;
+
+  GlobalKey _itemKeyFor(String id) =>
+      _itemKeys.putIfAbsent(id, () => GlobalKey(debugLabel: 'range-item-$id'));
+
+  void _scheduleRangeCheck(AppStore store) {
+    if (_rangeCheckScheduled) return;
+    _rangeCheckScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _rangeCheckScheduled = false;
+      _recomputeStickyRange(store);
+    });
+  }
+
+  void _setStickyState(_StickyRangeEdge edge, String? targetId, int count) {
+    if (_stickyEdge == edge &&
+        _stickyTargetId == targetId &&
+        _stickyCount == count) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _stickyEdge = edge;
+      _stickyTargetId = targetId;
+      _stickyCount = count;
+    });
+  }
+
+  void _recomputeStickyRange(AppStore store) {
+    final anchorId = store.selAnchorId;
+    if (!mounted || !store.selMode || anchorId == null) {
+      _setStickyState(_StickyRangeEdge.none, null, 0);
+      return;
+    }
+    final viewportCtx = _viewportKey.currentContext;
+    final viewportObj = viewportCtx?.findRenderObject();
+    if (viewportObj is! RenderBox ||
+        !viewportObj.attached ||
+        !viewportObj.hasSize) {
+      return;
+    }
+    final vh = viewportObj.size.height;
+    if (vh <= 0) return;
+
+    final ordered = store.selectableEventIds;
+    final anchorIdx = ordered.indexOf(anchorId);
+    if (anchorIdx < 0) {
+      _setStickyState(_StickyRangeEdge.none, null, 0);
+      return;
+    }
+
+    int? minVisibleIdx;
+    int? maxVisibleIdx;
+    String? firstVisibleId;
+    String? lastVisibleId;
+    bool? anchorAbove;
+    bool? anchorBelow;
+
+    for (var i = 0; i < ordered.length; i++) {
+      final id = ordered[i];
+      final itemObj = _itemKeys[id]?.currentContext?.findRenderObject();
+      if (itemObj is! RenderBox || !itemObj.attached || !itemObj.hasSize) {
+        continue;
+      }
+      final top = itemObj.localToGlobal(Offset.zero, ancestor: viewportObj).dy;
+      final bottom = top + itemObj.size.height;
+
+      if (id == anchorId) {
+        if (bottom <= 8) {
+          anchorAbove = true;
+          anchorBelow = false;
+        } else if (top >= vh - 8) {
+          anchorAbove = false;
+          anchorBelow = true;
+        } else {
+          anchorAbove = false;
+          anchorBelow = false;
+        }
+      }
+
+      if (bottom > 16 && top < vh - 16) {
+        if (minVisibleIdx == null || i < minVisibleIdx) {
+          minVisibleIdx = i;
+          firstVisibleId = id;
+        }
+        if (maxVisibleIdx == null || i > maxVisibleIdx) {
+          maxVisibleIdx = i;
+          lastVisibleId = id;
+        }
+      }
+    }
+
+    // 若锚点卡片已被 Sliver 回收，利用列表顺序与可见下标反推方向
+    if (anchorAbove == null && minVisibleIdx != null && maxVisibleIdx != null) {
+      if (anchorIdx < minVisibleIdx) {
+        anchorAbove = true;
+        anchorBelow = false;
+      } else if (anchorIdx > maxVisibleIdx) {
+        anchorAbove = false;
+        anchorBelow = true;
+      }
+    }
+
+    if (anchorAbove == true &&
+        lastVisibleId != null &&
+        ordered.indexOf(lastVisibleId) > anchorIdx) {
+      final preview = store.previewRangeTo(lastVisibleId);
+      if (preview != null) {
+        _setStickyState(_StickyRangeEdge.bottom, lastVisibleId, preview.count);
+        return;
+      }
+    }
+    if (anchorBelow == true &&
+        firstVisibleId != null &&
+        ordered.indexOf(firstVisibleId) < anchorIdx) {
+      final preview = store.previewRangeTo(firstVisibleId);
+      if (preview != null) {
+        _setStickyState(_StickyRangeEdge.top, firstVisibleId, preview.count);
+        return;
+      }
+    }
+    _setStickyState(_StickyRangeEdge.none, null, 0);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
+    final recordingStatus = widget.recordingStatus;
     final merged = recordingStatus == null
         ? store
-        : Listenable.merge([store, recordingStatus!]);
+        : Listenable.merge([store, recordingStatus]);
     return ListenableBuilder(
       listenable: merged,
       builder: (context, _) {
@@ -41,13 +181,37 @@ class TimelinePage extends StatelessWidget {
         final groups = store.feedGroups;
         // 录音/同步状态块只出现在「全部/记录」的内容顶部：
         // 勾选总结时收起（总结源列表保持干净），切到「总结」Tab 也不显示。
-        final showStatus = recordingStatus != null &&
+        final showStatus =
+            recordingStatus != null &&
             !store.selMode &&
             store.filter != FeedFilter.summary;
         // 设计稿只有一处顶部实时状态块（#live-status）：状态块已经在展示「正在录音 / 正在同步 / 正在转写」时，
         // 不再叠出第二条 _SyncBanner（「正在取回…」进度条），避免两块同步提示同时出现冲突。
         final statusBlockVisible =
-            showStatus && recordingStatus!.phase != RecordingPhase.idle;
+            showStatus && recordingStatus.phase != RecordingPhase.idle;
+        final showPendingBanner =
+            !store.selMode &&
+            store.filter != FeedFilter.summary &&
+            store.pendingLocalAudioCount > 0 &&
+            store.syncStage == null &&
+            !statusBlockVisible;
+        if (store.selMode && store.selAnchorId != null) {
+          _scheduleRangeCheck(store);
+        } else if (_stickyEdge != _StickyRangeEdge.none) {
+          _scheduleRangeCheck(store);
+        }
+
+        final showTopSticky =
+            store.selMode &&
+            store.selAnchorId != null &&
+            _stickyEdge == _StickyRangeEdge.top &&
+            _stickyTargetId != null;
+        final showBottomSticky =
+            store.selMode &&
+            store.selAnchorId != null &&
+            _stickyEdge == _StickyRangeEdge.bottom &&
+            _stickyTargetId != null;
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -57,142 +221,211 @@ class TimelinePage extends StatelessWidget {
                 !statusBlockVisible)
               _SyncBanner(store: store),
             Expanded(
-              // 下拉刷新：全部/记录 Tab 从设备补传新录音；总结 Tab 仅刷新本机总结列表（不触发蓝牙取回）
-              child: RefreshIndicator(
-                key: const Key('timeline-refresh'),
-                onRefresh: () async {
-                  if (store.filter == FeedFilter.summary) {
-                    await store.refreshSummariesOnly();
-                    return;
-                  }
-                  final message = await store.syncRecordings();
-                  if (message != null &&
-                      message.isNotEmpty &&
-                      context.mounted) {
-                    ScaffoldMessenger.of(context)
-                      ..hideCurrentSnackBar()
-                      ..showSnackBar(
-                        SnackBar(
-                          duration: const Duration(seconds: 2),
-                          content: Text(message),
-                        ),
-                      );
-                  }
-                },
-                child: groups.isEmpty
-                    ? ListView(
-                        key: const Key('timeline-empty'),
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.only(
-                          top: 16,
-                          bottom: RCDims.pageBottomPad,
-                        ),
-                        children: [
-                          if (showStatus)
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 22,
+              child: Stack(
+                key: _viewportKey,
+                children: [
+                  NotificationListener<ScrollNotification>(
+                    onNotification: (n) {
+                      if (store.selMode &&
+                          store.selAnchorId != null &&
+                          (n is ScrollUpdateNotification ||
+                              n is ScrollEndNotification ||
+                              n is ScrollMetricsNotification)) {
+                        _scheduleRangeCheck(store);
+                      }
+                      return false;
+                    },
+                    // 下拉刷新：全部/记录 Tab 从设备补传新录音并触发积压转写；总结 Tab 仅刷新本机总结列表
+                    child: RefreshIndicator(
+                      key: const Key('timeline-refresh'),
+                      onRefresh: () async {
+                        if (store.filter == FeedFilter.summary) {
+                          await store.refreshSummariesOnly();
+                          return;
+                        }
+                        final message = await store.syncRecordings();
+                        if (message != null &&
+                            message.isNotEmpty &&
+                            context.mounted) {
+                          ScaffoldMessenger.of(context)
+                            ..hideCurrentSnackBar()
+                            ..showSnackBar(
+                              SnackBar(
+                                duration: const Duration(seconds: 2),
+                                content: Text(message),
                               ),
-                              child: RecordingStatusBlock(
-                                controller: recordingStatus!,
-                              ),
-                            ),
-                          Padding(
-                            padding: const EdgeInsets.only(top: 60),
-                            child: Center(
-                              child: Column(
-                                children: [
-                                  Icon(
-                                    store.filter == FeedFilter.summary
-                                        ? Icons.summarize_outlined
-                                        : Icons.mic_none,
-                                    size: 36,
-                                    color: c.ax,
-                                  ),
-                                  const SizedBox(height: 10),
-                                  Text(
-                                    store.filter == FeedFilter.summary
-                                        ? '还没有总结\n点击右上角「总结」选择记录生成'
-                                        : (store.loadError ??
-                                              (store.syncError ??
-                                                  _emptyText(
-                                                    store,
-                                                    deviceReady:
-                                                        store.deviceConnected
-                                                            ?.call() ??
-                                                        true,
-                                                  ))),
-                                    key: store.filter == FeedFilter.summary
-                                        ? const Key('summary-empty-text')
-                                        : null,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: c.sec,
-                                      fontSize: 14,
-                                      height: 1.6,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      )
-                    : ListView(
-                        key: const Key('timeline-list'),
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.fromLTRB(
-                          22,
-                          4,
-                          22,
-                          RCDims.pageBottomPad,
-                        ),
-                        children: [
-                          if (showStatus)
-                            RecordingStatusBlock(
-                              controller: recordingStatus!,
-                            ),
-                          for (final g in groups) ...[
-                            Padding(
+                            );
+                        }
+                      },
+                      child: groups.isEmpty
+                          ? ListView(
+                              key: const Key('timeline-empty'),
+                              physics: const AlwaysScrollableScrollPhysics(),
                               padding: const EdgeInsets.only(
-                                top: 4,
-                                bottom: 14,
+                                top: 16,
+                                bottom: RCDims.pageBottomPad,
                               ),
-                              child: Text(
-                                g.dayLabel,
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                  color: c.label,
-                                ),
-                              ),
-                            ),
-                            for (final (i, item) in g.items.indexed)
-                              _TimelineRail(
-                                first: i == 0,
-                                last: i == g.items.length - 1,
-                                child: switch (item) {
-                                  final SummaryCard s => _SummaryCardView(
-                                    card: s,
-                                    store: store,
-                                  ),
-                                  final UnclassifiedPhotosCard u =>
-                                    _UnclassifiedPhotosCardView(card: u),
-                                  final ForkedEventPair fp =>
-                                    _ForkedEventCardView(
-                                      pair: fp,
-                                      store: store,
+                              children: [
+                                if (showStatus)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 22,
                                     ),
-                                  final RecordEvent e => _EventCardView(
-                                    event: e,
-                                    store: store,
+                                    child: RecordingStatusBlock(
+                                      controller: recordingStatus,
+                                    ),
                                   ),
-                                  _ => const SizedBox.shrink(),
-                                },
+                                if (showPendingBanner)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 22,
+                                    ),
+                                    child: _PendingAudioBanner(store: store),
+                                  ),
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 60),
+                                  child: Center(
+                                    child: Column(
+                                      children: [
+                                        Icon(
+                                          store.filter == FeedFilter.summary
+                                              ? Icons.summarize_outlined
+                                              : Icons.mic_none,
+                                          size: 36,
+                                          color: c.ax,
+                                        ),
+                                        const SizedBox(height: 10),
+                                        Text(
+                                          store.filter == FeedFilter.summary
+                                              ? '还没有总结\n点击右上角「总结」选择记录生成'
+                                              : (store.loadError ??
+                                                    (store.syncError ??
+                                                        _emptyText(
+                                                          store,
+                                                          deviceReady:
+                                                              store.deviceConnected
+                                                                  ?.call() ??
+                                                              true,
+                                                        ))),
+                                          key: store.filter ==
+                                                  FeedFilter.summary
+                                              ? const Key('summary-empty-text')
+                                              : null,
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: c.sec,
+                                            fontSize: 14,
+                                            height: 1.6,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            )
+                          : ListView(
+                              key: const Key('timeline-list'),
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.fromLTRB(
+                                22,
+                                4,
+                                22,
+                                RCDims.pageBottomPad,
                               ),
-                          ],
-                        ],
+                              children: [
+                                if (showStatus)
+                                  RecordingStatusBlock(
+                                    controller: recordingStatus,
+                                  ),
+                                if (showPendingBanner)
+                                  _PendingAudioBanner(store: store),
+                                for (final g in groups) ...[
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                      top: 4,
+                                      bottom: 14,
+                                    ),
+                                    child: Text(
+                                      g.dayLabel,
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700,
+                                        color: c.label,
+                                      ),
+                                    ),
+                                  ),
+                                  for (final (i, item) in g.items.indexed)
+                                    _TimelineRail(
+                                      first: i == 0,
+                                      last: i == g.items.length - 1,
+                                      child: switch (item) {
+                                        final SummaryCard s =>
+                                          _SummaryCardView(
+                                            card: s,
+                                            store: store,
+                                          ),
+                                        final UnclassifiedPhotosCard u =>
+                                          _UnclassifiedPhotosCardView(card: u),
+                                        final ForkedEventPair fp =>
+                                          _ForkedEventCardView(
+                                            pair: fp,
+                                            store: store,
+                                          ),
+                                        final TrivialClusterCard t =>
+                                          _TrivialClusterView(
+                                            card: t,
+                                            onTap: () =>
+                                                _showTrivialClusterSheet(
+                                                  context,
+                                                  store,
+                                                  t,
+                                                ),
+                                          ),
+                                        final RecordEvent e => _EventCardView(
+                                          event: e,
+                                          store: store,
+                                          cardKey: e.live
+                                              ? null
+                                              : _itemKeyFor(e.id),
+                                        ),
+                                        _ => const SizedBox.shrink(),
+                                      },
+                                    ),
+                                ],
+                              ],
+                            ),
+                    ),
+                  ),
+                  if (showTopSticky)
+                    Positioned(
+                      top: 10,
+                      left: 22,
+                      right: 22,
+                      child: Center(
+                        child: _StickyRangeButton(
+                          key: const Key('sticky-select-top'),
+                          icon: Icons.vertical_align_top_rounded,
+                          label: '选择到这儿 · 共 $_stickyCount 项',
+                          onTap: () => store.selectRangeTo(_stickyTargetId!),
+                        ),
                       ),
+                    ),
+                  if (showBottomSticky)
+                    Positioned(
+                      bottom: 12,
+                      left: 22,
+                      right: 22,
+                      child: Center(
+                        child: _StickyRangeButton(
+                          key: const Key('sticky-select-bottom'),
+                          icon: Icons.vertical_align_bottom_rounded,
+                          label: '选到此处 · 共 $_stickyCount 项',
+                          onTap: () => store.selectRangeTo(_stickyTargetId!),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
             if (store.selMode) _SelBar(store: store),
@@ -357,10 +590,17 @@ class _SelBar extends StatelessWidget {
                   color: c.label,
                 ),
               ),
-              const Spacer(),
-              Text(
-                '勾选要总结的记录',
-                style: TextStyle(fontSize: 12, color: c.sec),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  store.selAnchorId == null
+                      ? '点击标记起点，上下滑动可区间连选'
+                      : '已定起点，上下滑动可区间全选',
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: c.sec),
+                ),
               ),
             ],
           ),
@@ -464,15 +704,22 @@ class _TimelineRail extends StatelessWidget {
 
 /// 事件卡：标题、时间、2–3 行生活摘要；点开显示更完整概述与详情按钮。
 class _EventCardView extends StatelessWidget {
-  const _EventCardView({required this.event, required this.store});
+  const _EventCardView({
+    required this.event,
+    required this.store,
+    this.cardKey,
+  });
   final RecordEvent event;
   final AppStore store;
+  final GlobalKey? cardKey;
 
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
     final open = store.openCardId == event.id;
     final picked = store.selMode && store.selIds.contains(event.id);
+    final isAnchor =
+        store.selMode && !event.live && store.selAnchorId == event.id;
     final activePhotos = store.activePhotosForEvent(event);
     final mergeBg = c.isDark
         ? const Color(0xFF172738)
@@ -488,9 +735,11 @@ class _EventCardView extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 36),
       child: Align(
         alignment: Alignment.centerLeft,
-        child: SelectionMarker(
-          checked: picked,
-          child: Row(
+        child: KeyedSubtree(
+          key: cardKey,
+          child: SelectionMarker(
+            checked: picked,
+            child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (store.selMode && !event.live)
@@ -583,12 +832,34 @@ class _EventCardView extends StatelessWidget {
                                             color: mergeBorder,
                                           ),
                                         ),
-                                        child: Text(
+                                          child: Text(
                                           '已合并 ${event.mergedSliceCount} 分片',
                                           style: TextStyle(
                                             fontSize: 10.5,
                                             fontWeight: FontWeight.w600,
                                             color: mergeFg,
+                                          ),
+                                        ),
+                                      ),
+                                    if (isAnchor)
+                                      Container(
+                                        key: Key('sel-anchor-badge-${event.id}'),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 1.5,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: RCColors.ink,
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
+                                        ),
+                                        child: const Text(
+                                          '起点',
+                                          style: TextStyle(
+                                            fontSize: 10.5,
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.white,
                                           ),
                                         ),
                                       ),
@@ -666,6 +937,7 @@ class _EventCardView extends StatelessWidget {
               ),
             ],
           ),
+        ),
         ),
       ),
     );
@@ -1043,6 +1315,10 @@ class _SummaryCardView extends StatelessWidget {
         );
       case SummaryState.done:
         final picCount = store.activePhotoCountForSummary(card);
+        final rangeText =
+            (card.rangeLabel != null && card.rangeLabel!.isNotEmpty)
+            ? card.rangeLabel!
+            : card.time;
         inner = Column(
           key: const Key('sumcard-done'),
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1070,7 +1346,7 @@ class _SummaryCardView extends StatelessWidget {
               children: [
                 Flexible(
                   child: Text(
-                    '${card.time} · 已选 ${card.srcIds.length} 片段',
+                    '$rangeText · 已选 ${card.srcIds.length} 片段',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, color: c.sec),
@@ -1438,6 +1714,362 @@ class _UnclassifiedPhotosCardView extends StatelessWidget {
                       ),
                     ),
                   ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 待转写录音缓存横幅：录音阶段静默落盘，查看或满周期时统一批量转写并按活动合并。
+class _PendingAudioBanner extends StatelessWidget {
+  const _PendingAudioBanner({required this.store});
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final mins = math.max(1, (store.pendingLocalAudioDurationMs / 60000).round());
+    return Padding(
+      key: const Key('pending-audio-banner'),
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Material(
+        color: c.card,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: c.sep),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () =>
+              unawaited(store.transcribeAndOrganizePending(reason: 'manual')),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.schedule_rounded,
+                  size: 18,
+                  color: c.sec,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '待转写录音 · ${store.pendingLocalAudioCount} 段（约 $mins 分钟）',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          color: c.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '点击立即转写并按活动整合，或下拉刷新',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: c.sec),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: c.label,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '立即转写',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: c.onLabel,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 连续无意义口水/静音记录折叠成的轻量胶囊；点击可查看明细并跳入单独详情。
+class _TrivialClusterView extends StatelessWidget {
+  const _TrivialClusterView({required this.card, required this.onTap});
+  final TrivialClusterCard card;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final label = card.count > 1 ? '无意义碎碎念 · ${card.count} 段' : '无意义碎碎念';
+    return Padding(
+      key: Key('trivial-cluster-${card.id}'),
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Material(
+          color: c.card,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+            side: BorderSide(color: c.sep),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.chat_bubble_outline_rounded,
+                    size: 14,
+                    color: c.sec,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                            text: label,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w500,
+                              color: c.sec,
+                            ),
+                          ),
+                          TextSpan(
+                            text: '  ${card.timeRange} · ${card.totalDur}',
+                            style: TextStyle(fontSize: 11.5, color: c.ax),
+                          ),
+                        ],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  Icon(
+                    Icons.chevron_right,
+                    size: 15,
+                    color: c.ax,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _showTrivialClusterSheet(
+  BuildContext context,
+  AppStore store,
+  TrivialClusterCard card,
+) {
+  final c = context.rc;
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: c.bg,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    ),
+    builder: (sheetCtx) {
+      final sc = sheetCtx.rc;
+      final maxH = MediaQuery.of(sheetCtx).size.height * 0.65;
+      return ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxH),
+        child: Column(
+          key: const Key('trivial-sheet'),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 14, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '无意义碎碎念（${card.count} 段）',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: sc.ink,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '已自动折迭零碎试麦与静音片段，点任意一条查看详情',
+                          style: TextStyle(fontSize: 12, color: sc.sec),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(sheetCtx).pop(),
+                    icon: Icon(Icons.close, size: 20, color: sc.sec),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: sc.sep),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(
+                  16,
+                  10,
+                  16,
+                  RCDims.pageBottomPad,
+                ),
+                itemCount: card.items.length,
+                separatorBuilder: (_, _) => Divider(height: 1, color: sc.sep),
+                itemBuilder: (_, index) {
+                  final e = card.items[index];
+                  final snippet = e.brief.trim().isNotEmpty
+                      ? e.brief.trim()
+                      : (e.speakers == '无语音' ? '纯环境音或静音片段' : '点击查看原始记录');
+                  return InkWell(
+                    key: Key('trivial-item-${e.id}'),
+                    onTap: () {
+                      Navigator.of(sheetCtx).pop();
+                      store.openDetail(e.id, fresh: true);
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 11,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  e.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: sc.ink,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${e.time} · ${e.dur}${e.speakers == '无语音' ? ' · 无语音' : ''}',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: sc.sec,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  snippet,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    color: sc.sec,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(
+                            Icons.chevron_right,
+                            size: 16,
+                            color: sc.ax,
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+class _StickyRangeButton extends StatelessWidget {
+  const _StickyRangeButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33000000),
+            blurRadius: 12,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: c.label,
+        borderRadius: BorderRadius.circular(999),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 16, color: c.onLabel),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: c.onLabel,
+                    ),
+                  ),
                 ),
               ],
             ),

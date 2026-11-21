@@ -73,6 +73,29 @@ class UnclassifiedPhotosCard {
   });
 }
 
+/// 时间轴上连续低价值/无意义碎碎念或无语音切片折叠成的紧凑胶囊。
+class TrivialClusterCard {
+  final String id;
+  final int dayOffset;
+  final List<RecordEvent> items; // 倒序排列（最新在前）
+  final String timeRange;
+  final String totalDur;
+  final int speechCount;
+  final int silentCount;
+
+  const TrivialClusterCard({
+    required this.id,
+    required this.dayOffset,
+    required this.items,
+    required this.timeRange,
+    required this.totalDur,
+    required this.speechCount,
+    required this.silentCount,
+  });
+
+  int get count => items.length;
+}
+
 /// 同一时段多设备并存且转写语义不同时，在 Timeline 保留呈现的双列分叉条目。
 class ForkedEventPair {
   final String forkGroupId;
@@ -116,6 +139,9 @@ class RecordEvent {
   /// 由连续 `< 30s` 停顿声学合并的底层分片数（默认 1；`> 1` 时在时间轴展示 `ev-merge-badge-$id`「已合并 N 分片」）。
   final int mergedSliceCount;
 
+  /// 低价值碎碎念或无实质语义片段（时间轴合并折叠到紧凑小图标胶囊）。
+  final bool lowValue;
+
   /// 采集通路（`'ble'` | `'watch'` | `'phone'`）及来源设备名称。
   final String? sourceLane;
   final String? sourceDeviceLabel;
@@ -140,6 +166,7 @@ class RecordEvent {
     this.note,
     this.photos = const [],
     this.mergedSliceCount = 1,
+    this.lowValue = false,
     this.sourceLane,
     this.sourceDeviceLabel,
     this.forkGroupId,
@@ -169,6 +196,7 @@ extension RecordEventJson on RecordEvent {
         if (note != null) 'note': note,
         if (photos.isNotEmpty) 'pics': [for (final p in photos) p.toJson()],
         if (mergedSliceCount > 1) 'msc': mergedSliceCount,
+        if (lowValue) 'lv': true,
         if (sourceLane != null && sourceLane!.isNotEmpty) 'slane': sourceLane,
         if (sourceDeviceLabel != null && sourceDeviceLabel!.isNotEmpty)
           'sdev': sourceDeviceLabel,
@@ -203,6 +231,7 @@ RecordEvent recordEventFromJson(Map<String, dynamic> j) {
         if (p is Map<String, dynamic>) EventPhoto.fromJson(p),
     ],
     mergedSliceCount: ((j['msc'] as num?)?.toInt() ?? 1).clamp(1, 9999),
+    lowValue: j['lv'] == true,
     sourceLane: j['slane'] as String?,
     sourceDeviceLabel: j['sdev'] as String?,
     forkGroupId: j['fork'] as String?,

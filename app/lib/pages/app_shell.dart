@@ -238,6 +238,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late DateTime _lastCalendarDay = DateUtils.dateOnly(_now());
   bool _supportsDynamicIsland = false;
   bool _askedPhotoPermThisSession = false;
+  late RootTab _lastRootTab = widget.store.rootTab;
   bool _ownsBleReconnectSyncCb = false;
 
   DateTime _now() => (widget.clock ?? DateTime.now)();
@@ -281,6 +282,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.store.addListener(_onStoreTabChanged);
     if (!Platform.environment.containsKey('FLUTTER_TEST')) {
       _desktopCommands.setMethodCallHandler(_onDesktopCommand);
     }
@@ -528,12 +530,29 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         final elapsed = diffDays > 0 ? diffDays : 1;
         unawaited(widget.store.onCalendarDayRollover(daysElapsed: elapsed));
       }
+      if (widget.store.rootTab == RootTab.timeline &&
+          widget.store.pendingLocalAudioCount > 0) {
+        unawaited(
+          widget.store.transcribeAndOrganizePending(reason: 'view-resume'),
+        );
+      }
     }
+  }
+
+  void _onStoreTabChanged() {
+    final cur = widget.store.rootTab;
+    if (_lastRootTab != RootTab.timeline &&
+        cur == RootTab.timeline &&
+        widget.store.pendingLocalAudioCount > 0) {
+      unawaited(widget.store.transcribeAndOrganizePending(reason: 'tab-view'));
+    }
+    _lastRootTab = cur;
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.store.removeListener(_onStoreTabChanged);
     if (!Platform.environment.containsKey('FLUTTER_TEST')) {
       _desktopCommands.setMethodCallHandler(null);
     }

@@ -246,6 +246,7 @@ class SegmentRecord {
     this.fallback = false,
     this.summary = '',
     this.evidenceSliceIds = const [],
+    this.lowValue = false,
   });
 
   final String id;
@@ -280,6 +281,9 @@ class SegmentRecord {
   /// 回溯到原始切片的证据 id，供未来搜索使用，不在用户界面展示。
   List<String> evidenceSliceIds;
 
+  /// 是否为低价值碎碎念/无实质语义片段。
+  bool lowValue;
+
   bool get closed => status == SegmentStatus.closed;
   int? get durationMs => endAtMs == null ? null : endAtMs! - startAtMs;
 
@@ -304,6 +308,7 @@ class SegmentRecord {
     if (fallback) 'fb': true,
     if (summary.isNotEmpty) 'su': summary,
     if (evidenceSliceIds.isNotEmpty) 'ev': evidenceSliceIds,
+    if (lowValue) 'lv': true,
   };
 
   factory SegmentRecord.fromJson(Map<String, dynamic> j) => SegmentRecord(
@@ -334,6 +339,7 @@ class SegmentRecord {
     evidenceSliceIds: [
       for (final s in (j['ev'] as List? ?? const [])) '$s',
     ],
+    lowValue: j['lv'] == true,
   );
 }
 

@@ -821,6 +821,7 @@ void main() {
         required int uttRelStartMs,
         required int uttRelEndMs,
         required String text,
+        SegmentStatus status = SegmentStatus.closed,
       }) => RecordingFile(
         deviceName: name,
         session: 'SES_GAP',
@@ -860,15 +861,15 @@ void main() {
             endAtMs: containerStartMs + durationMs,
             title: text,
             brief: text,
-            status: SegmentStatus.closed,
+            status: status,
             sliceIds: const ['s0'],
           ),
         ],
       );
 
-      // 场景 A：Group 0 语音结束于 +50s；Group 1 容器始于 +60s（容器差仅 10s），
-      // 但真实首句始于 +115s（真实静音 65s >= 60s），当前时刻 +105s（甚至距 G0 结束仅 55s < 60s，
-      // 唯有靠 nextUnits.first.absStartMs - units.last.absEndMs >= 60s 才能命中触发！）。
+      // 场景 A：Group 0 语音结束于 +50s；Group 1 容器始于 +20 分钟（容器差小于 30 分钟活动合并窗），
+      // 但真实首句始于 +32 分钟（真实静音 31 分 10 秒 >= 30 分钟活动切分阈值与 15 分钟静音门槛），
+      // 当前时刻 +10 分钟（距 G0 结束仅 9 分 10 秒 < 15 分钟，唯有靠真实语音间隔 >= 15 分钟才能命中触发！）。
       final g0 = makeSpeechFile(
         name: 'G0.WAV',
         containerStartMs: todayBase,
@@ -879,11 +880,11 @@ void main() {
       );
       final g1 = makeSpeechFile(
         name: 'G1.WAV',
-        containerStartMs: todayBase + 60000,
-        durationMs: 70000,
-        uttRelStartMs: 55000, // absStart = +115s -> 距 g0 结束 +50s 真实静音达 65s!
-        uttRelEndMs: 65000,
-        text: '第二组在一百一十五秒才开口。',
+        containerStartMs: todayBase + 20 * 60000,
+        durationMs: 15 * 60000,
+        uttRelStartMs: 12 * 60000,
+        uttRelEndMs: 13 * 60000,
+        text: '第二组在三十二分钟才开口。',
       );
 
       final chatA = _MockChat((_, _) => jsonEncode({
@@ -908,47 +909,48 @@ void main() {
         cleanerA.hasReadyTrigger(
           [g0, g1],
           const TopicSegmentationState.empty(),
-          wallClockNowMs: todayBase + 105000,
+          wallClockNowMs: todayBase + 10 * 60000,
         ),
         isTrue,
-        reason: '真实语音间隔 65s >= 60s，不能被容器起点 +60s 误判为仅差 10s',
+        reason: '真实语音间隔 31 分 10 秒 >= 15 分钟，不能被容器起点 +20 分钟误并同组',
       );
       final resA = await cleanerA.run(
         [g0, g1],
         topicStore: topicStore,
-        wallClockNowMs: todayBase + 105000,
+        wallClockNowMs: todayBase + 10 * 60000,
       );
       expect(chatA.calls, 1);
       expect(resA.state.rollingByAnchor.containsKey('seg-G0.WAV'), isTrue);
       expect(resA.state.rollingByAnchor.containsKey('seg-G1.WAV'), isFalse);
       await topicStore.clear();
 
-      // 场景 B：历史闭合组 H0 (0..20s) 与 H1 (65s..85s) 之间仅停顿 45s（落入 30s..59s 纯声学拆段区间！），
-      // H1 之后在 +200s..210s 有 H2（H1 与 H2 间隔 115s >= 60s），当前时刻 +220s。
-      // 旧版因 nowMs - H0.endMs = 200s >= 60s 错误触发了 H0 上云！修复后 H0 必须跳过，仅 H1 触发上云。
+      // 场景 B：历史组 H0 (0..20s, live 状态保持独立分组) 与 H1 (+10m..+10m20s) 之间仅停顿 9 分 40 秒（< 15 分钟），
+      // H1 之后在 +45m..+45m10s 有 H2（H1 与 H2 间隔 34 分 40 秒 >= 30 分钟且 >= 15 分钟），当前时刻 +46m。
+      // 唯有 H1 满足 >=15 分钟后继停顿；H0（后继停顿仅 9m40s）与 H2（距 now 仅 50s）均不得调云。
       final h0 = makeSpeechFile(
         name: 'H0.WAV',
         containerStartMs: todayBase,
         durationMs: 30000,
         uttRelStartMs: 0,
         uttRelEndMs: 20000,
-        text: '仅隔四十五秒的历史短片段不该调云端。',
+        status: SegmentStatus.live,
+        text: '仅隔不到十分钟的历史短片段不该调云端。',
       );
       final h1 = makeSpeechFile(
         name: 'H1.WAV',
-        containerStartMs: todayBase + 60000,
+        containerStartMs: todayBase + 10 * 60000,
         durationMs: 30000,
-        uttRelStartMs: 5000, // absStart = +65s (距 H0 结束 45s)
-        uttRelEndMs: 25000, // absEnd = +85s
-        text: '随后静音超过一分钟的第二段才应该调云端。',
+        uttRelStartMs: 0,
+        uttRelEndMs: 20000,
+        text: '随后静音超过十五分钟的第二段才应该调云端。',
       );
       final h2 = makeSpeechFile(
         name: 'H2.WAV',
-        containerStartMs: todayBase + 195000,
+        containerStartMs: todayBase + 45 * 60000,
         durationMs: 20000,
-        uttRelStartMs: 5000, // absStart = +200s (距 H1 结束 115s >= 60s)
-        uttRelEndMs: 15000, // absEnd = +210s (距 now +220s 仅 10s < 60s)
-        text: '正在进行中的第三段尚未满一分钟停顿。',
+        uttRelStartMs: 0,
+        uttRelEndMs: 10000,
+        text: '正在进行中的第三段尚未满十五分钟停顿。',
       );
 
       final chatB = _MockChat((_, _) => jsonEncode({
@@ -958,7 +960,7 @@ void main() {
                 'title': '合规触发段标题',
                 'summary': '摘要',
                 'paragraphs': [
-                  {'uStart': 0, 'uEnd': 0, 'speaker': '说话人 1', 'text': '随后静音超过一分钟的第二段才应该调云端。'},
+                  {'uStart': 0, 'uEnd': 0, 'speaker': '说话人 1', 'text': '随后静音超过十五分钟的第二段才应该调云端。'},
                 ],
               },
             ],
@@ -972,10 +974,10 @@ void main() {
       final resB = await cleanerB.run(
         [h0, h1, h2],
         topicStore: topicStore,
-        wallClockNowMs: todayBase + 220000,
+        wallClockNowMs: todayBase + 46 * 60000,
       );
 
-      expect(chatB.calls, 1, reason: '只有 H1 满足 >=60s 后继静音；H0 (45s 间隔) 与 H2 (仅过 10s) 均不得调云');
+      expect(chatB.calls, 1, reason: '只有 H1 满足 >=15 分钟后继静音；H0 (9m40s 间隔) 与 H2 (仅过 50s) 均不得调云');
       expect(resB.state.rollingByAnchor.containsKey('seg-H0.WAV'), isFalse);
       expect(resB.state.rollingByAnchor.containsKey('seg-H1.WAV'), isTrue);
       expect(resB.state.rollingByAnchor.containsKey('seg-H2.WAV'), isFalse);

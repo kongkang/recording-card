@@ -4300,7 +4300,7 @@ class _DeveloperCleanBody extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                '持续录音达到该时长阈值后，自动结合声纹与语义对整段语音去口水词、合并同说话人段落并生成阶段标题与概述。',
+                '录音切片先静默存盘，累计到该时长阈值后批量转写并结合声纹与语义归拢成沉浸记录；切回查看、下拉刷新或停录时立即补齐。',
                 style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
               ),
               const SizedBox(height: 10),
@@ -4344,7 +4344,7 @@ class _DeveloperCleanBody extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              '停顿 ≥ 1 分钟自动触发清洗',
+                              '停顿达到阈值自动触发清洗',
                               style: TextStyle(
                                 fontSize: 13.5,
                                 fontWeight: FontWeight.w600,
@@ -4353,7 +4353,7 @@ class _DeveloperCleanBody extends StatelessWidget {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '未满周期但检测到明显沉默空白或停止录音时提前整理',
+                              '未满周期但检测到较长沉默空白或停止录音时提前整理',
                               style: TextStyle(fontSize: 11.5, color: c.sec),
                             ),
                           ],

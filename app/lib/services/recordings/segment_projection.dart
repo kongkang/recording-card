@@ -56,7 +56,10 @@ class SegmentProjection {
   /// `< 30s` 连续语音物理停顿合并阈值（不设总时长上限）。
   static const int _speechMergeGapLimitMs = 30 * 1000;
 
-  /// 提取当前全部「连续有声说话簇」，供滚动清洗分段服务与投影共源对齐 `anchorSegmentId`。
+  /// 同日内跨静音停顿归拢为沉浸活动组的最大允许间隔（30 分钟）。
+  static const int activityMergeGapLimitMs = 30 * 60 * 1000;
+
+  /// 提取当前全部「连续有声说话簇」，供既有 `< 30s` 分组与快速话题 Agent 对齐 `anchorSegmentId`。
   static List<ProjectedSpeechGroup> collectSpeechGroups(
     List<RecordingFile> files,
   ) {
@@ -112,6 +115,73 @@ class SegmentProjection {
     return groups;
   }
 
+  /// 提取跨短时静音停顿的「活动整理组」（同日内相邻有声片间隔 `< maxGapMs` 聚拢为同组），
+  /// 供滚动语义清洗服务识别连续工作/学习/讨论状态，避免一两分钟看视频或敲代码静默拆碎。
+  static List<ProjectedSpeechGroup> collectActivityGroups(
+    List<RecordingFile> files, {
+    int maxGapMs = activityMergeGapLimitMs,
+    Set<String> hiddenSegmentIds = const {},
+  }) {
+    final rawViews = _sortedRawViews(files, hiddenSegmentIds: hiddenSegmentIds);
+    final groups = <ProjectedSpeechGroup>[];
+    var bucket = <SegmentView>[];
+
+    void flush() {
+      if (bucket.isEmpty) return;
+      groups.add(
+        ProjectedSpeechGroup(
+          anchorSegmentId: bucket.first.segment.id,
+          views: List<SegmentView>.unmodifiable(bucket),
+          startAtMs: bucket.first.segment.startAtMs,
+          endAtMs: _endMsOf(bucket.last),
+        ),
+      );
+      bucket = <SegmentView>[];
+    }
+
+    for (final v in rawViews) {
+      if (v.file.isExternalImported) continue;
+      if (_isMergeableSilent(v)) continue;
+      if (!_isMergeableSpeech(v)) {
+        flush();
+        if (v.turns.isNotEmpty || v.utterances.isNotEmpty) {
+          groups.add(
+            ProjectedSpeechGroup(
+              anchorSegmentId: v.segment.id,
+              views: [v],
+              startAtMs: v.segment.startAtMs,
+              endAtMs: _endMsOf(v),
+            ),
+          );
+        }
+        continue;
+      }
+      if (bucket.isEmpty) {
+        bucket.add(v);
+        continue;
+      }
+      final prev = bucket.last;
+      final sameDay =
+          _dayOffset(prev.segment.startAtMs) == _dayOffset(v.segment.startAtMs);
+      final prevTrack = prev.file.resolvedSourceLane == RecordingSourceLane.ble
+          ? 'ble'
+          : 'companion';
+      final nextTrack = v.file.resolvedSourceLane == RecordingSourceLane.ble
+          ? 'ble'
+          : 'companion';
+      final gapMs = _speechStartMsOf(v) - _speechEndMsOf(prev);
+      final crossTrackOverlap = prevTrack != nextTrack && gapMs < -3000;
+      if (sameDay && !crossTrackOverlap && gapMs >= -60 * 1000 && gapMs < maxGapMs) {
+        bucket.add(v);
+      } else {
+        flush();
+        bucket.add(v);
+      }
+    }
+    flush();
+    return groups;
+  }
+
   static List<SegmentView> _sortedRawViews(
     List<RecordingFile> files, {
     Set<String> hiddenSegmentIds = const {},
@@ -135,6 +205,64 @@ class SegmentProjection {
     return rawViews;
   }
 
+  static List<TopicRunSegmentation> _collectActiveRuns(
+    TopicSegmentationState? topicState,
+  ) {
+    if (topicState == null) return const [];
+    final anchors = <String>{
+      ...topicState.rollingByAnchor.keys,
+      for (final m in topicState.stageByTask.values) ...m.keys,
+    };
+    final stageRuns = <TopicRunSegmentation>[
+      for (final taskId in TopicSegmentationState.higherStageOrder)
+        for (final run
+            in (topicState.stageByTask[taskId]?.values ??
+                const <TopicRunSegmentation>[]))
+          if (run.sections.isNotEmpty) run,
+    ];
+    final active = <TopicRunSegmentation>[];
+    for (final anchorId in anchors) {
+      final run = topicState.displayRunForAnchor(anchorId);
+      if (run == null || run.sections.isEmpty) continue;
+      final supersededByHigherStage = stageRuns.any(
+        (stageRun) =>
+            stageRun.runKey != run.runKey &&
+            _dayOffset(stageRun.startAtMs) == _dayOffset(run.startAtMs) &&
+            stageRun.startAtMs <= run.startAtMs &&
+            stageRun.endAtMs >= run.endAtMs &&
+            stageRun.evaluatedAtMs >= run.evaluatedAtMs,
+      );
+      if (supersededByHigherStage) continue;
+      active.add(run);
+    }
+    active.sort((a, b) => a.startAtMs.compareTo(b.startAtMs));
+    return active;
+  }
+
+  static TopicRunSegmentation? _matchingActiveRun(
+    SegmentView head,
+    List<TopicRunSegmentation> activeRuns,
+    Set<String> consumedKeys,
+  ) {
+    for (final run in activeRuns) {
+      if (consumedKeys.contains(run.runKey)) continue;
+      if (run.runKey == head.segment.id) return run;
+      if (_isMergeableSpeech(head) &&
+          _dayOffset(head.segment.startAtMs) == _dayOffset(run.startAtMs) &&
+          head.segment.startAtMs >= run.startAtMs &&
+          head.segment.startAtMs <= run.endAtMs) {
+        return run;
+      }
+    }
+    return null;
+  }
+
+  static bool _isProtectedSilent(SegmentView v) {
+    if (v.turns.isNotEmpty || v.utterances.isNotEmpty) return false;
+    final mark = (v.segment.mark ?? '').trim();
+    return mark.isNotEmpty && !_gapMarkPattern.hasMatch(mark);
+  }
+
   static ProjectionResult build(
     List<RecordingFile> files, {
     TopicSegmentationState? topicState,
@@ -144,6 +272,8 @@ class SegmentProjection {
     final forkGroupBySeg =
         reconciliation?.forkGroupBySegmentId ?? const <String, String>{};
     final rawViews = _sortedRawViews(files, hiddenSegmentIds: hiddenIds);
+    final activeRuns = _collectActiveRuns(topicState);
+    final consumedRunKeys = <String>{};
 
     final events = <RecordEvent>[];
     final views = <String, SegmentView>{};
@@ -153,6 +283,68 @@ class SegmentProjection {
     var i = 0;
     while (i < rawViews.length) {
       final head = rawViews[i];
+      final matchedRun = head.file.isExternalImported
+          ? null
+          : _matchingActiveRun(head, activeRuns, consumedRunKeys);
+      if (matchedRun != null) {
+        consumedRunKeys.add(matchedRun.runKey);
+        final group = <SegmentView>[head];
+        SegmentView? lastSpeech = _isMergeableSpeech(head) ? head : null;
+        var j = i + 1;
+        while (j < rawViews.length) {
+          final next = rawViews[j];
+          final sameDay =
+              _dayOffset(head.segment.startAtMs) ==
+              _dayOffset(next.segment.startAtMs);
+          final inRunWindow = sameDay &&
+              !next.file.isExternalImported &&
+              next.segment.startAtMs <= matchedRun.endAtMs;
+          if (inRunWindow) {
+            if (_isProtectedSilent(next)) {
+              // 带物理键打点的静音片单独保留不被吞并
+              views[next.segment.id] = next;
+              final ev = _eventFor(
+                next,
+                forkGroupId: forkGroupBySeg[next.segment.id],
+              );
+              events.add(ev);
+              startMsByEventId[ev.id] = next.segment.startAtMs;
+            } else {
+              group.add(next);
+              if (_isMergeableSpeech(next)) lastSpeech = next;
+            }
+            j++;
+            continue;
+          }
+          final nextClaimed = _matchingActiveRun(
+            next,
+            activeRuns,
+            consumedRunKeys,
+          );
+          if (nextClaimed == null &&
+              lastSpeech != null &&
+              _canMergeConsecutiveSpeech(lastSpeech, next)) {
+            group.add(next);
+            lastSpeech = next;
+            j++;
+            continue;
+          }
+          break;
+        }
+        _projectSpeechGroup(
+          group: group,
+          topicState: topicState,
+          overrideRollingRun: matchedRun,
+          forkGroupBySeg: forkGroupBySeg,
+          events: events,
+          views: views,
+          redirects: redirects,
+          startMsByEventId: startMsByEventId,
+        );
+        i = j;
+        continue;
+      }
+
       if (_isMergeableSilent(head)) {
         final group = <SegmentView>[head];
         var j = i + 1;
@@ -160,6 +352,9 @@ class SegmentProjection {
           final prev = group.last;
           final next = rawViews[j];
           if (!_canMergeConsecutiveSilent(prev, next)) break;
+          if (_matchingActiveRun(next, activeRuns, consumedRunKeys) != null) {
+            break;
+          }
           group.add(next);
           j++;
         }
@@ -213,6 +408,9 @@ class SegmentProjection {
         final prev = speechGroup.last;
         final next = rawViews[j];
         if (!_canMergeConsecutiveSpeech(prev, next)) break;
+        if (_matchingActiveRun(next, activeRuns, consumedRunKeys) != null) {
+          break;
+        }
         speechGroup.add(next);
         j++;
       }
@@ -335,6 +533,7 @@ class SegmentProjection {
   static void _projectSpeechGroup({
     required List<SegmentView> group,
     required TopicSegmentationState? topicState,
+    TopicRunSegmentation? overrideRollingRun,
     Map<String, String> forkGroupBySeg = const {},
     required List<RecordEvent> events,
     required Map<String, SegmentView> views,
@@ -344,7 +543,9 @@ class SegmentProjection {
     final anchor = group.first;
     final startAtMs = anchor.segment.startAtMs;
     final endAtMs = _endMsOf(group.last);
-    final rollingRun = topicState?.displayRunForAnchor(anchor.segment.id);
+    final rollingRun =
+        overrideRollingRun ??
+        topicState?.displayRunForAnchor(anchor.segment.id);
     final runKey = FastTopicSegmentAgent.buildRunKey(
       anchor.segment.id,
       startAtMs,
@@ -703,13 +904,25 @@ class SegmentProjection {
       String? explicitId,
       String summary = '',
       List<String> evidenceSliceIds = const [],
+      bool lowValue = false,
+      List<SegmentView>? extraChildren,
     }) {
       if (turns.isEmpty && utterances.isEmpty) return;
-      final subChildren = [
+      final subChildren = <SegmentView>[
         for (final c in group)
           if (_endMsOf(c) > secStartMs && c.segment.startAtMs < secEndMs) c,
+        if (extraChildren != null)
+          for (final ec in extraChildren) ec,
       ];
-      final effectiveChildren = subChildren.isEmpty ? [anchor] : subChildren;
+      final dedupChildren = <SegmentView>[];
+      final seenChildIds = <String>{};
+      for (final c in (subChildren.isEmpty ? [anchor] : subChildren)) {
+        if (seenChildIds.add(c.segment.id)) dedupChildren.add(c);
+      }
+      dedupChildren.sort(
+        (a, b) => a.segment.startAtMs.compareTo(b.segment.startAtMs),
+      );
+      final effectiveChildren = dedupChildren;
       final speakers = <String>{
         for (final t in turns)
           if (t.speakerLabel.trim().isNotEmpty && t.speakerLabel != '未区分')
@@ -727,7 +940,8 @@ class SegmentProjection {
       final resolvedTitle =
           (title.trim().isNotEmpty &&
               !_legacyRawTitlePattern.hasMatch(title.trim()) &&
-              isMeaningfulSpeechText(title))
+              isMeaningfulSpeechText(title) &&
+              countMeaningfulChars(title) >= 2)
           ? title.trim()
           : buildReadableFallbackTitle(seedText, fallback: '阶段话题');
       final preferredBrief = brief.trim().isNotEmpty ? brief.trim() : summary.trim();
@@ -753,6 +967,10 @@ class SegmentProjection {
           (emittedTopics.isEmpty
               ? anchor.segment.id
               : '${anchor.segment.id}#t$sectionIndex');
+      final childMarks = <String>{
+        for (final c in effectiveChildren)
+          if ((c.segment.mark ?? '').trim().isNotEmpty) c.segment.mark!.trim(),
+      }.toList();
       final secSeg = SegmentRecord(
         id: eventId,
         sessionId: anchor.segment.sessionId,
@@ -768,7 +986,9 @@ class SegmentProjection {
         status: anchor.segment.status,
         sliceIds: {for (final u in utterances) u.sliceId}.toList(),
         turnIds: [for (final t in turns) t.id],
-        mark: emittedTopics.isEmpty ? anchor.segment.mark : null,
+        mark: childMarks.isNotEmpty
+            ? childMarks.join(' · ')
+            : (emittedTopics.isEmpty ? anchor.segment.mark : null),
         polishStale: cleanedByCloud
             ? false
             : effectiveChildren.any(
@@ -781,6 +1001,7 @@ class SegmentProjection {
         evidenceSliceIds: evidenceSliceIds.isNotEmpty
             ? evidenceSliceIds
             : {for (final u in utterances) u.sliceId}.toList(),
+        lowValue: lowValue,
       );
       final secView = SegmentView(
         segment: secSeg,
@@ -864,6 +1085,7 @@ class SegmentProjection {
         cleanedByCloud: sec.cleanedByCloud,
         summary: sec.summary,
         evidenceSliceIds: sec.evidenceSliceIds,
+        lowValue: sec.lowValue,
       );
     }
 
@@ -909,17 +1131,55 @@ class SegmentProjection {
       return;
     }
 
-    for (var k = 1; k < group.length; k++) {
+    // 把 group 中所有子切片（含中间穿插静音片段）绑定到最匹配的话题段，确保照片和原音不丢
+    for (var k = 0; k < group.length; k++) {
       final child = group[k];
       final childMid = (child.segment.startAtMs + _endMsOf(child)) ~/ 2;
-      var targetId = emittedTopics.first.id;
+      var target = emittedTopics.first;
+      int? bestDist;
       for (final t in emittedTopics) {
         if (childMid >= t.startMs && childMid <= t.endMs) {
-          targetId = t.id;
+          target = t;
+          bestDist = 0;
           break;
         }
+        final dist = childMid < t.startMs
+            ? t.startMs - childMid
+            : childMid - t.endMs;
+        if (bestDist == null || dist < bestDist) {
+          bestDist = dist;
+          target = t;
+        }
       }
-      redirects[child.segment.id] = targetId;
+      if (child.segment.id != target.id) {
+        redirects[child.segment.id] = target.id;
+      }
+      final existingView = views[target.id];
+      if (existingView != null &&
+          !existingView.mergedChildren.any(
+            (m) => m.segment.id == child.segment.id,
+          )) {
+        final nextChildren = [
+          ...existingView.mergedChildren,
+          if (existingView.mergedChildren.isEmpty) existingView,
+          child,
+        ]..sort((a, b) => a.segment.startAtMs.compareTo(b.segment.startAtMs));
+        final uniq = <SegmentView>[];
+        final seen = <String>{};
+        for (final c in nextChildren) {
+          if (seen.add(c.segment.id)) uniq.add(c);
+        }
+        if (uniq.length > 1) {
+          views[target.id] = SegmentView(
+            segment: existingView.segment,
+            file: existingView.file,
+            turns: existingView.turns,
+            utterances: existingView.utterances,
+            slices: existingView.slices,
+            mergedChildren: List<SegmentView>.unmodifiable(uniq),
+          );
+        }
+      }
     }
   }
 
@@ -1051,6 +1311,7 @@ class SegmentProjection {
       live: false,
       note: null,
       mergedSliceCount: count,
+      lowValue: true,
       sourceLane: children.first.file.resolvedSourceLane.code,
       sourceDeviceLabel: children.first.file.resolvedSourceDeviceLabel,
     );
@@ -1229,6 +1490,7 @@ class SegmentProjection {
       live: segment.status == SegmentStatus.live,
       note: note,
       mergedSliceCount: mergedSliceCount,
+      lowValue: segment.lowValue || isReadySilent,
       sourceLane: file.resolvedSourceLane.code,
       sourceDeviceLabel: file.resolvedSourceDeviceLabel,
       forkGroupId: forkGroupId,
