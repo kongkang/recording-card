@@ -10,6 +10,7 @@ import '../../core/models/segment_view.dart';
 import '../../core/models/summary.dart';
 import '../segment/fast_topic_segment_agent.dart';
 import '../transcribe/utterance_builder.dart';
+import 'multi_track_reconciler.dart';
 
 class ProjectionResult {
   const ProjectionResult({
@@ -111,10 +112,14 @@ class SegmentProjection {
     return groups;
   }
 
-  static List<SegmentView> _sortedRawViews(List<RecordingFile> files) {
+  static List<SegmentView> _sortedRawViews(
+    List<RecordingFile> files, {
+    Set<String> hiddenSegmentIds = const {},
+  }) {
     final rawViews = <SegmentView>[];
     for (final file in files) {
       for (final segment in file.segments) {
+        if (hiddenSegmentIds.contains(segment.id)) continue;
         rawViews.add(_viewFor(file, segment));
       }
     }
@@ -133,8 +138,12 @@ class SegmentProjection {
   static ProjectionResult build(
     List<RecordingFile> files, {
     TopicSegmentationState? topicState,
+    MultiTrackReconciliationState? reconciliation,
   }) {
-    final rawViews = _sortedRawViews(files);
+    final hiddenIds = reconciliation?.hiddenSegmentIds ?? const <String>{};
+    final forkGroupBySeg =
+        reconciliation?.forkGroupBySegmentId ?? const <String, String>{};
+    final rawViews = _sortedRawViews(files, hiddenSegmentIds: hiddenIds);
 
     final events = <RecordEvent>[];
     final views = <String, SegmentView>{};
@@ -157,7 +166,10 @@ class SegmentProjection {
 
         if (group.length == 1) {
           views[head.segment.id] = head;
-          final event = _eventFor(head);
+          final event = _eventFor(
+            head,
+            forkGroupId: forkGroupBySeg[head.segment.id],
+          );
           events.add(event);
           startMsByEventId[event.id] = head.segment.startAtMs;
         } else {
@@ -185,7 +197,10 @@ class SegmentProjection {
 
       if (!_isMergeableSpeech(head)) {
         views[head.segment.id] = head;
-        final event = _eventFor(head);
+        final event = _eventFor(
+          head,
+          forkGroupId: forkGroupBySeg[head.segment.id],
+        );
         events.add(event);
         startMsByEventId[event.id] = head.segment.startAtMs;
         i++;
@@ -205,6 +220,7 @@ class SegmentProjection {
       _projectSpeechGroup(
         group: speechGroup,
         topicState: topicState,
+        forkGroupBySeg: forkGroupBySeg,
         events: events,
         views: views,
         redirects: redirects,
@@ -251,9 +267,18 @@ class SegmentProjection {
     final prevStart = prev.segment.startAtMs;
     final nextStart = next.segment.startAtMs;
     if (_dayOffset(prevStart) != _dayOffset(nextStart)) return false;
+    final prevTrack = prev.file.resolvedSourceLane == RecordingSourceLane.ble
+        ? 'ble'
+        : 'companion';
+    final nextTrack = next.file.resolvedSourceLane == RecordingSourceLane.ble
+        ? 'ble'
+        : 'companion';
 
     final prevEnd = _endMsOf(prev);
     final gapMs = nextStart - prevEnd;
+    if (prevTrack != nextTrack && gapMs < -3000) {
+      return false;
+    }
     final sameSession =
         prev.segment.sessionId.trim().isNotEmpty &&
         prev.segment.sessionId == next.segment.sessionId;
@@ -294,12 +319,23 @@ class SegmentProjection {
     final prevSpeechEnd = _speechEndMsOf(prev);
     final nextSpeechStart = _speechStartMsOf(next);
     final gapMs = nextSpeechStart - prevSpeechEnd;
+    final prevTrack = prev.file.resolvedSourceLane == RecordingSourceLane.ble
+        ? 'ble'
+        : 'companion';
+    final nextTrack = next.file.resolvedSourceLane == RecordingSourceLane.ble
+        ? 'ble'
+        : 'companion';
+    // 禁止把不同采集通路（如蓝牙路与手机/手表伴随路）在时间重叠窗口内混并成同一张卡片
+    if (prevTrack != nextTrack && gapMs < -3000) {
+      return false;
+    }
     return gapMs >= -60 * 1000 && gapMs < _speechMergeGapLimitMs;
   }
 
   static void _projectSpeechGroup({
     required List<SegmentView> group,
     required TopicSegmentationState? topicState,
+    Map<String, String> forkGroupBySeg = const {},
     required List<RecordEvent> events,
     required Map<String, SegmentView> views,
     required Map<String, String> redirects,
@@ -316,12 +352,20 @@ class SegmentProjection {
     );
     final topicRun = topicState?.runsByKey[runKey];
 
+    final groupForkId = group
+        .map((c) => forkGroupBySeg[c.segment.id])
+        .whereType<String>()
+        .firstOrNull;
+
     // 单个未拆分且无滚动清洗结果的片段直接走原始投影（无合并徽标）
     if (group.length == 1 &&
         (rollingRun == null || rollingRun.sections.isEmpty) &&
         (topicRun == null || topicRun.sections.isEmpty)) {
       views[anchor.segment.id] = anchor;
-      final event = _eventFor(anchor);
+      final event = _eventFor(
+        anchor,
+        forkGroupId: groupForkId,
+      );
       events.add(event);
       startMsByEventId[event.id] = anchor.segment.startAtMs;
       return;
@@ -394,6 +438,7 @@ class SegmentProjection {
         views: views,
         redirects: redirects,
         startMsByEventId: startMsByEventId,
+        forkGroupId: groupForkId,
       );
       return;
     }
@@ -504,6 +549,7 @@ class SegmentProjection {
         final ev = _eventFor(
           secView,
           mergedSliceCount: secView.mergedSliceCount,
+          forkGroupId: groupForkId,
         );
         events.add(ev);
         startMsByEventId[eventId] = secStartMs;
@@ -621,6 +667,7 @@ class SegmentProjection {
     final ev = _eventFor(
       mergedView,
       mergedSliceCount: group.length,
+      forkGroupId: groupForkId,
     );
     events.add(ev);
     startMsByEventId[ev.id] = startAtMs;
@@ -637,6 +684,7 @@ class SegmentProjection {
     required Map<String, SegmentView> views,
     required Map<String, String> redirects,
     required Map<String, int> startMsByEventId,
+    String? forkGroupId,
   }) {
     final emittedTopics = <({String id, int startMs, int endMs})>[];
     final anchorStartMs = anchor.file.startAtMs;
@@ -748,6 +796,7 @@ class SegmentProjection {
       final ev = _eventFor(
         secView,
         mergedSliceCount: secView.mergedSliceCount,
+        forkGroupId: forkGroupId,
       );
       events.add(ev);
       startMsByEventId[eventId] = secStartMs;
@@ -854,7 +903,7 @@ class SegmentProjection {
 
     if (emittedTopics.isEmpty) {
       views[anchor.segment.id] = anchor;
-      final ev = _eventFor(anchor);
+      final ev = _eventFor(anchor, forkGroupId: forkGroupId);
       events.add(ev);
       startMsByEventId[ev.id] = anchor.segment.startAtMs;
       return;
@@ -1002,6 +1051,8 @@ class SegmentProjection {
       live: false,
       note: null,
       mergedSliceCount: count,
+      sourceLane: children.first.file.resolvedSourceLane.code,
+      sourceDeviceLabel: children.first.file.resolvedSourceDeviceLabel,
     );
   }
 
@@ -1060,6 +1111,7 @@ class SegmentProjection {
   static RecordEvent _eventFor(
     SegmentView view, {
     int mergedSliceCount = 1,
+    String? forkGroupId,
   }) {
     final segment = view.segment;
     final file = view.file;
@@ -1177,6 +1229,9 @@ class SegmentProjection {
       live: segment.status == SegmentStatus.live,
       note: note,
       mergedSliceCount: mergedSliceCount,
+      sourceLane: file.resolvedSourceLane.code,
+      sourceDeviceLabel: file.resolvedSourceDeviceLabel,
+      forkGroupId: forkGroupId,
     );
   }
 

@@ -73,6 +73,23 @@ class UnclassifiedPhotosCard {
   });
 }
 
+/// 同一时段多设备并存且转写语义不同时，在 Timeline 保留呈现的双列分叉条目。
+class ForkedEventPair {
+  final String forkGroupId;
+  final int dayOffset;
+  final String time;
+  final RecordEvent left;
+  final RecordEvent right;
+
+  const ForkedEventPair({
+    required this.forkGroupId,
+    required this.dayOffset,
+    required this.time,
+    required this.left,
+    required this.right,
+  });
+}
+
 class RecordEvent {
   final String id;
   final int dayOffset;
@@ -99,6 +116,13 @@ class RecordEvent {
   /// 由连续 `< 30s` 停顿声学合并的底层分片数（默认 1；`> 1` 时在时间轴展示 `ev-merge-badge-$id`「已合并 N 分片」）。
   final int mergedSliceCount;
 
+  /// 采集通路（`'ble'` | `'watch'` | `'phone'`）及来源设备名称。
+  final String? sourceLane;
+  final String? sourceDeviceLabel;
+
+  /// 若该事件处于多路并行语义分叉对中，记录其所属分叉组 ID。
+  final String? forkGroupId;
+
   const RecordEvent({
     required this.id,
     required this.dayOffset,
@@ -116,6 +140,9 @@ class RecordEvent {
     this.note,
     this.photos = const [],
     this.mergedSliceCount = 1,
+    this.sourceLane,
+    this.sourceDeviceLabel,
+    this.forkGroupId,
   });
 }
 
@@ -142,6 +169,10 @@ extension RecordEventJson on RecordEvent {
         if (note != null) 'note': note,
         if (photos.isNotEmpty) 'pics': [for (final p in photos) p.toJson()],
         if (mergedSliceCount > 1) 'msc': mergedSliceCount,
+        if (sourceLane != null && sourceLane!.isNotEmpty) 'slane': sourceLane,
+        if (sourceDeviceLabel != null && sourceDeviceLabel!.isNotEmpty)
+          'sdev': sourceDeviceLabel,
+        if (forkGroupId != null && forkGroupId!.isNotEmpty) 'fork': forkGroupId,
       };
 }
 
@@ -172,5 +203,8 @@ RecordEvent recordEventFromJson(Map<String, dynamic> j) {
         if (p is Map<String, dynamic>) EventPhoto.fromJson(p),
     ],
     mergedSliceCount: ((j['msc'] as num?)?.toInt() ?? 1).clamp(1, 9999),
+    sourceLane: j['slane'] as String?,
+    sourceDeviceLabel: j['sdev'] as String?,
+    forkGroupId: j['fork'] as String?,
   );
 }

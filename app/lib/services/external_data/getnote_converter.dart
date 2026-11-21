@@ -124,6 +124,7 @@ class GetNoteConverter {
       turns: turns,
       segments: [segment],
       createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      sourceDeviceLabel: '得到大脑',
     );
   }
 

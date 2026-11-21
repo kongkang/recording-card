@@ -31,6 +31,7 @@ import 'package:recording_card/services/external_data/getnote_client.dart';
 import 'package:recording_card/services/external_data/getnote_sync_store.dart';
 import 'package:recording_card/services/platform/live_activity_service.dart';
 import 'package:recording_card/services/polish/slice_polish_service.dart';
+import 'package:recording_card/services/recordings/multi_track_reconciler.dart';
 import 'package:recording_card/services/recordings/recording_pipeline.dart';
 import 'package:recording_card/services/recordings/recording_store.dart';
 import 'package:recording_card/services/recordings/segment_projection.dart';
@@ -568,11 +569,17 @@ void main() {
       );
       expect(audEvent.srcMap, startsWith('来源 得到大脑 · '));
       expect(audEvent.speakers, '说话人 1 / 说话人 2');
+      expect(audEvent.sourceDeviceLabel, '得到大脑');
 
       // 验证 collectSpeechGroups 只收集本地 BLE 录音，不把外部笔记送入滚动清洗切片
       final loadedFiles = await recStore.loadAll(refresh: true);
       final speechGroups = SegmentProjection.collectSpeechGroups(loadedFiles);
       expect(speechGroups.map((g) => g.anchorSegmentId).toList(), ['seg-ble-1']);
+
+      // 验证多路比对服务不会拿外部导入笔记与并发 BLE 录音做隐藏或分叉配对
+      final recon = await MultiTrackReconciler().reconcile(loadedFiles);
+      expect(recon.hiddenSegmentIds, isEmpty);
+      expect(recon.forkGroupBySegmentId, isEmpty);
 
       // 清空凭据后 SecureStore 内密钥彻底抹除
       await syncStore.clearAll();

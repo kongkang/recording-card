@@ -18,6 +18,97 @@ import 'pcm_ring_buffer.dart';
 
 enum PhoneMicPermission { granted, denied, notDetermined }
 
+enum PhoneMicErrorKind { backgroundRestricted, audioBusy, permissionDenied, other }
+
+class PhoneMicStartException implements Exception {
+  const PhoneMicStartException({
+    required this.kind,
+    required this.userMessage,
+    this.osStatus,
+  });
+
+  final PhoneMicErrorKind kind;
+  final String userMessage;
+  final int? osStatus;
+
+  factory PhoneMicStartException.fromPlatform(PlatformException e) {
+    final code = e.code.trim();
+    final rawMsg = (e.message ?? '').trim();
+    int? osStatus;
+    if (e.details is Map && (e.details as Map)['osStatus'] is num) {
+      osStatus = ((e.details as Map)['osStatus'] as num).toInt();
+    } else {
+      final match = RegExp(r'OSStatus[^\d-]*(-?\d+)').firstMatch(rawMsg);
+      if (match != null) {
+        osStatus = int.tryParse(match.group(1)!);
+      }
+    }
+
+    if (code == 'phone_mic_background_restricted' ||
+        osStatus == 560557684 ||
+        rawMsg.contains('560557684')) {
+      return PhoneMicStartException(
+        kind: code == 'phone_mic_audio_busy'
+            ? PhoneMicErrorKind.audioBusy
+            : PhoneMicErrorKind.backgroundRestricted,
+        userMessage: rawMsg.isNotEmpty && !rawMsg.contains('OSStatus')
+            ? rawMsg
+            : '系统限制后台直接启用手机麦克风，请切回应用自动开启本机录音',
+        osStatus: osStatus ?? 560557684,
+      );
+    }
+    if (code == 'phone_mic_audio_busy' ||
+        osStatus == 561017449 ||
+        rawMsg.contains('561017449')) {
+      return PhoneMicStartException(
+        kind: PhoneMicErrorKind.audioBusy,
+        userMessage: rawMsg.isNotEmpty && !rawMsg.contains('OSStatus')
+            ? rawMsg
+            : '手机麦克风正被其他通话或语音应用占用，释放后将自动重试',
+        osStatus: osStatus ?? 561017449,
+      );
+    }
+    if (rawMsg.contains('权限')) {
+      return PhoneMicStartException(
+        kind: PhoneMicErrorKind.permissionDenied,
+        userMessage: rawMsg,
+        osStatus: osStatus,
+      );
+    }
+    return PhoneMicStartException(
+      kind: PhoneMicErrorKind.other,
+      userMessage: rawMsg.isNotEmpty
+          ? rawMsg
+          : '本机录音暂时无法启动，请重试',
+      osStatus: osStatus,
+    );
+  }
+
+  static PhoneMicStartException? tryParse(Object error) {
+    if (error is PhoneMicStartException) return error;
+    if (error is PlatformException) return PhoneMicStartException.fromPlatform(error);
+    final raw = error.toString();
+    if (raw.contains('560557684') || raw.contains('phone_mic_background_restricted')) {
+      return const PhoneMicStartException(
+        kind: PhoneMicErrorKind.backgroundRestricted,
+        userMessage: '系统限制后台直接启用手机麦克风，请切回应用自动开启本机录音',
+        osStatus: 560557684,
+      );
+    }
+    if (raw.contains('561017449') || raw.contains('phone_mic_audio_busy')) {
+      return const PhoneMicStartException(
+        kind: PhoneMicErrorKind.audioBusy,
+        userMessage: '手机麦克风正被其他通话或语音应用占用，释放后将自动重试',
+        osStatus: 561017449,
+      );
+    }
+    return null;
+  }
+
+  @override
+  String toString() => userMessage;
+}
+
 abstract interface class PhoneMicBackend {
   Future<PhoneMicPermission> checkPermission();
   Future<PhoneMicPermission> requestPermission();
@@ -34,11 +125,15 @@ class PlatformPhoneMicBackend implements PhoneMicBackend {
     MethodChannel channel = const MethodChannel(
       'com.reai.recordingcard/phone_mic',
     ),
+    this.onAppBecameActive,
+    this.onAudioInterruptionEnded,
   }) : _channel = channel {
     _channel.setMethodCallHandler(_handleIncoming);
   }
 
   final MethodChannel _channel;
+  VoidCallback? onAppBecameActive;
+  VoidCallback? onAudioInterruptionEnded;
   void Function(Uint8List)? _onPcm;
   void Function(String)? _onError;
 
@@ -58,6 +153,10 @@ class PlatformPhoneMicBackend implements PhoneMicBackend {
       case 'error':
         final msg = '${call.arguments ?? '本机录音采集异常'}';
         _onError?.call(msg);
+      case 'appBecameActive':
+        onAppBecameActive?.call();
+      case 'audioInterruptionEnded':
+        onAudioInterruptionEnded?.call();
     }
   }
 
@@ -92,7 +191,13 @@ class PlatformPhoneMicBackend implements PhoneMicBackend {
   }) async {
     _onPcm = onPcm;
     _onError = onError;
-    await _channel.invokeMethod<void>('start');
+    try {
+      await _channel.invokeMethod<void>('start');
+    } on PlatformException catch (e) {
+      _onPcm = null;
+      _onError = null;
+      throw PhoneMicStartException.fromPlatform(e);
+    }
   }
 
   @override
@@ -303,6 +408,8 @@ class PhoneMicRecorder {
           isFinal: isFinal,
           sliceKeyOverride: sliceKey,
           marksMs: marks,
+          sourceLane: 'phone',
+          sourceDeviceLabel: '手机本机',
         ),
       );
     }).catchError((Object e, StackTrace st) {

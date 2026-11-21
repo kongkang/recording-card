@@ -18,6 +18,7 @@ import '../../services/ai/summary_generator.dart';
 import '../../services/audio/live_audio_recorder.dart';
 import '../../services/audio/recording_status.dart';
 import '../../services/photos/photo_library_service.dart';
+import '../../services/recordings/multi_track_reconciler.dart';
 import '../../services/recordings/recording_pipeline.dart';
 import '../../services/recordings/recording_store.dart';
 import '../../services/recordings/recordings_manifest.dart';
@@ -126,6 +127,61 @@ class AppStore extends ChangeNotifier {
 
   /// 连续无语音切片合并后，被折叠子分段 ID → 锚点分段 ID 映射。
   Map<String, String> _mergedIdRedirects = const {};
+
+  /// 多路冗余录音比对合并与分叉决策状态。
+  MultiTrackReconciliationState _reconciliation =
+      const MultiTrackReconciliationState();
+
+  MultiTrackReconciliationState get multiTrackReconciliation => _reconciliation;
+
+  /// 若某条记录处于双路并行语义分叉对中，返回其对侧兄弟事件；否则为 null。
+  RecordEvent? siblingForkEventFor(String eventId) {
+    final ev = eventByIdOrNull(eventId);
+    final fk = ev?.forkGroupId;
+    if (fk == null || fk.isEmpty) return null;
+    for (final other in events) {
+      if (other.id != eventId && other.forkGroupId == fk) return other;
+    }
+    return null;
+  }
+
+  /// 蓝牙设备重连恢复后触发：先冲刷当前手表/手机兜底切片并等转写落盘，
+  /// 再从蓝牙设备拉回离线文件（若当前未在实时流录音），最后执行多路文本比对合并与分叉刷新。
+  Future<void> syncAfterBleReconnect({
+    Future<bool> Function()? flushWatch,
+    Future<bool> Function()? flushPhone,
+    bool pullBleFiles = true,
+  }) async {
+    if (_disposed) return;
+    final pipeline = _pipeline;
+    if (pipeline == null) return;
+    try {
+      if (flushWatch != null) {
+        await flushWatch();
+      }
+      if (flushPhone != null) {
+        await flushPhone();
+      }
+      await Future<void>.value();
+      await Future<void>.value();
+      await _liveIngestTail;
+      if (pullBleFiles && !pipeline.isBusy && _deviceReady) {
+        await pipeline.transcribeLocalPendingOnly(
+          onProgress: _onPipelineProgress,
+        );
+        await pipeline.sync(onProgress: _onPipelineProgress);
+      }
+      await pipeline.reconcileMultiTrack();
+      await refreshFromStore();
+      unawaited(evaluateTopicSegmentationAndRefresh());
+    } on Object catch (e) {
+      debugPrint('[store] syncAfterBleReconnect failed: $e');
+    } finally {
+      if (!_isActivelyRecording) {
+        _status?.updateQueue(remaining: 0, active: false);
+      }
+    }
+  }
 
   /// 按记录 ID 存储的关联照片（含点一机 V1 硬件抓拍与系统相册对齐导入，及排除状态）。
   Map<String, List<EventPhoto>> eventPhotos = {};
@@ -264,6 +320,7 @@ class AppStore extends ChangeNotifier {
     _liveIngestTail = _liveIngestTail.then((_) async {
       try {
         final saved = await pipeline.ingestLiveSlice(slice);
+        await pipeline.reconcileMultiTrack();
         await refreshFromStore();
         await syncPhotosAutomatically(recentOnly: true, targetFile: saved);
         _liveSlicesSavedThisRun++;
@@ -546,11 +603,17 @@ class AppStore extends ChangeNotifier {
     try {
       final files = await store.loadAll(refresh: true);
       final topicState = await _topicStoreFor()?.load();
-      final projection = SegmentProjection.build(files, topicState: topicState);
+      final reconciliation = await _pipeline?.reconciliationStore.load();
+      final projection = SegmentProjection.build(
+        files,
+        topicState: topicState,
+        reconciliation: reconciliation,
+      );
       recordingFiles = files;
       events = projection.events;
       segmentViews = projection.views;
       _mergedIdRedirects = projection.mergedIdRedirects;
+      _reconciliation = reconciliation ?? const MultiTrackReconciliationState();
     } on Object catch (e) {
       loadError = '读取本地录音失败：$e';
     }
@@ -653,6 +716,9 @@ class AppStore extends ChangeNotifier {
           note: e.note,
           photos: e.photos,
           mergedSliceCount: e.mergedSliceCount,
+          sourceLane: e.sourceLane,
+          sourceDeviceLabel: e.sourceDeviceLabel,
+          forkGroupId: e.forkGroupId,
         ),
     ];
     notifyListeners();
@@ -960,6 +1026,7 @@ class AppStore extends ChangeNotifier {
         onProgress: _onPipelineProgress,
       );
       final report = await pipeline.sync(onProgress: _onPipelineProgress);
+      await pipeline.reconcileMultiTrack();
       await refreshFromStore();
       unawaited(evaluateTopicSegmentationAndRefresh());
       unawaited(
@@ -1023,6 +1090,7 @@ class AppStore extends ChangeNotifier {
       await pipeline
           .processPending(onProgress: _onPipelineProgress)
           .timeout(const Duration(seconds: 90));
+      await pipeline.reconcileMultiTrack();
       await refreshFromStore();
       await syncPhotosAutomatically(recentOnly: false);
     } on TimeoutException {
@@ -1779,20 +1847,72 @@ class AppStore extends ChangeNotifier {
     }
 
     // 记录按天分组；feed 是倒序，同一天内必须按时间从晚到早排，不依赖 events
-    // 的原始顺序。先排记录，再把总结卡插到当天最上方。
+    // 的原始顺序。同一天且具有相同 forkGroupId 的双路事件并排配对成 ForkedEventPair。
     final byDay = <int, List<Object>>{};
+    final forkedByGroup = <String, List<RecordEvent>>{};
     for (final e in evs) {
+      final fk = e.forkGroupId;
+      if (fk != null && fk.isNotEmpty) {
+        (forkedByGroup[fk] ??= []).add(e);
+      }
+    }
+    final consumedForkIds = <String>{};
+    for (final e in evs) {
+      final fk = e.forkGroupId;
+      if (fk != null && fk.isNotEmpty && (forkedByGroup[fk]?.length ?? 0) >= 2) {
+        if (!consumedForkIds.add(fk)) continue;
+        final pairList = List<RecordEvent>.of(forkedByGroup[fk]!)
+          ..sort((a, b) {
+            int weight(RecordEvent ev) => switch (ev.sourceLane) {
+              'ble' => 3,
+              'watch' => 2,
+              'phone' => 1,
+              _ => 0,
+            };
+            return weight(b).compareTo(weight(a));
+          });
+        final left = pairList[0];
+        final right = pairList[1];
+        if (left.dayOffset == right.dayOffset) {
+          (byDay[left.dayOffset] ??= []).add(
+            ForkedEventPair(
+              forkGroupId: fk,
+              dayOffset: left.dayOffset,
+              time: left.time,
+              left: left,
+              right: right,
+            ),
+          );
+          for (final extra in pairList.skip(2)) {
+            (byDay[extra.dayOffset] ??= []).add(extra);
+          }
+        } else {
+          for (final item in pairList) {
+            (byDay[item.dayOffset] ??= []).add(item);
+          }
+        }
+        continue;
+      }
       (byDay[e.dayOffset] ??= []).add(e);
     }
+
+    int itemMinutes(Object item) => switch (item) {
+      final ForkedEventPair p => _minutesOfDay(p.time),
+      final RecordEvent e => _minutesOfDay(e.time),
+      _ => 0,
+    };
+
+    int itemStartMs(Object item) => switch (item) {
+      final ForkedEventPair p => segmentViews[p.left.id]?.segment.startAtMs ?? 0,
+      final RecordEvent e => segmentViews[e.id]?.segment.startAtMs ?? 0,
+      _ => 0,
+    };
+
     for (final list in byDay.values) {
       list.sort((a, b) {
-        final ea = a as RecordEvent;
-        final eb = b as RecordEvent;
-        final cmpMin = _minutesOfDay(eb.time).compareTo(_minutesOfDay(ea.time));
+        final cmpMin = itemMinutes(b).compareTo(itemMinutes(a));
         if (cmpMin != 0) return cmpMin;
-        final aMs = segmentViews[ea.id]?.segment.startAtMs ?? 0;
-        final bMs = segmentViews[eb.id]?.segment.startAtMs ?? 0;
-        return bMs.compareTo(aMs);
+        return itemStartMs(b).compareTo(itemStartMs(a));
       });
     }
     for (final entry in topByDay.entries) {
@@ -2814,6 +2934,9 @@ class AppStore extends ChangeNotifier {
           note: e.note,
           photos: e.photos,
           mergedSliceCount: e.mergedSliceCount,
+          sourceLane: e.sourceLane,
+          sourceDeviceLabel: e.sourceDeviceLabel,
+          forkGroupId: e.forkGroupId,
         ),
     ];
   }
