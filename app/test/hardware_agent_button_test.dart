@@ -121,6 +121,21 @@ class _FakePhoneMicBackend implements PhoneMicBackend {
   }
 }
 
+CardSnapshot _boardSnapshot({bool recording = false}) => CardSnapshot(
+  batteryLevel: 85,
+  isCharging: false,
+  wifiOpen: false,
+  recording: recording,
+  fwVersion: '2.1.0',
+  fwVersionCode: 210,
+  wifiVersion: '',
+  wifiVersionCode: 0,
+  deviceName: 'REAI_VB_TEST',
+  deviceId: 'board-test-1',
+  deviceKind: DeviceKind.boardV21,
+  capabilities: HardwareCapabilities.boardV21,
+);
+
 CardSnapshot _dyjSnapshot({bool recording = false}) => CardSnapshot(
   batteryLevel: 85,
   isCharging: false,
@@ -163,12 +178,12 @@ void main() {
         IphoneActionButtonBehavior.recordToggle,
       );
 
-      // 1) DYJV2 不展示 btn-config
-      final v2Device = DeviceStore(
-        gateway: FakeCardGateway(initialSnapshot: defaultSnapshot),
+      // 1a) 无按键配置能力的设备（如 BoardV21）不展示 btn-config
+      final boardDevice = DeviceStore(
+        gateway: FakeCardGateway(initialSnapshot: _boardSnapshot()),
       );
-      await v2Device.restoreLink();
-      v2Device.openSheet();
+      await boardDevice.restoreLink();
+      boardDevice.openSheet();
 
       await tester.pumpWidget(
         MaterialApp(
@@ -176,14 +191,47 @@ void main() {
           home: Scaffold(
             body: Stack(
               children: [
-                StatusSheetOverlay(store: v2Device, agentConfig: cfg),
+                StatusSheetOverlay(store: boardDevice, agentConfig: cfg),
               ],
             ),
           ),
         ),
       );
       expect(find.byKey(const Key('btn-config')), findsNothing);
-      v2Device.dispose();
+      boardDevice.dispose();
+
+      // 1b) 录音卡 V2 (CardV2) 展示 btn-config，且包含按键 + 拨杆共 5 项（不含拍照识图）
+      final cardDevice = DeviceStore(
+        gateway: FakeCardGateway(initialSnapshot: defaultSnapshot),
+      );
+      await cardDevice.restoreLink();
+      cardDevice.openSheet();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: testTheme(),
+          home: Scaffold(
+            body: Stack(
+              children: [
+                StatusSheetOverlay(store: cardDevice, agentConfig: cfg),
+              ],
+            ),
+          ),
+        ),
+      );
+      expect(find.byKey(const Key('btn-config')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('btn-config')));
+      await tester.pump();
+      expect(find.byKey(const Key('btn-config-view')), findsOneWidget);
+      expect(find.byKey(const Key('btn-cfg-click')), findsOneWidget);
+      expect(find.byKey(const Key('btn-cfg-double')), findsOneWidget);
+      expect(find.byKey(const Key('btn-cfg-long')), findsOneWidget);
+      expect(find.byKey(const Key('btn-cfg-switch_on')), findsOneWidget);
+      expect(find.byKey(const Key('btn-cfg-switch_off')), findsOneWidget);
+      expect(find.byKey(const Key('btn-cfg-click-photo_recognize')), findsNothing);
+      await tester.tap(find.byKey(const Key('btn-cfg-back')));
+      await tester.pump();
+      cardDevice.dispose();
 
       // 2) DYJ_V1 展示 btn-config → 可进二级页修改动作并持久化恢复
       final dyjDevice = DeviceStore(

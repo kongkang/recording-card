@@ -139,6 +139,9 @@ class HardwareCapabilities {
     this.hasRemoteRecordControl = true,
     required this.hasMarkButton,
     this.hasConfigurableButtons = false,
+    this.hasConfigurableSwitch = false,
+    this.hasOledDisplay = false,
+    this.hasStandaloneRealtimeStream = false,
     required this.otaMode,
   });
 
@@ -151,6 +154,9 @@ class HardwareCapabilities {
   final bool hasRemoteRecordControl;
   final bool hasMarkButton;
   final bool hasConfigurableButtons;
+  final bool hasConfigurableSwitch;
+  final bool hasOledDisplay;
+  final bool hasStandaloneRealtimeStream;
   final String otaMode; // 'dual_chip' | 'single_ota' | 'none'
 
   bool get hasDualChipOta => otaMode == 'dual_chip';
@@ -166,6 +172,10 @@ class HardwareCapabilities {
     hasPhysicalRecordToggle: true,
     hasRemoteRecordControl: true,
     hasMarkButton: true,
+    hasConfigurableButtons: true,
+    hasConfigurableSwitch: true,
+    hasOledDisplay: true,
+    hasStandaloneRealtimeStream: false,
     otaMode: 'dual_chip',
   );
 
@@ -179,6 +189,9 @@ class HardwareCapabilities {
     hasRemoteRecordControl: true,
     hasMarkButton: false,
     hasConfigurableButtons: true,
+    hasConfigurableSwitch: false,
+    hasOledDisplay: false,
+    hasStandaloneRealtimeStream: true,
     otaMode: 'single_ota',
   );
 
@@ -191,6 +204,7 @@ class HardwareCapabilities {
     hasPhysicalRecordToggle: true,
     hasRemoteRecordControl: true,
     hasMarkButton: false,
+    hasStandaloneRealtimeStream: true,
     otaMode: 'none',
   );
 
@@ -230,6 +244,7 @@ class HardwareCapabilities {
     hasPhysicalRecordToggle: true,
     hasRemoteRecordControl: true,
     hasMarkButton: true,
+    hasStandaloneRealtimeStream: true,
     otaMode: 'none',
   );
 
@@ -281,6 +296,15 @@ class HardwareCapabilities {
       hasConfigurableButtons: flag(
         'hasConfigurableButtons',
         fallback.hasConfigurableButtons,
+      ),
+      hasConfigurableSwitch: flag(
+        'hasConfigurableSwitch',
+        fallback.hasConfigurableSwitch,
+      ),
+      hasOledDisplay: flag('hasOledDisplay', fallback.hasOledDisplay),
+      hasStandaloneRealtimeStream: flag(
+        'hasStandaloneRealtimeStream',
+        fallback.hasStandaloneRealtimeStream,
       ),
       otaMode: (json['otaMode'] as String?) ?? fallback.otaMode,
     );
@@ -759,30 +783,46 @@ class RealtimeAudioEvent {
 
 enum RealtimeAudioKind { open, audio, gap, closed }
 
-/// 硬件按键事件（点一机 V1 `button.event` / 第三方按键手势事件）。
+/// 硬件按键/拨杆事件（录音卡 V2 `BTN_CLICK`/`TOGGLE_SWITCH`、点一机 V1 `button.event` 等）。
 class HardwareButtonEvent {
   const HardwareButtonEvent({
     required this.gesture,
     this.durationMs,
     this.deviceTs = 0,
     required this.receivedAtMs,
+    this.deviceAction,
+    this.source,
   });
 
-  factory HardwareButtonEvent.fromEvent(Map<String, dynamic> event) =>
-      HardwareButtonEvent(
-        gesture: '${event['gesture'] ?? ''}',
-        durationMs: (event['durationMs'] as num?)?.toInt(),
-        deviceTs: (event['deviceTs'] as num?)?.toInt() ?? 0,
-        receivedAtMs:
-            (event['receivedAtMs'] as num?)?.toInt() ??
-            DateTime.now().millisecondsSinceEpoch,
-      );
+  factory HardwareButtonEvent.fromEvent(Map<String, dynamic> event) {
+    var gesture = '${event['gesture'] ?? ''}'.trim();
+    if (gesture.isEmpty && event['kind'] == 'toggle_switch') {
+      final pos = '${event['position'] ?? ''}'.trim();
+      if (pos == 'on' || pos == 'off') {
+        gesture = 'switch_$pos';
+      }
+    }
+    final rawAction = event['deviceAction']?.toString().trim();
+    final rawSource = event['source']?.toString().trim();
+    return HardwareButtonEvent(
+      gesture: gesture,
+      durationMs: (event['durationMs'] as num?)?.toInt(),
+      deviceTs: (event['deviceTs'] as num?)?.toInt() ?? 0,
+      receivedAtMs:
+          (event['receivedAtMs'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
+      deviceAction: rawAction != null && rawAction.isNotEmpty ? rawAction : null,
+      source: rawSource != null && rawSource.isNotEmpty ? rawSource : null,
+    );
+  }
 
-  /// `'down' | 'up' | 'click' | 'double_click' | 'long_press_start' | 'long_press_end'`
+  /// `'down' | 'up' | 'click' | 'double_click' | 'long_press_start' | 'long_press_end' | 'switch_on' | 'switch_off'`
   final String gesture;
   final int? durationMs;
   final int deviceTs;
   final int receivedAtMs;
+  final String? deviceAction;
+  final String? source;
 }
 
 /// 一次事件拉取的结果：序号 + 自上次以来新到的事件（零蓝牙流量，读内存队列）。
@@ -805,10 +845,21 @@ class DeviceEventBatch {
   Iterable<Map<String, dynamic>> get voiceKeyEvents =>
       events.where((e) => e['event']?['kind'] == 'voice_key');
 
-  /// 硬件物理按键事件。
+  /// 硬件物理按键与拨杆事件。
   Iterable<HardwareButtonEvent> get buttonEvents => [
     for (final e in events)
-      if (e['event']?['kind'] == 'button' && e['event'] is Map)
+      if ((e['event']?['kind'] == 'button' ||
+              e['event']?['kind'] == 'toggle_switch') &&
+          e['event'] is Map)
+        HardwareButtonEvent.fromEvent(
+          Map<String, dynamic>.from(e['event'] as Map),
+        ),
+  ];
+
+  /// 硬件侧边拨杆事件。
+  Iterable<HardwareButtonEvent> get switchEvents => [
+    for (final e in events)
+      if (e['event']?['kind'] == 'toggle_switch' && e['event'] is Map)
         HardwareButtonEvent.fromEvent(
           Map<String, dynamic>.from(e['event'] as Map),
         ),

@@ -252,6 +252,7 @@ class _HomeGateState extends State<_HomeGate> {
     );
     _store.photoSyncEnabled = () => _agentConfig.photoLinkEnabled;
     _store.deviceGateway = () => _device.gateway;
+    _device.attachAgentConfig(_agentConfig);
     _device.onManualBleSync = () => _store.syncRecordings();
     unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
     unawaited(

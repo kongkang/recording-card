@@ -969,14 +969,16 @@ class _MainView extends StatelessWidget {
             listenable: agentConfig!,
             builder: (context, _) => _Row(
               keyName: 'btn-config',
-              label: '按键行为',
+              label: '按键行为设置',
               onTap: () => store.showView(DeviceView.btn),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Flexible(
                     child: Text(
-                      agentConfig!.dyjButtonSummary,
+                      store.activeCapabilities.hasConfigurableSwitch
+                          ? agentConfig!.cardButtonSummary
+                          : agentConfig!.dyjButtonSummary,
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
                       style: const TextStyle(fontSize: 14),
@@ -1963,6 +1965,7 @@ class _ButtonConfigView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final config = agentConfig;
+    final isCardControl = store.activeCapabilities.hasConfigurableSwitch;
     return Column(
       key: const Key('btn-config-view'),
       mainAxisSize: MainAxisSize.min,
@@ -1990,9 +1993,11 @@ class _ButtonConfigView extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 4),
-        const Text(
-          '配置点一机 V1 物理按键触发的动作；未开启持续录音时触发「语音任务」将自动开启临时录音并在完成后关闭。',
-          style: TextStyle(fontSize: 12, height: 1.45, color: RCColors.sec),
+        Text(
+          isCardControl
+              ? '配置录音卡物理按键与侧边拨杆触发的动作，修改后自动同步到硬件；若软件蓝牙开关与拨杆状态不一致，以软件蓝牙开关为准。'
+              : '配置点一机 V1 物理按键触发的动作；未开启持续录音时触发「语音任务」将自动开启临时录音并在完成后关闭。',
+          style: const TextStyle(fontSize: 12, height: 1.45, color: RCColors.sec),
         ),
         const SizedBox(height: 12),
         if (config == null)
@@ -2002,37 +2007,193 @@ class _ButtonConfigView extends StatelessWidget {
           )
         else
           ListenableBuilder(
-            listenable: config,
-            builder: (context, _) => Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _gestureSection(
-                  key: const Key('btn-cfg-click'),
-                  gesture: 'click',
-                  title: '单击',
-                  current: config.dyjClickAction,
-                  onPick: (a) => unawaited(config.setDyjButtonAction('click', a)),
-                ),
-                const SizedBox(height: 12),
-                _gestureSection(
-                  key: const Key('btn-cfg-long'),
-                  gesture: 'long_press',
-                  title: '长按',
-                  current: config.dyjLongPressAction,
-                  onPick: (a) =>
-                      unawaited(config.setDyjButtonAction('long_press', a)),
-                ),
-                const SizedBox(height: 12),
-                _gestureSection(
-                  key: const Key('btn-cfg-double'),
-                  gesture: 'double_click',
-                  title: '双击',
-                  current: config.dyjDoubleClickAction,
-                  onPick: (a) =>
-                      unawaited(config.setDyjButtonAction('double_click', a)),
-                ),
-              ],
-            ),
+            listenable: Listenable.merge([config, store]),
+            builder: (context, _) {
+              final err = store.cardControlsError;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (isCardControl && store.cardControlsSyncing)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 13,
+                            height: 13,
+                            child: CircularProgressIndicator(strokeWidth: 1.8),
+                          ),
+                          SizedBox(width: 6),
+                          Text(
+                            '正在同步硬件按键设置…',
+                            style: TextStyle(fontSize: 12, color: RCColors.sec),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (isCardControl && err != null && err.isNotEmpty)
+                    Container(
+                      key: const Key('btn-cfg-error'),
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: RCColors.danger.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: RCColors.danger.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Text(
+                        err,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: RCColors.danger,
+                        ),
+                      ),
+                    ),
+                  if (isCardControl) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '物理按钮',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: RCColors.sec,
+                        ),
+                      ),
+                    ),
+                    _gestureSection(
+                      key: const Key('btn-cfg-click'),
+                      gesture: 'click',
+                      title: '单击',
+                      current: config.cardClickAction,
+                      options: HardwareButtonAction.cardButtonOptions,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'click', a),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _gestureSection(
+                      key: const Key('btn-cfg-double'),
+                      gesture: 'double_click',
+                      title: '双击',
+                      current: config.cardDoubleClickAction,
+                      options: HardwareButtonAction.cardButtonOptions,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(
+                          config,
+                          'double_click',
+                          a,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _gestureSection(
+                      key: const Key('btn-cfg-long'),
+                      gesture: 'long_press',
+                      title: '长按',
+                      current: config.cardLongPressAction,
+                      options: HardwareButtonAction.cardButtonOptions,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'long_press', a),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '侧边拨杆',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: RCColors.sec,
+                        ),
+                      ),
+                    ),
+                    _gestureSection(
+                      key: const Key('btn-cfg-switch_on'),
+                      gesture: 'switch_on',
+                      title: '拨杆打开',
+                      current: config.cardSwitchOnAction,
+                      options: HardwareButtonAction.cardSwitchOptions,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'switch_on', a),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _gestureSection(
+                      key: const Key('btn-cfg-switch_off'),
+                      gesture: 'switch_off',
+                      title: '拨杆关闭',
+                      current: config.cardSwitchOffAction,
+                      options: HardwareButtonAction.cardSwitchOptions,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'switch_off', a),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      key: const Key('btn-cfg-reset-default'),
+                      onPressed: store.cardControlsSyncing
+                          ? null
+                          : () => unawaited(
+                              store.resetCardControlsToDefaults(config),
+                            ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: RCColors.ink,
+                        side: const BorderSide(color: RCColors.sep),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      ),
+                      child: const Text(
+                        '恢复默认按键行为',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ] else ...[
+                    _gestureSection(
+                      key: const Key('btn-cfg-click'),
+                      gesture: 'click',
+                      title: '单击',
+                      current: config.dyjClickAction,
+                      options: HardwareButtonAction.dyjButtonOptions,
+                      onPick: (a) =>
+                          unawaited(config.setDyjButtonAction('click', a)),
+                    ),
+                    const SizedBox(height: 12),
+                    _gestureSection(
+                      key: const Key('btn-cfg-long'),
+                      gesture: 'long_press',
+                      title: '长按',
+                      current: config.dyjLongPressAction,
+                      options: HardwareButtonAction.dyjButtonOptions,
+                      onPick: (a) =>
+                          unawaited(config.setDyjButtonAction('long_press', a)),
+                    ),
+                    const SizedBox(height: 12),
+                    _gestureSection(
+                      key: const Key('btn-cfg-double'),
+                      gesture: 'double_click',
+                      title: '双击',
+                      current: config.dyjDoubleClickAction,
+                      options: HardwareButtonAction.dyjButtonOptions,
+                      onPick: (a) => unawaited(
+                        config.setDyjButtonAction('double_click', a),
+                      ),
+                    ),
+                  ],
+                ],
+              );
+            },
           ),
       ],
     );
@@ -2043,6 +2204,7 @@ class _ButtonConfigView extends StatelessWidget {
     required String gesture,
     required String title,
     required HardwareButtonAction current,
+    required List<HardwareButtonAction> options,
     required ValueChanged<HardwareButtonAction> onPick,
   }) {
     return Container(
@@ -2077,7 +2239,7 @@ class _ButtonConfigView extends StatelessWidget {
             spacing: 6,
             runSpacing: 6,
             children: [
-              for (final act in HardwareButtonAction.values)
+              for (final act in options)
                 InkWell(
                   key: Key('btn-cfg-$gesture-${act.code}'),
                   borderRadius: BorderRadius.circular(999),

@@ -137,6 +137,7 @@ class _AppShellState extends State<AppShell> {
     widget.store.photoLibrary = _photoLib;
     widget.store.photoSyncEnabled ??= () => _agentConfig.photoLinkEnabled;
     widget.store.deviceGateway ??= () => _device.gateway;
+    _device.attachAgentConfig(_agentConfig);
     _device.onHardwarePhotoCaptured ??= () {
       if (_agentConfig.photoLinkEnabled &&
           _device.isConnected &&

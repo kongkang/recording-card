@@ -37,7 +37,7 @@ Flutter DeviceStore ──CardGateway(FFI)──> card_bridge(staticlib) ──>
 
 | SDK Crate | 对应硬件 (`deviceKind`) | 广播识别 / 开关门控 | 核心能力 |
 |---|---|---|---|
-| `reai-card-sdk` (v0.0.6) | 录音卡 V2 (`card_v2`) | `DYJV2_*`（默认开启） | ADPCM 实时流、`.APM` BLE 同步、2.4GHz Wi-Fi 配网、双芯 OTA |
+| `reai-card-sdk` (v0.0.6 / `3b7a5c5`) | 录音卡 V2 (`card_v2`) | `DYJV2_*`（默认开启） | ADPCM 实时流、`.APM` BLE 同步、2.4GHz Wi-Fi 配网、双芯 OTA、实体按键/拨杆 KV 配置（`CONFIG_SET/GET/DEL`）与 72×40 OLED 显示（`DISPLAY_SHOW/CLEAR`） |
 | `reai-dyj-sdk` (v0.1.14) | 点一机 V1 (`dyj_v1`) | `DYJ_*`（默认开启） | AMR-WB 实时流、`.amr` 同步、硬件按键拍照（`files/camera`）、Wi-Fi 配网 |
 | `reai-board-sdk` (v0.3.5) | 语音 AI 键盘 V2.1 (`board_v21`) | `REAI_VB_*`（默认开启） | Vendor GATT `0xFE60` mSBC 实时流、`AiVoiceKey` 物理语音键 |
 | `reai-ext-sdk` | 第三方统一契约层 | — | `RecorderDriver` / `RecorderDevice` trait、纯 Rust Ogg Opus / Raw Opus / LC3 → 16kHz Mono PCM 解码 |
@@ -46,6 +46,18 @@ Flutter DeviceStore ──CardGateway(FFI)──> card_bridge(staticlib) ──>
 | `reai-feishu-sdk` | 飞书录音豆 D3200 (`feishu_d3200`，设置项标 Beta) | Service `020cf5da-…` / `D3200-*` / `soundcore Work`（Setting 按需开启） | BLE 目录、远程启停、ECDH + AES-CTR 离线 Opus 拉取并转 16kHz WAV。不含实时流、SoftAP 与固件升级。尚未真机验证 |
 
 > Priority 3（Plaud Note / Pro / `reai-plaud-sdk`）仍待后续独立分支沿同一 `reai-ext-sdk` 契约接入。飞书录音豆的 Wi-Fi SoftAP 快传不在当前 BLE 接入包内。
+
+## 录音卡 V2 按键/拨杆配置与 OLED 屏幕边界（2026-11-21 核验）
+
+1. **物理按键与侧边拨杆（`reai-card-sdk` rev `3b7a5c5`）**
+   - 协议支持通过 `CONFIG_SET/GET/DEL` 读写 5 项输入槽位：`btn_single`、`btn_double`、`btn_long_press`、`btn_long_release`、`switch_on`、`switch_off`，并持续上行 `BTN_CLICK` 与 `TOGGLE_SWITCH` 事件（`app/rust/card_bridge` 已映射 `card_controls.get` / `card_controls.set`）。
+   - 固件内置原生动作：`record_mark`、`record_start`、`record_stop`、`record_toggle`、`sync_upload`（开启 Wi-Fi 上传）。App 侧自定义动作写入 `app_sync`（双击立即触发 App BLE/切片同步，避免抢占 SD 总线）与 `agent_voice`（长按语音触发 Agent）。
+   - 默认推荐绑定（首次连上且硬件尚未绑定任何非 `none` 动作时自动写入）：单击 `mark`（`record_mark`）、双击 `syncNow`（`app_sync`）、长按 `agentVoice`（`agent_voice`）、拨杆开 `recordStart`（`record_start`）、拨杆关 `recordStop`（`record_stop`）。
+   - **冲突优先级**：软件蓝牙录音开关使用幂等显式 `RECORD_START`/`RECORD_STOP`（Rust 桥在设备回错时自动复核 `record_status()` 收敛），优先级高于拨杆当前位置；拨杆物理拨动后根据硬件 `RECORD_STATUS` / `TOGGLE_SWITCH` 状态与屏幕变化在 App 侧同步跟随，不重复重放固件已执行的原生动作。
+
+2. **72×40 单色 OLED 屏幕（`DISPLAY_SHOW` / `DISPLAY_CLEAR`，固件 ≥ 0.3.7）**
+   - `DISPLAY_SHOW` 的纯文本 `lines` 模式仅支持 5×8 ASCII（12 字符 × 5 行），不支持中文字符；发送中文提示必须走 **360 字节单色位图**（`72×40` 像素、5 页 × 72 列、`bit 0` 为页顶行）经 `bitmap` 字段 Base64 下发（App 侧由 `FlutterOledBitmapRenderer` 栅格化后推送）。
+   - **扫描期限制（不可由 App/SDK 单方面绕过）**：蓝牙扫描阶段设备仅做被动 BLE 广播（Advertising），未建立 GATT 连接前手机无法向 NUS RX 特征值（`6e400002-...`）写入 `DISPLAY_SHOW` 命令，因此「被扫描到时在录音卡屏幕上亮出型号标签」无法仅靠 App/SDK 实现，必须由卡端固件在广播态自行刷新 OLED。App 侧已在**建立连接成功第一时间**自动下发「已连接 + 型号短号」位图提示，并在开始/停止录音、拨杆切换、打重点、立即同步、语音 Agent 各阶段及按键设置变更时推送中文屏幕提示。
 
 ## 清洗需求与数据边界
 持续源录音默认不分段；偶尔手动 mark，后续分析结合标记推测意图。大段无意义/空白作为阶段边界；清洗内容优先，原始脏数据完整保留、低权重，含口误。声纹近似或偏差时由 LLM 推测归整，必须保留原始映射，不能断言身份。这是产品需求，不代表演示已实现 ASR、声纹、LLM 或完整原始音频存储。

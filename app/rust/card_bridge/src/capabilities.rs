@@ -74,7 +74,10 @@ impl DeviceKind {
                 has_physical_record_toggle: true,
                 has_remote_record_control: true,
                 has_mark_button: true,
-                has_configurable_buttons: false,
+                has_configurable_buttons: true,
+                has_configurable_switch: true,
+                has_oled_display: true,
+                has_standalone_realtime_stream: false,
                 ota_mode: "dual_chip",
             },
             Self::DyjV1 => HardwareCapabilities {
@@ -87,6 +90,9 @@ impl DeviceKind {
                 has_remote_record_control: true,
                 has_mark_button: false,
                 has_configurable_buttons: true,
+                has_configurable_switch: false,
+                has_oled_display: false,
+                has_standalone_realtime_stream: true,
                 ota_mode: "single_ota",
             },
             Self::BoardV21 => HardwareCapabilities {
@@ -99,6 +105,9 @@ impl DeviceKind {
                 has_remote_record_control: true,
                 has_mark_button: false,
                 has_configurable_buttons: false,
+                has_configurable_switch: false,
+                has_oled_display: false,
+                has_standalone_realtime_stream: true,
                 ota_mode: "none",
             },
             Self::GetSeedGsc10 => {
@@ -125,6 +134,9 @@ pub struct HardwareCapabilities {
     pub has_remote_record_control: bool,
     pub has_mark_button: bool,
     pub has_configurable_buttons: bool,
+    pub has_configurable_switch: bool,
+    pub has_oled_display: bool,
+    pub has_standalone_realtime_stream: bool,
     /// `"dual_chip"` | `"single_ota"` | `"none"`
     pub ota_mode: &'static str,
 }
@@ -141,6 +153,9 @@ impl HardwareCapabilities {
             has_remote_record_control: caps.has_remote_record_control,
             has_mark_button: caps.has_mark_button,
             has_configurable_buttons: false,
+            has_configurable_switch: false,
+            has_oled_display: false,
+            has_standalone_realtime_stream: caps.realtime_audio,
             ota_mode: caps.ota_mode,
         }
     }
@@ -160,6 +175,9 @@ pub fn card_v2_dfu_recovery_capabilities() -> HardwareCapabilities {
         has_remote_record_control: false,
         has_mark_button: false,
         has_configurable_buttons: false,
+        has_configurable_switch: false,
+        has_oled_display: false,
+        has_standalone_realtime_stream: false,
         ota_mode: "dual_chip",
     }
 }
@@ -260,7 +278,13 @@ mod tests {
         let (k2, c2) = classify_ble_name("DYJV2_T4W25T").expect("card v2");
         assert_eq!(k2, DeviceKind::CardV2);
         assert!(c2.has_onboard_storage && c2.has_file_sync && !c2.has_camera_media);
-        assert!(c2.has_remote_record_control && !c2.has_configurable_buttons);
+        assert!(
+            c2.has_remote_record_control
+                && c2.has_configurable_buttons
+                && c2.has_configurable_switch
+                && c2.has_oled_display
+                && !c2.has_standalone_realtime_stream
+        );
         assert_eq!(c2.ota_mode, "dual_chip");
 
         let (k1, c1) = classify_ble_name("DYJ_RA6BO5").expect("dyj v1");
