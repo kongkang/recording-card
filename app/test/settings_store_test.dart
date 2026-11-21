@@ -9,20 +9,19 @@ import 'package:recording_card/core/storage/storage.dart';
 import 'package:recording_card/core/store/settings_store.dart';
 
 void main() {
-  test('6 个开关：分组顺序与默认值对齐设计稿', () {
+  test('4 个开关：分组顺序与默认值对齐设计稿', () {
     final items = SettingsStore.items;
-    expect(items.length, 6);
+    expect(items.length, 4);
     expect(
       items.map((i) => i.label).toList(),
-      ['持续录音', '标记重要对话', '自动转录', '自动清洗口语', '说话人推测归类', '仅使用 Wi-Fi 同步'],
+      ['自动转录', '自动清洗口语', '说话人推测归类', '仅使用 Wi-Fi 同步'],
     );
     expect(SettingsStore.groups.map((g) => g.title).toList(), [
-      '录音',
       '转录与清洗',
       '同步',
     ]);
-    // 前 5 个默认开，仅 Wi-Fi 同步默认关
-    expect(items.take(5).every((i) => i.defaultValue), isTrue);
+    // 前 3 个默认开，仅 Wi-Fi 同步默认关
+    expect(items.take(3).every((i) => i.defaultValue), isTrue);
     expect(items.last.defaultValue, isFalse);
   });
 
@@ -30,7 +29,7 @@ void main() {
     final store = SettingsStore(store: InMemoryStore());
     addTearDown(store.dispose);
     expect(store.loaded, isFalse);
-    expect(store.value('rc.set.record.continuous'), isTrue);
+    expect(store.value('rc.set.trans.auto'), isTrue);
     expect(store.value('rc.set.sync.wifiOnly'), isFalse);
   });
 
@@ -71,12 +70,12 @@ void main() {
     addTearDown(store.dispose);
     await store.load();
 
-    await store.toggle('rc.set.record.continuous');
-    expect(store.value('rc.set.record.continuous'), isFalse);
-    expect(await backing.getBool('rc.set.record.continuous'), isFalse);
+    await store.toggle('rc.set.trans.auto');
+    expect(store.value('rc.set.trans.auto'), isFalse);
+    expect(await backing.getBool('rc.set.trans.auto'), isFalse);
 
-    await store.toggle('rc.set.record.continuous');
-    expect(store.value('rc.set.record.continuous'), isTrue);
+    await store.toggle('rc.set.trans.auto');
+    expect(store.value('rc.set.trans.auto'), isTrue);
   });
 
   test('load 幂等：重复调用结果一致；本次运行改过的值不被盘里的旧值盖掉', () async {
@@ -109,11 +108,11 @@ void main() {
     addTearDown(store.dispose);
     await store.load();
     expect(store.loaded, isTrue);
-    expect(store.value('rc.set.record.mark'), isTrue);
+    expect(store.value('rc.set.trans.clean'), isTrue);
 
     // 写入失败也只记日志，内存态仍然生效
-    await store.setValue('rc.set.record.mark', false);
-    expect(store.value('rc.set.record.mark'), isFalse);
+    await store.setValue('rc.set.trans.clean', false);
+    expect(store.value('rc.set.trans.clean'), isFalse);
   });
 
   test('未知键：defaultValueOf 回退 false，setValue 写不存在的键不会崩', () async {

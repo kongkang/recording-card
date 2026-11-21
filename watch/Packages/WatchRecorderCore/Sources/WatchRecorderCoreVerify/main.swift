@@ -55,12 +55,30 @@ private func runAllChecks() throws {
         marksOffsetMs: [12_500, 48_900],
         gapCount: 0,
         offlineRecorded: true,
+        isFinal: false,
         byteSize: 245_760,
         fileName: "watch-20261115_0002.m4a",
         transferState: .pending
     )
     let sliceRoundTrip = WatchSliceDescriptor.fromTransferMetadata(slice.toTransferMetadata())
     verify(sliceRoundTrip == slice, "WatchSliceDescriptor metadata round-trip mismatch")
+    verify(sliceRoundTrip?.isFinal == false, "Rolling slice isFinal must remain false")
+
+    let finalSlice = WatchSliceDescriptor(
+        sliceId: "s-02",
+        sessionId: "watch-20261115",
+        sliceIndex: 2,
+        startAtMs: 1_794_758_520_000,
+        durationMs: 18_000,
+        isFinal: true,
+        byteSize: 80_000,
+        fileName: "watch-20261115_0003.m4a",
+        transferState: .pending
+    )
+    verify(
+        WatchSliceDescriptor.fromTransferMetadata(finalSlice.toTransferMetadata())?.isFinal == true,
+        "Final slice isFinal must round-trip as true"
+    )
     verify(
         slice.canonicalWavFileName == "LIVE_WATCH_20261115_0002.WAV",
         "Unexpected canonical WAV file name: \(slice.canonicalWavFileName)"
@@ -105,8 +123,35 @@ private func runAllChecks() throws {
     verify(store.pendingCount() == 2, "Failed transfer must remain pending")
     verify(store.pendingEntries().first?.lastError == "phone unreachable", "Failure error must be persisted")
 
+    // Zero-loss ack handshake: file delivery marks awaitingAck WITHOUT deleting local .m4a
+    try store.markDeliveredPendingAck(sliceId: "s1", nowMs: 10_000)
+    verify(
+        FileManager.default.fileExists(atPath: store.fileURL(for: s1).path),
+        "Delivered-pending-ack slice MUST preserve local .m4a until iPhone .ackSlice"
+    )
+    verify(
+        store.pendingEntries().first(where: { $0.sliceId == "s1" })?.transferState == .awaitingAck,
+        "Slice must enter .awaitingAck state after fileTransfer completion"
+    )
+    verify(store.pendingCount() == 2 && store.syncedCount() == 0, "AwaitingAck slice is not yet synced")
+
+    // Within ack timeout window, resetStaleTransferring must NOT re-queue awaitingAck slice
+    try store.resetStaleTransferring(activeSliceIds: [], nowMs: 25_000, ackTimeoutMs: 180_000)
+    verify(
+        store.pendingEntries().first(where: { $0.sliceId == "s1" })?.transferState == .awaitingAck,
+        "Fresh awaitingAck slice must not prematurely re-queue while iPhone transcodes"
+    )
+
+    // After ack timeout expires (e.g. iPhone crashed before WAV transcode ack), reset back to .pending
+    try store.resetStaleTransferring(activeSliceIds: [], nowMs: 250_000, ackTimeoutMs: 180_000)
+    verify(
+        store.pendingEntries().first(where: { $0.sliceId == "s1" })?.transferState == .pending,
+        "Expired awaitingAck slice must reset to .pending so Watch re-sends preserved .m4a"
+    )
+
+    try store.markDeliveredPendingAck(sliceId: "s1", nowMs: 260_000)
     try store.markSyncedAndDeleteLocalAudio(sliceId: "s1")
-    verify(!FileManager.default.fileExists(atPath: store.fileURL(for: s1).path), "Synced audio must be deleted from watch storage")
+    verify(!FileManager.default.fileExists(atPath: store.fileURL(for: s1).path), "Synced audio must be deleted from watch storage after .ackSlice")
     verify(store.pendingCount() == 1 && store.syncedCount() == 1, "Counts must reflect 1 pending and 1 synced")
 
     // 3. 异常重启孤儿音频恢复 & stale transferring 重置

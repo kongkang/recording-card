@@ -202,9 +202,22 @@ impl Peripheral {
         advertisement_name: Option<String>,
     ) {
         if let Ok(mut props) = self.shared.properties.lock() {
-            props.local_name = local_name;
-            props.advertisement_name = advertisement_name;
+            if let Some(name) = local_name {
+                props.local_name = Some(name);
+            }
+            if let Some(adv_name) = advertisement_name {
+                props.advertisement_name = Some(adv_name);
+            }
         }
+    }
+
+    pub(super) fn cached_names(&self) -> (Option<String>, Option<String>) {
+        self.shared
+            .properties
+            .lock()
+            .ok()
+            .map(|p| (p.local_name.clone(), p.advertisement_name.clone()))
+            .unwrap_or((None, None))
     }
 }
 

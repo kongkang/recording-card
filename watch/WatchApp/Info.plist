@@ -35,10 +35,6 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<key>NSHealthShareUsageDescription</key>
-	<string>录音卡手表仅通过运动会话申请垂腕息屏期间的后台持续运行权限，用于不中断录音，不会读取或写入任何健康隐私数据。</string>
-	<key>NSHealthUpdateUsageDescription</key>
-	<string>录音卡手表仅通过运动会话申请垂腕息屏期间的后台持续运行权限，用于不中断录音，不会读取或写入任何健康隐私数据。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>录音卡手表需要使用腕上麦克风持续采集录音并本地暂存，待连接手机后自动本地传输给录音卡处理。</string>
 	<key>UIBackgroundModes</key>
@@ -47,11 +43,6 @@
 	</array>
 	<key>WKApplication</key>
 	<true/>
-	<key>WKBackgroundModes</key>
-	<array>
-		<string>workout-processing</string>
-		<string>mindfulness</string>
-	</array>
 	<key>WKCompanionAppBundleIdentifier</key>
 	<string>$(WATCH_COMPANION_BUNDLE_ID)</string>
 	<key>WKRunsIndependentlyOfCompanionApp</key>

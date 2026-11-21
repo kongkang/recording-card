@@ -40,18 +40,30 @@
 		F59F8B47EA35E277F8C46242 /* BackgroundAssets.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D10D3EFC92FF071495784E60 /* BackgroundAssets.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
 		WC1122330003000000000001 /* WatchHardwareBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000001 /* WatchHardwareBridge.swift */; };
 		HS1122330003000000000001 /* HealthSignalBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = HS1122330001000000000001 /* HealthSignalBridge.swift */; };
+		HS1122330003000000000002 /* RCObjCCatch.m in Sources */ = {isa = PBXBuildFile; fileRef = HS1122330001000000000002 /* RCObjCCatch.m */; };
 		SS1122330003000000000001 /* SystemSpeechBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = SS1122330001000000000001 /* SystemSpeechBridge.swift */; };
 		SS1122330003000000000002 /* Speech.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = SS1122330001000000000002 /* Speech.framework */; };
-		WC1122330003000000000002 /* WatchRecorderCore in Frameworks */ = {isa = PBXBuildFile; productRef = WC1122330002000000000011 /* WatchRecorderCore */; };
+		AD1122330003000000000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AD1122330001000000000001 /* PrivacyInfo.xcprivacy */; };
 		WC1122330003000000000003 /* RecordingCardWatchMainApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000005 /* RecordingCardWatchMainApp.swift */; };
 		WC1122330003000000000004 /* WatchAudioCaptureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000006 /* WatchAudioCaptureEngine.swift */; };
 		WC1122330003000000000005 /* WatchMainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000007 /* WatchMainView.swift */; };
 		WC1122330003000000000006 /* WatchRuntimeKeepAlive.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000008 /* WatchRuntimeKeepAlive.swift */; };
 		WC1122330003000000000007 /* WatchSessionSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000009 /* WatchSessionSyncEngine.swift */; };
 		WC1122330003000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = WC112233000100000000000A /* Assets.xcassets */; };
-		WC1122330003000000000009 /* WatchRecorderCore in Frameworks */ = {isa = PBXBuildFile; productRef = WC1122330002000000000012 /* WatchRecorderCore */; };
 		WC112233000300000000000A /* RecordingCardComplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC112233000100000000000B /* RecordingCardComplication.swift */; };
-		WC112233000300000000000B /* WatchRecorderCore in Frameworks */ = {isa = PBXBuildFile; productRef = WC1122330002000000000013 /* WatchRecorderCore */; };
+		WC1122330003000000000021 /* ComplicationStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000021 /* ComplicationStateStore.swift */; };
+		WC1122330003000000000022 /* WatchAudioSliceTranscoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000022 /* WatchAudioSliceTranscoder.swift */; };
+		WC1122330003000000000023 /* WatchManifestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000023 /* WatchManifestStore.swift */; };
+		WC1122330003000000000024 /* WatchProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000024 /* WatchProtocol.swift */; };
+		WC1122330003000000000025 /* WavFileCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000025 /* WavFileCodec.swift */; };
+		WC1122330003000000000031 /* ComplicationStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000021 /* ComplicationStateStore.swift */; };
+		WC1122330003000000000032 /* WatchAudioSliceTranscoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000022 /* WatchAudioSliceTranscoder.swift */; };
+		WC1122330003000000000033 /* WatchManifestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000023 /* WatchManifestStore.swift */; };
+		WC1122330003000000000034 /* WatchProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000024 /* WatchProtocol.swift */; };
+		WC1122330003000000000035 /* WavFileCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000025 /* WavFileCodec.swift */; };
+		WC1122330003000000000041 /* ComplicationStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000021 /* ComplicationStateStore.swift */; };
+		WC1122330003000000000044 /* WatchProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000024 /* WatchProtocol.swift */; };
+		WC1122330003000000000045 /* WavFileCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000025 /* WavFileCodec.swift */; };
 		WC112233000300000000000C /* RecordingCardWatchWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000011 /* RecordingCardWatchWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		WC112233000300000000000D /* RecordingCardWatchApp.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000010 /* RecordingCardWatchApp.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -199,6 +211,8 @@
 		FE5C4E913EA6AC2821AD21A9 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		WC1122330001000000000001 /* WatchHardwareBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchHardwareBridge.swift; sourceTree = "<group>"; };
 		HS1122330001000000000001 /* HealthSignalBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HealthSignalBridge.swift; sourceTree = "<group>"; };
+		HS1122330001000000000002 /* RCObjCCatch.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = RCObjCCatch.m; sourceTree = "<group>"; };
+		HS1122330001000000000003 /* RCObjCCatch.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = RCObjCCatch.h; sourceTree = "<group>"; };
 		SS1122330001000000000001 /* SystemSpeechBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SystemSpeechBridge.swift; sourceTree = "<group>"; };
 		SS1122330001000000000002 /* Speech.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Speech.framework; path = System/Library/Frameworks/Speech.framework; sourceTree = SDKROOT; };
 		WC1122330001000000000002 /* Shared.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = Config/Shared.xcconfig; sourceTree = "<group>"; };
@@ -215,6 +229,12 @@
 		WC112233000100000000000D /* WatchWidgets.entitlements */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.entitlements; path = WatchWidgets.entitlements; sourceTree = "<group>"; };
 		WC1122330001000000000010 /* RecordingCardWatchApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RecordingCardWatchApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		WC1122330001000000000011 /* RecordingCardWatchWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RecordingCardWatchWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD1122330001000000000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xcprivacy; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		WC1122330001000000000021 /* ComplicationStateStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ComplicationStateStore.swift; sourceTree = "<group>"; };
+		WC1122330001000000000022 /* WatchAudioSliceTranscoder.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchAudioSliceTranscoder.swift; sourceTree = "<group>"; };
+		WC1122330001000000000023 /* WatchManifestStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchManifestStore.swift; sourceTree = "<group>"; };
+		WC1122330001000000000024 /* WatchProtocol.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchProtocol.swift; sourceTree = "<group>"; };
+		WC1122330001000000000025 /* WavFileCodec.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WavFileCodec.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -223,7 +243,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */,
-				WC1122330003000000000002 /* WatchRecorderCore in Frameworks */,
 				50CF06829065DA7CCBA15C6D /* Pods_Runner.framework in Frameworks */,
 				F59F8B47EA35E277F8C46242 /* BackgroundAssets.framework in Frameworks */,
 				SS1122330003000000000002 /* Speech.framework in Frameworks */,
@@ -259,7 +278,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				WC1122330003000000000009 /* WatchRecorderCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -267,7 +285,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				WC112233000300000000000B /* WatchRecorderCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -356,7 +373,10 @@
 				B00DA80CA6233BE9B872D8BC /* AppleAssetPackBridge.swift */,
 				WC1122330001000000000001 /* WatchHardwareBridge.swift */,
 				HS1122330001000000000001 /* HealthSignalBridge.swift */,
+				HS1122330001000000000002 /* RCObjCCatch.m */,
+				HS1122330001000000000003 /* RCObjCCatch.h */,
 				SS1122330001000000000001 /* SystemSpeechBridge.swift */,
+				AD1122330001000000000001 /* PrivacyInfo.xcprivacy */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
@@ -418,11 +438,25 @@
 			isa = PBXGroup;
 			children = (
 				WC1122330001000000000002 /* Shared.xcconfig */,
+				WC1122330002000000000004 /* WatchRecorderCore */,
 				WC1122330002000000000002 /* WatchApp */,
 				WC1122330002000000000003 /* WatchWidgets */,
 			);
 			name = Watch;
 			path = ../../watch;
+			sourceTree = "<group>";
+		};
+		WC1122330002000000000004 /* WatchRecorderCore */ = {
+			isa = PBXGroup;
+			children = (
+				WC1122330001000000000021 /* ComplicationStateStore.swift */,
+				WC1122330001000000000022 /* WatchAudioSliceTranscoder.swift */,
+				WC1122330001000000000023 /* WatchManifestStore.swift */,
+				WC1122330001000000000024 /* WatchProtocol.swift */,
+				WC1122330001000000000025 /* WavFileCodec.swift */,
+			);
+			name = WatchRecorderCore;
+			path = Packages/WatchRecorderCore/Sources/WatchRecorderCore;
 			sourceTree = "<group>";
 		};
 		WC1122330002000000000002 /* WatchApp */ = {
@@ -499,7 +533,6 @@
 			name = Runner;
 			packageProductDependencies = (
 				78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */,
-				WC1122330002000000000011 /* WatchRecorderCore */,
 			);
 			productName = Runner;
 			productReference = 97C146EE1CF9000F007C117D /* Runner.app */;
@@ -554,9 +587,6 @@
 				WC1122330005000000000021 /* PBXTargetDependency */,
 			);
 			name = RecordingCardWatchApp;
-			packageProductDependencies = (
-				WC1122330002000000000012 /* WatchRecorderCore */,
-			);
 			productName = RecordingCardWatchApp;
 			productReference = WC1122330001000000000010 /* RecordingCardWatchApp.app */;
 			productType = "com.apple.product-type.application";
@@ -574,9 +604,6 @@
 			dependencies = (
 			);
 			name = RecordingCardWatchWidgets;
-			packageProductDependencies = (
-				WC1122330002000000000013 /* WatchRecorderCore */,
-			);
 			productName = RecordingCardWatchWidgets;
 			productReference = WC1122330001000000000011 /* RecordingCardWatchWidgets.appex */;
 			productType = "com.apple.product-type.app-extension";
@@ -621,7 +648,6 @@
 			mainGroup = 97C146E51CF9000F007C117D;
 			packageReferences = (
 				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */,
-				WC1122330002000000000010 /* XCLocalSwiftPackageReference "../../watch/Packages/WatchRecorderCore" */,
 			);
 			productRefGroup = 97C146EF1CF9000F007C117D /* Products */;
 			projectDirPath = "";
@@ -655,6 +681,7 @@
 				97C146FC1CF9000F007C117D /* Main.storyboard in Resources */,
 				BC112233000300000000000A /* RCLcdDigital-Regular.ttf in Resources */,
 				BC112233000300000000000C /* RCLcdBlink-Regular.ttf in Resources */,
+				AD1122330003000000000001 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -829,7 +856,13 @@
 				CD9FCA54448E50F54EB23CF7 /* AppleAssetPackBridge.swift in Sources */,
 				WC1122330003000000000001 /* WatchHardwareBridge.swift in Sources */,
 				HS1122330003000000000001 /* HealthSignalBridge.swift in Sources */,
+				HS1122330003000000000002 /* RCObjCCatch.m in Sources */,
 				SS1122330003000000000001 /* SystemSpeechBridge.swift in Sources */,
+				WC1122330003000000000021 /* ComplicationStateStore.swift in Sources */,
+				WC1122330003000000000022 /* WatchAudioSliceTranscoder.swift in Sources */,
+				WC1122330003000000000023 /* WatchManifestStore.swift in Sources */,
+				WC1122330003000000000024 /* WatchProtocol.swift in Sources */,
+				WC1122330003000000000025 /* WavFileCodec.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -860,6 +893,11 @@
 				WC1122330003000000000005 /* WatchMainView.swift in Sources */,
 				WC1122330003000000000006 /* WatchRuntimeKeepAlive.swift in Sources */,
 				WC1122330003000000000007 /* WatchSessionSyncEngine.swift in Sources */,
+				WC1122330003000000000031 /* ComplicationStateStore.swift in Sources */,
+				WC1122330003000000000032 /* WatchAudioSliceTranscoder.swift in Sources */,
+				WC1122330003000000000033 /* WatchManifestStore.swift in Sources */,
+				WC1122330003000000000034 /* WatchProtocol.swift in Sources */,
+				WC1122330003000000000035 /* WavFileCodec.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -868,6 +906,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				WC112233000300000000000A /* RecordingCardComplication.swift in Sources */,
+				WC1122330003000000000041 /* ComplicationStateStore.swift in Sources */,
+				WC1122330003000000000044 /* WatchProtocol.swift in Sources */,
+				WC1122330003000000000045 /* WavFileCodec.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -928,7 +969,7 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = 2026112001;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
@@ -1009,9 +1050,12 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEAD_CODE_STRIPPING = NO;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
+				STRIP_INSTALLED_PRODUCT = NO;
+				STRIP_STYLE = "non-global";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1103,7 +1147,7 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = 2026112001;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
@@ -1243,9 +1287,12 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEAD_CODE_STRIPPING = NO;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
+				STRIP_INSTALLED_PRODUCT = NO;
+				STRIP_STYLE = "non-global";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1290,9 +1337,12 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEAD_CODE_STRIPPING = NO;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
+				STRIP_INSTALLED_PRODUCT = NO;
+				STRIP_STYLE = "non-global";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1334,7 +1384,7 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = 2026112001;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
@@ -1360,7 +1410,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = 2026112001;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
@@ -1387,7 +1437,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = 2026112001;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
@@ -1413,7 +1463,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = 2026112001;
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
@@ -1445,6 +1495,7 @@
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ../../watch/WatchApp/Info.plist;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.reai.recordingcard;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1473,6 +1524,7 @@
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ../../watch/WatchApp/Info.plist;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.reai.recordingcard;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1501,6 +1553,7 @@
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ../../watch/WatchApp/Info.plist;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.reai.recordingcard;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1684,31 +1737,12 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage;
 		};
-		WC1122330002000000000010 /* XCLocalSwiftPackageReference "../../watch/Packages/WatchRecorderCore" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../watch/Packages/WatchRecorderCore;
-		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = FlutterGeneratedPluginSwiftPackage;
-		};
-		WC1122330002000000000011 /* WatchRecorderCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = WC1122330002000000000010 /* XCLocalSwiftPackageReference "../../watch/Packages/WatchRecorderCore" */;
-			productName = WatchRecorderCore;
-		};
-		WC1122330002000000000012 /* WatchRecorderCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = WC1122330002000000000010 /* XCLocalSwiftPackageReference "../../watch/Packages/WatchRecorderCore" */;
-			productName = WatchRecorderCore;
-		};
-		WC1122330002000000000013 /* WatchRecorderCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = WC1122330002000000000010 /* XCLocalSwiftPackageReference "../../watch/Packages/WatchRecorderCore" */;
-			productName = WatchRecorderCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

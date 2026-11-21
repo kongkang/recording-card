@@ -15,6 +15,7 @@ class RecordingStatusController extends ChangeNotifier {
   String? _detail;
   int _pendingSlices = 0;
   int _elapsedSeconds = 0;
+  int _transcribeCycleMinutes = 15;
 
   /// 用户是否仍处于一次录音会话中；转录完成回到 recording 还是 idle 由它决定。
   bool _sessionActive = false;
@@ -32,6 +33,16 @@ class RecordingStatusController extends ChangeNotifier {
 
   /// 本次录音已持续秒数（由设备时钟同步进来）。
   int get elapsedSeconds => _elapsedSeconds;
+
+  /// 批量转写与整理周期（分钟）。
+  int get transcribeCycleMinutes => _transcribeCycleMinutes;
+
+  set transcribeCycleMinutes(int minutes) {
+    final next = minutes.clamp(5, 180);
+    if (next == _transcribeCycleMinutes) return;
+    _transcribeCycleMinutes = next;
+    notifyListeners();
+  }
 
   bool get isRecording => _phase == RecordingPhase.recording;
 

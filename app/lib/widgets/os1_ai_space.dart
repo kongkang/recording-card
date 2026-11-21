@@ -563,7 +563,8 @@ String _herVoiceLine(String raw) {
       }
     }
   }
-  text = text.replaceAll('**', '');
+  text = text.replaceAll(RegExp(r'[*#`~]'), '');
+  text = text.replaceAll(RegExp(r'^\s*[-•·]+\s*', multiLine: true), '');
   final para = text.split(RegExp(r'\n\s*\n')).first.trim();
   if (para.isNotEmpty) text = para;
   text = text.replaceAll(RegExp(r'\s+'), ' ').trim();

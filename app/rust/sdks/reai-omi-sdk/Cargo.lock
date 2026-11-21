@@ -627,6 +627,7 @@ dependencies = [
  "async-trait",
  "btleplug",
  "futures",
+ "log",
  "reai-ext-sdk",
  "serde_json",
  "tokio",

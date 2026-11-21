@@ -121,7 +121,7 @@ class SpeakerMatchResult {
 /// 少分配新编号：主导说话人先拿到更小的号。
 class SessionSpeakerMatcher {
   const SessionSpeakerMatcher({
-    this.matchThreshold = 0.75,
+    this.matchThreshold = 0.70,
     this.maxSpeakers = 6,
   });
 
@@ -152,7 +152,7 @@ class SessionSpeakerMatcher {
 
     final usedProfiles = <int>{};
     for (final pair in pairs) {
-      if (pair.score < matchThreshold) break;
+      if (pair.score <= matchThreshold) break;
       if (clusterToSpeaker.containsKey(pair.cluster) ||
           usedProfiles.contains(pair.profile)) {
         continue;

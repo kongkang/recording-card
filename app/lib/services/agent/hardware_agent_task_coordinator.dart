@@ -6,10 +6,10 @@
 /// - `agentVoice`：
 ///   - 若当前已在持续录音（硬件实时流或本机录音），记录 `[tStartMs, tEndMs]` 并优先复用已有润色/原始转写，
 ///     否则从 `PcmRingBuffer` 零干扰切出对应时间窗音频走端侧识别；
-///   - 若当前未在录音，自动拉起临时采集流（优先硬件实时流，无硬件/无流则本机麦克风），
+///   - 若当前未在录音，自动拉起临时采集流（优先硬件实时流，异常/无流自动回退本机麦克风），
 ///     识别后关闭临时流，**不启动长期录音、不污染 Timeline**；
 ///   - Agent 回复与异常均可通过原生 TTS（随 A2DP 耳机或本机扬声器）播报，
-///     并维护打断/回声隔离时间戳（`notBeforeMs`）；
+///     并严格维护打断/回声隔离时间戳（`notBeforeMs`）；
 /// - `photoRecognize`：调用 `camera_capture_and_fetch` 并走 `AgentChatController.sendPhotoRecognitionMessage`。
 library;
 
@@ -65,6 +65,9 @@ class _ActiveVoiceSession {
   int tempSampleRate = 16000;
   StreamSubscription<RealtimeAudioEvent>? hwSub;
   bool usedHwRealtime = false;
+  bool receivedHwAudio = false;
+  bool stopped = false;
+  Future<bool>? phoneFallbackFuture;
   PhoneMicBackend? phoneBackend;
   Timer? maxDurationTimer;
   String? captureError;
@@ -124,6 +127,13 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
   String? lastButtonToast;
   int buttonToastSeq = 0;
 
+  /// 等待按键广播流派发及当前串行队列中的异步任务全部完成。
+  Future<void> get idle async {
+    await Future<void>.delayed(Duration.zero);
+    await _serial;
+    await Future<void>.delayed(Duration.zero);
+  }
+
   bool _wasAgentSpeaking = false;
   int? _lastTtsEndedAtMs;
   int? _lastDownAtMs;
@@ -150,11 +160,6 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       });
     }
   }
-
-  HardwareButtonAction _actionForGesture(String gesture) =>
-      _device.activeCapabilities.hasConfigurableSwitch
-      ? _agentConfig.cardActionForGesture(gesture)
-      : _agentConfig.dyjActionForGesture(gesture);
 
   bool _wasExecutedByFirmware(
     HardwareButtonEvent ev,
@@ -220,7 +225,10 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
     if (_disposed) return;
     final speaking = _agentChat.isSpeaking;
     if (_wasAgentSpeaking && !speaking) {
-      _lastTtsEndedAtMs = _clock().millisecondsSinceEpoch;
+      final nowMs = _clock().millisecondsSinceEpoch;
+      if (_lastTtsEndedAtMs == null || nowMs > _lastTtsEndedAtMs!) {
+        _lastTtsEndedAtMs = nowMs;
+      }
     }
     _wasAgentSpeaking = speaking;
   }
@@ -234,10 +242,10 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
     return next;
   }
 
-  Future<void> _interruptSpeechIfActive() async {
+  Future<void> _interruptSpeechIfActive({int? timestampMs}) async {
     if (_agentChat.isSpeaking) {
       await _agentChat.interruptSpeech();
-      _lastTtsEndedAtMs = _clock().millisecondsSinceEpoch;
+      _lastTtsEndedAtMs = timestampMs ?? _clock().millisecondsSinceEpoch;
     }
   }
 
@@ -265,20 +273,47 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
 
   void _onHardwareButtonEvent(HardwareButtonEvent ev) {
     if (_disposed) return;
-    final action = _actionForGesture(ev.gesture);
-    _emitButtonToast(_formatButtonToast(ev, action));
-
-    if (ev.gesture == 'down') {
-      _lastDownAtMs = ev.receivedAtMs;
+    final normalizedGesture = switch (ev.gesture) {
+      'single_tap' => 'click',
+      'double_tap' => 'double_click',
+      _ => ev.gesture,
+    };
+    if (_device.activeKind == DeviceKind.omiCv1 &&
+        normalizedGesture.startsWith('long_press')) {
+      // Omi 固件长按约 3 秒直接硬关机，彻底忽略一切长按手势防误触
       return;
     }
+    final normalizedEv = normalizedGesture == ev.gesture
+        ? ev
+        : HardwareButtonEvent(
+            gesture: normalizedGesture,
+            rawGesture: ev.rawGesture,
+            button: ev.button,
+            action: ev.action,
+            receivedAtMs: ev.receivedAtMs,
+            durationMs: ev.durationMs,
+            deviceTs: ev.deviceTs,
+            deviceAction: ev.deviceAction,
+            source: ev.source,
+          );
+    final action = _agentConfig.buttonActionForDevice(
+      _device.activeKind,
+      normalizedGesture,
+    );
+    _emitButtonToast(_formatButtonToast(normalizedEv, action));
 
-    if (_agentChat.isSpeaking && ev.gesture != 'up') {
+    // 按下瞬间若正在播报 TTS，立即静默打断并锚定回声隔离水位，防止前 600ms 按住说话被外放声污染
+    if (_agentChat.isSpeaking && normalizedGesture != 'up') {
       unawaited(_agentChat.interruptSpeech());
       _lastTtsEndedAtMs = ev.receivedAtMs;
     }
 
-    if (ev.gesture == 'long_press_end' || ev.gesture == 'up') {
+    if (normalizedGesture == 'down') {
+      _lastDownAtMs = ev.receivedAtMs;
+      return;
+    }
+
+    if (normalizedGesture == 'long_press_end' || normalizedGesture == 'up') {
       unawaited(
         _enqueue(() async {
           final active = _activeVoice;
@@ -292,7 +327,11 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
 
     if (action == HardwareButtonAction.none) return;
 
-    if (ev.gesture == 'long_press_start') {
+    final isHoldLongPressStart =
+        normalizedGesture == 'long_press_start' ||
+        (normalizedGesture == 'long_press' &&
+            _device.activeCapabilities.hasConfigurableSwitch);
+    if (isHoldLongPressStart) {
       if (action == HardwareButtonAction.agentVoice) {
         final downTs = _lastDownAtMs;
         final fallbackDur = (ev.durationMs != null && ev.durationMs! > 0)
@@ -303,7 +342,7 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
             : ev.receivedAtMs - fallbackDur;
         unawaited(
           _enqueue(() async {
-            await _interruptSpeechIfActive();
+            await _interruptSpeechIfActive(timestampMs: ev.receivedAtMs);
             if (_activeVoice != null) return;
             await _startVoiceSession(tStartMs: tStartMs, holdMode: true);
           }),
@@ -311,9 +350,9 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       } else {
         unawaited(
           _enqueue(() async {
-            await _interruptSpeechIfActive();
-            if (_wasExecutedByFirmware(ev, action)) {
-              await _handleFirmwareExecutedAction(ev, action);
+            await _interruptSpeechIfActive(timestampMs: ev.receivedAtMs);
+            if (_wasExecutedByFirmware(normalizedEv, action)) {
+              await _handleFirmwareExecutedAction(normalizedEv, action);
             } else {
               await _executeImmediateAction(action);
             }
@@ -323,22 +362,22 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       return;
     }
 
-    if (ev.gesture == 'click' ||
-        ev.gesture == 'double_click' ||
-        ev.gesture == 'long_press' ||
-        ev.gesture == 'switch_on' ||
-        ev.gesture == 'switch_off') {
-      if (_wasExecutedByFirmware(ev, action)) {
+    if (normalizedGesture == 'click' ||
+        normalizedGesture == 'double_click' ||
+        normalizedGesture == 'long_press' ||
+        normalizedGesture == 'switch_on' ||
+        normalizedGesture == 'switch_off') {
+      if (_wasExecutedByFirmware(normalizedEv, action)) {
         unawaited(
           _enqueue(() async {
-            await _handleFirmwareExecutedAction(ev, action);
+            await _handleFirmwareExecutedAction(normalizedEv, action);
           }),
         );
       } else if (action == HardwareButtonAction.agentVoice) {
         final triggerMs = ev.receivedAtMs;
         unawaited(
           _enqueue(() async {
-            await _interruptSpeechIfActive();
+            await _interruptSpeechIfActive(timestampMs: triggerMs);
             if (_activeVoice != null) {
               await _finishVoiceSession(triggerMs);
             } else if (phase == HardwareAgentPhase.idle) {
@@ -349,7 +388,7 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       } else {
         unawaited(
           _enqueue(() async {
-            await _interruptSpeechIfActive();
+            await _interruptSpeechIfActive(timestampMs: ev.receivedAtMs);
             await _executeImmediateAction(action);
           }),
         );
@@ -362,7 +401,7 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
     _emitButtonToast('收到操作按钮：触发语音任务');
     final triggerMs = _clock().millisecondsSinceEpoch;
     return _enqueue(() async {
-      await _interruptSpeechIfActive();
+      await _interruptSpeechIfActive(timestampMs: triggerMs);
       if (_activeVoice != null) {
         await _finishVoiceSession(triggerMs);
       } else if (phase == HardwareAgentPhase.idle) {
@@ -377,6 +416,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
   ) async {
     switch (action) {
       case HardwareButtonAction.mark:
+        if (_liveAudio.isRunning) {
+          _liveAudio.recordMark();
+        }
+        if (_device.isPhoneRecording) {
+          _device.recordPhoneMark();
+        }
         _setStatus(HardwareAgentPhase.idle, '已打重点标记', transient: true);
         if (_device.activeCapabilities.hasOledDisplay) {
           unawaited(
@@ -437,6 +482,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
   Future<void> _executeImmediateAction(HardwareButtonAction action) async {
     switch (action) {
       case HardwareButtonAction.mark:
+        if (_liveAudio.isRunning) {
+          _liveAudio.recordMark();
+        }
+        if (_device.isPhoneRecording) {
+          _device.recordPhoneMark();
+        }
         final err = await _device.markNow();
         _setStatus(
           HardwareAgentPhase.idle,
@@ -595,9 +646,16 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         session.usedHwRealtime = true;
         session.hwSub = _device.gateway.realtimeAudio().listen(
           (ev) {
+            if (session.stopped || _disposed) return;
             if (ev.kind == RealtimeAudioKind.audio &&
                 ev.pcm != null &&
                 ev.pcm!.isNotEmpty) {
+              session.receivedHwAudio = true;
+              final notBefore = session.notBeforeMs;
+              if (notBefore != null &&
+                  _clock().millisecondsSinceEpoch < notBefore) {
+                return;
+              }
               final evenLen = ev.pcm!.length & ~1;
               if (evenLen > 0) {
                 session.tempSampleRate = ev.sampleRate;
@@ -607,12 +665,23 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
                       : Uint8List.sublistView(ev.pcm!, 0, evenLen),
                 );
               }
+            } else if (ev.kind == RealtimeAudioKind.closed &&
+                !session.receivedHwAudio) {
+              unawaited(_fallbackToPhoneMic(session, '硬件实时流未返回音频即关闭'));
             }
           },
           onError: (Object e) {
             session.captureError = '硬件临时采集失败：$e';
+            if (!session.receivedHwAudio && !session.stopped && !_disposed) {
+              unawaited(_fallbackToPhoneMic(session, '$e'));
+            }
           },
         );
+        // 让首拍异步微任务先执行：若 realtimeAudio 立即报错或拒绝，直接衔接本机麦克风回退
+        await Future<void>.delayed(Duration.zero);
+        if (session.phoneFallbackFuture != null) {
+          return await session.phoneFallbackFuture!;
+        }
         return true;
       } on Object catch (e) {
         await session.hwSub?.cancel();
@@ -622,6 +691,50 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       }
     }
 
+    return _startPhoneMicCapture(session);
+  }
+
+  Future<bool> _fallbackToPhoneMic(
+    _ActiveVoiceSession session,
+    String reason,
+  ) {
+    if (session.phoneFallbackFuture != null) {
+      return session.phoneFallbackFuture!;
+    }
+    final fut = () async {
+      final prevSub = session.hwSub;
+      session.hwSub = null;
+      session.usedHwRealtime = false;
+      if (prevSub != null) {
+        try {
+          await prevSub.cancel();
+        } on Object {
+          // best-effort cancel
+        }
+      }
+      if (!_device.isRecording) {
+        try {
+          await _device.gateway.closeRealtime();
+        } on Object {
+          // best-effort close
+        }
+      }
+      if (session.stopped || _disposed) return false;
+      final ok = await _startPhoneMicCapture(session);
+      if (!ok && !_disposed && !session.stopped && _activeVoice == session) {
+        final err = session.captureError ?? '无法启动临时录音采集（$reason）';
+        _activeVoice = null;
+        unawaited(_device.sendDyjLedHint('error'));
+        unawaited(_agentChat.speakText(err));
+        _setStatus(HardwareAgentPhase.idle, err, transient: true);
+      }
+      return ok;
+    }();
+    session.phoneFallbackFuture = fut;
+    return fut;
+  }
+
+  Future<bool> _startPhoneMicCapture(_ActiveVoiceSession session) async {
     final backend = _phoneMicBackendFactory();
     try {
       var perm = await backend.checkPermission();
@@ -632,9 +745,18 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         session.captureError = '需要开启麦克风权限才能发送语音任务';
         return false;
       }
+      if (session.stopped || _disposed) return false;
+      session.captureError = null;
+      session.tempSampleRate = 16000;
       session.phoneBackend = backend;
       await backend.startCapture(
         (pcm) {
+          if (session.stopped || _disposed) return;
+          final notBefore = session.notBeforeMs;
+          if (notBefore != null &&
+              _clock().millisecondsSinceEpoch < notBefore) {
+            return;
+          }
           final evenLen = pcm.length & ~1;
           if (evenLen > 0) {
             session.tempPcm.add(
@@ -654,6 +776,15 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
   }
 
   Future<void> _stopTempCapture(_ActiveVoiceSession session) async {
+    final pendingFallback = session.phoneFallbackFuture;
+    if (pendingFallback != null) {
+      try {
+        await pendingFallback;
+      } on Object {
+        // fallback error already handled
+      }
+    }
+    session.stopped = true;
     if (session.usedHwRealtime) {
       await session.hwSub?.cancel();
       session.hwSub = null;
@@ -693,12 +824,16 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
 
     String? transcriptText;
     PcmWindowSlice? slice;
+    final effectiveStartMs = session.notBeforeMs != null
+        ? math.max(session.tStartMs, session.notBeforeMs!)
+        : session.tStartMs;
+    final effectiveEndMs = math.max(tEndMs, effectiveStartMs);
 
     if (!session.usedTempCapture) {
       final lookup = _lookupExistingTranscript;
       if (lookup != null) {
         try {
-          final found = await lookup(session.tStartMs, tEndMs);
+          final found = await lookup(effectiveStartMs, effectiveEndMs);
           if (found != null && found.trim().isNotEmpty) {
             transcriptText = found.trim();
           }
@@ -721,8 +856,8 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       final rawBytes = session.tempPcm.takeBytes();
       if (rawBytes.length >= PcmRingBuffer.minSliceBytes) {
         slice = PcmWindowSlice(
-          startMs: session.tStartMs,
-          endMs: math.max(tEndMs, session.tStartMs),
+          startMs: effectiveStartMs,
+          endMs: effectiveEndMs,
           sampleRate: session.tempSampleRate,
           pcm16le: rawBytes,
         );
@@ -820,13 +955,27 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       final dir = _tempDirResolver != null
           ? await _tempDirResolver()
           : await getTemporaryDirectory();
-      if (!await dir.exists()) {
+      if (!dir.existsSync()) {
         await dir.create(recursive: true);
       }
       final res = await _device.captureAndFetchDyjPhoto(dir: dir.path);
-      final localPath = '${res['localPath'] ?? ''}'.trim();
+      final dataMap = res['data'] is Map
+          ? Map<String, dynamic>.from(res['data'] as Map)
+          : null;
+      if (res['ok'] == false) {
+        final bridgeErr =
+            '${res['error'] ?? dataMap?['error'] ?? '设备拍照命令返回失败'}'.trim();
+        throw StateError(bridgeErr.isEmpty ? '设备拍照命令返回失败' : bridgeErr);
+      }
+      final rawPath = (dataMap != null
+              ? (dataMap['path'] ?? dataMap['localPath'])
+              : null) ??
+          res['path'] ??
+          res['localPath'];
+      final localPath = '${rawPath ?? ''}'.trim();
       if (localPath.isEmpty) {
-        throw StateError('设备未返回照片路径');
+        final detailErr = '${dataMap?['error'] ?? res['error'] ?? ''}'.trim();
+        throw StateError(detailErr.isNotEmpty ? detailErr : '设备未返回照片路径');
       }
       final bytes = await File(localPath).readAsBytes();
       if (bytes.isEmpty) {
@@ -868,7 +1017,8 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         oledLine2: '请重试',
         timeoutMs: 2500,
       );
-      final msg = '拍照识别失败：$e';
+      final cleanErr = '$e'.replaceFirst(RegExp(r'^Bad state:\s*'), '');
+      final msg = '拍照识别失败：$cleanErr';
       unawaited(_agentChat.speakText('拍照识别失败，请稍后重试'));
       _setStatus(HardwareAgentPhase.idle, msg, transient: true);
     }

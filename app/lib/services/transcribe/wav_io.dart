@@ -219,19 +219,43 @@ int? readWavDurationMsSync(String path) {
 /// 异步封装，语义同 [readWavDurationMsSync]。
 Future<int?> readWavDurationMs(String path) async => readWavDurationMsSync(path);
 
+final Expando<bool> _conditionedTag = Expando<bool>('rcConditionedSpeech');
+
+/// 判断一段采样是否需要高通去直流或音量抬升（若无需改动，系统内置引擎可直接消费原切片 WAV 路径）。
+bool needsSignalConditioning(
+  Float32List raw, {
+  int sampleRate = 16000,
+}) {
+  if (raw.isEmpty || _conditionedTag[raw] == true) return false;
+  var sum = 0.0;
+  for (var i = 0; i < raw.length; i++) {
+    sum += raw[i];
+  }
+  final dcMean = sum / raw.length;
+  if (dcMean.abs() >= 0.005) return true;
+
+  final p95Rms = _percentile95FrameRms(raw, sampleRate: sampleRate);
+  const speechGateRms = 0.00085;
+  if (p95Rms < speechGateRms) return false;
+  const targetP95Rms = 0.065;
+  final gain = (targetP95Rms / p95Rms).clamp(1.0, 10.0);
+  return gain > 1.02;
+}
+
 /// 一阶高通去直流（截止频率约 12.7 Hz @ 16kHz）+ 噪声门控语音增益归一化。
 ///
 /// 解决真机实测发现的两类硬件实时流信号问题：
 /// - IMA-ADPCM 实时流预测器漂移后会产生约 +10000（+0.305）的恒定直流偏置，
 ///   扬声器交流耦合回听正常，但 Silero VAD 在大幅直流偏置下完全失明；
 /// - 佩戴距离较远时有效交流峰值仅 500~950（约 -32 dBFS），而底噪仅 10~12（约 -69 dBFS），
-///   按 50ms 帧 95 分位 RMS 抬升增益可避免单样本脉冲干扰，同时绝不放大纯静音底噪。
+///   按 50ms 帧 95 分位 RMS 抬升增益可避免单样本脉冲干扰，同时对极低能量微弱环境摩擦音限制最大增益，
+///   彻底杜绝底噪放大 24x 引发 SenseVoice 幻觉。
 Float32List conditionSpeechSamples(
   Float32List raw, {
   int sampleRate = 16000,
 }) {
   final n = raw.length;
-  if (n == 0) return raw;
+  if (n == 0 || _conditionedTag[raw] == true) return raw;
 
   final hp = Float32List(n);
   var prevX = raw[0].toDouble();
@@ -245,14 +269,23 @@ Float32List conditionSpeechSamples(
 
   final p95Rms = _percentile95FrameRms(hp, sampleRate: sampleRate);
   // 蓝牙流纯静音底噪 p95Rms ≈ 0.00035~0.00045；低于门限视为静音，不施加放大避免幻觉
-  const speechGateRms = 0.00075;
+  const speechGateRms = 0.00085;
   if (p95Rms < speechGateRms) {
+    _conditionedTag[hp] = true;
     return hp;
   }
 
+  // 对极微弱环境响动（衣服摩擦/空调底噪，0.00085..0.005）采用渐进软膝盖上限（2x..10x），
+  // 防止把 -56 dBFS 的环境微弱沙沙声暴力放大 24x 触发 SenseVoice 幻觉；真实远场语音上限 10x。
   const targetP95Rms = 0.065;
-  final gain = (targetP95Rms / p95Rms).clamp(1.0, 24.0);
+  final ramp = ((p95Rms - speechGateRms) / (0.005 - speechGateRms)).clamp(
+    0.0,
+    1.0,
+  );
+  final maxAllowedGain = 2.0 + 8.0 * ramp; // 2.0x .. 10.0x
+  final gain = (targetP95Rms / p95Rms).clamp(1.0, maxAllowedGain);
   if (gain <= 1.02) {
+    _conditionedTag[hp] = true;
     return hp;
   }
 
@@ -269,6 +302,7 @@ Float32List conditionSpeechSamples(
       hp[i] = v;
     }
   }
+  _conditionedTag[hp] = true;
   return hp;
 }
 
@@ -280,14 +314,17 @@ bool hasAcousticSpeechCandidate(
   final n = raw.length;
   if (n < sampleRate ~/ 4) return false;
   final hp = Float32List(n);
+  var rawSum = 0.0;
   var prevX = raw[0].toDouble();
   var y = 0.0;
   for (var i = 0; i < n; i++) {
     final x = raw[i].toDouble();
+    rawSum += x;
     y = (x - prevX) + 0.995 * y;
     prevX = x;
     hp[i] = y;
   }
+  final dcMean = (rawSum / n).abs();
   final window = math.max(160, sampleRate ~/ 20); // 50ms
   var activeFrames = 0;
   final rmsList = <double>[];
@@ -306,8 +343,14 @@ bool hasAcousticSpeechCandidate(
   }
   if (rmsList.isEmpty || activeFrames < 3) return false;
   rmsList.sort();
+  final p10 = rmsList[((rmsList.length - 1) * 0.10).floor()];
   final p95 = rmsList[((rmsList.length - 1) * 0.95).floor()];
-  return p95 >= 0.00085;
+  if (p95 < 0.00085) return false;
+  // 排除无直流偏置且 100% 恒幅无包络起伏的低幅稳态底噪/测试载波（p95 < 0.010 且无调制）
+  if (dcMean < 0.02 && p95 < 0.010 && p95 <= p10 * 1.08) {
+    return false;
+  }
+  return true;
 }
 
 double _percentile95FrameRms(Float32List samples, {required int sampleRate}) {

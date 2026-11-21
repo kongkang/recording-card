@@ -88,6 +88,10 @@ final class WatchRecorderCoreTests: XCTestCase {
         try store.registerSlice(first)
 
         XCTAssertEqual(store.pendingEntries().map(\.sliceId), ["id-1", "id-2"])
+        try store.markDeliveredPendingAck(sliceId: "id-1", nowMs: 10_000)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.fileURL(for: first).path))
+        XCTAssertEqual(store.pendingCount(), 2)
+        XCTAssertEqual(store.syncedCount(), 0)
         try store.markSyncedAndDeleteLocalAudio(sliceId: "id-1")
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL(for: first).path))
         XCTAssertEqual(store.pendingCount(), 1)

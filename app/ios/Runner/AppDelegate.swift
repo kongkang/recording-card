@@ -4,6 +4,7 @@ import Flutter
 import Photos
 import Speech
 import UIKit
+import UserNotifications
 
 #if canImport(AppIntents)
 import AppIntents
@@ -77,14 +78,17 @@ import AppIntents
     if let watchRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCWatchHardware") {
       WatchHardwareBridge.shared.register(with: watchRegistrar.messenger())
     }
-    if let healthRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCHealthSignal") {
-      HealthSignalBridge.shared.register(messenger: healthRegistrar.messenger())
-    }
+    // 健康通道与蓝牙共用同一 messenger：勿依赖可能为空的
+    // registrar(forPlugin: "RCHealthSignal")，否则设置页一点开就 MissingPlugin 闪退。
+    HealthSignalBridge.shared.register(messenger: registrar.messenger())
     if let speechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCSystemSpeech") {
       SystemSpeechBridge.shared.register(with: speechRegistrar.messenger())
     }
     if let agentSpeechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCAgentSpeech") {
       RCAgentSpeechBridge.shared.register(with: agentSpeechRegistrar.messenger())
+    }
+    if let localNotifRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCLocalNotifications") {
+      LocalNotificationBridge.shared.register(with: localNotifRegistrar.messenger())
     }
   }
 
@@ -100,6 +104,19 @@ import AppIntents
       DispatchQueue.main.async {
         UIApplication.shared.isIdleTimerDisabled = enabled
         result(true)
+      }
+    case "bridgeSymbols":
+      let cmdAddr = UInt64(rc_card_bridge_command_addr())
+      let freeAddr = UInt64(rc_card_bridge_free_string_addr())
+      let verAddr = UInt64(rc_card_bridge_version_addr())
+      if cmdAddr != 0 && freeAddr != 0 && verAddr != 0 {
+        result([
+          "command": String(cmdAddr),
+          "free": String(freeAddr),
+          "version": String(verAddr),
+        ])
+      } else {
+        result(nil)
       }
 
     default:
@@ -154,9 +171,18 @@ import AppIntents
   }
 
   private func flushPending() {
+    // 授权探测用的 CBCentralManager 不能留着，避免与 Rust 侧 btleplug 争抢无线电导致通道被关闭。
+    centralManager?.stopScan()
+    centralManager = nil
     guard let result = pendingResult else { return }
     pendingResult = nil
     result(statusText())
+  }
+
+  override func applicationDidEnterBackground(_ application: UIApplication) {
+    centralManager?.stopScan()
+    centralManager = nil
+    super.applicationDidEnterBackground(application)
   }
 
   // MARK: - 系统相册录音时段对齐导入（PhotoKit）
@@ -453,7 +479,7 @@ final class RCAgentSpeechBridge: NSObject, AVSpeechSynthesizerDelegate {
       try session.setCategory(
         .playAndRecord,
         mode: .measurement,
-        options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .duckOthers]
+        options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .duckOthers, .mixWithOthers]
       )
       try session.setActive(true)
 
@@ -518,6 +544,15 @@ final class RCAgentSpeechBridge: NSObject, AVSpeechSynthesizerDelegate {
     recognitionTask = nil
 
     if wasListening {
+      if !PhoneMicBridge.shared.isCapturing {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(
+          .playAndRecord,
+          mode: .default,
+          options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers]
+        )
+        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+      }
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         if emitFinal && !captured.isEmpty {
@@ -533,16 +568,20 @@ final class RCAgentSpeechBridge: NSObject, AVSpeechSynthesizerDelegate {
 
   private func speak(text: String, localeId: String) {
     guard !text.isEmpty else { return }
-    stopSpeaking()
-    if !PhoneMicBridge.shared.isCapturing {
-      let session = AVAudioSession.sharedInstance()
-      try? session.setCategory(
-        .playAndRecord,
-        mode: .default,
-        options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers]
-      )
-      try? session.setActive(true)
+    if listening {
+      stopListening(emitFinal: false)
     }
+    stopSpeaking()
+    // 即使本机麦克风正在采集（PhoneMicBridge.shared.isCapturing == true），也必须确保
+    // AVAudioSession 处于 .playAndRecord + mode: .default + .defaultToSpeaker，
+    // 避免此前 SFSpeechRecognizer 留下的 .measurement 模式导致 TTS 从听筒极小声输出。
+    let session = AVAudioSession.sharedInstance()
+    try? session.setCategory(
+      .playAndRecord,
+      mode: .default,
+      options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers]
+    )
+    try? session.setActive(true)
 
     let utterance = AVSpeechUtterance(string: text)
     utterance.voice = AVSpeechSynthesisVoice(language: localeId)
@@ -599,6 +638,98 @@ final class RCAgentSpeechBridge: NSObject, AVSpeechSynthesizerDelegate {
   private func emitError(_ message: String) {
     DispatchQueue.main.async { [weak self] in
       self?.channel?.invokeMethod("onSpeechError", arguments: ["message": message])
+    }
+  }
+}
+
+/// 本地系统通知桥：蓝牙意外断连、自动切换 Watch/手机接力、后台受限待点开接力、重连成功提醒。
+final class LocalNotificationBridge: NSObject, UNUserNotificationCenterDelegate {
+  static let shared = LocalNotificationBridge()
+
+  private var channel: FlutterMethodChannel?
+
+  private override init() {
+    super.init()
+  }
+
+  func register(with messenger: FlutterBinaryMessenger) {
+    let ch = FlutterMethodChannel(
+      name: "com.reai.recordingcard/local_notifications",
+      binaryMessenger: messenger
+    )
+    ch.setMethodCallHandler { [weak self] call, result in
+      self?.handle(call, result: result)
+    }
+    channel = ch
+    let center = UNUserNotificationCenter.current()
+    if center.delegate == nil {
+      center.delegate = self
+    }
+  }
+
+  private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "requestPermission":
+      UNUserNotificationCenter.current().requestAuthorization(
+        options: [.alert, .sound, .badge]
+      ) { granted, _ in
+        DispatchQueue.main.async {
+          result(granted ? "granted" : "denied")
+        }
+      }
+    case "notify":
+      let args = call.arguments as? [String: Any] ?? [:]
+      let id = (args["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+      let reqId = (id?.isEmpty == false) ? id! : "rc_device_alert"
+      let title = (args["title"] as? String) ?? "录音卡"
+      let body = (args["body"] as? String) ?? ""
+      let urgent = (args["urgent"] as? Bool) ?? false
+      let center = UNUserNotificationCenter.current()
+      if center.delegate == nil {
+        center.delegate = self
+      }
+      center.getNotificationSettings { settings in
+        let auth = settings.authorizationStatus
+        guard auth == .authorized || auth == .provisional || auth == .ephemeral else {
+          DispatchQueue.main.async { result(false) }
+          return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        if #available(iOS 15.0, *) {
+          content.interruptionLevel = urgent ? .timeSensitive : .active
+        }
+        let req = UNNotificationRequest(identifier: reqId, content: content, trigger: nil)
+        center.add(req) { err in
+          DispatchQueue.main.async {
+            result(err == nil)
+          }
+        }
+      }
+    case "cancel":
+      let args = call.arguments as? [String: Any] ?? [:]
+      let id = (args["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+      let reqId = (id?.isEmpty == false) ? id! : "rc_device_alert"
+      let center = UNUserNotificationCenter.current()
+      center.removePendingNotificationRequests(withIdentifiers: [reqId])
+      center.removeDeliveredNotifications(withIdentifiers: [reqId])
+      result(true)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    if #available(iOS 14.0, *) {
+      completionHandler([.banner, .sound, .list])
+    } else {
+      completionHandler([.alert, .sound])
     }
   }
 }

@@ -3,6 +3,7 @@
 library;
 
 import '../net/model_gateway.dart';
+import '../net/model_provider_store.dart';
 
 export '../net/model_gateway.dart' show ChatMessage;
 
@@ -16,9 +17,10 @@ abstract class ChatCompletion {
 }
 
 class ModelGatewayChatCompletion implements ChatCompletion {
-  ModelGatewayChatCompletion(this._gateway);
+  ModelGatewayChatCompletion(this._gateway, {this.scene = ModelScene.summary});
 
   final ModelGateway _gateway;
+  final ModelScene scene;
 
   @override
   Future<String> complete(
@@ -26,11 +28,11 @@ class ModelGatewayChatCompletion implements ChatCompletion {
     required String model,
     double temperature = 0.1,
     int maxTokens = 2048,
-  }) =>
-      _gateway.chat(
-        messages,
-        model: model,
-        temperature: temperature,
-        maxTokens: maxTokens,
-      );
+  }) => _gateway.chat(
+    messages,
+    model: model,
+    scene: scene,
+    temperature: temperature,
+    maxTokens: maxTokens,
+  );
 }

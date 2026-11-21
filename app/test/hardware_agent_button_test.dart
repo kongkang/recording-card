@@ -618,7 +618,8 @@ void main() {
 
       gw.pushButtonEvent(gesture: 'double_click', receivedAtMs: 10000);
       await device.pollEventsNow();
-      await Future<void>.delayed(const Duration(milliseconds: 40));
+      await coord.idle;
+      await Future<void>.delayed(Duration.zero);
 
       expect(gw.callLog, contains('camera_capture_and_fetch'));
       expect(capturedUrls.length, 1);

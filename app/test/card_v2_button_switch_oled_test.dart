@@ -611,6 +611,36 @@ void main() {
       await device.pollEventsNow();
       await _waitUntil(() => completion.userPrompts.length >= 2);
       expect(completion.userPrompts.length, 2);
+
+      // 4f) CardV2 实机固件发送 gesture='long_press' + 'long_press_end' 同样按住即录、松开即发
+      liveAudio.ringBuffer.append(
+        _voicedPcm(samples: 16000),
+        endTimestampMs: 7000,
+      );
+      liveAudio.ringBuffer.append(
+        _voicedPcm(samples: 16000),
+        endTimestampMs: 8000,
+      );
+      nowMs = 7000;
+      gw.pushButtonEvent(
+        gesture: 'long_press',
+        deviceAction: 'agent_voice',
+        source: 'card_v2_button',
+        receivedAtMs: 7000,
+      );
+      await device.pollEventsNow();
+      await _waitUntil(() => coord.phase == HardwareAgentPhase.listening);
+
+      nowMs = 8000;
+      gw.pushButtonEvent(
+        gesture: 'long_press_end',
+        deviceAction: 'agent_voice',
+        source: 'card_v2_button',
+        receivedAtMs: 8000,
+      );
+      await device.pollEventsNow();
+      await _waitUntil(() => completion.userPrompts.length >= 3);
+      expect(completion.userPrompts.length, 3);
     },
   );
 
