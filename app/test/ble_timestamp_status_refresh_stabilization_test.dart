@@ -26,6 +26,7 @@ import 'package:recording_card/services/transcribe/speech_models.dart';
 import 'package:recording_card/widgets/recording_status_block.dart';
 
 import 'support/fake_gateway.dart';
+import 'support/model_stub.dart';
 
 class _TestSpeechEngine implements SpeechEngine {
   @override
@@ -456,6 +457,7 @@ void main() {
         liveAudioBaseDir: root,
       );
       final status = RecordingStatusController();
+      final generator = await SummaryModel().generator();
       final appStore = AppStore(
         status: status,
         jsonStore: JsonStore(store: InMemoryStore()),
@@ -466,6 +468,7 @@ void main() {
       appStore.attachPipeline(
         pipeline: pipeline,
         store: recStore,
+        generator: generator,
         status: status,
       );
 
