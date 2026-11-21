@@ -1,4 +1,5 @@
 #import "GeneratedPluginRegistrant.h"
+#import "RCObjCCatch.h"
 #include <TargetConditionals.h>
 #include <stdint.h>
 

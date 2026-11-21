@@ -78,9 +78,9 @@ import AppIntents
     if let watchRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCWatchHardware") {
       WatchHardwareBridge.shared.register(with: watchRegistrar.messenger())
     }
-    if let healthRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCHealthSignal") {
-      HealthSignalBridge.shared.register(messenger: healthRegistrar.messenger())
-    }
+    // 健康通道与蓝牙共用同一 messenger：勿依赖可能为空的
+    // registrar(forPlugin: "RCHealthSignal")，否则设置页一点开就 MissingPlugin 闪退。
+    HealthSignalBridge.shared.register(messenger: registrar.messenger())
     if let speechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCSystemSpeech") {
       SystemSpeechBridge.shared.register(with: speechRegistrar.messenger())
     }
@@ -171,9 +171,18 @@ import AppIntents
   }
 
   private func flushPending() {
+    // 授权探测用的 CBCentralManager 不能留着，避免与 Rust 侧 btleplug 争抢无线电导致通道被关闭。
+    centralManager?.stopScan()
+    centralManager = nil
     guard let result = pendingResult else { return }
     pendingResult = nil
     result(statusText())
+  }
+
+  override func applicationDidEnterBackground(_ application: UIApplication) {
+    centralManager?.stopScan()
+    centralManager = nil
+    super.applicationDidEnterBackground(application)
   }
 
   // MARK: - 系统相册录音时段对齐导入（PhotoKit）

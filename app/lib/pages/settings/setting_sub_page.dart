@@ -1205,7 +1205,7 @@ class _AgentPromptsBody extends StatefulWidget {
 }
 
 class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
-  String _tab = 'summary'; // 'summary' | 'polish' | 'dream'
+  String _tab = 'summary'; // 'summary' | 'polish'
   late final TextEditingController _ctrl = TextEditingController(
     text: widget.config.promptFor(_tab),
   );
@@ -1453,8 +1453,6 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
                 _stageTab(context, 'summary', '总结生成'),
                 const SizedBox(width: 8),
                 _stageTab(context, 'polish', '口语清洗与分段'),
-                const SizedBox(width: 8),
-                _stageTab(context, 'dream', '日报与做梦'),
               ],
             ),
             const SizedBox(height: 10),
@@ -1483,7 +1481,7 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
             Text(
               _tab == 'summary'
                   ? '注：JSON 结构化字段契约由客户端自动追加在末尾，无需手动编写 JSON 格式说明。'
-                  : '注：本环节提示词已持久化保存，将在全天自动合并与日报/做梦管线启用时生效。',
+                  : '注：口语清洗提示词已接入本机清洗管线，保存后立即生效。',
               style: TextStyle(fontSize: 11.5, color: c.sec),
             ),
             if (_savedToast) ...[
@@ -1739,7 +1737,7 @@ class _AgentExtensionsBodyState extends State<_AgentExtensionsBody> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Skills、Tools、MCP 要分开看。标成「已接入」的才会进入当前清洗或总结；标成「未接入」的只是占位，打开开关也不会调用。',
+              'Skills 会自动注入滚动清洗与总结指令；Tools 联动本机相册对齐；下方可添加自定义 HTTPS MCP 服务供 OS1 对话调用。',
               style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
             ),
             const SizedBox(height: 16),
@@ -1776,7 +1774,21 @@ class _AgentExtensionsBodyState extends State<_AgentExtensionsBody> {
               ],
             ),
             const SizedBox(height: 6),
-            _extGroupCard(context, mcps),
+            if (mcps.isEmpty)
+              Container(
+                decoration: BoxDecoration(
+                  color: c.card,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: c.sep),
+                ),
+                padding: const EdgeInsets.all(14),
+                child: Text(
+                  '尚未添加自定义 MCP 服务，点击右上角「添加服务」可接入 HTTPS JSON-RPC 2.0 外部工具供 OS1 对话调用。',
+                  style: TextStyle(fontSize: 12.5, height: 1.45, color: c.sec),
+                ),
+              )
+            else
+              _extGroupCard(context, mcps),
             const SizedBox(height: 18),
             const _SubSectionLabel('OS1 对话工具权限'),
             const SizedBox(height: 8),
@@ -3935,15 +3947,6 @@ class _ExtHardwareLinkBody extends StatefulWidget {
 class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
   String? _hint;
 
-  Future<void> _toggleGetSeed(bool next) async {
-    await widget.config.setGetSeedLinkEnabled(next);
-    await widget.device?.setExtHardwareEnabled(getSeed: next);
-    if (!mounted) return;
-    setState(() {
-      _hint = next ? '已开启 Get 笔记录音卡扫描联动' : '已关闭 Get 笔记录音卡联动';
-    });
-  }
-
   Future<void> _toggleOmi(bool next) async {
     await widget.config.setOmiLinkEnabled(next);
     await widget.device?.setExtHardwareEnabled(omi: next);
@@ -3972,12 +3975,8 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
     return ListenableBuilder(
       listenable: listenable,
       builder: (context, _) {
-        final getSeedOn = widget.config.getSeedLinkEnabled;
         final omiOn = widget.config.omiLinkEnabled;
         final feishuOn = widget.config.feishuLinkEnabled;
-        final gsConn =
-            dev?.isConnected == true &&
-            dev?.activeKind == DeviceKind.getSeedGsc10;
         final omiConn =
             dev?.isConnected == true && dev?.activeKind == DeviceKind.omiCv1;
         final feishuConn =
@@ -3996,25 +3995,6 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                 children: [
                   _extHardwareRow(
                     context,
-                    cardKey: const Key('ext-getseed-card'),
-                    switchKey: const Key('ext-getseed-switch'),
-                    title: '得到 Get 笔记录音卡',
-                    modelTag: 'GSC10',
-                    subtitle: '机身物理按键控录，支持蓝牙读取电量与离线录音同步（v0.2.5+ 固件受官方云端鉴权限制）',
-                    enabled: getSeedOn,
-                    connected: gsConn,
-                    topRadius: 12,
-                    onChanged: () => unawaited(_toggleGetSeed(!getSeedOn)),
-                  ),
-                  Divider(
-                    height: 1,
-                    thickness: 1,
-                    indent: 16,
-                    endIndent: 16,
-                    color: c.sep,
-                  ),
-                  _extHardwareRow(
-                    context,
                     cardKey: const Key('ext-omi-card'),
                     switchKey: const Key('ext-omi-switch'),
                     title: 'Omi 随身录音器',
@@ -4022,6 +4002,7 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                     subtitle: '蓝牙实时拾音与板载存储同步，支持单击/双击按键（长按 3 秒为硬件关机）',
                     enabled: omiOn,
                     connected: omiConn,
+                    topRadius: 12,
                     onChanged: () => unawaited(_toggleOmi(!omiOn)),
                   ),
                   Divider(

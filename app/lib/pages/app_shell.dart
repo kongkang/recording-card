@@ -411,12 +411,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _liveAudio.setSliceDuration(dur);
       _device.setRecordingSliceDuration(dur);
     }
-    if (_agentConfig.getSeedLinkEnabled != _device.getSeedLinkEnabled ||
-        _agentConfig.omiLinkEnabled != _device.omiLinkEnabled ||
+    if (_agentConfig.omiLinkEnabled != _device.omiLinkEnabled ||
         _agentConfig.feishuLinkEnabled != _device.feishuLinkEnabled) {
       unawaited(
         _device.setExtHardwareEnabled(
-          getSeed: _agentConfig.getSeedLinkEnabled,
           omi: _agentConfig.omiLinkEnabled,
           feishu: _agentConfig.feishuLinkEnabled,
         ),

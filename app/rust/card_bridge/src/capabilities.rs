@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use reai_ext_sdk::{RecorderSdkDriver, SdkCapabilities};
 use reai_feishu_sdk::FeishuSdkDriver;
-use reai_getseed_sdk::GetSeedSdkDriver;
 use reai_omi_sdk::OmiSdkDriver;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -19,8 +18,6 @@ pub enum DeviceKind {
     DyjV1,
     /// 语音 AI 键盘 V2.1（`reai-board-sdk`，广播前缀 `REAI_VB_`）
     BoardV21,
-    /// 得到 Get 笔记录音卡 GSC10（`reai-getseed-sdk`）
-    GetSeedGsc10,
     /// Omi 量产版 / Friend Pendant（`reai-omi-sdk`）
     OmiCv1,
     /// 飞书录音豆 / soundcore Work D3200（`reai-feishu-sdk`）
@@ -33,7 +30,6 @@ impl DeviceKind {
             Self::CardV2 => "card_v2",
             Self::DyjV1 => "dyj_v1",
             Self::BoardV21 => "board_v21",
-            Self::GetSeedGsc10 => "getseed_gsc10",
             Self::OmiCv1 => "omi_cv1",
             Self::FeishuD3200 => "feishu_d3200",
         }
@@ -44,7 +40,6 @@ impl DeviceKind {
             Self::CardV2 => "录音卡 V2",
             Self::DyjV1 => "点一机 V1",
             Self::BoardV21 => "语音AI键盘 V2.1",
-            Self::GetSeedGsc10 => "Get笔记卡",
             Self::OmiCv1 => "Omi 录音器",
             Self::FeishuD3200 => "飞书录音豆",
         }
@@ -55,7 +50,6 @@ impl DeviceKind {
             Some("card_v2") => return Some(Self::CardV2),
             Some("dyj_v1") => return Some(Self::DyjV1),
             Some("board_v21") => return Some(Self::BoardV21),
-            Some("getseed_gsc10") => return Some(Self::GetSeedGsc10),
             Some("omi_cv1") => return Some(Self::OmiCv1),
             Some("feishu_d3200") => return Some(Self::FeishuD3200),
             _ => {}
@@ -101,9 +95,6 @@ impl DeviceKind {
                 has_configurable_buttons: false,
                 ota_mode: "none",
             },
-            Self::GetSeedGsc10 => {
-                HardwareCapabilities::from_sdk(GetSeedSdkDriver.default_capabilities())
-            }
             Self::OmiCv1 => HardwareCapabilities::from_sdk(OmiSdkDriver.default_capabilities()),
             Self::FeishuD3200 => {
                 HardwareCapabilities::from_sdk(FeishuSdkDriver.default_capabilities())
@@ -207,8 +198,8 @@ fn classify_proprietary_name(trimmed: &str) -> Option<(DeviceKind, HardwareCapab
     }
 }
 
-fn external_drivers() -> [&'static dyn RecorderSdkDriver; 3] {
-    [&GetSeedSdkDriver, &OmiSdkDriver, &FeishuSdkDriver]
+fn external_drivers() -> [&'static dyn RecorderSdkDriver; 2] {
+    [&OmiSdkDriver, &FeishuSdkDriver]
 }
 
 /// 根据 BLE 广播名称识别支持的录音硬件。
@@ -272,7 +263,6 @@ pub fn classify_ble_advertisement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reai_getseed_sdk::protocol::MFG_ID_GETSEED;
     use reai_omi_sdk::protocol::{SVC_FRIEND_PENDANT_UUID, SVC_OMI_AUDIO_UUID};
 
     #[test]
@@ -300,21 +290,10 @@ mod tests {
     }
 
     #[test]
-    fn classifies_getseed_and_omi_by_name_uuid_and_manufacturer_data() {
+    fn classifies_omi_and_feishu_by_name_and_uuid() {
         let empty = HashMap::new();
 
-        let (kg, cg) = classify_ble_name("Get-A102").expect("getseed name");
-        assert_eq!(kg, DeviceKind::GetSeedGsc10);
-        assert!(!cg.realtime_audio && cg.has_onboard_storage && cg.has_file_sync);
-        assert!(!cg.has_remote_record_control && !cg.has_wifi_config);
-        assert_eq!(cg.ota_mode, "none");
-
-        let mut mfd = HashMap::new();
-        mfd.insert(MFG_ID_GETSEED, vec![0x01, 0x02]);
-        let (name_mfd, kmfd, _) =
-            classify_ble_advertisement("uuid-1234", None, &[], &mfd).expect("getseed mfd");
-        assert_eq!(kmfd, DeviceKind::GetSeedGsc10);
-        assert!(name_mfd.contains("1234"));
+        assert!(classify_ble_name("Get-A102").is_none());
 
         let (name_omi, ko, co) =
             classify_ble_advertisement("dead-beef-5678", None, &[SVC_OMI_AUDIO_UUID], &empty)

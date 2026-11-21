@@ -558,8 +558,7 @@ class _SettingPageState extends State<SettingPage> {
     final dev = widget.device;
     if (dev != null &&
         dev.isConnected &&
-        (dev.activeKind == DeviceKind.getSeedGsc10 ||
-            dev.activeKind == DeviceKind.omiCv1 ||
+        (dev.activeKind == DeviceKind.omiCv1 ||
             dev.activeKind == DeviceKind.feishuD3200)) {
       return '已连接 ${dev.activeKind.displayModel}';
     }
@@ -852,7 +851,7 @@ class _SettingPageState extends State<SettingPage> {
                       const _RowDivider(),
                       _switchRow(context, index++, group.items[i]),
                     ],
-                  if (group.title == '录音') ...<Widget>[
+                  if (group.title == '同步') ...<Widget>[
                     const _RowDivider(),
                     _photoAutoSyncRow(context),
                   ],
