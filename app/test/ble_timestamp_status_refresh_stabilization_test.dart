@@ -356,7 +356,6 @@ void main() {
       var busy = true;
       final store = DeviceStore(gateway: gw, autoStart: true)
         ..isExternalBleSyncBusy = () => busy;
-      addTearDown(store.dispose);
 
       await store.restoreLink();
       await store.connectTo(dev);
@@ -374,6 +373,7 @@ void main() {
       busy = false;
       await tester.pump(const Duration(seconds: 35));
       expect(gw.snapshotCalls, greaterThan(baseSnapshots));
+      store.dispose();
     });
 
     testWidgets('手动 connectTo 会抢占失效退避中的后台重连并保持最终连接态', (
@@ -387,15 +387,14 @@ void main() {
       final store = DeviceStore(
         gateway: gw,
         autoStart: true,
-        backgroundReconnectDelays: const [Duration(milliseconds: 500)],
+        backgroundReconnectDelays: const [Duration(seconds: 10)],
       );
-      addTearDown(store.dispose);
 
       await store.restoreLink();
       await store.connectTo(dev);
       await tester.pump(const Duration(milliseconds: 200));
 
-      // 模拟看门狗初次失败触发后台自动重连（先让第 1 次重连也失败以进入 500ms 退避等待）
+      // 模拟看门狗初次失败触发后台自动重连（先让第 1 次重连也失败以进入 10s 退避等待）
       gw.failSnapshot = CardException.disconnected();
       gw.failConnect = const CardException(CardErrorKind.device, 'busy');
       await tester.pump(const Duration(seconds: 35));
@@ -407,6 +406,7 @@ void main() {
       await store.connectTo(dev);
       await tester.pump(const Duration(seconds: 1));
       expect(store.linkState, LinkState.connected);
+      store.dispose();
     });
   });
 

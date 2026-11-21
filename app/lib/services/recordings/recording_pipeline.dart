@@ -1165,10 +1165,6 @@ class RecordingPipeline {
           if (isRingChunk && !didDownload && file.stage == RecordingStage.queued) {
             ringAdvancementBlocked = true;
           }
-          if (onFileReady != null &&
-              (didDownload || file.stage == RecordingStage.ready)) {
-            await onFileReady(file);
-          }
         } on Object catch (e) {
           if (isRingChunk) {
             ringAdvancementBlocked = true;
@@ -1570,6 +1566,10 @@ class RecordingPipeline {
       fileTotal: fileTotal,
       onProgress: onProgress,
     );
+    if (onPartReady != null &&
+        (didDownload || file.stage == RecordingStage.ready)) {
+      await onPartReady(file);
+    }
     for (final child in extraChildFiles) {
       await _processLocalFileStages(
         child,
