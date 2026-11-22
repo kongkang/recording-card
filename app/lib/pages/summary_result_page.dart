@@ -2,7 +2,6 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -14,6 +13,7 @@ import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/export/export.dart';
 import '../widgets/photo_preview_sheet.dart';
+import '../widgets/photo_thumbnail.dart';
 import '../widgets/quick_speaker_sheet.dart';
 import '../widgets/store_scope.dart';
 
@@ -38,6 +38,60 @@ class SummaryResultPage extends StatefulWidget {
   State<SummaryResultPage> createState() => _SummaryResultPageState();
 }
 
+class _FullTextGroupData {
+  const _FullTextGroupData({
+    required this.resolvedSpeaker,
+    required this.rawSpeaker,
+    required this.firstTurnIndex,
+    required this.sampleQuote,
+    required this.joinedText,
+  });
+
+  final String resolvedSpeaker;
+  final String rawSpeaker;
+  final int firstTurnIndex;
+  final String sampleQuote;
+  final String joinedText;
+}
+
+class _FullTextEventSectionData {
+  const _FullTextEventSectionData({
+    required this.event,
+    required this.groups,
+    required this.fallback,
+  });
+
+  final RecordEvent event;
+  final List<_FullTextGroupData> groups;
+  final String fallback;
+}
+
+class _SummaryMemo {
+  const _SummaryMemo({
+    required this.key,
+    required this.allPhotos,
+    required this.leafMatches,
+    required this.pointPhotos,
+    required this.sourceEvents,
+    required this.sourcePhotoCounts,
+    required this.orderedSourceEvents,
+    required this.mergedFullTextSections,
+    required this.fullText,
+    required this.subDescText,
+  });
+
+  final Object key;
+  final List<_ContextualPhoto> allPhotos;
+  final Map<String, _ContextualPhoto> leafMatches;
+  final List<List<_ContextualPhoto>> pointPhotos;
+  final List<RecordEvent> sourceEvents;
+  final Map<String, int> sourcePhotoCounts;
+  final List<RecordEvent> orderedSourceEvents;
+  final List<_FullTextEventSectionData> mergedFullTextSections;
+  final String fullText;
+  final String subDescText;
+}
+
 class _SummaryResultPageState extends State<SummaryResultPage> {
   static final Map<String, Set<int>> _memoryCheckedTodos = <String, Set<int>>{};
   static String _prefsTodoKey(String cardId) => 'rc-sum-todos-$cardId';
@@ -45,6 +99,7 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
   final _fallbackScroll = ScrollController();
   final _sectionKeys = <String, GlobalKey>{};
   final _captureKey = GlobalKey(debugLabel: 'sum-export-capture');
+  _SummaryMemo? _memo;
 
   /// 结果态标题块（标题 + 统计行）的实测高度：目录钮的吸附位置由它决定。
   final _titleKey = GlobalKey();
@@ -71,8 +126,63 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
       _todosDone.clear();
       _hydratedSummaryId = null;
       _todoMutationVersion++;
+      _memo = null;
       _hydrateTodosFromMemoryAndPrefs(widget.summaryId);
     }
+  }
+
+  _SummaryMemo _ensureMemo(AppStore store, SummaryCard card) {
+    final key = (
+      card.id,
+      card.state,
+      card.title,
+      card.subDesc,
+      card.srcIds.length,
+      card.points.length,
+      card.structure.length,
+      identityHashCode(card),
+      store.dataRevision,
+    );
+    final cached = _memo;
+    if (cached != null && cached.key == key) return cached;
+
+    final allPhotos = _ResultView._allActivePhotos(store, card);
+    final leafMatches = _ResultView._leafPhotoMatches(card, allPhotos);
+    final pointPhotos = [
+      for (final pt in card.points) _ResultView._photosForPoint(store, pt),
+    ];
+    final sourceEvents = [
+      for (final id in card.srcIds) ?store.eventByIdOrNull(id),
+    ];
+    final sourcePhotoCounts = <String, int>{
+      for (final e in sourceEvents) e.id: store.activePhotosForEvent(e).length,
+    };
+    final orderedSourceEvents = sortEventsChronological(sourceEvents);
+    final mergedFullTextSections =
+        _ResultView._buildMergedFullTextSections(store, orderedSourceEvents);
+    final fullText = card.resolvedFullText(
+      sourceEvents,
+      speakerResolver: store.displaySpeaker,
+      turnSpeakerResolver: store.displayTurnSpeaker,
+      preferResolvedTurns: store.hasTurnOverridesFor(sourceEvents),
+      aliasTextTransformer: store.applySpeakerAliasesToText,
+    );
+    final subDescText = _ResultView._resolvedSubDesc(card, allPhotos.length);
+
+    final built = _SummaryMemo(
+      key: key,
+      allPhotos: allPhotos,
+      leafMatches: leafMatches,
+      pointPhotos: pointPhotos,
+      sourceEvents: sourceEvents,
+      sourcePhotoCounts: sourcePhotoCounts,
+      orderedSourceEvents: orderedSourceEvents,
+      mergedFullTextSections: mergedFullTextSections,
+      fullText: fullText,
+      subDescText: subDescText,
+    );
+    _memo = built;
+    return built;
   }
 
   void _hydrateTodosFromMemoryAndPrefs(String summaryId) {
@@ -423,11 +533,10 @@ class _ResultView extends StatelessWidget {
     ('src', '来源记录'),
   ];
 
-  String _resolvedSubDesc(AppStore store) {
+  static String _resolvedSubDesc(SummaryCard card, int photoCount) {
     final base = (card.subDesc ?? '')
         .replaceAll(RegExp(r'\s*·\s*含\s*\d+\s*张图片'), '')
         .trim();
-    final photoCount = _allActivePhotos(store).length;
     if (photoCount <= 0) return base;
     return base.isEmpty ? '含 $photoCount 张图片' : '$base · 含 $photoCount 张图片';
   }
@@ -436,112 +545,120 @@ class _ResultView extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
     final rc = context.rc;
-    final subDescText = _resolvedSubDesc(store);
+    final memo = page._ensureMemo(store, card);
+    final subDescText = memo.subDescText;
     // 每个 SummaryResultPageState 持有独立截图 GlobalKey，防止路由切换动画双实例挂载冲突
     _exportCaptureKey = page._captureKey;
     WidgetsBinding.instance.addPostFrameCallback((_) => page._measureTitle());
     final primaryCtrl = PrimaryScrollController.maybeOf(context);
     final scrollCtrl = primaryCtrl ?? page._fallbackScroll;
-    return AnimatedBuilder(
-      animation: scrollCtrl,
-      builder: (context, _) {
-        final offset = scrollCtrl.positions.length == 1
-            ? scrollCtrl.position.pixels
-            : 0.0;
-        final natural = page._titleH + _kTabsH - offset + 10;
-        final tocTop = math.max(_kTabsH + 10, natural);
-        return Stack(
-          children: [
-            RepaintBoundary(
-              key: page._captureKey,
-              child: CustomScrollView(
-                key: const Key('sum-scroll'),
-                primary: primaryCtrl != null,
-                controller: primaryCtrl != null ? null : page._fallbackScroll,
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      key: page._titleKey,
-                      padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  card.title ?? '',
-                                  key: const Key('sum-title'),
-                                  style: TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w800,
-                                    color: rc.label,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  subDescText,
-                                  key: const Key('sum-sub'),
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: rc.sec,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          _ExportButton(
-                            card: card,
-                            captureKey: page._captureKey,
-                            exportService: page.widget.exportService,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // 吸顶 Tab 栏：滚动中持续可见
-                  SliverPersistentHeader(
-                    key: const Key('stickbar'),
-                    pinned: true,
-                    delegate: _StickyTabs(
-                      tabs: _tabs,
-                      current: page._tab,
-                      onTap: page._setTab,
-                    ),
-                  ),
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(
-                      22,
-                      6,
-                      22,
-                      RCDims.pageBottomPad,
-                    ),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, _) => Column(
+    return Stack(
+      children: [
+        RepaintBoundary(
+          key: page._captureKey,
+          child: CustomScrollView(
+            key: const Key('sum-scroll'),
+            primary: primaryCtrl != null,
+            controller: primaryCtrl != null ? null : page._fallbackScroll,
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  key: page._titleKey,
+                  padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: _sections(context, store),
+                          children: [
+                            Text(
+                              card.title ?? '',
+                              key: const Key('sum-title'),
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                                color: rc.label,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              subDescText,
+                              key: const Key('sum-sub'),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: rc.sec,
+                              ),
+                            ),
+                          ],
                         ),
-                        childCount: 1,
                       ),
-                    ),
+                      _ExportButton(
+                        card: card,
+                        captureKey: page._captureKey,
+                        exportService: page.widget.exportService,
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-            // 目录浮钮：随内容滚动，撞到吸顶栏下沿后与 Tab 栏同点吸附（各 Tab 均可用）
-            Positioned(
-              top: tocTop,
-              right: 8,
-              child: _TocButton(onGo: page._tocGo),
-            ),
-          ],
-        );
-      },
+              // 吸顶 Tab 栏：滚动中持续可见
+              SliverPersistentHeader(
+                key: const Key('stickbar'),
+                pinned: true,
+                delegate: _StickyTabs(
+                  tabs: _tabs,
+                  current: page._tab,
+                  onTap: page._setTab,
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(
+                  22,
+                  6,
+                  22,
+                  RCDims.pageBottomPad,
+                ),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, _) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: _sections(context, store, memo),
+                    ),
+                    childCount: 1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // 目录浮钮：仅自身随滚动位移，不重建 CustomScrollView 与分节内容
+        Positioned(
+          top: 0,
+          right: 8,
+          child: AnimatedBuilder(
+            animation: scrollCtrl,
+            child: RepaintBoundary(child: _TocButton(onGo: page._tocGo)),
+            builder: (context, child) {
+              final offset = scrollCtrl.positions.length == 1
+                  ? scrollCtrl.position.pixels
+                  : 0.0;
+              final natural = page._titleH + _kTabsH - offset + 10;
+              final tocTop = math.max(_kTabsH + 10, natural);
+              return Transform.translate(
+                offset: Offset(0, tocTop),
+                child: child,
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
-  List<_ContextualPhoto> _allActivePhotos(AppStore store) {
+  static List<_ContextualPhoto> _allActivePhotos(
+    AppStore store,
+    SummaryCard card,
+  ) {
     final out = <_ContextualPhoto>[];
     final seen = <String>{};
     for (final id in card.srcIds) {
@@ -593,8 +710,8 @@ class _ResultView extends StatelessWidget {
     return out;
   }
 
-  Map<String, _ContextualPhoto> _leafPhotoMatches(
-    AppStore store,
+  static Map<String, _ContextualPhoto> _leafPhotoMatches(
+    SummaryCard card,
     List<_ContextualPhoto> allPhotos,
   ) {
     final map = <String, _ContextualPhoto>{};
@@ -688,22 +805,18 @@ class _ResultView extends StatelessWidget {
     return '核心脉络 · $resolved';
   }
 
-  List<Widget> _sections(BuildContext context, AppStore store) {
+  List<Widget> _sections(
+    BuildContext context,
+    AppStore store,
+    _SummaryMemo memo,
+  ) {
     final rc = context.rc;
     bool show(String k) => page._tab == 'all' || page._tab == k;
-    final allPhotos = _allActivePhotos(store);
-    final leafMatches = _leafPhotoMatches(store, allPhotos);
-    final sourceEvents = [
-      for (final id in card.srcIds) ?store.eventByIdOrNull(id),
-    ];
-    final orderedSourceEvents = sortEventsChronological(sourceEvents);
-    final fullText = card.resolvedFullText(
-      sourceEvents,
-      speakerResolver: store.displaySpeaker,
-      turnSpeakerResolver: store.displayTurnSpeaker,
-      preferResolvedTurns: store.hasTurnOverridesFor(sourceEvents),
-      aliasTextTransformer: store.applySpeakerAliasesToText,
-    );
+    final allPhotos = memo.allPhotos;
+    final leafMatches = memo.leafMatches;
+    final sourceEvents = memo.sourceEvents;
+    final orderedSourceEvents = memo.orderedSourceEvents;
+    final fullText = memo.fullText;
     final doneSet = page.checkedTodosFor(card);
     final doneCount = doneSet
         .where((idx) => idx >= 0 && idx < card.todos.length)
@@ -741,7 +854,7 @@ class _ResultView extends StatelessWidget {
               page: page,
               index: i,
               point: card.points[i],
-              photos: _photosForPoint(store, card.points[i]),
+              photos: memo.pointPhotos[i],
               sourceEvents: sourceEvents,
             ),
         ]),
@@ -806,7 +919,8 @@ class _ResultView extends StatelessWidget {
             child: _buildMergedFullTextContent(
               context,
               store,
-              orderedSourceEvents,
+              memo.mergedFullTextSections,
+              multipleEvents: orderedSourceEvents.length > 1,
               fallbackText: fullText,
             ),
           ),
@@ -819,7 +933,7 @@ class _ResultView extends StatelessWidget {
                 final srcRc = context.rc;
                 final e = store.eventByIdOrNull(id);
                 if (e == null) return const SizedBox.shrink();
-                final picCount = store.activePhotosForEvent(e).length;
+                final picCount = memo.sourcePhotoCounts[e.id] ?? 0;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Material(
@@ -945,36 +1059,15 @@ class _ResultView extends StatelessWidget {
     );
   }
 
-  Widget _buildMergedFullTextContent(
-    BuildContext context,
+  static List<_FullTextEventSectionData> _buildMergedFullTextSections(
     AppStore store,
-    List<RecordEvent> orderedEvents, {
-    required String fallbackText,
-  }) {
-    final rc = context.rc;
-    if (orderedEvents.isEmpty) {
-      final t = fallbackText.trim();
-      return SelectableText(
-        t.isNotEmpty ? t : '暂无可拼接的来源转写文本',
-        style: TextStyle(
-          fontSize: 14,
-          height: 1.65,
-          color: t.isNotEmpty ? rc.ink : rc.sec,
-        ),
-      );
-    }
-
-    final widgets = <Widget>[];
+    List<RecordEvent> orderedEvents,
+  ) {
+    final sections = <_FullTextEventSectionData>[];
     for (final e in orderedEvents) {
       if (isSilentPlaceholderEvent(e)) continue;
       final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
-      final groups = <({
-        String resolvedSpeaker,
-        String rawSpeaker,
-        int firstTurnIndex,
-        String sampleQuote,
-        String joinedText,
-      })>[];
+      final groups = <_FullTextGroupData>[];
 
       String? curSpk;
       var curRaw = '';
@@ -984,13 +1077,15 @@ class _ResultView extends StatelessWidget {
 
       void flushGroup() {
         if (curSpk == null || curText.trim().isEmpty) return;
-        groups.add((
-          resolvedSpeaker: curSpk,
-          rawSpeaker: curRaw,
-          firstTurnIndex: curFirstIdx,
-          sampleQuote: curSample,
-          joinedText: curText,
-        ));
+        groups.add(
+          _FullTextGroupData(
+            resolvedSpeaker: curSpk,
+            rawSpeaker: curRaw,
+            firstTurnIndex: curFirstIdx,
+            sampleQuote: curSample,
+            joinedText: curText,
+          ),
+        );
       }
 
       for (var ti = 0; ti < turns.length; ti++) {
@@ -1017,8 +1112,43 @@ class _ResultView extends StatelessWidget {
       final fallback = (e.longText.trim().isNotEmpty ? e.longText : e.brief)
           .trim();
       if (groups.isEmpty && fallback.isEmpty) continue;
+      sections.add(
+        _FullTextEventSectionData(
+          event: e,
+          groups: groups,
+          fallback: fallback,
+        ),
+      );
+    }
+    return sections;
+  }
 
-      if (orderedEvents.length > 1) {
+  Widget _buildMergedFullTextContent(
+    BuildContext context,
+    AppStore store,
+    List<_FullTextEventSectionData> sections, {
+    required bool multipleEvents,
+    required String fallbackText,
+  }) {
+    final rc = context.rc;
+    if (sections.isEmpty) {
+      final t = fallbackText.trim();
+      return SelectableText(
+        t.isNotEmpty ? t : '暂无可拼接的来源转写文本',
+        style: TextStyle(
+          fontSize: 14,
+          height: 1.65,
+          color: t.isNotEmpty ? rc.ink : rc.sec,
+        ),
+      );
+    }
+
+    final widgets = <Widget>[];
+    for (final sec in sections) {
+      final e = sec.event;
+      final groups = sec.groups;
+
+      if (multipleEvents) {
         widgets.add(
           Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 8),
@@ -1039,7 +1169,7 @@ class _ResultView extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: SelectableText(
-              fallback,
+              sec.fallback,
               style: TextStyle(
                 fontSize: 14,
                 height: 1.65,
@@ -1632,7 +1762,6 @@ class _InlineSummaryFigure extends StatelessWidget {
   Widget build(BuildContext context) {
     final rc = context.rc;
     final p = item.photo;
-    final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
     final srcLabel = p.source == 'dyj_camera' ? '点一机抓拍' : '系统相册';
     return Material(
       color: rc.card,
@@ -1652,20 +1781,13 @@ class _InlineSummaryFigure extends StatelessWidget {
                 child: SizedBox(
                   width: 56,
                   height: 56,
-                  child: hasFile
-                      ? Image.file(File(p.path), fit: BoxFit.cover)
-                      : ColoredBox(
-                          color: rc.sep,
-                          child: Center(
-                            child: Icon(
-                              p.source == 'dyj_camera'
-                                  ? Icons.photo_camera_outlined
-                                  : Icons.photo_outlined,
-                              size: 20,
-                              color: rc.sec,
-                            ),
-                          ),
-                        ),
+                  child: PhotoThumbnail(
+                    path: p.path,
+                    logicalWidth: 56,
+                    source: p.source,
+                    placeholderIconSize: 20,
+                    placeholderColor: rc.sep,
+                  ),
                 ),
               ),
               const SizedBox(width: 10),

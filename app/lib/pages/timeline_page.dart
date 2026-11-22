@@ -2,10 +2,10 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../core/models/record.dart';
 import '../core/models/recording.dart';
@@ -13,6 +13,7 @@ import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/audio/recording_status.dart';
+import '../widgets/photo_thumbnail.dart';
 import '../widgets/recording_status_block.dart';
 import '../widgets/selection_marker.dart';
 import '../widgets/store_scope.dart';
@@ -171,30 +172,25 @@ class _TimelinePageState extends State<TimelinePage> {
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
     final recordingStatus = widget.recordingStatus;
-    final merged = recordingStatus == null
-        ? store
-        : Listenable.merge([store, recordingStatus]);
     return ListenableBuilder(
-      listenable: merged,
+      listenable: store,
       builder: (context, _) {
         final c = context.rc;
-        final groups = store.feedGroups;
+        final entries = store.feedEntries;
         // 录音/同步状态块只出现在「全部/记录」的内容顶部：
         // 勾选总结时收起（总结源列表保持干净），切到「总结」Tab 也不显示。
         final showStatus =
             recordingStatus != null &&
             !store.selMode &&
             store.filter != FeedFilter.summary;
-        // 设计稿只有一处顶部实时状态块（#live-status）：状态块已经在展示「正在录音 / 正在同步 / 正在转写」时，
-        // 不再叠出第二条 _SyncBanner（「正在取回…」进度条），避免两块同步提示同时出现冲突。
-        final statusBlockVisible =
-            showStatus && recordingStatus.phase != RecordingPhase.idle;
-        final showPendingBanner =
+        final showPendingCandidate =
             !store.selMode &&
             store.filter != FeedFilter.summary &&
             store.pendingLocalAudioCount > 0 &&
-            store.syncStage == null &&
-            !statusBlockVisible;
+            store.syncStage == null;
+        if (!store.selMode && _itemKeys.isNotEmpty) {
+          _itemKeys.clear();
+        }
         if (store.selMode && store.selAnchorId != null) {
           _scheduleRangeCheck(store);
         } else if (_stickyEdge != _StickyRangeEdge.none) {
@@ -212,14 +208,19 @@ class _TimelinePageState extends State<TimelinePage> {
             _stickyEdge == _StickyRangeEdge.bottom &&
             _stickyTargetId != null;
 
+        final headerCount =
+            (showStatus ? 1 : 0) + (showPendingCandidate ? 1 : 0);
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _TabsBar(store: store),
             if (store.selMode) _RangeBar(store: store),
-            if ((store.loading || store.syncStage != null) &&
-                !statusBlockVisible)
-              _SyncBanner(store: store),
+            _SyncBannerHost(
+              store: store,
+              showStatus: showStatus,
+              recordingStatus: recordingStatus,
+            ),
             Expanded(
               child: Stack(
                 key: _viewportKey,
@@ -257,7 +258,7 @@ class _TimelinePageState extends State<TimelinePage> {
                             );
                         }
                       },
-                      child: groups.isEmpty
+                      child: entries.isEmpty
                           ? ListView(
                               key: const Key('timeline-empty'),
                               physics: const AlwaysScrollableScrollPhysics(),
@@ -275,12 +276,14 @@ class _TimelinePageState extends State<TimelinePage> {
                                       controller: recordingStatus,
                                     ),
                                   ),
-                                if (showPendingBanner)
-                                  Padding(
+                                if (showPendingCandidate)
+                                  _PendingAudioBannerHost(
+                                    store: store,
+                                    showStatus: showStatus,
+                                    recordingStatus: recordingStatus,
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 22,
                                     ),
-                                    child: _PendingAudioBanner(store: store),
                                   ),
                                 Padding(
                                   padding: const EdgeInsets.only(top: 60),
@@ -324,30 +327,47 @@ class _TimelinePageState extends State<TimelinePage> {
                                 ),
                               ],
                             )
-                          : ListView(
+                          : ListView.builder(
                               key: const Key('timeline-list'),
                               physics: const AlwaysScrollableScrollPhysics(),
+                              scrollCacheExtent: const ScrollCacheExtent.pixels(
+                                320,
+                              ),
+                              addAutomaticKeepAlives: false,
                               padding: const EdgeInsets.fromLTRB(
                                 22,
                                 4,
                                 22,
                                 RCDims.pageBottomPad,
                               ),
-                              children: [
-                                if (showStatus)
-                                  RecordingStatusBlock(
+                              itemCount: headerCount + entries.length,
+                              itemBuilder: (context, index) {
+                                if (showStatus && index == 0) {
+                                  return RecordingStatusBlock(
+                                    key: const ValueKey('tl-status-block'),
                                     controller: recordingStatus,
-                                  ),
-                                if (showPendingBanner)
-                                  _PendingAudioBanner(store: store),
-                                for (final g in groups) ...[
-                                  Padding(
+                                  );
+                                }
+                                final pendingIdx = showStatus ? 1 : 0;
+                                if (showPendingCandidate &&
+                                    index == pendingIdx) {
+                                  return _PendingAudioBannerHost(
+                                    key: const ValueKey('tl-pending-banner'),
+                                    store: store,
+                                    showStatus: showStatus,
+                                    recordingStatus: recordingStatus,
+                                  );
+                                }
+                                final entry = entries[index - headerCount];
+                                return switch (entry) {
+                                  final FeedDayHeaderEntry h => Padding(
+                                    key: ValueKey('tl-day-${h.dayOffset}'),
                                     padding: const EdgeInsets.only(
                                       top: 4,
                                       bottom: 14,
                                     ),
                                     child: Text(
-                                      g.dayLabel,
+                                      h.dayLabel,
                                       style: TextStyle(
                                         fontSize: 15,
                                         fontWeight: FontWeight.w700,
@@ -355,45 +375,45 @@ class _TimelinePageState extends State<TimelinePage> {
                                       ),
                                     ),
                                   ),
-                                  for (final (i, item) in g.items.indexed)
-                                    _TimelineRail(
-                                      first: i == 0,
-                                      last: i == g.items.length - 1,
-                                      child: switch (item) {
-                                        final SummaryCard s =>
-                                          _SummaryCardView(
-                                            card: s,
-                                            store: store,
-                                          ),
-                                        final UnclassifiedPhotosCard u =>
-                                          _UnclassifiedPhotosCardView(card: u),
-                                        final ForkedEventPair fp =>
-                                          _ForkedEventCardView(
-                                            pair: fp,
-                                            store: store,
-                                          ),
-                                        final TrivialClusterCard t =>
-                                          _TrivialClusterView(
-                                            card: t,
-                                            onTap: () =>
-                                                _showTrivialClusterSheet(
-                                                  context,
-                                                  store,
-                                                  t,
-                                                ),
-                                          ),
-                                        final RecordEvent e => _EventCardView(
-                                          event: e,
-                                          store: store,
-                                          cardKey: e.live
-                                              ? null
-                                              : _itemKeyFor(e.id),
-                                        ),
-                                        _ => const SizedBox.shrink(),
-                                      },
+                                  final FeedItemEntry it => _TimelineRail(
+                                    key: ValueKey(
+                                      'tl-rail-${_entryKeyId(it.item)}',
                                     ),
-                                ],
-                              ],
+                                    first: it.first,
+                                    last: it.last,
+                                    child: switch (it.item) {
+                                      final SummaryCard s => _SummaryCardView(
+                                        card: s,
+                                        store: store,
+                                      ),
+                                      final UnclassifiedPhotosCard u =>
+                                        _UnclassifiedPhotosCardView(card: u),
+                                      final ForkedEventPair fp =>
+                                        _ForkedEventCardView(
+                                          pair: fp,
+                                          store: store,
+                                        ),
+                                      final TrivialClusterCard t =>
+                                        _TrivialClusterView(
+                                          card: t,
+                                          onTap: () => _showTrivialClusterSheet(
+                                            context,
+                                            store,
+                                            t,
+                                          ),
+                                        ),
+                                      final RecordEvent e => _EventCardView(
+                                        event: e,
+                                        store: store,
+                                        cardKey: (!e.live && store.selMode)
+                                            ? _itemKeyFor(e.id)
+                                            : null,
+                                      ),
+                                      _ => const SizedBox.shrink(),
+                                    },
+                                  ),
+                                };
+                              },
                             ),
                     ),
                   ),
@@ -431,6 +451,85 @@ class _TimelinePageState extends State<TimelinePage> {
             if (store.selMode) _SelBar(store: store),
           ],
         );
+      },
+    );
+  }
+
+  static String _entryKeyId(Object item) => switch (item) {
+    final SummaryCard s => 'sum-${s.id}',
+    final UnclassifiedPhotosCard u => 'unc-${u.dayOffset}',
+    final ForkedEventPair fp => 'fork-${fp.forkGroupId}',
+    final TrivialClusterCard t => 'triv-${t.id}',
+    final RecordEvent e => 'ev-${e.id}',
+    _ => '${identityHashCode(item)}',
+  };
+}
+
+class _SyncBannerHost extends StatelessWidget {
+  const _SyncBannerHost({
+    required this.store,
+    required this.showStatus,
+    required this.recordingStatus,
+  });
+
+  final AppStore store;
+  final bool showStatus;
+  final RecordingStatusController? recordingStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    // 设计稿只有一处顶部实时状态块（#live-status）：状态块已经在展示「正在录音 / 正在同步 / 正在转写」时，
+    // 不再叠出第二条 _SyncBanner（「正在取回…」进度条），避免两块同步提示同时出现冲突。
+    final active = store.loading || store.syncStage != null;
+    if (!active) return const SizedBox.shrink();
+    final ctrl = recordingStatus;
+    if (!showStatus || ctrl == null) {
+      return _SyncBanner(store: store);
+    }
+    return ListenableBuilder(
+      listenable: ctrl,
+      builder: (context, _) {
+        if (ctrl.phase != RecordingPhase.idle) {
+          return const SizedBox.shrink();
+        }
+        return _SyncBanner(store: store);
+      },
+    );
+  }
+}
+
+class _PendingAudioBannerHost extends StatelessWidget {
+  const _PendingAudioBannerHost({
+    super.key,
+    required this.store,
+    required this.showStatus,
+    required this.recordingStatus,
+    this.padding,
+  });
+
+  final AppStore store;
+  final bool showStatus;
+  final RecordingStatusController? recordingStatus;
+  final EdgeInsetsGeometry? padding;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget content() {
+      final banner = _PendingAudioBanner(store: store);
+      return padding != null ? Padding(padding: padding!, child: banner) : banner;
+    }
+
+    final ctrl = recordingStatus;
+    if (!showStatus || ctrl == null) {
+      return content();
+    }
+    return ListenableBuilder(
+      listenable: ctrl,
+      builder: (context, _) {
+        if (ctrl.phase != RecordingPhase.idle) {
+          return const SizedBox.shrink();
+        }
+        return content();
       },
     );
   }
@@ -647,6 +746,7 @@ class _SelBar extends StatelessWidget {
 /// 首项线从点下方起、末项线到点上方止、单项无线，跨项距连续成轨。
 class _TimelineRail extends StatelessWidget {
   const _TimelineRail({
+    super.key,
     required this.first,
     required this.last,
     required this.child,
@@ -658,48 +758,76 @@ class _TimelineRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
-    final only = first && last;
-    // 懒加载列表给无限高约束，IntrinsicHeight 先按卡片定高再让轨道拉伸成线
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(
-            width: 10,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                if (!only)
-                  Positioned(
-                    left: 4.5,
-                    top: first ? 9.0 : 0,
-                    bottom: last ? null : 0,
-                    height: last ? 9.0 : null,
-                    width: 1,
-                    child: ColoredBox(color: c.sep),
-                  ),
-                Positioned(
-                  left: 0,
-                  top: 8,
-                  child: Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: c.bg,
-                      border: Border.all(color: c.ax, width: 1.5),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(child: child),
-        ],
+    return CustomPaint(
+      painter: _TimelineRailPainter(
+        first: first,
+        last: last,
+        lineColor: c.sep,
+        dotFillColor: c.bg,
+        dotBorderColor: c.ax,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.only(left: 26),
+        child: child,
       ),
     );
   }
+}
+
+class _TimelineRailPainter extends CustomPainter {
+  const _TimelineRailPainter({
+    required this.first,
+    required this.last,
+    required this.lineColor,
+    required this.dotFillColor,
+    required this.dotBorderColor,
+  });
+
+  final bool first;
+  final bool last;
+  final Color lineColor;
+  final Color dotFillColor;
+  final Color dotBorderColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final only = first && last;
+    if (!only) {
+      final linePaint = Paint()
+        ..color = lineColor
+        ..strokeWidth = 1.0
+        ..style = PaintingStyle.stroke;
+      final top = first ? 9.0 : 0.0;
+      final bottom = last ? 9.0 : size.height;
+      if (bottom > top) {
+        canvas.drawLine(Offset(5.0, top), Offset(5.0, bottom), linePaint);
+      }
+    }
+    const dotCenter = Offset(5.0, 13.0);
+    canvas.drawCircle(
+      dotCenter,
+      4.25,
+      Paint()
+        ..color = dotFillColor
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawCircle(
+      dotCenter,
+      4.25,
+      Paint()
+        ..color = dotBorderColor
+        ..strokeWidth = 1.5
+        ..style = PaintingStyle.stroke,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_TimelineRailPainter oldDelegate) =>
+      oldDelegate.first != first ||
+      oldDelegate.last != last ||
+      oldDelegate.lineColor != lineColor ||
+      oldDelegate.dotFillColor != dotFillColor ||
+      oldDelegate.dotBorderColor != dotBorderColor;
 }
 
 /// 事件卡：标题、时间、2–3 行生活摘要；点开显示更完整概述与详情按钮。
@@ -1578,7 +1706,6 @@ class _PhotoStackThumb extends StatelessWidget {
     required double size,
     int? overlayCount,
   }) {
-    final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
     final phBg = c.isDark ? const Color(0xFF242428) : const Color(0xFFEAEAE4);
     final phInner = c.isDark
         ? const Color(0xFF2A2A2E)
@@ -1595,13 +1722,13 @@ class _PhotoStackThumb extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (hasFile)
-            Image.file(File(p.path), fit: BoxFit.cover)
-          else
-            ColoredBox(
-              color: phInner,
-              child: Icon(Icons.photo_outlined, size: 16, color: c.sec),
-            ),
+          PhotoThumbnail(
+            path: p.path,
+            logicalWidth: size,
+            source: p.source,
+            placeholderIconSize: 16,
+            placeholderColor: phInner,
+          ),
           if (overlayCount != null)
             ColoredBox(
               color: const Color(0x88000000),

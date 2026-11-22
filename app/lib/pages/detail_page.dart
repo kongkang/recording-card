@@ -7,17 +7,20 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../core/models/record.dart';
+import '../core/models/recording.dart';
 import '../core/models/segment_view.dart';
+import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/recordings/cleaned_dialogue.dart';
 import '../services/transcribe/utterance_builder.dart';
 import '../widgets/photo_preview_sheet.dart';
+import '../widgets/photo_thumbnail.dart';
 import '../widgets/quick_speaker_sheet.dart';
 import '../widgets/raw_audio_player.dart';
 import '../widgets/store_scope.dart';
@@ -40,21 +43,162 @@ class DetailPage extends StatefulWidget {
   State<DetailPage> createState() => _DetailPageState();
 }
 
+sealed class _DetailListEntry {
+  const _DetailListEntry();
+}
+
+class _DetailForkCompareEntry extends _DetailListEntry {
+  const _DetailForkCompareEntry(this.sibling);
+  final RecordEvent sibling;
+}
+
+class _DetailSilentEmptyEntry extends _DetailListEntry {
+  const _DetailSilentEmptyEntry();
+}
+
+class _DetailOverviewEntry extends _DetailListEntry {
+  const _DetailOverviewEntry(this.text);
+  final String text;
+}
+
+class _DetailDialogueBubbleEntry extends _DetailListEntry {
+  const _DetailDialogueBubbleEntry({
+    required this.firstTurnIndex,
+    required this.turnIndices,
+    required this.rawSpk,
+    required this.displaySpk,
+    required this.avatarSpk,
+    required this.canQuickName,
+    required this.paragraphs,
+    required this.startClock,
+  });
+
+  final int firstTurnIndex;
+  final List<int> turnIndices;
+  final String rawSpk;
+  final String displaySpk;
+  final String avatarSpk;
+  final bool canQuickName;
+  final List<String> paragraphs;
+  final String startClock;
+}
+
+class _DetailInlinePhotoEntry extends _DetailListEntry {
+  const _DetailInlinePhotoEntry({
+    required this.photo,
+    required this.index,
+    required this.quoteText,
+  });
+
+  final EventPhoto photo;
+  final int index;
+  final String? quoteText;
+}
+
+class _DetailRefSummaryEntry extends _DetailListEntry {
+  const _DetailRefSummaryEntry({
+    required this.summary,
+    required this.picCount,
+  });
+
+  final SummaryCard summary;
+  final int picCount;
+}
+
+class _DetailRawNoteEntry extends _DetailListEntry {
+  const _DetailRawNoteEntry({
+    required this.text,
+    required this.bottomPad,
+    this.muted = false,
+  });
+
+  final String text;
+  final double bottomPad;
+  final bool muted;
+}
+
+class _DetailRawSliceHeaderEntry extends _DetailListEntry {
+  const _DetailRawSliceHeaderEntry({
+    required this.sliceId,
+    required this.label,
+    required this.seekMs,
+  });
+
+  final String sliceId;
+  final String label;
+  final int seekMs;
+}
+
+class _DetailRawBubbleEntry extends _DetailListEntry {
+  const _DetailRawBubbleEntry({
+    required this.meta,
+    required this.text,
+    this.bubbleKey,
+    this.staticActive = false,
+    this.trackPlaybackPos = false,
+    this.startMs = 0,
+    this.endMs = 0,
+    this.onTap,
+  });
+
+  final String meta;
+  final String text;
+  final Key? bubbleKey;
+  final bool staticActive;
+  final bool trackPlaybackPos;
+  final int startMs;
+  final int endMs;
+  final VoidCallback? onTap;
+}
+
+class _DetailHeaderMemo {
+  const _DetailHeaderMemo({
+    required this.key,
+    required this.refs,
+    required this.speakerText,
+    required this.hasAnyTurns,
+    required this.hasMarkedSpeaker,
+  });
+
+  final Object key;
+  final List<SummaryCard> refs;
+  final String speakerText;
+  final bool hasAnyTurns;
+  final bool hasMarkedSpeaker;
+}
+
+class _DetailEntriesMemo {
+  const _DetailEntriesMemo({required this.key, required this.entries});
+
+  final Object key;
+  final List<_DetailListEntry> entries;
+}
+
 class _DetailPageState extends State<DetailPage> {
   String _tab = 'dlg'; // dlg | raw | refs
   final GlobalKey<RawAudioPlayerState> _playerKey =
       GlobalKey<RawAudioPlayerState>();
-  int? _activeFilePosMs;
+  final ValueNotifier<int?> _activeFilePosMs = ValueNotifier<int?>(null);
   int _selectedMergedSliceIdx = 0;
   bool _showForkCompare = false;
+  _DetailHeaderMemo? _headerMemo;
+  _DetailEntriesMemo? _entriesMemo;
+
+  @override
+  void dispose() {
+    _activeFilePosMs.dispose();
+    super.dispose();
+  }
 
   @override
   void didUpdateWidget(covariant DetailPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.eventId != widget.eventId) {
-      _activeFilePosMs = null;
+      _activeFilePosMs.value = null;
       _selectedMergedSliceIdx = 0;
       _showForkCompare = false;
+      _headerMemo = null;
+      _entriesMemo = null;
     }
   }
 
@@ -103,6 +247,71 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
+  _DetailHeaderMemo _ensureHeaderMemo(
+    AppStore store,
+    RecordEvent e,
+    RecordEvent? sibling,
+  ) {
+    final key = (e.id, sibling?.id, store.dataRevision);
+    final cached = _headerMemo;
+    if (cached != null && cached.key == key) return cached;
+
+    final refs = store.doneSummariesReferencing(e.id);
+    final speakerText = lifeSpeakerLabel(store.displaySpeakersSummary(e));
+    final dialogOrRaw = e.dialog.isNotEmpty ? e.dialog : e.raw;
+    final hasAnyTurns = dialogOrRaw.any((t) => t.spk.trim() != '无语音');
+    final markableSpeakers = store.speakerEntriesForEvents([e]);
+    final hasMarkedSpeaker =
+        markableSpeakers.any((s) => s.currentAlias.isNotEmpty) ||
+        store.hasTurnOverridesFor([e]);
+    final built = _DetailHeaderMemo(
+      key: key,
+      refs: refs,
+      speakerText: speakerText,
+      hasAnyTurns: hasAnyTurns,
+      hasMarkedSpeaker: hasMarkedSpeaker,
+    );
+    _headerMemo = built;
+    return built;
+  }
+
+  List<_DetailListEntry> _ensureEntries(
+    AppStore store,
+    RecordEvent e,
+    List<SummaryCard> refs,
+    SegmentView? view,
+    RecordEvent? sibling,
+  ) {
+    final key = (
+      e.id,
+      _tab,
+      _selectedMergedSliceIdx,
+      _showForkCompare,
+      sibling?.id,
+      store.dataRevision,
+    );
+    final cached = _entriesMemo;
+    if (cached != null && cached.key == key) return cached.entries;
+
+    final tabEntries = switch (_tab) {
+      'dlg' => _dialogEntries(store, e, view),
+      'raw' => _rawEntries(store, e, view),
+      'refs' => [
+        for (final r in refs)
+          _DetailRefSummaryEntry(
+            summary: r,
+            picCount: store.activePhotoCountForSummary(r),
+          ),
+      ],
+      _ => const <_DetailListEntry>[],
+    };
+    final entries = (sibling != null && _showForkCompare)
+        ? <_DetailListEntry>[_DetailForkCompareEntry(sibling), ...tabEntries]
+        : tabEntries;
+    _entriesMemo = _DetailEntriesMemo(key: key, entries: entries);
+    return entries;
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
@@ -148,17 +357,15 @@ class _DetailPageState extends State<DetailPage> {
         ),
       );
     }
-    final refs = store.doneSummariesReferencing(e.id);
-    final view = store.segmentViewFor(e.id);
     final sibling = store.siblingForkEventFor(e.id);
-    final speakerText = lifeSpeakerLabel(store.displaySpeakersSummary(e));
+    final header = _ensureHeaderMemo(store, e, sibling);
+    final refs = header.refs;
+    final view = store.segmentViewFor(e.id);
+    final speakerText = header.speakerText;
     final dialogOrRaw = e.dialog.isNotEmpty ? e.dialog : e.raw;
-    final hasAnyTurns =
-        dialogOrRaw.any((t) => t.spk.trim() != '无语音');
-    final markableSpeakers = store.speakerEntriesForEvents([e]);
-    final hasMarkedSpeaker =
-        markableSpeakers.any((s) => s.currentAlias.isNotEmpty) ||
-        store.hasTurnOverridesFor([e]);
+    final hasAnyTurns = header.hasAnyTurns;
+    final hasMarkedSpeaker = header.hasMarkedSpeaker;
+    final entries = _ensureEntries(store, e, refs, view, sibling);
 
     return ColoredBox(
       color: c.bg,
@@ -417,8 +624,8 @@ class _DetailPageState extends State<DetailPage> {
                       wavPath: currentWavPath,
                     ),
                     onFilePositionChanged: (ms) {
-                      if (mounted && _activeFilePosMs != ms) {
-                        setState(() => _activeFilePosMs = ms);
+                      if (mounted && _activeFilePosMs.value != ms) {
+                        _activeFilePosMs.value = ms;
                       }
                     },
                   ),
@@ -426,18 +633,18 @@ class _DetailPageState extends State<DetailPage> {
               },
             ),
           Expanded(
-            child: ListView(
+            child: ListView.builder(
               padding: const EdgeInsets.fromLTRB(
                 22,
                 14,
                 22,
                 RCDims.pageBottomPad,
               ),
-              children: [
-                if (sibling != null && _showForkCompare)
-                  _buildForkComparePanel(c, e, sibling),
-                ..._buildTab(c, store, e, refs, view),
-              ],
+              scrollCacheExtent: const ScrollCacheExtent.pixels(320),
+              addAutomaticKeepAlives: false,
+              itemCount: entries.length,
+              itemBuilder: (context, index) =>
+                  _buildDetailEntry(context, c, store, e, entries[index]),
             ),
           ),
         ],
@@ -554,113 +761,343 @@ class _DetailPageState extends State<DetailPage> {
     ),
   );
 
-  List<Widget> _buildTab(
+  Widget _buildDetailEntry(
+    BuildContext context,
     RCColorScheme c,
     AppStore store,
     RecordEvent e,
-    List refs,
-    SegmentView? view,
+    _DetailListEntry entry,
   ) {
-    switch (_tab) {
-      case 'dlg':
-        return _dialogWidgets(c, store, e, view);
-      case 'raw':
-        return _rawWidgets(c, store, e, view);
-      case 'refs':
-        return [
-          for (final r in refs)
-            Builder(
-              builder: (context) {
-                final picCount = store.activePhotoCountForSummary(r);
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Material(
-                    color: c.card,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(color: c.sep),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      key: Key('ref-${r.id}'),
-                      onTap: () => store.openSum(r.id),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    r.title ?? '',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600,
-                                      color: c.label,
-                                    ),
-                                  ),
-                                ),
-                                Icon(
-                                  Icons.chevron_right,
-                                  size: 16,
-                                  color: c.ax,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    '${r.time} · 已选 ${r.srcIds.length} 片段',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: c.sec,
-                                    ),
-                                  ),
-                                ),
-                                if (picCount > 0) ...[
-                                  Text(
-                                    ' · ',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: c.sec,
-                                    ),
-                                  ),
-                                  Text(
-                                    '含 $picCount 张图片',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: c.sec,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
+    switch (entry) {
+      case _DetailForkCompareEntry(:final sibling):
+        return _buildForkComparePanel(c, e, sibling);
+      case _DetailSilentEmptyEntry():
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Container(
+            key: const Key('detail-silent-empty'),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: c.sep),
+            ),
+            child: Text(
+              '这段时间没有识别到人声，可在「原始数据」回听原始录音。',
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.55,
+                color: c.sec,
+              ),
+            ),
+          ),
+        );
+      case _DetailOverviewEntry(:final text):
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Container(
+            key: const Key('detail-overview-card'),
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: c.bg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: c.sep),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '阶段概述',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: c.sec,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  text,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.55,
+                    color: c.ink,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      case _DetailDialogueBubbleEntry():
+        void openQuickSheet() {
+          store.setPendingMergedBubbleTurns(
+            e.id,
+            entry.firstTurnIndex,
+            entry.turnIndices,
+          );
+          unawaited(
+            showQuickSpeakerSheet(
+              context,
+              store: store,
+              event: e,
+              turnIndex: entry.firstTurnIndex,
+              rawSpeaker: entry.rawSpk,
+              sampleQuote: entry.paragraphs.join('\n'),
+            ).whenComplete(store.clearPendingMergedBubbleTurns),
+          );
+        }
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              InkWell(
+                key: Key('turn-spk-${entry.firstTurnIndex}'),
+                borderRadius: BorderRadius.circular(14),
+                onTap: entry.canQuickName ? openQuickSheet : null,
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _speakerColor(entry.displaySpk, isDark: c.isDark),
+                  ),
+                  child: Text(
+                    _avatar(entry.avatarSpk),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: c.label,
                     ),
                   ),
-                );
-              },
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    GestureDetector(
+                      key: Key('turn-who-${e.id}-${entry.firstTurnIndex}'),
+                      onTap: entry.canQuickName ? openQuickSheet : null,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              '${entry.displaySpk} · ${entry.startClock}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: entry.canQuickName ? c.ink : c.sec,
+                                fontWeight: entry.canQuickName
+                                    ? FontWeight.w500
+                                    : FontWeight.w400,
+                              ),
+                            ),
+                          ),
+                          if (entry.canQuickName) ...[
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.edit_outlined,
+                              size: 11,
+                              color: c.sec,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Container(
+                      key: Key('turn-para-${e.id}-${entry.firstTurnIndex}'),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: c.card,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: c.sep),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (var i = 0; i < entry.paragraphs.length; i++) ...[
+                            if (i > 0) const SizedBox(height: 8),
+                            Text(
+                              entry.paragraphs[i],
+                              key: Key(
+                                'turn-para-body-${e.id}-${entry.firstTurnIndex}-$i',
+                              ),
+                              style: TextStyle(
+                                fontSize: 14,
+                                height: 1.5,
+                                color: c.label,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      case _DetailInlinePhotoEntry():
+        return _inlinePhotoCard(
+          c,
+          store,
+          e,
+          entry.photo,
+          entry.index,
+          quoteText: entry.quoteText,
+        );
+      case _DetailRefSummaryEntry(:final summary, :final picCount):
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Material(
+            color: c.card,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: c.sep),
             ),
-        ];
-      default:
-        return const [];
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              key: Key('ref-${summary.id}'),
+              onTap: () => store.openSum(summary.id),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            summary.title ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: c.label,
+                            ),
+                          ),
+                        ),
+                        Icon(
+                          Icons.chevron_right,
+                          size: 16,
+                          color: c.ax,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            '${summary.time} · 已选 ${summary.srcIds.length} 片段',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: c.sec,
+                            ),
+                          ),
+                        ),
+                        if (picCount > 0) ...[
+                          Text(
+                            ' · ',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: c.sec,
+                            ),
+                          ),
+                          Text(
+                            '含 $picCount 张图片',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: c.sec,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      case _DetailRawNoteEntry(:final text, :final bottomPad, :final muted):
+        return Padding(
+          padding: EdgeInsets.only(bottom: bottomPad),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: muted ? 12 : 12.5,
+              color: muted ? c.ax : c.sec,
+              height: 1.5,
+            ),
+          ),
+        );
+      case _DetailRawSliceHeaderEntry(:final sliceId, :final label, :final seekMs):
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8, top: 4),
+          child: InkWell(
+            onTap: () => _seekRawAudio(seekMs),
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Text(
+                label,
+                key: Key('raw-slice-$sliceId'),
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: c.sec,
+                ),
+              ),
+            ),
+          ),
+        );
+      case _DetailRawBubbleEntry():
+        return _buildRawBubble(c, entry);
     }
   }
 
-  List<Widget> _dialogWidgets(
-    RCColorScheme c,
+  Widget _buildRawBubble(RCColorScheme c, _DetailRawBubbleEntry entry) {
+    if (!entry.trackPlaybackPos) {
+      return _rawBubble(
+        c,
+        entry.meta,
+        entry.text,
+        bubbleKey: entry.bubbleKey,
+        active: entry.staticActive,
+        onTap: entry.onTap,
+      );
+    }
+    return ValueListenableBuilder<int?>(
+      valueListenable: _activeFilePosMs,
+      builder: (context, pos, _) {
+        final active =
+            pos != null && pos >= entry.startMs && pos <= entry.endMs;
+        return _rawBubble(
+          c,
+          entry.meta,
+          entry.text,
+          bubbleKey: entry.bubbleKey,
+          active: active,
+          onTap: entry.onTap,
+        );
+      },
+    );
+  }
+
+  List<_DetailListEntry> _dialogEntries(
     AppStore store,
     RecordEvent e,
     SegmentView? view,
@@ -840,125 +1277,21 @@ class _DetailPageState extends State<DetailPage> {
       ));
     }
 
-    final entries = <({int sortSec, int order, Widget widget})>[];
+    final entries = <({int sortSec, int order, _DetailListEntry entry})>[];
     var order = 0;
     for (final g in groups) {
-      void openQuickSheet() {
-        store.setPendingMergedBubbleTurns(
-          e.id,
-          g.firstTurnIndex,
-          g.turnIndices,
-        );
-        unawaited(
-          showQuickSpeakerSheet(
-            context,
-            store: store,
-            event: e,
-            turnIndex: g.firstTurnIndex,
-            rawSpeaker: g.rawSpk,
-            sampleQuote: g.paragraphs.join('\n'),
-          ).whenComplete(store.clearPendingMergedBubbleTurns),
-        );
-      }
-
       entries.add((
         sortSec: g.sortSec,
         order: order++,
-        widget: Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              InkWell(
-                key: Key('turn-spk-${g.firstTurnIndex}'),
-                borderRadius: BorderRadius.circular(14),
-                onTap: g.canQuickName ? openQuickSheet : null,
-                child: Container(
-                  width: 28,
-                  height: 28,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _speakerColor(g.displaySpk, isDark: c.isDark),
-                  ),
-                  child: Text(
-                    _avatar(g.avatarSpk),
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: c.label,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    GestureDetector(
-                      key: Key('turn-who-${e.id}-${g.firstTurnIndex}'),
-                      onTap: g.canQuickName ? openQuickSheet : null,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              '${g.displaySpk} · ${g.startClock}',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: g.canQuickName ? c.ink : c.sec,
-                                fontWeight: g.canQuickName
-                                    ? FontWeight.w500
-                                    : FontWeight.w400,
-                              ),
-                            ),
-                          ),
-                          if (g.canQuickName) ...[
-                            const SizedBox(width: 4),
-                            Icon(
-                              Icons.edit_outlined,
-                              size: 11,
-                              color: c.sec,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Container(
-                      key: Key('turn-para-${e.id}-${g.firstTurnIndex}'),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: c.card,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: c.sep),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          for (var i = 0; i < g.paragraphs.length; i++) ...[
-                            if (i > 0) const SizedBox(height: 8),
-                            Text(
-                              g.paragraphs[i],
-                              key: Key(
-                                'turn-para-body-${e.id}-${g.firstTurnIndex}-$i',
-                              ),
-                              style: TextStyle(
-                                fontSize: 14,
-                                height: 1.5,
-                                color: c.label,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        entry: _DetailDialogueBubbleEntry(
+          firstTurnIndex: g.firstTurnIndex,
+          turnIndices: g.turnIndices,
+          rawSpk: g.rawSpk,
+          displaySpk: g.displaySpk,
+          avatarSpk: g.avatarSpk,
+          canQuickName: g.canQuickName,
+          paragraphs: g.paragraphs,
+          startClock: g.startClock,
         ),
       ));
     }
@@ -979,7 +1312,11 @@ class _DetailPageState extends State<DetailPage> {
       entries.add((
         sortSec: sortSec,
         order: order++,
-        widget: _inlinePhotoCard(c, store, e, p, i, quoteText: nearestQuote),
+        entry: _DetailInlinePhotoEntry(
+          photo: p,
+          index: i,
+          quoteText: nearestQuote,
+        ),
       ));
     }
 
@@ -1000,64 +1337,9 @@ class _DetailPageState extends State<DetailPage> {
         !(groups.length == 1 && overviewText == joinedFirst.trim());
 
     return [
-      if (groups.isEmpty)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: Container(
-            key: const Key('detail-silent-empty'),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: c.card,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: c.sep),
-            ),
-            child: Text(
-              '这段时间没有识别到人声，可在「原始数据」回听原始录音。',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.55,
-                color: c.sec,
-              ),
-            ),
-          ),
-        ),
-      if (showOverviewCard)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: Container(
-            key: const Key('detail-overview-card'),
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: c.bg,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: c.sep),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '阶段概述',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: c.sec,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  overviewText,
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.55,
-                    color: c.ink,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      for (final item in entries) item.widget,
+      if (groups.isEmpty) const _DetailSilentEmptyEntry(),
+      if (showOverviewCard) _DetailOverviewEntry(overviewText),
+      for (final item in entries) item.entry,
     ];
   }
 
@@ -1069,7 +1351,6 @@ class _DetailPageState extends State<DetailPage> {
     int index, {
     String? quoteText,
   }) {
-    final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
     final srcLabel = p.source == 'dyj_camera' ? '点一机抓拍' : '系统相册';
     return Padding(
       key: Key('dphoto-${e.id}-$index'),
@@ -1103,22 +1384,12 @@ class _DetailPageState extends State<DetailPage> {
                     child: SizedBox(
                       width: 72,
                       height: 72,
-                      child: hasFile
-                          ? Image.file(File(p.path), fit: BoxFit.cover)
-                          : ColoredBox(
-                              color: c.isDark
-                                  ? const Color(0xFF242428)
-                                  : const Color(0xFFEAEAE4),
-                              child: Center(
-                                child: Icon(
-                                  p.source == 'dyj_camera'
-                                      ? Icons.photo_camera_outlined
-                                      : Icons.photo_outlined,
-                                  size: 24,
-                                  color: c.sec,
-                                ),
-                              ),
-                            ),
+                      child: PhotoThumbnail(
+                        path: p.path,
+                        logicalWidth: 72,
+                        source: p.source,
+                        placeholderIconSize: 24,
+                      ),
                     ),
                   ),
                 ),
@@ -1220,30 +1491,28 @@ class _DetailPageState extends State<DetailPage> {
     return h * 3600 + min * 60 + sec;
   }
 
-  List<Widget> _rawWidgets(
-    RCColorScheme c,
+  List<_DetailListEntry> _rawEntries(
     AppStore store,
     RecordEvent e,
     SegmentView? view,
   ) {
     // 播放器已置顶吸顶在「原始数据」tab 顶部（raw-sticky-player），此处只滚句子流。
-    final widgets = <Widget>[];
+    final entries = <_DetailListEntry>[];
 
     if (view == null) {
       for (var i = 0; i < e.raw.length; i++) {
         final l = e.raw[i];
         final parsedMs = _parseRelativeClockMs(l.src);
-        widgets.add(
-          _rawBubble(
-            c,
-            '${_rawSpeakerLabel(store, e, l.spk)} · ${l.src}',
-            l.text,
+        entries.add(
+          _DetailRawBubbleEntry(
+            meta: '${_rawSpeakerLabel(store, e, l.spk)} · ${l.src}',
+            text: l.text,
             bubbleKey: Key('raw-utt-$i'),
             onTap: parsedMs != null ? () => _seekRawAudio(parsedMs) : null,
           ),
         );
       }
-      return widgets;
+      return entries;
     }
 
     if (view.isMergedSilent) {
@@ -1251,13 +1520,11 @@ class _DetailPageState extends State<DetailPage> {
         0,
         view.mergedChildren.length - 1,
       );
-      widgets.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Text(
-            '连续 ${view.mergedChildren.length} 个无语音切片已合并展示，点选任一切片可在上方播放器回听对应原始音频：',
-            style: TextStyle(fontSize: 12, color: c.sec, height: 1.5),
-          ),
+      entries.add(
+        _DetailRawNoteEntry(
+          text:
+              '连续 ${view.mergedChildren.length} 个无语音切片已合并展示，点选任一切片可在上方播放器回听对应原始音频：',
+          bottomPad: 10,
         ),
       );
       for (var i = 0; i < view.mergedChildren.length; i++) {
@@ -1269,23 +1536,20 @@ class _DetailPageState extends State<DetailPage> {
                 (child.file.durationMs > 0 ? child.file.durationMs : 1000));
         final durSec = ((cEnd - cStart) / 1000).round().clamp(1, 86400);
         final active = i == selectedIdx;
-        widgets.add(
-          _rawBubble(
-            c,
-            '切片 ${i + 1} · ${_hms(cStart)}—${_hms(cEnd)} · $durSec 秒',
-            child.file.deviceName,
+        entries.add(
+          _DetailRawBubbleEntry(
+            meta: '切片 ${i + 1} · ${_hms(cStart)}—${_hms(cEnd)} · $durSec 秒',
+            text: child.file.deviceName,
             bubbleKey: Key('raw-merged-slice-$i'),
-            active: active,
+            staticActive: active,
             onTap: () {
-              setState(() {
-                _selectedMergedSliceIdx = i;
-                _activeFilePosMs = null;
-              });
+              _activeFilePosMs.value = null;
+              setState(() => _selectedMergedSliceIdx = i);
             },
           ),
         );
       }
-      return widgets;
+      return entries;
     }
 
     if (view.isMergedSpeech) {
@@ -1293,13 +1557,11 @@ class _DetailPageState extends State<DetailPage> {
         0,
         view.mergedChildren.length - 1,
       );
-      widgets.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Text(
-            '连续 ${view.mergedChildren.length} 个分片已按 <30s 停顿自动合并，点击任一分片切换上方播放器回听对应原始 WAV：',
-            style: TextStyle(fontSize: 12, color: c.sec, height: 1.5),
-          ),
+      entries.add(
+        _DetailRawNoteEntry(
+          text:
+              '连续 ${view.mergedChildren.length} 个分片已按 <30s 停顿自动合并，点击任一分片切换上方播放器回听对应原始 WAV：',
+          bottomPad: 10,
         ),
       );
       for (var i = 0; i < view.mergedChildren.length; i++) {
@@ -1311,39 +1573,33 @@ class _DetailPageState extends State<DetailPage> {
                 (child.file.durationMs > 0 ? child.file.durationMs : 1000));
         final durSec = ((cEnd - cStart) / 1000).round().clamp(1, 86400);
         final active = i == selectedIdx;
-        widgets.add(
-          _rawBubble(
-            c,
-            '分片 ${i + 1} · ${_hms(cStart)}—${_hms(cEnd)} · $durSec 秒',
-            child.file.deviceName,
+        entries.add(
+          _DetailRawBubbleEntry(
+            meta: '分片 ${i + 1} · ${_hms(cStart)}—${_hms(cEnd)} · $durSec 秒',
+            text: child.file.deviceName,
             bubbleKey: Key('raw-merged-slice-$i'),
-            active: active,
+            staticActive: active,
             onTap: () {
-              setState(() {
-                _selectedMergedSliceIdx = i;
-                _activeFilePosMs = null;
-              });
+              _activeFilePosMs.value = null;
+              setState(() => _selectedMergedSliceIdx = i);
             },
           ),
         );
         for (final u in child.utterances) {
-          final pos = _activeFilePosMs;
-          final uActive =
-              active && pos != null && pos >= u.startMs && pos <= u.endMs;
-          widgets.add(
-            _rawBubble(
-              c,
-              '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
-              '${_hms(child.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
-              u.text,
+          entries.add(
+            _DetailRawBubbleEntry(
+              meta:
+                  '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
+                  '${_hms(child.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
+              text: u.text,
               bubbleKey: Key('raw-utt-${u.id}'),
-              active: uActive,
+              trackPlaybackPos: active,
+              startMs: u.startMs,
+              endMs: u.endMs,
               onTap: () {
                 final switched = _selectedMergedSliceIdx != i;
-                setState(() {
-                  _selectedMergedSliceIdx = i;
-                });
                 if (switched) {
+                  setState(() => _selectedMergedSliceIdx = i);
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     if (mounted) _seekRawAudio(u.startMs);
                   });
@@ -1355,94 +1611,82 @@ class _DetailPageState extends State<DetailPage> {
           );
         }
       }
-      return widgets;
+      return entries;
     }
 
     if (view.slices.isEmpty) {
       if (view.utterances.isEmpty) {
-        widgets.add(
-          Text(
-            '暂无原始转写（静音或模型未识别到语音）。',
-            style: TextStyle(fontSize: 13, color: c.sec),
+        entries.add(
+          const _DetailRawNoteEntry(
+            text: '暂无原始转写（静音或模型未识别到语音）。',
+            bottomPad: 0,
           ),
         );
       } else {
         final hasAudioFile =
             view.file.wavPath != null && view.file.wavPath!.isNotEmpty;
         for (final u in view.utterances) {
-          final pos = _activeFilePosMs;
-          final active = pos != null && pos >= u.startMs && pos <= u.endMs;
-          widgets.add(
-            _rawBubble(
-              c,
-              '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
-              '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
-              u.text,
+          entries.add(
+            _DetailRawBubbleEntry(
+              meta:
+                  '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
+                  '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
+              text: u.text,
               bubbleKey: Key('raw-utt-${u.id}'),
-              active: active,
+              trackPlaybackPos: true,
+              startMs: u.startMs,
+              endMs: u.endMs,
               onTap: hasAudioFile ? () => _seekRawAudio(u.startMs) : null,
             ),
           );
         }
       }
-      return widgets;
+      return entries;
     }
 
+    final utterancesBySlice = <String, List<RawUtterance>>{};
+    for (final u in view.utterances) {
+      (utterancesBySlice[u.sliceId] ??= []).add(u);
+    }
     for (final slice in view.slices) {
-      final sliceUtterances = view.utterances
-          .where((u) => u.sliceId == slice.id)
-          .toList();
-      widgets.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8, top: 4),
-          child: InkWell(
-            onTap: () => _seekRawAudio(slice.startMs),
-            borderRadius: BorderRadius.circular(6),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Text(
-                '[${_hms(view.file.startAtMs + slice.startMs)}—'
-                '${_hms(view.file.startAtMs + slice.endMs)}]',
-                key: Key('raw-slice-${slice.id}'),
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                  color: c.sec,
-                ),
-              ),
-            ),
-          ),
+      final sliceUtterances =
+          utterancesBySlice[slice.id] ?? const <RawUtterance>[];
+      entries.add(
+        _DetailRawSliceHeaderEntry(
+          sliceId: slice.id,
+          label:
+              '[${_hms(view.file.startAtMs + slice.startMs)}—'
+              '${_hms(view.file.startAtMs + slice.endMs)}]',
+          seekMs: slice.startMs,
         ),
       );
       for (final u in sliceUtterances) {
-        final pos = _activeFilePosMs;
-        final active = pos != null && pos >= u.startMs && pos <= u.endMs;
-        widgets.add(
-          _rawBubble(
-            c,
-            '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
-            '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
-            u.text,
+        entries.add(
+          _DetailRawBubbleEntry(
+            meta:
+                '${_rawSpeakerLabel(store, e, u.speakerLabel ?? '未区分')} · '
+                '${_hms(view.file.startAtMs + u.startMs)} · ${_emotion(u.emotion)}',
+            text: u.text,
             bubbleKey: Key('raw-utt-${u.id}'),
-            active: active,
+            trackPlaybackPos: true,
+            startMs: u.startMs,
+            endMs: u.endMs,
             onTap: () => _seekRawAudio(u.startMs),
           ),
         );
       }
       if (slice.silenceAfterMs >= 2000) {
         final seconds = (slice.silenceAfterMs / 1000).round();
-        widgets.add(
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text(
-              '（静音约 $seconds 秒）',
-              style: TextStyle(fontSize: 12, color: c.ax),
-            ),
+        entries.add(
+          _DetailRawNoteEntry(
+            text: '（静音约 $seconds 秒）',
+            bottomPad: 12,
+            muted: true,
           ),
         );
       }
     }
-    return widgets;
+    return entries;
   }
 
   Widget _rawBubble(
