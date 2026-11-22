@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use reai_ext_sdk::{RecorderSdkDriver, SdkCapabilities};
 use reai_feishu_sdk::FeishuSdkDriver;
+use reai_iflytek_sdk::IflytekSdkDriver;
 use reai_omi_sdk::OmiSdkDriver;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -22,6 +23,8 @@ pub enum DeviceKind {
     OmiCv1,
     /// 飞书录音豆 / soundcore Work D3200（`reai-feishu-sdk`）
     FeishuD3200,
+    /// 讯飞智能录音笔 A1（`reai-iflytek-sdk`）
+    IflytekA1,
 }
 
 impl DeviceKind {
@@ -32,6 +35,7 @@ impl DeviceKind {
             Self::BoardV21 => "board_v21",
             Self::OmiCv1 => "omi_cv1",
             Self::FeishuD3200 => "feishu_d3200",
+            Self::IflytekA1 => "iflytek_a1",
         }
     }
 
@@ -42,6 +46,7 @@ impl DeviceKind {
             Self::BoardV21 => "语音AI键盘 V2.1",
             Self::OmiCv1 => "Omi 录音器",
             Self::FeishuD3200 => "飞书录音豆",
+            Self::IflytekA1 => "讯飞智能录音笔 A1",
         }
     }
 
@@ -52,6 +57,7 @@ impl DeviceKind {
             Some("board_v21") => return Some(Self::BoardV21),
             Some("omi_cv1") => return Some(Self::OmiCv1),
             Some("feishu_d3200") => return Some(Self::FeishuD3200),
+            Some("iflytek_a1") => return Some(Self::IflytekA1),
             _ => {}
         }
         name_hint.and_then(|n| classify_ble_name(n).map(|(k, _)| k))
@@ -113,6 +119,9 @@ impl DeviceKind {
             Self::OmiCv1 => HardwareCapabilities::from_sdk(OmiSdkDriver.default_capabilities()),
             Self::FeishuD3200 => {
                 HardwareCapabilities::from_sdk(FeishuSdkDriver.default_capabilities())
+            }
+            Self::IflytekA1 => {
+                HardwareCapabilities::from_sdk(IflytekSdkDriver.default_capabilities())
             }
         }
     }
@@ -228,8 +237,8 @@ fn classify_proprietary_name(trimmed: &str) -> Option<(DeviceKind, HardwareCapab
     }
 }
 
-fn external_drivers() -> [&'static dyn RecorderSdkDriver; 2] {
-    [&OmiSdkDriver, &FeishuSdkDriver]
+fn external_drivers() -> [&'static dyn RecorderSdkDriver; 3] {
+    [&OmiSdkDriver, &FeishuSdkDriver, &IflytekSdkDriver]
 }
 
 /// 根据 BLE 广播名称识别支持的录音硬件。
@@ -388,6 +397,31 @@ mod tests {
 
         let (kn, _) = classify_ble_name("D3200-C3A1").expect("feishu name");
         assert_eq!(kn, DeviceKind::FeishuD3200);
+
+        let (ka_name, ka, ca) = classify_ble_advertisement(
+            "11e0-a1",
+            Some("讯飞录音笔A1_11E0"),
+            &[],
+            &empty,
+        )
+        .expect("iflytek a1 name");
+        assert_eq!(ka_name, "讯飞录音笔A1_11E0");
+        assert_eq!(ka, DeviceKind::IflytekA1);
+        assert!(ca.realtime_audio && ca.has_file_sync && ca.has_remote_record_control);
+        assert!(ca.has_physical_record_toggle && !ca.has_wifi_config && !ca.has_mark_button);
+        assert_eq!(ca.ota_mode, "none");
+
+        let mut a1_mfd = HashMap::new();
+        a1_mfd.insert(0x3332, b"03051401437265".to_vec());
+        let (ka_uuid_name, ka2, _) = classify_ble_advertisement(
+            "11e0-uuid",
+            None,
+            &[reai_iflytek_sdk::SERVICE_UUID],
+            &a1_mfd,
+        )
+        .expect("iflytek a1 uuid");
+        assert_eq!(ka2, DeviceKind::IflytekA1);
+        assert!(ka_uuid_name.starts_with("讯飞录音笔A1_"));
 
         let (dfu_name, dfu_kind, dfu_caps) = classify_ble_advertisement(
             "dfu-1",

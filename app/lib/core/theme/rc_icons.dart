@@ -363,6 +363,11 @@ class DeviceKindBadge extends StatelessWidget {
           const Color(0xFF5C2E2E),
           const Color(0xFFFF8585),
         ),
+        DeviceKind.iflytekA1 => (
+          const Color(0xFF112A2C),
+          const Color(0xFF1F4E52),
+          const Color(0xFF5CDBD3),
+        ),
         DeviceKind.appleWatch => (
           const Color(0xFF172B1F),
           const Color(0xFF294F38),
@@ -395,6 +400,11 @@ class DeviceKindBadge extends StatelessWidget {
         const Color(0xFFFFF1F0),
         const Color(0xFFFFCCC7),
         const Color(0xFFCF1322),
+      ),
+      DeviceKind.iflytekA1 => (
+        const Color(0xFFE6FFFB),
+        const Color(0xFF87E8DE),
+        const Color(0xFF006D75),
       ),
       DeviceKind.appleWatch => (
         const Color(0xFFEAF7EE),

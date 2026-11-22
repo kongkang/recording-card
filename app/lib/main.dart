@@ -311,6 +311,7 @@ class _HomeGateState extends State<_HomeGate> {
       _device.setExtHardwareEnabled(
         omi: _agentConfig.omiLinkEnabled,
         feishu: _agentConfig.feishuLinkEnabled,
+        iflytekA1: _agentConfig.iflytekA1LinkEnabled,
       ),
     );
     _cloudSelection = _currentCloudSelection;

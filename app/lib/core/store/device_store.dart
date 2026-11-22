@@ -440,9 +440,11 @@ class DeviceStore extends ChangeNotifier {
 
   bool _omiLinkEnabled = false;
   bool _feishuLinkEnabled = false;
+  bool _iflytekA1LinkEnabled = false;
 
   bool get omiLinkEnabled => _omiLinkEnabled;
   bool get feishuLinkEnabled => _feishuLinkEnabled;
+  bool get iflytekA1LinkEnabled => _iflytekA1LinkEnabled;
 
   /// 只展示我们自己的录音卡/点一机/键盘（按需含已开启的 Apple Watch 与第三方硬件）。
   ///
@@ -453,6 +455,7 @@ class DeviceStore extends ChangeNotifier {
     bool allowWatch = true,
     bool allowOmi = false,
     bool allowFeishu = false,
+    bool allowIflytekA1 = false,
     bool listAll = false,
   }) {
     if (listAll) return true;
@@ -463,22 +466,29 @@ class DeviceStore extends ChangeNotifier {
       DeviceKind.appleWatch => allowWatch,
       DeviceKind.omiCv1 => allowOmi,
       DeviceKind.feishuD3200 => allowFeishu,
+      DeviceKind.iflytekA1 => allowIflytekA1,
     };
   }
 
   Future<void> setExtHardwareEnabled({
     bool? omi,
     bool? feishu,
+    bool? iflytekA1,
   }) async {
     final nextOmi = omi ?? _omiLinkEnabled;
     final nextFeishu = feishu ?? _feishuLinkEnabled;
-    if (nextOmi == _omiLinkEnabled && nextFeishu == _feishuLinkEnabled) {
+    final nextIflytekA1 = iflytekA1 ?? _iflytekA1LinkEnabled;
+    if (nextOmi == _omiLinkEnabled &&
+        nextFeishu == _feishuLinkEnabled &&
+        nextIflytekA1 == _iflytekA1LinkEnabled) {
       return;
     }
     _omiLinkEnabled = nextOmi;
     _feishuLinkEnabled = nextFeishu;
+    _iflytekA1LinkEnabled = nextIflytekA1;
     if ((!nextOmi && isConnected && activeKind == DeviceKind.omiCv1) ||
-        (!nextFeishu && isConnected && activeKind == DeviceKind.feishuD3200)) {
+        (!nextFeishu && isConnected && activeKind == DeviceKind.feishuD3200) ||
+        (!nextIflytekA1 && isConnected && activeKind == DeviceKind.iflytekA1)) {
       await disconnectSafely();
     }
     if (discovered.isNotEmpty) {
@@ -489,6 +499,7 @@ class DeviceStore extends ChangeNotifier {
               allowWatch: watchHardware.linkEnabled,
               allowOmi: _omiLinkEnabled,
               allowFeishu: _feishuLinkEnabled,
+              allowIflytekA1: _iflytekA1LinkEnabled,
             ),
           )
           .toList(growable: false);
@@ -674,6 +685,7 @@ class DeviceStore extends ChangeNotifier {
             allowWatch: watchHardware.linkEnabled,
             allowOmi: _omiLinkEnabled,
             allowFeishu: _feishuLinkEnabled,
+            allowIflytekA1: _iflytekA1LinkEnabled,
           ))
             device,
       ]..sort((a, b) => (b.rssi ?? -100).compareTo(a.rssi ?? -100));

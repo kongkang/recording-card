@@ -202,6 +202,8 @@ void main() {
     expect(find.byKey(const Key('ext-omi-card')), findsOneWidget);
     expect(find.byKey(const Key('ext-feishu-card')), findsOneWidget);
     expect(find.byKey(const Key('ext-feishu-beta')), findsOneWidget);
+    expect(find.byKey(const Key('ext-iflytek-card')), findsOneWidget);
+    expect(find.byKey(const Key('ext-iflytek-switch')), findsOneWidget);
     expect(find.text('Beta'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('ext-omi-switch')));
@@ -232,16 +234,24 @@ void main() {
     expect(find.text('7F20'), findsOneWidget);
   });
 
-  test('CardFile 识别 .ogg / .opus / .wav 音频扩展名', () {
+  test('CardFile 识别 .ogg / .opus / .sbc / .wav 音频扩展名与讯飞 A1 广播短名', () {
     const oggFile = CardFile(name: '20261115_101500.ogg', size: 4096);
     const opusFile = CardFile(name: 'segment_001.opus', size: 2048);
+    const sbcFile = CardFile(name: '2026_11_22_14_24_51.sbc', size: 12288);
     const wavFile = CardFile(name: 'clip.wav', size: 8192);
     expect(oggFile.isOgg, isTrue);
     expect(oggFile.isAudioRecording, isTrue);
     expect(opusFile.isOgg, isTrue);
     expect(opusFile.isAudioRecording, isTrue);
+    expect(sbcFile.isSbc, isTrue);
+    expect(sbcFile.isAudioRecording, isTrue);
     expect(wavFile.isWav, isTrue);
     expect(wavFile.isAudioRecording, isTrue);
+    expect(DeviceKind.fromBleName('讯飞录音笔A1_11E0'), DeviceKind.iflytekA1);
+    expect(DeviceKind.fromBleName('IFLYTEK_A1_ABCD'), DeviceKind.iflytekA1);
+    expect(DeviceKind.bleShortId('讯飞录音笔A1_11E0'), '11E0');
+    expect(DeviceKind.bleShortId('IFLYTEK_A1_ABCD'), 'ABCD');
+    expect(DeviceKind.fromCode('iflytek_a1'), DeviceKind.iflytekA1);
   });
 
   testWidgets('连接 Omi 录音器：展示统一录音开关、物理按键联动及无百分比/已充满红线', (
@@ -361,5 +371,124 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(env.gateway.recordCalls, ['start']);
+  });
+
+  testWidgets('开启讯飞智能录音笔 A1 联动：过滤开关、短名、状态能力裁剪与关停断连', (tester) async {
+    final env = await _pumpExtShell(tester);
+    env.gateway.devices = [
+      ...env.gateway.devices,
+      const CardDevice(
+        id: 'iflytek-1',
+        name: '讯飞录音笔A1_11E0',
+        rssi: -45,
+        kind: DeviceKind.iflytekA1,
+      ),
+    ];
+
+    // 默认未开启时严格过滤掉 A1
+    await tester.tap(find.byKey(const Key('hw-capsule')));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('dev-item-iflytek-1')), findsNothing);
+    await tester.tap(find.byKey(const Key('sheet-close')));
+    await tester.pump();
+
+    // 进入 Setting → 第三方硬件联动，开启讯飞智能录音笔 A1
+    await tester.tap(find.byKey(const Key('nav-setting')));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('set-ext-hw')),
+      220,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('setting-list')),
+        matching: find.byType(Scrollable),
+      ).first,
+    );
+    await tester.tap(find.byKey(const Key('set-ext-hw')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('ext-iflytek-switch')));
+    await tester.pump();
+    expect(env.agentConfig.iflytekA1LinkEnabled, isTrue);
+    expect(env.device.iflytekA1LinkEnabled, isTrue);
+
+    await tester.tap(find.byKey(const Key('crumb-back')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<Text>(find.byKey(const Key('sv-exthw'))).data,
+      '已开启 1 款',
+    );
+
+    // 打开胶囊扫描可见 iflytek-1，短名为 11E0，标签为 讯飞智能录音笔 A1
+    env.gateway.connectResult = const CardSnapshot(
+      batteryLevel: 85,
+      isCharging: false,
+      wifiOpen: false,
+      recording: false,
+      fwVersion: '1.0.15',
+      fwVersionCode: 1015,
+      wifiVersion: '',
+      wifiVersionCode: 0,
+      deviceName: '讯飞录音笔A1_11E0',
+      deviceId: 'iflytek-1',
+      deviceKind: DeviceKind.iflytekA1,
+      displayModel: '讯飞智能录音笔 A1',
+      capabilities: HardwareCapabilities.iflytekA1,
+    );
+
+    await tester.tap(find.byKey(const Key('hw-capsule')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(env.device.discovered.map((d) => d.id).toList(), [
+      'iflytek-1',
+      'v2',
+      'v1',
+      'kbd',
+    ]);
+    expect(find.byKey(const Key('dev-kind-iflytek-1')), findsOneWidget);
+    expect(find.text('讯飞智能录音笔 A1'), findsOneWidget);
+    expect(find.text('11E0'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('dev-item-iflytek-1')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(env.device.isConnected, isTrue);
+    expect(env.device.activeKind, DeviceKind.iflytekA1);
+    expect(find.byKey(const Key('rec-toggle')), findsOneWidget);
+    expect(find.byKey(const Key('rec-physical-only')), findsNothing);
+    expect(find.byKey(const Key('sync-now')), findsOneWidget);
+    expect(find.byKey(const Key('wifi-row')), findsNothing);
+    expect(find.byKey(const Key('fw-update')), findsNothing);
+    expect(find.byKey(const Key('phone-rec-row')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('rec-toggle')));
+    await tester.pump();
+    await tester.pump();
+    expect(env.gateway.recordCalls, ['start']);
+    expect(env.device.isRecording, isTrue);
+
+    env.gateway.pushVoiceKeyEvent(pressed: true);
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump();
+    expect(env.gateway.recordCalls, ['start', 'stop']);
+    expect(env.device.isRecording, isFalse);
+
+    await tester.tap(find.byKey(const Key('sheet-close')));
+    await tester.pump();
+
+    // 确认 Setting 摘要反映当前已连接讯飞智能录音笔 A1，且关闭开关时自动断连
+    expect(
+      tester.widget<Text>(find.byKey(const Key('sv-exthw'))).data,
+      '已连接 讯飞智能录音笔 A1',
+    );
+    await tester.tap(find.byKey(const Key('set-ext-hw')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ext-iflytek-switch')));
+    await tester.pump();
+    await tester.pump();
+    expect(env.agentConfig.iflytekA1LinkEnabled, isFalse);
+    expect(env.device.isConnected, isFalse);
   });
 }

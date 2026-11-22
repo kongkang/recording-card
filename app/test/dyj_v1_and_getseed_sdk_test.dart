@@ -254,7 +254,7 @@ void main() {
     expect(find.byKey(const Key('wifi-5g-hint')), findsNothing);
   });
 
-  testWidgets('Setting 第三方硬件页仅保留 Omi 与飞书录音豆（不含 Get 笔记卡蓝牙）', (tester) async {
+  testWidgets('Setting 第三方硬件页包含 Omi、飞书录音豆与讯飞 A1（不含 Get 笔记卡蓝牙）', (tester) async {
     final cfg = AgentConfigStore();
     addTearDown(cfg.dispose);
     await tester.pumpWidget(
@@ -270,5 +270,6 @@ void main() {
     expect(find.byKey(const Key('ext-getseed-card')), findsNothing);
     expect(find.byKey(const Key('ext-omi-card')), findsOneWidget);
     expect(find.byKey(const Key('ext-feishu-card')), findsOneWidget);
+    expect(find.byKey(const Key('ext-iflytek-card')), findsOneWidget);
   });
 }

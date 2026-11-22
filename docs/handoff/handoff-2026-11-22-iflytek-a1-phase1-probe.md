@@ -136,3 +136,12 @@ git checkout -b feat/iflytek-a1-phase1-probe origin/feat/iflytek-a1-phase1-probe
 | `btsnoop` 解析器自测 | `python3 scripts/parse_btsnoop_hci.py --self-test` | **`OK`**（3 条合成帧：2 ATT + 1 动态 L2CAP/RFCOMM） |
 | 实机 USB 只读冒烟 | `cargo run --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe -- usb` | **`exit 0`**（10:24 测时线已拔除返回空；此前 10:11/10:16 同命令均检出 `0x10d7:0xb00b` + `/Volumes/NO NAME`） |
 | 实机 BLE 扫描冒烟 | `cargo run --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe -- scan --secs 4` | **`exit 0`**（检出 `讯飞录音笔A1_11E0` `rssi=-51`、`shortId="11E0"`、`manufacturerDataAscii["0x3332"]="2303051401437265"`） |
+
+---
+
+## 八、Phase 3 全栈接入交付记录（2026-11-22 晚）
+
+1. **`app/rust/sdks/reai-ext-sdk`**：新增纯 Rust 定点 SBC 解码模块 `sbc.rs`（A2DP Table B.4，0-diff 对齐 FFmpeg）并导出 `sbc_bytes_to_16k_mono` / `sbc_bytes_to_wav_file_16k_mono`；修复 `wav_to_16k_mono` 在 USB 挂载场景下 `data` chunk 长度为 `0` 或未及时更新的尾部字节恢复。
+2. **`app/android/.../btleplug/android/impl/Peripheral.java`**：修复订阅无 `0x2902` CCCD 特征值（`001120a4` 实时流）时的空指针异常。
+3. **`app/rust/sdks/reai-iflytek-sdk`**：新增完整 `IflytekSdkDriver`（`iflytek_a1`）与 `IflytekSession<L>`，覆盖 `0x3332` `userId` 离线握手、时间同步、电量/存储/录像态快照、远程启停、物理键录停事件、`001120a4` 实时 16kHz SBC 流、分页目录（本地时间 `YYYY_MM_DD_HH_MM_SS.sbc`）、CRC-8/ATM 分块并发补传下载与单文件删除。
+4. **`app/rust/card_bridge` & Flutter & 双版本原型**：注册 `DeviceKind::IflytekA1`、`HardwareCapabilities.iflytekA1`、Setting →「第三方硬件联动 → 讯飞智能录音笔 A1」（`ext-iflytek-card` / `ext-iflytek-switch` 默认关闭）、`ext_sdk_hardware_test.dart`、`prototype/{current.html,index.html,verify.cjs}` 及 `docs/{SDK-CAPABILITY.md,MULTI-DEVICE-ARCHITECTURE.md}` 全链路同步。
