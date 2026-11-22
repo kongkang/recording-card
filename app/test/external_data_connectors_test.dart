@@ -1170,23 +1170,24 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.scrollUntilVisible(
-        find.byKey(const Key('set-ext-notes')),
+        find.byKey(const Key('set-ext-api')),
         220,
         scrollable: find.descendant(
           of: find.byKey(const Key('setting-list')),
           matching: find.byType(Scrollable),
         ).first,
       );
-      expect(tester.widget<Text>(find.byKey(const Key('sv-extnotes'))).data, '未配置');
-      expect(
-        tester.widget<Text>(find.byKey(const Key('sv-extrecorders'))).data,
-        '未配置',
-      );
+      expect(find.byKey(const Key('set-ext-notes')), findsNothing);
+      expect(find.byKey(const Key('set-ext-recorders')), findsNothing);
+      expect(find.byKey(const Key('set-ext-data')), findsNothing);
+      expect(find.byKey(const Key('set-ext-hw')), findsOneWidget);
+      expect(tester.widget<Text>(find.byKey(const Key('sv-extapi'))).data, '未配置');
 
-      // 1) 笔记与阅读软件（API）
-      await tester.tap(find.byKey(const Key('set-ext-notes')));
+      // 1) 第三方 API 接入（扁平列出 Get 笔记与 11 款笔记/阅读/录音 API）
+      await tester.tap(find.byKey(const Key('set-ext-api')));
       await tester.pumpAndSettle();
       for (final id in const [
+        'getnote',
         'notion',
         'yuque',
         'obsidian',
@@ -1194,9 +1195,18 @@ void main() {
         'weread',
         'evernote',
         'readwise',
+        'plaud',
+        'limitless',
+        'omi_cloud',
+        'fireflies',
       ]) {
-        expect(find.byKey(Key('ext-conn-$id')), findsOneWidget);
+        expect(find.byKey(Key('ext-api-row-$id')), findsOneWidget);
       }
+
+      // 配置 Notion 并同步
+      await tester.tap(find.byKey(const Key('ext-api-row-notion')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('ext-conn-notion')), findsOneWidget);
 
       await tester.enterText(
         find.byKey(const Key('ext-field-notion-apiToken')),
@@ -1224,24 +1234,19 @@ void main() {
       await tester.tap(find.byKey(const Key('crumb-back')));
       await tester.pumpAndSettle();
       expect(
-        tester.widget<Text>(find.byKey(const Key('sv-extnotes'))).data,
+        tester.widget<Text>(find.byKey(const Key('ext-api-val-notion'))).data,
         '已导入 1 条',
       );
 
-      // 2) 第三方录音软件（API）
+      // 2) 配置 Plaud 并开启自动导入
       await tester.scrollUntilVisible(
-        find.byKey(const Key('set-ext-recorders')),
-        220,
-        scrollable: find.descendant(
-          of: find.byKey(const Key('setting-list')),
-          matching: find.byType(Scrollable),
-        ).first,
+        find.byKey(const Key('ext-api-row-plaud')),
+        120,
+        scrollable: find.byType(Scrollable).last,
       );
-      await tester.tap(find.byKey(const Key('set-ext-recorders')));
+      await tester.tap(find.byKey(const Key('ext-api-row-plaud')));
       await tester.pumpAndSettle();
-      for (final id in const ['plaud', 'limitless', 'omi_cloud', 'fireflies']) {
-        expect(find.byKey(Key('ext-conn-$id')), findsOneWidget);
-      }
+      expect(find.byKey(const Key('ext-conn-plaud')), findsOneWidget);
 
       await tester.enterText(
         find.byKey(const Key('ext-field-plaud-accessToken')),
@@ -1267,9 +1272,11 @@ void main() {
 
       await tester.tap(find.byKey(const Key('crumb-back')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('crumb-back')));
+      await tester.pumpAndSettle();
       expect(
-        tester.widget<Text>(find.byKey(const Key('sv-extrecorders'))).data,
-        '自动 1 源 · 已导入 1 条',
+        tester.widget<Text>(find.byKey(const Key('sv-extapi'))).data,
+        '自动 1 项 · 已导入 2 条',
       );
 
       // 3) 时间轴与详情验证

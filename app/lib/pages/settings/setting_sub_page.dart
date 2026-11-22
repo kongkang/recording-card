@@ -18,7 +18,6 @@ import '../../core/theme/tokens.dart';
 import '../../services/audio/voice_sample_capture.dart';
 import '../../services/auth/oauth_config.dart';
 import '../../services/auth_service.dart';
-import '../../services/external_data/external_connector.dart';
 import '../../services/external_data/external_data_hub_store.dart';
 import '../../services/external_data/getnote_sync_store.dart';
 import '../../services/health/health_signal_controller.dart';
@@ -50,11 +49,13 @@ class SettingSubPage extends StatelessWidget {
     this.getNoteStore,
     this.externalDataHub,
     this.showPaneBack = false,
+    this.backLabel = '返回 Setting',
     this.standalone = false,
+    this.standaloneBackLabel = 'Setting',
   });
 
   final String
-  subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extdata' | 'extnotes' | 'extrecorders' | 'health' | 'dev'
+  subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extapi' | 'extdata' | 'extapi:<id>' | 'health' | 'dev'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
@@ -64,31 +65,104 @@ class SettingSubPage extends StatelessWidget {
   final GetNoteSyncStore? getNoteStore;
   final ExternalDataHubStore? externalDataHub;
   final bool showPaneBack;
+  final String backLabel;
   final bool standalone;
+  final String standaloneBackLabel;
 
-  String get _title => switch (subId) {
-    'login' => '云端账号授权',
-    'local' => '本地语音引擎',
-    'cloud' => '云端模型设置',
-    'prompts' => '预设风格与提示词',
-    'voiceprint' => '声纹识别',
-    'ext' => '扩展能力（Skills · Tools · MCP）',
-    'mem' => '本机记忆检索',
-    'island' => '灵动岛与操作按钮',
-    'watch' => 'Apple Watch 联动',
-    'exthw' => '第三方硬件联动',
-    'extdata' => '得到大脑 / Get 笔记',
-    'extnotes' => '笔记与阅读软件（API）',
-    'extrecorders' => '第三方录音软件（API）',
-    'health' => '行为与健康信号',
-    'dev' => '开发者设置',
-    _ => '设置详情',
-  };
+  ExternalDataHubStore get _hub =>
+      externalDataHub ?? ExternalDataHubStore.instance;
+
+  String get _title {
+    if (subId.startsWith('extapi:')) {
+      final cid = subId.substring(7);
+      return _hub.connectorById(cid)?.name ?? '第三方 API 接入';
+    }
+    return switch (subId) {
+      'login' => '云端账号授权',
+      'local' => '本地语音引擎',
+      'cloud' => '云端模型设置',
+      'prompts' => '预设风格与提示词',
+      'voiceprint' => '声纹识别',
+      'ext' => '扩展能力（Skills · Tools · MCP）',
+      'mem' => '本机记忆检索',
+      'island' => '灵动岛与操作按钮',
+      'watch' => 'Apple Watch 联动',
+      'exthw' => '第三方硬件 SDK',
+      'extapi' || 'extnotes' || 'extrecorders' => '第三方 API 接入',
+      'extdata' => 'Get 笔记',
+      'health' => '行为与健康信号',
+      'dev' => '开发者设置',
+      _ => '设置详情',
+    };
+  }
+
+  Widget? _buildTitleHelpButton() {
+    if (subId == 'local') {
+      return _SettingsHelpButton(
+        key: const Key('local-engine-help'),
+        title: _title,
+        message: [
+          '录音在本机转成文字。',
+          if (modelManager?.supportsSystemAsr == true)
+            '系统转写使用${modelManager!.systemCapabilities.effectiveEngineTitle}。'
+          else
+            '此设备可下载增强转写模型。',
+          '增强转写（SenseVoice）约 228 MB，适合多语言和方言录音。',
+          '区分说话人（CAM++）约 27 MB，按声音区分说话人。',
+          '人声检测（Silero VAD）随应用内置，用于跳过静音。',
+        ].join('\n\n'),
+      );
+    }
+    if (subId == 'cloud') {
+      return const _SettingsHelpButton(
+        key: Key('cloud-provider-help'),
+        title: '模型服务',
+        message:
+            '外脑会按场景自动选择模型。第三方服务使用你选择的模型并计入该服务商的用量。提示词、技能与 Agent 流程仍由本机管理，任务所需内容会发给选中的服务商。',
+      );
+    }
+    if (subId == 'exthw') {
+      return const _SettingsHelpButton(
+        key: Key('ext-hw-help'),
+        title: '第三方硬件 SDK',
+        message: '开启对应设备后，可在首页右上角设备列表中扫描连接第三方硬件，固件升级与配网请继续使用各硬件官方 App。',
+      );
+    }
+    if (subId == 'extapi' || subId == 'extnotes' || subId == 'extrecorders') {
+      return const _SettingsHelpButton(
+        key: Key('ext-api-help'),
+        title: '第三方 API 接入',
+        message:
+            '支持通过各平台官方 API 连续翻页拉取全部历史笔记、阅读划线与云端录音记录。\n\n开启「自动导入」后，系统每 60 分钟自动检查新增与更新；所有密钥均仅保存于本机系统密钥库（Keychain）。',
+      );
+    }
+    if (subId == 'extdata') {
+      return const _SettingsHelpButton(
+        key: Key('getnote-help'),
+        title: 'Get 笔记',
+        message:
+            '请在 biji.com/openapi 创建应用并获取 Client ID（cli_...）与 API Key（gk_live_...）。\n\n同步时会从第 1 页起连续游标翻页直至全部历史拉取完成，每页结果实时落盘并按 note_id 幂等去重；凭据仅保存在本机系统密钥库（Keychain）。',
+      );
+    }
+    if (subId.startsWith('extapi:')) {
+      final cid = subId.substring(7);
+      final conn = _hub.connectorById(cid);
+      if (conn == null) return null;
+      return _SettingsHelpButton(
+        key: Key('ext-conn-help-$cid'),
+        title: conn.name,
+        message:
+            '${conn.setupGuide}\n\n所有凭据仅保存于本机系统密钥库（Keychain），开启「自动导入」后每 60 分钟自动检查新增与更新。',
+      );
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
     final appStore = StoreScope.maybeOf(context);
+    final helpBtn = _buildTitleHelpButton();
     return Scaffold(
       backgroundColor: c.bg,
       appBar: standalone
@@ -96,13 +170,13 @@ class SettingSubPage extends StatelessWidget {
               backgroundColor: c.bg,
               surfaceTintColor: Colors.transparent,
               elevation: 0,
-              leadingWidth: 108,
+              leadingWidth: standaloneBackLabel == 'Setting' ? 108 : 164,
               leading: TextButton.icon(
                 key: const Key('standalone-crumb-back'),
                 onPressed: () => Navigator.of(context).maybePop(),
                 icon: Icon(Icons.chevron_left, size: 18, color: c.label),
                 label: Text(
-                  'Setting',
+                  standaloneBackLabel,
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
@@ -125,7 +199,7 @@ class SettingSubPage extends StatelessWidget {
                   key: const Key('pb-setsub'),
                   onPressed: appStore.goBack,
                   icon: const Icon(Icons.chevron_left, size: 18),
-                  label: const Text('返回 Setting'),
+                  label: Text(backLabel),
                   style: TextButton.styleFrom(
                     foregroundColor: c.sec,
                     padding: const EdgeInsets.symmetric(
@@ -161,28 +235,7 @@ class SettingSubPage extends StatelessWidget {
                           ),
                         ),
                       ),
-                      if (subId == 'local')
-                        _SettingsHelpButton(
-                          key: const Key('local-engine-help'),
-                          title: _title,
-                          message: [
-                            '录音在本机转成文字。',
-                            if (modelManager?.supportsSystemAsr == true)
-                              '系统转写使用${modelManager!.systemCapabilities.effectiveEngineTitle}。'
-                            else
-                              '此设备可下载增强转写模型。',
-                            '增强转写（SenseVoice）约 228 MB，适合多语言和方言录音。',
-                            '区分说话人（CAM++）约 27 MB，按声音区分说话人。',
-                            '人声检测（Silero VAD）随应用内置，用于跳过静音。',
-                          ].join('\n\n'),
-                        ),
-                      if (subId == 'cloud')
-                        const _SettingsHelpButton(
-                          key: Key('cloud-provider-help'),
-                          title: '模型服务',
-                          message:
-                              '外脑会按场景自动选择模型。第三方服务使用你选择的模型并计入该服务商的用量。提示词、技能与 Agent 流程仍由本机管理，任务所需内容会发给选中的服务商。',
-                        ),
+                      ?helpBtn,
                     ],
                   ),
                   const SizedBox(height: 14),
@@ -212,17 +265,40 @@ class SettingSubPage extends StatelessWidget {
                       config: agentConfig,
                       device: device,
                     ),
+                    'extapi' || 'extnotes' || 'extrecorders' =>
+                      ExternalApiListBody(
+                        getNoteStore: getNoteStore ?? GetNoteSyncStore.instance,
+                        hubStore: _hub,
+                        onOpenSub: standalone
+                            ? (targetId) {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => SettingSubPage(
+                                      subId: targetId,
+                                      agentConfig: agentConfig,
+                                      device: device,
+                                      modelManager: modelManager,
+                                      modelProviders: modelProviders,
+                                      authService: authService,
+                                      healthSignals: healthSignals,
+                                      getNoteStore: getNoteStore,
+                                      externalDataHub: externalDataHub,
+                                      standalone: true,
+                                      standaloneBackLabel: '第三方 API 接入',
+                                    ),
+                                  ),
+                                );
+                              }
+                            : null,
+                      ),
                     'extdata' => GetNoteSyncBody(
                       store: getNoteStore ?? GetNoteSyncStore.instance,
                     ),
-                    'extnotes' => ExternalDataHubBody(
-                      store: externalDataHub ?? ExternalDataHubStore.instance,
-                      category: ExternalConnectorCategory.notes,
-                    ),
-                    'extrecorders' => ExternalDataHubBody(
-                      store: externalDataHub ?? ExternalDataHubStore.instance,
-                      category: ExternalConnectorCategory.recorders,
-                    ),
+                    final s when s.startsWith('extapi:') =>
+                      ExternalConnectorDetailBody(
+                        store: _hub,
+                        connectorId: s.substring(7),
+                      ),
                     'health' =>
                       healthSignals == null
                           ? const Text('采集服务未装载')
