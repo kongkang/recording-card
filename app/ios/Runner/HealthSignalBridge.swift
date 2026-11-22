@@ -41,8 +41,9 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
   }
 
   func bootstrap() {
-    guard UserDefaults.standard.bool(forKey: enabledKey) else { return }
-    startCollection(intervalMs: storedIntervalMs(), phaseMs: storedPhaseMs())
+    // 启动期不做任何 HealthKit 查询/观察：catchUp 里单位换算、活动摘要谓词等
+    // 都会抛 NSException，且发生在 Flutter 起来之前，表现为「完全打不开」。
+    // 开关仍由 Flutter 前台就绪后再 _pushActive 恢复。
   }
 
   func register(messenger: FlutterBinaryMessenger) {
@@ -88,7 +89,18 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
           return
         }
         if active {
-          self.startCollection(intervalMs: interval, phaseMs: phase)
+          let ok = self.startCollection(intervalMs: interval, phaseMs: phase)
+          if !ok {
+            UserDefaults.standard.set(false, forKey: self.enabledKey)
+            result(
+              FlutterError(
+                code: "health_collection_failed",
+                message: "健康观察查询未能启动，已关闭采集开关，避免反复闪退",
+                details: nil
+              )
+            )
+            return
+          }
         } else {
           self.stopCollection()
         }
@@ -97,7 +109,7 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
     case "catchUp":
       let args = call.arguments as? [String: Any] ?? [:]
       enqueueCatchUp(args: args, quick: false, trigger: nil) {
-        result(nil)
+        DispatchQueue.main.async { result(nil) }
       }
     case "drainSpool":
       result(drainSpool(maxItems: 400))
@@ -127,17 +139,45 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
       ])
       return
     }
+    // 只向系统申请「第三方 App 可读」的类型。把 ECG/心理状态/用药/视力处方等
+    // 一并塞进 requestAuthorization 会触发 HealthKit 的 NSException
+    // (_throwIfAuthorizationDisallowedForSharing) 直接 SIGABRT。
     let types = authorizationTypes()
-    healthStore.requestAuthorization(toShare: [], read: types) { [weak self] success, error in
-      DispatchQueue.main.async {
-        guard let self else { return }
-        self.finishHealthThenLocation(
-          success: success,
-          error: error,
-          requested: types.count,
-          result: result
-        )
+    let share = Set<HKSampleType>()
+    var launched = false
+    let exception = RCObjCCatchException {
+      self.healthStore.requestAuthorization(toShare: share, read: types) { [weak self] success, error in
+        DispatchQueue.main.async {
+          guard let self else { return }
+          self.finishHealthThenLocation(
+            success: success,
+            error: error,
+            requested: types.count,
+            result: result
+          )
+        }
       }
+      launched = true
+    }
+    if let exception {
+      result([
+        "available": false,
+        "requested": types.count,
+        "location": locationStatusText(),
+        "clinicalSkipped": true,
+        "error": exception.reason
+          ?? "系统拒绝了本次健康授权请求（\(exception.name.rawValue)）",
+      ])
+      return
+    }
+    if !launched {
+      result([
+        "available": false,
+        "requested": types.count,
+        "location": locationStatusText(),
+        "clinicalSkipped": true,
+        "error": "健康授权未能发起",
+      ])
     }
   }
 
@@ -277,29 +317,35 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
     notifySpool()
   }
 
-  private func startCollection(intervalMs: Int, phaseMs: Int) {
-    guard HKHealthStore.isHealthDataAvailable() else { return }
+  @discardableResult
+  private func startCollection(intervalMs: Int, phaseMs: Int) -> Bool {
+    guard HKHealthStore.isHealthDataAvailable() else { return false }
     ensureSpecs()
     deliveryGeneration += 1
     stopObserverQueries()
+    // 授权弹窗已过滤的类型，观察查询也必须同样跳过：HKObserverQuery 对 ECG/
+    // 心理状态/系列样本等会在 init 时直接 NSException（启动期 bootstrap 会连环崩）。
     for spec in specs {
       guard let sampleType = spec.sampleType else { continue }
+      guard Self.isSafeAuthorizationType(spec.objectType) else { continue }
       let typeId = spec.typeId
-      let query = HKObserverQuery(sampleType: sampleType, predicate: nil) {
-        [weak self] _, completion, _ in
-        self?.enqueueCatchUp(
-          args: [:],
-          quick: true,
-          trigger: typeId,
-          completion: completion
-        )
+      _ = RCObjCCatchException {
+        let query = HKObserverQuery(sampleType: sampleType, predicate: nil) {
+          [weak self] _, completion, _ in
+          self?.enqueueCatchUp(
+            args: [:],
+            quick: true,
+            trigger: typeId,
+            completion: completion
+          )
+        }
+        self.observers.append(query)
+        self.healthStore.execute(query)
       }
-      observers.append(query)
-      healthStore.execute(query)
-      healthStore.enableBackgroundDelivery(for: sampleType, frequency: .immediate) { _, _ in }
     }
     startPhaseTimer(intervalMs: intervalMs, phaseMs: phaseMs)
     startLocationUpdates()
+    return true
   }
 
   private func stopCollection() {
@@ -326,7 +372,8 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
     let status = locationManager.authorizationStatus
     guard status == .authorizedAlways || status == .authorizedWhenInUse else { return }
     if status == .authorizedAlways {
-      locationManager.allowsBackgroundLocationUpdates = true
+      // startMonitoringSignificantLocationChanges 无需 UIBackgroundModes: location，
+      // 且在未声明该后台模式时设置 allowsBackgroundLocationUpdates = true 会触发 NSInternalInconsistencyException 崩溃。
       locationManager.pausesLocationUpdatesAutomatically = false
       locationManager.startMonitoringSignificantLocationChanges()
     }
@@ -443,9 +490,10 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
       return
     }
     ensureSpecs()
-    let selected = job.quick
+    let selected = (job.quick
       ? specs.filter { Self.quickTypeIds.contains($0.typeId) || $0.typeId == job.trigger }
       : specs
+    ).filter { Self.isSafeAuthorizationType($0.objectType) }
     if selected.isEmpty {
       finished()
       return
@@ -678,39 +726,63 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
   }
 
   private func queryActivity(since: Date, until: Date, done: @escaping ([[String: Any]]) -> Void) {
+    // 活动摘要谓词在部分系统/日期组件组合下会直接 NSException；整段兜底。
     let calendar = Calendar.current
     let startParts = calendar.dateComponents([.year, .month, .day], from: since)
     let endParts = calendar.dateComponents([.year, .month, .day], from: until.addingTimeInterval(86_400))
-    let predicate = HKQuery.predicate(forActivitySummariesBetweenStart: startParts, end: endParts)
-    let query = HKActivitySummaryQuery(predicate: predicate) { [weak self] _, summaries, _ in
-      guard let self else {
-        done([])
-        return
-      }
-      var rows: [[String: Any]] = []
-      for summary in summaries ?? [] {
-        guard let day = calendar.date(from: summary.dateComponents(for: calendar)) else { continue }
-        let move = (try? summary.activeEnergyBurned.doubleValue(for: .kilocalorie())) ?? 0
-        let exercise = (try? summary.appleExerciseTime.doubleValue(for: .minute())) ?? 0
-        let stand = (try? summary.appleStandHours.doubleValue(for: .count())) ?? 0
-        if move == 0 && exercise == 0 && stand == 0 { continue }
-        let end = calendar.date(byAdding: .day, value: 1, to: day) ?? day
-        rows.append(self.draft(
-          typeId: "activity_summary",
-          start: day,
-          end: end,
-          value: move,
-          text: "活动 \(Int(move.rounded())) 千卡 · 锻炼 \(Int(exercise.rounded())) 分 · 站立 \(Int(stand.rounded()))",
-          unit: "kcal",
-          sourceName: "健康",
-          sourceBundle: "healthkit.activity",
-          aggregation: "span",
-          metadata: ["exerciseMin": exercise, "standHours": stand]
-        ))
-      }
-      done(rows)
+    guard startParts.year != nil, startParts.month != nil, startParts.day != nil,
+          endParts.year != nil, endParts.month != nil, endParts.day != nil else {
+      done([])
+      return
     }
-    healthStore.execute(query)
+    var query: HKActivitySummaryQuery?
+    let exception = RCObjCCatchException {
+      let predicate = HKQuery.predicate(forActivitySummariesBetweenStart: startParts, end: endParts)
+      query = HKActivitySummaryQuery(predicate: predicate) { [weak self] _, summaries, _ in
+        guard let self else {
+          done([])
+          return
+        }
+        var rows: [[String: Any]] = []
+        for summary in summaries ?? [] {
+          guard let day = calendar.date(from: summary.dateComponents(for: calendar)) else { continue }
+          let move = self.safeDouble(summary.activeEnergyBurned, unit: .kilocalorie()) ?? 0
+          let exercise = self.safeDouble(summary.appleExerciseTime, unit: .minute()) ?? 0
+          let stand = self.safeDouble(summary.appleStandHours, unit: .count()) ?? 0
+          if move == 0 && exercise == 0 && stand == 0 { continue }
+          let end = calendar.date(byAdding: .day, value: 1, to: day) ?? day
+          rows.append(self.draft(
+            typeId: "activity_summary",
+            start: day,
+            end: end,
+            value: move,
+            text: "活动 \(Int(move.rounded())) 千卡 · 锻炼 \(Int(exercise.rounded())) 分 · 站立 \(Int(stand.rounded()))",
+            unit: "kcal",
+            sourceName: "健康",
+            sourceBundle: "healthkit.activity",
+            aggregation: "span",
+            metadata: ["exerciseMin": exercise, "standHours": stand]
+          ))
+        }
+        done(rows)
+      }
+      if let query {
+        self.healthStore.execute(query)
+      }
+    }
+    if exception != nil || query == nil {
+      done([])
+    }
+  }
+
+  private func safeDouble(_ quantity: HKQuantity, unit: HKUnit) -> Double? {
+    guard quantity.is(compatibleWith: unit) else { return nil }
+    var value = Double.nan
+    let exception = RCObjCCatchException {
+      value = quantity.doubleValue(for: unit)
+    }
+    if exception != nil || !value.isFinite { return nil }
+    return value
   }
 
   private func queryGenericSample(
@@ -735,7 +807,7 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
         var text = label
         if #available(iOS 14.0, *), let ecg = sample as? HKElectrocardiogram {
           if let rate = ecg.averageHeartRate {
-            value = try? rate.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
+            value = self.safeDouble(rate, unit: HKUnit.count().unitDivided(by: .minute()))
           }
           text = self.ecgText(ecg.classification)
         } else if #available(iOS 18.0, *), let mind = sample as? HKStateOfMind {
@@ -850,10 +922,9 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
 
   private func doubleValue(_ quantity: HKQuantity, typeId: String) -> (value: Double, unit: String)? {
     for candidate in unitCandidates(typeId) {
-      if let value = try? quantity.doubleValue(for: candidate.unit), value.isFinite {
-        let scaled = candidate.percent ? value * 100 : value
-        return (scaled, candidate.label)
-      }
+      guard let value = safeDouble(quantity, unit: candidate.unit) else { continue }
+      let scaled = candidate.percent ? value * 100 : value
+      return (scaled, candidate.label)
     }
     return nil
   }
@@ -1050,13 +1121,42 @@ final class HealthSignalBridge: NSObject, CLLocationManagerDelegate {
   private func authorizationTypes() -> Set<HKObjectType> {
     ensureSpecs()
     var types = Set<HKObjectType>()
-    for spec in specs {
+    for spec in specs where Self.isSafeAuthorizationType(spec.objectType) {
       types.insert(spec.objectType)
     }
-    if let pressure = HKCorrelationType.correlationType(forIdentifier: .bloodPressure) {
-      types.insert(pressure)
-    }
     return types
+  }
+
+  /// 过滤会让 requestAuthorization 直接抛 NSException 的类型。
+  /// 这些类型仍可在用户已有权限时尝试读取；只是不要塞进授权弹窗请求。
+  private static func isSafeAuthorizationType(_ type: HKObjectType) -> Bool {
+    if type is HKCharacteristicType { return true }
+    if type is HKQuantityType { return true }
+    if type is HKCategoryType { return true }
+    if type is HKWorkoutType { return true }
+    if type is HKCorrelationType { return false }
+    // 活动摘要 / 系列 / ECG / 听力图 / 视力处方 / 心理状态 / 用药：部分系统上会直接 abort
+    let id = type.identifier
+    let blocked: Set<String> = [
+      HKObjectType.activitySummaryType().identifier,
+      HKSeriesType.heartbeat().identifier,
+      HKSeriesType.workoutRoute().identifier,
+      HKObjectType.audiogramSampleType().identifier,
+    ]
+    if blocked.contains(id) { return false }
+    if #available(iOS 14.0, *) {
+      if id == HKObjectType.electrocardiogramType().identifier { return false }
+    }
+    if #available(iOS 16.0, *) {
+      if id == HKObjectType.visionPrescriptionType().identifier { return false }
+    }
+    if #available(iOS 18.0, *) {
+      if id == HKObjectType.stateOfMindType().identifier { return false }
+    }
+    if #available(iOS 26.0, *) {
+      if id == HKObjectType.userAnnotatedMedicationType().identifier { return false }
+    }
+    return type is HKSampleType
   }
 
   private static let quickTypeIds: Set<String> = [

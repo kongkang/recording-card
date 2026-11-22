@@ -1,9 +1,8 @@
-/// 蓝牙授权（iOS 需要主动申请；Android 由系统在扫描时申请）。
+/// 蓝牙授权与硬件录音前台保活通道（iOS CoreBluetooth + Android 12+ BLUETOOTH_SCAN/CONNECT 及 <=11 定位权限）。
 ///
-/// 为什么单独做一层：Rust SDK 底层是 btleplug → CoreBluetooth，
-/// 第一次创建 `CBCentralManager` 时系统才弹「允许使用蓝牙」。
-/// 那个弹窗会阻塞扫描；如果用户错过或拒绝，扫描会一直等不到结果却看不出原因。
-/// 所以在真正扫描前先同步一次授权状态，必要时主动发起申请，并把结果交给界面提示。
+/// 为什么单独做一层：Rust SDK 底层是 btleplug（iOS CoreBluetooth / Android droidplug）。
+/// iOS 第一次创建 `CBCentralManager` 时系统才弹「允许使用蓝牙」；Android 则需要宿主 Activity
+/// 主动发起运行时权限申请。提前在 Dart 侧同步真实授权状态并在需要时申请，能避免无提示扫描失败。
 library;
 
 import 'dart:io';
@@ -18,7 +17,7 @@ enum BluetoothAuthorization {
   /// 用户拒绝过（需要在系统设置里打开）
   denied,
 
-  /// 被家长控制等策略限制
+  /// 被家长控制或硬件策略限制
   restricted,
 
   /// 还没问过
@@ -48,13 +47,20 @@ enum BluetoothAuthorization {
 }
 
 class BluetoothPermission {
-  const BluetoothPermission();
+  const BluetoothPermission({
+    @visibleForTesting bool forceChannelForTesting = false,
+  }) : _forceChannelForTesting = forceChannelForTesting;
 
   static const _channel = MethodChannel('com.reai.recordingcard/bluetooth');
 
+  final bool _forceChannelForTesting;
+
+  bool get _supportsChannel =>
+      _forceChannelForTesting || Platform.isIOS || Platform.isAndroid;
+
   /// 读取当前授权状态（不触发对话框）。
   Future<BluetoothAuthorization> status() async {
-    if (!Platform.isIOS) return BluetoothAuthorization.unknown;
+    if (!_supportsChannel) return BluetoothAuthorization.unknown;
     try {
       final value = await _channel.invokeMethod<String>('status');
       return BluetoothAuthorization.parse(value);
@@ -69,7 +75,7 @@ class BluetoothPermission {
 
   /// 需要时触发系统授权对话框，返回最终状态。
   Future<BluetoothAuthorization> request() async {
-    if (!Platform.isIOS) return BluetoothAuthorization.unknown;
+    if (!_supportsChannel) return BluetoothAuthorization.unknown;
     try {
       final value = await _channel.invokeMethod<String>('request');
       return BluetoothAuthorization.parse(value);
@@ -83,7 +89,7 @@ class BluetoothPermission {
 
   /// 固件升级等长耗时流程期间请求保持屏幕常亮，避免系统休眠中断 BLE 连接。
   Future<void> setKeepScreenOn(bool enabled) async {
-    if (!Platform.isIOS && !Platform.isAndroid) return;
+    if (!_supportsChannel) return;
     try {
       await _channel.invokeMethod<void>('setKeepScreenOn', {
         'enabled': enabled,
@@ -104,6 +110,28 @@ class BluetoothPermission {
       debugPrint('[mem] 原生内存整理失败：$e');
     } on MissingPluginException {
       // 测试环境或非 iOS 注册：安全忽略
+    }
+  }
+
+  /// Android 录音期间启停前台保活服务（`connectedDevice|microphone`），防止锁屏或退后台后系统回收进程。
+  Future<void> setRecordingForeground(
+    bool enabled, {
+    String? title,
+    String? subtitle,
+    bool useMicrophone = false,
+  }) async {
+    if (!_forceChannelForTesting && !Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('setRecordingForeground', <String, Object?>{
+        'enabled': enabled,
+        'title': ?title,
+        'subtitle': ?subtitle,
+        'useMicrophone': useMicrophone,
+      });
+    } on PlatformException catch (e) {
+      debugPrint('[ble] 设置录音前台服务失败：$e');
+    } on MissingPluginException {
+      // 测试环境安全忽略
     }
   }
 }

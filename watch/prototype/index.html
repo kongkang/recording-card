@@ -369,7 +369,7 @@ button:disabled{opacity:.38;cursor:not-allowed}
   z-index:30;
 }
 
-/* ============ 右侧：Apple Watch Series 10（46mm） ============ */
+/* ============ 右侧：Apple Watch ============ */
 .watch-panel{
   display:flex;
   flex-direction:column;
@@ -414,8 +414,20 @@ button:disabled{opacity:.38;cursor:not-allowed}
   align-items:center;
 }
 .watch-case{
-  width:272px;
-  height:328px;
+  --screen-width:205px;
+  --screen-height:251px;
+  --header-height:39px;
+  /* 系统状态栏时间，不是 App 控件。HIG Typography：49mm 默认 Dynamic Type = XLarge，Caption 2 = 15pt，强调字重 Semibold，行距 17.5。 */
+  --sys-time-size:15px;
+  --sys-time-tracking:0.06px;
+  --control-height:48px;
+  --queue-height:38px;
+  --bottom-inset:8px;
+  --dial-size:37px;
+  --idle-size:42px;
+  --dial-gap:4px;
+  width:calc(var(--screen-width) + 30px);
+  height:calc(var(--screen-height) + 30px);
   background:linear-gradient(145deg,#2E2E32,#141417);
   border-radius:58px;
   padding:15px;
@@ -423,6 +435,34 @@ button:disabled{opacity:.38;cursor:not-allowed}
   position:relative;
   transition:transform .12s cubic-bezier(.2,.9,.3,1);
 }
+.watch-case.series{
+  --screen-width:198px;
+  --screen-height:242px;
+  --header-height:37px;
+  --dial-size:36px;
+  /* 46mm 同样是 XLarge，Caption 2 = 15pt Semibold。 */
+  --sys-time-size:15px;
+}
+.watch-case.compact{
+  --screen-width:162px;
+  --screen-height:197px;
+  --header-height:30px;
+  /* 40mm 默认 Dynamic Type = Large，Caption 2 = 14pt Semibold，行距 16.5。 */
+  --sys-time-size:14px;
+  --sys-time-tracking:0.16px;
+  --control-height:44px;
+  --queue-height:34px;
+  --bottom-inset:7px;
+  --dial-size:26px;
+  --idle-size:36px;
+  --dial-gap:2px;
+}
+.watch-size{font:inherit;color:var(--label);background:var(--card);border:1px solid var(--sep);border-radius:8px;padding:4px 8px}
+.watch-screen:has(.w-app:not([hidden])){padding:0}
+.watch-case.compact .w-face-time{font-size:30px}
+.watch-case.compact .comp-corner{width:38px;height:38px}
+.watch-case.compact :is(.comp-circular,.wf-subdial){width:36px;height:36px}
+.watch-case.compact .wf-wave{gap:1px}
 .watch-case.knock-hit{
   transform:translateY(-2px) scale(.985);
 }
@@ -467,12 +507,11 @@ button:disabled{opacity:.38;cursor:not-allowed}
 .watch-top{
   display:flex;
   align-items:center;
-  justify-content:space-between;
+  gap:5px;
   font-size:11px;
   color:rgba(255,255,255,.68);
-  margin-bottom:2px;
-  padding:0 3px;
-  height:18px;
+  padding:0 14px;
+  height:var(--header-height);
   flex:none;
 }
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
@@ -787,16 +826,16 @@ button:disabled{opacity:.38;cursor:not-allowed}
   color:rgba(255,255,255,.72);
   white-space:nowrap;
 }
-.w-batt-pill .batt{display:inline-flex;color:var(--ok);vertical-align:-1px}
-.w-batt-pill.lv-mid .batt{color:var(--warn)}
-.w-batt-pill.lv-low .batt{color:var(--danger)}
 .w-batt-pill.chg{color:#63E686}
 .w-sysclock{
-  font-size:12px;
+  flex:none;
+  margin-inline-start:auto;
+  font-size:var(--sys-time-size);
   font-weight:600;
+  line-height:1;
   color:rgba(255,255,255,.92);
   font-variant-numeric:tabular-nums;
-  letter-spacing:.3px;
+  letter-spacing:var(--sys-time-tracking);
 }
 .w-hero{
   flex:1;
@@ -805,8 +844,10 @@ button:disabled{opacity:.38;cursor:not-allowed}
   flex-direction:column;
   align-items:center;
   justify-content:center;
+  gap:var(--dial-gap);
+  line-height:1.2;
   text-align:center;
-  padding:0 2px;
+  padding:0 8px;
   -webkit-user-select:none;
   user-select:none;
   cursor:default;
@@ -820,19 +861,17 @@ button:disabled{opacity:.38;cursor:not-allowed}
 }
 .w-bigclock{
   display:block;
-  font-size:46px;
+  font-size:var(--idle-size);
   font-weight:500;
   line-height:1;
   letter-spacing:-1.5px;
   font-variant-numeric:tabular-nums;
   color:#FFFFFF;
-  margin-top:4px;
 }
 .w-idle-sub{
   display:block;
   font-size:9.5px;
   color:rgba(255,255,255,.42);
-  margin-top:6px;
 }
 .w-recline{
   display:flex;
@@ -862,27 +901,24 @@ button:disabled{opacity:.38;cursor:not-allowed}
 }
 .w-bighero{
   display:block;
-  font-size:35px;
+  font-size:var(--dial-size);
   font-weight:600;
   line-height:1.06;
   letter-spacing:-1px;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   font-variant-numeric:tabular-nums;
   color:#FFFFFF;
-  margin-top:3px;
 }
 .w-remain{
   display:block;
   font-size:10.5px;
   color:rgba(255,255,255,.6);
-  margin-top:3px;
   font-variant-numeric:tabular-nums;
 }
 .w-knock-hint{
   display:block;
   font-size:9.5px;
   color:rgba(255,255,255,.42);
-  margin-top:5px;
   pointer-events:none;
 }
 /* 底部紧凑栈：紧挨排列——操作控制（开始录音 / 纯色扁平滑动停止）在上，单圈倒计时段+待传条压在最底 */
@@ -891,11 +927,12 @@ button:disabled{opacity:.38;cursor:not-allowed}
   width:100%;
   display:flex;
   flex-direction:column;
-  gap:6px;
+  gap:5px;
 }
 .w-rec-btn{
-  width:100%;
-  height:38px;
+  width:calc(100% - 16px);
+  height:var(--control-height);
+  margin-inline:8px;
   border:0;
   border-radius:999px;
   padding:0 12px;
@@ -909,7 +946,8 @@ button:disabled{opacity:.38;cursor:not-allowed}
 /* 纯色扁平防误触滑动条（老式 iPhone 滑块式 · 无金属反光或拟物渐变） */
 .w-stop{
   position:relative;
-  height:38px;
+  height:var(--control-height);
+  margin-inline:8px;
   border-radius:999px;
   overflow:hidden;
   background:rgba(255,59,48,.16);
@@ -921,7 +959,8 @@ button:disabled{opacity:.38;cursor:not-allowed}
   font-size:11px;
   font-weight:600;
   letter-spacing:.6px;
-  padding-left:16px;
+  padding-left:var(--control-height);
+  padding-right:8px;
   -webkit-user-select:none;
   user-select:none;
   touch-action:none;
@@ -937,8 +976,8 @@ button:disabled{opacity:.38;cursor:not-allowed}
   position:absolute;
   left:3px;
   top:3px;
-  width:30px;
-  height:30px;
+  width:calc(var(--control-height) - 8px);
+  height:calc(var(--control-height) - 8px);
   border-radius:50%;
   border:0;
   padding:0;
@@ -963,10 +1002,10 @@ button:disabled{opacity:.38;cursor:not-allowed}
 .w-slice-bar{
   position:relative;
   width:100%;
-  height:30px;
+  height:calc(var(--queue-height) + var(--bottom-inset));
   border:0;
-  border-radius:12px;
-  padding:0 10px;
+  border-radius:14px 14px 0 0;
+  padding:0 14px var(--bottom-inset);
   background:rgba(255,255,255,.09);
   color:#FFFFFF;
   font-size:10.5px;
@@ -1005,8 +1044,8 @@ button:disabled{opacity:.38;cursor:not-allowed}
 .w-slice-bar.synced .w-slice-right{color:#30D158}
 .w-lap-progress{
   position:absolute;
-  left:0;
-  bottom:0;
+  left:14%;
+  bottom:calc(var(--bottom-inset) + 2px);
   height:2px;
   width:0%;
   background:#FF453A;
@@ -1105,6 +1144,7 @@ button:disabled{opacity:.38;cursor:not-allowed}
   font-weight:700;
   color:#FFFFFF;
 }
+.w-q-version{font-size:10px;color:rgba(255,255,255,.68);font-variant-numeric:tabular-nums}
 .w-qflush{
   width:100%;
   border:0;
@@ -1171,7 +1211,7 @@ button:disabled{opacity:.38;cursor:not-allowed}
   <div class="proto-actions">
     <div class="seg" data-testid="phone-version-seg" role="group" aria-label="主端设计稿版本">
       <button type="button" class="on" data-pver="current" onclick="setPhoneVersion('current')">当前版（App 已实现）</button>
-      <button type="button" data-pver="target" onclick="setPhoneVersion('target')">目标版·12</button>
+      <button type="button" data-pver="target" onclick="setPhoneVersion('target')">目标版·11</button>
     </div>
     <div class="seg" data-testid="view-mode-seg" role="group" aria-label="视图模式">
       <button type="button" class="on" data-mode="both" onclick="setViewMode('both')">双端同屏</button>
@@ -1254,7 +1294,7 @@ button:disabled{opacity:.38;cursor:not-allowed}
     </div>
   </section>
 
-  <!-- 右侧：Apple Watch Series 10（46mm）1:1 对齐 WatchMainView.swift & RecordingCardComplication.swift -->
+  <!-- 右侧：Apple Watch1:1 对齐 WatchMainView.swift & RecordingCardComplication.swift -->
   <section class="dev-col watch-col" aria-label="Apple Watch 端">
     <div class="dev-caption">
       <span>Apple Watch 客户端（1:1 对齐 WatchMainView）</span>
@@ -1268,17 +1308,21 @@ button:disabled{opacity:.38;cursor:not-allowed}
         <button type="button" data-testid="watch-aod-toggle" onclick="toggleWatchAOD()">息屏预览</button>
       </div>
 
+      <select class="watch-size" aria-label="手表屏幕尺寸" data-testid="watch-size" onchange="document.getElementById('watch-case').className = 'watch-case ' + this.value">
+        <option value="ultra">Ultra 49 mm</option>
+        <option value="series">Series 46 mm</option>
+        <option value="compact">小尺寸 40 mm</option>
+      </select>
+
       <div class="watch-band-top" aria-hidden="true"></div>
       <div class="watch-case-wrap">
-        <div class="watch-case">
+        <div class="watch-case" id="watch-case">
           <div class="watch-screen" id="watch-screen">
             <span class="w-knock-ripple" id="w-knock-ripple" aria-hidden="true"></span>
             <div class="watch-top" id="w-top-bar">
               <span id="w-conn-status" class="w-conn" data-testid="watch-conn-status"><i class="w-dot"></i><span id="w-conn-pill">已连手机</span></span>
-              <span style="display:inline-flex;align-items:center;gap:7px;flex:none">
-                <span id="w-batt-pill" data-testid="watch-batt-pill" class="lv-hi"><span class="batt" aria-hidden="true"><svg width="19" height="10" viewBox="0 0 23 11"><rect x="0.75" y="0.75" width="18.5" height="9.5" rx="2.75" fill="none" stroke="currentColor" stroke-width="1.5"/><rect class="batt-fill" x="3" y="3" width="12.3" height="5" rx="1.25" fill="currentColor"/></svg></span><span id="w-batt-txt">电量高</span></span>
-                <span id="w-top-clock" class="w-sysclock">14:38</span>
-              </span>
+              <span id="w-batt-pill" data-testid="watch-batt-pill" class="w-batt-pill lv-hi"><span id="w-batt-txt">电量高</span></span>
+              <span id="w-top-clock" class="w-sysclock" title="系统状态栏时间">14:38</span>
             </div>
 
             <!-- 表盘 4 家族复杂功能 · watchOS 11 Modular 高质感表盘 -->
@@ -1388,6 +1432,7 @@ button:disabled{opacity:.38;cursor:not-allowed}
                 <button type="button" class="w-qback" data-testid="watch-queue-back" onclick="closeWatchQueue()">‹ 返回</button>
                 <span class="w-qtitle">本地队列</span>
               </div>
+              <div class="w-q-version" data-testid="watch-queue-version">手表版本 1.0.0+2026112008</div>
               <button type="button" class="w-qflush" id="w-flush-btn" data-testid="watch-flush-btn" onclick="flushWatchQueue()">立即同步到手机</button>
               <div class="w-qlist" id="w-qlist">
                 <div class="w-qempty">暂无缓存音频片段</div>
@@ -2186,7 +2231,7 @@ function renderToolbar() {
   var cap = document.getElementById("phone-ver-caption");
   if (cap) {
     cap.textContent = S.phoneVersion === "target"
-      ? "iPhone「录音卡」真源设计稿（目标版·12）"
+      ? "iPhone「录音卡」真源设计稿（目标版·11）"
       : "iPhone「录音卡」真源设计稿（当前版）";
   }
   var rb = document.getElementById("tb-reach-btn");
@@ -2291,7 +2336,7 @@ function renderWatchClock() {
   }
   var lapProg = document.getElementById("w-lap-progress");
   if (lapProg) {
-    lapProg.style.width = S.watchRec ? ((lap / 60) * 100).toFixed(1) + "%" : "0%";
+    lapProg.style.width = S.watchRec ? ((lap / 60) * 72).toFixed(1) + "%" : "0%";
   }
 
   var circRing = document.getElementById("comp-circ-ring");
@@ -2332,7 +2377,7 @@ function renderWatchUI() {
   document.getElementById("w-app").hidden = isFace || isQueue;
   document.getElementById("w-queue-view").hidden = isFace || !isQueue;
 
-  // 顶栏：左 = 连接状态（不展示 App 名）；右 = 电量 + 系统时间（watchOS 10+ 应用不可隐藏系统时钟）
+  // 顶栏：左 = 连接状态与电量；右 = 系统时间（watchOS 10+ 应用不可隐藏系统时钟）
   var connEl = document.getElementById("w-conn-status");
   var pill = document.getElementById("w-conn-pill");
   if (connEl) connEl.className = "w-conn" + (!S.reachable ? " off" : "");

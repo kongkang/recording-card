@@ -1,7 +1,7 @@
 /// OS1 后台 Worker Isolate 极简 Pi Agent Harness。
 ///
 /// 设计哲学（借鉴 pi_agent_rust / ZeroClaw）：
-/// - 检索索引（中文 bigram + BM25）、SKILL.md 渐进加载、联网抓取解析、HTTP MCP、
+/// - 检索索引（中文 bigram + 实义单字 + IDF）、SKILL.md 渐进加载、联网抓取解析、HTTP MCP、
 ///   上下文压缩与 session.jsonl 落盘全部运行在独立后台 Isolate，UI 主线程零阻塞；
 /// - 模型请求、健康 SQLite 查询、配置变更通过端口桥回主 Isolate 复用现有 `ModelGateway`
 ///   （保留 OAuth Keychain 与 401 自动刷新）、`HealthSignalStore` 与 `AgentConfigStore`；
@@ -54,12 +54,14 @@ class AgentHarnessWorker {
     AgentConfigPatchFn? patchConfig,
     WebSearchClient? webSearchOverride,
     AgentMcpClient? mcpOverride,
+    DateTime Function()? clock,
     bool inProcess = false,
   }) : _complete = complete,
        _queryHealth = queryHealth,
        _patchConfig = patchConfig,
        _webSearchOverride = webSearchOverride,
        _mcpOverride = mcpOverride,
+       _clock = clock,
        _inProcess = inProcess;
 
   final AgentCompleteFn _complete;
@@ -67,6 +69,7 @@ class AgentHarnessWorker {
   final AgentConfigPatchFn? _patchConfig;
   final WebSearchClient? _webSearchOverride;
   final AgentMcpClient? _mcpOverride;
+  final DateTime Function()? _clock;
   final bool _inProcess;
 
   Isolate? _isolate;
@@ -96,6 +99,7 @@ class AgentHarnessWorker {
         patchConfig: _patchConfig,
         webSearch: _webSearchOverride,
         mcpClient: _mcpOverride,
+        clock: _clock,
       );
       return;
     }
@@ -272,15 +276,19 @@ class AgentHarnessWorker {
     required List<AgentChatMessage> history,
     required AgentConfigSnapshot config,
     bool viaVoice = false,
+    int? nowMs,
     void Function(String reaction)? onReaction,
   }) async {
     await _ensureStarted();
+    final effectiveNowMs =
+        nowMs ?? (_clock ?? DateTime.now)().millisecondsSinceEpoch;
     if (_useInProcess) {
       return _inProcessFallback!.runTurn(
         userText: userText,
         history: history,
         config: config,
         viaVoice: viaVoice,
+        nowMs: effectiveNowMs,
         onReaction: onReaction,
       );
     }
@@ -289,6 +297,7 @@ class AgentHarnessWorker {
       {
         'text': userText,
         'viaVoice': viaVoice,
+        'nowMs': effectiveNowMs,
         'history': [for (final m in history) m.toJson()],
         'config': config.toJson(),
       },
@@ -329,6 +338,10 @@ class AgentHarnessWorker {
     _inProcessFallback = null;
     await _resetIsolate();
   }
+
+  /// 对语音播报文本做零 Markdown 净化，确保系统 TTS 朗读丝滑自然。
+  static String cleanVoiceReplyText(String raw) =>
+      _WorkerEngine._sanitizeReply(raw, viaVoice: true);
 }
 
 void _workerIsolateEntry(SendPort mainPort) {
@@ -427,6 +440,7 @@ void _workerIsolateEntry(SendPort mainPort) {
           final res = await engine.runTurn(
             userText: '${payload['text'] ?? ''}',
             viaVoice: payload['viaVoice'] == true,
+            nowMs: (payload['nowMs'] as num?)?.toInt(),
             history: [
               for (final m in rawHist)
                 if (m is Map)
@@ -479,21 +493,25 @@ class _WorkerEngine {
     AgentConfigPatchFn? patchConfig,
     WebSearchClient? webSearch,
     AgentMcpClient? mcpClient,
+    DateTime Function()? clock,
   }) : _complete = complete,
        _queryHealth = queryHealth,
        _patchConfig = patchConfig,
        _webSearch = webSearch ?? WebSearchClient(),
-       _mcpClient = mcpClient ?? AgentMcpClient();
+       _mcpClient = mcpClient ?? AgentMcpClient(),
+       _clock = clock ?? DateTime.now;
 
   final AgentCompleteFn _complete;
   final AgentHealthQueryFn? _queryHealth;
   final AgentConfigPatchFn? _patchConfig;
   final WebSearchClient _webSearch;
   final AgentMcpClient _mcpClient;
+  final DateTime Function() _clock;
   final RecordSearchIndex _index = RecordSearchIndex();
 
   static const int _maxSteps = 5;
   static const int _maxContextChars = 14000;
+  static const int _detailPageChars = 4000;
 
   void syncCorpus(List<AgentDocument> docs) {
     _index.replaceCorpus(docs);
@@ -547,6 +565,7 @@ class _WorkerEngine {
     required List<AgentChatMessage> history,
     required AgentConfigSnapshot config,
     bool viaVoice = false,
+    int? nowMs,
     void Function(String reaction)? onReaction,
   }) async {
     final cleanUser = userText.trim();
@@ -557,14 +576,17 @@ class _WorkerEngine {
     final skillStore = AgentSkillStore(config.agentDirPath);
     await skillStore.ensureRoot();
 
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final turnNow = nowMs != null
+        ? DateTime.fromMillisecondsSinceEpoch(nowMs)
+        : _clock();
+    final tsMs = turnNow.millisecondsSinceEpoch;
     await _appendSession(
       config.agentDirPath,
       AgentChatMessage(
-        id: 'u-$nowMs',
+        id: 'u-$tsMs',
         role: 'user',
         text: cleanUser,
-        createdAtMs: nowMs,
+        createdAtMs: tsMs,
         viaVoice: viaVoice,
       ),
     );
@@ -575,6 +597,8 @@ class _WorkerEngine {
       config: config,
       skills: skills,
       mcpTools: mcpTools,
+      now: turnNow,
+      viaVoice: viaVoice,
     );
 
     final messages = <ChatMessage>[
@@ -603,6 +627,7 @@ class _WorkerEngine {
         if (parsed.toolCalls.isEmpty) {
           final finalReply = _sanitizeReply(
             parsed.reply.isNotEmpty ? parsed.reply : raw,
+            viaVoice: viaVoice,
           );
           if (finalReply.isEmpty) {
             return AgentTurnResult(
@@ -632,6 +657,7 @@ class _WorkerEngine {
             config: config,
             skillStore: skillStore,
             mcpTools: mcpTools,
+            now: turnNow,
           );
           results.add({'tool': call.name, 'output': output});
         }
@@ -659,6 +685,7 @@ class _WorkerEngine {
       final parsed = parseModelStep(raw);
       final finalReply = _sanitizeReply(
         parsed.reply.isNotEmpty ? parsed.reply : raw,
+        viaVoice: viaVoice,
       );
       await _appendSession(
         config.agentDirPath,
@@ -706,10 +733,13 @@ class _WorkerEngine {
     required AgentConfigSnapshot config,
     required List<AgentSkillSummary> skills,
     required List<AgentMcpToolSpec> mcpTools,
+    required DateTime now,
+    required bool viaVoice,
   }) {
-    final now = DateTime.now();
+    const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    final wd = weekdays[(now.weekday - 1).clamp(0, 6)];
     final nowText =
-        '${now.year}-${_two(now.month)}-${_two(now.day)} '
+        '${now.year}-${_two(now.month)}-${_two(now.day)} $wd '
         '${_two(now.hour)}:${_two(now.minute)}';
     final buf = StringBuffer()
       ..writeln(config.agentPrompt)
@@ -735,10 +765,10 @@ class _WorkerEngine {
     buf.writeln('\n你可以使用以下工具（未启用的能力不要编造结果）：');
     if (config.recordSearchEnabled) {
       buf.writeln(
-        '- search_records(query?, speaker?, dayOffset?, kind?, limit?)：检索历史录音转写与总结卡（kind 可选 record|summary，dayOffset 0=今天 1=昨天）。',
+        '- search_records(query?, speaker?, dayOffset?, minDayOffset?, maxDayOffset?, timeOfDay?, kind?, limit?)：检索历史录音转写与总结卡（kind 可选 record|summary；dayOffset 0=今天 1=昨天 2=前天，也可用 minDayOffset..maxDayOffset 查日期区间；timeOfDay 可选 morning|forenoon|noon|afternoon|evening）。',
       );
       buf.writeln(
-        '- get_record_detail(id)：查看指定录音或总结卡的完整对话正文与待办。',
+        '- get_record_detail(id, offsetChars?)：查看指定录音或总结卡的完整对话正文与待办（单次返回最多 $_detailPageChars 字；若 hasMore=true，可传 offsetChars=nextOffsetChars 继续向后分页读取全文）。',
       );
     }
     if (config.healthAccessEnabled) {
@@ -767,6 +797,14 @@ class _WorkerEngine {
       );
     }
 
+    if (viaVoice) {
+      buf.writeln('''
+语音播报输出约束（当前通过硬件语音按键/通话触发，回复将由系统 TTS 直接朗读）：
+- 用自然、口语化的简短中文直接给出答案（控制在 2～3 句短句内）；
+- 若依据历史录音或总结回答，自然点明发生时间与来源记录标题；
+- 严禁使用任何 Markdown 格式符号（零 *、零 #、零 -、零反引号与列表符号），全部用连贯短句表达。''');
+    }
+
     buf.writeln('''
 输出格式约定（严格遵守）：
 1. 需要调用工具时，仅输出 JSON 对象：
@@ -784,6 +822,7 @@ class _WorkerEngine {
     required AgentConfigSnapshot config,
     required AgentSkillStore skillStore,
     required List<AgentMcpToolSpec> mcpTools,
+    required DateTime now,
   }) async {
     try {
       switch (name) {
@@ -795,8 +834,12 @@ class _WorkerEngine {
             query: args['query'] as String?,
             speaker: args['speaker'] as String?,
             dayOffset: (args['dayOffset'] as num?)?.toInt(),
+            minDayOffset: (args['minDayOffset'] as num?)?.toInt(),
+            maxDayOffset: (args['maxDayOffset'] as num?)?.toInt(),
+            timeOfDay: args['timeOfDay'] as String?,
             kind: args['kind'] as String?,
             limit: ((args['limit'] as num?)?.toInt() ?? 6).clamp(1, 12),
+            now: now,
           );
           return jsonEncode({
             'ok': true,
@@ -824,18 +867,35 @@ class _WorkerEngine {
           if (doc == null) {
             return jsonEncode({'ok': false, 'reason': '未找到 id=$id 的记录'});
           }
-          final body = doc.body.length > 4000
-              ? '${doc.body.substring(0, 4000)}\n...(后略)'
-              : doc.body;
+          final totalChars = doc.body.length;
+          final rawOffset = (args['offsetChars'] as num?)?.toInt() ?? 0;
+          final start = RecordSearchIndex.safeAlignStart(
+            doc.body,
+            rawOffset.clamp(0, totalChars),
+          );
+          final end = RecordSearchIndex.safeAlignEnd(
+            doc.body,
+            (start + _detailPageChars).clamp(start, totalChars),
+          );
+          final hasMore = end < totalChars;
+          final slice = doc.body.substring(start, end);
+          final body = hasMore
+              ? '$slice\n...(后略，共 $totalChars 字，可传 offsetChars=$end 继续读取后续内容)'
+              : slice;
           return jsonEncode({
             'ok': true,
             'id': doc.id,
             'kind': doc.kind,
             'title': doc.title,
             'time': doc.timeLabel,
+            'dayOffset': doc.dayOffset,
             'speakers': doc.speakers,
             'summary': doc.summary,
             'todos': doc.todos,
+            'offsetChars': start,
+            'totalChars': totalChars,
+            'hasMore': hasMore,
+            if (hasMore) 'nextOffsetChars': end,
             'body': body,
           });
 
@@ -1069,11 +1129,45 @@ class _WorkerEngine {
     return null;
   }
 
-  static String _sanitizeReply(String raw) {
+  static String _sanitizeReply(String raw, {bool viaVoice = false}) {
     var s = raw.trim();
     s = s.replaceAll('思考过程', '思路');
     s = s.replaceAll('调用工具', '核对资料');
-    return s;
+    if (!viaVoice) return s;
+
+    // 语音模式下彻底去除 Markdown 符号（* / # / - / 链接 / 代码框），避免 TTS 生硬念出符号
+    s = s.replaceAllMapped(
+      RegExp(r'\[([^\]]+)\]\([^)]+\)'),
+      (m) => m.group(1) ?? '',
+    );
+    s = s.replaceAll(RegExp(r'(?<=\d)\s*-\s*(?=\d)'), '到');
+    final lines = <String>[];
+    for (final rawLine in s.split(RegExp(r'\r?\n'))) {
+      var line = rawLine.trim();
+      if (line.isEmpty) continue;
+      final wasHeading = line.startsWith('#');
+      line = line.replaceFirst(RegExp(r'^[#>\s]+'), '');
+      line = line.replaceFirst(RegExp(r'^[-*•·]+\s*'), '');
+      line = line.replaceAll(RegExp(r'[*#`~]'), '');
+      line = line.replaceAll('-', ' ');
+      line = line.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (line.isEmpty) continue;
+      if (wasHeading && !RegExp(r'[。！？!?：:；;，,]$').hasMatch(line)) {
+        line = '$line：';
+      }
+      lines.add(line);
+    }
+    if (lines.isEmpty) return '';
+    final out = StringBuffer();
+    for (var i = 0; i < lines.length; i++) {
+      final cur = lines[i];
+      out.write(cur);
+      if (i + 1 < lines.length &&
+          !RegExp(r'[。！？!?：:；;，,]$').hasMatch(cur)) {
+        out.write('，');
+      }
+    }
+    return out.toString().trim();
   }
 
   static String _two(int n) => n < 10 ? '0$n' : '$n';

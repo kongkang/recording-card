@@ -457,6 +457,15 @@ pub trait Central: Send + Sync + Clone {
     /// may contain peripherals that are no longer available.
     async fn peripherals(&self) -> Result<Vec<Self::Peripheral>>;
 
+    /// Returns any peripherals currently connected to the OS/system Bluetooth stack that expose
+    /// any of the given GATT service UUIDs (for recovering non-advertising connected peripherals).
+    async fn retrieve_connected_peripherals(
+        &self,
+        _services: &[Uuid],
+    ) -> Result<Vec<Self::Peripheral>> {
+        Ok(Vec::new())
+    }
+
     /// Returns a particular [`Peripheral`] by its address if it has been discovered.
     async fn peripheral(&self, id: &PeripheralId) -> Result<Self::Peripheral>;
 

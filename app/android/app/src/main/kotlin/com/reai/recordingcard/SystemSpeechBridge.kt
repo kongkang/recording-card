@@ -3,8 +3,10 @@ package com.reai.recordingcard
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.content.res.Resources
 import android.media.AudioFormat
 import android.os.Build
@@ -12,7 +14,9 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.speech.ModelDownloadListener
 import android.speech.RecognitionListener
+import android.speech.RecognitionService
 import android.speech.RecognitionSupport
 import android.speech.RecognitionSupportCallback
 import android.speech.RecognizerIntent
@@ -40,13 +44,17 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
- * Android 系统内置端侧语音识别桥接（channel: `com.reai.recordingcard/system_speech`）。
+ * Android 系统内置及兼容端侧语音识别桥接（channel: `com.reai.recordingcard/system_speech`）。
  *
- * 严格遵循本地隐私红线：
- * - 仅在 Android 13+（API 33+）且系统端侧识别服务可用、且底层包名非三星 Bixby/SMT
- *   （避免忽略 `EXTRA_AUDIO_SOURCE` 后静默回退打开物理麦克风）时启用系统内置模型；
- * - 全程使用 `SpeechRecognizer.createOnDeviceSpeechRecognizer`，音频仅注入本地剥离 WAV 头的 16k PCM 流；
- * - 国行小米 / OPPO / vivo / 荣耀 / 华为等未开放标准端侧识别服务时如实返回不支持与设备型号信息，由 UI 引导下载 SenseVoice。
+ * 按 Android 13–16 官方标准三层自适应优先级解析：
+ * 1. `native_on_device`: 系统默认提供可用端侧识别（API 33+ `isOnDeviceRecognitionAvailable == true`）且非 Bixby/SMT；
+ * 2. `compat_service`: 当默认引擎不可用或为三星 `bixby` / `com.google.android.as` 时，枚举已安装的非 Bixby
+ *    `RecognitionService`（优先 `com.google.android.tts` / `GoogleTTSRecognitionService`），在通过
+ *    `checkRecognitionSupport(EXTRA_PREFER_OFFLINE=true)` 纯端侧中文校验后直连 `createSpeechRecognizer(ctx, ComponentName)`；
+ * 3. `local_self_hosted`: 未匹配到免下载的纯端侧系统/兼容服务时，如实返回不支持与品牌说明，由上层优先展示本地离线 SenseVoice 模型。
+ *
+ * 全程严格遵守本地隐私红线：音频仅剥离 WAV 头后通过 `ParcelFileDescriptor` 注入 16kHz PCM 流，
+ * 不回退开启物理麦克风、不使用纯在线识别服务、不上传云端。
  */
 class SystemSpeechBridge(private val activity: Activity) {
     companion object {
@@ -55,18 +63,42 @@ class SystemSpeechBridge(private val activity: Activity) {
 
         private const val ERROR_LANGUAGE_NOT_SUPPORTED = 12
         private const val ERROR_LANGUAGE_UNAVAILABLE = 13
+
+        const val STRATEGY_NATIVE = "native_on_device"
+        const val STRATEGY_COMPAT = "compat_service"
+        const val STRATEGY_LOCAL_SELF_HOSTED = "local_self_hosted"
     }
 
-    private data class DeviceProfile(
+    private data class CompatServiceCandidate(
+        val component: ComponentName,
+        val packageName: String,
+        val label: String,
+        val isGoogleTts: Boolean,
+    )
+
+    private data class BaseDeviceProfile(
         val osMajorVersion: Int,
         val sdkInt: Int,
         val brandId: String,
         val brandLabel: String,
+        val romLabel: String,
         val deviceSummary: String,
-        val onDeviceServicePackage: String,
-        val isBixbyBlocked: Boolean,
+        val defaultServicePackage: String,
+        val isBixby: Boolean,
+        val onDeviceApiAvailable: Boolean,
+        val candidates: List<CompatServiceCandidate>,
+    )
+
+    private data class ResolvedProfile(
+        val base: BaseDeviceProfile,
+        val resolutionStrategy: String,
         val supportsModernSystemAsr: Boolean,
         val engineName: String,
+        val onDeviceServicePackage: String,
+        val compatComponent: ComponentName?,
+        val compatDescription: String,
+        val offlinePackInstalled: Boolean,
+        val canDownloadOfflinePack: Boolean,
         val unsupportedReason: String,
     )
 
@@ -81,7 +113,11 @@ class SystemSpeechBridge(private val activity: Activity) {
         val endSample: Int,
     )
 
-    private class SubWindowException(val code: String, override val message: String) : Exception(message)
+    private class SubWindowException(
+        val code: String,
+        override val message: String,
+        val speechErrorCode: Int = 0,
+    ) : Exception(message)
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -90,6 +126,7 @@ class SystemSpeechBridge(private val activity: Activity) {
     private var channel: MethodChannel? = null
     private var pendingPermResult: MethodChannel.Result? = null
     private var activeDownloadRecognizer: SpeechRecognizer? = null
+    private val lastResolvedProfile = AtomicReference<ResolvedProfile?>(null)
 
     fun register(messenger: BinaryMessenger) {
         val ch = MethodChannel(messenger, CHANNEL_NAME)
@@ -163,107 +200,329 @@ class SystemSpeechBridge(private val activity: Activity) {
     }
 
     private fun queryCapabilities(result: MethodChannel.Result) {
-        val profile = detectDeviceProfile()
-        if (!profile.supportsModernSystemAsr || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            result.success(
-                buildCapabilityMap(
-                    profile = profile,
-                    offlinePackInstalled = false,
-                    canDownloadOfflinePack = false,
-                ),
-            )
-            return
-        }
-        checkChineseSupportApi33(profile) { installed, canDownload ->
-            result.success(
-                buildCapabilityMap(
-                    profile = profile,
-                    offlinePackInstalled = installed,
-                    canDownloadOfflinePack = canDownload,
-                ),
-            )
+        resolveProfileAsync { resolved ->
+            lastResolvedProfile.set(resolved)
+            result.success(buildCapabilityMap(resolved))
         }
     }
 
-    private fun buildCapabilityMap(
-        profile: DeviceProfile,
-        offlinePackInstalled: Boolean,
-        canDownloadOfflinePack: Boolean,
-    ): Map<String, Any> = mapOf(
+    private fun resolveProfileAsync(onDone: (ResolvedProfile) -> Unit) {
+        val base = detectBaseProfile()
+        if (base.sdkInt < Build.VERSION_CODES.TIRAMISU || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            onDone(buildLocalSelfHostedProfile(base))
+            return
+        }
+
+        val preferCompatFirst =
+            base.brandId == "samsung" &&
+                (base.isBixby || base.defaultServicePackage.lowercase(Locale.ROOT).startsWith("com.google.android.as")) &&
+                base.candidates.any { it.isGoogleTts }
+
+        val canTryNative = base.onDeviceApiAvailable && !base.isBixby
+
+        if (preferCompatFirst) {
+            probeCompatCandidatesApi33(base, base.candidates.take(3), 0) { compatProfile ->
+                if (compatProfile != null) {
+                    onDone(compatProfile)
+                } else if (canTryNative) {
+                    probeNativeApi33(base, onFallbackCompat = { onDone(buildLocalSelfHostedProfile(base)) }, onDone = onDone)
+                } else {
+                    onDone(buildLocalSelfHostedProfile(base))
+                }
+            }
+            return
+        }
+
+        if (canTryNative) {
+            probeNativeApi33(
+                base = base,
+                onFallbackCompat = {
+                    val remaining = base.candidates
+                        .filter { !it.packageName.equals(base.defaultServicePackage, ignoreCase = true) }
+                        .take(3)
+                    probeCompatCandidatesApi33(base, remaining, 0) { compatProfile ->
+                        onDone(compatProfile ?: buildLocalSelfHostedProfile(base))
+                    }
+                },
+                onDone = onDone,
+            )
+            return
+        }
+
+        probeCompatCandidatesApi33(base, base.candidates.take(3), 0) { compatProfile ->
+            onDone(compatProfile ?: buildLocalSelfHostedProfile(base))
+        }
+    }
+
+    private fun buildCapabilityMap(profile: ResolvedProfile): Map<String, Any> = mapOf(
         "platform" to "android",
-        "osMajorVersion" to profile.osMajorVersion,
-        "sdkInt" to profile.sdkInt,
-        "brandId" to profile.brandId,
-        "deviceSummary" to profile.deviceSummary,
+        "osMajorVersion" to profile.base.osMajorVersion,
+        "sdkInt" to profile.base.sdkInt,
+        "brandId" to profile.base.brandId,
+        "deviceSummary" to profile.base.deviceSummary,
         "engineName" to profile.engineName,
         "onDeviceServicePackage" to profile.onDeviceServicePackage,
+        "resolutionStrategy" to profile.resolutionStrategy,
+        "compatServiceComponent" to (profile.compatComponent?.flattenToShortString() ?: ""),
+        "compatDescription" to profile.compatDescription,
+        "detectedServices" to profile.base.candidates.map { it.packageName },
         "supportsModernSystemAsr" to profile.supportsModernSystemAsr,
-        "offlinePackInstalled" to offlinePackInstalled,
-        "canDownloadOfflinePack" to canDownloadOfflinePack,
+        "offlinePackInstalled" to profile.offlinePackInstalled,
+        "canDownloadOfflinePack" to profile.canDownloadOfflinePack,
         "unsupportedReason" to profile.unsupportedReason,
         "authStatus" to authStatusText(),
     )
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-    private fun checkChineseSupportApi33(
-        profile: DeviceProfile,
-        onDone: (installed: Boolean, canDownload: Boolean) -> Unit,
+    private fun buildChineseSupportIntent(): Intent =
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun probeNativeApi33(
+        base: BaseDeviceProfile,
+        onFallbackCompat: () -> Unit,
+        onDone: (ResolvedProfile) -> Unit,
     ) {
         val finished = AtomicBoolean(false)
         var sr: SpeechRecognizer? = null
         val timeout = Runnable {
             if (finished.compareAndSet(false, true)) {
                 sr?.destroy()
-                onDone(true, false)
+                onDone(
+                    buildNativeProfile(
+                        base = base,
+                        installed = true,
+                        canDownload = false,
+                    ),
+                )
             }
         }
-        try {
-            sr = SpeechRecognizer.createOnDeviceSpeechRecognizer(activity)
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-            }
-            mainHandler.postDelayed(timeout, 1000L)
-            sr.checkRecognitionSupport(
-                intent,
-                worker,
-                object : RecognitionSupportCallback {
-                    override fun onSupportResult(support: RecognitionSupport) {
-                        val installedTags = support.installedOnDeviceLanguages
-                        val supportedTags = support.supportedOnDeviceLanguages
-                        val pendingTags = support.pendingOnDeviceLanguages
-                        val hasZhInstalled = matchesChineseTag(installedTags)
-                        val hasZhDownloadable = matchesChineseTag(supportedTags) || matchesChineseTag(pendingTags)
-                        val finalInstalled = hasZhInstalled || (!hasZhDownloadable && installedTags.isEmpty())
-                        mainHandler.post {
-                            mainHandler.removeCallbacks(timeout)
-                            if (finished.compareAndSet(false, true)) {
-                                sr?.destroy()
-                                onDone(finalInstalled, !hasZhInstalled && hasZhDownloadable)
+        mainHandler.post {
+            try {
+                sr = SpeechRecognizer.createOnDeviceSpeechRecognizer(activity)
+                mainHandler.postDelayed(timeout, 1000L)
+                sr?.checkRecognitionSupport(
+                    buildChineseSupportIntent(),
+                    worker,
+                    object : RecognitionSupportCallback {
+                        override fun onSupportResult(support: RecognitionSupport) {
+                            val installedTags = support.installedOnDeviceLanguages
+                            val supportedTags = support.supportedOnDeviceLanguages
+                            val pendingTags = support.pendingOnDeviceLanguages
+                            val hasZhInstalled = matchesChineseTag(installedTags)
+                            val hasZhDownloadable =
+                                matchesChineseTag(supportedTags) || matchesChineseTag(pendingTags)
+                            val emptyOnDevice = installedTags.isEmpty() &&
+                                supportedTags.isEmpty() &&
+                                pendingTags.isEmpty()
+                            mainHandler.post {
+                                mainHandler.removeCallbacks(timeout)
+                                if (finished.compareAndSet(false, true)) {
+                                    sr?.destroy()
+                                    if (!hasZhInstalled && !hasZhDownloadable && base.candidates.isNotEmpty() && !emptyOnDevice) {
+                                        onFallbackCompat()
+                                    } else {
+                                        val finalInstalled = hasZhInstalled || (!hasZhDownloadable && emptyOnDevice)
+                                        onDone(
+                                            buildNativeProfile(
+                                                base = base,
+                                                installed = finalInstalled,
+                                                canDownload = !hasZhInstalled && hasZhDownloadable,
+                                            ),
+                                        )
+                                    }
+                                }
                             }
                         }
-                    }
 
-                    override fun onError(error: Int) {
-                        mainHandler.post {
-                            mainHandler.removeCallbacks(timeout)
-                            if (finished.compareAndSet(false, true)) {
-                                sr?.destroy()
-                                // 部分厂商实现不支持 checkRecognitionSupport，但端侧识别仍可直接调用
-                                onDone(true, false)
+                        override fun onError(error: Int) {
+                            mainHandler.post {
+                                mainHandler.removeCallbacks(timeout)
+                                if (finished.compareAndSet(false, true)) {
+                                    sr?.destroy()
+                                    // 部分原生端侧实现不开放 checkRecognitionSupport，仍允许直接转写；若报错则转兼容检查或按默认可用
+                                    onDone(
+                                        buildNativeProfile(
+                                            base = base,
+                                            installed = true,
+                                            canDownload = false,
+                                        ),
+                                    )
+                                }
                             }
                         }
-                    }
-                },
-            )
-        } catch (_: Throwable) {
-            mainHandler.removeCallbacks(timeout)
-            if (finished.compareAndSet(false, true)) {
-                sr?.destroy()
-                onDone(true, false)
+                    },
+                )
+            } catch (_: Throwable) {
+                mainHandler.removeCallbacks(timeout)
+                if (finished.compareAndSet(false, true)) {
+                    sr?.destroy()
+                    onFallbackCompat()
+                }
             }
         }
     }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun probeCompatCandidatesApi33(
+        base: BaseDeviceProfile,
+        candidates: List<CompatServiceCandidate>,
+        index: Int,
+        onDone: (ResolvedProfile?) -> Unit,
+    ) {
+        if (index >= candidates.size) {
+            onDone(null)
+            return
+        }
+        val cand = candidates[index]
+        val finished = AtomicBoolean(false)
+        var sr: SpeechRecognizer? = null
+        val timeout = Runnable {
+            if (finished.compareAndSet(false, true)) {
+                sr?.destroy()
+                probeCompatCandidatesApi33(base, candidates, index + 1, onDone)
+            }
+        }
+        mainHandler.post {
+            try {
+                sr = SpeechRecognizer.createSpeechRecognizer(activity, cand.component)
+                mainHandler.postDelayed(timeout, 1000L)
+                sr?.checkRecognitionSupport(
+                    buildChineseSupportIntent(),
+                    worker,
+                    object : RecognitionSupportCallback {
+                        override fun onSupportResult(support: RecognitionSupport) {
+                            // 严格端侧隐私门控：必须明确支持端侧离线中文（禁止仅列 onlineLanguages 的服务通过）
+                            val hasZhInstalled = matchesChineseTag(support.installedOnDeviceLanguages)
+                            val hasZhDownloadable =
+                                matchesChineseTag(support.supportedOnDeviceLanguages) ||
+                                    matchesChineseTag(support.pendingOnDeviceLanguages)
+                            mainHandler.post {
+                                mainHandler.removeCallbacks(timeout)
+                                if (finished.compareAndSet(false, true)) {
+                                    sr?.destroy()
+                                    if (hasZhInstalled || hasZhDownloadable) {
+                                        onDone(
+                                            buildCompatProfile(
+                                                base = base,
+                                                candidate = cand,
+                                                installed = hasZhInstalled,
+                                                canDownload = !hasZhInstalled && hasZhDownloadable,
+                                            ),
+                                        )
+                                    } else {
+                                        probeCompatCandidatesApi33(base, candidates, index + 1, onDone)
+                                    }
+                                }
+                            }
+                        }
+
+                        override fun onError(error: Int) {
+                            mainHandler.post {
+                                mainHandler.removeCallbacks(timeout)
+                                if (finished.compareAndSet(false, true)) {
+                                    sr?.destroy()
+                                    probeCompatCandidatesApi33(base, candidates, index + 1, onDone)
+                                }
+                            }
+                        }
+                    },
+                )
+            } catch (_: Throwable) {
+                mainHandler.removeCallbacks(timeout)
+                if (finished.compareAndSet(false, true)) {
+                    sr?.destroy()
+                    probeCompatCandidatesApi33(base, candidates, index + 1, onDone)
+                }
+            }
+        }
+    }
+
+    private fun buildNativeProfile(
+        base: BaseDeviceProfile,
+        installed: Boolean,
+        canDownload: Boolean,
+    ): ResolvedProfile {
+        val lowPkg = base.defaultServicePackage.lowercase(Locale.ROOT)
+        val engineName = when {
+            base.brandId == "pixel" && lowPkg.startsWith("com.google.android.as") ->
+                "Pixel 原生端侧语音模型（System Intelligence）"
+            lowPkg.startsWith("com.google.android.as") ->
+                "${base.brandLabel} 端侧语音模型（System Intelligence）"
+            lowPkg.startsWith("com.google.android.tts") ->
+                "${base.brandLabel} 系统内置语音模型（Google 端侧离线）"
+            else ->
+                "${base.brandLabel} 系统内置端侧语音模型"
+        }
+        val desc =
+            "已匹配当前设备原生端侧语音识别服务（Android ${base.osMajorVersion} · createOnDeviceSpeechRecognizer），通过本地文件流注入 16kHz PCM 转写，免下载 228 MB 模型且全程不打开麦克风、不上云。"
+        return ResolvedProfile(
+            base = base,
+            resolutionStrategy = STRATEGY_NATIVE,
+            supportsModernSystemAsr = true,
+            engineName = engineName,
+            onDeviceServicePackage = base.defaultServicePackage,
+            compatComponent = null,
+            compatDescription = desc,
+            offlinePackInstalled = installed,
+            canDownloadOfflinePack = canDownload,
+            unsupportedReason = "",
+        )
+    }
+
+    private fun buildCompatProfile(
+        base: BaseDeviceProfile,
+        candidate: CompatServiceCandidate,
+        installed: Boolean,
+        canDownload: Boolean,
+    ): ResolvedProfile {
+        val engineName = if (candidate.isGoogleTts) {
+            "${base.brandLabel} 兼容方案（直连 Google 端侧语音）"
+        } else {
+            "${base.brandLabel} 兼容方案（直连 ${candidate.label} 端侧离线）"
+        }
+        val prefix = if (base.isBixby) {
+            "已自动绕开三星 Bixby 语音组件，直连本机已安装的"
+        } else {
+            "已匹配并直连本机可用的"
+        }
+        val serviceLabel = if (candidate.isGoogleTts) {
+            "Google 端侧离线语音服务（GoogleTTSRecognitionService）"
+        } else {
+            "${candidate.label} 端侧离线服务（${candidate.packageName}）"
+        }
+        val desc =
+            "$prefix「$serviceLabel」，直接通过本地 PCM 文件流转写，无需下载 228 MB 增强模型，全程不开麦克风、不上传云端。"
+        return ResolvedProfile(
+            base = base,
+            resolutionStrategy = STRATEGY_COMPAT,
+            supportsModernSystemAsr = true,
+            engineName = engineName,
+            onDeviceServicePackage = candidate.packageName,
+            compatComponent = candidate.component,
+            compatDescription = desc,
+            offlinePackInstalled = installed,
+            canDownloadOfflinePack = canDownload,
+            unsupportedReason = "",
+        )
+    }
+
+    private fun buildLocalSelfHostedProfile(base: BaseDeviceProfile): ResolvedProfile = ResolvedProfile(
+        base = base,
+        resolutionStrategy = STRATEGY_LOCAL_SELF_HOSTED,
+        supportsModernSystemAsr = false,
+        engineName = "",
+        onDeviceServicePackage = base.defaultServicePackage,
+        compatComponent = null,
+        compatDescription = "",
+        offlinePackInstalled = false,
+        canDownloadOfflinePack = false,
+        unsupportedReason = buildUnsupportedReason(base),
+    )
 
     private fun matchesChineseTag(tags: List<String>): Boolean =
         tags.any { tag ->
@@ -272,35 +531,108 @@ class SystemSpeechBridge(private val activity: Activity) {
         }
 
     private fun handleDownloadSystemModel(language: String, result: MethodChannel.Result) {
-        val profile = detectDeviceProfile()
-        if (!profile.supportsModernSystemAsr || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             result.success(false)
             return
         }
-        triggerDownloadApi33(resolveLocaleTag(language))
-        result.success(true)
+        val cached = lastResolvedProfile.get()
+        if (cached != null) {
+            triggerDownloadForProfile(cached, resolveLocaleTag(language), result)
+            return
+        }
+        resolveProfileAsync { resolved ->
+            lastResolvedProfile.set(resolved)
+            triggerDownloadForProfile(resolved, resolveLocaleTag(language), result)
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-    private fun triggerDownloadApi33(localeTag: String) {
+    private fun triggerDownloadForProfile(
+        profile: ResolvedProfile,
+        localeTag: String,
+        result: MethodChannel.Result,
+    ) {
+        if (!profile.supportsModernSystemAsr) {
+            result.success(false)
+            return
+        }
         mainHandler.post {
             try {
                 activeDownloadRecognizer?.destroy()
-                val sr = SpeechRecognizer.createOnDeviceSpeechRecognizer(activity)
+                val sr = if (profile.compatComponent != null) {
+                    SpeechRecognizer.createSpeechRecognizer(activity, profile.compatComponent)
+                } else {
+                    SpeechRecognizer.createOnDeviceSpeechRecognizer(activity)
+                }
                 activeDownloadRecognizer = sr
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, localeTag)
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 }
-                sr.triggerModelDownload(intent)
-                mainHandler.postDelayed({
-                    if (activeDownloadRecognizer === sr) {
-                        sr.destroy()
-                        activeDownloadRecognizer = null
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    val settled = AtomicBoolean(false)
+                    val timeout = Runnable {
+                        if (settled.compareAndSet(false, true)) {
+                            if (activeDownloadRecognizer === sr) {
+                                sr.destroy()
+                                activeDownloadRecognizer = null
+                            }
+                            result.success(false)
+                        }
                     }
-                }, 4000L)
+                    mainHandler.postDelayed(timeout, 12000L)
+                    sr.triggerModelDownload(
+                        intent,
+                        worker,
+                        object : ModelDownloadListener {
+                            override fun onProgress(completedPercent: Int) {}
+
+                            override fun onSuccess() {
+                                finishDownloadCallback(sr, timeout, settled, true, result)
+                            }
+
+                            override fun onScheduled() {
+                                finishDownloadCallback(sr, timeout, settled, true, result)
+                            }
+
+                            override fun onError(error: Int) {
+                                finishDownloadCallback(sr, timeout, settled, false, result)
+                            }
+                        },
+                    )
+                } else {
+                    sr.triggerModelDownload(intent)
+                    mainHandler.postDelayed({
+                        if (activeDownloadRecognizer === sr) {
+                            sr.destroy()
+                            activeDownloadRecognizer = null
+                        }
+                    }, 4000L)
+                    result.success(true)
+                }
             } catch (_: Throwable) {
-                // 静默忽略拉起系统语言包下载时的非关键异常
+                result.success(false)
+            }
+        }
+    }
+
+    private fun finishDownloadCallback(
+        sr: SpeechRecognizer,
+        timeout: Runnable,
+        settled: AtomicBoolean,
+        ok: Boolean,
+        result: MethodChannel.Result,
+    ) {
+        mainHandler.post {
+            mainHandler.removeCallbacks(timeout)
+            if (settled.compareAndSet(false, true)) {
+                if (activeDownloadRecognizer === sr) {
+                    sr.destroy()
+                    activeDownloadRecognizer = null
+                }
+                result.success(ok)
             }
         }
     }
@@ -319,10 +651,26 @@ class SystemSpeechBridge(private val activity: Activity) {
             result.error("FILE_NOT_FOUND", "音频文件不存在：$wavPath", null)
             return
         }
-        val profile = detectDeviceProfile()
+        val cached = lastResolvedProfile.get()
+        if (cached != null) {
+            dispatchTranscribeWithProfile(cached, wavFile, language, result)
+            return
+        }
+        resolveProfileAsync { resolved ->
+            lastResolvedProfile.set(resolved)
+            dispatchTranscribeWithProfile(resolved, wavFile, language, result)
+        }
+    }
+
+    private fun dispatchTranscribeWithProfile(
+        profile: ResolvedProfile,
+        wavFile: File,
+        language: String,
+        result: MethodChannel.Result,
+    ) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || !profile.supportsModernSystemAsr) {
             val reason = profile.unsupportedReason.ifEmpty {
-                "当前 Android 设备不支持系统内置端侧语音转写，请下载 SenseVoice 增强模型"
+                "当前 Android 设备未匹配免下载的端侧兼容语音模型，请下载本机首选的 SenseVoice 增强模型"
             }
             result.error("SYSTEM_ASR_UNSUPPORTED", reason, null)
             return
@@ -339,7 +687,7 @@ class SystemSpeechBridge(private val activity: Activity) {
         val localeTag = resolveLocaleTag(language)
         worker.execute {
             try {
-                val payload = transcribeWavInBackgroundApi33(wavFile, localeTag)
+                val payload = transcribeWavInBackgroundApi33(profile, wavFile, localeTag)
                 mainHandler.post { result.success(payload) }
             } catch (e: SubWindowException) {
                 mainHandler.post { result.error(e.code, e.message, null) }
@@ -353,6 +701,7 @@ class SystemSpeechBridge(private val activity: Activity) {
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private fun transcribeWavInBackgroundApi33(
+        profile: ResolvedProfile,
         wavFile: File,
         localeTag: String,
     ): Map<String, Any> {
@@ -366,6 +715,7 @@ class SystemSpeechBridge(private val activity: Activity) {
             )
         }
 
+        val googleTtsFallback = profile.base.candidates.firstOrNull { it.isGoogleTts }?.component
         val windows = buildEnergyAlignedWindows(wav.monoSamples, wav.sampleRate)
         val combinedText = StringBuilder()
         val allTokens = ArrayList<String>()
@@ -375,12 +725,14 @@ class SystemSpeechBridge(private val activity: Activity) {
             if (!hasVoiceEnergy(wav.monoSamples, win.startSample, win.endSample)) {
                 continue
             }
-            val subText = transcribeWindowApi33(
+            val subText = transcribeWindowWithOptionalFallbackApi33(
                 samples = wav.monoSamples,
                 start = win.startSample,
                 end = win.endSample,
                 sampleRate = wav.sampleRate,
                 localeTag = localeTag,
+                primaryComponent = profile.compatComponent,
+                fallbackComponent = if (profile.compatComponent == null) googleTtsFallback else null,
             ).trim()
             if (subText.isEmpty()) continue
 
@@ -405,12 +757,38 @@ class SystemSpeechBridge(private val activity: Activity) {
     }
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun transcribeWindowWithOptionalFallbackApi33(
+        samples: ShortArray,
+        start: Int,
+        end: Int,
+        sampleRate: Int,
+        localeTag: String,
+        primaryComponent: ComponentName?,
+        fallbackComponent: ComponentName?,
+    ): String {
+        return try {
+            transcribeWindowApi33(samples, start, end, sampleRate, localeTag, primaryComponent)
+        } catch (e: SubWindowException) {
+            val shouldFallback =
+                primaryComponent == null &&
+                    fallbackComponent != null &&
+                    (e.code == "SYSTEM_ASR_TIMEOUT" ||
+                        e.speechErrorCode == SpeechRecognizer.ERROR_CLIENT ||
+                        e.speechErrorCode == SpeechRecognizer.ERROR_AUDIO ||
+                        e.speechErrorCode == SpeechRecognizer.ERROR_SERVER)
+            if (!shouldFallback) throw e
+            transcribeWindowApi33(samples, start, end, sampleRate, localeTag, fallbackComponent)
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private fun transcribeWindowApi33(
         samples: ShortArray,
         start: Int,
         end: Int,
         sampleRate: Int,
         localeTag: String,
+        targetComponent: ComponentName?,
     ): String {
         val pcmFile = File(activity.cacheDir, "rc_asr_win_${seqCounter.incrementAndGet()}.pcm")
         writeLittleEndianPcm16(pcmFile, samples, start, end)
@@ -420,6 +798,7 @@ class SystemSpeechBridge(private val activity: Activity) {
         val latch = CountDownLatch(1)
         val textRef = AtomicReference("")
         val partialRef = AtomicReference("")
+        val segmentTexts = java.util.Collections.synchronizedList(ArrayList<String>())
         val errorCodeRef = AtomicInteger(0)
 
         try {
@@ -427,7 +806,11 @@ class SystemSpeechBridge(private val activity: Activity) {
             val audioSourcePfd = pfd
             mainHandler.post {
                 try {
-                    val sr = SpeechRecognizer.createOnDeviceSpeechRecognizer(activity)
+                    val sr = if (targetComponent != null) {
+                        SpeechRecognizer.createSpeechRecognizer(activity, targetComponent)
+                    } else {
+                        SpeechRecognizer.createOnDeviceSpeechRecognizer(activity)
+                    }
                     srRef.set(sr)
                     sr.setRecognitionListener(object : RecognitionListener {
                         override fun onReadyForSpeech(params: Bundle?) {}
@@ -443,6 +826,18 @@ class SystemSpeechBridge(private val activity: Activity) {
                             if (candidate.isNotEmpty()) {
                                 partialRef.set(candidate)
                             }
+                        }
+
+                        override fun onSegmentResults(segmentResults: Bundle) {
+                            val items = segmentResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            val piece = items?.firstOrNull()?.trim().orEmpty()
+                            if (piece.isNotEmpty()) {
+                                segmentTexts.add(piece)
+                            }
+                        }
+
+                        override fun onEndOfSegmentedSession() {
+                            latch.countDown()
                         }
 
                         override fun onResults(results: Bundle?) {
@@ -461,6 +856,8 @@ class SystemSpeechBridge(private val activity: Activity) {
                     val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                         putExtra(RecognizerIntent.EXTRA_LANGUAGE, localeTag)
+                        putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, activity.packageName)
+                        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                         putExtra(
                             RecognizerIntent.EXTRA_ENABLE_FORMATTING,
@@ -483,21 +880,22 @@ class SystemSpeechBridge(private val activity: Activity) {
                 throw SubWindowException("SYSTEM_ASR_TIMEOUT", "系统端侧语音识别超时")
             }
 
+            val segmentedJoined = joinSegmentPieces(segmentTexts)
             val err = errorCodeRef.get()
             if (err == 0) {
-                return textRef.get()
+                return textRef.get().ifEmpty { segmentedJoined }.ifEmpty { partialRef.get() }
             }
             if (err == SpeechRecognizer.ERROR_NO_MATCH || err == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                return partialRef.get()
+                return segmentedJoined.ifEmpty { partialRef.get() }
             }
             if (err == ERROR_LANGUAGE_NOT_SUPPORTED || err == ERROR_LANGUAGE_UNAVAILABLE) {
-                triggerDownloadApi33(localeTag)
                 throw SubWindowException(
                     "MODEL_NOT_INSTALLED",
-                    "系统离线语音包未就绪，已拉起系统下载；稍后重试或下载 SenseVoice 增强模型",
+                    "系统离线语音包未就绪，请先下载系统中文离线语言包或切换 SenseVoice 增强模型",
+                    err,
                 )
             }
-            throw SubWindowException("SYSTEM_ASR_FAILED", "系统语音识别失败（错误码 $err）")
+            throw SubWindowException("SYSTEM_ASR_FAILED", "系统语音识别失败（错误码 $err）", err)
         } finally {
             mainHandler.post {
                 srRef.getAndSet(null)?.destroy()
@@ -510,7 +908,22 @@ class SystemSpeechBridge(private val activity: Activity) {
         }
     }
 
-    private fun detectDeviceProfile(): DeviceProfile {
+    private fun joinSegmentPieces(pieces: List<String>): String {
+        val sb = StringBuilder()
+        synchronized(pieces) {
+            for (raw in pieces) {
+                val p = raw.trim()
+                if (p.isEmpty()) continue
+                if (sb.isNotEmpty() && isAsciiWordChar(sb[sb.length - 1]) && isAsciiWordChar(p[0])) {
+                    sb.append(' ')
+                }
+                sb.append(p)
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun detectBaseProfile(): BaseDeviceProfile {
         val sdkInt = Build.VERSION.SDK_INT
         val osMajor = parseMajorInt(Build.VERSION.RELEASE, sdkInt)
         val manufacturer = (Build.MANUFACTURER ?: "").trim()
@@ -608,76 +1021,91 @@ class SystemSpeechBridge(private val activity: Activity) {
             false
         }
 
-        val supportsModern =
-            sdkInt >= Build.VERSION_CODES.TIRAMISU &&
-                onDeviceApiAvailable &&
-                !isBixby
-
-        val engineName = if (supportsModern) {
-            when {
-                lowServicePkg.startsWith("com.google.android.as") ->
-                    "Android 系统端侧语音（System Intelligence）"
-                lowServicePkg.startsWith("com.google.android.tts") ->
-                    "Google 端侧离线语音引擎"
-                else ->
-                    "$brandLabel 系统内置语音引擎"
-            }
-        } else {
-            ""
-        }
-
-        val unsupportedReason = if (supportsModern) {
-            ""
-        } else {
-            buildUnsupportedReason(
-                sdkInt = sdkInt,
-                brandId = brandId,
-                brandLabel = brandLabel,
-                romLabel = romLabel,
-                isBixby = isBixby,
-            )
-        }
-
-        return DeviceProfile(
+        return BaseDeviceProfile(
             osMajorVersion = osMajor,
             sdkInt = sdkInt,
             brandId = brandId,
             brandLabel = brandLabel,
+            romLabel = romLabel,
             deviceSummary = deviceSummary,
-            onDeviceServicePackage = servicePkg,
-            isBixbyBlocked = isBixby,
-            supportsModernSystemAsr = supportsModern,
-            engineName = engineName,
-            unsupportedReason = unsupportedReason,
+            defaultServicePackage = servicePkg,
+            isBixby = isBixby,
+            onDeviceApiAvailable = onDeviceApiAvailable,
+            candidates = discoverCompatibleServices(),
         )
     }
 
-    private fun buildUnsupportedReason(
-        sdkInt: Int,
-        brandId: String,
-        brandLabel: String,
-        romLabel: String,
-        isBixby: Boolean,
-    ): String {
-        if (sdkInt < Build.VERSION_CODES.TIRAMISU) {
-            return "已识别本机为 $brandLabel（Android ${Build.VERSION.RELEASE}），系统版本低于 Android 13，不支持音频文件级端侧转写；请下载纯端侧 SenseVoice 增强模型。"
+    private fun discoverCompatibleServices(): List<CompatServiceCandidate> {
+        return try {
+            val pm = activity.packageManager
+            val queryIntent = Intent(RecognitionService.SERVICE_INTERFACE)
+            val infos: List<ResolveInfo> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentServices(queryIntent, PackageManager.ResolveInfoFlags.of(0L))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.queryIntentServices(queryIntent, 0)
+            }
+            val seen = HashSet<String>()
+            val out = ArrayList<CompatServiceCandidate>()
+            for (ri in infos) {
+                val si = ri.serviceInfo ?: continue
+                val pkg = si.packageName?.trim().orEmpty()
+                val cls = si.name?.trim().orEmpty()
+                if (pkg.isEmpty() || cls.isEmpty()) continue
+                val lowPkg = pkg.lowercase(Locale.ROOT)
+                if (lowPkg.contains("bixby") || lowPkg.startsWith("com.samsung.smt")) {
+                    continue
+                }
+                if (!seen.add(pkg)) continue
+                val label = try {
+                    si.loadLabel(pm).toString().trim().ifEmpty { pkg }
+                } catch (_: Throwable) {
+                    pkg
+                }
+                out.add(
+                    CompatServiceCandidate(
+                        component = ComponentName(pkg, cls),
+                        packageName = pkg,
+                        label = label,
+                        isGoogleTts = lowPkg == "com.google.android.tts",
+                    ),
+                )
+            }
+            out.sortWith(
+                compareBy<CompatServiceCandidate> {
+                    when {
+                        it.isGoogleTts -> 0
+                        it.packageName.lowercase(Locale.ROOT) == "com.google.android.as" -> 1
+                        else -> 2
+                    }
+                }.thenBy { it.packageName },
+            )
+            out
+        } catch (_: Throwable) {
+            emptyList()
         }
-        if (isBixby) {
-            return "已识别本机为 $brandLabel（Bixby 语音组件），三星 Bixby 端侧接口会忽略离线音频文件并误开手机麦克风；为防串音与隐私风险，请下载 SenseVoice 增强模型。"
+    }
+
+    private fun buildUnsupportedReason(base: BaseDeviceProfile): String {
+        if (base.sdkInt < Build.VERSION_CODES.TIRAMISU) {
+            return "已识别本机为 ${base.brandLabel}（Android ${Build.VERSION.RELEASE}），系统版本低于 Android 13，无法通过端侧文件流免麦转写；已优先为您切换外脑本地离线模型 SenseVoice。"
         }
-        return when (brandId) {
+        if (base.isBixby) {
+            return "已识别本机为 ${base.brandLabel}（默认绑定 Bixby 语音且未检测到可用的 Google 端侧兼容语音服务），Bixby 接口会忽略离线音频文件并误开手机麦克风；为保障隐私已优先展示本地离线 SenseVoice 模型。"
+        }
+        return when (base.brandId) {
             "xiaomi" ->
-                "已识别本机为 $brandLabel（$romLabel），当前未开放免签名端侧音频文件转写服务；音频不上传小爱云端，请下载 SenseVoice 增强模型。"
+                "已识别本机为 ${base.brandLabel}（${base.romLabel}），当前未匹配到免下载的端侧系统/兼容语音服务（国行小爱未开放标准端侧文件流）；已优先展示本地离线 SenseVoice 模型，音频不出本机。"
             "oppo" ->
-                "已识别本机为 $brandLabel（$romLabel），当前未开启 Google 端侧语音且 ColorOS AIUnit 需系统白名单；请下载 SenseVoice 增强模型。"
+                "已识别本机为 ${base.brandLabel}（${base.romLabel}），当前未匹配到可用的端侧系统/兼容语音服务（ColorOS AIUnit 需商业白名单且未开源文件流）；已优先展示本地离线 SenseVoice 模型。"
             "vivo" ->
-                "已识别本机为 $brandLabel（$romLabel），OriginOS 离线识别接口未向第三方开放标准文件流；请下载 SenseVoice 增强模型。"
+                "已识别本机为 ${base.brandLabel}（${base.romLabel}），当前未匹配到标准端侧文件流语音服务（OriginOS 未向第三方开放）；已优先展示本地离线 SenseVoice 模型。"
             "honor" ->
-                "已识别本机为 $brandLabel（$romLabel），当前设备未启用标准端侧识别服务，请下载 SenseVoice 增强模型。"
+                "已识别本机为 ${base.brandLabel}（${base.romLabel}），当前未检测到标准端侧兼容服务（Magic Live 离线工具需专属渠道授权与签名）；已优先展示本地离线 SenseVoice 模型。"
             "huawei" ->
-                "已识别本机为华为设备（$romLabel），无端侧免鉴权文件转写服务；严禁上传录音上云，请下载 SenseVoice 增强模型。"
+                "已识别本机为华为设备（${base.romLabel}），无标准免上云端侧系统语音服务（HMS AFT 仅支持云端传输）；为坚守隐私红线，已优先展示本地离线 SenseVoice 模型。"
             else ->
-                "已识别本机为 $brandLabel（$romLabel），当前系统未提供标准纯端侧音频文件转写服务；请下载 SenseVoice 增强模型。"
+                "已识别本机为 ${base.brandLabel}（${base.romLabel}），未检测到可用的免下载系统或兼容端侧语音服务；已优先展示本地离线 SenseVoice 模型。"
         }
     }
 
@@ -808,7 +1236,7 @@ class SystemSpeechBridge(private val activity: Activity) {
         val targetSamples = sampleRate * 12
         val searchStartDelta = sampleRate * 9
         val searchEndDelta = (sampleRate * 13.5).toInt()
-        val hop = max(1, sampleRate / 10) // 100ms 步长寻最低能量谷
+        val hop = max(1, sampleRate / 10)
 
         val out = ArrayList<SubWindow>()
         var cursor = 0
@@ -913,7 +1341,6 @@ class SystemSpeechBridge(private val activity: Activity) {
             val ts = winStartMs + (spanMs.toLong() * i / total).toInt()
             outTimestamps.add(ts)
         }
-        // 保证 timestamps 单调非减
         if (prevCount > 0 && outTimestamps.size > prevCount) {
             val prevTs = outTimestamps[prevCount - 1]
             for (k in prevCount until outTimestamps.size) {

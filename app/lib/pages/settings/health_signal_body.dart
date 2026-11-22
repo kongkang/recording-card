@@ -328,28 +328,10 @@ class HealthSamplingDevSection extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '默认都是 1 分钟。录音切片长度只保存配置，现有实时切片、合并和分段仍按代码里的 1 分钟窗口运行。健康采样间隔和相位会用于本机健康与位置采集，让取样落在窗口后半段，避开前半段转写。',
+                '切片默认静默落盘后按周期或查看时批量转写，健康采样间隔和相位会用于本机健康与位置采集，让取样落在窗口后半段。（录音切片长度可在上方「实时录音切片窗口」统一调整。）',
                 style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
               ),
               const SizedBox(height: 12),
-              _Meter(
-                title: '录音切片长度',
-                valueKey: const Key('dev-slice-seconds-value'),
-                valueLabel: AgentConfigStore.formatSampleWindow(
-                  config.recordingSliceSeconds,
-                ),
-                primary: primary,
-                presets: const [60, 300],
-                presetKey: (seconds) => Key('dev-slice-preset-$seconds'),
-                selected: config.recordingSliceSeconds,
-                onPreset: (seconds) =>
-                    unawaited(config.setRecordingSliceSeconds(seconds)),
-                sliderKey: const Key('dev-slice-slider'),
-                sliderValue: config.recordingSliceSeconds.toDouble(),
-                onSlide: (value) =>
-                    unawaited(config.setRecordingSliceSeconds(value.round())),
-              ),
-              Divider(height: 18, color: c.sep),
               _Meter(
                 title: '健康采样间隔',
                 valueKey: const Key('dev-health-interval-value'),

@@ -23,17 +23,21 @@ class ChatMeterSnapshot {
 }
 
 class MeteredChatCompletion implements ChatCompletion {
-  MeteredChatCompletion(this.inner);
+  MeteredChatCompletion(this.inner) : _counter = _ChatMeterCounter();
+
+  MeteredChatCompletion._(this.inner, this._counter);
+
+  /// Trace multiple scene-specific routes in the same recording cleanup run.
+  MeteredChatCompletion withInner(ChatCompletion inner) =>
+      MeteredChatCompletion._(inner, _counter);
 
   final ChatCompletion inner;
-  int _calls = 0;
-  int _inputChars = 0;
-  int _outputChars = 0;
+  final _ChatMeterCounter _counter;
 
   ChatMeterSnapshot snapshot() => ChatMeterSnapshot(
-    calls: _calls,
-    inputChars: _inputChars,
-    outputChars: _outputChars,
+    calls: _counter.calls,
+    inputChars: _counter.inputChars,
+    outputChars: _counter.outputChars,
   );
 
   @override
@@ -43,8 +47,8 @@ class MeteredChatCompletion implements ChatCompletion {
     double temperature = 0.1,
     int maxTokens = 2048,
   }) async {
-    _calls += 1;
-    _inputChars += messages.fold<int>(
+    _counter.calls += 1;
+    _counter.inputChars += messages.fold<int>(
       0,
       (sum, message) => sum + message.content.length,
     );
@@ -54,7 +58,13 @@ class MeteredChatCompletion implements ChatCompletion {
       temperature: temperature,
       maxTokens: maxTokens,
     );
-    _outputChars += output.length;
+    _counter.outputChars += output.length;
     return output;
   }
+}
+
+class _ChatMeterCounter {
+  int calls = 0;
+  int inputChars = 0;
+  int outputChars = 0;
 }

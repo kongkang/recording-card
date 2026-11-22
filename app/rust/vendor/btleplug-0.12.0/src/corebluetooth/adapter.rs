@@ -45,20 +45,27 @@ fn handle_corebluetooth_event(
             advertisement_name,
             event_receiver,
         } => {
-            if let Some(existing) = manager.peripheral_mut(&uuid.into()) {
+            let id = uuid.into();
+            if let Some(existing) = manager.peripheral_mut(&id) {
                 existing.value().update_name(local_name, advertisement_name);
-                manager.emit(CentralEvent::DeviceUpdated(uuid.into()));
+                manager.emit(CentralEvent::DeviceUpdated(id));
                 return;
             }
+            let (prev_local, prev_adv) = manager
+                .peripheral(&id)
+                .map(|p| p.cached_names())
+                .unwrap_or((None, None));
             manager.add_peripheral(Peripheral::new(
                 uuid,
-                local_name,
-                advertisement_name,
+                local_name.filter(|s| !s.trim().is_empty()).or(prev_local),
+                advertisement_name
+                    .filter(|s| !s.trim().is_empty())
+                    .or(prev_adv),
                 Arc::downgrade(manager),
                 event_receiver,
                 adapter_sender.clone(),
             ));
-            manager.emit(CentralEvent::DeviceDiscovered(uuid.into()));
+            manager.emit(CentralEvent::DeviceDiscovered(id));
         }
         CoreBluetoothEvent::DeviceUpdated {
             uuid,
@@ -101,7 +108,7 @@ impl Adapter {
             }
         }
         debug!("Adapter connected");
-        let manager = Arc::new(AdapterManager::default());
+        let manager: Arc<AdapterManager<Peripheral>> = Arc::new(AdapterManager::default());
         for ev in pre_init_events {
             handle_corebluetooth_event(&manager, &adapter_sender, ev);
         }
@@ -184,6 +191,46 @@ impl Central for Adapter {
 
     async fn peripherals(&self) -> Result<Vec<Peripheral>> {
         Ok(self.manager.peripherals())
+    }
+
+    async fn retrieve_connected_peripherals(
+        &self,
+        services: &[uuid::Uuid],
+    ) -> Result<Vec<Peripheral>> {
+        if services.is_empty() {
+            return Ok(Vec::new());
+        }
+        let fut = CoreBluetoothReplyFuture::default();
+        self.sender
+            .to_owned()
+            .send(CoreBluetoothMessage::RetrieveConnectedPeripherals {
+                services: services.to_vec(),
+                future: fut.get_state_clone(),
+            })
+            .await?;
+        let uuids = match fut.await {
+            CoreBluetoothReply::Peripherals(uuids) => uuids,
+            CoreBluetoothReply::Err(msg) => return Err(Error::RuntimeError(msg)),
+            _ => return Ok(Vec::new()),
+        };
+        let mut out = Vec::with_capacity(uuids.len());
+        for uuid in uuids {
+            let pid: PeripheralId = uuid.into();
+            let mut found = self.manager.peripheral(&pid);
+            if found.is_none() {
+                for _ in 0..10 {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    found = self.manager.peripheral(&pid);
+                    if found.is_some() {
+                        break;
+                    }
+                }
+            }
+            if let Some(p) = found {
+                out.push(p);
+            }
+        }
+        Ok(out)
     }
 
     async fn peripheral(&self, id: &PeripheralId) -> Result<Peripheral> {

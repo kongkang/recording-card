@@ -1,8 +1,6 @@
 /// 未归类图片相册子页 —— 双列 1:1 正方形相册网格，支持大图预览、按当日记录归位与标记「不归类」。
 library;
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../core/models/record.dart';
@@ -10,6 +8,7 @@ import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
 import '../data/seed.dart';
 import '../widgets/photo_preview_sheet.dart';
+import '../widgets/photo_thumbnail.dart';
 import '../widgets/store_scope.dart';
 
 class UnclassifiedPhotosPage extends StatelessWidget {
@@ -28,13 +27,14 @@ class UnclassifiedPhotosPage extends StatelessWidget {
     return ListenableBuilder(
       listenable: store,
       builder: (context, _) {
+        final c = context.rc;
         final items = store.unclassifiedPhotosForDay(dayOffset);
         final title = dayOffset == 0
             ? '今日未归类图片'
             : '${dayLabel(dayOffset)}未归类图片';
         return ColoredBox(
           key: const Key('p-unc'),
-          color: RCColors.bg,
+          color: c.bg,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -49,7 +49,7 @@ class UnclassifiedPhotosPage extends StatelessWidget {
                       '返回${AppStore.pageLabels[store.stackPrev?.type] ?? 'Timeline'}',
                     ),
                     style: TextButton.styleFrom(
-                      foregroundColor: RCColors.sec,
+                      foregroundColor: c.sec,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
                         vertical: 4,
@@ -71,17 +71,18 @@ class UnclassifiedPhotosPage extends StatelessWidget {
                           Text(
                             title,
                             key: const Key('uncp-title'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.w800,
+                              color: c.label,
                             ),
                           ),
                           const SizedBox(height: 4),
                           Text(
                             '共 ${items.length} 张 · 点击图片预览，可归入当日记录或标记不归类',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
-                              color: RCColors.sec,
+                              color: c.sec,
                             ),
                           ),
                         ],
@@ -92,9 +93,9 @@ class UnclassifiedPhotosPage extends StatelessWidget {
                         key: const Key('unc-dismiss-all'),
                         onPressed: () => store.dismissUnclassifiedDay(dayOffset),
                         style: TextButton.styleFrom(
-                          foregroundColor: RCColors.sec,
-                          backgroundColor: RCColors.card,
-                          side: const BorderSide(color: RCColors.sep),
+                          foregroundColor: c.sec,
+                          backgroundColor: c.card,
+                          side: BorderSide(color: c.sep),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
@@ -116,11 +117,11 @@ class UnclassifiedPhotosPage extends StatelessWidget {
               ),
               Expanded(
                 child: items.isEmpty
-                    ? const Center(
-                        key: Key('unc-empty'),
+                    ? Center(
+                        key: const Key('unc-empty'),
                         child: Text(
                           '暂无待归类图片',
-                          style: TextStyle(fontSize: 13, color: RCColors.sec),
+                          style: TextStyle(fontSize: 13, color: c.sec),
                         ),
                       )
                     : LayoutBuilder(
@@ -131,6 +132,7 @@ class UnclassifiedPhotosPage extends StatelessWidget {
                               (constraints.maxWidth - hPad * 2 - spacing)
                                   .clamp(120.0, 2000.0);
                           final tileSide = gridWidth / 2;
+                          final dayEvents = store.candidateDayEvents(dayOffset);
                           return GridView.builder(
                             key: const Key('unc-album-grid'),
                             padding: const EdgeInsets.fromLTRB(
@@ -152,12 +154,14 @@ class UnclassifiedPhotosPage extends StatelessWidget {
                               final cands = store.candidateEventsForPhoto(
                                 dayOffset,
                                 item.photo,
+                                prefilteredDayEvents: dayEvents,
                               );
                               return _AlbumTile(
                                 store: store,
                                 event: item.event,
                                 photo: item.photo,
                                 candidates: cands,
+                                logicalWidth: tileSide,
                               );
                             },
                           );
@@ -178,24 +182,30 @@ class _AlbumTile extends StatelessWidget {
     required this.event,
     required this.photo,
     required this.candidates,
+    required this.logicalWidth,
   });
 
   final AppStore store;
   final RecordEvent event;
   final EventPhoto photo;
   final List<RecordEvent> candidates;
+  final double logicalWidth;
 
   @override
   Widget build(BuildContext context) {
-    final hasFile = photo.path.isNotEmpty && File(photo.path).existsSync();
+    final c = context.rc;
     final srcLabel = photo.source == 'dyj_camera' ? '点一机抓拍' : '系统相册';
     final best = candidates.isNotEmpty ? candidates.first : null;
+    final okBg = c.isDark ? const Color(0xFF1A2E1E) : const Color(0xFFEAF3EA);
+    final okBorder = c.isDark
+        ? const Color(0xFF2D5434)
+        : const Color(0xFFB8D9B8);
     return Container(
       key: Key('unc-item-${event.id}-${photo.id}'),
       decoration: BoxDecoration(
-        color: RCColors.card,
+        color: c.card,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: RCColors.sep),
+        border: Border.all(color: c.sep),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -209,21 +219,12 @@ class _AlbumTile extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (hasFile)
-                    Image.file(File(photo.path), fit: BoxFit.cover, cacheWidth: 480)
-                  else
-                    ColoredBox(
-                      color: const Color(0xFFEAEAE4),
-                      child: Center(
-                        child: Icon(
-                          photo.source == 'dyj_camera'
-                              ? Icons.photo_camera_outlined
-                              : Icons.photo_outlined,
-                          size: 28,
-                          color: RCColors.sec,
-                        ),
-                      ),
-                    ),
+                  PhotoThumbnail(
+                    path: photo.path,
+                    logicalWidth: logicalWidth,
+                    source: photo.source,
+                    placeholderIconSize: 28,
+                  ),
                   Positioned(
                     left: 8,
                     bottom: 8,
@@ -261,7 +262,7 @@ class _AlbumTile extends StatelessWidget {
                     '$srcLabel · 原属 ${event.title}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 11, color: RCColors.sec),
+                    style: TextStyle(fontSize: 11, color: c.sec),
                   ),
                   Row(
                     children: [
@@ -286,20 +287,18 @@ class _AlbumTile extends StatelessWidget {
                                       vertical: 3,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFEAF3EA),
+                                      color: okBg,
                                       borderRadius: BorderRadius.circular(6),
-                                      border: Border.all(
-                                        color: const Color(0xFFB8D9B8),
-                                      ),
+                                      border: Border.all(color: okBorder),
                                     ),
                                     child: Text(
                                       '归入·${best.title}',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 11,
                                         fontWeight: FontWeight.w600,
-                                        color: RCColors.okInk,
+                                        color: c.okInk,
                                       ),
                                     ),
                                   ),
@@ -311,15 +310,15 @@ class _AlbumTile extends StatelessWidget {
                                   key: Key('unc-pick-${event.id}-${photo.id}'),
                                   onTap: () => _showCandidatePicker(context),
                                   borderRadius: BorderRadius.circular(6),
-                                  child: const Padding(
-                                    padding: EdgeInsets.symmetric(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
                                       horizontal: 3,
                                       vertical: 3,
                                     ),
                                     child: Icon(
                                       Icons.expand_more,
                                       size: 14,
-                                      color: RCColors.sec,
+                                      color: c.sec,
                                     ),
                                   ),
                                 ),
@@ -340,13 +339,13 @@ class _AlbumTile extends StatelessWidget {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: RCColors.bg,
+                            color: c.bg,
                             borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: RCColors.sep),
+                            border: Border.all(color: c.sep),
                           ),
-                          child: const Text(
+                          child: Text(
                             '不归类',
-                            style: TextStyle(fontSize: 11, color: RCColors.sec),
+                            style: TextStyle(fontSize: 11, color: c.sec),
                           ),
                         ),
                       ),
@@ -362,14 +361,19 @@ class _AlbumTile extends StatelessWidget {
   }
 
   void _showCandidatePicker(BuildContext context) {
+    final rc = context.rc;
     showModalBottomSheet<void>(
       context: context,
       useRootNavigator: true,
-      backgroundColor: RCColors.card,
+      backgroundColor: rc.card,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (ctx) {
+        final sc = ctx.rc;
+        final okBg = sc.isDark
+            ? const Color(0xFF1A2E1E)
+            : const Color(0xFFEAF3EA);
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
@@ -377,9 +381,13 @@ class _AlbumTile extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   '归入当日记录',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: sc.label,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 for (var ci = 0; ci < candidates.length; ci++)
@@ -397,9 +405,10 @@ class _AlbumTile extends StatelessWidget {
                                 c.title,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
+                                  color: sc.label,
                                 ),
                               ),
                             ),
@@ -411,15 +420,15 @@ class _AlbumTile extends StatelessWidget {
                                   vertical: 1.5,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFEAF3EA),
+                                  color: okBg,
                                   borderRadius: BorderRadius.circular(5),
                                 ),
-                                child: const Text(
+                                child: Text(
                                   '时间最接近',
                                   style: TextStyle(
                                     fontSize: 10.5,
                                     fontWeight: FontWeight.w600,
-                                    color: RCColors.okInk,
+                                    color: sc.okInk,
                                   ),
                                 ),
                               ),
@@ -428,15 +437,15 @@ class _AlbumTile extends StatelessWidget {
                         ),
                         subtitle: Text(
                           '${c.time} · ${c.dur}',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
-                            color: RCColors.sec,
+                            color: sc.sec,
                           ),
                         ),
-                        trailing: const Icon(
+                        trailing: Icon(
                           Icons.chevron_right,
                           size: 18,
-                          color: RCColors.ax,
+                          color: sc.ax,
                         ),
                         onTap: () {
                           Navigator.of(ctx).pop();

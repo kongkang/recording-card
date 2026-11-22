@@ -51,6 +51,66 @@ pub const RING_NOTIFY_DONE: u8 = 0x04;
 pub const RING_NOTIFY_READ_BEGIN: u8 = 0x05;
 
 pub const RING_RECORD_SIZE: usize = 444;
+pub const MIN_PLAUSIBLE_UNIX_SEC: u32 = 1_700_000_000;
+pub const MAX_PLAUSIBLE_UNIX_SEC: u32 = 4_102_444_800;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RingTimedSegment {
+    pub start_ts: Option<u32>,
+    pub end_ts: Option<u32>,
+    pub frames: Vec<Vec<u8>>,
+}
+
+pub fn is_plausible_unix_sec(ts: u32) -> bool {
+    ts > MIN_PLAUSIBLE_UNIX_SEC && ts < MAX_PLAUSIBLE_UNIX_SEC
+}
+
+/// 按时间断档拆解 Omi Ring Buffer 原始字节流：
+/// - 每条 444B: `[ts:4 BE][packed len+frame]`
+/// - 若相邻有效时间戳跨度超过 `gap_secs`（例如横跨两次不同时刻的离线录音），自动拆分成多段并各自保留真实录制起点时间戳。
+pub fn split_ring_encoded_segments(raw: &[u8], gap_secs: u32) -> Vec<RingTimedSegment> {
+    let mut out: Vec<RingTimedSegment> = Vec::new();
+    let mut cur_start: Option<u32> = None;
+    let mut cur_last: Option<u32> = None;
+    let mut cur_frames: Vec<Vec<u8>> = Vec::new();
+
+    for record in raw.chunks_exact(RING_RECORD_SIZE) {
+        let ts = u32::from_be_bytes([record[0], record[1], record[2], record[3]]);
+        let valid_ts = is_plausible_unix_sec(ts).then_some(ts);
+        let mut rec_frames = Vec::new();
+        extract_len_prefixed_frames(&record[4..], &mut rec_frames);
+        if rec_frames.is_empty() {
+            continue;
+        }
+        if let (Some(prev), Some(curr)) = (cur_last, valid_ts) {
+            if curr.abs_diff(prev) > gap_secs && !cur_frames.is_empty() {
+                out.push(RingTimedSegment {
+                    start_ts: cur_start,
+                    end_ts: cur_last,
+                    frames: std::mem::take(&mut cur_frames),
+                });
+                cur_start = None;
+                cur_last = None;
+            }
+        }
+        if cur_start.is_none() {
+            cur_start = valid_ts;
+        }
+        if valid_ts.is_some() {
+            cur_last = valid_ts;
+        }
+        cur_frames.extend(rec_frames);
+    }
+
+    if !cur_frames.is_empty() {
+        out.push(RingTimedSegment {
+            start_ts: cur_start,
+            end_ts: cur_last,
+            frames: cur_frames,
+        });
+    }
+    out
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OmiAudioCodec {
@@ -287,6 +347,11 @@ pub fn extract_len_prefixed_frames(payload: &[u8], out: &mut Vec<Vec<u8>>) {
     }
 }
 
+/// 解码 Omi 按键手势。
+///
+/// Omi 量产版固件在 Zephyr GPIO 层写死长按约 3 秒直接硬件关机且无 BLE 配置开关，
+/// 按压过程中也不会上报 <3s 的长按时长，因此彻底禁用长按（码 3 及释放 5 均返回 `None`），
+/// 仅开放 `single_tap`（1）与 `double_tap`（2）。
 pub fn decode_button_gesture(value: &[u8]) -> Option<&'static str> {
     let code = match value.len() {
         0 => return None,
@@ -296,7 +361,6 @@ pub fn decode_button_gesture(value: &[u8]) -> Option<&'static str> {
     match code {
         1 => Some("single_tap"),
         2 => Some("double_tap"),
-        3 => Some("long_press_start"),
         _ => None,
     }
 }
@@ -375,5 +439,46 @@ mod tests {
         let (ts, frames) = extract_ring_encoded_frames(&rec);
         assert_eq!(ts, Some(1_730_000_000));
         assert_eq!(frames, vec![vec![11, 22, 33], vec![44, 55]]);
+
+        assert_eq!(decode_button_gesture(&[1, 0, 0, 0]), Some("single_tap"));
+        assert_eq!(decode_button_gesture(&[2, 0, 0, 0]), Some("double_tap"));
+        assert_eq!(decode_button_gesture(&[3, 0, 0, 0]), None);
+        assert_eq!(decode_button_gesture(&[5, 0, 0, 0]), None);
+        assert_eq!(decode_button_gesture(&[]), None);
+    }
+
+    #[test]
+    fn splits_ring_segments_on_timestamp_gaps_and_preserves_uncalibrated() {
+        let make_rec = |ts: u32, marker: u8| {
+            let mut rec = vec![0u8; RING_RECORD_SIZE];
+            rec[0..4].copy_from_slice(&ts.to_be_bytes());
+            rec[4] = 2;
+            rec[5] = marker;
+            rec[6] = marker;
+            rec
+        };
+
+        let mut raw = Vec::new();
+        raw.extend_from_slice(&make_rec(1_730_000_000, 1));
+        raw.extend_from_slice(&make_rec(1_730_000_010, 2));
+        // Jump by > 60s -> starts a new timed segment
+        raw.extend_from_slice(&make_rec(1_730_003_600, 3));
+        raw.extend_from_slice(&make_rec(1_730_003_605, 4));
+
+        let segs = split_ring_encoded_segments(&raw, 60);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].start_ts, Some(1_730_000_000));
+        assert_eq!(segs[0].end_ts, Some(1_730_000_010));
+        assert_eq!(segs[0].frames, vec![vec![1, 1], vec![2, 2]]);
+        assert_eq!(segs[1].start_ts, Some(1_730_003_600));
+        assert_eq!(segs[1].end_ts, Some(1_730_003_605));
+        assert_eq!(segs[1].frames, vec![vec![3, 3], vec![4, 4]]);
+
+        // Uncalibrated ts = 0 keeps start_ts = None without synthesizing wall clock
+        let uncal = make_rec(0, 9);
+        let uncal_segs = split_ring_encoded_segments(&uncal, 60);
+        assert_eq!(uncal_segs.len(), 1);
+        assert_eq!(uncal_segs[0].start_ts, None);
+        assert_eq!(uncal_segs[0].frames, vec![vec![9, 9]]);
     }
 }

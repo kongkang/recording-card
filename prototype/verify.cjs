@@ -96,7 +96,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-testid="card-sum-demo"] .sumphotos', x => x.textContent.trim()), '含 2 张图片');
   assert(await p.$eval('[data-testid="card-sum-demo"] .when', x => x.textContent.includes('已选 1 片段 · 含 2 张图片')));
   assert.equal(await p.$('[data-testid="card-sum-demo"] .sum-side .sumphotos'), null);
-  // 分组内倒序：日终产物（总结/睡前日记/未归类）在顶部，记录中间，做梦卡在底部
+  // 分组内倒序：日终产物（睡前日记/未归类）在顶部，总结按覆盖结尾时间内联插入，做梦卡在底部
   const dayKinds = await p.evaluate(() => {
     const out = []; let cur = null;
     [...document.querySelectorAll('#feed > *')].forEach(el => {
@@ -106,7 +106,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     return out;
   });
   assert.equal(dayKinds[0].day, '今天');
-  assert.deepEqual(dayKinds[0].kinds.slice(0, 3), ['summary', 'daily', 'unclassified'], '总结/睡前日记/未归类应在今天分组顶部');
+  assert.deepEqual(dayKinds[0].kinds.slice(0, 2), ['daily', 'unclassified'], '睡前日记/未归类应在今天分组顶部');
   assert.equal(dayKinds[0].kinds[dayKinds[0].kinds.length - 1], 'dream', '做梦卡是当天最早事件，应在倒序分组底部');
   assert.equal(dayKinds[1].kinds[0], 'daily', '睡前日记应在昨天分组顶部');
   assert(await p.$eval('[data-testid="card-dream-0"]', x => x.innerText.includes('做梦完成') && x.innerText.includes('知识库')));
@@ -122,9 +122,25 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$('[data-testid="set-health-location"]'), 'index.html 应包含定位与健康采集行');
   assert.equal(await p.$('[data-testid="nc-merge-panel"]'), null);
   assert(await p.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
+  assert(await p.$eval('[data-testid="fork-card-demo"]', x => x.innerText.includes('录音卡 V2') && x.innerText.includes('手机本机')));
+  assert.equal(await p.$eval('[data-testid="nt-badge-fork-card"]', x => x.innerText.trim()), 'NT');
+  assert(await p.$('[data-testid="fork-col-ble"]'));
+  assert(await p.$('[data-testid="fork-col-phone"]'));
+  assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'fork card must not overflow 390px');
   const sumTop = await p.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
   const e1Top = await p.$eval('[data-testid="card-e1"]', x => x.getBoundingClientRect().top);
-  assert(sumTop < e1Top, '总结卡应在当天记录上方');
+  const e2Top = await p.$eval('[data-testid="card-e2"]', x => x.getBoundingClientRect().top);
+  assert(e1Top < sumTop && sumTop < e2Top, `总结卡应插入在覆盖结尾时间点（e1 之下、e2 之上）：e1=${e1Top}, sum=${sumTop}, e2=${e2Top}`);
+  // 无意义碎碎念折叠成紧凑胶囊，点击弹窗列明细并可跳入独立记录详情
+  assert(await p.$eval('[data-testid="trivial-cluster-0"]', x => x.innerText.includes('无意义碎碎念 · 2 段')));
+  assert.equal(await p.$('[data-testid="card-e_triv1"]'), null, '无意义碎碎念不得单独铺开为普通卡片');
+  await p.click('[data-testid="trivial-cluster-0"]');
+  assert(await p.$eval('#trivial-wrap', x => x.classList.contains('show')));
+  await p.click('[data-testid="trivial-item-e_triv1"]');
+  assert(await p.$eval('#p-detail', x => x.classList.contains('show')));
+  assert(await p.$eval('#dt-h3', x => x.innerText.includes('我正在说话')));
+  await p.evaluate(() => goBack());
+  await new Promise(r => setTimeout(r, 300));
   // 睡前日记：有趣叙事 + 点赞反馈 + 1~5 个待确认轻标注（点选后同步声纹与待标注计数）
   await p.evaluate(() => document.querySelector('[data-testid="card-daily-0"]').click());
   assert(await p.$eval('#p-diary', x => x.classList.contains('show')));
@@ -256,6 +272,13 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('[data-testid="rawline-e1-2"]', x => x.classList.contains('active')));
   await shot('detail-raw-audio');
   await p.click('[data-testid="raw-audio-delete"]');
+  assert(await p.$('[data-testid="raw-audio-delete-confirm"]'), '点击清理应先弹出内联二次确认');
+  assert(await p.$('[data-testid="raw-audio-delete-cancel"]'));
+  assert(await p.$('[data-testid="raw-audio-player"]'), '未点确认前不应删除音频');
+  await p.click('[data-testid="raw-audio-delete-cancel"]');
+  assert.equal(await p.$('[data-testid="raw-audio-delete-confirm"]'), null);
+  await p.click('[data-testid="raw-audio-delete"]');
+  await p.click('[data-testid="raw-audio-delete-confirm"]');
   assert(await p.$eval('[data-testid="raw-audio-cleared"]', x => x.innerText.includes('原始录音已清理')));
   assert.equal(await p.$('[data-testid="raw-audio-player"]'), null, '清理后不应假装还能播');
   await shot('raw-data');
@@ -269,7 +292,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$eval('[data-f="summary"]', x => x.disabled), true);
   assert.equal(await p.$eval('[data-f="event"]', x => x.disabled), false);
   assert(await p.$eval('[data-f="event"]', x => x.classList.contains('on')));
-  assert.equal(await p.$$eval('#feed [data-sel]', x => x.length), 6);
+  assert.equal(await p.$$eval('#feed [data-sel]', x => x.length), await p.evaluate(() => EVENTS.filter(e => !isLowValueEvent(e) && !isSilentEvent(e)).length));
   await shot('summary-multiselect');
   const checkedCount = () => p.$$eval('[data-sel]:checked', x => x.length);
   // 范围计数按页面同一套日期语义推导（周一/月初跑脚本时硬编码会过期）
@@ -277,7 +300,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     const pred = r === 'today' ? (o) => o === 0
       : r === 'week' ? (o) => o <= (new Date().getDay() + 6) % 7
       : (o) => { const d = new Date(); d.setDate(d.getDate() - o); const n = new Date(); return d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear(); };
-    return EVENTS.filter(e => pred(e.off)).length;
+    return EVENTS.filter(e => pred(e.off) && !e.lowValue && !isSilentEvent(e)).length;
   }, r);
   await p.click('.rangebar .chip[data-r="today"]');
   assert.equal(await checkedCount(), await expCount('today'));
@@ -287,6 +310,26 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await checkedCount(), await expCount('month'));
   await p.click('.rangebar .chip[data-r="none"]');
   assert.equal(await checkedCount(), 0);
+  // 基于最近标记起点的滚动区间连选：「选到此处」（下滑）与「选择到这儿」（上滑）
+  await p.evaluate(() => window.scrollTo(0, 0));
+  await p.click('[data-testid="card-e1"]');
+  assert(await p.$('[data-testid="sel-anchor-badge-e1"]'), '点击后应展示起点徽标');
+  await p.evaluate(() => { window.scrollTo(0, document.body.scrollHeight); updateStickyRange(); });
+  await p.waitForSelector('[data-testid="sticky-select-bottom"].show', { timeout: 2000 });
+  assert(await p.$eval('[data-testid="sticky-select-bottom"]', x => x.innerText.includes('选到此处')));
+  await p.click('[data-testid="sticky-select-bottom"]');
+  assert((await checkedCount()) >= 3, '点选到此处应全选起点至当前可见最末记录');
+  assert(!(await p.$eval('[data-testid="sticky-select-bottom"]', x => x.classList.contains('show'))));
+  await p.click('.rangebar .chip[data-r="none"]');
+  await p.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await p.click('[data-testid="card-e6"]');
+  await p.evaluate(() => { window.scrollTo(0, 0); updateStickyRange(); });
+  await p.waitForSelector('[data-testid="sticky-select-top"].show', { timeout: 2000 });
+  assert(await p.$eval('[data-testid="sticky-select-top"]', x => x.innerText.includes('选择到这儿')));
+  await p.click('[data-testid="sticky-select-top"]');
+  assert((await checkedCount()) >= 3, '点选择到这儿应全选当前可见最顶记录至起点');
+  await p.click('.rangebar .chip[data-r="none"]');
+  await p.evaluate(() => window.scrollTo(0, 0));
   await p.click('.rangebar .chip[data-r="week"]');
   assert.equal(await checkedCount(), await expCount('week'));
   assert.equal(await p.$eval('#sel-count2', x => x.innerText), '已选 ' + (await expCount('week')) + ' 项');
@@ -513,11 +556,25 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     }
   });
   await p.click('[data-testid="crumb-back"]');
-  // 本地语音引擎：iOS 26+ 与 Android GMS 默认系统内置免下载即用，国产 ROM / 三星 Bixby / iOS < 26 自动隐藏系统项并隔离平台展示
+  // 本地语音引擎与多设备兜底：NT·2 入口
+  assert.equal(await p.$eval('[data-testid="nt-btn"]', x => x.innerText.trim()), 'NT·2');
+  await p.click('[data-testid="nt-btn"]');
+  assert(await p.$eval('#nt-pop', x => !x.hidden && x.innerText.includes('Android 多品牌端侧 ASR') && x.innerText.includes('多设备断连兜底')));
+  assert(await p.$('[data-testid="nt-item-multi-device-failover"]'));
+  await p.click('[data-testid="nt-item-android-asr"]');
+  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('系统转写') && !x.innerText.includes('Google')));
+  assert(await p.$eval('[data-testid="nt-badge-local-sub"]', x => x.innerText.trim() === 'NT'));
+  assert(await p.$eval('[data-testid="local-help"]', x => x.hidden));
+  await p.click('[data-testid="local-engine-help"]');
+  assert(await p.$eval('[data-testid="local-help"]', x => !x.hidden));
+  await p.$eval('[data-testid="plat-chip-ios26"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-ios26"]');
+  await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
+  assert(await p.$eval('[data-testid="nt-badge-local-row"]', x => x.innerText.trim() === 'NT'));
   await p.$eval('[data-testid="set-local-model"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="set-local-model"]');
-  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('本地转写已就绪') && x.innerText.includes('系统内置生效中') && x.innerText.includes('SenseVoice')));
+  assert(await p.$eval('#p-setsub', x => x.classList.contains('show') && x.innerText.includes('系统转写') && x.innerText.includes('增强转写')));
   assert.equal(await p.$('[data-testid="local-verify-btn"]'), null);
   assert.equal(await p.$('[data-testid="model-install-all"]'), null);
   assert.equal(await p.$('[data-testid="model-delete-sensevoice-small-int8"]'), null);
@@ -529,79 +586,108 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.$eval('[data-testid="model-delete-sensevoice-small-int8"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="model-delete-sensevoice-small-int8"]');
   assert(await p.$eval('#mdl-del-wrap', x => x.classList.contains('show')));
-  assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('228 MB') && x.innerText.includes('系统默认模型')));
+  assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('228 MB') && x.innerText.includes('切回系统模型')));
   await p.click('[data-testid="model-delete-confirm-btn"]');
   assert.equal(await p.$('[data-testid="model-install-all"]'), null);
-  assert(await p.$eval('#p-setsub', x => x.innerText.includes('系统内置生效中')));
-  // Android GMS（Pixel）：默认系统内置免下载即用，且界面绝不出现 iOS / SpeechAnalyzer 推荐文案
+  assert(await p.$eval('#p-setsub', x => x.innerText.includes('系统转写')));
+  assert(await p.$eval('[data-testid="local-help"]', x => x.hidden));
+  await p.click('[data-testid="local-engine-help"]');
+  // Android GMS（Pixel）：原生端侧语音模型免下载即用，且界面绝不出现 iOS / SpeechAnalyzer 推荐文案
   await p.$eval('[data-testid="plat-chip-android-gms"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-android-gms"]');
   assert.equal(await p.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
   assert(await p.$eval('[data-testid="local-device-summary"]', x => x.innerText.includes('Pixel')));
-  assert(await p.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('Google 端侧离线语音引擎')));
+  assert(await p.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('系统转写')));
   assert(await p.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
     return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
   }), 'Android GMS 页面不应出现 iOS 模型推荐');
   await p.$eval('[data-testid="model-dl-sys-pack"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="model-dl-sys-pack"]');
   assert.equal(await p.$('[data-testid="model-dl-sys-pack"]'), null);
-  // 国产 Android（HyperOS 等）：隐藏系统选项，仅显示 Android 可选的 SenseVoice
+  // Android 兼容方案（三星 Galaxy 直连 Google 端侧语音）：兼容方案优先、绕开 Bixby、零 iOS 文案
+  await p.$eval('[data-testid="plat-chip-android-compat"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="plat-chip-android-compat"]');
+  assert.equal(await p.$eval('#sv-local', x => x.innerText.trim()), '兼容方案 · 即用');
+  assert(await p.$eval('[data-testid="local-status-card"]', x => x.innerText.includes('系统转写') && !x.innerText.includes('三星 Galaxy')));
+  assert(await p.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('系统转写')));
+  assert(await p.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
+    return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+  }), 'Android 兼容方案页面不应出现 iOS 模型推荐');
+  // 国产 Android（HyperOS 等）：隐藏系统选项，将本地 SenseVoice 设为第一选择
   await p.$eval('[data-testid="plat-chip-android-cn"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-android-cn"]');
   assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
-  assert(await p.$eval('[data-testid="asr-opt-sensevoice"]', x => x.innerText.includes('本机推荐方案')));
+  assert(await p.$eval('[data-testid="model-install-all"]', x => x.innerText.includes('下载')));
   assert(await p.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
-    return txt.includes('Xiaomi 15') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
+    return !txt.includes('Xiaomi 15') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
   }));
-  // 三星 Bixby：明确拦截说明并仅展示 SenseVoice
+  // 三星仅 Bixby：明确拦截说明并仅展示 SenseVoice
   await p.$eval('[data-testid="plat-chip-android-bixby"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-android-bixby"]');
   assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
   assert(await p.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
-    return txt.includes('Bixby') && txt.includes('麦克风') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
+    return !txt.includes('Bixby') && !txt.includes('麦克风') && !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
   }));
   // 旧 iOS 15–25：同样隐藏不可用系统选项，引导手动下载并在删完后提示云端风险，绝不出现 Android 字样
   await p.$eval('[data-testid="plat-chip-ios-old"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-ios-old"]');
   assert.equal(await p.$('[data-testid="asr-opt-system"]'), null);
   assert(await p.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
     return !txt.includes('Android') && !txt.includes('Bixby');
   }));
   await p.waitForSelector('[data-testid="model-install-all"]', { timeout: 3000 });
   await p.$eval('[data-testid="model-install-all"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="model-install-all"]');
-  await p.waitForFunction(() => document.getElementById('p-setsub').innerText.includes('SenseVoice 生效中'), { timeout: 4000 });
+  await p.waitForSelector('[data-testid="asr-opt-sensevoice"].on', { timeout: 4000 });
   await p.$eval('[data-testid="model-delete-sensevoice-small-int8"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="model-delete-sensevoice-small-int8"]');
-  assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('付费云端模式') && x.innerText.includes('隐私')));
+  assert(await p.$eval('[data-testid="model-delete-confirm-dialog"]', x => x.innerText.includes('重新下载前暂停转写')));
   await p.click('[data-testid="model-delete-confirm-btn"]');
   await p.waitForSelector('[data-testid="model-install-all"]', { timeout: 3000 });
   await p.$eval('[data-testid="plat-chip-ios26"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="plat-chip-ios26"]');
-  assert(await p.$eval('#p-setsub', x => x.innerText.includes('本地转写已就绪') && x.innerText.includes('系统内置生效中')));
+  assert(await p.$eval('#p-setsub', x => x.innerText.includes('系统转写')));
   await p.click('[data-testid="crumb-back"]');
   assert(await p.$eval('#p-setting', x => x.classList.contains('show')));
-  // 云端模型极简模式 + 连击版本号 7 次解锁开发者模式
-  assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), '已开启');
+  // 外脑默认自动选模，并且无需先启用云端模型。
+  assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), '外脑（Wainao）');
   await p.click('[data-testid="set-cloud-model"]');
-  assert(await p.$('[data-testid="cloud-enable-switch"]'));
-  assert(await p.$('[data-testid="cloud-custom-api-input"]'));
-  assert.equal(await p.$('[data-testid="model-opt-qwen-max"]'), null);
+  assert.equal(await p.$eval('[data-testid="cloud-provider-wainao"]', x => x.getAttribute('aria-pressed')), 'true');
+  assert.equal(await p.$('[data-testid="cloud-enable-switch"]'), null);
+  assert.equal(await p.$('[data-testid="cloud-api-key"]'), null);
+  await p.click('[data-testid="cloud-provider-deepseek"]');
+  assert(await p.$('[data-testid="cloud-api-key"]'));
+  assert.equal(await p.$eval('[data-testid="cloud-advanced"]', x => x.open), false);
+  await p.click('[data-testid="cloud-test-connection"]');
+  assert.equal(await p.$eval('#cloud-connection-status', x => x.innerText), '请输入 API Key');
+  await p.type('[data-testid="cloud-api-key"]', 'preview-key');
+  await p.click('[data-testid="cloud-test-connection"]');
+  assert.equal(await p.$eval('#cloud-connection-status', x => x.innerText), '预览 · 示例模型');
+  await p.click('[data-testid="cloud-save-provider"]');
+  assert.equal(await p.$eval('#cloud-connection-status', x => x.innerText), '请选择总结模型');
+  await p.select('[data-testid="cloud-model-summary"]', 'deepseek-chat');
+  await p.click('[data-testid="cloud-save-provider"]');
+  assert.equal(await p.$eval('[data-testid="cloud-provider-deepseek"]', x => x.getAttribute('aria-pressed')), 'true');
+  await p.click('[data-testid="cloud-provider-custom"]');
+  await p.click('[data-testid="cloud-test-connection"]');
+  assert.equal(await p.$eval('#cloud-connection-status', x => x.innerText), '请输入有效的 HTTPS API 地址');
+  await p.type('[data-testid="cloud-custom-api-input"]', 'https://api.example.com/v1');
+  await p.click('[data-testid="cloud-test-connection"]');
+  assert(await p.$('[data-testid="cloud-model-summary"]'));
+  await p.click('[data-testid="cloud-provider-wainao"]');
+  await p.click('[data-testid="cloud-provider-deepseek"]');
+  await p.click('[data-testid="cloud-use-configured"]');
   await p.click('[data-testid="crumb-back"]');
+  assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), 'DeepSeek');
   for (let i = 0; i < 7; i++) {
     await p.click('[data-testid="setting-version"]');
   }
   assert.equal(await p.$eval('#lbl-version', x => x.innerText.trim()), '版本（开发者）');
-  await p.click('[data-testid="set-cloud-model"]');
-  await p.click('[data-testid="model-opt-qwen-max"]');
-  assert(await p.$('[data-testid="temp-0.2"]'));
-  assert.equal(await p.$eval('[data-testid="tbc-ctx-fullday"]', x => x.innerText.trim()), 'TBC');
-  await p.click('[data-testid="crumb-back"]');
-  assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), 'qwen-max');
   // 交叉反馈：每分钟自动关联系统相册照片（默认开启开关 + 关后重开弹权限弹窗）+ 灵动岛按机型隐藏
   assert.equal(await p.$eval('[data-testid="sw-photo-sync"]', x => x.getAttribute('aria-checked')), 'true');
   assert(await p.$eval('#sv-photo-imp', x => x.innerText.includes('每分钟随切片自动对齐')));
@@ -639,9 +725,15 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="sw-sk-risk"]');
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$eval('#sv-ext', x => x.innerText.trim()), '已启用 6 项');
+  // 批量转写周期设置（默认每 15 分钟 → 切换 30 分钟）
+  assert.equal(await p.$eval('#sv-transcribe-cycle', x => x.innerText.trim()), '每 15 分钟');
+  await p.click('[data-testid="set-transcribe-cycle"]');
+  assert(await p.$eval('#cycle-wrap', x => x.classList.contains('show')));
+  await p.click('[data-testid="cycle-opt-30"]');
+  assert.equal(await p.$eval('#sv-transcribe-cycle', x => x.innerText.trim()), '每 30 分钟');
   // 开发者设置（清洗周期 + 层叠重叠上下文 + 存量重洗）
   await p.click('[data-testid="set-developer"]');
-  assert.equal(await p.$eval('[data-testid="dev-cycle-value"]', x => x.innerText.trim()), '10 分钟');
+  assert.equal(await p.$eval('[data-testid="dev-cycle-value"]', x => x.innerText.trim()), '15 分钟');
   await p.click('[data-testid="dev-cycle-preset-30"]');
   assert.equal(await p.$eval('[data-testid="dev-cycle-value"]', x => x.innerText.trim()), '30 分钟');
   await p.click('[data-testid="dev-overlap-mode-minutes"]');
@@ -762,7 +854,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#sync-rel', x => /刚刚|秒前|分钟前/.test(x.innerText)));
   assert.equal(await p.$$eval('#dev-main .syncico', x => x.length), 0);
   assert(await p.$eval('[data-testid="sync-now"]', x => x.innerText.includes('自动同步') && !!x.querySelector('.syncidle svg')));
-  assert(await p.$eval('[data-testid="wifi-row"]', x => x.textContent.includes('已配置 · 2 个网络') && !!x.querySelector('.rowchev')));
+  assert(await p.$eval('[data-testid="wifi-row"]', x => x.hidden === true));
   await shot('hardware-capsule');
   await p.click('[data-testid="sync-now"]');
   assert(await p.$eval('#sync-ico.spin svg', x => !!x));
@@ -776,31 +868,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#sync-ico.okcheck', x => !!x));
   await p.click('[data-testid="fw-update"]');
   assert(await p.$eval('#dev-upg', x => !x.hidden && x.innerText.includes('主控芯片') && x.innerText.includes('2.1.0 → 2.2.0') && x.innerText.includes('1.4.2 → 1.5.0')));
-  // 录音进行中点升级：弹出确认弹窗，确认后停硬件录音、自动切本机录音（灵动岛显示 App Logo），升级完成后关闭本机录音
-  await p.click('#upg-btn');
-  assert(await p.$eval('[data-testid="ota-rec-confirm-dialog"]', x => !x.hidden && x.innerText.includes('当前正在录音')));
-  assert.equal(await p.$eval('#upg-back', x => x.disabled), false);
-  await p.click('[data-testid="ota-rec-confirm"]');
-  await new Promise(r => setTimeout(r, 120));
-  assert(await p.evaluate(() => phoneRec.on === true && rec.on === false));
-  assert(await p.$eval('#dyn-island', x => x.classList.contains('show') && !x.querySelector('[data-testid="di-app-logo"]').hidden));
-  assert(await p.$eval('#upg-back', x => x.disabled));
-  assert(await p.$eval('#upg-warn', x => !x.hidden));
-  // 更新中锁定：点空白处弹层不消失
-  await p.click('#sheet .backdrop');
-  assert(await p.$eval('#sheet', x => x.classList.contains('show')));
-  await new Promise(r => setTimeout(r, 1200));
-  assert(await p.$eval('#upg-stage', x => x.innerText.includes('主控芯片')));
-  await p.waitForFunction(() => document.getElementById('upg-back') && document.getElementById('upg-back').disabled === false, { timeout: 15000 });
-  assert(await p.evaluate(() => phoneRec.on === false));
-  assert.equal(await p.$eval('#fw-val', x => x.innerText.trim()), '已是最新');
-  assert(await p.$eval('#dev-state', x => x.innerText.includes('已更新到 主控 2.2.0 / Wi-Fi 1.5.0')));
-  // 同步冷却结束后恢复箭头，再开启录音以验收 Timeline 顶部实时状态块
-  await p.waitForFunction(() => document.querySelector('#sync-ico.syncidle'), { timeout: 13000 });
-  assert(await p.$eval('#sync-txt', x => x.innerText.includes('手动同步')));
-  await p.click('[data-testid="rec-toggle"]');
-  // Wi-Fi 二级页：已保存置顶（前3+展开）→ 扫描 → 范围外置灰 → 直连 → 新网络保存
-  await p.click('[data-testid="wifi-row"]');
+  assert(await p.$eval('[data-testid="upg-wifi-row"]', x => !x.hidden && x.textContent.includes('已配置 · 2 个网络') && !!x.querySelector('.rowchev')));
+  // Wi-Fi 二级页（仅 Wi-Fi 芯片有升级时从固件更新页进入）：已保存置顶（前3+展开）→ 扫描 → 范围外置灰 → 直连 → 新网络保存 → 返回固件更新页
+  await p.click('[data-testid="upg-wifi-row"]');
   assert(await p.$eval('#dev-wifi', x => !x.hidden));
   assert.equal(await p.$('#dev-wifi .tbc-badge'), null);
   assert.equal(await p.$$eval('#wsaved .witem', x => x.length), 3);
@@ -822,10 +892,38 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#wlist .wform', x => x.innerText.includes('正在验证')));
   await p.waitForFunction(() => document.getElementById('wstate') && document.getElementById('wstate').textContent.includes('Office-2.4G 连接成功'), { timeout: 8000 });
   assert(await p.$eval('#wlist', x => x.innerText.includes('已连接')));
-  assert.equal(await p.$eval('#wifi-n', x => x.innerText), '5');
+  assert.equal(await p.$eval('#upg-wifi-n', x => x.innerText), '5');
   await p.click('[data-testid="wifi-back"]');
+  assert(await p.$eval('#dev-upg', x => !x.hidden));
+  assert(await p.$eval('[data-testid="upg-wifi-row"]', x => !x.hidden && x.textContent.includes('5 个网络')));
+  // 录音进行中点升级：弹出确认弹窗，确认后停硬件录音、自动切本机录音（灵动岛显示 App Logo），升级完成后关闭本机录音并隐藏 Wi-Fi 入口
+  await p.click('#upg-btn');
+  assert(await p.$eval('[data-testid="ota-rec-confirm-dialog"]', x => !x.hidden && x.innerText.includes('当前正在录音')));
+  assert.equal(await p.$eval('#upg-back', x => x.disabled), false);
+  await p.click('[data-testid="ota-rec-confirm"]');
+  await new Promise(r => setTimeout(r, 120));
+  assert(await p.evaluate(() => phoneRec.on === true && rec.on === false));
+  assert(await p.$eval('#dyn-island', x => x.classList.contains('show') && !x.querySelector('[data-testid="di-app-logo"]').hidden));
+  assert(await p.$eval('#upg-back', x => x.disabled));
+  assert(await p.$eval('#upg-warn', x => !x.hidden));
+  // 更新中锁定：点空白处弹层不消失
+  await p.click('#sheet .backdrop');
+  assert(await p.$eval('#sheet', x => x.classList.contains('show')));
+  await new Promise(r => setTimeout(r, 1200));
+  assert(await p.$eval('#upg-stage', x => x.innerText.includes('主控芯片')));
+  await p.waitForFunction(() => document.getElementById('upg-back') && document.getElementById('upg-back').disabled === false, { timeout: 15000 });
+  assert(await p.evaluate(() => phoneRec.on === false));
+  assert.equal(await p.$eval('#fw-val', x => x.innerText.trim()), '已是最新');
+  assert(await p.$eval('#dev-state', x => x.innerText.includes('已更新到 主控 2.2.0 / Wi-Fi 1.5.0')));
+  await p.click('[data-testid="fw-update"]');
+  assert(await p.$eval('#dev-upg', x => !x.hidden));
+  assert(await p.$eval('[data-testid="upg-wifi-row"]', x => x.hidden === true));
+  await p.click('#upg-back');
   assert(await p.$eval('#dev-main', x => !x.hidden));
-  assert(await p.$eval('[data-testid="wifi-row"]', x => x.textContent.includes('5 个网络')));
+  // 同步冷却结束后恢复箭头，再开启录音以验收 Timeline 顶部实时状态块
+  await p.waitForFunction(() => document.querySelector('#sync-ico.syncidle'), { timeout: 13000 });
+  assert(await p.$eval('#sync-txt', x => x.innerText.includes('手动同步')));
+  await p.click('[data-testid="rec-toggle"]');
   await p.click('#dev-main > .btn:last-child');
   // 状态弹层是从 Setting 页打开的；先回 Timeline 再看记录顶部状态块
   await p.click('[data-testid="nav-timeline"]');
@@ -1016,12 +1114,18 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   // 行为与健康信号已从 NC 落地；目标版仍保留圈地与生理信号的 TBC 入口
   await p.click('[data-testid="nav-setting"]');
   assert(await p.$('[data-testid="set-health-location"]'));
+  await p.$eval('[data-testid="set-health-location"]', x => x.scrollIntoView({ block: 'center' }));
   await p.click('[data-testid="set-health-location"]');
   assert(await p.$('[data-testid="health-sync-switch"]'));
   assert.equal(await p.$$eval('#p-setsub .nc-badge', x => x.length), 0);
   assert(await p.$('[data-testid="health-to-territory"]'), '目标版保留 GPS 圈地 TBC');
   assert(await p.$('[data-testid="health-to-bio-detail"]'), '目标版保留生理信号 TBC');
   await p.click('[data-testid="crumb-back"]');
+  await p.$eval('[data-testid="account-delete-entry"]', x => x.scrollIntoView({ block: 'center' }));
+  await p.click('[data-testid="account-delete-entry"]');
+  assert(await p.$eval('#account-del-wrap', x => x.classList.contains('show')));
+  await p.click('[data-testid="account-delete-cancel"]');
+  assert(!(await p.$eval('#account-del-wrap', x => x.classList.contains('show'))));
 
   // 当前版本基线（current.html · App 已有功能）：零 TBC 标记、保持两栏底栏、无日出 AI 与目标版新项
   const pCur = await b.newPage();
@@ -1123,18 +1227,57 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert((await pCur.$$eval('#parity-list .p-item', x => x.length)) >= 9);
   await pCur.evaluate(() => closeParity());
   assert(await pCur.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
+  assert(await pCur.$eval('[data-testid="fork-card-demo"]', x => x.innerText.includes('录音卡 V2') && x.innerText.includes('手机本机')));
+  assert.equal(await pCur.$eval('[data-testid="nt-badge-fork-card"]', x => x.innerText.trim()), 'NT');
+  assert(await pCur.$('[data-testid="fork-col-ble"]'));
+  assert(await pCur.$('[data-testid="fork-col-phone"]'));
+  assert.equal(await pCur.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  // 当前版验证：总结卡内联位置 + 无意义碎碎念胶囊 + 滚动区间连选 + 批量转写周期设置
+  const curE1Top = await pCur.$eval('[data-testid="card-e1"]', x => x.getBoundingClientRect().top);
+  const curSumTop = await pCur.$eval('[data-testid="card-sum-demo"]', x => x.getBoundingClientRect().top);
+  const curE2Top = await pCur.$eval('[data-testid="card-e2"]', x => x.getBoundingClientRect().top);
+  assert(curE1Top < curSumTop && curSumTop < curE2Top, 'current.html 总结卡应在 e1 之下、e2 之上');
+  assert(await pCur.$eval('[data-testid="trivial-cluster-0"]', x => x.innerText.includes('无意义碎碎念 · 2 段')));
+  await pCur.click('[data-testid="summary-start"]');
+  await pCur.click('[data-testid="card-e1"]');
+  await pCur.evaluate(() => { window.scrollTo(0, document.body.scrollHeight); updateStickyRange(); });
+  await pCur.waitForSelector('[data-testid="sticky-select-bottom"].show', { timeout: 2000 });
+  await pCur.click('[data-testid="sticky-select-bottom"]');
+  assert(await pCur.$eval('#sel-count2', x => parseInt(x.innerText.replace(/\D/g, ''), 10) >= 3));
+  await pCur.click('#sumbar .btn.ghost');
+  assert.equal(await pCur.$eval('[data-testid="nt-btn"]', x => x.innerText.trim()), 'NT·2');
+  await pCur.click('[data-testid="nt-btn"]');
+  assert(await pCur.$('[data-testid="nt-item-multi-device-failover"]'));
+  await pCur.click('[data-testid="nt-btn"]');
   await pCur.click('[data-testid="nav-setting"]');
+  assert.equal(await pCur.$eval('#sv-transcribe-cycle', x => x.innerText.trim()), '每 15 分钟');
+  await pCur.click('[data-testid="set-transcribe-cycle"]');
+  await pCur.click('[data-testid="cycle-opt-30"]');
+  assert.equal(await pCur.$eval('#sv-transcribe-cycle', x => x.innerText.trim()), '每 30 分钟');
   assert.equal(await pCur.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
+  assert(await pCur.$eval('[data-testid="nt-badge-local-row"]', x => x.innerText.trim() === 'NT'));
   await pCur.$eval('[data-testid="set-local-model"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="set-local-model"]');
   assert(await pCur.$('[data-testid="asr-engine-group"]'));
+  assert(await pCur.$eval('[data-testid="nt-badge-local-sub"]', x => x.innerText.trim() === 'NT'));
   assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on')));
   assert(await pCur.$('[data-testid="model-dl-asr"]'));
+  assert(await pCur.$eval('[data-testid="local-help"]', x => x.hidden));
+  await pCur.click('[data-testid="local-engine-help"]');
+  assert(await pCur.$eval('[data-testid="local-help"]', x => !x.hidden));
   await pCur.$eval('[data-testid="plat-chip-android-gms"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="plat-chip-android-gms"]');
-  assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('Google 端侧离线语音引擎')));
+  assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('系统转写')));
   assert(await pCur.$eval('#setsub-body', x => {
-    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-plat-preview').map(el => el.innerText).join('\n');
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
+    return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
+  }));
+  await pCur.$eval('[data-testid="plat-chip-android-compat"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="plat-chip-android-compat"]');
+  assert.equal(await pCur.$eval('#sv-local', x => x.innerText.trim()), '兼容方案 · 即用');
+  assert(await pCur.$eval('[data-testid="asr-opt-system"]', x => x.classList.contains('on') && x.innerText.includes('系统转写')));
+  assert(await pCur.$eval('#setsub-body', x => {
+    const txt = [...x.children].filter(el => el.dataset.testid !== 'local-help').map(el => el.innerText).join('\n');
     return !txt.includes('iOS') && !txt.includes('SpeechAnalyzer');
   }));
   await pCur.$eval('[data-testid="plat-chip-android-cn"]', x => x.scrollIntoView({ block: 'center' }));
@@ -1147,6 +1290,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="plat-chip-ios26"]');
   assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0);
   assert.equal(await pCur.$$eval('.tbc-badge', x => x.length), 0);
+  assert((await pCur.$$eval('.nt-badge', x => x.length)) >= 1);
   await pCur.click('[data-testid="crumb-back"]');
   await pCur.evaluate(() => { agCfg.local.spk = 'none'; syncSetSummary(); });
   await pCur.$eval('[data-testid="set-voiceprint"]', x => x.scrollIntoView({ block: 'center' }));
@@ -1184,6 +1328,15 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('#conn-list .conn-item');
   await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
   assert.equal(await pCur.$('#dev-main [data-testid="phone-rec-main-row"]'), null, 'current.html 已连硬件不应显示本机录音行');
+  assert(await pCur.$eval('[data-testid="wifi-row"]', x => x.hidden === true), 'current.html 录音卡 V2 主弹层默认隐藏 Wi-Fi 行');
+  await pCur.click('[data-testid="fw-update"]');
+  assert(await pCur.$eval('[data-testid="upg-wifi-row"]', x => !x.hidden && x.textContent.includes('已配置')));
+  await pCur.click('[data-testid="upg-wifi-row"]');
+  assert(await pCur.$eval('#dev-wifi', x => !x.hidden));
+  await pCur.click('[data-testid="wifi-back"]');
+  assert(await pCur.$eval('#dev-upg', x => !x.hidden));
+  await pCur.click('#upg-back');
+  assert(await pCur.$eval('#dev-main', x => !x.hidden));
   await pCur.click('[data-testid="rec-toggle"]');
   assert.deepEqual(await pCur.evaluate(() => ({ hw: rec.on, phone: phoneRec.on, standby: phoneRec.standby })), { hw: true, phone: false, standby: true });
   assert(await pCur.$eval('#dyn-island', x => x.classList.contains('show') && x.innerText.includes('蓝牙录音中') && x.innerText.includes('锁屏实况')));
@@ -1253,31 +1406,41 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="disconnect-confirm"]');
   await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
   await pCur.evaluate(() => closeSheet());
+  // 当前版验证：Watch 已启用联动时，BLE 意外断连优先 Watch 接力（Watch/手机互斥）+ 断连横幅 + 自动重连拉取合并
+  await pCur.click('[data-testid="hw-capsule"]');
+  await pCur.waitForSelector('[data-testid="dev-item-DYJV2_T4W25T"]', { timeout: 5000 });
+  await pCur.click('[data-testid="dev-item-DYJV2_T4W25T"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
+  await pCur.click('[data-testid="rec-toggle"]');
+  await pCur.click('[data-testid="hw-unexpected-drop-btn"]');
+  await pCur.waitForFunction(() => !conn.retrying && !conn.connected, { timeout: 4000 });
+  assert.deepEqual(await pCur.evaluate(() => ({ hw: rec.on, watch: watchFailover.on, phone: phoneRec.on })), { hw: false, watch: true, phone: false });
+  assert(await pCur.$eval('[data-testid="capsule-watch-rec"]', x => getComputedStyle(x).display !== 'none' && x.innerText.trim() === '手表录音'));
+  assert(await pCur.$eval('#dyn-island', x => x.classList.contains('show') && x.innerText.includes('Apple Watch 接力录音中')));
+  await pCur.click('[data-testid="hw-capsule"]');
+  assert(await pCur.$eval('[data-testid="ble-disconnect-banner"]', x => !x.hidden && x.innerText.includes('Apple Watch')));
+  await pCur.click('[data-testid="hw-auto-reconnect-btn"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 4000 });
+  assert.deepEqual(await pCur.evaluate(() => ({ conn: conn.connected, hw: rec.on, watch: watchFailover.on, phone: phoneRec.on })), { conn: true, hw: true, watch: false, phone: false });
+  await pCur.click('[data-testid="rec-toggle"]');
+  await pCur.click('[data-testid="dev-disconnect"]');
+  await pCur.click('[data-testid="disconnect-confirm"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
+  await pCur.evaluate(() => closeSheet());
   await pCur.evaluate(() => { agCfg.watchLinkEnabled = false; syncSetSummary(); });
   assert.equal(await pCur.$eval('#sv-watch', x => x.innerText.trim()), '未开启');
-  // 当前版验证：Setting → 第三方硬件联动（Get笔记卡 / Omi 录音器）
+  // 当前版验证：Setting → 第三方硬件联动（Omi 录音器 / 飞书录音豆）
   assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '未开启');
   await pCur.$eval('[data-testid="set-ext-hw"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="set-ext-hw"]');
-  await pCur.waitForSelector('[data-testid="ext-getseed-switch"]', { timeout: 3000 });
-  await pCur.click('[data-testid="ext-getseed-switch"]');
+  await pCur.waitForSelector('[data-testid="ext-omi-switch"]', { timeout: 3000 });
+  assert.equal(await pCur.$('[data-testid="ext-getseed-switch"]'), null);
   await pCur.click('[data-testid="ext-omi-switch"]');
   await pCur.click('[data-testid="crumb-back"]');
-  assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '已开启 2 款');
+  assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '已开启 1 款');
   await pCur.click('[data-testid="hw-capsule"]');
-  await pCur.waitForFunction(() => document.querySelectorAll('#conn-list .conn-item').length === 5, { timeout: 5000 });
-  assert.deepEqual(await pCur.$$eval('#conn-list .cn', e => e.map(x => x.innerText.trim())), ['T4W25T', 'A102', '7F20', 'B7K9Q2', 'L3M8N1']);
-  await pCur.click('[data-testid="dev-item-Get-A102"]');
-  await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
-  assert.equal(await pCur.$eval('#dev-kind-badge', x => x.innerText.trim()), 'Get笔记卡');
-  assert(await pCur.$eval('[data-testid="rec-physical-only"]', x => !x.hidden && x.innerText.trim() === '机身按键控录'));
-  assert(await pCur.$eval('#rec-sw', x => x.hidden));
-  assert(await pCur.$eval('#row-sync', x => !x.hidden));
-  assert(await pCur.$eval('#row-wifi', x => x.hidden));
-  assert(await pCur.$eval('#row-fw', x => x.hidden));
-  await pCur.click('[data-testid="dev-disconnect"]');
-  await pCur.click('[data-testid="disconnect-confirm"]');
-  await pCur.waitForFunction(() => document.querySelectorAll('#conn-list .conn-item').length === 5, { timeout: 5000 });
+  await pCur.waitForFunction(() => document.querySelectorAll('#conn-list .conn-item').length === 4, { timeout: 5000 });
+  assert.deepEqual(await pCur.$$eval('#conn-list .cn', e => e.map(x => x.innerText.trim())), ['T4W25T', '7F20', 'B7K9Q2', 'L3M8N1']);
   await pCur.click('[data-testid="dev-item-Omi-7F20"]');
   await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
   assert.equal(await pCur.$eval('#dev-kind-badge', x => x.innerText.trim()), 'Omi 录音器');
@@ -1289,7 +1452,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="dev-disconnect"]');
   await pCur.click('[data-testid="disconnect-confirm"]');
   await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
-  await pCur.evaluate(() => { closeSheet(); agCfg.getSeedLinkEnabled = false; agCfg.omiLinkEnabled = false; agCfg.feishuLinkEnabled = false; syncSetSummary(); });
+  await pCur.evaluate(() => { closeSheet(); agCfg.omiLinkEnabled = false; agCfg.feishuLinkEnabled = false; agCfg.iflytekA1LinkEnabled = false; syncSetSummary(); });
   assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '未开启');
   await pCur.$eval('[data-testid="set-ext-hw"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="set-ext-hw"]');
@@ -1314,6 +1477,29 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
   await pCur.evaluate(() => { closeSheet(); agCfg.feishuLinkEnabled = false; syncSetSummary(); });
   assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '未开启');
+  await pCur.$eval('[data-testid="set-ext-hw"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-ext-hw"]');
+  await pCur.waitForSelector('[data-testid="ext-iflytek-switch"]', { timeout: 3000 });
+  assert.equal(await pCur.$('[data-testid="ext-iflytek-beta"]'), null);
+  await pCur.click('[data-testid="ext-iflytek-switch"]');
+  await pCur.click('[data-testid="crumb-back"]');
+  assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '已开启 1 款');
+  await pCur.click('[data-testid="hw-capsule"]');
+  await pCur.waitForFunction(() => document.querySelectorAll('#conn-list .conn-item').length === 4, { timeout: 5000 });
+  assert.ok((await pCur.$$eval('#conn-list .cn', e => e.map(x => x.innerText.trim()))).includes('11E0'));
+  await pCur.click('[data-testid="dev-item-IFLYTEK_A1_11E0"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
+  assert.equal(await pCur.$eval('#dev-kind-badge', x => x.innerText.trim()), '讯飞智能录音笔 A1');
+  assert(await pCur.$eval('#rec-sw', x => !x.hidden));
+  assert(await pCur.$eval('[data-testid="rec-physical-only"]', x => x.hidden));
+  assert(await pCur.$eval('#row-sync', x => !x.hidden));
+  assert(await pCur.$eval('#row-wifi', x => x.hidden));
+  assert(await pCur.$eval('#row-fw', x => x.hidden));
+  await pCur.click('[data-testid="dev-disconnect"]');
+  await pCur.click('[data-testid="disconnect-confirm"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
+  await pCur.evaluate(() => { closeSheet(); agCfg.iflytekA1LinkEnabled = false; syncSetSummary(); });
+  assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '未开启');
   // 当前版：定位与健康采集读设计列表，开关可关，且没有目标版的信号联动预览
   assert.equal(await pCur.$eval('#sv-health', x => x.innerText.trim()), '已开启 · 6 条');
   await pCur.$eval('[data-testid="set-health-location"]', x => x.scrollIntoView({ block: 'center' }));
@@ -1328,6 +1514,59 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$$eval('[data-testid^="health-item-"]', x => x.length), 6, '关闭开关不清空已展示的设计列表');
   await pCur.evaluate(() => { agCfg.healthSignalEnabled = true; syncSetSummary(); });
   await pCur.click('[data-testid="crumb-back"]');
+  // 当前版：Setting → 第三方数据接入 → 第三方 API 接入（扁平列出 Get 笔记与 11 款笔记/阅读/录音 API）
+  assert.equal(await pCur.$eval('#sv-extapi', x => x.innerText.trim()), '未配置');
+  assert.equal(await pCur.$('#sv-extdata'), null);
+  assert.equal(await pCur.$('#sv-extnotes'), null);
+  assert.equal(await pCur.$('#sv-extrecorders'), null);
+  await pCur.$eval('[data-testid="set-ext-api"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-ext-api"]');
+  await pCur.waitForSelector('[data-testid="ext-api-row-getnote"]', { timeout: 3000 });
+  for (const id of ['getnote', 'notion', 'yuque', 'obsidian', 'flomo', 'weread', 'evernote', 'readwise', 'plaud', 'limitless', 'omi_cloud', 'fireflies']) {
+    assert(await pCur.$(`[data-testid="ext-api-row-${id}"]`), '缺少扁平 API 行 ' + id);
+  }
+  await pCur.click('[data-testid="ext-api-row-getnote"]');
+  await pCur.waitForSelector('[data-testid="getnote-import-other-switch"]', { timeout: 3000 });
+  assert.equal(await pCur.$eval('#crumb-dest', x => x.innerText.trim()), '第三方 API 接入');
+  assert.equal(await pCur.$eval('[data-testid="getnote-import-other-switch"]', x => x.getAttribute('aria-checked')), 'false');
+  await pCur.type('[data-testid="getnote-client-id-input"]', 'cli_demo_123');
+  await pCur.type('[data-testid="getnote-api-key-input"]', 'gk_live_demo_456');
+  await pCur.click('[data-testid="getnote-test-btn"]');
+  assert(await pCur.$eval('[data-testid="getnote-status-card"]', x => x.innerText.includes('已连接')));
+  await pCur.click('[data-testid="getnote-sync-btn"]');
+  assert(await pCur.$eval('[data-testid="getnote-status-card"]', x => x.innerText.includes('已导入 2 条')));
+  await pCur.click('[data-testid="getnote-import-other-switch"]');
+  assert.equal(await pCur.$eval('[data-testid="getnote-import-other-switch"]', x => x.getAttribute('aria-checked')), 'true');
+  await pCur.click('[data-testid="getnote-sync-btn"]');
+  assert(await pCur.$eval('[data-testid="getnote-status-card"]', x => x.innerText.includes('已导入 3 条')));
+  await pCur.waitForSelector('[data-testid="getnote-auto-import-switch"]', { timeout: 3000 });
+  assert.equal(await pCur.$eval('[data-testid="getnote-auto-import-switch"]', x => x.getAttribute('aria-checked')), 'false');
+  await pCur.click('[data-testid="getnote-auto-import-switch"]');
+  assert.equal(await pCur.$eval('[data-testid="getnote-auto-import-switch"]', x => x.getAttribute('aria-checked')), 'true');
+  await pCur.click('[data-testid="crumb-back"]');
+  await pCur.waitForSelector('[data-testid="ext-api-row-getnote"]', { timeout: 3000 });
+  assert.equal(await pCur.$eval('#ext-api-val-getnote', x => x.innerText.trim()), '自动 · 3 条');
+  await pCur.click('[data-testid="ext-api-row-notion"]');
+  await pCur.waitForSelector('[data-testid="ext-conn-notion"]', { timeout: 3000 });
+  await pCur.type('[data-testid="ext-field-notion"]', 'ntn_proto_secret');
+  await pCur.click('[data-testid="ext-test-notion"]');
+  assert(await pCur.$eval('[data-testid="ext-status-notion"]', x => x.innerText.includes('已连接')));
+  await pCur.click('[data-testid="ext-auto-notion"]');
+  assert.equal(await pCur.$eval('[data-testid="ext-auto-notion"]', x => x.getAttribute('aria-checked')), 'true');
+  assert(await pCur.$eval('[data-testid="ext-status-notion"]', x => x.innerText.includes('已导入 1 条')));
+  await pCur.click('[data-testid="crumb-back"]');
+  await pCur.$eval('[data-testid="ext-api-row-plaud"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="ext-api-row-plaud"]');
+  await pCur.waitForSelector('[data-testid="ext-conn-plaud"]', { timeout: 3000 });
+  await pCur.type('[data-testid="ext-field-plaud"]', 'plaud_proto_token');
+  await pCur.click('[data-testid="ext-auto-plaud"]');
+  assert.equal(await pCur.$eval('[data-testid="ext-auto-plaud"]', x => x.getAttribute('aria-checked')), 'true');
+  assert(await pCur.$eval('[data-testid="ext-status-plaud"]', x => x.innerText.includes('已导入 1 条')));
+  await pCur.click('[data-testid="crumb-back"]');
+  await pCur.waitForSelector('[data-testid="ext-api-row-plaud"]', { timeout: 3000 });
+  await pCur.click('[data-testid="crumb-back"]');
+  assert.equal(await pCur.$eval('#sv-extapi', x => x.innerText.trim()), '自动 3 项 · 已导入 5 条');
+  await pCur.evaluate(() => { clearGetNoteProto(); clearAllExtHubProto(); });
   // 当前版宽屏全页面滚动到底部留白验证（Timeline / Setting / 总结详情 / 记录详情）
   await pCur.setViewport({ width: 900, height: 680, deviceScaleFactor: 2 });
   await pCur.click('[data-testid="nav-timeline"]');
@@ -1353,10 +1592,32 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     return rc.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom;
   });
   assert(curSetGap >= 44, 'current.html Setting 宽屏底部留白不足: ' + curSetGap);
+  // 当前版：全库声纹 × 语义 1-Tap 轻确认横幅 & 单段防污染解绑
+  await pCur.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 });
+  await pCur.click('[data-testid="nav-timeline"]');
+  const e1Open = await pCur.$eval('[data-testid="card-e1"]', x => x.classList.contains('open'));
+  if (!e1Open) await pCur.click('[data-testid="card-e1"]');
+  await pCur.$eval('[data-testid="detail-e1"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="detail-e1"]');
+  await pCur.waitForSelector('#p-detail.show #dt-dlg [data-testid="spk-suggest-bar"]', { timeout: 3000 });
+  assert(await pCur.$eval('#p-detail #dt-dlg [data-testid="spk-suggest-bar"]', x => x.innerText.includes('老陈') && x.innerText.includes('小周')));
+  assert(await pCur.$eval('[data-testid="turn-who-e1-1"]', x => x.innerText.includes('疑似老陈?')));
+  await pCur.click('#p-detail [data-testid="spk-suggest-confirm-e1-1"]');
+  assert(await pCur.$eval('[data-testid="turn-who-e1-1"]', x => x.innerText.trim() === '老陈'));
+  await pCur.click('[data-testid="turn-who-e1-1"]');
+  await pCur.waitForSelector('[data-testid="qspk-detach-btn"]:not([hidden])', { timeout: 2000 });
+  await pCur.click('[data-testid="qspk-detach-btn"]');
+  assert(await pCur.$eval('[data-testid="turn-who-e1-1"]', x => x.innerText.includes('说话人 1')));
+  await pCur.click('[data-testid="crumb-back"]');
+  await pCur.click('[data-testid="nav-setting"]');
+  await pCur.$eval('[data-testid="set-voiceprint"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-voiceprint"]');
+  assert(await pCur.$eval('[data-testid="vp-library-section"]', x => x.innerText.includes('老陈')), '解绑单段后声纹库仍保留人物档案');
+  await pCur.click('[data-testid="crumb-back"]');
   await pCur.close();
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'bedtime-diary', 'diary-likes-annotations', 'dream-card', 'dream-sheet', 'dream-comic-skill', 'unc-triage-sheet', 'voiceprint-context-tag', 'voiceprint-merge-detach', 'memory-graph-triad', 'memory-provenance-metabolism', 'hw-button-island-push', 'tbc-markers', 'parity-drawer', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'raw-seek', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'sum-contextual-photos', 'map-photo-hierarchy', 'todo-progressive-meta', 'point-expand', 'point-trace', 'src-photo-infocards', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'setting-v2-subpages', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'multi-hw-scan', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'dfu-rec-guard', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'apple-watch-hardware-link', 'ble-scan-expiry', 'territory-checkin-map', 'sleep-hr-hrv-emotion', 'sunrise-ai-her-chat', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'bedtime-diary', 'diary-likes-annotations', 'dream-card', 'dream-sheet', 'dream-comic-skill', 'unc-triage-sheet', 'voiceprint-context-tag', 'voiceprint-merge-detach', 'voiceprint-suggest-confirm-and-detach', 'memory-graph-triad', 'memory-provenance-metabolism', 'hw-button-island-push', 'tbc-markers', 'parity-drawer', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'raw-seek', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'sum-contextual-photos', 'map-photo-hierarchy', 'todo-progressive-meta', 'point-expand', 'point-trace', 'src-photo-infocards', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'setting-v2-subpages', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'multi-hw-scan', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'dfu-rec-guard', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'apple-watch-hardware-link', 'ble-scan-expiry', 'territory-checkin-map', 'sleep-hr-hrv-emotion', 'sunrise-ai-her-chat', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });

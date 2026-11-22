@@ -14,10 +14,11 @@ class PrivacyPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     return Scaffold(
-      backgroundColor: RCColors.bg,
+      backgroundColor: c.bg,
       appBar: AppBar(
-        backgroundColor: RCColors.bg,
+        backgroundColor: c.bg,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
@@ -25,16 +26,16 @@ class PrivacyPage extends StatelessWidget {
         titleSpacing: 0,
         leading: IconButton(
           icon: const Icon(Icons.chevron_left, size: 28),
-          color: RCColors.label,
+          color: c.label,
           tooltip: '返回',
           onPressed: () => Navigator.of(context).maybePop(),
         ),
-        title: const Text(
+        title: Text(
           '隐私政策',
           style: TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w600,
-            color: RCColors.label,
+            color: c.label,
           ),
         ),
       ),
@@ -54,36 +55,40 @@ class PrivacyPage extends StatelessWidget {
               children: [
                 Text(
                   '生效日期：$privacyUpdatedAt',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     height: 1.5,
-                    color: RCColors.sec,
+                    color: c.sec,
                   ),
                 ),
                 const SizedBox(height: 16),
-                _paragraph(privacyIntro),
+                _paragraph(context, privacyIntro),
                 for (final section in privacySections) ...[
                   const SizedBox(height: 26),
                   Text(
                     section.title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
                       height: 1.5,
-                      color: RCColors.label,
+                      color: c.label,
                     ),
                   ),
                   const SizedBox(height: 8),
                   for (final paragraph in section.paragraphs)
-                    _paragraph(paragraph, bullet: paragraph.startsWith('- ')),
+                    _paragraph(
+                      context,
+                      paragraph,
+                      bullet: paragraph.startsWith('- '),
+                    ),
                 ],
                 const SizedBox(height: 32),
-                const Text(
+                Text(
                   '本页为精要版说明；如需完整条款或行使数据权利，请通过上方邮箱联系我们。',
                   style: TextStyle(
                     fontSize: 12,
                     height: 1.6,
-                    color: RCColors.ax,
+                    color: c.ax,
                   ),
                 ),
               ],
@@ -95,16 +100,17 @@ class PrivacyPage extends StatelessWidget {
   }
 
   /// 正文段落：`- ` 开头按条列渲染（去掉前缀，加圆点与缩进）。
-  Widget _paragraph(String text, {bool bullet = false}) {
+  Widget _paragraph(BuildContext context, String text, {bool bullet = false}) {
+    final c = context.rc;
     if (!bullet) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: Text(
           text,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 15,
             height: 1.75,
-            color: RCColors.ink,
+            color: c.ink,
           ),
         ),
       );
@@ -122,10 +128,10 @@ class PrivacyPage extends StatelessWidget {
           Expanded(
             child: Text(
               text.substring(2),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 15,
                 height: 1.75,
-                color: RCColors.ink,
+                color: c.ink,
               ),
             ),
           ),
@@ -144,8 +150,8 @@ class _Dot extends StatelessWidget {
     return Container(
       width: 4,
       height: 4,
-      decoration: const BoxDecoration(
-        color: RCColors.sec,
+      decoration: BoxDecoration(
+        color: context.rc.sec,
         shape: BoxShape.circle,
       ),
     );

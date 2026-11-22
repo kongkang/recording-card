@@ -94,6 +94,19 @@ class LocalAsrService implements SpeechEngine {
 
   bool get isLoaded => _loaded;
 
+  static const double defaultVadMinSilenceDuration = 0.45;
+  static const double defaultVadMaxSpeechDuration = 28;
+
+  static sherpa.SileroVadModelConfig buildSileroVadConfig(String vadPath) =>
+      sherpa.SileroVadModelConfig(
+        model: vadPath,
+        threshold: 0.20,
+        minSilenceDuration: defaultVadMinSilenceDuration,
+        minSpeechDuration: 0.20,
+        windowSize: 512,
+        maxSpeechDuration: defaultVadMaxSpeechDuration,
+      );
+
   bool _vadLoaded = false;
   String? _vadPath;
 
@@ -522,13 +535,8 @@ void _asrWorkerMain(SendPort mainPort) {
           initSherpaBindings(msg['nativeLibraryPath'] as String?);
           vad = sherpa.VoiceActivityDetector(
             config: sherpa.VadModelConfig(
-              sileroVad: sherpa.SileroVadModelConfig(
-                model: msg['vadPath'] as String,
-                threshold: 0.20,
-                minSilenceDuration: 0.5,
-                minSpeechDuration: 0.20,
-                windowSize: 512,
-                maxSpeechDuration: 10,
+              sileroVad: LocalAsrService.buildSileroVadConfig(
+                msg['vadPath'] as String,
               ),
               sampleRate: 16000,
               numThreads: 1,

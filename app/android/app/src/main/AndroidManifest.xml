@@ -35,8 +35,13 @@
     <!-- 可选云端转写 / 版本检查 / 固件更新 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- OS1 原生语音对话输入 -->
+    <!-- OS1 原生语音对话输入与本机/断连保底录音 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 锁屏/退后台期间保持蓝牙硬件同步与本机保底录音常驻前台服务 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- BLE 是核心能力但不设为 required，避免不带蓝牙的平板在商店无法安装；运行时再做能力判断 -->
     <uses-feature
@@ -48,10 +53,16 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config">
         <!-- allowBackup=false：录音与转写内容不进系统云备份（体积大且涉及隐私）。
-             usesCleartextTraffic=false：所有网络请求强制 HTTPS；若固件配网页只提供
-             局域网 http，需要另加 networkSecurityConfig 例外（见 docs/RELEASE.md 待确认项 2）。 -->
+             usesCleartextTraffic=false + networkSecurityConfig：公网请求强制 HTTPS，
+             仅对硬件 SoftAP（192.168.4.1 / 192.168.43.1）放行局域网明文 HTTP。 -->
+        <service
+            android:name=".RecordingForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice|microphone" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -116,7 +127,17 @@
             <action android:name="android.speech.RecognitionService" />
         </intent>
         <intent>
+            <action android:name="android.speech.OnDeviceRecognitionService" />
+        </intent>
+        <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+        <package android:name="com.google.android.tts" />
+        <package android:name="com.google.android.as" />
+        <package android:name="com.google.android.aicore" />
+        <package android:name="com.hihonor.mcs.intelligence.voice" />
+        <package android:name="com.miui.voiceassistant" />
+        <package android:name="com.heytap.speechassist" />
+        <package android:name="com.vivo.aiengine" />
     </queries>
 </manifest>

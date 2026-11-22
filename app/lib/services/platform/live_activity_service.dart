@@ -172,6 +172,24 @@ class LiveActivityService {
     subtitle: '蓝牙断连 · 本机保底录音中',
   );
 
+  /// 启动/更新蓝牙意外断连后由 Apple Watch 接力的实况卡片。
+  Future<void> startWatchFailoverRecordingActivity({
+    required DateTime startedAt,
+  }) => startRecordingActivity(
+    startedAt: startedAt,
+    title: '录音卡',
+    subtitle: '蓝牙断连 · Apple Watch 接力录音中',
+  );
+
+  /// 蓝牙断开且 iOS 后台受限待用户轻点回到前台自动开启手机麦克风的提醒实况卡片。
+  Future<void> startPendingFailoverRecordingActivity({
+    required DateTime startedAt,
+  }) => startRecordingActivity(
+    startedAt: startedAt,
+    title: '录音卡',
+    subtitle: '蓝牙已断连 · 轻点打开恢复本机录音',
+  );
+
   /// 关闭灵动岛实况卡片。
   Future<void> stopLocalRecordingActivity() async {
     try {

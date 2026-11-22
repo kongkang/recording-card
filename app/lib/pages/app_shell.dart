@@ -3,10 +3,12 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 import '../core/device/card_gateway.dart';
 import '../core/storage/storage.dart';
@@ -20,11 +22,17 @@ import '../services/agent/hardware_agent_task_coordinator.dart';
 import '../services/audio/live_audio_recorder.dart';
 import '../services/audio/recording_status.dart';
 import '../services/auth_service.dart';
+import '../services/external_data/external_data_hub_store.dart';
+import '../services/external_data/getnote_sync_store.dart';
 import '../services/health/health_signal_controller.dart';
 import '../services/memory/memory_search_scope.dart';
 import '../services/memory/memory_search_service.dart';
 import '../services/photos/photo_library_service.dart';
+import '../services/transcribe/asr_models.dart';
+import '../services/transcribe/local_asr_service.dart';
 import '../services/transcribe/model_manager_controller.dart';
+import '../services/transcribe/speech_engine.dart';
+import '../services/transcribe/speech_models.dart';
 import '../services/transcribe/system_speech_client.dart';
 import '../widgets/legacy_upgrade_sheet.dart';
 import '../widgets/os1_ai_space.dart';
@@ -36,6 +44,109 @@ import 'status_sheet.dart';
 import 'summary_result_page.dart';
 import 'timeline_page.dart';
 import 'unclassified_photos_page.dart';
+
+const _desktopCommands = MethodChannel('com.reai.recordingcard/desktop');
+
+/// 硬件按键 / Action Button 语音指令双路离线转写：
+/// 优先尝试系统端侧识别（[SystemSpeechClient]，`language: 'auto'`）；
+/// 若系统识别抛错或返回空文本，自动回退到本地 SenseVoice（`language: 'auto'`）。
+/// 若用户已显式指定首选 SenseVoice，则先跑 SenseVoice，不可用或为空时回退系统识别。
+Future<String> transcribeVoiceCommandWithDualFallback(
+  Float32List samples, {
+  int sampleRate = 16000,
+  SystemSpeechClient? systemSpeech,
+  SpeechEngine? localAsr,
+  Future<SpeechEngine?> Function()? resolveLocalAsr,
+  ModelInstaller? installer,
+  SpeechModelProvider? modelProvider,
+  bool preferSenseVoice = false,
+}) async {
+  if (samples.isEmpty) return '';
+
+  Future<String> trySystem() async {
+    final sys = systemSpeech ?? SystemSpeechClient();
+    await sys.requestAuthorization();
+    final res = await sys.transcribeSamples(
+      samples,
+      sampleRate: sampleRate,
+      language: 'auto',
+    );
+    return res.text.trim();
+  }
+
+  Future<({bool attempted, String text})> trySenseVoice() async {
+    String? modelPath;
+    String? tokensPath;
+    if (modelProvider != null) {
+      final resolved = await modelProvider.resolve();
+      if (resolved != null &&
+          !resolved.usesSystemAsr &&
+          resolved.asrModelPath.isNotEmpty &&
+          resolved.tokensPath.isNotEmpty) {
+        modelPath = resolved.asrModelPath;
+        tokensPath = resolved.tokensPath;
+      }
+    }
+    if ((modelPath == null || tokensPath == null) && installer != null) {
+      final asr = await installer.status(senseVoiceSpec);
+      if (asr.installed) {
+        modelPath = await installer.resolve(senseVoiceSpec, 'model.int8.onnx');
+        tokensPath = await installer.resolve(senseVoiceSpec, 'tokens.txt');
+      }
+    }
+    if (modelPath == null ||
+        modelPath.isEmpty ||
+        tokensPath == null ||
+        tokensPath.isEmpty) {
+      return (attempted: false, text: '');
+    }
+    final engine =
+        localAsr ?? (resolveLocalAsr != null ? await resolveLocalAsr() : null);
+    if (engine == null) {
+      return (attempted: false, text: '');
+    }
+    await engine.load(
+      modelPath: modelPath,
+      tokensPath: tokensPath,
+      language: 'auto',
+    );
+    final res = await engine.transcribe(samples, sampleRate: sampleRate);
+    return (attempted: true, text: res.text.trim());
+  }
+
+  if (preferSenseVoice) {
+    Object? localErr;
+    try {
+      final local = await trySenseVoice();
+      if (local.text.isNotEmpty) return local.text;
+    } on Object catch (e) {
+      localErr = e;
+    }
+    try {
+      final sysText = await trySystem();
+      if (sysText.isNotEmpty) return sysText;
+    } on Object {
+      if (localErr != null) Error.throwWithStackTrace(localErr, StackTrace.current);
+      rethrow;
+    }
+    return '';
+  }
+
+  Object? sysErr;
+  try {
+    final sysText = await trySystem();
+    if (sysText.isNotEmpty) return sysText;
+  } on Object catch (e) {
+    sysErr = e;
+  }
+
+  final local = await trySenseVoice();
+  if (local.text.isNotEmpty) return local.text;
+  if (!local.attempted && sysErr != null) {
+    throw sysErr;
+  }
+  return '';
+}
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -50,13 +161,21 @@ class AppShell extends StatefulWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    this.getNoteStore,
+    this.externalDataHub,
     this.memorySearch,
     this.agentChat,
     this.hardwareAgentCoordinator,
     this.transcribeSamples,
+    this.systemSpeech,
+    this.fallbackLocalAsr,
+    this.modelInstaller,
     this.lookupExistingTranscript,
     this.supportsDynamicIslandOverride,
     this.onDeviceCreated,
+    this.clock,
+    this.crashStore,
+    this.accountHttpClient,
   });
 
   final AppStore store;
@@ -69,13 +188,21 @@ class AppShell extends StatefulWidget {
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
+  final GetNoteSyncStore? getNoteStore;
+  final ExternalDataHubStore? externalDataHub;
   final MemorySearchService? memorySearch;
   final AgentChatController? agentChat;
   final HardwareAgentTaskCoordinator? hardwareAgentCoordinator;
   final SliceTranscribeFn? transcribeSamples;
+  final SystemSpeechClient? systemSpeech;
+  final SpeechEngine? fallbackLocalAsr;
+  final ModelInstaller? modelInstaller;
   final TranscriptLookupFn? lookupExistingTranscript;
   final bool? supportsDynamicIslandOverride;
   final void Function(DeviceStore)? onDeviceCreated;
+  final DateTime Function()? clock;
+  final KeyValueStore? crashStore;
+  final http.Client? accountHttpClient;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -95,9 +222,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         healthStore: widget.healthSignals?.store,
       );
 
-  /// 实时音频接收器：录音期间边录边把 PCM 收进本地，每满 1 分钟切片即刻送本地 ASR 转写落库。
+  /// 实时音频接收器：录音期间边录边把 PCM 收进本地，按可配置窗口（默认 1 分钟）切片即刻送本地 ASR 转写落库。
+  late final bool _ownsLiveAudio = widget.liveAudio == null;
   late final LiveAudioRecorder _liveAudio =
-      widget.liveAudio ?? LiveAudioRecorder(gateway: _device.gateway);
+      widget.liveAudio ??
+      LiveAudioRecorder(
+        gateway: _device.gateway,
+        sliceDuration: _agentConfig.recordingSliceDuration,
+      );
   late final PhotoLibraryService _photoLib =
       widget.photoLibrary ?? const PhotoLibraryService();
   late final HardwareAgentTaskCoordinator _hwAgent;
@@ -105,28 +237,75 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   StreamSubscription<LiveAudioSlice>? _liveSliceSub;
   StreamSubscription<LiveAudioSlice>? _phoneSliceSub;
   StreamSubscription<LiveAudioSlice>? _watchSliceSub;
+  SpeechEngine? _ownedFallbackAsr;
+  late DateTime _lastCalendarDay = DateUtils.dateOnly(_now());
   bool _supportsDynamicIsland = false;
   bool _askedPhotoPermThisSession = false;
+  late RootTab _lastRootTab = widget.store.rootTab;
+  bool _ownsBleReconnectSyncCb = false;
+
+  DateTime _now() => (widget.clock ?? DateTime.now)();
 
   bool get _resolvedSupportsDynamicIsland =>
       widget.supportsDynamicIslandOverride ?? _supportsDynamicIsland;
+
+  Future<String> _defaultTranscribeSamples(
+    Float32List samples, {
+    int sampleRate = 16000,
+  }) async {
+    final preferSv = _agentConfig.preferredAsrEngine == 'sensevoice';
+    if (widget.transcribeSamples != null) {
+      if (widget.systemSpeech != null && !preferSv) {
+        try {
+          await widget.systemSpeech!.requestAuthorization();
+          final sys = await widget.systemSpeech!.transcribeSamples(
+            samples,
+            sampleRate: sampleRate,
+            language: 'auto',
+          );
+          if (sys.text.trim().isNotEmpty) return sys.text.trim();
+        } on Object {
+          // 系统识别失败时自动回退至本地 SenseVoice 回调
+        }
+      }
+      return widget.transcribeSamples!(samples, sampleRate: sampleRate);
+    }
+    return transcribeVoiceCommandWithDualFallback(
+      samples,
+      sampleRate: sampleRate,
+      systemSpeech: widget.systemSpeech,
+      localAsr: widget.fallbackLocalAsr,
+      resolveLocalAsr: () async => _ownedFallbackAsr ??= LocalAsrService(
+        idleReleaseDelay: const Duration(seconds: 45),
+      ),
+      installer: widget.modelInstaller ?? ModelInstaller(),
+      preferSenseVoice: preferSv,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.store.addListener(_onStoreTabChanged);
+    if (!Platform.environment.containsKey('FLUTTER_TEST')) {
+      _desktopCommands.setMethodCallHandler(_onDesktopCommand);
+    }
     if (widget.device == null) widget.onDeviceCreated?.call(_device);
     // 让 store 知道设备在不在：没连卡时下拉不要去取回录音，更不该报"整理中断"。
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
     widget.store.deviceConnected ??= () => _device.isConnected;
     _device.onAutoSyncMissedData ??= () => widget.store.syncRecordings();
     widget.store.deviceRecording ??= () =>
-        _device.isRecording || _device.isPhoneRecording;
+        _device.isRecording ||
+        _device.isPhoneRecording ||
+        _device.isWatchFallbackRecording;
     widget.store.flushActiveRecordingSlice ??= () async {
       if (_liveAudio.isRunning) {
         return _liveAudio.flushActiveSlice();
       }
-      if (_device.isConnected && _device.activeKind == DeviceKind.appleWatch) {
+      if (_device.isWatchFallbackRecording ||
+          (_device.isConnected && _device.activeKind == DeviceKind.appleWatch)) {
         return _device.flushWatchRecordingSlice();
       }
       if (_device.isPhoneRecording) {
@@ -134,11 +313,20 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       }
       return false;
     };
+    if (_device.onBleReconnectedNeedSync == null) {
+      _ownsBleReconnectSyncCb = true;
+      _device.onBleReconnectedNeedSync = (_) => widget.store.syncAfterBleReconnect(
+        flushWatch: _device.flushWatchRecordingSlice,
+        flushPhone: _device.flushPhoneRecordingSlice,
+        pullBleFiles: _device.activeCapabilities.hasFileSync,
+      );
+    }
     widget.store.deviceHasCameraMedia ??= () =>
         _device.activeCapabilities.hasCameraMedia;
     widget.store.photoLibrary = _photoLib;
     widget.store.photoSyncEnabled ??= () => _agentConfig.photoLinkEnabled;
     widget.store.deviceGateway ??= () => _device.gateway;
+    _device.attachAgentConfig(_agentConfig);
     _device.onHardwarePhotoCaptured ??= () {
       if (_agentConfig.photoLinkEnabled &&
           _device.isConnected &&
@@ -155,6 +343,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _watchSliceSub = _device.watchAudioSlices.listen((slice) {
       unawaited(widget.store.ingestLiveSlice(slice));
     });
+    if (_ownsLiveAudio) {
+      _device.setRecordingSliceDuration(_agentConfig.recordingSliceDuration);
+    }
     _device.setIslandEnabled(_agentConfig.islandEnabled);
     if (_agentConfig.watchLinkEnabled != _device.watchHardware.linkEnabled) {
       unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
@@ -167,15 +358,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           agentConfig: _agentConfig,
           agentChat: _agentChat,
           liveAudio: _liveAudio,
-          transcribeSamples:
-              widget.transcribeSamples ??
-              (Float32List samples, {int sampleRate = 16000}) async {
-                final res = await SystemSpeechClient().transcribeSamples(
-                  samples,
-                  sampleRate: sampleRate,
-                );
-                return res.text;
-              },
+          transcribeSamples: _defaultTranscribeSamples,
           lookupExistingTranscript: widget.lookupExistingTranscript,
         );
     _device.liveActivityService.onActionButtonAgent = () {
@@ -212,21 +395,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     }
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _device.handleAppResumed();
-    } else if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden) {
-      if (!_liveAudio.isRunning) {
-        _liveAudio.ringBuffer.clear();
-      }
-      if (!_device.isPhoneRecording) {
-        _device.phoneRingBuffer.clear();
-      }
-    }
-  }
-
   Future<void> _loadLiveActivityCaps() async {
     final caps = await _device.liveActivityService.queryCapabilities();
     if (!mounted) return;
@@ -254,14 +422,19 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (_agentConfig.watchLinkEnabled != _device.watchHardware.linkEnabled) {
       unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
     }
-    if (_agentConfig.getSeedLinkEnabled != _device.getSeedLinkEnabled ||
-        _agentConfig.omiLinkEnabled != _device.omiLinkEnabled ||
-        _agentConfig.feishuLinkEnabled != _device.feishuLinkEnabled) {
+    if (_ownsLiveAudio) {
+      final dur = _agentConfig.recordingSliceDuration;
+      _liveAudio.setSliceDuration(dur);
+      _device.setRecordingSliceDuration(dur);
+    }
+    if (_agentConfig.omiLinkEnabled != _device.omiLinkEnabled ||
+        _agentConfig.feishuLinkEnabled != _device.feishuLinkEnabled ||
+        _agentConfig.iflytekA1LinkEnabled != _device.iflytekA1LinkEnabled) {
       unawaited(
         _device.setExtHardwareEnabled(
-          getSeed: _agentConfig.getSeedLinkEnabled,
           omi: _agentConfig.omiLinkEnabled,
           feishu: _agentConfig.feishuLinkEnabled,
+          iflytekA1: _agentConfig.iflytekA1LinkEnabled,
         ),
       );
     }
@@ -274,11 +447,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   /// （蓝牙文件拉取仅作为离线录音或流断档时的手动补传通道）。
   void _syncRecordingStatus() {
     final hwRecording = _device.isRecording;
+    final watchFailover = _device.isWatchFallbackRecording;
     final phoneRecording = _device.isPhoneRecording;
-    final recording = hwRecording || phoneRecording;
+    final recording = hwRecording || watchFailover || phoneRecording;
     if (recording) {
       if (hwRecording && _device.activeCapabilities.realtimeAudio) {
         _liveAudio.updateDeviceSessionId(_device.recordSession);
+        _liveAudio.updateSourceDeviceLabel(_device.activeRecordingDeviceLabel);
         if (!_liveAudio.isRunning) {
           unawaited(_liveAudio.start());
         }
@@ -287,6 +462,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         unawaited(_liveAudio.stop());
       }
       if (!_wasRecording) {
+        if (widget.store.pauseOfflineSyncForLiveRecording()) {
+          _device.markPendingPostReconnectSync();
+        }
         widget.store.onLiveRecordingStarted();
         _recording.startRecording();
         unawaited(_ensurePhotoPermissionOnRecordStart());
@@ -294,12 +472,19 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         _recording.ensureRecording();
       }
       _recording.updateElapsed(
-        hwRecording ? _device.recSeconds : _device.phoneRecSeconds,
+        hwRecording
+            ? _device.recSeconds
+            : (watchFailover
+                  ? _device.watchFailoverRecSeconds
+                  : _device.phoneRecSeconds),
       );
     } else if (_wasRecording) {
       _wasRecording = false;
       unawaited(_onRecordingStopped());
       return;
+    } else if (_device.isPendingForegroundPhoneFailover &&
+        _recording.phase != RecordingPhase.idle) {
+      _recording.stopRecording();
     }
     _wasRecording = recording;
   }
@@ -317,20 +502,95 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     await _liveAudio.stop();
     final savedCount = await widget.store.finishLiveRecording();
     if (!mounted) return;
-    if (!_device.isRecording && !_device.isPhoneRecording) {
+    if (!_device.isRecording &&
+        !_device.isPhoneRecording &&
+        !_device.isWatchFallbackRecording) {
       _recording.stopRecording();
       if (savedCount > 0 || hadLiveSamples) {
         _device.noteSyncFinished(manual: false);
       }
     }
+    if (_device.consumePendingPostReconnectSync() && _device.isConnected) {
+      unawaited(
+        widget.store.syncAfterBleReconnect(
+          flushWatch: _device.flushWatchRecordingSlice,
+          flushPhone: _device.flushPhoneRecordingSlice,
+          pullBleFiles: _device.activeCapabilities.hasFileSync,
+        ),
+      );
+    }
+  }
+
+  Future<void> _onDesktopCommand(MethodCall call) async {
+    if (call.method == 'openSettings') {
+      widget.store.go(RootTab.setting);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant AppShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.clock != widget.clock) {
+      _lastCalendarDay = DateUtils.dateOnly(_now());
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _device.handleAppResumed();
+      final today = DateUtils.dateOnly(_now());
+      final diffDays = today.difference(_lastCalendarDay).inDays;
+      if (diffDays != 0) {
+        _lastCalendarDay = today;
+        final elapsed = diffDays > 0 ? diffDays : 1;
+        unawaited(widget.store.onCalendarDayRollover(daysElapsed: elapsed));
+      }
+      if (widget.store.rootTab == RootTab.timeline &&
+          widget.store.pendingLocalAudioCount > 0) {
+        unawaited(
+          widget.store.transcribeAndOrganizePending(reason: 'view-resume'),
+        );
+      }
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _device.handleAppBackgrounded();
+      if (!_liveAudio.isRunning) {
+        _liveAudio.ringBuffer.clear();
+      }
+      if (!_device.isPhoneRecording) {
+        _device.phoneRingBuffer.clear();
+      }
+    }
+  }
+
+  void _onStoreTabChanged() {
+    final cur = widget.store.rootTab;
+    if (_lastRootTab != RootTab.timeline &&
+        cur == RootTab.timeline &&
+        widget.store.pendingLocalAudioCount > 0) {
+      unawaited(widget.store.transcribeAndOrganizePending(reason: 'tab-view'));
+    }
+    _lastRootTab = cur;
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.store.removeListener(_onStoreTabChanged);
+    if (!Platform.environment.containsKey('FLUTTER_TEST')) {
+      _desktopCommands.setMethodCallHandler(null);
+    }
+    final fallbackAsr = _ownedFallbackAsr;
+    if (fallbackAsr != null) {
+      unawaited(fallbackAsr.dispose());
+    }
     _agentConfig.removeListener(_syncAgentIslandConfig);
     _device.liveActivityService.onActionButtonAgent = null;
     _device.liveActivityService.onActionButtonToggle = null;
+    if (_ownsBleReconnectSyncCb) {
+      _device.onBleReconnectedNeedSync = null;
+    }
     if (_ownsHwAgent) _hwAgent.dispose();
     _liveSliceSub?.cancel();
     _phoneSliceSub?.cancel();
@@ -381,8 +641,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           authService: widget.authService,
                           photoLibrary: _photoLib,
                           healthSignals: widget.healthSignals,
+                          getNoteStore: widget.getNoteStore,
+                          externalDataHub: widget.externalDataHub,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
+                          crashStore: widget.crashStore,
+                          accountHttpClient: widget.accountHttpClient,
                         )
                       else
                         _NarrowLayout(
@@ -394,8 +658,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           authService: widget.authService,
                           photoLibrary: _photoLib,
                           healthSignals: widget.healthSignals,
+                          getNoteStore: widget.getNoteStore,
+                          externalDataHub: widget.externalDataHub,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
+                          crashStore: widget.crashStore,
+                          accountHttpClient: widget.accountHttpClient,
                         ),
                       ListenableBuilder(
                         listenable: _hwAgent,
@@ -491,9 +759,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                             vertical: 8,
                                           ),
                                           decoration: BoxDecoration(
-                                            color: RCColors.label.withValues(
-                                              alpha: 0.92,
-                                            ),
+                                            color: context.rc.isDark
+                                                ? const Color(0xEB222228)
+                                                : context.rc.label.withValues(
+                                                    alpha: 0.92,
+                                                  ),
                                             borderRadius:
                                                 BorderRadius.circular(999),
                                             boxShadow: const [
@@ -517,7 +787,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                                         _hwAgent.phase ==
                                                             HardwareAgentPhase
                                                                 .listening
-                                                        ? RCColors.ok
+                                                        ? context.rc.ok
                                                         : const Color(0xFF60A5FA),
                                                   ),
                                                 ),
@@ -542,6 +812,98 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                     ),
                                   ),
                               ],
+                            ),
+                          );
+                        },
+                      ),
+                      ListenableBuilder(
+                        listenable: _device,
+                        builder: (context, _) {
+                          final notice = _device.disconnectNotice;
+                          if (notice == null ||
+                              notice.isEmpty ||
+                              _device.sheetOpen ||
+                              _device.isConnected) {
+                            return const SizedBox.shrink();
+                          }
+                          final c = context.rc;
+                          final headerH = wide
+                              ? RCDims.wideChrome
+                              : RCDims.narrowHeader;
+                          final topPad =
+                              MediaQuery.paddingOf(context).top + headerH + 6;
+                          return Positioned(
+                            top: topPad,
+                            left: 14,
+                            right: 14,
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                key: const Key('ble-disconnect-toast'),
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: _device.openSheet,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: c.isDark
+                                        ? const Color(0xF025211A)
+                                        : const Color(0xF5FFF8EB),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: c.warn.withValues(alpha: 0.45),
+                                    ),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        color: Color(0x22000000),
+                                        blurRadius: 10,
+                                        offset: Offset(0, 3),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        _device.isPendingForegroundPhoneFailover
+                                            ? Icons.mic_off_rounded
+                                            : Icons.bluetooth_disabled_rounded,
+                                        size: 16,
+                                        color: c.warn,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          notice,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            height: 1.35,
+                                            fontWeight: FontWeight.w500,
+                                            color: c.label,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      GestureDetector(
+                                        key: const Key('ble-disconnect-toast-close'),
+                                        behavior: HitTestBehavior.opaque,
+                                        onTap: _device.dismissDisconnectNotice,
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(4),
+                                          child: Icon(
+                                            Icons.close,
+                                            size: 16,
+                                            color: c.sec,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
                             ),
                           );
                         },
@@ -617,15 +979,16 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final store = StoreScope.of(context);
     final sub = store.subStack.isNotEmpty;
     return Container(
       key: const Key('app-header'),
       height: height,
       padding: EdgeInsets.fromLTRB(20, topInset, 20, 0),
-      decoration: const BoxDecoration(
-        color: RCColors.bg,
-        border: Border(bottom: BorderSide(color: RCColors.sep)),
+      decoration: BoxDecoration(
+        color: c.bg,
+        border: Border(bottom: BorderSide(color: c.sep)),
       ),
       child: Row(
         children: [
@@ -634,7 +997,7 @@ class _Header extends StatelessWidget {
               key: const Key('crumb-back'),
               onPressed: store.goBack,
               style: TextButton.styleFrom(
-                foregroundColor: RCColors.label,
+                foregroundColor: c.label,
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -667,12 +1030,16 @@ class _Header extends StatelessWidget {
                 key: const Key('header-tap-top'),
                 behavior: HitTestBehavior.opaque,
                 onTap: () => _scrollActiveToTop(context),
-                child: const Align(
+                child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
                     '录音卡',
-                    key: Key('app-title'),
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                    key: const Key('app-title'),
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: c.label,
+                    ),
                   ),
                 ),
               ),
@@ -686,6 +1053,8 @@ class _Header extends StatelessWidget {
               connected: device.isConnected,
               recording: device.isRecording,
               phoneRecording: device.isPhoneRecording,
+              watchRecording: device.isWatchFallbackRecording,
+              pendingFailover: device.isPendingForegroundPhoneFailover,
               charging: device.isCharging,
               reconnecting: device.isReconnecting,
             ),
@@ -704,34 +1073,44 @@ class _BottomNav extends StatelessWidget {
   });
   final double height;
 
-  /// 窄屏真机安全区：home indicator 高度并入底栏背景，图标区仍占上方 [height]
+  /// 窄屏/宽屏真机安全区：home indicator 高度并入底栏背景，图标区仍占上方 [height]
   final double bottomInset;
   final VoidCallback onOpenOs1;
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final store = StoreScope.of(context);
     Widget item(String label, RootTab tab, String keyName, IconData icon) {
       final on = store.rootTab == tab;
+      final itemColor = on ? c.label : c.sec;
       return Expanded(
         child: InkWell(
           key: Key(keyName),
           onTap: () => store.go(tab),
           child: SizedBox(
             height: double.infinity,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 20, color: on ? RCColors.label : RCColors.sec),
-                const SizedBox(height: 3),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: on ? RCColors.label : RCColors.sec,
-                  ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(icon, size: 20, color: itemColor),
+                    const SizedBox(height: 3),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        height: 1.15,
+                        color: itemColor,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -770,7 +1149,7 @@ class _BottomNav extends StatelessWidget {
                               Color(0xFFC5361B),
                             ],
                           ),
-                          border: Border.all(color: RCColors.bg, width: 3),
+                          border: Border.all(color: c.bg, width: 3),
                           boxShadow: const [
                             BoxShadow(
                               color: Color(0x61D94124),
@@ -786,12 +1165,15 @@ class _BottomNav extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      const Text(
+                      Text(
                         'OS1',
                         style: TextStyle(
                           fontSize: 10.5,
+                          height: 1.1,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFFC5361B),
+                          color: c.isDark
+                              ? const Color(0xFFFF8A65)
+                              : const Color(0xFFC5361B),
                           letterSpacing: 0.3,
                         ),
                       ),
@@ -809,9 +1191,9 @@ class _BottomNav extends StatelessWidget {
       key: const Key('bottom-nav'),
       height: height,
       padding: EdgeInsets.only(bottom: bottomInset),
-      decoration: const BoxDecoration(
-        color: RCColors.bg,
-        border: Border(top: BorderSide(color: RCColors.sep)),
+      decoration: BoxDecoration(
+        color: c.bg,
+        border: Border(top: BorderSide(color: c.sep)),
       ),
       alignment: Alignment.topCenter,
       child: Row(
@@ -839,6 +1221,8 @@ Widget _stackTopPage(
   ModelManagerController? modelManager,
   AuthService? authService,
   HealthSignalController? healthSignals,
+  GetNoteSyncStore? getNoteStore,
+  ExternalDataHubStore? externalDataHub,
 }) {
   final top = store.stackTop;
   if (top == null) return const SizedBox.shrink();
@@ -846,6 +1230,7 @@ Widget _stackTopPage(
     return SummaryResultPage(
       summaryId: top.id,
       showPaneBack: wide && store.showPaneBackSum,
+      onCancelGeneration: () => store.cancelGeneratingSummary(top.id),
     );
   }
   if (top.type == 'unc') {
@@ -855,6 +1240,10 @@ Widget _stackTopPage(
     );
   }
   if (top.type == 'setsub') {
+    final prev = store.stackPrev;
+    final backLabel = prev?.type == 'setsub'
+        ? '返回${AppStore.settingSubBackLabel(prev!.id)}'
+        : '返回 Setting';
     return SettingSubPage(
       subId: top.id,
       agentConfig: agentConfig,
@@ -862,7 +1251,10 @@ Widget _stackTopPage(
       modelManager: modelManager,
       authService: authService,
       healthSignals: healthSignals,
+      getNoteStore: getNoteStore,
+      externalDataHub: externalDataHub,
       showPaneBack: wide && store.showPaneBackSetSub,
+      backLabel: backLabel,
     );
   }
   return DetailPage(
@@ -882,8 +1274,12 @@ class _NarrowLayout extends StatelessWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    this.getNoteStore,
+    this.externalDataHub,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
+    this.crashStore,
+    this.accountHttpClient,
   });
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
@@ -893,8 +1289,12 @@ class _NarrowLayout extends StatelessWidget {
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
+  final GetNoteSyncStore? getNoteStore;
+  final ExternalDataHubStore? externalDataHub;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
+  final KeyValueStore? crashStore;
+  final http.Client? accountHttpClient;
 
   @override
   Widget build(BuildContext context) {
@@ -936,7 +1336,11 @@ class _NarrowLayout extends StatelessWidget {
                         authService: authService,
                         photoLibrary: photoLibrary,
                         healthSignals: healthSignals,
+                        getNoteStore: getNoteStore,
+                        externalDataHub: externalDataHub,
                         supportsDynamicIsland: supportsDynamicIsland,
+                        crashStore: crashStore,
+                        accountHttpClient: accountHttpClient,
                       ),
                     },
                   ),
@@ -951,12 +1355,15 @@ class _NarrowLayout extends StatelessWidget {
                     child: Offstage(
                       offstage: e != store.subStack.last,
                       child: _subPage(
+                        store,
                         e,
                         agentConfig,
                         device,
                         modelManager,
                         authService,
                         healthSignals,
+                        getNoteStore,
+                        externalDataHub,
                       ),
                     ),
                   ),
@@ -991,15 +1398,22 @@ class _NarrowLayout extends StatelessWidget {
 
   /// 栈内条目对应的页面（Navigator 页面渲染用；宽屏右栏仍走 _stackTopPage）
   static Widget _subPage(
+    AppStore store,
     RouteEntry e,
     AgentConfigStore agentConfig,
     DeviceStore device,
     ModelManagerController? modelManager,
     AuthService? authService,
     HealthSignalController? healthSignals,
+    GetNoteSyncStore? getNoteStore,
+    ExternalDataHubStore? externalDataHub,
   ) {
     if (e.type == 'sum') {
-      return SummaryResultPage(summaryId: e.id, showPaneBack: false);
+      return SummaryResultPage(
+        summaryId: e.id,
+        showPaneBack: false,
+        onCancelGeneration: () => store.cancelGeneratingSummary(e.id),
+      );
     }
     if (e.type == 'unc') {
       return UnclassifiedPhotosPage(
@@ -1015,6 +1429,8 @@ class _NarrowLayout extends StatelessWidget {
         modelManager: modelManager,
         authService: authService,
         healthSignals: healthSignals,
+        getNoteStore: getNoteStore,
+        externalDataHub: externalDataHub,
         showPaneBack: false,
       );
     }
@@ -1032,8 +1448,12 @@ class _WideLayout extends StatelessWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    this.getNoteStore,
+    this.externalDataHub,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
+    this.crashStore,
+    this.accountHttpClient,
   });
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
@@ -1043,17 +1463,29 @@ class _WideLayout extends StatelessWidget {
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
+  final GetNoteSyncStore? getNoteStore;
+  final ExternalDataHubStore? externalDataHub;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
+  final KeyValueStore? crashStore;
+  final http.Client? accountHttpClient;
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final store = StoreScope.of(context);
     final sub = store.subStack.isNotEmpty;
     final primaryScroll = PrimaryScrollController.maybeOf(context);
+    // iPad / Android 15+ edge-to-edge 安全区：顶部状态栏并入顶栏，底部手势条并入底栏
+    final insets = MediaQuery.paddingOf(context);
     return Column(
       children: [
-        _Header(height: RCDims.wideChrome, wide: true, device: device),
+        _Header(
+          height: RCDims.wideChrome + insets.top,
+          topInset: insets.top,
+          wide: true,
+          device: device,
+        ),
         Expanded(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1076,19 +1508,23 @@ class _WideLayout extends StatelessWidget {
                       authService: authService,
                       photoLibrary: photoLibrary,
                       healthSignals: healthSignals,
+                      getNoteStore: getNoteStore,
+                      externalDataHub: externalDataHub,
                       supportsDynamicIsland: supportsDynamicIsland,
+                      crashStore: crashStore,
+                      accountHttpClient: accountHttpClient,
                     ),
                   },
                 ),
               ),
-              Container(width: 1, color: RCColors.sep),
+              Container(width: 1, color: c.sep),
               Expanded(
                 child: _withPrimaryScroll(
                   primaryScroll,
                   active: sub,
                   child: sub
                       ? Material(
-                          color: RCColors.bg,
+                          color: c.bg,
                           child: _stackTopPage(
                             store,
                             wide: true,
@@ -1097,6 +1533,8 @@ class _WideLayout extends StatelessWidget {
                             modelManager: modelManager,
                             authService: authService,
                             healthSignals: healthSignals,
+                            getNoteStore: getNoteStore,
+                            externalDataHub: externalDataHub,
                           ),
                         )
                       : const _EmptyPane(),
@@ -1105,7 +1543,11 @@ class _WideLayout extends StatelessWidget {
             ],
           ),
         ),
-        _BottomNav(height: 56, onOpenOs1: onOpenOs1),
+        _BottomNav(
+          height: RCDims.wideChrome + insets.bottom,
+          bottomInset: insets.bottom,
+          onOpenOs1: onOpenOs1,
+        ),
       ],
     );
   }
@@ -1116,16 +1558,17 @@ class _EmptyPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      key: Key('empty-pane'),
+    final c = context.rc;
+    return Center(
+      key: const Key('empty-pane'),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.schedule, size: 40, color: RCColors.ax),
-          SizedBox(height: 10),
+          Icon(Icons.schedule, size: 40, color: c.ax),
+          const SizedBox(height: 10),
           Text(
             '选择左侧记录查看详情',
-            style: TextStyle(fontSize: 13, color: RCColors.sec),
+            style: TextStyle(fontSize: 13, color: c.sec),
           ),
         ],
       ),

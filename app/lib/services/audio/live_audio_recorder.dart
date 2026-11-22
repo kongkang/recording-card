@@ -18,6 +18,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -54,6 +55,9 @@ class LiveAudioSlice {
     this.gapCount = 0,
     this.isFinal = false,
     this.sliceKeyOverride,
+    this.marksMs = const [],
+    this.sourceLane,
+    this.sourceDeviceLabel,
   });
 
   final String sessionId;
@@ -81,6 +85,15 @@ class LiveAudioSlice {
 
   /// 重检/续跑已落盘记录时直接沿用原主键，防止会话标签前缀变化派生新键。
   final String? sliceKeyOverride;
+
+  /// 切片内物理打点时间列表（相对切片起点毫秒或 Unix 毫秒时间戳）。
+  final List<int> marksMs;
+
+  /// 采集通路标识：`'ble'` | `'watch'` | `'phone'`（空值按前缀兜底推断）。
+  final String? sourceLane;
+
+  /// 人类可读来源设备名（如「录音卡 V2 · T4W25T」「Apple Watch」「手机本机」）。
+  final String? sourceDeviceLabel;
 
   /// 作为 RecordingStore 的唯一键（可读且稳定）。
   String get sliceKey {
@@ -126,17 +139,40 @@ class LiveSession {
   int get receivedSamples =>
       spans.fold(0, (sum, span) => sum + (span.endMs - span.startMs));
 
+  int get receivedDurationMs => receivedSamples;
+
   int get startedAtMs => startedAt.millisecondsSinceEpoch;
 
   int get endedAtMs =>
       spans.isEmpty ? startedAtMs : startedAtMs + spans.last.endMs;
 
-  /// 判断卡上某个 `.APM` 切片是否已被本次无断档实时流完整覆盖。
+  int get maxGapDurationMs {
+    var maxGap = 0;
+    for (var i = 1; i < spans.length; i++) {
+      final gap = spans[i].startMs - spans[i - 1].endMs;
+      if (gap > maxGap) maxGap = gap;
+    }
+    return maxGap;
+  }
+
+  /// 会话实时流是否健康可用（无需整片重下蓝牙卡文件）：
+  /// - 零断档且非空直接健康；
+  /// - 时长 `>= 60s` 的长会话容忍轻微瞬态 BLE 丢包（`gapCount <= 3` 且单次断档 `<= 2s`），
+  ///   避免偶发掉一两个包就强行重下重转 10 分钟大文件。
+  bool get isHealthy {
+    if (spans.isEmpty) return false;
+    if (gapCount <= 0) return true;
+    return receivedDurationMs >= 60000 &&
+        gapCount <= 3 &&
+        maxGapDurationMs <= 2000;
+  }
+
+  /// 判断卡上某个 `.APM` 切片是否已被本次健康实时流完整覆盖。
   ///
-  /// 只有 `gapCount == 0` 且时间窗口吻合时才返回 true；有断档或蓝牙断开后卡端离线继续录的切片
-  /// 返回 false，留给手动蓝牙同步补传。
+  /// 健康会话（零断档，或 `>= 60s` 且仅轻微瞬态丢包 `gapCount <= 3`）且时间窗口吻合时返回 true；
+  /// 严重断档或蓝牙断开后卡端离线继续录的切片返回 false，留给手动蓝牙同步补传。
   bool coversCardFile(CardFile cardFile) {
-    if (gapCount > 0 || spans.isEmpty) return false;
+    if (!isHealthy) return false;
     const toleranceMs = 8000;
     final cardStartSec = cardFile.startAtSec ?? cardFile.createdAtSec;
     if (cardStartSec == null || cardStartSec <= 0) {
@@ -212,11 +248,12 @@ class LiveAudioRecorder extends ChangeNotifier {
   LiveAudioRecorder({
     required CardGateway gateway,
     Directory? baseDir,
-    this.sliceDuration = const Duration(minutes: 1),
+    Duration? sliceDuration = const Duration(minutes: 1),
     this.onSliceReady,
     DateTime Function()? clock,
   }) : _gateway = gateway,
        _baseDirOverride = baseDir,
+       _sliceDuration = sliceDuration,
        _clock = clock ?? DateTime.now;
 
   final CardGateway _gateway;
@@ -232,8 +269,27 @@ class LiveAudioRecorder extends ChangeNotifier {
   static const int minManualFlushBytes =
       defaultSampleRate * bytesPerSample ~/ 2;
 
-  /// 滚动切片时长（验证期默认 1 分钟；传 null 则只在停录时整体封口）。
-  final Duration? sliceDuration;
+  Duration? _sliceDuration;
+
+  /// 滚动切片时长（默认 1 分钟，可通过 [setSliceDuration] 实时修改；传 null 则只在停录时整体封口）。
+  Duration? get sliceDuration => _sliceDuration;
+
+  /// 动态调整实时切片窗口；若缩小时当前缓冲已满新阈值，立即按新上限切分并保留剩余采样。
+  void setSliceDuration(Duration? next) {
+    final normalized = (next != null && next <= Duration.zero) ? null : next;
+    if (_sliceDuration == normalized) return;
+    _sliceDuration = normalized;
+    final session = _session;
+    if (normalized != null && session != null && !_stopping) {
+      _slicer.flushIfExceeds(
+        sliceDuration: normalized,
+        sampleRate: session.sampleRate,
+        onSliceFlush: (pcmBytes) =>
+            _sealSliceBytes(pcmBytes, isFinal: false),
+      );
+    }
+    notifyListeners();
+  }
 
   /// 每满一片（或停录冲刷尾片）立即回调上层送入本地 ASR。
   void Function(LiveAudioSlice slice)? onSliceReady;
@@ -252,14 +308,16 @@ class LiveAudioRecorder extends ChangeNotifier {
 
   LiveSession? _session;
   String? _pendingDeviceSessionId;
+  String _sourceDeviceLabel = '蓝牙设备';
   int _writtenSamples = 0;
   bool _stopping = false;
 
-  /// 当前滚动切片缓冲（1 分钟 16kHz 16bit 单声道仅约 1.92MB，内存精确切分无异步竞态）。
-  final BytesBuilder _slicePcm = BytesBuilder(copy: false);
+  /// 当前滚动切片缓冲（支持能量谷底软切，1 分钟 16kHz 16bit 单声道仅约 1.92MB，内存精确切分无异步竞态）。
+  final SoftBoundaryPcmSlicer _slicer = SoftBoundaryPcmSlicer();
   int _sliceStartSample = 0;
   int _sliceIndex = 0;
   int _sliceGapCount = 0;
+  final List<int> _sliceMarksMs = <int>[];
   Future<void> _sliceWriteChain = Future<void>.value();
 
   /// 等待当前已封口切片的异步落盘与回调完成（仅供测试做确定性断言，不中断录音）。
@@ -293,6 +351,14 @@ class LiveAudioRecorder extends ChangeNotifier {
     if (s == null || _pendingDeviceSessionId == null) return;
     if (s.deviceSessionId == _pendingDeviceSessionId) return;
     _session = s.copyWith(deviceSessionId: _pendingDeviceSessionId);
+  }
+
+  /// 更新当前蓝牙实时录音的展示设备名称（透传写入切片与 `RecordingFile` 来源标签）。
+  void updateSourceDeviceLabel(String? label) {
+    final trimmed = label?.trim();
+    if (trimmed != null && trimmed.isNotEmpty) {
+      _sourceDeviceLabel = trimmed;
+    }
   }
 
   Future<Directory> _baseDir() async {
@@ -339,10 +405,11 @@ class LiveAudioRecorder extends ChangeNotifier {
     _writtenSamples = 0;
     _stopping = false;
     _cutSpan = false;
-    _slicePcm.clear();
+    _slicer.clear();
     _sliceStartSample = 0;
     _sliceIndex = 0;
     _sliceGapCount = 0;
+    _sliceMarksMs.clear();
     ringBuffer.clear();
     lastError = null;
 
@@ -397,43 +464,56 @@ class LiveAudioRecorder extends ChangeNotifier {
     }
   }
 
+  /// 记录一次当前实时切片内的物理重点打点（可选传入毫秒时间戳；默认取当前已写入采样对应偏移）。
+  void recordMark({int? timestampMs}) {
+    final session = _session;
+    if (session == null || _stopping) return;
+    if (timestampMs != null) {
+      _sliceMarksMs.add(timestampMs);
+      return;
+    }
+    final sliceElapsedSamples =
+        (_writtenSamples - _sliceStartSample).clamp(0, 1 << 30);
+    final relMs = sliceElapsedSamples * 1000 ~/ session.sampleRate;
+    _sliceMarksMs.add(relMs);
+  }
+
   void _appendSlicePcm(Uint8List alignedPcm) {
     final dur = sliceDuration;
     final session = _session;
     if (dur == null || dur <= Duration.zero || session == null) return;
-    final targetSamples =
-        (dur.inMilliseconds * session.sampleRate ~/ 1000).clamp(1, 1 << 30);
-    final targetBytes = targetSamples * 2;
-
-    var offset = 0;
-    while (offset < alignedPcm.length) {
-      final currentBytes = _slicePcm.length;
-      final needed = targetBytes - currentBytes;
-      final remainingInChunk = alignedPcm.length - offset;
-      if (remainingInChunk >= needed) {
-        _slicePcm.add(Uint8List.sublistView(alignedPcm, offset, offset + needed));
-        offset += needed;
-        _sealCurrentSlice(isFinal: false);
-      } else {
-        _slicePcm.add(Uint8List.sublistView(alignedPcm, offset));
-        offset = alignedPcm.length;
-      }
-    }
+    _slicer.append(
+      alignedPcm,
+      sliceDuration: dur,
+      sampleRate: session.sampleRate,
+      onSliceFlush: (pcmBytes) =>
+          _sealSliceBytes(pcmBytes, isFinal: false),
+    );
   }
 
   void _sealCurrentSlice({required bool isFinal}) {
+    final pcmBytes = _slicer.takeRemainingBytes(clearOddByte: isFinal);
+    if (pcmBytes.isEmpty) return;
+    _sealSliceBytes(pcmBytes, isFinal: isFinal);
+  }
+
+  void _sealSliceBytes(Uint8List pcmBytes, {required bool isFinal}) {
     final session = _session;
     final sessionDir = _sessionDir;
-    final pcmBytes = _slicePcm.takeBytes();
     if (session == null || sessionDir == null || pcmBytes.isEmpty) return;
 
     final samples = pcmBytes.length ~/ 2;
-    final startMsOffset = _sliceStartSample * 1000 ~/ session.sampleRate;
-    final durationMs = (samples * 1000 / session.sampleRate).round();
+    final startMsOffset = (_sliceStartSample * 1000) ~/ session.sampleRate;
+    _sliceStartSample += samples;
+    final nextStartMsOffset = (_sliceStartSample * 1000) ~/ session.sampleRate;
+    final durationMs = math.max(1, nextStartMsOffset - startMsOffset);
     final sliceIdx = _sliceIndex++;
     final gaps = _sliceGapCount;
-    _sliceStartSample += samples;
+    final marks = _sliceMarksMs.isEmpty
+        ? const <int>[]
+        : List<int>.unmodifiable(_sliceMarksMs);
     _sliceGapCount = 0;
+    _sliceMarksMs.clear();
 
     final startAtMs = session.startedAtMs + startMsOffset;
     final sliceFileName = 'slice_${sliceIdx.toString().padLeft(4, '0')}.wav';
@@ -444,10 +524,13 @@ class LiveAudioRecorder extends ChangeNotifier {
       deviceSessionId: session.deviceSessionId,
       sliceIndex: sliceIdx,
       startAtMs: startAtMs,
-      durationMs: durationMs <= 0 ? 1 : durationMs,
+      durationMs: durationMs,
       wavPath: wavPath,
       gapCount: gaps,
       isFinal: isFinal,
+      marksMs: marks,
+      sourceLane: 'ble',
+      sourceDeviceLabel: _sourceDeviceLabel,
     );
 
     final updatedKeys = [...session.sliceKeys, slice.sliceKey];
@@ -515,7 +598,7 @@ class LiveAudioRecorder extends ChangeNotifier {
   /// 若当前未在录音或已累积不足 0.5 秒（防连拉产生极碎空片），等待在途写入落盘后返回 `false`。
   Future<bool> flushActiveSlice() async {
     if (!isRunning || _stopping) return false;
-    if (_slicePcm.length < minManualFlushBytes) {
+    if (_slicer.bufferedBytes < minManualFlushBytes) {
       await _sliceWriteChain;
       return false;
     }
@@ -537,7 +620,7 @@ class LiveAudioRecorder extends ChangeNotifier {
     }
 
     // 停录时若还有未满一片的尾部 PCM，立即封口为尾片送去本地转写
-    if (sliceDuration != null && _slicePcm.length > 0) {
+    if (sliceDuration != null && _slicer.bufferedBytes > 0) {
       _sealCurrentSlice(isFinal: true);
     }
     await _sliceWriteChain;
@@ -744,5 +827,227 @@ class LiveAudioRecorder extends ChangeNotifier {
     _sink?.close();
     _sliceController.close();
     super.dispose();
+  }
+}
+
+/// 软边界能量谷底实时 PCM 切分器（供蓝牙实时流与手机本机麦克风共用）：
+/// - 当 `sliceDuration >= 20s` 时，累积达 `75%`（如 60s 窗口的 45s）后，按 `50ms` 帧扫描
+///   去直流 AC-RMS；一旦捕获连续 `>= 300ms`（6 帧）安静停顿谷底即刻封口切分，避免一刀切断音节；
+/// - 若说话人全程无停顿，则在 `100%` `sliceDuration` 硬上限兜底切分，绝不无限膨胀；
+/// - 当 `sliceDuration < 20s`（测试短窗口）时保持精确采样硬边界切分。
+class SoftBoundaryPcmSlicer {
+  static const Duration minSoftSliceDuration = Duration(seconds: 20);
+  static const int minPauseFrames = 6; // 6 * 50ms = 300ms
+  static const double quietAcRmsThreshold = 0.008;
+
+  final BytesBuilder _pcm = BytesBuilder(copy: false);
+  Uint8List _frameBuf = Uint8List(1600);
+  int _frameFill = 0;
+  int _quietRunFrames = 0;
+  bool _sawActiveSpeech = false;
+  int? _oddByte;
+  int _totalAlignedSamples = 0;
+
+  int get bufferedBytes => _pcm.length;
+
+  /// 当前会话已对齐接收的完整 16-bit 采样总数（包含跨奇数散字节重组完成的采样）。
+  int get totalAlignedSamples => _totalAlignedSamples;
+
+  void clear() {
+    _pcm.clear();
+    _frameFill = 0;
+    _quietRunFrames = 0;
+    _sawActiveSpeech = false;
+    _oddByte = null;
+    _totalAlignedSamples = 0;
+  }
+
+  /// 动态调小 [sliceDuration] 时，按新上限立即切出已满分片，保留剩余尾部采样与 `_oddByte`。
+  void flushIfExceeds({
+    required Duration sliceDuration,
+    required int sampleRate,
+    required void Function(Uint8List pcmBytes) onSliceFlush,
+  }) {
+    if (sliceDuration <= Duration.zero || sampleRate <= 0) return;
+    final hardMaxSamples =
+        (sliceDuration.inMilliseconds * sampleRate ~/ 1000).clamp(1, 1 << 30);
+    final hardMaxBytes = hardMaxSamples * 2;
+    if (_pcm.length < hardMaxBytes) return;
+    final raw = _pcm.takeBytes();
+    final alignedLen = raw.length & ~1;
+    if (raw.length > alignedLen && _oddByte == null) {
+      _oddByte = raw.last;
+    }
+    var offset = 0;
+    while (alignedLen - offset >= hardMaxBytes) {
+      onSliceFlush(Uint8List.sublistView(raw, offset, offset + hardMaxBytes));
+      offset += hardMaxBytes;
+    }
+    if (offset < alignedLen) {
+      _pcm.add(Uint8List.sublistView(raw, offset, alignedLen));
+    }
+    _frameFill = 0;
+    _quietRunFrames = 0;
+    _sawActiveSpeech = _pcm.length > 0 && _sawActiveSpeech;
+  }
+
+  /// 取出当前缓冲中的偶数字节采样数据。
+  /// - 录音中途手动刷新（`clearOddByte: false`）保留尾部半帧单字节，确保后续到达的高字节不错位；
+  /// - 停录收尾（`clearOddByte: true`）清空半帧残余。
+  Uint8List takeRemainingBytes({bool clearOddByte = true}) {
+    _frameFill = 0;
+    _quietRunFrames = 0;
+    _sawActiveSpeech = false;
+    if (clearOddByte) {
+      _oddByte = null;
+    }
+    final raw = _pcm.takeBytes();
+    final evenLen = raw.length & ~1;
+    if (evenLen <= 0) return Uint8List(0);
+    return evenLen == raw.length ? raw : Uint8List.sublistView(raw, 0, evenLen);
+  }
+
+  Uint8List append(
+    Uint8List incoming, {
+    required Duration sliceDuration,
+    required int sampleRate,
+    required void Function(Uint8List pcmBytes) onSliceFlush,
+  }) {
+    if (incoming.isEmpty || sliceDuration <= Duration.zero || sampleRate <= 0) {
+      return Uint8List(0);
+    }
+
+    Uint8List aligned;
+    if (_oddByte != null) {
+      final combined = Uint8List(1 + incoming.length);
+      combined[0] = _oddByte!;
+      combined.setRange(1, combined.length, incoming);
+      _oddByte = null;
+      final evenLen = combined.length & ~1;
+      if (evenLen < combined.length) {
+        _oddByte = combined.last;
+      }
+      if (evenLen <= 0) return Uint8List(0);
+      aligned = evenLen == combined.length
+          ? combined
+          : Uint8List.sublistView(combined, 0, evenLen);
+    } else {
+      final evenLen = incoming.length & ~1;
+      if (evenLen < incoming.length) {
+        _oddByte = incoming.last;
+      }
+      if (evenLen <= 0) return Uint8List(0);
+      aligned = evenLen == incoming.length
+          ? incoming
+          : Uint8List.sublistView(incoming, 0, evenLen);
+    }
+
+    _totalAlignedSamples += aligned.length ~/ 2;
+
+    final hardMaxSamples =
+        (sliceDuration.inMilliseconds * sampleRate ~/ 1000).clamp(1, 1 << 30);
+    final hardMaxBytes = hardMaxSamples * 2;
+
+    if (sliceDuration < minSoftSliceDuration) {
+      var offset = 0;
+      while (offset < aligned.length) {
+        final needed = hardMaxBytes - _pcm.length;
+        final rem = aligned.length - offset;
+        if (rem >= needed) {
+          _pcm.add(Uint8List.sublistView(aligned, offset, offset + needed));
+          offset += needed;
+          onSliceFlush(_pcm.takeBytes());
+        } else {
+          _pcm.add(Uint8List.sublistView(aligned, offset));
+          offset = aligned.length;
+        }
+      }
+      return aligned;
+    }
+
+    final frameSamples = math.max(160, sampleRate ~/ 20); // 50ms
+    final frameBytes = frameSamples * 2;
+    if (_frameBuf.length != frameBytes) {
+      _frameBuf = Uint8List(frameBytes);
+      _frameFill = 0;
+    }
+    final softMinSamples = (hardMaxSamples * 3) ~/ 4;
+    final softMinBytes = softMinSamples * 2;
+    final scanStartBytes = math.max(
+      0,
+      softMinBytes - minPauseFrames * frameBytes,
+    );
+
+    var offset = 0;
+    while (offset < aligned.length) {
+      final untilFrameEnd = frameBytes - _frameFill;
+      final untilHardCeiling = hardMaxBytes - _pcm.length;
+      final step = math.min(
+        aligned.length - offset,
+        math.min(untilFrameEnd, untilHardCeiling),
+      );
+      if (step <= 0) break;
+
+      final sub = Uint8List.sublistView(aligned, offset, offset + step);
+      _pcm.add(sub);
+      final needFrameRms =
+          !_sawActiveSpeech || _pcm.length > scanStartBytes - frameBytes;
+      if (needFrameRms) {
+        _frameBuf.setRange(_frameFill, _frameFill + step, sub);
+      }
+      _frameFill += step;
+      offset += step;
+
+      if (_frameFill == frameBytes) {
+        if (!_sawActiveSpeech || _pcm.length > scanStartBytes) {
+          final rms = _computeFrameAcRms(_frameBuf);
+          if (rms >= quietAcRmsThreshold) {
+            _sawActiveSpeech = true;
+            _quietRunFrames = 0;
+          } else if (_pcm.length > scanStartBytes) {
+            _quietRunFrames++;
+          } else {
+            _quietRunFrames = 0;
+          }
+        } else {
+          _quietRunFrames = 0;
+        }
+        _frameFill = 0;
+      }
+
+      if (_sawActiveSpeech &&
+          _pcm.length >= softMinBytes &&
+          _quietRunFrames >= minPauseFrames) {
+        final flushed = _pcm.takeBytes();
+        _frameFill = 0;
+        _quietRunFrames = 0;
+        _sawActiveSpeech = false;
+        onSliceFlush(flushed);
+      } else if (_pcm.length >= hardMaxBytes) {
+        final flushed = _pcm.takeBytes();
+        _frameFill = 0;
+        _quietRunFrames = 0;
+        _sawActiveSpeech = false;
+        onSliceFlush(flushed);
+      }
+    }
+    return aligned;
+  }
+
+  static double _computeFrameAcRms(Uint8List frameBytes) {
+    final samples = frameBytes.length ~/ 2;
+    if (samples <= 0) return 0;
+    final bd = ByteData.sublistView(frameBytes);
+    var sum = 0.0;
+    for (var i = 0; i < samples; i++) {
+      sum += bd.getInt16(i * 2, Endian.little) / 32768.0;
+    }
+    final mean = sum / samples;
+    var sumSq = 0.0;
+    for (var i = 0; i < samples; i++) {
+      final d = (bd.getInt16(i * 2, Endian.little) / 32768.0) - mean;
+      sumSq += d * d;
+    }
+    return math.sqrt(sumSq / samples);
   }
 }

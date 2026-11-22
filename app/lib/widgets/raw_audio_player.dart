@@ -33,6 +33,7 @@ class RawAudioPlayer extends StatefulWidget {
     this.allowDelete = true,
     this.padding = const EdgeInsets.only(bottom: 18),
     this.onFilePositionChanged,
+    this.onAudioDeleted,
   });
 
   /// 记录对应的设备文件名（绑定表的主键）。
@@ -60,6 +61,9 @@ class RawAudioPlayer extends StatefulWidget {
   /// 播放位置变化回调（相对 WAV 文件起点的毫秒数；停止归零时传 null）。
   final ValueChanged<int?>? onFilePositionChanged;
 
+  /// 确认清理本地原始音频后的回调（用于通知上层/Store 同步清理同源分段状态）。
+  final FutureOr<void> Function()? onAudioDeleted;
+
   @override
   State<RawAudioPlayer> createState() => RawAudioPlayerState();
 }
@@ -80,6 +84,7 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
   int _filePositionMs = 0;
   double? _dragRelMs;
   String? _error;
+  bool _confirmingDelete = false;
 
   int get _effectiveFileTotalMs {
     if (_fileDurationMs > 0) return _fileDurationMs;
@@ -155,6 +160,12 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
   @override
   void didUpdateWidget(covariant RawAudioPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.fileKey == widget.fileKey &&
+        (widget.wavPath == null || widget.wavPath!.isEmpty) &&
+        _audioPath == null &&
+        !_loading) {
+      return;
+    }
     if (oldWidget.fileKey != widget.fileKey ||
         oldWidget.wavPath != widget.wavPath ||
         oldWidget.clipStartMs != widget.clipStartMs ||
@@ -181,6 +192,7 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
       _filePositionMs = 0;
       _dragRelMs = null;
       _error = null;
+      _confirmingDelete = false;
     });
     widget.onFilePositionChanged?.call(null);
     await _load();
@@ -228,18 +240,23 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
 
     LiveSession? session;
     String? fallbackSessionPath;
-    session = await LiveAudioRecorder.sessionForFile(
-      widget.fileKey,
-      baseDir: widget.baseDir,
-    );
-    if (session != null) {
-      fallbackSessionPath = await LiveAudioRecorder.audioPathOf(
-        session.id,
+    try {
+      session = await LiveAudioRecorder.sessionForFile(
+        widget.fileKey,
         baseDir: widget.baseDir,
       );
-      if (fallbackSessionPath != null) {
-        wavDurMs = readWavDurationMsSync(fallbackSessionPath) ?? 0;
+      if (session != null) {
+        fallbackSessionPath = await LiveAudioRecorder.audioPathOf(
+          session.id,
+          baseDir: widget.baseDir,
+        );
+        if (fallbackSessionPath != null) {
+          wavDurMs = readWavDurationMsSync(fallbackSessionPath) ?? 0;
+        }
       }
+    } on Object {
+      session = null;
+      fallbackSessionPath = null;
     }
 
     final resolvedPath = fallbackSessionPath;
@@ -343,26 +360,53 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
     }
     if (_usingDirectFile && path != null) {
       final f = File(path);
-      if (await f.exists()) {
-        await f.delete();
+      try {
+        if (await f.exists()) {
+          await f.delete();
+        }
+      } on FileSystemException {
+        // 文件已被并发移除时忽略
+      }
+      try {
+        final linkedSession = await LiveAudioRecorder.sessionForFile(
+          widget.fileKey,
+          baseDir: widget.baseDir,
+        );
+        if (linkedSession != null) {
+          await LiveAudioRecorder.deleteSession(
+            linkedSession.id,
+            baseDir: widget.baseDir,
+          );
+        }
+      } on Object {
+        // 无平台目录插件或会话不存在时忽略
       }
     } else if (_session != null) {
-      await LiveAudioRecorder.deleteSession(
-        _session!.id,
-        baseDir: widget.baseDir,
-      );
+      try {
+        await LiveAudioRecorder.deleteSession(
+          _session!.id,
+          baseDir: widget.baseDir,
+        );
+      } on Object {
+        // 无平台目录插件或会话已被移除时忽略
+      }
     }
+    if (mounted) {
+      setState(() {
+        _session = null;
+        _audioPath = null;
+        _usingDirectFile = false;
+        _playing = false;
+        _loading = false;
+        _filePositionMs = 0;
+        _fileDurationMs = 0;
+        _playerDurationMs = 0;
+        _dragRelMs = null;
+        _confirmingDelete = false;
+      });
+    }
+    await widget.onAudioDeleted?.call();
     if (!mounted) return;
-    setState(() {
-      _session = null;
-      _audioPath = null;
-      _usingDirectFile = false;
-      _playing = false;
-      _filePositionMs = 0;
-      _fileDurationMs = 0;
-      _playerDurationMs = 0;
-      _dragRelMs = null;
-    });
     widget.onFilePositionChanged?.call(null);
   }
 
@@ -383,6 +427,7 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     if (_loading) {
       return const SizedBox(height: 44);
     }
@@ -392,12 +437,12 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
         key: const Key('raw-audio-cleared'),
         padding: widget.padding,
         child: Row(
-          children: const [
-            Icon(Icons.mic_off_outlined, size: 16, color: RCColors.ax),
-            SizedBox(width: 8),
+          children: [
+            Icon(Icons.mic_off_outlined, size: 16, color: c.ax),
+            const SizedBox(width: 8),
             Text(
               '原始录音已清理',
-              style: TextStyle(fontSize: 12.5, color: RCColors.sec),
+              style: TextStyle(fontSize: 12.5, color: c.sec),
             ),
           ],
         ),
@@ -421,8 +466,8 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
         constraints: const BoxConstraints(minHeight: 44),
         padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
         decoration: BoxDecoration(
-          color: RCColors.card,
-          border: Border.all(color: RCColors.sep),
+          color: c.card,
+          border: Border.all(color: c.sep),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
@@ -445,7 +490,7 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
                       child: Icon(
                         _playing ? Icons.pause : Icons.play_arrow,
                         size: 24,
-                        color: RCColors.label,
+                        color: c.label,
                       ),
                     ),
                   ),
@@ -457,10 +502,10 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
                       Text(
                         '${_mmss(posDuration)} / ${_mmss(totalDuration)}',
                         key: const Key('raw-audio-time'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: RCColors.ink,
-                          fontFeatures: [FontFeature.tabularFigures()],
+                          color: c.ink,
+                          fontFeatures: const [FontFeature.tabularFigures()],
                         ),
                       ),
                       const SizedBox(height: 2),
@@ -471,18 +516,18 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
                         key: const Key('raw-audio-state'),
                         style: TextStyle(
                           fontSize: 11.5,
-                          color: gaps > 0 ? RCColors.warn : RCColors.sec,
+                          color: gaps > 0 ? c.warn : c.sec,
                         ),
                       ),
                     ],
                   ),
                 ),
-                if (widget.allowDelete)
+                if (widget.allowDelete && !_confirmingDelete)
                   TextButton(
                     key: const Key('raw-audio-delete'),
-                    onPressed: _deleteLocal,
+                    onPressed: () => setState(() => _confirmingDelete = true),
                     style: TextButton.styleFrom(
-                      foregroundColor: RCColors.sec,
+                      foregroundColor: c.sec,
                       minimumSize: const Size(44, 44),
                     ),
                     child: const Text(
@@ -490,15 +535,43 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
                       style: TextStyle(fontSize: 12),
                     ),
                   ),
+                if (widget.allowDelete && _confirmingDelete) ...[
+                  TextButton(
+                    key: const Key('raw-audio-delete-cancel'),
+                    onPressed: () => setState(() => _confirmingDelete = false),
+                    style: TextButton.styleFrom(
+                      foregroundColor: c.sec,
+                      minimumSize: const Size(44, 44),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    child: const Text(
+                      '取消',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+                  TextButton(
+                    key: const Key('raw-audio-delete-confirm'),
+                    onPressed: _deleteLocal,
+                    style: TextButton.styleFrom(
+                      foregroundColor: c.danger,
+                      minimumSize: const Size(44, 44),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    child: const Text(
+                      '确认清理',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
               ],
             ),
             SliderTheme(
               data: SliderTheme.of(context).copyWith(
                 trackHeight: 3,
-                activeTrackColor: RCColors.label,
-                inactiveTrackColor: RCColors.sep,
-                thumbColor: RCColors.label,
-                overlayColor: RCColors.label.withValues(alpha: 0.12),
+                activeTrackColor: c.label,
+                inactiveTrackColor: c.sep,
+                thumbColor: c.label,
+                overlayColor: c.label.withValues(alpha: 0.12),
                 thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
                 overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
               ),
@@ -530,7 +603,7 @@ class RawAudioPlayerState extends State<RawAudioPlayer> {
                 padding: const EdgeInsets.only(top: 4, left: 4, right: 4),
                 child: Text(
                   _error!,
-                  style: const TextStyle(fontSize: 11.5, color: RCColors.danger),
+                  style: TextStyle(fontSize: 11.5, color: c.danger),
                 ),
               ),
           ],

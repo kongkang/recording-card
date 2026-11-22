@@ -6,9 +6,11 @@
 //! - 离线录音文件同步、转换（Ogg Opus / LC3 / μ-law / PCM -> 16kHz WAV）与删除
 
 pub mod audio;
+pub mod sbc;
 pub mod types;
 
 pub use types::{
     RecorderDevice, RecorderSdkDriver, SdkAudioChunk, SdkBattery, SdkCapabilities, SdkDeviceEvent,
-    SdkError, SdkFileEntry, SdkRecordStatus, SdkSavedFile, SdkSnapshot, SdkStorage,
+    SdkError, SdkFileEntry, SdkRecordStatus, SdkSavedFile, SdkSavedFilePart, SdkSnapshot,
+    SdkStorage,
 };
