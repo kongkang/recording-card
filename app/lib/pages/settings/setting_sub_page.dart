@@ -3255,7 +3255,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                     children: [
                       Expanded(
                         child: Text(
-                          '常用声纹（上限 5 个）',
+                          '核心关注声纹（5 个置顶槽位）',
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w700,
@@ -3271,7 +3271,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '最多设置 5 个常用声纹参与自动识别。',
+                    '全部已入库声纹均会自动识别（跨设备通道自适应）；前 5 槽位仅作界面置顶与语义名录优先参考。',
                     style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
                   ),
                   for (
@@ -3323,7 +3323,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '命名过的说话人保存在此，方便手动选用。',
+                    '所有已命名的说话人都会参与端侧声纹自动匹配与语义校验，多设备样本自动归并到同一人物。',
                     style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
                   ),
                   if (libPersons.isEmpty)

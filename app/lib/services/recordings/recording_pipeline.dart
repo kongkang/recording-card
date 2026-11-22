@@ -33,6 +33,7 @@ import '../transcribe/speech_models.dart';
 import '../transcribe/system_speech_client.dart';
 import '../transcribe/utterance_builder.dart';
 import '../transcribe/wav_io.dart';
+import '../voiceprint/joint_speaker_resolver.dart';
 import 'multi_track_reconciler.dart';
 import 'network_policy.dart';
 import 'recording_store.dart';
@@ -2120,6 +2121,7 @@ class RecordingPipeline {
           fileCentroids: cluster.centroids,
           clusterSpeechMs: speechMs,
           deviceName: file.deviceName,
+          deviceLabel: file.resolvedSourceDeviceLabel,
         );
         clusterToSpeaker = match.clusterToSpeaker;
         await profileStore.save(match.profiles);
@@ -2130,41 +2132,110 @@ class RecordingPipeline {
 
     int sessionIndexOf(int cluster) => clusterToSpeaker[cluster] ?? cluster;
 
-    // 仅对照 5 常用自动识别槽位（1..5）匹配声纹；高分直接落真实姓名，次高区间记录弱提示
+    // 全量声纹库多质心 + 语义上下文联合匹配：高分直接落实名，擦边/跨设备/纯语义记入待确认建议
     final vpStore = voiceprintStore;
     final resolvedLabelByCluster = <int, String>{};
-    for (final entry in cluster.centroids.entries) {
-      final cIdx = entry.key;
-      final defaultSlot = '说话人 ${sessionIndexOf(cIdx) + 1}';
-      if (vpStore != null) {
-        final match = vpStore.matchFrequentOnly(entry.value);
-        if (match.confirmed != null) {
-          resolvedLabelByCluster[cIdx] = match.confirmed!.name;
-          continue;
-        }
-        if (match.fuzzyHint != null) {
-          vpStore.recordFuzzyHint(
-            session: file.session.isEmpty ? file.id : file.session,
-            speakerSlot: defaultSlot,
-            candidateName: match.fuzzyHint!.name,
-          );
-        }
-      }
-      resolvedLabelByCluster[cIdx] = defaultSlot;
-    }
+    final sesKey = file.session.isEmpty ? file.id : file.session;
+    final sourceDevice = file.resolvedSourceDeviceLabel;
+    final sourceLane = file.resolvedSourceLane.code;
 
-    file.utterances = [
+    final preliminaryUtterances = [
       for (final u in file.utterances)
         if (byId[u.id] != null && byId[u.id]!.known)
           u.copyWith(
             speakerCluster: sessionIndexOf(byId[u.id]!.cluster),
-            speakerLabel:
-                resolvedLabelByCluster[byId[u.id]!.cluster] ??
-                '说话人 ${sessionIndexOf(byId[u.id]!.cluster) + 1}',
+            speakerLabel: '说话人 ${sessionIndexOf(byId[u.id]!.cluster) + 1}',
             spkConfidence: byId[u.id]!.confidence,
           )
         else
           u.copyWith(speakerLabel: '未区分', spkConfidence: 0),
+    ];
+
+    if (vpStore != null && cluster.centroids.isNotEmpty) {
+      final slotCentroids = <String, List<double>>{};
+      final slotSpeechMs = <String, int>{};
+      final clusterToSlot = <int, String>{};
+
+      for (final u in file.utterances) {
+        final assignment = byId[u.id];
+        if (assignment == null || !assignment.known) continue;
+        final slot = '说话人 ${sessionIndexOf(assignment.cluster) + 1}';
+        slotSpeechMs[slot] = (slotSpeechMs[slot] ?? 0) + u.durationMs;
+      }
+
+      for (final entry in cluster.centroids.entries) {
+        final slot = '说话人 ${sessionIndexOf(entry.key) + 1}';
+        clusterToSlot[entry.key] = slot;
+        slotCentroids[slot] = entry.value;
+        vpStore.observeChannelEmbedding(
+          entry.value,
+          deviceLabel: sourceDevice,
+          sourceLane: sourceLane,
+        );
+      }
+
+      final clues = SemanticSpeakerClueExtractor.extractFromUtterances(
+        preliminaryUtterances,
+        knownNames: vpStore.preferredRosterNames(limit: 40).toSet(),
+      );
+
+      final resolution = JointSpeakerResolver.resolveSession(
+        session: sesKey,
+        speakerCentroids: slotCentroids,
+        speakerSpeechMs: slotSpeechMs,
+        semanticClues: clues,
+        voiceprintStore: vpStore,
+        deviceLabel: sourceDevice,
+        sourceLane: sourceLane,
+        nowMs: DateTime.now().millisecondsSinceEpoch,
+      );
+
+      for (final outcome in resolution.autoConfirmed.values) {
+        vpStore.clearSuggestion(
+          session: sesKey,
+          speakerSlot: outcome.speakerSlot,
+          notify: false,
+        );
+        if (outcome.shouldEnrollChannelCentroid) {
+          final centroid = slotCentroids[outcome.speakerSlot];
+          if (centroid != null && centroid.isNotEmpty) {
+            vpStore.upsertPersonAndSample(
+              name: outcome.personName,
+              embedding: centroid,
+              deviceLabel: outcome.deviceLabel,
+              sourceLane: sourceLane,
+              sceneLabel: '跨设备自适应',
+            );
+          }
+        }
+      }
+
+      for (final sug in resolution.suggestions.values) {
+        vpStore.recordCandidateSuggestion(sug, notify: false);
+      }
+
+      for (final entry in clusterToSlot.entries) {
+        final slot = entry.value;
+        resolvedLabelByCluster[entry.key] =
+            resolution.autoConfirmed[slot]?.personName ?? slot;
+      }
+    } else {
+      for (final entry in cluster.centroids.entries) {
+        resolvedLabelByCluster[entry.key] =
+            '说话人 ${sessionIndexOf(entry.key) + 1}';
+      }
+    }
+
+    file.utterances = [
+      for (final u in preliminaryUtterances)
+        if (byId[u.id] != null && byId[u.id]!.known)
+          u.copyWith(
+            speakerLabel:
+                resolvedLabelByCluster[byId[u.id]!.cluster] ??
+                u.speakerLabel,
+          )
+        else
+          u,
     ];
   }
 

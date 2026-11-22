@@ -23,6 +23,7 @@ import '../widgets/photo_preview_sheet.dart';
 import '../widgets/photo_thumbnail.dart';
 import '../widgets/quick_speaker_sheet.dart';
 import '../widgets/raw_audio_player.dart';
+import '../widgets/speaker_suggestion_banner.dart';
 import '../widgets/store_scope.dart';
 
 class DetailPage extends StatefulWidget {
@@ -59,6 +60,11 @@ class _DetailSilentEmptyEntry extends _DetailListEntry {
 class _DetailOverviewEntry extends _DetailListEntry {
   const _DetailOverviewEntry(this.text);
   final String text;
+}
+
+class _DetailSpeakerSuggestBannerEntry extends _DetailListEntry {
+  const _DetailSpeakerSuggestBannerEntry(this.eventId);
+  final String eventId;
 }
 
 class _DetailDialogueBubbleEntry extends _DetailListEntry {
@@ -792,6 +798,12 @@ class _DetailPageState extends State<DetailPage> {
             ),
           ),
         );
+      case _DetailSpeakerSuggestBannerEntry(:final eventId):
+        return SpeakerSuggestionBanner(
+          store: store,
+          eventIds: [eventId],
+          margin: const EdgeInsets.only(bottom: 14),
+        );
       case _DetailOverviewEntry(:final text):
         return Padding(
           padding: const EdgeInsets.only(bottom: 14),
@@ -1254,7 +1266,7 @@ class _DetailPageState extends State<DetailPage> {
               m.turnIndex < nextFirstIdx)
             m.turnIndex,
       ];
-      final displaySpk = lifeSpeakerLabel(
+      final baseDisplaySpk = lifeSpeakerLabel(
         store.displayTurnSpeaker(
           e,
           bubble.firstTurnIndex,
@@ -1262,6 +1274,14 @@ class _DetailPageState extends State<DetailPage> {
           includeGuessSuffix: false,
         ),
       );
+      final hintCandidate = store.pendingCandidateNameForEventSlot(
+        e,
+        src.spk,
+        turnIndex: bubble.firstTurnIndex,
+      );
+      final displaySpk = (hintCandidate != null && hintCandidate.isNotEmpty)
+          ? '$baseDisplaySpk · 疑似$hintCandidate?'
+          : baseDisplaySpk;
       groups.add((
         firstTurnIndex: bubble.firstTurnIndex,
         turnIndices: turnIndices.isEmpty
@@ -1269,7 +1289,7 @@ class _DetailPageState extends State<DetailPage> {
             : turnIndices,
         rawSpk: src.spk,
         displaySpk: displaySpk,
-        avatarSpk: displaySpk,
+        avatarSpk: baseDisplaySpk,
         canQuickName: src.spk.trim() != '无语音',
         paragraphs: bubble.paragraphs,
         startClock: extractClockHead(src.clock),
@@ -1339,6 +1359,9 @@ class _DetailPageState extends State<DetailPage> {
     return [
       if (groups.isEmpty) const _DetailSilentEmptyEntry(),
       if (showOverviewCard) _DetailOverviewEntry(overviewText),
+      if (groups.isNotEmpty &&
+          store.pendingSpeakerSuggestionsFor([e.id]).isNotEmpty)
+        _DetailSpeakerSuggestBannerEntry(e.id),
       for (final item in entries) item.entry,
     ];
   }
