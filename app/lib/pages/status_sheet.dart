@@ -423,6 +423,9 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       store.handleAppResumed();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      store.handleAppBackgrounded();
     }
   }
 
@@ -978,7 +981,7 @@ class _MainView extends StatelessWidget {
               ],
             ),
           ),
-        if (showWifiRow && store.activeCapabilities.hasWifiConfig)
+        if (showWifiRow && store.showMainWifiRow)
           _Row(
             keyName: 'wifi-row',
             label: 'Wi-Fi',
@@ -1787,6 +1790,36 @@ class _FirmwareView extends StatelessWidget {
               style: TextStyle(fontSize: 13, color: c.label),
             ),
           ),
+        if (store.showFirmwareWifiRow)
+          _Row(
+            keyName: 'upg-wifi-row',
+            label: 'Wi-Fi 设置',
+            onTap: () => store.showView(
+              DeviceView.wifi,
+              wifiReturnTo: DeviceView.upg,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    store.wifiSaved.isNotEmpty
+                        ? '已配置 · ${store.wifiCountShown} 个网络'
+                        : '升级前请配网',
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: TextStyle(fontSize: 13, color: c.label),
+                  ),
+                ),
+                const SizedBox(width: 5),
+                RCIcon(
+                  RCIconKind.chevronRight,
+                  size: 15,
+                  color: c.sec,
+                ),
+              ],
+            ),
+          ),
         if (store.fwError != null)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1809,7 +1842,10 @@ class _FirmwareView extends StatelessWidget {
                     alignment: Alignment.centerLeft,
                     child: TextButton(
                       key: const Key('upg-goto-wifi'),
-                      onPressed: () => store.showView(DeviceView.wifi),
+                      onPressed: () => store.showView(
+                        DeviceView.wifi,
+                        wifiReturnTo: DeviceView.upg,
+                      ),
                       style: TextButton.styleFrom(
                         foregroundColor: c.ink,
                         padding: const EdgeInsets.only(top: 4),
@@ -1979,7 +2015,7 @@ class _WifiViewState extends State<_WifiView> {
           children: [
             IconButton(
               key: const Key('wifi-back'),
-              onPressed: () => store.showView(DeviceView.main),
+              onPressed: store.closeWifiView,
               icon: RCIcon(
                 RCIconKind.chevronLeft,
                 size: 18,
@@ -2130,7 +2166,9 @@ class _WifiViewState extends State<_WifiView> {
           ],
         const SizedBox(height: 8),
         Text(
-          '录音卡仅支持 2.4GHz 网络，此处只显示 2.4GHz 接入点',
+          store.isCardV2WifiOtaOnly
+              ? '录音卡仅支持 2.4GHz 网络；仅用于 Wi-Fi 固件升级，离开或升级完成后将自动关闭设备 Wi-Fi'
+              : '录音卡仅支持 2.4GHz 网络，此处只显示 2.4GHz 接入点',
           style: TextStyle(fontSize: 11, color: c.sec),
         ),
         const SizedBox(height: 10),

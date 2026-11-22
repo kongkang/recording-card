@@ -6602,9 +6602,9 @@ async fn ota_wifi_with_device(
         }
         if !connected {
             let msg = if creds.is_empty() {
-                "录音卡尚未配置 Wi-Fi 网络，请先在录音卡弹层「Wi-Fi」中连接 2.4GHz 路由器后再升级"
+                "录音卡尚未配置 Wi-Fi 网络，请在当前固件更新页点击「Wi-Fi 设置」连接 2.4GHz 路由器后再升级"
             } else {
-                "未能自动连上已保存的 Wi-Fi 网络，请先在录音卡弹层「Wi-Fi」中确认 2.4GHz 路由器在范围内并连接后再升级"
+                "未能自动连上已保存的 Wi-Fi 网络，请在当前固件更新页点击「Wi-Fi 设置」确认 2.4GHz 路由器在范围内并连接后再升级"
             };
             return Err(CardSdkError::InvalidCommand(msg.to_owned()).to_string());
         }

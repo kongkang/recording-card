@@ -502,11 +502,10 @@ void main() {
 
       await tester.tap(find.byKey(const Key('wifi-back')));
       await tester.pump();
-
-      // ⑦-B 配网后再进固件更新页：展示 0.8.12 → 0.8.15，单阶段升级完成并自动重连刷新版本
-      await tester.tap(find.byKey(const Key('fw-update')));
-      await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
+      expect(find.byKey(const Key('dev-upg')), findsOneWidget);
+
+      // ⑦-B 配网后再回到固件更新页：展示 0.8.12 → 0.8.15，单阶段升级完成并自动重连刷新版本
       expect(
         tester.widget<Text>(find.byKey(const Key('fw-main-ver'))).data,
         '0.8.12 → 0.8.15',

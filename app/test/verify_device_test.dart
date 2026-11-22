@@ -64,24 +64,31 @@ void main() {
       expect(find.textContaining('已连接'), findsNothing);
       expect(find.textContaining('可录至'), findsOneWidget);
       expect(find.textContaining('电量高'), findsOneWidget);
-      // 可点行：同步 / Wi-Fi / 固件
+      // 可点行：同步 / 固件（录音卡 V2 现阶段无日常 Wi-Fi 场景，主弹层默认隐藏 Wi-Fi 行）
       expect(find.byKey(const Key('sync-now')), findsOneWidget);
-      expect(find.byKey(const Key('wifi-row')), findsOneWidget);
+      expect(find.byKey(const Key('wifi-row')), findsNothing);
       expect(find.byKey(const Key('fw-update')), findsOneWidget);
       // 未同步过：如实说「尚未同步」，不假装刚刚同步
       expect(
         tester.widget<Text>(find.byKey(const Key('sync-txt'))).data,
         '自动同步 · 尚未同步',
       );
-      // 打开弹层时预取概要到内存（Wi-Fi 数量来自设备凭据），刷新后显示「已配置 · 1 个网络」。
       await tester.pump();
-      expect(find.textContaining('已配置 · 1 个网络'), findsOneWidget);
       expect(gateway.snapshotCalls, greaterThan(0));
       expect(
         tester.widget<Text>(find.byKey(const Key('fw-val'))).data,
         '已是最新',
         reason: '服务器 versionCode 不比设备新时不能说有更新',
       );
+      // 无 Wi-Fi 芯片更新时，固件更新页也不显示 Wi-Fi 设置入口
+      await tapInSheet(tester, find.byKey(const Key('fw-update')));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const Key('dev-upg')), findsOneWidget);
+      expect(find.byKey(const Key('upg-wifi-row')), findsNothing);
+      await tapInSheet(tester, find.byKey(const Key('upg-back')));
+      await tester.pump();
+      expect(find.byKey(const Key('dev-main')), findsOneWidget);
 
       // 录音时钟：格式 h:mm:ss，从 0 起跳且宽度不变（定宽防抖动）
       final clock = find.byKey(const Key('rec-clock'));
@@ -263,12 +270,17 @@ void main() {
     await tester.pump();
   });
 
-  // verify.cjs 248-273：Wi-Fi 配网（已保存置顶/展开/范围外置灰/直连/新网络保存/计数）
+  // verify.cjs 248-273：Wi-Fi 配网（仅 Wi-Fi 升级时从固件更新页进入：已保存置顶/展开/范围外置灰/直连/新网络保存/计数/返回固件页）
   testWidgets('wifi-setup / wifi-count', (tester) async {
-    // Wi-Fi 入口按 owner 决策暂时隐藏；入口恢复时这条用例随之生效
+    // Wi-Fi 入口按 owner 决策仅在 Wi-Fi 芯片有更新时从固件更新页进入
     if (!showWifiRow) return;
     final gateway = FakeCardGateway(
       initialSnapshot: defaultSnapshot,
+      wifiOta: const CardOtaInfo(
+        version: '1.6.0',
+        versionCode: 16,
+        url: 'https://ota.invalid/wifi.bin',
+      ),
       wifiCredentials: const [
         CardWifiCredential(ssid: 'HomeWiFi'),
         CardWifiCredential(ssid: 'Studio-2.4G'),
@@ -285,7 +297,15 @@ void main() {
     );
     await bootConnected(tester, gateway: gateway);
 
-    await tapInSheet(tester, find.byKey(const Key('wifi-row')));
+    expect(find.byKey(const Key('wifi-row')), findsNothing);
+    await tapInSheet(tester, find.byKey(const Key('fw-update')));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('dev-upg')), findsOneWidget);
+    expect(find.byKey(const Key('upg-wifi-row')), findsOneWidget);
+    expect(find.textContaining('已配置 · 4 个网络'), findsOneWidget);
+
+    await tapInSheet(tester, find.byKey(const Key('upg-wifi-row')));
     await tester.pump();
     await tester.pump();
     expect(find.byKey(const Key('dev-wifi')), findsOneWidget);
@@ -334,13 +354,15 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
 
-    // 返回主页：计数刷新为 5（设备把新网络存进了凭据表）
+    // 返回固件更新页：计数刷新为 5（设备把新网络存进了凭据表）
     await tester.tap(find.byKey(const Key('wifi-back')));
     await tester.pump();
-    expect(find.byKey(const Key('dev-main')), findsOneWidget);
-    expect(find.textContaining('5 个网络'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('sheet-close')));
     await tester.pump();
+    expect(find.byKey(const Key('dev-upg')), findsOneWidget);
+    expect(find.textContaining('5 个网络'), findsOneWidget);
+    await tapInSheet(tester, find.byKey(const Key('upg-back')));
+    await tester.pump();
+    await tapInSheet(tester, find.byKey(const Key('sheet-close')));
     expect(find.byKey(const Key('sheet')), findsNothing);
   });
 
@@ -349,12 +371,20 @@ void main() {
     if (!showWifiRow) return;
     final gateway = FakeCardGateway(
       initialSnapshot: defaultSnapshot,
+      wifiOta: const CardOtaInfo(
+        version: '1.6.0',
+        versionCode: 16,
+        url: 'https://ota.invalid/wifi.bin',
+      ),
       wifiNetworks: const [
         CardWifiNetwork(ssid: 'Office-2.4G', rssi: -60, secured: true),
       ],
     );
     final h = await bootConnected(tester, gateway: gateway);
-    await tapInSheet(tester, find.byKey(const Key('wifi-row')));
+    await tapInSheet(tester, find.byKey(const Key('fw-update')));
+    await tester.pump();
+    await tester.pump();
+    await tapInSheet(tester, find.byKey(const Key('upg-wifi-row')));
     await tester.pump();
     await tester.pump();
 
