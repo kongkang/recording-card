@@ -340,6 +340,10 @@ class Peripheral {
                     }
 
                     BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIGURATION_DESCRIPTOR);
+                    if (descriptor == null) {
+                        this.wakeCommand(future, null);
+                        return;
+                    }
                     byte[] cccdValue;
                     if (!enable) {
                         cccdValue = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE;

@@ -421,11 +421,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _device.setRecordingSliceDuration(dur);
     }
     if (_agentConfig.omiLinkEnabled != _device.omiLinkEnabled ||
-        _agentConfig.feishuLinkEnabled != _device.feishuLinkEnabled) {
+        _agentConfig.feishuLinkEnabled != _device.feishuLinkEnabled ||
+        _agentConfig.iflytekA1LinkEnabled != _device.iflytekA1LinkEnabled) {
       unawaited(
         _device.setExtHardwareEnabled(
           omi: _agentConfig.omiLinkEnabled,
           feishu: _agentConfig.feishuLinkEnabled,
+          iflytekA1: _agentConfig.iflytekA1LinkEnabled,
         ),
       );
     }

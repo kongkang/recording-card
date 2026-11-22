@@ -28,6 +28,7 @@ use capabilities::{classify_ble_advertisement, DeviceKind};
 use dyj_v1_session::{parse_dyj_audio_filename, version_code_from_semver, DyjV1Session};
 use reai_ext_sdk::{RecorderDevice, RecorderSdkDriver, SdkDeviceEvent};
 use reai_feishu_sdk::FeishuSdkDriver;
+use reai_iflytek_sdk::IflytekSdkDriver;
 use reai_omi_sdk::OmiSdkDriver;
 use reai_board_sdk::kernel::audio::{
     AudioFrame, AudioStreamAction, AudioStreamScope, AudioTransport,
@@ -317,7 +318,7 @@ static STATE: OnceLock<BridgeState> = OnceLock::new();
 static VERSION: &str = concat!(
     "card_bridge/",
     env!("CARGO_PKG_VERSION"),
-    " card-v2/0.0.8 dyj-v1/0.1 board-v21/0.3 omi/0.1 feishu/0.1"
+    " card-v2/0.0.8 dyj-v1/0.1 board-v21/0.3 omi/0.1 feishu/0.1 iflytek/0.1"
 );
 
 /// Android 直连 logcat 的零依赖检查点输出（不经 log crate，绕开 logger 初始化问题）。
@@ -799,6 +800,19 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
                     "samples": result.samples,
                     "durationSecs": result.duration_secs,
                 }));
+            } else if lower == "sbc" || (lower != "apm" && head.first() == Some(&0x9c)) {
+                let src_owned = src_path.to_path_buf();
+                let wav_owned = wav_path.to_path_buf();
+                let result = tokio::task::spawn_blocking(move || {
+                    reai_ext_sdk::sbc::sbc_to_wav_16k_mono(&src_owned, &wav_owned)
+                })
+                .await
+                .map_err(|e| BridgeError::from(format!("SBC 音频解码任务失败: {e}")))??;
+                out.ok(json!({
+                    "path": wav,
+                    "samples": result.samples,
+                    "durationSecs": result.duration_secs,
+                }));
             } else {
                 let result = reai_card_sdk::apm_to_wav(src_path, wav_path).await?;
                 out.ok(json!({
@@ -911,6 +925,7 @@ pub(crate) fn known_ble_service_uuids() -> Vec<uuid::Uuid> {
         reai_omi_sdk::protocol::SVC_OMI_AUDIO_UUID,
         reai_omi_sdk::protocol::SVC_FRIEND_PENDANT_UUID,
         reai_feishu_sdk::SERVICE_UUID,
+        reai_iflytek_sdk::SERVICE_UUID,
     ];
     if let Ok(nus) = uuid::Uuid::parse_str(NUS_SERVICE_UUID) {
         out.push(nus);
@@ -1153,7 +1168,7 @@ async fn connect_device(payload: Value) -> Result<Value, BridgeError> {
             })?;
             connect_board_v21(&id, &name).await?
         }
-        DeviceKind::OmiCv1 | DeviceKind::FeishuD3200 => {
+        DeviceKind::OmiCv1 | DeviceKind::FeishuD3200 | DeviceKind::IflytekA1 => {
             connect_external_sdk(&id, target_name.as_deref(), target_kind).await?
         }
     };
@@ -1740,6 +1755,7 @@ async fn connect_external_sdk(
     let driver: &dyn RecorderSdkDriver = match kind {
         DeviceKind::OmiCv1 => &OmiSdkDriver,
         DeviceKind::FeishuD3200 => &FeishuSdkDriver,
+        DeviceKind::IflytekA1 => &IflytekSdkDriver,
         _ => {
             return Err(BridgeError::from(format!(
                 "非第三方 SDK 设备类型: {}",
@@ -1944,6 +1960,8 @@ async fn release_device() -> Value {
                                 || u.starts_with("D3200")
                                 || u.starts_with("SOUNDCORE WORK")
                                 || u.starts_with("REAI_VB")
+                                || n.trim().starts_with("讯飞录音笔A1")
+                                || u.starts_with("IFLYTEK")
                         })
                     });
                     if is_managed_ble {
@@ -7210,6 +7228,18 @@ mod tests {
             ),
             Some("D3200-C3A1".to_string())
         );
+        assert_eq!(
+            matches_external_candidate(
+                &IflytekSdkDriver,
+                "new-rpa-iflytek",
+                "old-id",
+                Some("讯飞录音笔A1_11E0"),
+                Some("讯飞录音笔A1_11E0"),
+                &[],
+                &empty_mfd,
+            ),
+            Some("讯飞录音笔A1_11E0".to_string())
+        );
         assert!(now_unix_ms() > 0);
     }
 
@@ -8045,6 +8075,7 @@ mod tests {
         assert!(services.contains(&reai_omi_sdk::protocol::SVC_OMI_AUDIO_UUID));
         assert!(services.contains(&reai_omi_sdk::protocol::SVC_FRIEND_PENDANT_UUID));
         assert!(services.contains(&reai_feishu_sdk::SERVICE_UUID));
+        assert!(services.contains(&reai_iflytek_sdk::SERVICE_UUID));
         assert!(services.contains(&uuid::Uuid::parse_str(NUS_SERVICE_UUID).unwrap()));
         assert!(services.contains(&uuid::Uuid::parse_str("0000fe59-0000-1000-8000-00805f9b34fb").unwrap()));
         assert!(services.contains(&uuid::Uuid::parse_str("0000ff10-0000-1000-8000-00805f9b34fb").unwrap()));

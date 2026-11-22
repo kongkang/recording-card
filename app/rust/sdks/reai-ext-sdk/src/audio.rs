@@ -121,7 +121,16 @@ pub fn wav_to_16k_mono(input: &Path, output: &Path) -> Result<AudioTranscodeRepo
             bytes[pos + 7],
         ]) as usize;
         let payload_start = pos + 8;
-        let payload_end = payload_start.saturating_add(chunk_len).min(bytes.len());
+        let mut payload_end = payload_start.saturating_add(chunk_len).min(bytes.len());
+        if chunk_id == b"data" && (chunk_len == 0 || payload_end < bytes.len()) {
+            let next_is_chunk = payload_end + 8 <= bytes.len()
+                && bytes[payload_end..payload_end + 4]
+                    .iter()
+                    .all(|b| b.is_ascii_alphanumeric() || *b == b' ');
+            if chunk_len == 0 || !next_is_chunk {
+                payload_end = bytes.len();
+            }
+        }
         if chunk_id == b"fmt " && payload_end - payload_start >= 16 {
             let fmt = &bytes[payload_start..payload_end];
             let audio_format = u16::from_le_bytes([fmt[0], fmt[1]]);
@@ -366,5 +375,27 @@ mod tests {
 
         let mut lc3_work = Lc3WorkBufs::new_16k_10ms_mono();
         let _lc3_dec = lc3_work.decoder();
+    }
+
+    #[test]
+    fn wav_to_16k_mono_recovers_undersized_data_chunk_header() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("reai_ext_wav_fix_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let raw_path = temp_dir.join("undersized.wav");
+        let fixed_path = temp_dir.join("fixed.wav");
+
+        let samples = vec![1234i16; 320];
+        write_wav_16k_mono(&raw_path, &samples).unwrap();
+        let mut bytes = std::fs::read(&raw_path).unwrap();
+        // Simulate A1 USB WAV quirk: RIFF and data chunk sizes stamped as 0 while PCM follows.
+        bytes[4..8].copy_from_slice(&0u32.to_le_bytes());
+        bytes[40..44].copy_from_slice(&0u32.to_le_bytes());
+        std::fs::write(&raw_path, &bytes).unwrap();
+
+        let report = wav_to_16k_mono(&raw_path, &fixed_path).unwrap();
+        assert_eq!(report.samples, 320);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

@@ -1452,7 +1452,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="dev-disconnect"]');
   await pCur.click('[data-testid="disconnect-confirm"]');
   await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
-  await pCur.evaluate(() => { closeSheet(); agCfg.omiLinkEnabled = false; agCfg.feishuLinkEnabled = false; syncSetSummary(); });
+  await pCur.evaluate(() => { closeSheet(); agCfg.omiLinkEnabled = false; agCfg.feishuLinkEnabled = false; agCfg.iflytekA1LinkEnabled = false; syncSetSummary(); });
   assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '未开启');
   await pCur.$eval('[data-testid="set-ext-hw"]', x => x.scrollIntoView({ block: 'center' }));
   await pCur.click('[data-testid="set-ext-hw"]');
@@ -1476,6 +1476,29 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="disconnect-confirm"]');
   await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
   await pCur.evaluate(() => { closeSheet(); agCfg.feishuLinkEnabled = false; syncSetSummary(); });
+  assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '未开启');
+  await pCur.$eval('[data-testid="set-ext-hw"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-ext-hw"]');
+  await pCur.waitForSelector('[data-testid="ext-iflytek-switch"]', { timeout: 3000 });
+  assert.equal(await pCur.$('[data-testid="ext-iflytek-beta"]'), null);
+  await pCur.click('[data-testid="ext-iflytek-switch"]');
+  await pCur.click('[data-testid="crumb-back"]');
+  assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '已开启 1 款');
+  await pCur.click('[data-testid="hw-capsule"]');
+  await pCur.waitForFunction(() => document.querySelectorAll('#conn-list .conn-item').length === 4, { timeout: 5000 });
+  assert.ok((await pCur.$$eval('#conn-list .cn', e => e.map(x => x.innerText.trim()))).includes('11E0'));
+  await pCur.click('[data-testid="dev-item-IFLYTEK_A1_11E0"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
+  assert.equal(await pCur.$eval('#dev-kind-badge', x => x.innerText.trim()), '讯飞智能录音笔 A1');
+  assert(await pCur.$eval('#rec-sw', x => !x.hidden));
+  assert(await pCur.$eval('[data-testid="rec-physical-only"]', x => x.hidden));
+  assert(await pCur.$eval('#row-sync', x => !x.hidden));
+  assert(await pCur.$eval('#row-wifi', x => x.hidden));
+  assert(await pCur.$eval('#row-fw', x => x.hidden));
+  await pCur.click('[data-testid="dev-disconnect"]');
+  await pCur.click('[data-testid="disconnect-confirm"]');
+  await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
+  await pCur.evaluate(() => { closeSheet(); agCfg.iflytekA1LinkEnabled = false; syncSetSummary(); });
   assert.equal(await pCur.$eval('#sv-exthw', x => x.innerText.trim()), '未开启');
   // 当前版：定位与健康采集读设计列表，开关可关，且没有目标版的信号联动预览
   assert.equal(await pCur.$eval('#sv-health', x => x.innerText.trim()), '已开启 · 6 条');

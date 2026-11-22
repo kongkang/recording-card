@@ -250,6 +250,7 @@ dependencies = [
  "reai-dyj-sdk",
  "reai-ext-sdk",
  "reai-feishu-sdk",
+ "reai-iflytek-sdk",
  "reai-omi-sdk",
  "serde",
  "serde_json",
@@ -1646,6 +1647,22 @@ dependencies = [
  "reai-ext-sdk",
  "serde_json",
  "sha2",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "reai-iflytek-sdk"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "btleplug",
+ "chrono",
+ "futures",
+ "log",
+ "reai-ext-sdk",
+ "serde",
+ "serde_json",
  "tokio",
  "uuid",
 ]

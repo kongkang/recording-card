@@ -3988,6 +3988,15 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
     });
   }
 
+  Future<void> _toggleIflytekA1(bool next) async {
+    await widget.config.setIflytekA1LinkEnabled(next);
+    await widget.device?.setExtHardwareEnabled(iflytekA1: next);
+    if (!mounted) return;
+    setState(() {
+      _hint = next ? '已开启讯飞智能录音笔 A1 扫描联动' : '已关闭讯飞智能录音笔 A1 联动';
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
@@ -4000,11 +4009,15 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
       builder: (context, _) {
         final omiOn = widget.config.omiLinkEnabled;
         final feishuOn = widget.config.feishuLinkEnabled;
+        final iflytekOn = widget.config.iflytekA1LinkEnabled;
         final omiConn =
             dev?.isConnected == true && dev?.activeKind == DeviceKind.omiCv1;
         final feishuConn =
             dev?.isConnected == true &&
             dev?.activeKind == DeviceKind.feishuD3200;
+        final iflytekConn =
+            dev?.isConnected == true &&
+            dev?.activeKind == DeviceKind.iflytekA1;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -4046,8 +4059,26 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                     subtitle: 'BLE 同步板载录音，支持远程启停；尚未真机验证，固件走官方 App',
                     enabled: feishuOn,
                     connected: feishuConn,
-                    bottomRadius: 12,
                     onChanged: () => unawaited(_toggleFeishu(!feishuOn)),
+                  ),
+                  Divider(
+                    height: 1,
+                    thickness: 1,
+                    indent: 16,
+                    endIndent: 16,
+                    color: c.sep,
+                  ),
+                  _extHardwareRow(
+                    context,
+                    cardKey: const Key('ext-iflytek-card'),
+                    switchKey: const Key('ext-iflytek-switch'),
+                    title: '讯飞智能录音笔',
+                    modelTag: 'A1',
+                    subtitle: '蓝牙实时拾音、远程启停与板载录音同步（本机 SBC 解码），固件走官方 App',
+                    enabled: iflytekOn,
+                    connected: iflytekConn,
+                    bottomRadius: 12,
+                    onChanged: () => unawaited(_toggleIflytekA1(!iflytekOn)),
                   ),
                 ],
               ),

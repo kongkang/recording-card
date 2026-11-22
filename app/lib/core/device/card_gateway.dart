@@ -32,6 +32,7 @@ enum DeviceKind {
   boardV21('board_v21', '语音AI键盘 V2.1'),
   omiCv1('omi_cv1', 'Omi 录音器'),
   feishuD3200('feishu_d3200', '飞书录音豆'),
+  iflytekA1('iflytek_a1', '讯飞智能录音笔 A1'),
   appleWatch('apple_watch', 'Apple Watch');
 
   const DeviceKind(this.code, this.displayModel);
@@ -72,10 +73,17 @@ enum DeviceKind {
     if (raw == '录音豆' || raw.startsWith('飞书录音豆')) {
       return DeviceKind.feishuD3200;
     }
+    if (trimmed.startsWith('IFLYTEK_A1') ||
+        trimmed.startsWith('IFLYTEK A1') ||
+        trimmed.startsWith('IFLYREC_A1') ||
+        trimmed.startsWith('讯飞录音笔A1') ||
+        trimmed.startsWith('訊飛錄音筆A1')) {
+      return DeviceKind.iflytekA1;
+    }
     return null;
   }
 
-  /// 剥离已知代际广播前缀（`DYJV2_`、`REAI_VB_`、`DYJ_`、`OMI-`/`OMI_`、`FRIEND_`），仅保留编号。
+  /// 剥离已知代际广播前缀（`DYJV2_`、`REAI_VB_`、`DYJ_`、`OMI-`/`OMI_`、`FRIEND_`、`讯飞录音笔A1_`、`IFLYTEK_A1_`），仅保留编号。
   /// 若剥离后为空或无已知前缀，则回退原名称（去除首尾空白）。
   static String bleShortId(String name) {
     final trimmed = name.trim();
@@ -92,6 +100,16 @@ enum DeviceKind {
       'FRIEND ',
       'D3200-',
       'D3200_',
+      '讯飞录音笔A1_',
+      '讯飞录音笔A1-',
+      '讯飞录音笔A1 ',
+      '訊飛錄音筆A1_',
+      '訊飛錄音筆A1-',
+      '訊飛錄音筆A1 ',
+      'IFLYTEK_A1_',
+      'IFLYTEK_A1-',
+      'IFLYTEK A1 ',
+      'IFLYREC_A1_',
     ]) {
       if (upper.startsWith(prefix)) {
         final suffix = trimmed.substring(prefix.length).trim();
@@ -113,6 +131,8 @@ enum DeviceKind {
         return DeviceKind.omiCv1;
       case 'feishu_d3200':
         return DeviceKind.feishuD3200;
+      case 'iflytek_a1':
+        return DeviceKind.iflytekA1;
       case 'apple_watch':
         return DeviceKind.appleWatch;
       default:
@@ -240,6 +260,20 @@ class HardwareCapabilities {
     otaMode: 'none',
   );
 
+  /// 讯飞智能录音笔 A1（BLE 实时 16kHz SBC 流 + 远程启停 + 物理键录停事件 + 分块文件同步）。
+  static const iflytekA1 = HardwareCapabilities(
+    realtimeAudio: true,
+    hasOnboardStorage: true,
+    hasFileSync: true,
+    hasWifiConfig: false,
+    hasCameraMedia: false,
+    hasPhysicalRecordToggle: true,
+    hasRemoteRecordControl: true,
+    hasMarkButton: false,
+    hasStandaloneRealtimeStream: true,
+    otaMode: 'none',
+  );
+
   /// Apple Watch 独立采集硬件（WCSession 本地传片 + 表端离线缓存，无蓝牙实时 PCM 流 / Wi-Fi / 固件 OTA）。
   static const appleWatch = HardwareCapabilities(
     realtimeAudio: false,
@@ -259,6 +293,7 @@ class HardwareCapabilities {
     DeviceKind.boardV21 => boardV21,
     DeviceKind.omiCv1 => omiCv1,
     DeviceKind.feishuD3200 => feishuD3200,
+    DeviceKind.iflytekA1 => iflytekA1,
     DeviceKind.appleWatch => appleWatch,
   };
 
@@ -612,9 +647,11 @@ class CardFile {
     return lower.endsWith('.ogg') || lower.endsWith('.opus');
   }
 
+  bool get isSbc => name.toLowerCase().endsWith('.sbc');
+
   bool get isWav => name.toLowerCase().endsWith('.wav');
 
-  bool get isAudioRecording => isApm || isAmr || isOgg || isWav;
+  bool get isAudioRecording => isApm || isAmr || isOgg || isSbc || isWav;
 
   bool get isTxt => name.toUpperCase().endsWith('.TXT');
 

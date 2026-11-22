@@ -370,6 +370,7 @@ class AgentConfigStore extends ChangeNotifier {
   bool watchLinkEnabled = false;
   bool omiLinkEnabled = false;
   bool feishuLinkEnabled = false;
+  bool iflytekA1LinkEnabled = false;
 
   /// 行为与健康信号总开关。默认关闭；打开后才申请系统权限并在本机采集。
   bool healthSignalEnabled = false;
@@ -540,7 +541,8 @@ class AgentConfigStore extends ChangeNotifier {
 
   int get enabledExtHardwareCount =>
       (omiLinkEnabled ? 1 : 0) +
-      (feishuLinkEnabled ? 1 : 0);
+      (feishuLinkEnabled ? 1 : 0) +
+      (iflytekA1LinkEnabled ? 1 : 0);
 
   /// 用户手动指定的模型。空字符串表示没有指定，不能把目录里的 deepseek-v3 当成已选。
   String cloudModel = '';
@@ -761,6 +763,9 @@ class AgentConfigStore extends ChangeNotifier {
     }
     if (data['feishuLinkEnabled'] is bool) {
       feishuLinkEnabled = data['feishuLinkEnabled'] as bool;
+    }
+    if (data['iflytekA1LinkEnabled'] is bool) {
+      iflytekA1LinkEnabled = data['iflytekA1LinkEnabled'] as bool;
     }
     if (data['healthSignalEnabled'] is bool) {
       healthSignalEnabled = data['healthSignalEnabled'] as bool;
@@ -1013,6 +1018,12 @@ class AgentConfigStore extends ChangeNotifier {
 
   Future<void> setFeishuLinkEnabled(bool value) async {
     feishuLinkEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setIflytekA1LinkEnabled(bool value) async {
+    iflytekA1LinkEnabled = value;
     notifyListeners();
     await _save();
   }
@@ -1521,6 +1532,7 @@ class AgentConfigStore extends ChangeNotifier {
       'watchLinkEnabled': watchLinkEnabled,
       'omiLinkEnabled': omiLinkEnabled,
       'feishuLinkEnabled': feishuLinkEnabled,
+      'iflytekA1LinkEnabled': iflytekA1LinkEnabled,
       'healthSignalEnabled': healthSignalEnabled,
       if (preferredAsrEngine != null) 'asrEngine': preferredAsrEngine,
       'agentWebSearchEnabled': agentWebSearchEnabled,

@@ -6,6 +6,7 @@
 //! - 离线录音文件同步、转换（Ogg Opus / LC3 / μ-law / PCM -> 16kHz WAV）与删除
 
 pub mod audio;
+pub mod sbc;
 pub mod types;
 
 pub use types::{
