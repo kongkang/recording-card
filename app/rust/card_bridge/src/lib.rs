@@ -906,6 +906,32 @@ pub(crate) async fn read_peripheral_props_bounded(
     }
 }
 
+pub(crate) fn known_ble_service_uuids() -> Vec<uuid::Uuid> {
+    let mut out = vec![
+        reai_omi_sdk::protocol::SVC_OMI_AUDIO_UUID,
+        reai_omi_sdk::protocol::SVC_FRIEND_PENDANT_UUID,
+        reai_feishu_sdk::SERVICE_UUID,
+    ];
+    if let Ok(nus) = uuid::Uuid::parse_str(NUS_SERVICE_UUID) {
+        out.push(nus);
+    }
+    if let Ok(dfu) = uuid::Uuid::parse_str("0000fe59-0000-1000-8000-00805f9b34fb") {
+        out.push(dfu);
+    }
+    if let Ok(dyj) = uuid::Uuid::parse_str("0000ff10-0000-1000-8000-00805f9b34fb") {
+        out.push(dyj);
+    }
+    out
+}
+
+pub(crate) async fn retrieve_os_connected_peripherals(adapter: &btleplug::platform::Adapter) {
+    let _ = tokio::time::timeout(
+        Duration::from_millis(600),
+        adapter.retrieve_connected_peripherals(&known_ble_service_uuids()),
+    )
+    .await;
+}
+
 /// 单次 BLE 扫描同时发现录音卡 V2 (`DYJV2_`)、点一机 V1 (`DYJ_`) 与语音 AI 键盘 V2.1 (`REAI_VB_`)。
 async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
     let adapter = scan_adapter().await?;
@@ -970,6 +996,8 @@ async fn unified_scan_once(
     let _ = adapter.stop_scan().await;
     let scan_completed_at_ms = now_unix_ms();
     alog::info("unified_scan: stopped");
+
+    retrieve_os_connected_peripherals(adapter).await;
 
     let peripherals = adapter
         .peripherals()
@@ -1356,23 +1384,41 @@ where
     let _guard = SlotGuard(connecting_slot);
     let mut last_err: Option<BridgeError> = None;
 
-    if !id_hint.is_empty() {
-        if let Ok(peripherals) = adapter.peripherals().await {
-            if let Some(cached) = peripherals.into_iter().find(|p| p.id().to_string() == id_hint) {
-                let props = read_peripheral_props_bounded(&cached).await;
-                if let Some(display_name) = matcher(id_hint, props.as_ref()) {
-                    match try_connect_peripheral_with_slot(
-                        &cached,
-                        label,
-                        Duration::from_secs(4),
-                        connecting_slot,
-                    )
-                    .await
-                    {
-                        Ok(()) => return Ok((cached, display_name)),
-                        Err(e) => last_err = Some(e),
-                    }
+    retrieve_os_connected_peripherals(adapter).await;
+
+    if let Ok(peripherals) = adapter.peripherals().await {
+        let mut matched: Option<(btleplug::platform::Peripheral, String)> = None;
+        for p in peripherals {
+            let pid = p.id().to_string();
+            let exact_id = !id_hint.is_empty() && pid == id_hint;
+            if !exact_id {
+                let is_conn = matches!(
+                    tokio::time::timeout(Duration::from_millis(250), p.is_connected()).await,
+                    Ok(Ok(true))
+                );
+                if !is_conn {
+                    continue;
                 }
+            }
+            let props = read_peripheral_props_bounded(&p).await;
+            if let Some(display_name) = matcher(&pid, props.as_ref()) {
+                matched = Some((p, display_name));
+                if exact_id {
+                    break;
+                }
+            }
+        }
+        if let Some((cached, display_name)) = matched {
+            match try_connect_peripheral_with_slot(
+                &cached,
+                label,
+                Duration::from_secs(4),
+                connecting_slot,
+            )
+            .await
+            {
+                Ok(()) => return Ok((cached, display_name)),
+                Err(e) => last_err = Some(e),
             }
         }
     }
@@ -1386,7 +1432,7 @@ where
         .await
         .map_err(|e| BridgeError::from(format!("BLE 扫描启动失败: {e}")))?;
 
-    let scan_deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+    let scan_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
     let mut fresh: Option<(btleplug::platform::Peripheral, String)> = None;
     loop {
         let now = tokio::time::Instant::now();
@@ -1429,7 +1475,7 @@ where
     try_connect_peripheral_with_slot(
         &fresh_peripheral,
         label,
-        Duration::from_secs(14),
+        Duration::from_secs(10),
         connecting_slot,
     )
     .await?;
@@ -1865,25 +1911,42 @@ async fn release_device() -> Value {
     if let Some(p) = connecting {
         let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
     }
-    // 兜底释放：若此前某次 connect 超时或半连接遗留在 CoreBluetooth，把 adapter 里仍连着的 DYJ_/DYJV2_/DFU 外设也断开。
+    // 兜底释放：若此前某次 connect 超时或半连接遗留在 CoreBluetooth（含 Omi / 飞书 / DYJ / CardV2 / DFU），
+    // 先取回 OS 级已连接外设再逐一断开，避免硬件继续保持连接亮蓝灯、不再广播。
     let cached_adapter = state().scan_adapter.lock().await.clone();
     if let Some(adapter) = cached_adapter {
+        retrieve_os_connected_peripherals(&adapter).await;
         if let Ok(peripherals) = adapter.peripherals().await {
             for p in peripherals {
                 if let Ok(true) = tokio::time::timeout(Duration::from_millis(350), p.is_connected())
                     .await
                     .unwrap_or(Ok(false))
                 {
-                    let is_reai_ble = read_peripheral_props_bounded(&p)
-                        .await
-                        .and_then(|pr| pr.local_name)
-                        .is_some_and(|n| {
-                            let t = n.trim();
-                            t.starts_with("DYJ_")
-                                || t.starts_with("DYJV2_")
-                                || t.to_ascii_uppercase().starts_with("DFU")
-                        });
-                    if is_reai_ble {
+                    let props = read_peripheral_props_bounded(&p).await;
+                    let is_managed_ble = props.as_ref().is_some_and(|pr| {
+                        let pid = p.id().to_string();
+                        if classify_ble_advertisement(
+                            &pid,
+                            pr.local_name.as_deref(),
+                            &pr.services,
+                            &pr.manufacturer_data,
+                        )
+                        .is_some()
+                        {
+                            return true;
+                        }
+                        pr.local_name.as_deref().is_some_and(|n| {
+                            let u = n.trim().to_ascii_uppercase();
+                            u.starts_with("DYJ")
+                                || u.starts_with("DFU")
+                                || u.starts_with("OMI")
+                                || u.starts_with("FRIEND")
+                                || u.starts_with("D3200")
+                                || u.starts_with("SOUNDCORE WORK")
+                                || u.starts_with("REAI_VB")
+                        })
+                    });
+                    if is_managed_ble {
                         let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
                     }
                 }
@@ -3278,13 +3341,14 @@ async fn realtime_open_board_v21(
 // ── 文件同步、相机媒体同步与 Wi-Fi 配置 ─────────────────────────
 
 fn normalize_mtime_sec(raw: u64) -> Option<u64> {
-    if raw == 0 {
-        None
+    let sec = if raw == 0 {
+        return None;
     } else if raw > 1_000_000_000_000 {
-        Some(raw / 1000)
+        raw / 1000
     } else {
-        Some(raw)
-    }
+        raw
+    };
+    (1_577_836_800..=4_102_444_800).contains(&sec).then_some(sec)
 }
 
 fn build_dyj_file_entry(
@@ -3610,11 +3674,16 @@ async fn take_card_v2_file_with_progress(
         return Err(BridgeError::from(format!("重命名录音文件失败: {e}")));
     }
 
+    let stamp = reai_card_sdk::RecordingStamp::parse(&taken.name)
+        .filter(|s| s.synced && (1_577_836_800..=4_102_444_800).contains(&s.timestamp));
+
     Ok(json!({
         "path": final_path.to_string_lossy(),
         "bytesWritten": taken.bytes_written,
         "originalName": resolved.original_name,
         "deviceName": resolved.device_name,
+        "startAt": stamp.map(|s| s.timestamp),
+        "timeSynced": stamp.map(|s| s.synced),
     }))
 }
 
@@ -4025,6 +4094,9 @@ async fn download_device_file(
                 "bytesWritten": saved.bytes_written,
                 "originalName": saved.original_name,
                 "deviceName": saved.device_name.or_else(|| Some(dev_name.clone())),
+                "startAt": saved.start_at,
+                "timeSynced": saved.time_synced,
+                "parts": saved.parts,
             }))
         }
     }
@@ -4078,6 +4150,9 @@ async fn take_oldest_device_file(
                 "bytesWritten": saved.bytes_written,
                 "originalName": saved.original_name,
                 "deviceName": saved.device_name.or_else(|| Some(dev_name.clone())),
+                "startAt": saved.start_at,
+                "timeSynced": saved.time_synced,
+                "parts": saved.parts,
             }))
         }
     }
@@ -7962,5 +8037,21 @@ mod tests {
             "Cafe-Open",
             &saved
         ));
+    }
+
+    #[test]
+    fn known_ble_services_and_plausible_mtime_checks() {
+        let services = known_ble_service_uuids();
+        assert!(services.contains(&reai_omi_sdk::protocol::SVC_OMI_AUDIO_UUID));
+        assert!(services.contains(&reai_omi_sdk::protocol::SVC_FRIEND_PENDANT_UUID));
+        assert!(services.contains(&reai_feishu_sdk::SERVICE_UUID));
+        assert!(services.contains(&uuid::Uuid::parse_str(NUS_SERVICE_UUID).unwrap()));
+        assert!(services.contains(&uuid::Uuid::parse_str("0000fe59-0000-1000-8000-00805f9b34fb").unwrap()));
+        assert!(services.contains(&uuid::Uuid::parse_str("0000ff10-0000-1000-8000-00805f9b34fb").unwrap()));
+
+        assert_eq!(normalize_mtime_sec(0), None);
+        assert_eq!(normalize_mtime_sec(1_000_000_000), None);
+        assert_eq!(normalize_mtime_sec(1_730_000_000), Some(1_730_000_000));
+        assert_eq!(normalize_mtime_sec(1_730_000_000_123), Some(1_730_000_000));
     }
 }

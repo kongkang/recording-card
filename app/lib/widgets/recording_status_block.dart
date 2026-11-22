@@ -88,11 +88,15 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
         };
         final pending = widget.controller.pendingSlices;
         final recDetail = widget.controller.detail;
+        final syncDone = widget.controller.syncDone;
+        final syncTotal = widget.controller.syncTotal;
         final subtitle = switch (phase) {
           RecordingPhase.recording =>
-            recDetail != null && recDetail.isNotEmpty
-                ? '已录 ${_clock(widget.controller.elapsedSeconds)} · $recDetail'
-                : '已录 ${_clock(widget.controller.elapsedSeconds)} · 每满 ${widget.controller.transcribeCycleMinutes} 分钟或查看时转写',
+            syncTotal > 0
+                ? '已录 ${_clock(widget.controller.elapsedSeconds)} · 已存 $syncDone/$syncTotal 段'
+                : (recDetail != null && recDetail.isNotEmpty
+                      ? '已录 ${_clock(widget.controller.elapsedSeconds)} · $recDetail'
+                      : '已录 ${_clock(widget.controller.elapsedSeconds)} · 每满 ${widget.controller.transcribeCycleMinutes} 分钟或查看时转写'),
           RecordingPhase.syncing => widget.controller.detail ?? '正在整理最近一段…',
           RecordingPhase.transcribing =>
             recDetail != null && recDetail.isNotEmpty
@@ -113,6 +117,7 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
           child: IgnorePointer(
             child: Container(
               key: const Key('recording-status-block'),
+              constraints: const BoxConstraints(minHeight: 42),
               // 由 Timeline 列表统一给左右 22 的边距；这里只管上下留白；样式 1:1 对齐原型 `.live`
               margin: const EdgeInsets.only(top: 8, bottom: 4),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
@@ -158,7 +163,8 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
                         subtitle,
                         key: const Key('recording-status-subtitle'),
                         textAlign: TextAlign.right,
-                        maxLines: 2,
+                        maxLines: 1,
+                        softWrap: false,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 12,
