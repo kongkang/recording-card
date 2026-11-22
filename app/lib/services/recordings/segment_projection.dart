@@ -1480,8 +1480,8 @@ class SegmentProjection {
       mark: segment.mark ?? '',
       srcMap: isExternal
           ? (endMs > startMs
-                ? '来源 得到大脑 · ${_hm(startMs)}—${_hm(endMs)}'
-                : '来源 得到大脑 · ${_hm(startMs)}')
+                ? '来源 ${file.resolvedSourceDeviceLabel} · ${_hm(startMs)}—${_hm(endMs)}'
+                : '来源 ${file.resolvedSourceDeviceLabel} · ${_hm(startMs)}')
           : (mergedSliceCount > 1
                 ? '来源 ${_hm(startMs)}—${_hm(endMs)} · $mergedSliceCount 个分片'
                 : '来源 ${_hm(startMs)}—${_hm(endMs)}'),

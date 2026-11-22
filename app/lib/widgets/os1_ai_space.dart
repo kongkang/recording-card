@@ -707,55 +707,80 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
         Expanded(
           child: Container(
             color: const Color(0xFFF3F2EE),
-            child: ListView(
-              key: const Key('ai-chat-feed'),
-              controller: _scrollCtrl,
-              padding: const EdgeInsets.fromLTRB(
-                16,
-                14,
-                16,
-                RCDims.pageBottomPad,
-              ),
-              children: [
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.only(bottom: 14),
-                    child: Text(
-                      '有事直接问我 · 可检索录音记录、健康状态与联网资料',
-                      style: TextStyle(fontSize: 11.5, color: RCColors.sec),
-                    ),
+            child: Builder(
+              builder: (context) {
+                final showEmptyGuide = c.messages.isEmpty && !c.isBusy;
+                final showError = c.errorMessage != null;
+                final itemCount =
+                    1 +
+                    (showEmptyGuide ? 1 : 0) +
+                    c.messages.length +
+                    (c.isBusy ? 1 : 0) +
+                    (showError ? 1 : 0);
+                return ListView.builder(
+                  key: const Key('ai-chat-feed'),
+                  controller: _scrollCtrl,
+                  addAutomaticKeepAlives: false,
+                  padding: const EdgeInsets.fromLTRB(
+                    16,
+                    14,
+                    16,
+                    RCDims.pageBottomPad,
                   ),
-                ),
-                if (c.messages.isEmpty && !c.isBusy) _emptyGuideCard(),
-                for (var i = 0; i < c.messages.length; i++)
-                  _ChatBubble(
-                    index: i,
-                    message: c.messages[i],
-                    onSpeak: c.messages[i].role == 'assistant'
-                        ? () => unawaited(c.speakText(c.messages[i].text))
-                        : null,
-                  ),
-                if (c.isBusy) const _TypingBubble(),
-                if (c.errorMessage != null)
-                  Container(
-                    key: const Key('ai-chat-error'),
-                    margin: const EdgeInsets.only(top: 8),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFF1F0),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFFFCCC7)),
-                    ),
-                    child: Text(
-                      c.errorMessage!,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        height: 1.45,
-                        color: RCColors.danger,
+                  itemCount: itemCount,
+                  itemBuilder: (context, index) {
+                    if (index == 0) {
+                      return const Center(
+                        child: Padding(
+                          padding: EdgeInsets.only(bottom: 14),
+                          child: Text(
+                            '有事直接问我 · 可检索录音记录、健康状态与联网资料',
+                            style: TextStyle(fontSize: 11.5, color: RCColors.sec),
+                          ),
+                        ),
+                      );
+                    }
+                    var cursor = index - 1;
+                    if (showEmptyGuide) {
+                      if (cursor == 0) return _emptyGuideCard();
+                      cursor--;
+                    }
+                    if (cursor < c.messages.length) {
+                      final msg = c.messages[cursor];
+                      return _ChatBubble(
+                        index: cursor,
+                        message: msg,
+                        onSpeak: msg.role == 'assistant'
+                            ? () => unawaited(c.speakText(msg.text))
+                            : null,
+                      );
+                    }
+                    cursor -= c.messages.length;
+                    if (c.isBusy) {
+                      if (cursor == 0) return const _TypingBubble();
+                      cursor--;
+                    }
+                    return Container(
+                      key: const Key('ai-chat-error'),
+                      margin: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF1F0),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFFCCC7)),
                       ),
-                    ),
-                  ),
-              ],
+                      child: Text(
+                        c.errorMessage!,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          height: 1.45,
+                          color: RCColors.danger,
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
             ),
           ),
         ),

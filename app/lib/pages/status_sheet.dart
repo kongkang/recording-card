@@ -47,6 +47,14 @@ class _BatteryIconState extends State<BatteryIcon>
     vsync: this,
     duration: const Duration(milliseconds: 1200),
   );
+  late final CurvedAnimation _breatheCurve = CurvedAnimation(
+    parent: _breathe,
+    curve: Curves.easeInOut,
+  );
+  late final Animation<double> _breatheOpacity = Tween<double>(
+    begin: 0.35,
+    end: 1.0,
+  ).animate(_breatheCurve);
 
   @override
   void initState() {
@@ -69,6 +77,7 @@ class _BatteryIconState extends State<BatteryIcon>
 
   @override
   void dispose() {
+    _breatheCurve.dispose();
     _breathe.dispose();
     super.dispose();
   }
@@ -96,9 +105,7 @@ class _BatteryIconState extends State<BatteryIcon>
         : (maxFillWidth * widget.level / 100);
     final fillWidth = rawWidth.clamp(1.5, maxFillWidth);
     final opacityAnim = widget.charging
-        ? Tween<double>(begin: 0.35, end: 1.0).animate(
-            CurvedAnimation(parent: _breathe, curve: Curves.easeInOut),
-          )
+        ? _breatheOpacity
         : const AlwaysStoppedAnimation<double>(1.0);
 
     // 原型 SVG 23×11：电池体 + 间隙 + 正极凸起；充电中内部填充呼吸 + 居中闪电覆盖。
@@ -208,6 +215,8 @@ class HwCapsule extends StatefulWidget {
 class _HwCapsuleState extends State<HwCapsule>
     with SingleTickerProviderStateMixin {
   late final AnimationController _pulse;
+  late final CurvedAnimation _pulseCurve;
+  late final Animation<double> _pulseOpacity;
 
   bool get _isRunning =>
       (widget.connected && widget.recording) ||
@@ -224,6 +233,11 @@ class _HwCapsuleState extends State<HwCapsule>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
+    _pulseCurve = CurvedAnimation(
+      parent: _pulse,
+      curve: const Interval(0, 0.45),
+    );
+    _pulseOpacity = Tween(begin: 0.35, end: 1.0).animate(_pulseCurve);
     if (_isRunning) _pulse.repeat();
   }
 
@@ -240,6 +254,7 @@ class _HwCapsuleState extends State<HwCapsule>
 
   @override
   void dispose() {
+    _pulseCurve.dispose();
     _pulse.dispose();
     super.dispose();
   }
@@ -269,106 +284,98 @@ class _HwCapsuleState extends State<HwCapsule>
     final watchRec = !linked && widget.watchRecording;
     final localRec = !linked && !watchRec && widget.phoneRecording;
     final pendingRec = !linked && !watchRec && !localRec && widget.pendingFailover;
-    return Semantics(
-      label: linked
-          ? (widget.reconnecting
-                ? '录音卡状态：连接中'
-                : (widget.recording ? '录音卡状态：已连接，录音中' : '录音卡状态：已连接，未录音'))
-          : (watchRec
-                ? '录音卡状态：手表保底录音中'
-                : (localRec
-                      ? '录音卡状态：本机录音中'
-                      : (pendingRec ? '录音卡状态：待恢复保底录音' : '录音卡状态：无设备'))),
-      button: true,
-      child: InkWell(
-        key: const Key('hw-capsule'),
-        onTap: widget.onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-          decoration: BoxDecoration(
-            border: Border.all(color: r.sep),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (linked)
-                widget.recording && widget.connected
-                    ? FadeTransition(
-                        opacity: Tween(begin: 0.35, end: 1.0).animate(
-                          CurvedAnimation(
-                            parent: _pulse,
-                            curve: const Interval(0, 0.45),
-                          ),
-                        ),
-                        child: _dot(r),
-                      )
-                    : _dot(r)
-              else if (watchRec || localRec)
-                FadeTransition(
-                  opacity: Tween(begin: 0.35, end: 1.0).animate(
-                    CurvedAnimation(
-                      parent: _pulse,
-                      curve: const Interval(0, 0.45),
+    return RepaintBoundary(
+      child: Semantics(
+        label: linked
+            ? (widget.reconnecting
+                  ? '录音卡状态：连接中'
+                  : (widget.recording ? '录音卡状态：已连接，录音中' : '录音卡状态：已连接，未录音'))
+            : (watchRec
+                  ? '录音卡状态：手表保底录音中'
+                  : (localRec
+                        ? '录音卡状态：本机录音中'
+                        : (pendingRec ? '录音卡状态：待恢复保底录音' : '录音卡状态：无设备'))),
+        button: true,
+        child: InkWell(
+          key: const Key('hw-capsule'),
+          onTap: widget.onTap,
+          borderRadius: BorderRadius.circular(999),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            decoration: BoxDecoration(
+              border: Border.all(color: r.sep),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (linked)
+                  widget.recording && widget.connected
+                      ? FadeTransition(
+                          opacity: _pulseOpacity,
+                          child: _dot(r),
+                        )
+                      : _dot(r)
+                else if (watchRec || localRec)
+                  FadeTransition(
+                    opacity: _pulseOpacity,
+                    child: _dot(r, forceOk: true),
+                  )
+                else if (pendingRec)
+                  _dot(r, colorOverride: r.warn)
+                else
+                  Container(
+                    key: const Key('capsule-off'),
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: r.ax, width: 1.4),
                     ),
                   ),
-                  child: _dot(r, forceOk: true),
-                )
-              else if (pendingRec)
-                _dot(r, colorOverride: r.warn)
-              else
-                Container(
-                  key: const Key('capsule-off'),
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: r.ax, width: 1.4),
+                const SizedBox(width: 6),
+                if (widget.reconnecting)
+                  Text(
+                    '连接中…',
+                    key: const Key('capsule-retry'),
+                    style: TextStyle(fontSize: 12, color: r.sec),
+                  )
+                else if (widget.connected)
+                  BatteryIcon(
+                    level: widget.level,
+                    scale: 0.9,
+                    charging: widget.charging,
+                  )
+                else if (watchRec)
+                  Text(
+                    '手表录音',
+                    key: const Key('capsule-watch-rec'),
+                    style: TextStyle(fontSize: 12, color: r.label),
+                  )
+                else if (localRec)
+                  Text(
+                    '本机录音',
+                    key: const Key('capsule-phone-rec'),
+                    style: TextStyle(fontSize: 12, color: r.label),
+                  )
+                else if (pendingRec)
+                  Text(
+                    '待接力',
+                    key: const Key('capsule-failover-pending'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: r.warn,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  )
+                else
+                  Text(
+                    '无设备',
+                    key: const Key('capsule-nodata'),
+                    style: TextStyle(fontSize: 12, color: r.sec),
                   ),
-                ),
-              const SizedBox(width: 6),
-              if (widget.reconnecting)
-                Text(
-                  '连接中…',
-                  key: const Key('capsule-retry'),
-                  style: TextStyle(fontSize: 12, color: r.sec),
-                )
-              else if (widget.connected)
-                BatteryIcon(
-                  level: widget.level,
-                  scale: 0.9,
-                  charging: widget.charging,
-                )
-              else if (watchRec)
-                Text(
-                  '手表录音',
-                  key: const Key('capsule-watch-rec'),
-                  style: TextStyle(fontSize: 12, color: r.label),
-                )
-              else if (localRec)
-                Text(
-                  '本机录音',
-                  key: const Key('capsule-phone-rec'),
-                  style: TextStyle(fontSize: 12, color: r.label),
-                )
-              else if (pendingRec)
-                Text(
-                  '待接力',
-                  key: const Key('capsule-failover-pending'),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: r.warn,
-                    fontWeight: FontWeight.w600,
-                  ),
-                )
-              else
-                Text(
-                  '无设备',
-                  key: const Key('capsule-nodata'),
-                  style: TextStyle(fontSize: 12, color: r.sec),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

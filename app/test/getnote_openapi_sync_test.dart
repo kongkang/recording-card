@@ -27,6 +27,8 @@ import 'package:recording_card/core/store/device_store.dart';
 import 'package:recording_card/pages/app_shell.dart';
 import 'package:recording_card/services/analysis/chat_completion.dart';
 import 'package:recording_card/services/audio/phone_mic_service.dart';
+import 'package:recording_card/services/external_data/external_data_hub_store.dart';
+import 'package:recording_card/services/external_data/external_data_scheduler.dart';
 import 'package:recording_card/services/external_data/getnote_client.dart';
 import 'package:recording_card/services/external_data/getnote_sync_store.dart';
 import 'package:recording_card/services/platform/live_activity_service.dart';
@@ -35,6 +37,7 @@ import 'package:recording_card/services/recordings/multi_track_reconciler.dart';
 import 'package:recording_card/services/recordings/recording_pipeline.dart';
 import 'package:recording_card/services/recordings/recording_store.dart';
 import 'package:recording_card/services/recordings/segment_projection.dart';
+import 'package:recording_card/services/schedule/task_scheduler.dart';
 import 'package:recording_card/services/segment/segment_build_service.dart';
 import 'package:recording_card/services/transcribe/local_asr_service.dart';
 import 'package:recording_card/services/transcribe/slice_planner.dart';
@@ -795,6 +798,450 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('raw-sticky-player')), findsNothing);
       expect(find.textContaining('原始逐字稿：确定发布时间与验收项。'), findsOneWidget);
+    });
+
+    testWidgets('自动导入开关可在 Get 笔记设置页切换并持久化', (tester) async {
+      final model = SummaryModel();
+      final appStore = AppStore(
+        events: const [],
+        generator: await model.generator(),
+        loadPersistedState: false,
+      );
+      final agentConfig = AgentConfigStore();
+      final device = DeviceStore(
+        gateway: FakeCardGateway(),
+        liveActivityService: _TrackingLiveActivity(),
+        phoneMicBackend: _StubPhoneMicBackend(),
+      );
+      final getNoteStore = GetNoteSyncStore(
+        secureStore: InMemorySecureStore(),
+        prefsStore: InMemoryStore(),
+        client: GetNoteClient(
+          httpClient: MockClient((_) async => http.Response('{}', 200)),
+          requestDelay: Duration.zero,
+        ),
+      );
+
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      addTearDown(device.dispose);
+      addTearDown(appStore.dispose);
+      addTearDown(agentConfig.dispose);
+      addTearDown(getNoteStore.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: testTheme(),
+          home: AppShell(
+            store: appStore,
+            device: device,
+            agentConfig: agentConfig,
+            getNoteStore: getNoteStore,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('nav-setting')));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('set-ext-data')),
+        220,
+        scrollable: find.descendant(
+          of: find.byKey(const Key('setting-list')),
+          matching: find.byType(Scrollable),
+        ).first,
+      );
+      await tester.tap(find.byKey(const Key('set-ext-data')));
+      await tester.pumpAndSettle();
+
+      final autoSwitchFinder = find.byKey(const Key('getnote-auto-import-switch'));
+      expect(tester.widget<RCSwitch>(autoSwitchFinder).on, isFalse);
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('getnote-auto-import-row')),
+        120,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.tap(find.byKey(const Key('getnote-auto-import-row')));
+      await tester.pumpAndSettle();
+      expect(tester.widget<RCSwitch>(autoSwitchFinder).on, isTrue);
+      expect(getNoteStore.autoImport, isTrue);
+    });
+  });
+
+  group('得到大脑 / Get 笔记无限翻页、退避重试与每小时自动检查', () {
+    test('超过 50 条（125 条共 3 页）连续翻页全部导入，支持 data.cursor 与 pagination.next_cursor 回退', () async {
+      final now = DateTime.now();
+      final listPageSizes = <String?>[];
+      final seenCursors = <String?>[];
+      final detailFetched = <String>[];
+
+      List<Map<String, dynamic>> makePage(int start, int count) => [
+        for (var i = 0; i < count; i++)
+          {
+            'note_id': 'pg_${start + i}',
+            'title': '笔记 ${start + i}',
+            'note_type': 'recorder_audio',
+            'content': '第 ${start + i} 条录音纪要内容',
+            'created_at': now
+                .subtract(Duration(minutes: start + i))
+                .toIso8601String(),
+          },
+      ];
+
+      final mockClient = MockClient((req) async {
+        if (req.url.path == '/open/api/v1/resource/note/list') {
+          final cur = req.url.queryParameters['cursor'];
+          listPageSizes.add(req.url.queryParameters['page_size']);
+          seenCursors.add(cur);
+          if (cur == null) {
+            return http.Response(
+              jsonEncode({
+                'code': 0,
+                'data': {
+                  'notes': makePage(1, 50),
+                  // 模拟服务端 pagination.next_cursor 为空串但 data.cursor 非空的契约变体
+                  'pagination': {'has_more': true, 'next_cursor': ''},
+                  'cursor': 'cur_page_2',
+                  'total': 125,
+                },
+              }),
+              200,
+              headers: {'content-type': 'application/json; charset=utf-8'},
+            );
+          }
+          if (cur == 'cur_page_2') {
+            return http.Response(
+              jsonEncode({
+                'code': 0,
+                'data': {
+                  'notes': makePage(51, 50),
+                  'pagination': {'has_more': true, 'next_cursor': 'cur_page_3'},
+                  'total': 125,
+                },
+              }),
+              200,
+              headers: {'content-type': 'application/json; charset=utf-8'},
+            );
+          }
+          return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'notes': makePage(101, 25),
+                'pagination': {'has_more': false, 'next_cursor': '0'},
+                'total': 125,
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        if (req.url.path == '/open/api/v1/resource/note/detail') {
+          final id = req.url.queryParameters['id']!;
+          detailFetched.add(id);
+          return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'note_id': id,
+                'title': '笔记 $id',
+                'note_type': 'recorder_audio',
+                'content': '详情正文 $id',
+                'created_at': now.toIso8601String(),
+                'audio': {'duration': 60, 'original': '原始逐字稿 $id'},
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        return http.Response('{}', 404);
+      });
+
+      final model = SummaryModel();
+      final appStore = AppStore(
+        events: const [],
+        generator: await model.generator(),
+        loadPersistedState: false,
+      );
+      addTearDown(appStore.dispose);
+
+      final syncStore = GetNoteSyncStore(
+        secureStore: InMemorySecureStore(),
+        prefsStore: InMemoryStore(),
+        client: GetNoteClient(httpClient: mockClient, requestDelay: Duration.zero),
+      );
+      addTearDown(syncStore.dispose);
+
+      final result = await syncStore.syncNow(
+        appStore: appStore,
+        clientId: 'cli_full',
+        apiKey: 'gk_live_full',
+      );
+      expect(result.ok, isTrue);
+      expect(result.pagesScanned, 3);
+      expect(result.added, 125);
+      expect(result.hasMorePending, isFalse);
+      expect(syncStore.importedCount, 125);
+      expect(syncStore.fullBackfillCompleted, isTrue);
+      expect(detailFetched, hasLength(125));
+      expect(seenCursors, [null, 'cur_page_2', 'cur_page_3']);
+      expect(listPageSizes.toSet(), {'50'});
+      expect(appStore.events.where((e) => e.id.startsWith('getnote-')), hasLength(125));
+    });
+
+    test('逐页落盘且中途 cancelSync 保留已导入数据，下次同步幂等补齐剩余', () async {
+      final now = DateTime.now();
+      late GetNoteSyncStore syncStore;
+      var cancelledOnce = false;
+
+      final mockClient = MockClient((req) async {
+        if (req.url.path == '/open/api/v1/resource/note/list') {
+          final cur = req.url.queryParameters['cursor'];
+          if (cur == null) {
+            return http.Response(
+              jsonEncode({
+                'code': 0,
+                'data': {
+                  'notes': [
+                    for (var i = 1; i <= 3; i++)
+                      {
+                        'note_id': 'c_$i',
+                        'title': '笔记 c_$i',
+                        'note_type': 'recorder_audio',
+                        'content': '内容 $i',
+                        'created_at': now.toIso8601String(),
+                      },
+                  ],
+                  'has_more': true,
+                  'next_cursor': 'p2',
+                },
+              }),
+              200,
+              headers: {'content-type': 'application/json; charset=utf-8'},
+            );
+          }
+          // 仅首次进入第 2 页列表请求时取消
+          if (!cancelledOnce) {
+            cancelledOnce = true;
+            syncStore.cancelSync();
+          }
+          return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'notes': [
+                  {
+                    'note_id': 'c_4',
+                    'title': '笔记 c_4',
+                    'note_type': 'recorder_audio',
+                    'content': '内容 4',
+                    'created_at': now.toIso8601String(),
+                  },
+                ],
+                'has_more': false,
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        if (req.url.path == '/open/api/v1/resource/note/detail') {
+          final id = req.url.queryParameters['id']!;
+          return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'note_id': id,
+                'title': '笔记 $id',
+                'note_type': 'recorder_audio',
+                'content': '正文 $id',
+                'created_at': now.toIso8601String(),
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        return http.Response('{}', 404);
+      });
+
+      final model = SummaryModel();
+      final appStore = AppStore(
+        events: const [],
+        generator: await model.generator(),
+        loadPersistedState: false,
+      );
+      addTearDown(appStore.dispose);
+
+      syncStore = GetNoteSyncStore(
+        secureStore: InMemorySecureStore(),
+        prefsStore: InMemoryStore(),
+        client: GetNoteClient(httpClient: mockClient, requestDelay: Duration.zero),
+      );
+      addTearDown(syncStore.dispose);
+
+      final cancelledRes = await syncStore.syncNow(
+        appStore: appStore,
+        clientId: 'cli_c',
+        apiKey: 'gk_live_c',
+      );
+      expect(cancelledRes.ok, isTrue);
+      expect(cancelledRes.cancelled, isTrue);
+      expect(cancelledRes.added, 3);
+      expect(syncStore.importedCount, 3);
+      expect(syncStore.fullBackfillCompleted, isFalse);
+
+      // 再次同步不再取消，幂等跳过前 3 条并补齐第 4 条
+      final resumedRes = await syncStore.syncNow(appStore: appStore);
+      expect(resumedRes.ok, isTrue);
+      expect(resumedRes.cancelled, isFalse);
+      expect(resumedRes.added, 1);
+      expect(resumedRes.skippedExisting, 3);
+      expect(syncStore.importedCount, 4);
+      expect(syncStore.fullBackfillCompleted, isTrue);
+    });
+
+    test('瞬态 429 自动重试后成功', () async {
+      var calls = 0;
+      final client = GetNoteClient(
+        httpClient: MockClient((req) async {
+          calls += 1;
+          if (calls == 1) {
+            return http.Response('{}', 429, headers: {'retry-after': '1'});
+          }
+          return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'notes': [
+                  {
+                    'note_id': 'retry_ok',
+                    'title': '重试成功笔记',
+                    'note_type': 'recorder_audio',
+                    'content': '正文',
+                    'created_at': DateTime.now().toIso8601String(),
+                  },
+                ],
+                'has_more': false,
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+        requestDelay: Duration.zero,
+      );
+      final probe = await client.testConnection(
+        clientId: 'cli_r',
+        apiKey: 'gk_live_r',
+      );
+      expect(calls, 2);
+      expect(probe.sampleTitle, '重试成功笔记');
+    });
+
+    test('每小时自动检查与 TaskScheduler 联动：未满 60 分钟跳过，满 60 分钟自动拉取', () async {
+      var listCalls = 0;
+      final now = DateTime(2026, 11, 22, 10, 0);
+      var clock = now;
+
+      final mockClient = MockClient((req) async {
+        if (req.url.path == '/open/api/v1/resource/note/list') {
+          listCalls += 1;
+          return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'notes': [
+                  {
+                    'note_id': 'auto_$listCalls',
+                    'title': '自动拉取 $listCalls',
+                    'note_type': 'recorder_audio',
+                    'content': '自动同步正文 $listCalls',
+                    'created_at': clock.toIso8601String(),
+                  },
+                ],
+                'has_more': false,
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        if (req.url.path == '/open/api/v1/resource/note/detail') {
+          final id = req.url.queryParameters['id']!;
+          return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'note_id': id,
+                'title': '自动拉取 $id',
+                'note_type': 'recorder_audio',
+                'content': '正文 $id',
+                'created_at': clock.toIso8601String(),
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        return http.Response('{}', 404);
+      });
+
+      final model = SummaryModel();
+      final appStore = AppStore(
+        events: const [],
+        generator: await model.generator(),
+        loadPersistedState: false,
+      );
+      addTearDown(appStore.dispose);
+
+      final syncStore = GetNoteSyncStore(
+        secureStore: InMemorySecureStore(),
+        prefsStore: InMemoryStore(),
+        client: GetNoteClient(httpClient: mockClient, requestDelay: Duration.zero),
+      );
+      addTearDown(syncStore.dispose);
+      await syncStore.saveCredentials(clientId: 'cli_a', apiKey: 'gk_live_a');
+      await syncStore.setAutoImport(true);
+
+      final hub = ExternalDataHubStore(
+        secureStore: InMemorySecureStore(),
+        prefsStore: InMemoryStore(),
+        connectors: const [],
+      );
+      addTearDown(hub.dispose);
+
+      final scheduler = TaskScheduler(
+        store: JsonStore(store: InMemoryStore()),
+        now: () => clock,
+      );
+      addTearDown(scheduler.dispose);
+      await scheduler.load();
+      registerExternalDataSyncHandler(
+        scheduler: scheduler,
+        appStore: appStore,
+        getNoteStore: syncStore,
+        externalHub: hub,
+      );
+      await scheduler.ensureTasks(defaultExternalDataTasks());
+
+      // 第 1 次到期触发
+      await scheduler.tick(now: clock);
+      expect(syncStore.importedCount, 1);
+
+      // 30 分钟后未满 60 分钟，不触发
+      clock = clock.add(const Duration(minutes: 30));
+      await scheduler.tick(now: clock);
+      expect(syncStore.importedCount, 1);
+
+      // 满 60 分钟后再次触发导入新条目
+      clock = clock.add(const Duration(minutes: 30));
+      await scheduler.tick(now: clock);
+      expect(syncStore.importedCount, 2);
     });
   });
 }

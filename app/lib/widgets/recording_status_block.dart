@@ -26,9 +26,18 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
     vsync: this,
     duration: const Duration(milliseconds: 900),
   );
+  late final CurvedAnimation _pulseCurve = CurvedAnimation(
+    parent: _pulse,
+    curve: Curves.easeInOut,
+  );
+  late final Animation<double> _pulseOpacity = Tween<double>(
+    begin: 0.32,
+    end: 1.0,
+  ).animate(_pulseCurve);
 
   @override
   void dispose() {
+    _pulseCurve.dispose();
     _pulse.dispose();
     super.dispose();
   }
@@ -104,68 +113,70 @@ class _RecordingStatusBlockState extends State<RecordingStatusBlock>
           decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
         );
 
-        return IgnorePointer(
-          child: Container(
-            key: const Key('recording-status-block'),
-            constraints: const BoxConstraints(minHeight: 42),
-            // 由 Timeline 列表统一给左右 22 的边距；这里只管上下留白；样式 1:1 对齐原型 `.live`
-            margin: const EdgeInsets.only(top: 8, bottom: 4),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-            decoration: BoxDecoration(
-              color: isError
-                  ? (c.isDark
-                        ? const Color(0xFF2C1517)
-                        : const Color(0xFFFFF8F7))
-                  : c.card,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
+        return RepaintBoundary(
+          child: IgnorePointer(
+            child: Container(
+              key: const Key('recording-status-block'),
+              constraints: const BoxConstraints(minHeight: 42),
+              // 由 Timeline 列表统一给左右 22 的边距；这里只管上下留白；样式 1:1 对齐原型 `.live`
+              margin: const EdgeInsets.only(top: 8, bottom: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              decoration: BoxDecoration(
                 color: isError
                     ? (c.isDark
-                          ? const Color(0xFF6E2A2E)
-                          : const Color(0xFFFFD2CE))
-                    : c.sep,
-                width: isError ? 1.0 : 0.5,
-              ),
-            ),
-            child: Row(
-              children: [
-                if (phase == RecordingPhase.recording)
-                  FadeTransition(
-                    opacity: Tween<double>(begin: 0.32, end: 1.0).animate(_pulse),
-                    child: dot,
-                  )
-                else
-                  dot,
-                const SizedBox(width: 10),
-                Text(
-                  label,
-                  key: const Key('recording-status-text'),
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isError ? errorTextColor : c.label,
-                  ),
+                          ? const Color(0xFF2C1517)
+                          : const Color(0xFFFFF8F7))
+                    : c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isError
+                      ? (c.isDark
+                            ? const Color(0xFF6E2A2E)
+                            : const Color(0xFFFFD2CE))
+                      : c.sep,
+                  width: isError ? 1.0 : 0.5,
                 ),
-                if (subtitle != null) ...[
+              ),
+              child: Row(
+                children: [
+                  if (phase == RecordingPhase.recording)
+                    FadeTransition(
+                      opacity: _pulseOpacity,
+                      child: dot,
+                    )
+                  else
+                    dot,
                   const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      subtitle,
-                      key: const Key('recording-status-subtitle'),
-                      textAlign: TextAlign.right,
-                      maxLines: 1,
-                      softWrap: false,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        height: 1.3,
-                        color: isError ? errorTextColor : c.sec,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
+                  Text(
+                    label,
+                    key: const Key('recording-status-text'),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: isError ? errorTextColor : c.label,
                     ),
                   ),
+                  if (subtitle != null) ...[
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        subtitle,
+                        key: const Key('recording-status-subtitle'),
+                        textAlign: TextAlign.right,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.3,
+                          color: isError ? errorTextColor : c.sec,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         );
