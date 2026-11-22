@@ -405,8 +405,13 @@ class RecordingFile {
   /// 第三方外部平台（如得到大脑 OpenAPI）导入记录的设备文件名前缀。
   static const String getNoteDevicePrefix = 'GETNOTE_';
 
+  /// 通用第三方平台（Notion / 语雀 / Obsidian / flomo / Plaud 等）导入记录的设备文件名前缀。
+  static const String externalDevicePrefix = 'EXT_';
+
   /// 是否为外部平台导入条目（不经过本地转写、音频清理或连续语音分段合并）。
-  bool get isExternalImported => deviceName.startsWith(getNoteDevicePrefix);
+  bool get isExternalImported =>
+      deviceName.startsWith(getNoteDevicePrefix) ||
+      deviceName.startsWith(externalDevicePrefix);
 
   /// 设备会话号（8 位十六进制）；旧固件为空。
   final String session;
@@ -459,7 +464,8 @@ class RecordingFile {
   String get resolvedSourceDeviceLabel {
     final trimmed = sourceDeviceLabel?.trim();
     if (trimmed != null && trimmed.isNotEmpty) return trimmed;
-    if (isExternalImported) return '得到大脑';
+    if (deviceName.startsWith(getNoteDevicePrefix)) return '得到大脑';
+    if (isExternalImported) return '第三方导入';
     return resolvedSourceLane.defaultLabel;
   }
 

@@ -790,21 +790,45 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 已导入的外部平台（如得到大脑）记录去重键集合（形如 `GETNOTE_<noteId>`）。
-  Future<Set<String>> existingExternalDeviceNames() async {
-    final names = <String>{
-      for (final f in recordingFiles)
-        if (f.isExternalImported) f.deviceName,
-      for (final e in events)
-        if (e.id.startsWith('getnote-'))
-          '${RecordingFile.getNoteDevicePrefix}${e.id.substring(8)}',
-    };
+  static String _externalDeviceNameFromEventId(String id) {
+    final rest = id.substring(4);
+    final sep = rest.indexOf('-');
+    if (sep <= 0) return '${RecordingFile.externalDevicePrefix}$rest';
+    final provider = rest.substring(0, sep).toUpperCase();
+    final itemId = rest.substring(sep + 1);
+    return '${RecordingFile.externalDevicePrefix}${provider}_$itemId';
+  }
+
+  /// 已导入的外部平台（得到大脑、Notion、Plaud 等）记录去重键集合（形如 `GETNOTE_<id>` / `EXT_<PROVIDER>_<id>`）。
+  ///
+  /// 传入 [prefix] 时仅返回对应前缀的去重键，避免多源共存时混淆各源计数。
+  Future<Set<String>> existingExternalDeviceNames({String? prefix}) async {
+    bool matches(String name) => prefix == null || name.startsWith(prefix);
+    final names = <String>{};
+    for (final f in recordingFiles) {
+      if (f.isExternalImported && matches(f.deviceName)) {
+        names.add(f.deviceName);
+      }
+    }
+    for (final e in events) {
+      String? devName;
+      if (e.id.startsWith('getnote-')) {
+        devName = '${RecordingFile.getNoteDevicePrefix}${e.id.substring(8)}';
+      } else if (e.id.startsWith('ext-')) {
+        devName = _externalDeviceNameFromEventId(e.id);
+      }
+      if (devName != null && matches(devName)) {
+        names.add(devName);
+      }
+    }
     final store = _recordingStore;
     if (store != null) {
       try {
         final files = await store.loadAll(refresh: true);
         for (final f in files) {
-          if (f.isExternalImported) names.add(f.deviceName);
+          if (f.isExternalImported && matches(f.deviceName)) {
+            names.add(f.deviceName);
+          }
         }
       } on Object catch (e) {
         debugPrint('[store] 读取外部导入去重清单失败：$e');
@@ -813,7 +837,7 @@ class AppStore extends ChangeNotifier {
     return names;
   }
 
-  /// 写入并投影外部平台（得到大脑 OpenAPI）导入记录，按 `deviceName` 幂等去重。
+  /// 写入并投影外部平台导入记录，按 `deviceName` 幂等去重；返回本次新加入（或更新）并落盘的条目数。
   Future<int> ingestExternalRecordings(List<RecordingFile> files) async {
     if (_disposed || files.isEmpty) return 0;
     final store = _recordingStore;
