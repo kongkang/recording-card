@@ -483,6 +483,8 @@ void main() {
       tester.widget<Text>(find.byKey(const Key('sv-exthw'))).data,
       '已连接 讯飞智能录音笔 A1',
     );
+    await tester.ensureVisible(find.byKey(const Key('set-ext-hw')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('set-ext-hw')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('ext-iflytek-switch')));

@@ -33,7 +33,6 @@ import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/auth_service.dart';
-import '../services/external_data/external_connector.dart';
 import '../services/external_data/external_data_hub_store.dart';
 import '../services/external_data/getnote_sync_store.dart';
 import '../services/health/health_signal_controller.dart';
@@ -628,8 +627,8 @@ class _SettingPageState extends State<SettingPage> {
           modelManager: widget.modelManager,
           authService: widget.authService,
           healthSignals: widget.healthSignals,
-          getNoteStore: widget.getNoteStore,
-          externalDataHub: widget.externalDataHub,
+          getNoteStore: _getNoteStore,
+          externalDataHub: _externalDataHub,
           standalone: true,
         ),
       ),
@@ -858,57 +857,34 @@ class _SettingPageState extends State<SettingPage> {
                   valueKey: const Key('sv-watch'),
                   onTap: () => _openSub(context, 'watch'),
                 ),
-                const _RowDivider(),
-                _navRow(
-                  context,
-                  keyName: 'set-ext-hw',
-                  label: '第三方硬件联动',
-                  value: _extHwSummaryText(),
-                  valueKey: const Key('sv-exthw'),
-                  onTap: () => _openSub(context, 'exthw'),
-                ),
               ],
             ),
             const _GroupTitle(text: '第三方数据接入'),
             _GroupCard(
               children: <Widget>[
-                ListenableBuilder(
-                  listenable: _getNoteStore,
-                  builder: (context, _) => _navRow(
-                    context,
-                    keyName: 'set-ext-data',
-                    label: '得到大脑 / Get 笔记',
-                    value: _getNoteStore.summaryStatusText,
-                    valueKey: const Key('sv-extdata'),
-                    onTap: () => _openSub(context, 'extdata'),
-                  ),
+                _navRow(
+                  context,
+                  keyName: 'set-ext-hw',
+                  label: '第三方硬件 SDK',
+                  value: _extHwSummaryText(),
+                  valueKey: const Key('sv-exthw'),
+                  onTap: () => _openSub(context, 'exthw'),
                 ),
                 const _RowDivider(),
                 ListenableBuilder(
-                  listenable: _externalDataHub,
+                  listenable: Listenable.merge([
+                    _getNoteStore,
+                    _externalDataHub,
+                  ]),
                   builder: (context, _) => _navRow(
                     context,
-                    keyName: 'set-ext-notes',
-                    label: '笔记与阅读软件（API）',
-                    value: _externalDataHub.categorySummaryText(
-                      ExternalConnectorCategory.notes,
+                    keyName: 'set-ext-api',
+                    label: '第三方 API 接入',
+                    value: _externalDataHub.unifiedSummaryText(
+                      getNoteStore: _getNoteStore,
                     ),
-                    valueKey: const Key('sv-extnotes'),
-                    onTap: () => _openSub(context, 'extnotes'),
-                  ),
-                ),
-                const _RowDivider(),
-                ListenableBuilder(
-                  listenable: _externalDataHub,
-                  builder: (context, _) => _navRow(
-                    context,
-                    keyName: 'set-ext-recorders',
-                    label: '第三方录音软件（API）',
-                    value: _externalDataHub.categorySummaryText(
-                      ExternalConnectorCategory.recorders,
-                    ),
-                    valueKey: const Key('sv-extrecorders'),
-                    onTap: () => _openSub(context, 'extrecorders'),
+                    valueKey: const Key('sv-extapi'),
+                    onTap: () => _openSub(context, 'extapi'),
                   ),
                 ),
               ],

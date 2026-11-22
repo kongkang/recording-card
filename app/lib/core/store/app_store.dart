@@ -441,6 +441,12 @@ class AppStore extends ChangeNotifier {
     'setsub': 'Setting',
   };
 
+  static String settingSubBackLabel(String subId) => switch (subId) {
+    'extapi' || 'extnotes' || 'extrecorders' => '第三方 API 接入',
+    'exthw' => '第三方硬件 SDK',
+    _ => 'Setting',
+  };
+
   void attachServices({
     required RecordingSyncService recordings,
     required SummaryGenerator generator,
@@ -1676,6 +1682,9 @@ class AppStore extends ChangeNotifier {
       subStack.length > 1 ? subStack[subStack.length - 2] : null;
   String get crumbDest {
     if (stackPrev != null) {
+      if (stackPrev!.type == 'setsub') {
+        return settingSubBackLabel(stackPrev!.id);
+      }
       return pageLabels[stackPrev!.type] ?? 'Timeline';
     }
     if (stackTop?.type == 'setsub') return 'Setting';

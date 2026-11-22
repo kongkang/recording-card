@@ -723,17 +723,21 @@ void main() {
       await tester.pump();
 
       await tester.scrollUntilVisible(
-        find.byKey(const Key('set-ext-data')),
+        find.byKey(const Key('set-ext-api')),
         220,
         scrollable: find.descendant(
           of: find.byKey(const Key('setting-list')),
           matching: find.byType(Scrollable),
         ).first,
       );
-      expect(tester.widget<Text>(find.byKey(const Key('sv-extdata'))).data, '未配置');
+      expect(tester.widget<Text>(find.byKey(const Key('sv-extapi'))).data, '未配置');
 
-      await tester.tap(find.byKey(const Key('set-ext-data')));
+      await tester.tap(find.byKey(const Key('set-ext-api')));
       await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('ext-api-row-getnote')));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Text>(find.byKey(const Key('setsub-title'))).data, 'Get 笔记');
 
       final scopeSwitch = tester.widget<RCSwitch>(
         find.byKey(const Key('getnote-import-other-switch')),
@@ -773,7 +777,14 @@ void main() {
       await tester.tap(find.byKey(const Key('crumb-back')));
       await tester.pumpAndSettle();
       expect(
-        tester.widget<Text>(find.byKey(const Key('sv-extdata'))).data,
+        tester.widget<Text>(find.byKey(const Key('ext-api-val-getnote'))).data,
+        '已导入 2 条',
+      );
+
+      await tester.tap(find.byKey(const Key('crumb-back')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Text>(find.byKey(const Key('sv-extapi'))).data,
         '已导入 2 条',
       );
 
@@ -846,14 +857,16 @@ void main() {
       await tester.tap(find.byKey(const Key('nav-setting')));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
-        find.byKey(const Key('set-ext-data')),
+        find.byKey(const Key('set-ext-api')),
         220,
         scrollable: find.descendant(
           of: find.byKey(const Key('setting-list')),
           matching: find.byType(Scrollable),
         ).first,
       );
-      await tester.tap(find.byKey(const Key('set-ext-data')));
+      await tester.tap(find.byKey(const Key('set-ext-api')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ext-api-row-getnote')));
       await tester.pumpAndSettle();
 
       final autoSwitchFinder = find.byKey(const Key('getnote-auto-import-switch'));

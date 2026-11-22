@@ -1224,6 +1224,10 @@ Widget _stackTopPage(
     );
   }
   if (top.type == 'setsub') {
+    final prev = store.stackPrev;
+    final backLabel = prev?.type == 'setsub'
+        ? '返回${AppStore.settingSubBackLabel(prev!.id)}'
+        : '返回 Setting';
     return SettingSubPage(
       subId: top.id,
       agentConfig: agentConfig,
@@ -1234,6 +1238,7 @@ Widget _stackTopPage(
       getNoteStore: getNoteStore,
       externalDataHub: externalDataHub,
       showPaneBack: wide && store.showPaneBackSetSub,
+      backLabel: backLabel,
     );
   }
   return DetailPage(

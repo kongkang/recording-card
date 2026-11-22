@@ -22,6 +22,7 @@ import 'connectors/readwise_connector.dart';
 import 'connectors/weread_connector.dart';
 import 'connectors/yuque_connector.dart';
 import 'external_connector.dart';
+import 'getnote_sync_store.dart';
 
 class ExternalSyncRunResult {
   const ExternalSyncRunResult({
@@ -173,6 +174,62 @@ class ExternalDataHubStore extends ChangeNotifier {
     if (st.importedCount > 0) return '已导入 ${st.importedCount} 条';
     if (st.connectionVerified) return '已连接';
     return '已配置';
+  }
+
+  /// 扁平列表右侧使用的极简状态摘要。
+  String compactStatusTextFor(String id) {
+    final st = stateFor(id);
+    if (st.syncing) return '同步中…';
+    if (!hasRequiredConfig(id)) return '未配置';
+    if (st.autoImport) {
+      return st.importedCount > 0 ? '自动 · ${st.importedCount} 条' : '每小时自动';
+    }
+    if (st.importedCount > 0) return '已导入 ${st.importedCount} 条';
+    if (st.connectionVerified) return '已连接';
+    return '已配置';
+  }
+
+  static String getNoteCompactStatusText(GetNoteSyncStore store) {
+    if (store.syncing) return '同步中…';
+    if (!store.hasCredentials) return '未配置';
+    if (store.autoImport) {
+      return store.importedCount > 0
+          ? '自动 · ${store.importedCount} 条'
+          : '每小时自动';
+    }
+    if (store.importedCount > 0) return '已导入 ${store.importedCount} 条';
+    if (store.connectionVerified) return '已连接';
+    return '已配置';
+  }
+
+  int totalAutoEnabledCount({GetNoteSyncStore? getNoteStore}) {
+    var count = getNoteStore?.autoImport == true ? 1 : 0;
+    for (final c in _connectors) {
+      if (stateFor(c.id).autoImport) count += 1;
+    }
+    return count;
+  }
+
+  String unifiedSummaryText({GetNoteSyncStore? getNoteStore}) {
+    var anySyncing = getNoteStore?.syncing == true;
+    var configuredCount = getNoteStore?.hasCredentials == true ? 1 : 0;
+    var autoCount = getNoteStore?.autoImport == true ? 1 : 0;
+    var totalImported = getNoteStore?.importedCount ?? 0;
+    for (final c in _connectors) {
+      final st = stateFor(c.id);
+      if (st.syncing) anySyncing = true;
+      if (hasRequiredConfig(c.id)) configuredCount += 1;
+      if (st.autoImport) autoCount += 1;
+      totalImported += st.importedCount;
+    }
+    if (anySyncing) return '同步中…';
+    if (totalImported > 0 && autoCount > 0) {
+      return '自动 $autoCount 项 · 已导入 $totalImported 条';
+    }
+    if (totalImported > 0) return '已导入 $totalImported 条';
+    if (autoCount > 0) return '自动同步 $autoCount 项';
+    if (configuredCount > 0) return '已配置 $configuredCount 项';
+    return '未配置';
   }
 
   String categorySummaryText(ExternalConnectorCategory category) {

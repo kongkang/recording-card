@@ -1514,11 +1514,20 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$$eval('[data-testid^="health-item-"]', x => x.length), 6, '关闭开关不清空已展示的设计列表');
   await pCur.evaluate(() => { agCfg.healthSignalEnabled = true; syncSetSummary(); });
   await pCur.click('[data-testid="crumb-back"]');
-  // 当前版：Setting → 第三方数据接入（得到大脑 / Get 笔记 OpenAPI）
-  assert.equal(await pCur.$eval('#sv-extdata', x => x.innerText.trim()), '未配置');
-  await pCur.$eval('[data-testid="set-ext-data"]', x => x.scrollIntoView({ block: 'center' }));
-  await pCur.click('[data-testid="set-ext-data"]');
+  // 当前版：Setting → 第三方数据接入 → 第三方 API 接入（扁平列出 Get 笔记与 11 款笔记/阅读/录音 API）
+  assert.equal(await pCur.$eval('#sv-extapi', x => x.innerText.trim()), '未配置');
+  assert.equal(await pCur.$('#sv-extdata'), null);
+  assert.equal(await pCur.$('#sv-extnotes'), null);
+  assert.equal(await pCur.$('#sv-extrecorders'), null);
+  await pCur.$eval('[data-testid="set-ext-api"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-ext-api"]');
+  await pCur.waitForSelector('[data-testid="ext-api-row-getnote"]', { timeout: 3000 });
+  for (const id of ['getnote', 'notion', 'yuque', 'obsidian', 'flomo', 'weread', 'evernote', 'readwise', 'plaud', 'limitless', 'omi_cloud', 'fireflies']) {
+    assert(await pCur.$(`[data-testid="ext-api-row-${id}"]`), '缺少扁平 API 行 ' + id);
+  }
+  await pCur.click('[data-testid="ext-api-row-getnote"]');
   await pCur.waitForSelector('[data-testid="getnote-import-other-switch"]', { timeout: 3000 });
+  assert.equal(await pCur.$eval('#crumb-dest', x => x.innerText.trim()), '第三方 API 接入');
   assert.equal(await pCur.$eval('[data-testid="getnote-import-other-switch"]', x => x.getAttribute('aria-checked')), 'false');
   await pCur.type('[data-testid="getnote-client-id-input"]', 'cli_demo_123');
   await pCur.type('[data-testid="getnote-api-key-input"]', 'gk_live_demo_456');
@@ -1535,17 +1544,10 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="getnote-auto-import-switch"]');
   assert.equal(await pCur.$eval('[data-testid="getnote-auto-import-switch"]', x => x.getAttribute('aria-checked')), 'true');
   await pCur.click('[data-testid="crumb-back"]');
-  assert.equal(await pCur.$eval('#sv-extdata', x => x.innerText.trim()), '自动同步 · 已导入 3 条');
-  await pCur.evaluate(() => { clearGetNoteProto(); });
-  // 当前版：Setting → 第三方数据接入（笔记与阅读软件 API & 第三方录音软件 API）
-  assert.equal(await pCur.$eval('#sv-extnotes', x => x.innerText.trim()), '未配置');
-  assert.equal(await pCur.$eval('#sv-extrecorders', x => x.innerText.trim()), '未配置');
-  await pCur.$eval('[data-testid="set-ext-notes"]', x => x.scrollIntoView({ block: 'center' }));
-  await pCur.click('[data-testid="set-ext-notes"]');
+  await pCur.waitForSelector('[data-testid="ext-api-row-getnote"]', { timeout: 3000 });
+  assert.equal(await pCur.$eval('#ext-api-val-getnote', x => x.innerText.trim()), '自动 · 3 条');
+  await pCur.click('[data-testid="ext-api-row-notion"]');
   await pCur.waitForSelector('[data-testid="ext-conn-notion"]', { timeout: 3000 });
-  for (const id of ['notion', 'yuque', 'obsidian', 'flomo', 'weread', 'evernote', 'readwise']) {
-    assert(await pCur.$(`[data-testid="ext-conn-${id}"]`), '缺少笔记连接器 ' + id);
-  }
   await pCur.type('[data-testid="ext-field-notion"]', 'ntn_proto_secret');
   await pCur.click('[data-testid="ext-test-notion"]');
   assert(await pCur.$eval('[data-testid="ext-status-notion"]', x => x.innerText.includes('已连接')));
@@ -1553,20 +1555,18 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await pCur.$eval('[data-testid="ext-auto-notion"]', x => x.getAttribute('aria-checked')), 'true');
   assert(await pCur.$eval('[data-testid="ext-status-notion"]', x => x.innerText.includes('已导入 1 条')));
   await pCur.click('[data-testid="crumb-back"]');
-  assert.equal(await pCur.$eval('#sv-extnotes', x => x.innerText.trim()), '自动 1 源 · 已导入 1 条');
-  await pCur.$eval('[data-testid="set-ext-recorders"]', x => x.scrollIntoView({ block: 'center' }));
-  await pCur.click('[data-testid="set-ext-recorders"]');
+  await pCur.$eval('[data-testid="ext-api-row-plaud"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="ext-api-row-plaud"]');
   await pCur.waitForSelector('[data-testid="ext-conn-plaud"]', { timeout: 3000 });
-  for (const id of ['plaud', 'limitless', 'omi_cloud', 'fireflies']) {
-    assert(await pCur.$(`[data-testid="ext-conn-${id}"]`), '缺少录音连接器 ' + id);
-  }
   await pCur.type('[data-testid="ext-field-plaud"]', 'plaud_proto_token');
   await pCur.click('[data-testid="ext-auto-plaud"]');
   assert.equal(await pCur.$eval('[data-testid="ext-auto-plaud"]', x => x.getAttribute('aria-checked')), 'true');
   assert(await pCur.$eval('[data-testid="ext-status-plaud"]', x => x.innerText.includes('已导入 1 条')));
   await pCur.click('[data-testid="crumb-back"]');
-  assert.equal(await pCur.$eval('#sv-extrecorders', x => x.innerText.trim()), '自动 1 源 · 已导入 1 条');
-  await pCur.evaluate(() => { clearAllExtHubProto(); });
+  await pCur.waitForSelector('[data-testid="ext-api-row-plaud"]', { timeout: 3000 });
+  await pCur.click('[data-testid="crumb-back"]');
+  assert.equal(await pCur.$eval('#sv-extapi', x => x.innerText.trim()), '自动 3 项 · 已导入 5 条');
+  await pCur.evaluate(() => { clearGetNoteProto(); clearAllExtHubProto(); });
   // 当前版宽屏全页面滚动到底部留白验证（Timeline / Setting / 总结详情 / 记录详情）
   await pCur.setViewport({ width: 900, height: 680, deviceScaleFactor: 2 });
   await pCur.click('[data-testid="nav-timeline"]');
