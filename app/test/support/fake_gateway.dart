@@ -124,6 +124,9 @@ class FakeCardGateway implements CardGateway {
   CardException? failDownload;
   CardException? failTranscode;
   Set<String> failDownloadNames = {};
+  final Map<String, CardDownload> downloadOverrides = {};
+  final List<String> deletedFiles = [];
+  Duration downloadDelay = Duration.zero;
   int downloadCalls = 0;
   int transcodeCalls = 0;
 
@@ -562,9 +565,33 @@ class FakeCardGateway implements CardGateway {
   @override
   Future<CardDownload> download(String name, String dir) async {
     downloadCalls++;
+    if (downloadDelay > Duration.zero) {
+      await Future<void>.delayed(downloadDelay);
+    }
     if (failDownload != null) throw failDownload!;
     if (failDownloadNames.contains(name)) {
       throw CardException(CardErrorKind.device, '注入失败：$name');
+    }
+    final override = downloadOverrides[name];
+    if (override != null) {
+      if (writeDownload) {
+        if (override.path.isNotEmpty) {
+          final f = File(override.path);
+          await f.parent.create(recursive: true);
+          if (!await f.exists()) {
+            await f.writeAsBytes(Uint8List(64), flush: true);
+          }
+        }
+        for (final part in override.parts) {
+          if (part.path.isEmpty) continue;
+          final f = File(part.path);
+          await f.parent.create(recursive: true);
+          if (!await f.exists()) {
+            await f.writeAsBytes(Uint8List(64), flush: true);
+          }
+        }
+      }
+      return override;
     }
     final path = '$dir/$name';
     if (writeDownload) {
@@ -588,7 +615,10 @@ class FakeCardGateway implements CardGateway {
   }
 
   @override
-  Future<void> deleteFile(String name) async {}
+  Future<void> deleteFile(String name) async {
+    deletedFiles.add(name);
+    callLog.add('file.delete:$name');
+  }
 
   @override
   Future<CardAudio> transcode(String apmPath, String wavPath) async {

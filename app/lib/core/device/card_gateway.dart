@@ -581,13 +581,13 @@ class CardFile {
       name: name,
       size: (json['size'] as num?)?.toInt() ?? 0,
       index: _intOrNull(json['index']),
-      createdAtSec: _intOrNull(
+      createdAtSec: _normalizeEpochSec(
         json['created_at'] ?? json['createdAt'] ?? json['createTime'],
       ),
       session: _stringOrNull(json['session']),
       seq: _intOrNull(json['seq']),
       startAtSec:
-          _intOrNull(json['start_at'] ?? json['startAt']) ??
+          _normalizeEpochSec(json['start_at'] ?? json['startAt']) ??
           CameraSyncItem._parseCapturedEpochSec(name),
       synced: json['synced'] is bool ? json['synced'] as bool : null,
     );
@@ -629,11 +629,52 @@ class CardFile {
   static int? _intOrNull(Object? value) =>
       value is num ? value.toInt() : null;
 
+  static bool? _boolOrNull(Object? value) =>
+      value is bool ? value : null;
+
+  /// 将设备端返回的时间戳规范为合理范围内的 Unix 秒（2020-01-01 ~ 2100-01-01），
+  /// 自动兼容毫秒输入并过滤 0 / 1970 / 未校时假值。
+  static int? _normalizeEpochSec(Object? value) {
+    final raw = _intOrNull(value);
+    if (raw == null || raw <= 0) return null;
+    final sec = raw >= 1000000000000 ? raw ~/ 1000 : raw;
+    if (sec < 1577836800 || sec > 4102444800) return null;
+    return sec;
+  }
+
   static String? _stringOrNull(Object? value) {
     if (value is! String) return null;
     final v = value.trim();
     return v.isEmpty ? null : v;
   }
+}
+
+/// 单个物理缓存文件拆出的时序分段（例如 Omi Ring Buffer 单块跨多段录音）。
+class CardDownloadPart {
+  const CardDownloadPart({
+    required this.path,
+    required this.bytesWritten,
+    this.startAtSec,
+    this.timeSynced,
+    this.durationSecs,
+  });
+
+  factory CardDownloadPart.fromJson(Map<String, dynamic> json) =>
+      CardDownloadPart(
+        path: (json['path'] as String?) ?? '',
+        bytesWritten: (json['bytesWritten'] as num?)?.toInt() ?? 0,
+        startAtSec: CardFile._normalizeEpochSec(
+          json['startAt'] ?? json['start_at'],
+        ),
+        timeSynced: CardFile._boolOrNull(json['timeSynced']),
+        durationSecs: (json['durationSecs'] as num?)?.toDouble(),
+      );
+
+  final String path;
+  final int bytesWritten;
+  final int? startAtSec;
+  final bool? timeSynced;
+  final double? durationSecs;
 }
 
 /// 下载结果。
@@ -642,15 +683,35 @@ class CardDownload {
     required this.path,
     required this.bytesWritten,
     required this.originalName,
+    this.startAtSec,
+    this.timeSynced,
+    this.parts = const [],
   });
-  factory CardDownload.fromJson(Map<String, dynamic> json) => CardDownload(
-    path: (json['path'] as String?) ?? '',
-    bytesWritten: (json['bytesWritten'] as num?)?.toInt() ?? 0,
-    originalName: (json['originalName'] as String?) ?? '',
-  );
+  factory CardDownload.fromJson(Map<String, dynamic> json) {
+    final rawParts = json['parts'];
+    final parts = rawParts is List
+        ? rawParts
+              .whereType<Map<String, dynamic>>()
+              .map(CardDownloadPart.fromJson)
+              .toList()
+        : const <CardDownloadPart>[];
+    return CardDownload(
+      path: (json['path'] as String?) ?? '',
+      bytesWritten: (json['bytesWritten'] as num?)?.toInt() ?? 0,
+      originalName: (json['originalName'] as String?) ?? '',
+      startAtSec: CardFile._normalizeEpochSec(
+        json['startAt'] ?? json['start_at'],
+      ),
+      timeSynced: CardFile._boolOrNull(json['timeSynced']),
+      parts: parts,
+    );
+  }
   final String path;
   final int bytesWritten;
   final String originalName;
+  final int? startAtSec;
+  final bool? timeSynced;
+  final List<CardDownloadPart> parts;
 }
 
 /// 设备扫描到的 Wi-Fi 网络。
@@ -1272,6 +1333,9 @@ class RealCardGateway implements CardGateway {
   /// 是否绑定真实原生 FFI 动态库（区分单元测试注入桩）。
   bool get isNativeFfi => _testDispatch == null;
 
+  /// 文件/流下载产生实际字节或百分比推进时的链路保活回调。
+  void Function()? onDownloadProgressActivity;
+
   final Map<int, StreamController<Map<String, dynamic>>> _pending = {};
   int _ticket = 0;
 
@@ -1504,6 +1568,7 @@ class RealCardGateway implements CardGateway {
             );
             if (advanced) {
               armWatchdog();
+              onDownloadProgressActivity?.call();
             }
           }
         },

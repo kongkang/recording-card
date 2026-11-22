@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -16,14 +16,15 @@ use uuid::Uuid;
 use reai_ext_sdk::audio::write_wav_16k_mono;
 use reai_ext_sdk::{
     RecorderDevice, RecorderSdkDriver, SdkAudioChunk, SdkBattery, SdkCapabilities, SdkDeviceEvent,
-    SdkError, SdkFileEntry, SdkRecordStatus, SdkSavedFile, SdkSnapshot,
+    SdkError, SdkFileEntry, SdkRecordStatus, SdkSavedFile, SdkSavedFilePart, SdkSnapshot,
 };
 
 use crate::protocol::{
-    decode_button_gesture, extract_len_prefixed_frames, extract_ring_encoded_frames,
-    matches_omi_name, parse_multi_file_list, parse_ring_info, split_friend_pendant_lc3_frames,
-    MultiFileEntry, OmiAudioCodec, OmiFrameDecoder, OmiPacketReassembler, RingBufferInfo,
-    CHR_BATTERY_LEVEL_UUID, CHR_FRIEND_PENDANT_AUDIO_UUID, CHR_FW_REV_UUID, CHR_MODEL_NUMBER_UUID,
+    decode_button_gesture, extract_len_prefixed_frames, is_plausible_unix_sec, matches_omi_name,
+    parse_multi_file_list, parse_ring_info, split_friend_pendant_lc3_frames,
+    split_ring_encoded_segments, MultiFileEntry, OmiAudioCodec, OmiFrameDecoder,
+    OmiPacketReassembler, RingBufferInfo, RingTimedSegment, CHR_BATTERY_LEVEL_UUID,
+    CHR_FRIEND_PENDANT_AUDIO_UUID, CHR_FW_REV_UUID, CHR_MODEL_NUMBER_UUID,
     CHR_OMI_AUDIO_CODEC_UUID, CHR_OMI_AUDIO_DATA_UUID, CHR_OMI_BUTTON_TRIGGER_UUID,
     CHR_OMI_CHARGING_UUID, CHR_OMI_MUTE_UUID, CHR_OMI_STORAGE_CTRL_UUID, CHR_OMI_STORAGE_DATA_UUID,
     CHR_OMI_TIMESYNC_WRITE_UUID, RING_CMD_ADVANCE, RING_CMD_INFO, RING_CMD_READ, RING_CMD_STOP,
@@ -206,127 +207,175 @@ impl OmiDevice {
                 .map_err(|e| SdkError::Ble(format!("Omi 蓝牙建连失败: {e}")))?;
         }
 
-        tokio::time::timeout(BLE_DISCOVER_TIMEOUT, peripheral.discover_services())
-            .await
-            .map_err(|_| SdkError::Timeout("发现 Omi GATT 服务超时".into()))?
-            .map_err(|e| SdkError::Ble(format!("发现 Omi GATT 服务失败: {e}")))?;
+        let setup_res = async {
+            tokio::time::timeout(BLE_DISCOVER_TIMEOUT, peripheral.discover_services())
+                .await
+                .map_err(|_| SdkError::Timeout("发现 Omi GATT 服务超时".into()))?
+                .map_err(|e| SdkError::Ble(format!("发现 Omi GATT 服务失败: {e}")))?;
 
-        let chars = peripheral.characteristics();
-        let (variant, audio_data_char) = if let Some(c) = chars
-            .iter()
-            .find(|c| c.uuid == CHR_OMI_AUDIO_DATA_UUID)
-            .cloned()
-        {
-            (OmiHardwareVariant::Cv1, c)
-        } else if let Some(c) = chars
-            .iter()
-            .find(|c| c.uuid == CHR_FRIEND_PENDANT_AUDIO_UUID)
-            .cloned()
-        {
-            (OmiHardwareVariant::FriendPendant, c)
-        } else {
-            return Err(SdkError::Protocol(
-                "未在 Omi 设备上发现标准音频流服务特征".into(),
-            ));
-        };
-
-        let audio_codec_char = chars
-            .iter()
-            .find(|c| c.uuid == CHR_OMI_AUDIO_CODEC_UUID)
-            .cloned();
-        let battery_char = chars
-            .iter()
-            .find(|c| c.uuid == CHR_BATTERY_LEVEL_UUID && c.service_uuid == SVC_BATTERY_UUID)
-            .or_else(|| chars.iter().find(|c| c.uuid == CHR_BATTERY_LEVEL_UUID))
-            .cloned();
-        let charging_char = chars
-            .iter()
-            .find(|c| c.uuid == CHR_OMI_CHARGING_UUID)
-            .cloned();
-        let mute_char = chars.iter().find(|c| c.uuid == CHR_OMI_MUTE_UUID).cloned();
-        let button_char = chars
-            .iter()
-            .find(|c| c.uuid == CHR_OMI_BUTTON_TRIGGER_UUID && c.service_uuid == SVC_OMI_BUTTON_UUID)
-            .or_else(|| chars.iter().find(|c| c.uuid == CHR_OMI_BUTTON_TRIGGER_UUID))
-            .cloned();
-        let timesync_char = chars
-            .iter()
-            .find(|c| c.uuid == CHR_OMI_TIMESYNC_WRITE_UUID)
-            .cloned();
-        let storage_data_char = chars
-            .iter()
-            .find(|c| c.uuid == CHR_OMI_STORAGE_DATA_UUID && c.service_uuid == SVC_OMI_STORAGE_UUID)
-            .or_else(|| chars.iter().find(|c| c.uuid == CHR_OMI_STORAGE_DATA_UUID))
-            .cloned();
-        let storage_ctrl_char = chars
-            .iter()
-            .find(|c| c.uuid == CHR_OMI_STORAGE_CTRL_UUID)
-            .cloned();
-
-        let fw_version = read_optional_utf8(
-            &peripheral,
-            chars
+            let chars = peripheral.characteristics();
+            let (variant, audio_data_char) = if let Some(c) = chars
                 .iter()
-                .find(|c| c.uuid == CHR_FW_REV_UUID && c.service_uuid == SVC_DIS_UUID)
-                .or_else(|| chars.iter().find(|c| c.uuid == CHR_FW_REV_UUID)),
-        )
-        .await;
-        let model_number = read_optional_utf8(
-            &peripheral,
-            chars
+                .find(|c| c.uuid == CHR_OMI_AUDIO_DATA_UUID)
+                .cloned()
+            {
+                (OmiHardwareVariant::Cv1, c)
+            } else if let Some(c) = chars
                 .iter()
-                .find(|c| c.uuid == CHR_MODEL_NUMBER_UUID && c.service_uuid == SVC_DIS_UUID)
-                .or_else(|| chars.iter().find(|c| c.uuid == CHR_MODEL_NUMBER_UUID)),
-        )
-        .await;
+                .find(|c| c.uuid == CHR_FRIEND_PENDANT_AUDIO_UUID)
+                .cloned()
+            {
+                (OmiHardwareVariant::FriendPendant, c)
+            } else {
+                return Err(SdkError::Protocol(
+                    "未在 Omi 设备上发现标准音频流服务特征".into(),
+                ));
+            };
 
-        let codec = match variant {
-            OmiHardwareVariant::FriendPendant => OmiAudioCodec::Lc3Fs1030,
-            OmiHardwareVariant::Cv1 => match &audio_codec_char {
-                Some(c) => match tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.read(c)).await {
-                    Ok(Ok(bytes)) if !bytes.is_empty() => OmiAudioCodec::from_codec_id(bytes[0]),
-                    _ => OmiAudioCodec::Opus,
+            let audio_codec_char = chars
+                .iter()
+                .find(|c| c.uuid == CHR_OMI_AUDIO_CODEC_UUID)
+                .cloned();
+            let battery_char = chars
+                .iter()
+                .find(|c| c.uuid == CHR_BATTERY_LEVEL_UUID && c.service_uuid == SVC_BATTERY_UUID)
+                .or_else(|| chars.iter().find(|c| c.uuid == CHR_BATTERY_LEVEL_UUID))
+                .cloned();
+            let charging_char = chars
+                .iter()
+                .find(|c| c.uuid == CHR_OMI_CHARGING_UUID)
+                .cloned();
+            let mute_char = chars.iter().find(|c| c.uuid == CHR_OMI_MUTE_UUID).cloned();
+            let button_char = chars
+                .iter()
+                .find(|c| c.uuid == CHR_OMI_BUTTON_TRIGGER_UUID && c.service_uuid == SVC_OMI_BUTTON_UUID)
+                .or_else(|| chars.iter().find(|c| c.uuid == CHR_OMI_BUTTON_TRIGGER_UUID))
+                .cloned();
+            let timesync_char = chars
+                .iter()
+                .find(|c| c.uuid == CHR_OMI_TIMESYNC_WRITE_UUID)
+                .cloned();
+            let storage_data_char = chars
+                .iter()
+                .find(|c| c.uuid == CHR_OMI_STORAGE_DATA_UUID && c.service_uuid == SVC_OMI_STORAGE_UUID)
+                .or_else(|| chars.iter().find(|c| c.uuid == CHR_OMI_STORAGE_DATA_UUID))
+                .cloned();
+            let storage_ctrl_char = chars
+                .iter()
+                .find(|c| c.uuid == CHR_OMI_STORAGE_CTRL_UUID)
+                .cloned();
+
+            let fw_version = read_optional_utf8(
+                &peripheral,
+                chars
+                    .iter()
+                    .find(|c| c.uuid == CHR_FW_REV_UUID && c.service_uuid == SVC_DIS_UUID)
+                    .or_else(|| chars.iter().find(|c| c.uuid == CHR_FW_REV_UUID)),
+            )
+            .await;
+            let model_number = read_optional_utf8(
+                &peripheral,
+                chars
+                    .iter()
+                    .find(|c| c.uuid == CHR_MODEL_NUMBER_UUID && c.service_uuid == SVC_DIS_UUID)
+                    .or_else(|| chars.iter().find(|c| c.uuid == CHR_MODEL_NUMBER_UUID)),
+            )
+            .await;
+
+            let codec = match variant {
+                OmiHardwareVariant::FriendPendant => OmiAudioCodec::Lc3Fs1030,
+                OmiHardwareVariant::Cv1 => match &audio_codec_char {
+                    Some(c) => match tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.read(c)).await {
+                        Ok(Ok(bytes)) if !bytes.is_empty() => OmiAudioCodec::from_codec_id(bytes[0]),
+                        _ => OmiAudioCodec::Opus,
+                    },
+                    None => OmiAudioCodec::Opus,
                 },
-                None => OmiAudioCodec::Opus,
-            },
+            };
+
+            let mut initial_battery = SdkBattery::default();
+            if let Some(ref c) = battery_char {
+                if let Ok(Ok(bytes)) =
+                    tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.read(c)).await
+                {
+                    if let Some(&lvl) = bytes.first() {
+                        initial_battery.level = Some(lvl.min(100));
+                    }
+                }
+                let _ = tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.subscribe(c)).await;
+            }
+            if let Some(ref c) = charging_char {
+                if let Ok(Ok(bytes)) =
+                    tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.read(c)).await
+                {
+                    if let Some(&ch) = bytes.first() {
+                        initial_battery.is_charging = ch != 0;
+                    }
+                }
+                let _ = tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.subscribe(c)).await;
+            }
+            if let Some(ref c) = button_char {
+                let _ = tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.subscribe(c)).await;
+            }
+            if let Some(ref c) = storage_data_char {
+                let _ = tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.subscribe(c)).await;
+            }
+
+            let has_storage = storage_data_char.is_some();
+            let has_button = button_char.is_some();
+            let caps = OmiSdkDriver::capabilities(has_storage, has_button);
+
+            let notif_stream = tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.notifications())
+                .await
+                .map_err(|_| SdkError::Timeout("获取 Omi BLE 通知流超时".into()))?
+                .map_err(|e| SdkError::Ble(format!("订阅 Omi BLE 通知失败: {e}")))?;
+
+            Ok((
+                variant,
+                audio_data_char,
+                audio_codec_char,
+                battery_char,
+                charging_char,
+                mute_char,
+                button_char,
+                timesync_char,
+                storage_data_char,
+                storage_ctrl_char,
+                fw_version,
+                model_number,
+                codec,
+                initial_battery,
+                caps,
+                notif_stream,
+            ))
+        }
+        .await;
+
+        let (
+            variant,
+            audio_data_char,
+            audio_codec_char,
+            battery_char,
+            charging_char,
+            mute_char,
+            button_char,
+            timesync_char,
+            storage_data_char,
+            storage_ctrl_char,
+            fw_version,
+            model_number,
+            codec,
+            initial_battery,
+            caps,
+            notif_stream,
+        ) = match setup_res {
+            Ok(parts) => parts,
+            Err(err) => {
+                // 避免连接已成功但后续服务发现/订阅失败时把物理链路留在 CoreBluetooth，导致设备常亮蓝灯且不再广播
+                let _ = tokio::time::timeout(Duration::from_secs(2), peripheral.disconnect()).await;
+                return Err(err);
+            }
         };
-
-        let mut initial_battery = SdkBattery::default();
-        if let Some(ref c) = battery_char {
-            if let Ok(Ok(bytes)) =
-                tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.read(c)).await
-            {
-                if let Some(&lvl) = bytes.first() {
-                    initial_battery.level = Some(lvl.min(100));
-                }
-            }
-            let _ = tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.subscribe(c)).await;
-        }
-        if let Some(ref c) = charging_char {
-            if let Ok(Ok(bytes)) =
-                tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.read(c)).await
-            {
-                if let Some(&ch) = bytes.first() {
-                    initial_battery.is_charging = ch != 0;
-                }
-            }
-            let _ = tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.subscribe(c)).await;
-        }
-        if let Some(ref c) = button_char {
-            let _ = tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.subscribe(c)).await;
-        }
-        if let Some(ref c) = storage_data_char {
-            let _ = tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.subscribe(c)).await;
-        }
-
-        let has_storage = storage_data_char.is_some();
-        let has_button = button_char.is_some();
-        let caps = OmiSdkDriver::capabilities(has_storage, has_button);
-
-        let notif_stream = tokio::time::timeout(BLE_GATT_TIMEOUT, peripheral.notifications())
-            .await
-            .map_err(|_| SdkError::Timeout("获取 Omi BLE 通知流超时".into()))?
-            .map_err(|e| SdkError::Ble(format!("订阅 Omi BLE 通知失败: {e}")))?;
 
         let (events_tx, _) = broadcast::channel(64);
         let (audio_tx, _) = broadcast::channel(128);
@@ -576,7 +625,8 @@ impl RecorderDevice for OmiDevice {
         }
 
         let realtime_enabled = self.realtime_enabled.load(Ordering::SeqCst);
-        if !realtime_enabled {
+        let storage_transfer_busy = self.storage_lock.try_lock().is_err();
+        if !realtime_enabled && !storage_transfer_busy {
             if let Some(ref c) = self.audio_codec_char {
                 if let Ok(Ok(bytes)) =
                     tokio::time::timeout(Duration::from_secs(2), self.peripheral.read(c)).await
@@ -588,9 +638,9 @@ impl RecorderDevice for OmiDevice {
             }
         }
 
-        let battery = if realtime_enabled {
+        let battery = if realtime_enabled || storage_transfer_busy {
             let cached = self.battery_cache.lock().await.clone();
-            if cached.level.is_some() {
+            if cached.level.is_some() || storage_transfer_busy {
                 cached
             } else {
                 self.read_battery_now().await
@@ -846,7 +896,7 @@ impl RecorderDevice for OmiDevice {
 
         let _guard = self.storage_lock.lock().await;
         let codec = *self.codec.lock().await;
-        let encoded_frames: Vec<Vec<u8>> = match handle {
+        let segments: Vec<RingTimedSegment> = match handle {
             OmiStorageHandle::Ring {
                 read_seq,
                 write_seq,
@@ -881,8 +931,7 @@ impl RecorderDevice for OmiDevice {
                         Err(_) => break,
                     }
                 }
-                let (_ts, frames) = extract_ring_encoded_frames(&raw);
-                frames
+                split_ring_encoded_segments(&raw, 60)
             }
             OmiStorageHandle::MultiFile(mf) => {
                 let mut rx = self.storage_rx.lock().await;
@@ -910,7 +959,12 @@ impl RecorderDevice for OmiDevice {
                     }
                 }
                 let _ = self.write_char_auto(sdata, &[RING_CMD_STOP]).await;
-                frames
+                let ts_opt = is_plausible_unix_sec(mf.timestamp).then_some(mf.timestamp);
+                vec![RingTimedSegment {
+                    start_ts: ts_opt,
+                    end_ts: ts_opt,
+                    frames,
+                }]
             }
             OmiStorageHandle::Legacy { offset, .. } => {
                 let mut rx = self.storage_rx.lock().await;
@@ -944,37 +998,68 @@ impl RecorderDevice for OmiDevice {
                         Err(_) => break,
                     }
                 }
-                frames
+                vec![RingTimedSegment {
+                    start_ts: None,
+                    end_ts: None,
+                    frames,
+                }]
             }
         };
 
-        let mut dec = OmiFrameDecoder::for_codec(codec)?;
-        let mut all_pcm = Vec::new();
-        for frame in encoded_frames {
-            if let Ok(samples) = dec.decode_frame(&frame) {
-                all_pcm.extend_from_slice(&samples);
-            }
-        }
-
         let out_dir = PathBuf::from(dir);
         tokio::fs::create_dir_all(&out_dir).await?;
-        let dest = out_dir.join(name);
-        let part_dest = out_dir.join(format!("{name}.part"));
-        if let Err(err) = write_wav_16k_mono(&part_dest, &all_pcm) {
-            let _ = tokio::fs::remove_file(&part_dest).await;
-            return Err(err);
-        }
-        tokio::fs::rename(&part_dest, &dest).await?;
-        let bytes_written = tokio::fs::metadata(&dest)
-            .await
-            .map(|m| m.len())
-            .unwrap_or((all_pcm.len() * 2 + 44) as u64);
+        let stem = name
+            .strip_suffix(".wav")
+            .or_else(|| name.strip_suffix(".WAV"))
+            .unwrap_or(name);
 
+        if segments.is_empty() {
+            let (dest, bytes_written) = write_omi_wav_segment(&out_dir, name, codec, &[]).await?;
+            return Ok(SdkSavedFile {
+                path: dest,
+                bytes_written,
+                original_name: name.to_string(),
+                device_name: Some(self.name.clone()),
+                start_at: None,
+                time_synced: Some(false),
+                parts: Vec::new(),
+            });
+        }
+
+        let mut parts: Vec<SdkSavedFilePart> = Vec::with_capacity(segments.len());
+        for (idx, seg) in segments.iter().enumerate() {
+            let file_name = if idx == 0 {
+                name.to_string()
+            } else {
+                format!("{stem}_p{idx}.wav")
+            };
+            let (dest, bytes_written) =
+                write_omi_wav_segment(&out_dir, &file_name, codec, &seg.frames).await?;
+            let start_at = seg.start_ts.map(i64::from);
+            let time_synced = Some(start_at.is_some());
+            parts.push(SdkSavedFilePart {
+                path: dest,
+                bytes_written,
+                original_name: file_name,
+                start_at,
+                time_synced,
+            });
+        }
+
+        let first = &parts[0];
+        let extra_parts = if parts.len() > 1 {
+            parts.clone()
+        } else {
+            Vec::new()
+        };
         Ok(SdkSavedFile {
-            path: dest,
-            bytes_written,
+            path: first.path.clone(),
+            bytes_written: first.bytes_written,
             original_name: name.to_string(),
             device_name: Some(self.name.clone()),
+            start_at: first.start_at,
+            time_synced: first.time_synced,
+            parts: extra_parts,
         })
     }
 
@@ -1056,7 +1141,7 @@ impl RecorderDevice for OmiDevice {
                 .await;
             }
         }
-        match tokio::time::timeout(Duration::from_millis(1400), self.peripheral.disconnect()).await {
+        match tokio::time::timeout(Duration::from_millis(2800), self.peripheral.disconnect()).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) if is_conn => Err(SdkError::Ble(e.to_string())),
             Ok(Err(_)) | Err(_) => {
@@ -1065,6 +1150,33 @@ impl RecorderDevice for OmiDevice {
             }
         }
     }
+}
+
+async fn write_omi_wav_segment(
+    out_dir: &Path,
+    file_name: &str,
+    codec: OmiAudioCodec,
+    encoded_frames: &[Vec<u8>],
+) -> Result<(PathBuf, u64), SdkError> {
+    let mut dec = OmiFrameDecoder::for_codec(codec)?;
+    let mut all_pcm = Vec::new();
+    for frame in encoded_frames {
+        if let Ok(samples) = dec.decode_frame(frame) {
+            all_pcm.extend_from_slice(&samples);
+        }
+    }
+    let dest = out_dir.join(file_name);
+    let part_dest = out_dir.join(format!("{file_name}.part"));
+    if let Err(err) = write_wav_16k_mono(&part_dest, &all_pcm) {
+        let _ = tokio::fs::remove_file(&part_dest).await;
+        return Err(err);
+    }
+    tokio::fs::rename(&part_dest, &dest).await?;
+    let bytes_written = tokio::fs::metadata(&dest)
+        .await
+        .map(|m| m.len())
+        .unwrap_or((all_pcm.len() * 2 + 44) as u64);
+    Ok((dest, bytes_written))
 }
 
 #[cfg(test)]

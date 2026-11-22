@@ -123,6 +123,7 @@ class DeviceStore extends ChangeNotifier {
                ? Duration.zero
                : const Duration(seconds: 3)),
        _now = now ?? DateTime.now {
+    _bindDownloadProgressActivity(_bleGateway);
     _gateway = WatchCompositeCardGateway(
       bleGateway: _bleGateway,
       watchService: _watchHardware,
@@ -347,6 +348,12 @@ class DeviceStore extends ChangeNotifier {
       linkState == LinkState.connecting ||
       linkState == LinkState.reconnecting;
 
+  void _bindDownloadProgressActivity(CardGateway gw) {
+    if (gw is RealCardGateway) {
+      gw.onDownloadProgressActivity = _markLinkActivity;
+    }
+  }
+
   Future<void> _recoverNativeBridgeIfNeeded() {
     if (_bleGateway.available || !_allowNativeBridgeRecovery) {
       return Future<void>.value();
@@ -361,6 +368,7 @@ class DeviceStore extends ChangeNotifier {
                   await RealCardGateway.tryBindFromPlatformChannel());
         if (recovered != null && recovered.available) {
           _bleGateway = recovered;
+          _bindDownloadProgressActivity(recovered);
           _gateway.rebindBleGateway(recovered);
         }
       } on Object {
@@ -705,6 +713,8 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
     final epoch = ++_epoch;
+    _autoReconnectTarget = null;
+    _stopBackgroundAutoReconnect();
     _stopScanExpiryTimer();
     linkState = LinkState.connecting;
     linkError = null;
@@ -1356,9 +1366,9 @@ class DeviceStore extends ChangeNotifier {
     Duration(seconds: 60),
   ];
 
-  /// 重连只发 connect（不再预拉快照），但桥内要先扫描（4s→6s 两档）再建链路，
-  /// 上限给到 20s，避免把"正在重连"误判成失败。
-  static const _retryConnectTimeout = Duration(seconds: 25);
+  /// 重连只发 connect（不再预拉快照），但桥内要先扫描再建链路，
+  /// 上限给到 32s（覆盖原生扫描 + 握手最坏耗时），避免把"正在重连"误判成失败。
+  static const _retryConnectTimeout = Duration(seconds: 32);
 
   Timer? _heartbeatTimer;
   bool _watchdogProbing = false;
@@ -1369,6 +1379,9 @@ class DeviceStore extends ChangeNotifier {
   bool _backgroundReconnecting = false;
   bool _pendingPostReconnectSync = false;
   String? _disconnectNotice;
+
+  /// 外部 BLE 同步管线（例如 RecordingPipeline.sync）是否正在忙，忙时顺延心跳探测避免误判断连。
+  bool Function()? isExternalBleSyncBusy;
 
   /// 蓝牙设备后台自动重连恢复后触发（用于冲刷伴随路并补拉离线切片与多路比对合并）。
   Future<void> Function(CardDevice device)? onBleReconnectedNeedSync;
@@ -1387,6 +1400,11 @@ class DeviceStore extends ChangeNotifier {
     final v = _pendingPostReconnectSync;
     _pendingPostReconnectSync = false;
     return v;
+  }
+
+  /// 标记下一次空闲/重连恢复后补拉设备离线切片（例如现场开录打断离线同步时）。
+  void markPendingPostReconnectSync() {
+    _pendingPostReconnectSync = true;
   }
 
   String _disconnectTargetLabel(CardDevice? target) {
@@ -1605,8 +1623,11 @@ class DeviceStore extends ChangeNotifier {
   /// 发起轻量非侵入式链路存活探测，确保蓝牙意外失联 <=12s 内拉起本机麦克风保底接力。
   void _heartbeatTick() {
     if (linkState != LinkState.connected) return;
-    // 固件升级/同步/录音命令链路忙：不插队，且这些动作本身已算活动
-    if (fwUpdating || syncing || _linkBusy) {
+    // 固件升级/同步/外部下载管线/录音命令链路忙：不插队，且这些动作本身已算活动
+    if (fwUpdating ||
+        syncing ||
+        _linkBusy ||
+        (isExternalBleSyncBusy?.call() ?? false)) {
       _markLinkActivity();
       return;
     }

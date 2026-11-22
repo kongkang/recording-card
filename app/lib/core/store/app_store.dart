@@ -304,7 +304,12 @@ class AppStore extends ChangeNotifier {
         await pipeline.transcribeLocalPendingOnly(
           onProgress: _onPipelineProgress,
         );
-        await pipeline.sync(onProgress: _onPipelineProgress);
+        await pipeline.sync(
+          onProgress: _onPipelineProgress,
+          onFileReady: (_) async {
+            if (!_disposed) await refreshFromStore();
+          },
+        );
       }
       await pipeline.reconcileMultiTrack();
       await refreshFromStore();
@@ -513,7 +518,7 @@ class AppStore extends ChangeNotifier {
           );
           if (_status?.isRecording == true) {
             _status?.setRecordingDetail(
-              '已缓存 $cachedMins 分钟 · 满 $transcribeCycleMinutes 分钟自动转写',
+              '已存 $pendingLocalAudioCount 段（约 $cachedMins 分钟）',
             );
           }
           if (pendingLocalAudioDurationMs >=
@@ -542,7 +547,7 @@ class AppStore extends ChangeNotifier {
               (pendingLocalAudioDurationMs / 60000).round(),
             );
             _status?.setRecordingDetail(
-              '已缓存 $cachedMins 分钟 · 满 $transcribeCycleMinutes 分钟自动转写',
+              '已存 $pendingLocalAudioCount 段（约 $cachedMins 分钟）',
             );
           } else if (!deferNow) {
             _status?.setRecordingDetail(
@@ -644,7 +649,7 @@ class AppStore extends ChangeNotifier {
           (pendingLocalAudioDurationMs / 60000).round(),
         );
         _status?.setRecordingDetail(
-          '已缓存 $cachedMins 分钟 · 满 $transcribeCycleMinutes 分钟自动转写',
+          '已存 $pendingLocalAudioCount 段（约 $cachedMins 分钟）',
         );
       } else {
         _status?.setRecordingDetail(null);
@@ -1219,11 +1224,54 @@ class AppStore extends ChangeNotifier {
   bool get _isActivelyRecording =>
       (deviceRecording?.call() ?? false) || (_status?.sessionActive ?? false);
 
+  Future<String?>? _syncInFlight;
+  Timer? _pullRefreshTimer;
+
+  bool get isSyncInFlight => _syncInFlight != null;
+
+  /// 若当前正在执行长耗时离线蓝牙拉取，通知管线在当前文件落盘后礼让暂停。
+  bool pauseOfflineSyncForLiveRecording() =>
+      _pipeline?.requestSyncPauseForLiveRecording() ?? false;
+
+  /// 下拉刷新入口：复用在途同步并限定界面转圈最长等待 [maxWait]，
+  /// 避免多段蓝牙拉取把 RefreshIndicator 长期卡住；在途同步转入后台增量刷新时间轴。
+  Future<String?> pullToRefresh({
+    Duration maxWait = const Duration(milliseconds: 600),
+  }) async {
+    final task = _syncInFlight ??= syncRecordings().whenComplete(() {
+      _syncInFlight = null;
+    });
+    final completer = Completer<String?>();
+    _pullRefreshTimer?.cancel();
+    _pullRefreshTimer = Timer(maxWait, () {
+      _pullRefreshTimer = null;
+      if (!completer.isCompleted) completer.complete(null);
+    });
+    unawaited(
+      task.then(
+        (msg) {
+          _pullRefreshTimer?.cancel();
+          _pullRefreshTimer = null;
+          if (!completer.isCompleted) completer.complete(msg);
+        },
+        onError: (Object err, StackTrace st) {
+          _pullRefreshTimer?.cancel();
+          _pullRefreshTimer = null;
+          if (!completer.isCompleted) completer.complete('同步失败：$err');
+        },
+      ),
+    );
+    return completer.future;
+  }
+
   Future<String?> syncRecordings() async {
     // 场景 A · 录音进行中（硬件实时流 / 本机麦克风）：
-    // 不停录、不请求蓝牙 FILE_LIST；若当前缓冲已满 0.5 秒则立即切分封口并送入本地转写，
-    // 同时把已缓存的未转写切片一并转写整理。
+    // 不停录、不请求蓝牙 FILE_LIST；若之前在拉取离线切片则先礼让暂停，
+    // 防止实时刷新在 pipeline._waitUntilIdle() 上无限等待。
     if (_isActivelyRecording) {
+      if (_pipeline?.isBusy == true) {
+        _pipeline!.requestSyncPauseForLiveRecording();
+      }
       syncError = null;
       syncStage = null;
       syncProgress = 0;
@@ -1395,7 +1443,12 @@ class AppStore extends ChangeNotifier {
       final localReport = await pipeline.transcribeLocalPendingOnly(
         onProgress: _onPipelineProgress,
       );
-      final report = await pipeline.sync(onProgress: _onPipelineProgress);
+      final report = await pipeline.sync(
+        onProgress: _onPipelineProgress,
+        onFileReady: (_) async {
+          if (!_disposed) await refreshFromStore();
+        },
+      );
       await pipeline.reconcileMultiTrack();
       await refreshFromStore();
       unawaited(evaluateTopicSegmentationAndRefresh());
@@ -1411,6 +1464,8 @@ class AppStore extends ChangeNotifier {
             ? localReport.failures.first
             : report.failures.first;
         syncError = '$totalFailed 条录音处理失败：$firstFailure';
+      } else if (report.pausedForLiveRecording) {
+        syncError = null;
       }
       return syncError;
     } on Object catch (e) {
@@ -1501,10 +1556,22 @@ class AppStore extends ChangeNotifier {
     final total = p.sliceTotal ?? 0;
     final index = p.sliceIndex ?? 0;
     final remaining = total > 0 ? (total - index).clamp(0, total) : 0;
-    if (p.stage == PipelineStage.done) {
+    final fileTotal = p.fileTotal;
+    final fileDone = p.stage == PipelineStage.done
+        ? (p.fileIndex + 1).clamp(0, fileTotal)
+        : p.fileIndex.clamp(0, fileTotal);
+    final allFilesDone =
+        p.stage == PipelineStage.done &&
+        (fileTotal <= 0 || p.fileIndex + 1 >= fileTotal);
+    if (allFilesDone) {
       _status?.updateQueue(remaining: 0, active: false);
     } else {
-      _status?.updateSync(p.text, remaining: remaining);
+      _status?.updateSync(
+        p.text,
+        remaining: remaining,
+        done: fileTotal > 0 ? fileDone : null,
+        total: fileTotal > 0 ? fileTotal : null,
+      );
     }
     notifyListeners();
   }
@@ -2986,6 +3053,8 @@ class AppStore extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _pullRefreshTimer?.cancel();
+    _pullRefreshTimer = null;
     _genTicker?.cancel();
     voiceprintStore.removeListener(_onVoiceprintChanged);
     voiceprintStore.dispose();

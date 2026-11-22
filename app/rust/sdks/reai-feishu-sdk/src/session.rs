@@ -618,11 +618,15 @@ impl<L: FeishuLink + 'static> RecorderDevice for FeishuSession<L> {
         let _ = std::fs::remove_file(&ogg_path);
         transcoded?;
         let bytes_written = std::fs::metadata(&wav_path).map(|meta| meta.len()).unwrap_or(0);
+        let ts_sec = (entry.id >= 1_577_836_800 && entry.id < 4_102_444_800).then_some(i64::from(entry.id));
         Ok(SdkSavedFile {
             path: wav_path,
             bytes_written,
             original_name: file_entry(&entry).name,
             device_name: Some(self.name.clone()),
+            start_at: ts_sec,
+            time_synced: Some(ts_sec.is_some()),
+            parts: Vec::new(),
         })
     }
 
@@ -672,15 +676,17 @@ impl Drop for TransferGuard<'_> {
 }
 
 fn file_entry(row: &protocol::DirectoryEntry) -> SdkFileEntry {
+    let ts_sec =
+        (row.id >= 1_577_836_800 && row.id < 4_102_444_800).then_some(i64::from(row.id));
     SdkFileEntry {
         name: format!("{}.opus", row.id),
         size: u64::from(row.duration_ms).saturating_mul(8),
         index: None,
-        created_at: Some(i64::from(row.id)),
+        created_at: ts_sec,
         session: None,
         seq: None,
-        start_at: Some(i64::from(row.id) * 1000),
-        synced: Some(false),
+        start_at: ts_sec,
+        synced: Some(ts_sec.is_some()),
     }
 }
 
@@ -786,6 +792,8 @@ mod tests {
         let files = session.list_files().await.unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].name, "1700000000.opus");
+        assert_eq!(files[0].start_at, Some(1_700_000_000));
+        assert_eq!(files[0].synced, Some(true));
 
         let dir = std::env::temp_dir().join(format!("feishu-sdk-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -794,6 +802,8 @@ mod tests {
             .await
             .unwrap();
         assert!(saved.path.ends_with("1700000000.wav"));
+        assert_eq!(saved.start_at, Some(1_700_000_000));
+        assert_eq!(saved.time_synced, Some(true));
         assert!(saved.bytes_written > 44);
         let wav = std::fs::read(&saved.path).unwrap();
         assert_eq!(&wav[..4], b"RIFF");
