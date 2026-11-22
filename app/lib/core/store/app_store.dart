@@ -33,6 +33,7 @@ import '../../services/schedule/cleaning_task_ids.dart';
 import '../../services/schedule/task_scheduler.dart';
 import '../../services/segment/fast_topic_segment_agent.dart';
 import '../../services/segment/record_value_classifier.dart';
+import '../../services/voiceprint/joint_speaker_resolver.dart';
 import '../device/card_gateway.dart';
 import '../models/record.dart';
 import '../models/recording.dart';
@@ -128,6 +129,20 @@ abstract final class GenConst {
   static const minEstimateSeconds = 8;
 }
 
+class _SpeakerNamingUndoSnapshot {
+  const _SpeakerNamingUndoSnapshot({
+    required this.previousAliases,
+    required this.previousTurnOverrides,
+    required this.previousVoiceprintJson,
+    required this.retroSyncedEventCount,
+  });
+
+  final Map<String, String> previousAliases;
+  final Map<String, String> previousTurnOverrides;
+  final Map<String, dynamic> previousVoiceprintJson;
+  final int retroSyncedEventCount;
+}
+
 class AppStore extends ChangeNotifier {
   AppStore({
     List<RecordEvent>? events,
@@ -153,6 +168,15 @@ class AppStore extends ChangeNotifier {
   int _photoVersion = 0;
   int _aliasVersion = 0;
   int _feedVersion = 0;
+
+  _SpeakerNamingUndoSnapshot? _lastNamingUndo;
+  final Set<String> _observedChannelKeys = {};
+  final Set<String> _autoEnrolledSessionSlots = {};
+
+  int get lastRetroSyncedEventCount =>
+      _lastNamingUndo?.retroSyncedEventCount ?? 0;
+
+  bool get canUndoLastSpeakerNaming => _lastNamingUndo != null;
 
   int get dataRevision => _dataVersion + _photoVersion + _aliasVersion;
 
@@ -440,6 +464,11 @@ class AppStore extends ChangeNotifier {
     _topicStore = pipeline.topicStore;
     _generator = generator;
     _status = status;
+  }
+
+  @visibleForTesting
+  void bindRecordingStoreForTest(RecordingStore store) {
+    _recordingStore = store;
   }
 
   TopicSegmentationStore? _topicStoreFor() {
@@ -947,6 +976,7 @@ class AppStore extends ChangeNotifier {
       events = projection.events;
       segmentViews = projection.views;
       _reconciliation = reconciliation ?? const MultiTrackReconciliationState();
+      await reconcileVoiceprintsAndCluesForEvents(events, notify: false);
     } on Object catch (e) {
       loadError = '读取本地录音失败：$e';
     }
@@ -2871,6 +2901,7 @@ class AppStore extends ChangeNotifier {
       final draft = await generator.generate(
         sources,
         speakerResolver: displaySpeaker,
+        knownSpeakerNames: voiceprintStore.preferredRosterNames(limit: 16),
         onProgress: (progress, step) {
           if (_disposed ||
               _cancelledSummaryIds.contains(card.id) ||
@@ -2891,17 +2922,56 @@ class AppStore extends ChangeNotifier {
           summaryById(card.id) == null) {
         return;
       }
+      final reconciledChanged = await reconcileVoiceprintsAndCluesForEvents(
+        sources,
+        extraClues: draft.speakerClues,
+        notify: false,
+      );
+      if (_disposed ||
+          _cancelledSummaryIds.contains(card.id) ||
+          _genEpoch != myEpoch ||
+          summaryById(card.id) == null) {
+        return;
+      }
+      final resolvedTitle = reconciledChanged
+          ? applySpeakerAliasesToText(draft.title, sources)
+          : draft.title;
+      final resolvedOverview = reconciledChanged
+          ? applySpeakerAliasesToText(draft.overview, sources)
+          : draft.overview;
+      final resolvedPoints = reconciledChanged
+          ? [
+              for (final p in draft.points)
+                InfoPoint(
+                  applySpeakerAliasesToText(p.title, sources),
+                  applySpeakerAliasesToText(p.detail, sources),
+                  p.sources,
+                ),
+            ]
+          : draft.points;
+      final resolvedTodos = reconciledChanged
+          ? [
+              for (final t in draft.todos)
+                applySpeakerAliasesToText(t, sources),
+            ]
+          : draft.todos;
+      final resolvedFullText = reconciledChanged
+          ? applySpeakerAliasesToText(draft.fullText, sources)
+          : draft.fullText;
+      final resolvedMarkdown = reconciledChanged
+          ? applySpeakerAliasesToText(draft.markdown, sources)
+          : draft.markdown;
       card
         ..state = SummaryState.done
         ..progress = 100
         ..error = null
-        ..title = draft.title
-        ..overview = draft.overview
+        ..title = resolvedTitle
+        ..overview = resolvedOverview
         ..structure = draft.structure
-        ..points = draft.points
-        ..todos = draft.todos
-        ..markdown = draft.markdown
-        ..fullText = draft.fullText
+        ..points = resolvedPoints
+        ..todos = resolvedTodos
+        ..markdown = resolvedMarkdown
+        ..fullText = resolvedFullText
         ..endAtMs = sources.map((e) => _windowForEvent(e).endMs).reduce(math.max)
         ..rangeLabel = _formatSummaryRangeLabel(sources)
         ..subDesc = _describeSources(sources)
@@ -3087,19 +3157,76 @@ class AppStore extends ChangeNotifier {
   static bool isUnclusteredSpeaker(String slot) =>
       slot.isEmpty || slot == '未区分' || slot == '说话人 未区分' || slot == '无语音';
 
-  String? speakerAliasFor(RecordEvent event, String rawSpeaker) {
-    final slot = normalizeSpeakerSlot(rawSpeaker);
+  String _sessionKeyForEvent(RecordEvent event) {
+    final ses = segmentViewFor(event.id)?.file.session.trim() ?? '';
+    return ses.isNotEmpty ? ses : 'event:${event.id}';
+  }
+
+  /// 为指定对话行追溯底层声纹簇编号（「说话人 N」）。
+  ///
+  /// 即使转录管线已将高置信度身份（如「老陈」）直接写入 turn.spk / utterance.speakerLabel，
+  /// 仍可从 SegmentView 的 utterance.speakerCluster 还原原始声纹簇槽位以支持单段解绑与纠偏。
+  String _resolveClusterSlotForTurn(
+    RecordEvent event,
+    int turnIndex,
+    String rawSpeaker,
+  ) {
+    final norm = normalizeSpeakerSlot(rawSpeaker);
+    if (isClusterSlotToken(rawSpeaker) && !isUnclusteredSpeaker(norm)) {
+      return norm;
+    }
+    final view = segmentViewFor(event.id);
+    if (view != null) {
+      final turns = view.turns;
+      if (turnIndex >= 0 && turnIndex < turns.length) {
+        final srcIds = turns[turnIndex].srcUtteranceIds;
+        if (srcIds.isNotEmpty) {
+          for (final utt in view.utterances) {
+            final c = utt.speakerCluster;
+            if (srcIds.contains(utt.id) && c != null && c >= 0) {
+              return '说话人 ${c + 1}';
+            }
+          }
+        }
+      }
+      if (event.dialog.isEmpty &&
+          turnIndex >= 0 &&
+          turnIndex < view.utterances.length) {
+        final c = view.utterances[turnIndex].speakerCluster;
+        if (c != null && c >= 0) return '说话人 ${c + 1}';
+      }
+    }
+    return norm;
+  }
+
+  String? speakerAliasFor(
+    RecordEvent event,
+    String rawSpeaker, {
+    int? turnIndex,
+  }) {
+    final slot = turnIndex != null
+        ? _resolveClusterSlotForTurn(event, turnIndex, rawSpeaker)
+        : normalizeSpeakerSlot(rawSpeaker);
     if (isUnclusteredSpeaker(slot)) return null;
+    final sesKey = _sessionKeyForEvent(event);
+    if (voiceprintStore.isDetached(
+      session: sesKey,
+      speakerSlot: slot,
+      eventId: event.id,
+      rawName: rawSpeaker,
+    )) {
+      return null;
+    }
+    final byEvent = _speakerAliases['event:${event.id}:$slot'];
+    if (byEvent != null && byEvent.trim().isNotEmpty) {
+      return byEvent.trim();
+    }
     final view = segmentViewFor(event.id);
     if (view != null && view.file.session.isNotEmpty) {
       final bySession = _speakerAliases['session:${view.file.session}:$slot'];
       if (bySession != null && bySession.trim().isNotEmpty) {
         return bySession.trim();
       }
-    }
-    final byEvent = _speakerAliases['event:${event.id}:$slot'];
-    if (byEvent != null && byEvent.trim().isNotEmpty) {
-      return byEvent.trim();
     }
     return null;
   }
@@ -3116,6 +3243,18 @@ class AppStore extends ChangeNotifier {
         .trim();
     final slot = normalizeSpeakerSlot(rawSpeaker);
     if (isUnclusteredSpeaker(slot)) return slot;
+    final sesKey = _sessionKeyForEvent(event);
+    if (voiceprintStore.isDetached(
+      session: sesKey,
+      speakerSlot: slot,
+      eventId: event.id,
+      rawName: clean,
+    )) {
+      if (isClusterSlotToken(slot) && !isUnclusteredSpeaker(slot)) {
+        return includeGuessSuffix ? '$slot（推测）' : slot;
+      }
+      return includeGuessSuffix ? '说话人（推测）' : '说话人';
+    }
     final alias = speakerAliasFor(event, slot);
     if (alias != null && alias.isNotEmpty) return alias;
     if (!isClusterSlotToken(clean)) return clean;
@@ -3133,6 +3272,21 @@ class AppStore extends ChangeNotifier {
     if (override != null && override.trim().isNotEmpty) {
       return override.trim();
     }
+    final slot = _resolveClusterSlotForTurn(event, turnIndex, rawSpeaker);
+    final sesKey = _sessionKeyForEvent(event);
+    if (voiceprintStore.isDetached(
+      session: sesKey,
+      speakerSlot: slot,
+      eventId: event.id,
+      rawName: rawSpeaker,
+    )) {
+      if (isClusterSlotToken(slot) && !isUnclusteredSpeaker(slot)) {
+        return includeGuessSuffix ? '$slot（推测）' : slot;
+      }
+      return includeGuessSuffix ? '说话人（推测）' : '说话人';
+    }
+    final alias = speakerAliasFor(event, slot, turnIndex: turnIndex);
+    if (alias != null && alias.isNotEmpty) return alias;
     return displaySpeaker(
       event,
       rawSpeaker,
@@ -3214,8 +3368,190 @@ class AppStore extends ChangeNotifier {
     '这个',
   };
 
-  /// 为快捷命名浮层推断「可能为：XXX」候选名（端侧声纹弱匹配 > 相邻对话上下文称呼）。
+  /// 查询指定记录与说话人槽位的待确认候选建议（优先持久化建议，其次本地确定性语义分析）。
+  SpeakerCandidateSuggestion? speakerSuggestionFor(
+    RecordEvent event,
+    String rawSpeaker, {
+    int? turnIndex,
+  }) {
+    final slot = turnIndex != null
+        ? _resolveClusterSlotForTurn(event, turnIndex, rawSpeaker)
+        : normalizeSpeakerSlot(rawSpeaker);
+    if (isUnclusteredSpeaker(slot) || !isClusterSlotToken(slot)) return null;
+    if (speakerAliasFor(event, slot, turnIndex: turnIndex) != null) {
+      return null;
+    }
+    final sesKey = _sessionKeyForEvent(event);
+    if (voiceprintStore.isDetached(
+      session: sesKey,
+      speakerSlot: slot,
+      eventId: event.id,
+      rawName: rawSpeaker,
+    )) {
+      return null;
+    }
+
+    final stored = voiceprintStore.suggestionFor(
+      session: sesKey,
+      speakerSlot: slot,
+    );
+    if (stored != null &&
+        !voiceprintStore.isSuggestionDismissed(
+          session: sesKey,
+          speakerSlot: slot,
+          candidateName: stored.candidateName,
+        )) {
+      return stored;
+    }
+
+    final turns = event.dialog.isNotEmpty ? event.dialog : event.raw;
+    if (turns.isEmpty) return null;
+    final clues = SemanticSpeakerClueExtractor.extractFromTurnLines(
+      turns,
+      knownNames: voiceprintStore.preferredRosterNames(limit: 40).toSet(),
+      eventId: event.id,
+    );
+    SemanticSpeakerClue? best;
+    for (final c in clues) {
+      if (c.speakerSlot != slot) continue;
+      if (voiceprintStore.isSuggestionDismissed(
+        session: sesKey,
+        speakerSlot: slot,
+        candidateName: c.candidateName,
+      )) {
+        continue;
+      }
+      if (best == null || c.confidence > best.confidence) {
+        best = c;
+      }
+    }
+    if (best == null) return null;
+    return SpeakerCandidateSuggestion(
+      session: sesKey,
+      speakerSlot: slot,
+      candidateName: best.candidateName,
+      confidence: best.confidence,
+      source: SpeakerSuggestionSource.semantic,
+      reason: best.evidence,
+      semanticScore: best.confidence,
+      updatedAtMs: 0,
+    );
+  }
+
+  /// 未确认声纹簇的轻提示标签后缀用候选名（若本句/本槽已明确命名则不显示）。
+  String? pendingCandidateNameForEventSlot(
+    RecordEvent event,
+    String rawSpeaker, {
+    int? turnIndex,
+  }) {
+    final slot = turnIndex != null
+        ? _resolveClusterSlotForTurn(event, turnIndex, rawSpeaker)
+        : normalizeSpeakerSlot(rawSpeaker);
+    if (!isClusterSlotToken(slot) || isUnclusteredSpeaker(slot)) return null;
+    final resolved = turnIndex != null
+        ? displayTurnSpeaker(
+            event,
+            turnIndex,
+            rawSpeaker,
+            includeGuessSuffix: false,
+          )
+        : displaySpeaker(event, rawSpeaker, includeGuessSuffix: false);
+    if (!isClusterSlotToken(resolved)) return null;
+    return speakerSuggestionFor(
+      event,
+      slot,
+      turnIndex: turnIndex,
+    )?.candidateName;
+  }
+
+  /// 收集一组记录内所有待一键确认的「说话人 N → 疑似称呼」条目标签。
+  List<
+    ({
+      RecordEvent event,
+      SpeakerCandidateSuggestion suggestion,
+      String sampleQuote,
+    })
+  >
+  pendingSpeakerSuggestionsFor(Iterable<String> eventIds) {
+    final out =
+        <
+          ({
+            RecordEvent event,
+            SpeakerCandidateSuggestion suggestion,
+            String sampleQuote,
+          })
+        >[];
+    final seenEventSlots = <String>{};
+    for (final eid in eventIds) {
+      final event = eventByIdOrNull(eid);
+      if (event == null) continue;
+      final turns = event.dialog.isNotEmpty ? event.dialog : event.raw;
+      final sesKey = _sessionKeyForEvent(event);
+
+      final genericSlots = <String>{};
+      final quotesBySlot = <String, String>{};
+      for (var i = 0; i < turns.length; i++) {
+        final t = turns[i];
+        final resolved = displayTurnSpeaker(
+          event,
+          i,
+          t.spk,
+          includeGuessSuffix: false,
+        );
+        final norm = normalizeSpeakerSlot(resolved);
+        if (!isClusterSlotToken(norm) || isUnclusteredSpeaker(norm)) continue;
+        genericSlots.add(norm);
+        quotesBySlot.putIfAbsent(norm, () => t.text.trim());
+      }
+
+      // 同时纳入存储于 VoiceprintLibraryStore 的跨段建议
+      for (final s in voiceprintStore.suggestionsForSession(sesKey)) {
+        if (genericSlots.contains(s.speakerSlot) || turns.isEmpty) {
+          genericSlots.add(s.speakerSlot);
+        }
+      }
+
+      for (final slot in genericSlots) {
+        final key = '${event.id}|$slot';
+        if (!seenEventSlots.add(key)) continue;
+        final sug = speakerSuggestionFor(event, slot);
+        if (sug == null) continue;
+        out.add((
+          event: event,
+          suggestion: sug,
+          sampleQuote: quotesBySlot[slot] ?? '',
+        ));
+      }
+    }
+    out.sort(
+      (a, b) => b.suggestion.confidence.compareTo(a.suggestion.confidence),
+    );
+    return out;
+  }
+
+  String? speakerSuggestionReasonFor(
+    RecordEvent event,
+    int turnIndex,
+    String rawSpeaker,
+  ) {
+    return speakerSuggestionFor(
+      event,
+      rawSpeaker,
+      turnIndex: turnIndex,
+    )?.reason;
+  }
+
+  /// 为快捷命名浮层推断「可能为：XXX」候选名（联合声纹+语义建议 > 端侧声纹弱匹配 > 相邻对话上下文称呼）。
   String? speakerHintFor(RecordEvent event, int turnIndex, String rawSpeaker) {
+    final suggestion = speakerSuggestionFor(
+      event,
+      rawSpeaker,
+      turnIndex: turnIndex,
+    );
+    if (suggestion != null && suggestion.candidateName.trim().isNotEmpty) {
+      return suggestion.candidateName.trim();
+    }
+
     final slot = normalizeSpeakerSlot(rawSpeaker);
     final view = segmentViewFor(event.id);
     if (view != null && !isUnclusteredSpeaker(slot)) {
@@ -3301,11 +3637,22 @@ class AppStore extends ChangeNotifier {
     List<double>? sampleEmbedding,
     String? sampleDeviceLabel,
     String? sampleSceneLabel,
+    bool captureUndoSnapshot = true,
   }) async {
     final clean = newName.trim();
     if (clean.isEmpty) {
       return (saved: false, frequentFull: false, profile: null);
     }
+
+    final undoBeforeAliases = captureUndoSnapshot
+        ? Map<String, String>.of(_speakerAliases)
+        : null;
+    final undoBeforeTurns = captureUndoSnapshot
+        ? Map<String, String>.of(_turnSpeakerOverrides)
+        : null;
+    final undoBeforeVp = captureUndoSnapshot
+        ? voiceprintStore.exportJson()
+        : null;
 
     final pendingBubble = _pendingMergedBubbleTurns;
     final effectiveBubbleTurns =
@@ -3316,8 +3663,9 @@ class AppStore extends ChangeNotifier {
             ? pendingBubble.turnIndices
             : null);
 
-    final slot = normalizeSpeakerSlot(rawSpeaker);
+    final slot = _resolveClusterSlotForTurn(event, turnIndex, rawSpeaker);
     final view = segmentViewFor(event.id);
+    final sesKey = _sessionKeyForEvent(event);
     voiceprintStore.recordRecentName(clean, notify: false);
 
     if (!applyToOtherMatching) {
@@ -3329,6 +3677,17 @@ class AppStore extends ChangeNotifier {
         _turnSpeakerOverrides['turn:${event.id}:$turnIndex'] = clean;
       }
     } else if (!isUnclusteredSpeaker(slot)) {
+      voiceprintStore.clearDetachedSlot(
+        session: sesKey,
+        speakerSlot: slot,
+        eventId: event.id,
+        notify: false,
+      );
+      voiceprintStore.clearSuggestion(
+        session: sesKey,
+        speakerSlot: slot,
+        notify: false,
+      );
       _turnSpeakerOverrides['turn:${event.id}:$turnIndex'] = clean;
       final sesId = view?.file.session.trim() ?? '';
       final targets = <RecordEvent>[
@@ -3340,13 +3699,25 @@ class AppStore extends ChangeNotifier {
       ];
       if (!targets.any((e) => e.id == event.id)) targets.add(event);
       for (final e in targets) {
+        final eSes = _sessionKeyForEvent(e);
+        voiceprintStore.clearDetachedSlot(
+          session: eSes,
+          speakerSlot: slot,
+          eventId: e.id,
+          notify: false,
+        );
+        voiceprintStore.clearSuggestion(
+          session: eSes,
+          speakerSlot: slot,
+          notify: false,
+        );
         _turnSpeakerOverrides.removeWhere((k, _) {
           if (!k.startsWith('turn:${e.id}:')) return false;
           final idx = int.tryParse(k.split(':').last);
           if (idx == null) return false;
           final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
           if (idx < 0 || idx >= turns.length) return false;
-          return normalizeSpeakerSlot(turns[idx].spk) == slot;
+          return _resolveClusterSlotForTurn(e, idx, turns[idx].spk) == slot;
         });
         _turnSpeakerOverrides['turn:${event.id}:$turnIndex'] = clean;
         if (view != null && sesId.isNotEmpty) {
@@ -3369,6 +3740,7 @@ class AppStore extends ChangeNotifier {
 
     PersonVoiceProfile? savedProfile;
     var frequentFull = false;
+    final retroSyncedEventIds = <String>{};
     if (rememberVoiceprint) {
       var centroid = sampleEmbedding;
       SpeakerProfileStore? pStore;
@@ -3397,23 +3769,38 @@ class AppStore extends ChangeNotifier {
       }
       final existing = voiceprintStore.findByName(clean);
       final hadSlot = existing?.isInFrequentSlot ?? false;
+      final devLabel =
+          sampleDeviceLabel ??
+          view?.file.resolvedSourceDeviceLabel ??
+          event.sourceDeviceLabel ??
+          '录音卡';
+      final srcLane = view?.file.resolvedSourceLane.code ?? event.sourceLane;
+      final scene = sampleSceneLabel ?? event.title;
+      if (centroid != null && centroid.isNotEmpty) {
+        voiceprintStore.observeChannelEmbedding(
+          centroid,
+          deviceLabel: devLabel,
+          sourceLane: srcLane,
+          sceneLabel: scene,
+          notify: false,
+        );
+      }
       savedProfile = voiceprintStore.upsertPersonAndSample(
         name: clean,
         embedding: centroid,
-        deviceLabel: sampleDeviceLabel ?? (view?.file.deviceName ?? '录音卡'),
-        sceneLabel: sampleSceneLabel ?? event.title,
+        deviceLabel: devLabel,
+        sourceLane: srcLane,
+        sceneLabel: scene,
         preferFrequentSlot: true,
+        notify: false,
       );
       if (!hadSlot && !savedProfile.isInFrequentSlot) {
         frequentFull = true;
       }
 
-      // 回溯历史会话声纹质心（>= 0.72 确认更新历史说话人别名；[0.48, 0.72) 记录弱提示）
-      final refVectors = <List<double>>[
-        for (final s in savedProfile.samples)
-          if (s.embedding.isNotEmpty) s.embedding,
-      ];
-      if (pStore != null && refVectors.isNotEmpty) {
+      // 全库跨设备回溯历史会话声纹质心（Margin + AS-Norm + 通道自适应；每会话最多 1-to-1 指认最佳簇）
+      if (pStore != null &&
+          savedProfile.samples.any((s) => s.embedding.isNotEmpty)) {
         final curSes = view?.file.session.trim() ?? '';
         final candidateSessions = <String>{
           for (final f in recordingFiles)
@@ -3425,37 +3812,179 @@ class AppStore extends ChangeNotifier {
           if (!applyToOtherMatching && otherSes == curSes) continue;
           try {
             final otherSet = await pStore.load(otherSes);
+            if (otherSet.profiles.isEmpty) continue;
+            final otherEvents = [
+              for (final ev in events)
+                if (segmentViewFor(ev.id)?.file.session.trim() == otherSes) ev,
+            ];
+            final firstOtherView = otherEvents.isNotEmpty
+                ? segmentViewFor(otherEvents.first.id)
+                : null;
+            final oDev =
+                firstOtherView?.file.resolvedSourceDeviceLabel ??
+                (otherEvents.isNotEmpty
+                    ? otherEvents.first.sourceDeviceLabel
+                    : null) ??
+                otherSet.deviceLabel;
+            final oLane =
+                firstOtherView?.file.resolvedSourceLane.code ??
+                (otherEvents.isNotEmpty
+                    ? otherEvents.first.sourceLane
+                    : null);
+            final oScene = otherEvents.isNotEmpty
+                ? otherEvents.first.title
+                : '录音';
+
+            final oChannelKey = VoiceChannel.normalizeChannelKey(
+              oDev,
+              sourceLane: oLane,
+              sceneLabel: oScene,
+            );
+            if (_observedChannelKeys.add('$otherSes|$oChannelKey')) {
+              for (final sp in otherSet.profiles) {
+                if (sp.centroid.isEmpty) continue;
+                voiceprintStore.observeChannelEmbedding(
+                  sp.centroid,
+                  deviceLabel: oDev,
+                  sourceLane: oLane,
+                  sceneLabel: oScene,
+                  notify: false,
+                );
+              }
+            }
+
+            // 查找本会话内对 clean 匹配分最高的单一簇（1-to-1 互斥，避免跨人污染）
+            ({String slot, VoiceprintMatchEvaluation eval, VoiceprintCandidateScore top})?
+                bestCluster;
             for (final sp in otherSet.profiles) {
               if (sp.centroid.isEmpty) continue;
-              var bestSim = 0.0;
-              for (final vec in refVectors) {
-                final sim = VoiceprintLibraryStore.cosineSimilarity(
-                  vec,
-                  sp.centroid,
-                );
-                if (sim > bestSim) bestSim = sim;
-              }
               final otherSlot = '说话人 ${sp.index + 1}';
-              if (bestSim >= 0.72) {
+              if (otherSes == curSes && otherSlot == slot) continue;
+              if (voiceprintStore.isDetached(
+                session: otherSes,
+                speakerSlot: otherSlot,
+              )) {
+                continue;
+              }
+              final existingSesAlias =
+                  (_speakerAliases['session:$otherSes:$otherSlot'] ?? '')
+                      .trim();
+              if (existingSesAlias.isNotEmpty && existingSesAlias != clean) {
+                continue;
+              }
+              final peerCentroids = [
+                for (final peer in otherSet.profiles)
+                  if (peer.index != sp.index && peer.centroid.isNotEmpty)
+                    peer.centroid,
+              ];
+              final eval = voiceprintStore.matchAllProfiles(
+                sp.centroid,
+                deviceLabel: oDev,
+                sourceLane: oLane,
+                sceneLabel: oScene,
+                speechMs: sp.speechMs,
+                sessionPeerCentroids: peerCentroids,
+              );
+              final topCand =
+                  eval.candidates.isNotEmpty ? eval.candidates.first : null;
+              if (topCand == null || topCand.profile.name.trim() != clean) {
+                continue;
+              }
+              if (bestCluster == null ||
+                  topCand.effectiveScore >
+                      bestCluster.top.effectiveScore) {
+                bestCluster = (slot: otherSlot, eval: eval, top: topCand);
+              }
+            }
+            if (bestCluster == null) continue;
+            final otherSlot = bestCluster.slot;
+            final eval = bestCluster.eval;
+            final topCand = bestCluster.top;
+            final bestScore = topCand.effectiveScore;
+            final autoConfirmed =
+                eval.confirmed != null && eval.confirmed!.name.trim() == clean;
+            if (autoConfirmed ||
+                (bestScore >= 0.72 &&
+                    (eval.margin >= 0.05 || eval.candidates.length == 1))) {
+              if (!voiceprintStore.isDetached(
+                session: otherSes,
+                speakerSlot: otherSlot,
+              )) {
                 _speakerAliases['session:$otherSes:$otherSlot'] = clean;
-                for (final ev in events) {
-                  if (segmentViewFor(ev.id)?.file.session.trim() == otherSes) {
-                    _speakerAliases['event:${ev.id}:$otherSlot'] = clean;
-                  }
+              }
+              for (final ev in otherEvents) {
+                if (voiceprintStore.isDetached(
+                  session: otherSes,
+                  speakerSlot: otherSlot,
+                  eventId: ev.id,
+                  rawName: clean,
+                )) {
+                  continue;
                 }
-              } else if (bestSim >= 0.48) {
-                voiceprintStore.recordFuzzyHint(
+                final prevEvAlias =
+                    (_speakerAliases['event:${ev.id}:$otherSlot'] ?? '').trim();
+                if (prevEvAlias.isNotEmpty && prevEvAlias != clean) continue;
+                if (prevEvAlias != clean && ev.id != event.id) {
+                  retroSyncedEventIds.add(ev.id);
+                }
+                _speakerAliases['event:${ev.id}:$otherSlot'] = clean;
+              }
+              voiceprintStore.clearSuggestion(
+                session: otherSes,
+                speakerSlot: otherSlot,
+                notify: false,
+              );
+            } else if (bestScore >= 0.44 &&
+                !voiceprintStore.isSuggestionDismissed(
                   session: otherSes,
                   speakerSlot: otherSlot,
                   candidateName: clean,
-                );
-              }
+                )) {
+              final rDev = VoiceChannel.readableDeviceLabel(
+                oDev,
+                sourceLane: oLane,
+                sceneLabel: oScene,
+              );
+              voiceprintStore.recordCandidateSuggestion(
+                SpeakerCandidateSuggestion(
+                  session: otherSes,
+                  speakerSlot: otherSlot,
+                  candidateName: clean,
+                  confidence: bestScore.clamp(0.45, 0.79),
+                  source: SpeakerSuggestionSource.voiceprint,
+                  reason:
+                      '${topCand.sameChannel ? "同设备" : "跨设备($rDev)"}声纹相似度 ${(bestScore * 100).round()}%',
+                  acousticScore: bestScore,
+                  margin: eval.margin,
+                  channelKey: oChannelKey,
+                  deviceLabel: rDev,
+                ),
+                notify: false,
+              );
+              voiceprintStore.recordFuzzyHint(
+                session: otherSes,
+                speakerSlot: otherSlot,
+                candidateName: clean,
+                notify: false,
+              );
             }
           } on Object {
             // 忽略单个损坏会话档案
           }
         }
       }
+    }
+
+    if (captureUndoSnapshot &&
+        undoBeforeAliases != null &&
+        undoBeforeTurns != null &&
+        undoBeforeVp != null) {
+      _lastNamingUndo = _SpeakerNamingUndoSnapshot(
+        previousAliases: undoBeforeAliases,
+        previousTurnOverrides: undoBeforeTurns,
+        previousVoiceprintJson: undoBeforeVp,
+        retroSyncedEventCount: retroSyncedEventIds.length,
+      );
     }
 
     if (_disposed) {
@@ -3465,6 +3994,445 @@ class AppStore extends ChangeNotifier {
     _persist();
     notifyListeners();
     return (saved: true, frequentFull: frequentFull, profile: savedProfile);
+  }
+
+  /// 撤销最近一次「声纹确认 + 历史自动回填」（供 SnackBar 1-Tap 撤销）。
+  bool undoLastSpeakerNaming() {
+    final snap = _lastNamingUndo;
+    if (snap == null) return false;
+    _speakerAliases
+      ..clear()
+      ..addAll(snap.previousAliases);
+    _turnSpeakerOverrides
+      ..clear()
+      ..addAll(snap.previousTurnOverrides);
+    voiceprintStore.restoreJson(snap.previousVoiceprintJson, notify: false);
+    _lastNamingUndo = null;
+    if (_disposed) return false;
+    _onAliasesMutated();
+    _persist();
+    notifyListeners();
+    return true;
+  }
+
+  /// 一键确认单条声纹/语义推荐：写回当前与同会话、入库对应通道质心，并自动回溯历史录音。
+  Future<({bool saved, int retroSyncedCount})> confirmSpeakerSuggestion({
+    required RecordEvent event,
+    required SpeakerCandidateSuggestion suggestion,
+  }) async {
+    final turns = event.dialog.isNotEmpty ? event.dialog : event.raw;
+    var firstIdx = 0;
+    var rawSpk = suggestion.speakerSlot;
+    for (var i = 0; i < turns.length; i++) {
+      final slot = _resolveClusterSlotForTurn(event, i, turns[i].spk);
+      if (slot == suggestion.speakerSlot) {
+        firstIdx = i;
+        rawSpk = turns[i].spk;
+        break;
+      }
+    }
+    final res = await applyQuickSpeakerNaming(
+      event: event,
+      turnIndex: firstIdx,
+      rawSpeaker: rawSpk,
+      newName: suggestion.candidateName,
+      rememberVoiceprint: true,
+      applyToOtherMatching: true,
+    );
+    return (saved: res.saved, retroSyncedCount: lastRetroSyncedEventCount);
+  }
+
+  /// 一键确认当前卡片/记录内全部候选建议（保留单一撤销点以便一键回退整批）。
+  Future<({int confirmedCount, int retroSyncedCount})>
+  confirmAllSpeakerSuggestions(
+    List<
+      ({
+        RecordEvent event,
+        SpeakerCandidateSuggestion suggestion,
+        String sampleQuote,
+      })
+    >
+    items,
+  ) async {
+    if (items.isEmpty) return (confirmedCount: 0, retroSyncedCount: 0);
+    final beforeAliases = Map<String, String>.of(_speakerAliases);
+    final beforeTurns = Map<String, String>.of(_turnSpeakerOverrides);
+    final beforeVp = voiceprintStore.exportJson();
+
+    var confirmed = 0;
+    for (final item in items) {
+      final turns = item.event.dialog.isNotEmpty
+          ? item.event.dialog
+          : item.event.raw;
+      var firstIdx = 0;
+      var rawSpk = item.suggestion.speakerSlot;
+      for (var i = 0; i < turns.length; i++) {
+        if (_resolveClusterSlotForTurn(item.event, i, turns[i].spk) ==
+            item.suggestion.speakerSlot) {
+          firstIdx = i;
+          rawSpk = turns[i].spk;
+          break;
+        }
+      }
+      final res = await applyQuickSpeakerNaming(
+        event: item.event,
+        turnIndex: firstIdx,
+        rawSpeaker: rawSpk,
+        newName: item.suggestion.candidateName,
+        rememberVoiceprint: true,
+        applyToOtherMatching: true,
+        captureUndoSnapshot: false,
+      );
+      if (res.saved) confirmed++;
+    }
+
+    final targetIds = {for (final i in items) i.event.id};
+    final changedOtherEvents = <String>{};
+    for (final entry in _speakerAliases.entries) {
+      if (!entry.key.startsWith('event:')) continue;
+      final rest = entry.key.substring(6);
+      final colon = rest.indexOf(':');
+      if (colon <= 0) continue;
+      final evId = rest.substring(0, colon);
+      if (!targetIds.contains(evId) &&
+          beforeAliases[entry.key] != entry.value) {
+        changedOtherEvents.add(evId);
+      }
+    }
+    _lastNamingUndo = _SpeakerNamingUndoSnapshot(
+      previousAliases: beforeAliases,
+      previousTurnOverrides: beforeTurns,
+      previousVoiceprintJson: beforeVp,
+      retroSyncedEventCount: changedOtherEvents.length,
+    );
+    _onAliasesMutated();
+    _persist();
+    if (!_disposed) notifyListeners();
+    return (
+      confirmedCount: confirmed,
+      retroSyncedCount: changedOtherEvents.length,
+    );
+  }
+
+  void dismissSpeakerSuggestion({
+    required RecordEvent event,
+    required SpeakerCandidateSuggestion suggestion,
+  }) {
+    voiceprintStore.dismissSuggestion(
+      session: _sessionKeyForEvent(event),
+      speakerSlot: suggestion.speakerSlot,
+      candidateName: suggestion.candidateName,
+      notify: false,
+    );
+    _onAliasesMutated();
+    _persist();
+    if (!_disposed) notifyListeners();
+  }
+
+  /// 将当前记录片段的某个说话人槽位解绑为「未确认（说话人 N（推测））」，隔离错误归并防污染声纹库。
+  void detachSpeakerForEvent({
+    required RecordEvent event,
+    required int turnIndex,
+    required String rawSpeaker,
+  }) {
+    final slot = _resolveClusterSlotForTurn(event, turnIndex, rawSpeaker);
+    if (isUnclusteredSpeaker(slot)) return;
+    final currentName = displayTurnSpeaker(
+      event,
+      turnIndex,
+      rawSpeaker,
+      includeGuessSuffix: false,
+    ).trim();
+    final sesKey = _sessionKeyForEvent(event);
+
+    _lastNamingUndo = _SpeakerNamingUndoSnapshot(
+      previousAliases: Map<String, String>.of(_speakerAliases),
+      previousTurnOverrides: Map<String, String>.of(_turnSpeakerOverrides),
+      previousVoiceprintJson: voiceprintStore.exportJson(),
+      retroSyncedEventCount: 0,
+    );
+
+    _speakerAliases.remove('event:${event.id}:$slot');
+    final view = segmentViewFor(event.id);
+    if (view != null && view.file.session.trim().isNotEmpty) {
+      final sesId = view.file.session.trim();
+      final sameSessionOtherEvents = events.any(
+        (other) =>
+            other.id != event.id &&
+            segmentViewFor(other.id)?.file.session.trim() == sesId,
+      );
+      if (!sameSessionOtherEvents) {
+        _speakerAliases.remove('session:$sesId:$slot');
+      }
+    }
+    _turnSpeakerOverrides.removeWhere((k, _) {
+      if (!k.startsWith('turn:${event.id}:')) return false;
+      final idx = int.tryParse(k.split(':').last);
+      if (idx == null) return false;
+      final turns = event.dialog.isNotEmpty ? event.dialog : event.raw;
+      if (idx < 0 || idx >= turns.length) return false;
+      return _resolveClusterSlotForTurn(event, idx, turns[idx].spk) == slot;
+    });
+
+    voiceprintStore.detachSlot(
+      session: sesKey,
+      speakerSlot: slot,
+      eventId: event.id,
+      personName: isClusterSlotToken(currentName) ? null : currentName,
+      notify: false,
+    );
+    voiceprintStore.clearSuggestion(
+      session: sesKey,
+      speakerSlot: slot,
+      notify: false,
+    );
+
+    _onAliasesMutated();
+    _persist();
+    if (!_disposed) notifyListeners();
+  }
+
+  /// 在列表加载或总结生成后自动执行「全库声纹 × 通道统计 × 语义线索」联合对账。
+  Future<bool> reconcileVoiceprintsAndCluesForEvents(
+    List<RecordEvent> targets, {
+    List<SemanticSpeakerClue> extraClues = const [],
+    bool notify = true,
+  }) async {
+    if (targets.isEmpty) return false;
+    SpeakerProfileStore? pStore;
+    if (_recordingStore != null) {
+      try {
+        pStore = SpeakerProfileStore(root: await _recordingStore!.root());
+      } on Object {
+        pStore = null;
+      }
+    }
+
+    final sessionCache = <String, SpeakerProfileSet?>{};
+    final knownNames = voiceprintStore.preferredRosterNames(limit: 40).toSet();
+    var aliasOrEnrollmentChanged = false;
+    var anyStateMutated = false;
+
+    for (final e in targets) {
+      final view = segmentViewFor(e.id);
+      final realSession = view?.file.session.trim() ?? '';
+      final sesKey = realSession.isNotEmpty ? realSession : 'event:${e.id}';
+      SpeakerProfileSet? profileSet;
+      if (pStore != null && realSession.isNotEmpty) {
+        if (sessionCache.containsKey(realSession)) {
+          profileSet = sessionCache[realSession];
+        } else {
+          try {
+            profileSet = await pStore.load(realSession);
+          } on Object {
+            profileSet = null;
+          }
+          sessionCache[realSession] = profileSet;
+        }
+      }
+
+      final devLabel =
+          view?.file.resolvedSourceDeviceLabel ??
+          e.sourceDeviceLabel ??
+          profileSet?.deviceLabel ??
+          '录音卡';
+      final srcLane = view?.file.resolvedSourceLane.code ?? e.sourceLane;
+      final channelKey = VoiceChannel.normalizeChannelKey(
+        devLabel,
+        sourceLane: srcLane,
+        sceneLabel: e.title,
+      );
+
+      final speakerCentroids = <String, List<double>>{};
+      final speakerSpeechMs = <String, int>{};
+      if (profileSet != null) {
+        final observeKey = '$realSession|$channelKey';
+        final shouldObserve = _observedChannelKeys.add(observeKey);
+        for (final sp in profileSet.profiles) {
+          if (sp.centroid.isEmpty) continue;
+          final slot = '说话人 ${sp.index + 1}';
+          speakerCentroids[slot] = sp.centroid;
+          speakerSpeechMs[slot] = sp.speechMs;
+          if (shouldObserve) {
+            voiceprintStore.observeChannelEmbedding(
+              sp.centroid,
+              deviceLabel: devLabel,
+              sourceLane: srcLane,
+              sceneLabel: e.title,
+              notify: false,
+            );
+          }
+        }
+      }
+
+      final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
+      final lockedSlotToName = <String, String>{};
+      for (var ti = 0; ti < turns.length; ti++) {
+        final rawSpk = turns[ti].spk;
+        final slot = _resolveClusterSlotForTurn(e, ti, rawSpk);
+        if (!SemanticSpeakerClueExtractor.isClusterSlot(slot)) continue;
+        if (voiceprintStore.isDetached(
+          session: sesKey,
+          speakerSlot: slot,
+          eventId: e.id,
+          rawName: rawSpk,
+        )) {
+          continue;
+        }
+        final existingAlias =
+            _speakerAliases['event:${e.id}:$slot'] ??
+            (realSession.isNotEmpty
+                ? _speakerAliases['session:$realSession:$slot']
+                : null);
+        if (existingAlias != null && existingAlias.trim().isNotEmpty) {
+          lockedSlotToName[slot] = existingAlias.trim();
+        } else if (!isClusterSlotToken(rawSpk) && !isUnclusteredSpeaker(rawSpk)) {
+          lockedSlotToName[slot] = rawSpk.trim();
+        }
+      }
+      for (final slot in speakerCentroids.keys) {
+        if (lockedSlotToName.containsKey(slot)) continue;
+        if (voiceprintStore.isDetached(
+          session: sesKey,
+          speakerSlot: slot,
+          eventId: e.id,
+        )) {
+          continue;
+        }
+        final existingAlias =
+            _speakerAliases['event:${e.id}:$slot'] ??
+            (realSession.isNotEmpty
+                ? _speakerAliases['session:$realSession:$slot']
+                : null);
+        if (existingAlias != null && existingAlias.trim().isNotEmpty) {
+          lockedSlotToName[slot] = existingAlias.trim();
+        }
+      }
+
+      // 从原始槽位视图抽取确定性语义线索 + 合并云端结构化线索
+      final turnDtosForClues = <({String speaker, String text})>[
+        for (var ti = 0; ti < turns.length; ti++)
+          (
+            speaker: _resolveClusterSlotForTurn(e, ti, turns[ti].spk),
+            text: turns[ti].text,
+          ),
+      ];
+      final localClues = SemanticSpeakerClueExtractor.extractFromTurnPairs(
+        turnDtosForClues,
+        knownNames: knownNames,
+        eventId: e.id,
+      );
+      final combinedClues = <SemanticSpeakerClue>[
+        ...localClues,
+        for (final c in extraClues)
+          if (c.eventId == e.id || (c.eventId == null && targets.length == 1))
+            SemanticSpeakerClue(
+              speakerSlot: c.speakerSlot,
+              candidateName: c.candidateName,
+              confidence: c.confidence,
+              kind: c.kind,
+              evidence: c.evidence,
+              eventId: e.id,
+            ),
+      ];
+
+      if (speakerCentroids.isEmpty && combinedClues.isEmpty) continue;
+
+      final resolution = JointSpeakerResolver.resolveSession(
+        session: sesKey,
+        speakerCentroids: speakerCentroids,
+        speakerSpeechMs: speakerSpeechMs,
+        semanticClues: combinedClues,
+        voiceprintStore: voiceprintStore,
+        deviceLabel: devLabel,
+        sourceLane: srcLane,
+        sceneLabel: e.title,
+        lockedSlotToName: lockedSlotToName,
+        nowMs: DateTime.now().millisecondsSinceEpoch,
+      );
+
+      for (final outcome in resolution.autoConfirmed.values) {
+        if (lockedSlotToName.containsKey(outcome.speakerSlot)) continue;
+        if (voiceprintStore.isDetached(
+          session: sesKey,
+          speakerSlot: outcome.speakerSlot,
+          eventId: e.id,
+          rawName: outcome.personName,
+        )) {
+          continue;
+        }
+        if ((_speakerAliases['event:${e.id}:${outcome.speakerSlot}'] ?? '') !=
+            outcome.personName) {
+          _speakerAliases['event:${e.id}:${outcome.speakerSlot}'] =
+              outcome.personName;
+          aliasOrEnrollmentChanged = true;
+          anyStateMutated = true;
+        }
+        if (realSession.isNotEmpty) {
+          final hasMultipleEvents = events.where(
+            (ev) => segmentViewFor(ev.id)?.file.session.trim() == realSession,
+          ).length > 1;
+          if (!hasMultipleEvents &&
+              (_speakerAliases['session:$realSession:${outcome.speakerSlot}'] ??
+                      '')
+                  .isEmpty) {
+            _speakerAliases['session:$realSession:${outcome.speakerSlot}'] =
+                outcome.personName;
+          }
+        }
+        voiceprintStore.clearSuggestion(
+          session: sesKey,
+          speakerSlot: outcome.speakerSlot,
+          notify: false,
+        );
+        final centroid = speakerCentroids[outcome.speakerSlot];
+        if (outcome.shouldEnrollChannelCentroid &&
+            centroid != null &&
+            centroid.isNotEmpty &&
+            _autoEnrolledSessionSlots.add(
+              '$sesKey|${outcome.speakerSlot}|${outcome.personName}',
+            )) {
+          voiceprintStore.upsertPersonAndSample(
+            name: outcome.personName,
+            embedding: centroid,
+            deviceLabel: devLabel,
+            sourceLane: srcLane,
+            sceneLabel: e.title,
+            preferFrequentSlot: true,
+            notify: false,
+          );
+          anyStateMutated = true;
+        }
+      }
+
+      for (final sug in resolution.suggestions.values) {
+        if (lockedSlotToName.containsKey(sug.speakerSlot)) continue;
+        if (voiceprintStore.isDetached(
+          session: sesKey,
+          speakerSlot: sug.speakerSlot,
+          eventId: e.id,
+        )) {
+          continue;
+        }
+        final prev = voiceprintStore.suggestionFor(
+          session: sesKey,
+          speakerSlot: sug.speakerSlot,
+        );
+        if (prev?.candidateName == sug.candidateName &&
+            prev?.reason == sug.reason) {
+          continue;
+        }
+        voiceprintStore.recordCandidateSuggestion(sug, notify: false);
+        anyStateMutated = true;
+      }
+    }
+
+    if (anyStateMutated) {
+      _onAliasesMutated();
+      _persist();
+      if (notify && !_disposed) notifyListeners();
+    }
+    return aliasOrEnrollmentChanged;
   }
 
   /// 生成卡片/详情摘要行里的说话人汇总文本。
@@ -3771,6 +4739,9 @@ class AppStore extends ChangeNotifier {
     eventPhotos = {};
     _speakerAliases = {};
     _turnSpeakerOverrides = {};
+    _lastNamingUndo = null;
+    _observedChannelKeys.clear();
+    _autoEnrolledSessionSlots.clear();
     _onAliasesMutated();
     _restoringState = true;
     try {

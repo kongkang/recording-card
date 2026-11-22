@@ -21,6 +21,7 @@ import '../../core/models/record.dart';
 import '../../core/models/summary.dart';
 import '../../core/store/agent_config_store.dart';
 import '../net/model_gateway.dart';
+import '../voiceprint/joint_speaker_resolver.dart';
 
 class SummaryGenerationException implements Exception {
   const SummaryGenerationException(this.message);
@@ -39,6 +40,7 @@ class SummaryDraft {
     required this.todos,
     required this.markdown,
     this.fullText = '',
+    this.speakerClues = const [],
   });
 
   final String title;
@@ -48,6 +50,7 @@ class SummaryDraft {
   final List<String> todos;
   final String markdown;
   final String fullText;
+  final List<SemanticSpeakerClue> speakerClues;
 }
 
 class SummaryGenerator {
@@ -85,7 +88,10 @@ class SummaryGenerator {
     return picked;
   }
 
-  String _buildSystemPrompt({bool isReduce = false}) {
+  String _buildSystemPrompt({
+    bool isReduce = false,
+    List<String> knownSpeakerNames = const [],
+  }) {
     final cfg = _agentConfig;
     final customRole = cfg?.promptFor('summary').trim() ?? '';
     final skillLines = cfg?.enabledSkillRules ?? const <String>[];
@@ -99,6 +105,19 @@ class SummaryGenerator {
       buffer.writeln('已启用的整理技能约束：');
       for (final rule in skillLines) {
         buffer.writeln('- $rule');
+      }
+    }
+    if (knownSpeakerNames.isNotEmpty) {
+      final cleanRoster = [
+        for (final n in knownSpeakerNames)
+          if (n.trim().isNotEmpty) n.trim(),
+      ];
+      if (cleanRoster.isNotEmpty) {
+        buffer
+          ..writeln()
+          ..writeln(
+            '已知人物名录（仅姓名参考，无声纹向量；若对话中未识别的「说话人 N」可从呼语、自报或分工明确推知对应人物，请在 speakerClues 中标注）：${cleanRoster.join("、")}',
+          );
       }
     }
     buffer
@@ -127,6 +146,7 @@ class SummaryGenerator {
     List<RecordEvent> events, {
     void Function(double progress, String step)? onProgress,
     String Function(RecordEvent event, String rawSpeaker)? speakerResolver,
+    List<String> knownSpeakerNames = const [],
     bool Function()? isCancelled,
   }) async {
     void checkCancelled() {
@@ -180,7 +200,9 @@ class SummaryGenerator {
       final transcript = blocks.map((b) => b.formatted).join('\n');
       raw = await _gateway.chat(
         [
-          ChatMessage.system(_buildSystemPrompt()),
+          ChatMessage.system(
+            _buildSystemPrompt(knownSpeakerNames: knownSpeakerNames),
+          ),
           ChatMessage.user(transcript),
         ],
         model: modelOverride,
@@ -196,6 +218,7 @@ class SummaryGenerator {
         blocks: blocks,
         model: modelOverride,
         temperature: temp,
+        knownSpeakerNames: knownSpeakerNames,
         onProgress: onProgress,
         checkCancelled: checkCancelled,
       );
@@ -205,6 +228,7 @@ class SummaryGenerator {
       raw,
       ordered,
       speakerResolver: speakerResolver,
+      knownSpeakerNames: knownSpeakerNames,
     );
     onProgress?.call(1, '完成');
     return draft;
@@ -215,6 +239,7 @@ class SummaryGenerator {
     required List<_FormattedEventBlock> blocks,
     required String? model,
     required double temperature,
+    List<String> knownSpeakerNames = const [],
     required void Function(double progress, String step)? onProgress,
     required void Function() checkCancelled,
   }) async {
@@ -290,7 +315,12 @@ class SummaryGenerator {
 
     final raw = await _gateway.chat(
       [
-        ChatMessage.system(_buildSystemPrompt(isReduce: true)),
+        ChatMessage.system(
+          _buildSystemPrompt(
+            isReduce: true,
+            knownSpeakerNames: knownSpeakerNames,
+          ),
+        ),
         ChatMessage.user(reduceInput.toString()),
       ],
       model: model,
@@ -327,12 +357,14 @@ class SummaryGenerator {
   "overview": "内容概览（简短单句备忘写精炼 1 句；多条或长对话写 2-3 句）",
   "structure": [{"name": "主题分组名", "leaves": ["核心要点"]}],
   "points": [{"title": "信息点标题", "detail": "具体细节说明", "sources": ["对应的记录id"]}],
-  "todos": ["可执行的行动项"]
+  "todos": ["可执行的行动项"],
+  "speakerClues": [{"eventId": "记录id", "slot": "说话人 N", "name": "推测姓名", "confidence": 0.78, "kind": "self_intro|vocative|llm", "evidence": "上下文依据"}]
 }
 要求：
 1. 按输入篇幅自适应详略：若输入只是几秒至几十秒的简短口头备忘或单句话，overview 保持 1 句直达重点，structure 与 points 仅提炼 1 条精炼核心结论，禁止凑数硬拆空泛分支；若输入为长对话或多条记录，按主题完整展开逻辑分支与关键数字细节；
 2. structure 与 points 至少各一条；points 的 sources 只能使用出现过的真实记录 id；
-3. 行动项仅提取原文明确的待办或承诺，没有就返回空数组 []。''';
+3. 行动项仅提取原文明确的待办或承诺，没有就返回空数组 []；
+4. speakerClues 为可选字段，仅当原文存在未识别的「说话人 N」且对话中有明确自报/直呼其名或结合已知人物名录有充分依据时填写（严禁把被谈及但未发言的第三人当成说话人），不确定可省略。''';
 
   List<_FormattedEventBlock> _buildEventBlocks(
     List<RecordEvent> events, {
@@ -525,6 +557,7 @@ class SummaryGenerator {
     String raw,
     List<RecordEvent> events, {
     String Function(RecordEvent event, String rawSpeaker)? speakerResolver,
+    List<String> knownSpeakerNames = const [],
   }) {
     final jsonText = _extractJson(raw);
     if (jsonText == null) {
@@ -599,6 +632,20 @@ class SummaryGenerator {
         ? parsedFullText
         : stitchPolishedFullText(events, speakerResolver: speakerResolver);
 
+    final knownSet = <String>{
+      for (final n in knownSpeakerNames)
+        if (n.trim().isNotEmpty) n.trim(),
+    };
+    final rawClues = SemanticSpeakerClueExtractor.parseCloudClues(
+      json['speakerClues'],
+      knownNames: knownSet,
+      eventId: events.length == 1 ? events.first.id : null,
+    );
+    final speakerClues = [
+      for (final clue in rawClues)
+        if (clue.eventId != null && byId.containsKey(clue.eventId)) clue,
+    ];
+
     return SummaryDraft(
       title: title,
       overview: overview,
@@ -606,6 +653,7 @@ class SummaryGenerator {
       points: points,
       todos: todos,
       fullText: fullText,
+      speakerClues: speakerClues,
       markdown: _markdown(
         title,
         overview,

@@ -15,6 +15,7 @@ import '../services/export/export.dart';
 import '../widgets/photo_preview_sheet.dart';
 import '../widgets/photo_thumbnail.dart';
 import '../widgets/quick_speaker_sheet.dart';
+import '../widgets/speaker_suggestion_banner.dart';
 import '../widgets/store_scope.dart';
 
 /// 吸顶 Tab 栏高度（原型 .stabs 行高 46）。
@@ -823,6 +824,12 @@ class _ResultView extends StatelessWidget {
         .length;
 
     return [
+      if (show('ov') || show('ft'))
+        SpeakerSuggestionBanner(
+          store: store,
+          eventIds: card.srcIds,
+          margin: const EdgeInsets.only(bottom: 14),
+        ),
       if (show('ov'))
         _section(context, 'sec-ov', '概览', [
           Text(
@@ -1223,7 +1230,19 @@ class _ResultView extends StatelessWidget {
                             border: Border.all(color: rc.sep),
                           ),
                           child: Text(
-                            g.resolvedSpeaker,
+                            () {
+                              if (!canTap) return g.resolvedSpeaker;
+                              final cand = store
+                                  .pendingCandidateNameForEventSlot(
+                                    e,
+                                    g.rawSpeaker,
+                                    turnIndex: g.firstTurnIndex,
+                                  );
+                              if (cand != null && cand.isNotEmpty) {
+                                return '${g.resolvedSpeaker} · 疑似$cand?';
+                              }
+                              return g.resolvedSpeaker;
+                            }(),
                             style: TextStyle(
                               fontSize: 12.5,
                               fontWeight: FontWeight.w600,
