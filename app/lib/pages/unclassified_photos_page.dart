@@ -1,8 +1,6 @@
 /// 未归类图片相册子页 —— 双列 1:1 正方形相册网格，支持大图预览、按当日记录归位与标记「不归类」。
 library;
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../core/models/record.dart';
@@ -10,6 +8,7 @@ import '../core/store/app_store.dart';
 import '../core/theme/tokens.dart';
 import '../data/seed.dart';
 import '../widgets/photo_preview_sheet.dart';
+import '../widgets/photo_thumbnail.dart';
 import '../widgets/store_scope.dart';
 
 class UnclassifiedPhotosPage extends StatelessWidget {
@@ -133,6 +132,7 @@ class UnclassifiedPhotosPage extends StatelessWidget {
                               (constraints.maxWidth - hPad * 2 - spacing)
                                   .clamp(120.0, 2000.0);
                           final tileSide = gridWidth / 2;
+                          final dayEvents = store.candidateDayEvents(dayOffset);
                           return GridView.builder(
                             key: const Key('unc-album-grid'),
                             padding: const EdgeInsets.fromLTRB(
@@ -154,12 +154,14 @@ class UnclassifiedPhotosPage extends StatelessWidget {
                               final cands = store.candidateEventsForPhoto(
                                 dayOffset,
                                 item.photo,
+                                prefilteredDayEvents: dayEvents,
                               );
                               return _AlbumTile(
                                 store: store,
                                 event: item.event,
                                 photo: item.photo,
                                 candidates: cands,
+                                logicalWidth: tileSide,
                               );
                             },
                           );
@@ -180,17 +182,18 @@ class _AlbumTile extends StatelessWidget {
     required this.event,
     required this.photo,
     required this.candidates,
+    required this.logicalWidth,
   });
 
   final AppStore store;
   final RecordEvent event;
   final EventPhoto photo;
   final List<RecordEvent> candidates;
+  final double logicalWidth;
 
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
-    final hasFile = photo.path.isNotEmpty && File(photo.path).existsSync();
     final srcLabel = photo.source == 'dyj_camera' ? '点一机抓拍' : '系统相册';
     final best = candidates.isNotEmpty ? candidates.first : null;
     final okBg = c.isDark ? const Color(0xFF1A2E1E) : const Color(0xFFEAF3EA);
@@ -216,23 +219,12 @@ class _AlbumTile extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (hasFile)
-                    Image.file(File(photo.path), fit: BoxFit.cover)
-                  else
-                    ColoredBox(
-                      color: c.isDark
-                          ? const Color(0xFF242428)
-                          : const Color(0xFFEAEAE4),
-                      child: Center(
-                        child: Icon(
-                          photo.source == 'dyj_camera'
-                              ? Icons.photo_camera_outlined
-                              : Icons.photo_outlined,
-                          size: 28,
-                          color: c.sec,
-                        ),
-                      ),
-                    ),
+                  PhotoThumbnail(
+                    path: photo.path,
+                    logicalWidth: logicalWidth,
+                    source: photo.source,
+                    placeholderIconSize: 28,
+                  ),
                   Positioned(
                     left: 8,
                     bottom: 8,
