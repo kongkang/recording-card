@@ -26,8 +26,8 @@ use objc2_core_bluetooth::{
     CBAdvertisementDataLocalNameKey, CBAdvertisementDataManufacturerDataKey,
     CBAdvertisementDataServiceDataKey, CBAdvertisementDataServiceUUIDsKey,
     CBAdvertisementDataTxPowerLevelKey, CBCentralManager, CBCentralManagerDelegate,
-    CBCharacteristic, CBDescriptor, CBManagerState, CBPeripheral, CBPeripheralDelegate, CBService,
-    CBUUID,
+    CBCentralManagerRestoredStatePeripheralsKey, CBCharacteristic, CBDescriptor, CBManagerState,
+    CBPeripheral, CBPeripheralDelegate, CBService, CBUUID,
 };
 use objc2_foundation::{
     NSArray, NSData, NSDictionary, NSError, NSNumber, NSObject, NSObjectProtocol, NSString,
@@ -43,6 +43,9 @@ use uuid::Uuid;
 pub enum CentralDelegateEvent {
     DidUpdateState {
         state: CBManagerState,
+    },
+    WillRestorePeripherals {
+        peripherals: Vec<Retained<CBPeripheral>>,
     },
     DiscoveredPeripheral {
         cbperipheral: Retained<CBPeripheral>,
@@ -183,6 +186,10 @@ impl Debug for CentralDelegateEvent {
             CentralDelegateEvent::DidUpdateState { state } => f
                 .debug_struct("CentralDelegateEvent")
                 .field("state", state)
+                .finish(),
+            CentralDelegateEvent::WillRestorePeripherals { peripherals } => f
+                .debug_struct("WillRestorePeripherals")
+                .field("count", &peripherals.len())
                 .finish(),
             CentralDelegateEvent::DiscoveredPeripheral {
                 cbperipheral,
@@ -465,10 +472,31 @@ declare_class!(
             self.send_event(CentralDelegateEvent::DidUpdateState { state });
         }
 
-        // #[method(centralManager:willRestoreState:)]
-        // fn delegate_centralmanager_willrestorestate(&self, _central: &CBCentralManager, _dict: &NSDictionary<NSString, AnyObject>) {
-        //     trace!("delegate_centralmanager_willrestorestate");
-        // }
+        #[method(centralManager:willRestoreState:)]
+        fn delegate_centralmanager_willrestorestate(
+            &self,
+            _central: &CBCentralManager,
+            dict: &NSDictionary<NSString, AnyObject>,
+        ) {
+            trace!("delegate_centralmanager_willrestorestate");
+            if let Some(raw_peripherals) =
+                dict.get(unsafe { CBCentralManagerRestoredStatePeripheralsKey })
+            {
+                let raw_ptr: *const AnyObject = raw_peripherals;
+                let arr_ptr: *const NSArray<CBPeripheral> = raw_ptr.cast();
+                let arr = unsafe { &*arr_ptr };
+                let mut restored = Vec::with_capacity(arr.count());
+                for p in arr {
+                    unsafe { p.setDelegate(Some(ProtocolObject::from_ref(self))) };
+                    restored.push(p.retain());
+                }
+                if !restored.is_empty() {
+                    self.send_event(CentralDelegateEvent::WillRestorePeripherals {
+                        peripherals: restored,
+                    });
+                }
+            }
+        }
 
         #[method(centralManager:didConnectPeripheral:)]
         fn delegate_centralmanager_didconnectperipheral(

@@ -14,7 +14,9 @@ use log::*;
 use objc2_core_bluetooth::CBManagerState;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::task;
+use uuid::Uuid;
 
 /// Implementation of [api::Central](crate::api::Central).
 #[derive(Clone, Debug)]
@@ -31,72 +33,91 @@ fn get_central_state(state: CBManagerState) -> CentralState {
     }
 }
 
+fn handle_corebluetooth_event(
+    manager: &Arc<AdapterManager<Peripheral>>,
+    adapter_sender: &Sender<CoreBluetoothMessage>,
+    msg: CoreBluetoothEvent,
+) {
+    match msg {
+        CoreBluetoothEvent::DeviceDiscovered {
+            uuid,
+            local_name,
+            advertisement_name,
+            event_receiver,
+        } => {
+            let id = uuid.into();
+            if let Some(existing) = manager.peripheral_mut(&id) {
+                existing.value().update_name(local_name, advertisement_name);
+                manager.emit(CentralEvent::DeviceUpdated(id));
+                return;
+            }
+            let (prev_local, prev_adv) = manager
+                .peripheral(&id)
+                .map(|p| p.cached_names())
+                .unwrap_or((None, None));
+            manager.add_peripheral(Peripheral::new(
+                uuid,
+                local_name.filter(|s| !s.trim().is_empty()).or(prev_local),
+                advertisement_name
+                    .filter(|s| !s.trim().is_empty())
+                    .or(prev_adv),
+                Arc::downgrade(manager),
+                event_receiver,
+                adapter_sender.clone(),
+            ));
+            manager.emit(CentralEvent::DeviceDiscovered(id));
+        }
+        CoreBluetoothEvent::DeviceUpdated {
+            uuid,
+            local_name,
+            advertisement_name,
+        } => {
+            let id = uuid.into();
+            if let Some(entry) = manager.peripheral_mut(&id) {
+                entry.value().update_name(local_name, advertisement_name);
+                manager.emit(CentralEvent::DeviceUpdated(id));
+            }
+        }
+        CoreBluetoothEvent::DeviceDisconnected { uuid } => {
+            manager.emit(CentralEvent::DeviceDisconnected(uuid.into()));
+        }
+        CoreBluetoothEvent::DidUpdateState { state } => {
+            let central_state = get_central_state(state);
+            manager.emit(CentralEvent::StateUpdate(central_state));
+        }
+    }
+}
+
 impl Adapter {
     pub(crate) async fn new() -> Result<Self> {
         let (sender, mut receiver) = mpsc::channel(256);
         let adapter_sender = run_corebluetooth_thread(sender)?;
-        // Since init currently blocked until the state update, we know the
-        // receiver is dropped after that. We can pick it up here and make it
-        // part of our event loop to update our peripherals.
+        // CoreBluetooth may emit `willRestoreState:` (restored peripherals) before
+        // `centralManagerDidUpdateState:`. Buffer any pre-init events instead of failing.
         debug!("Waiting on adapter connect");
-        if !matches!(
-            receiver.next().await,
-            Some(CoreBluetoothEvent::DidUpdateState { state: _ })
-        ) {
-            return Err(Error::Other(
-                "Adapter failed to connect.".to_string().into(),
-            ));
+        let mut pre_init_events = Vec::new();
+        loop {
+            match receiver.next().await {
+                Some(CoreBluetoothEvent::DidUpdateState { state: _ }) => break,
+                Some(ev) => pre_init_events.push(ev),
+                None => {
+                    return Err(Error::Other(
+                        "Adapter failed to connect.".to_string().into(),
+                    ));
+                }
+            }
         }
         debug!("Adapter connected");
         let manager: Arc<AdapterManager<Peripheral>> = Arc::new(AdapterManager::default());
+        for ev in pre_init_events {
+            handle_corebluetooth_event(&manager, &adapter_sender, ev);
+        }
 
         let manager_clone = manager.clone();
         let adapter_sender_clone = adapter_sender.clone();
         task::spawn(async move {
             while let Some(msg) = receiver.next().await {
-                match msg {
-                    CoreBluetoothEvent::DeviceDiscovered {
-                        uuid,
-                        local_name,
-                        advertisement_name,
-                        event_receiver,
-                    } => {
-                        let id = uuid.into();
-                        let (prev_local, prev_adv) = manager_clone
-                            .peripheral(&id)
-                            .map(|p| p.cached_names())
-                            .unwrap_or((None, None));
-                        manager_clone.add_peripheral(Peripheral::new(
-                            uuid,
-                            local_name.filter(|s| !s.trim().is_empty()).or(prev_local),
-                            advertisement_name
-                                .filter(|s| !s.trim().is_empty())
-                                .or(prev_adv),
-                            Arc::downgrade(&manager_clone),
-                            event_receiver,
-                            adapter_sender_clone.clone(),
-                        ));
-                        manager_clone.emit(CentralEvent::DeviceDiscovered(id));
-                    }
-                    CoreBluetoothEvent::DeviceUpdated {
-                        uuid,
-                        local_name,
-                        advertisement_name,
-                    } => {
-                        let id = uuid.into();
-                        if let Some(entry) = manager_clone.peripheral_mut(&id) {
-                            entry.value().update_name(local_name, advertisement_name);
-                            manager_clone.emit(CentralEvent::DeviceUpdated(id));
-                        }
-                    }
-                    CoreBluetoothEvent::DeviceDisconnected { uuid } => {
-                        manager_clone.emit(CentralEvent::DeviceDisconnected(uuid.into()));
-                    }
-                    CoreBluetoothEvent::DidUpdateState { state } => {
-                        let central_state = get_central_state(state);
-                        manager_clone.emit(CentralEvent::StateUpdate(central_state));
-                    }
-                }
+                handle_corebluetooth_event(&manager_clone, &adapter_sender_clone, msg);
             }
         });
 
@@ -104,6 +125,43 @@ impl Adapter {
             manager,
             sender: adapter_sender,
         })
+    }
+
+    pub async fn retrieve_peripherals(
+        &self,
+        identifiers: &[Uuid],
+        services: &[Uuid],
+    ) -> Result<Vec<Peripheral>> {
+        let fut = CoreBluetoothReplyFuture::default();
+        self.sender
+            .to_owned()
+            .send(CoreBluetoothMessage::RetrievePeripherals {
+                identifiers: identifiers.to_vec(),
+                services: services.to_vec(),
+                future: fut.get_state_clone(),
+            })
+            .await?;
+
+        let uuids = match fut.await {
+            CoreBluetoothReply::Peripherals(uuids) => uuids,
+            CoreBluetoothReply::Err(msg) => return Err(Error::RuntimeError(msg)),
+            _ => return Err(Error::Other("Unexpected retrieve_peripherals reply".into())),
+        };
+
+        let mut out = Vec::with_capacity(uuids.len());
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+        for uuid in uuids {
+            let pid: PeripheralId = uuid.into();
+            let mut found = self.manager.peripheral(&pid);
+            while found.is_none() && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                found = self.manager.peripheral(&pid);
+            }
+            if let Some(p) = found {
+                out.push(p);
+            }
+        }
+        Ok(out)
     }
 }
 

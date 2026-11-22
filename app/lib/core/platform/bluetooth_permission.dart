@@ -101,6 +101,18 @@ class BluetoothPermission {
     }
   }
 
+  /// 退后台或收到内存警告时请求原生侧回收 URLCache 与空闲堆内存。
+  Future<void> trimNativeMemory() async {
+    if (!Platform.isIOS) return;
+    try {
+      await _channel.invokeMethod<void>('trimMemory');
+    } on PlatformException catch (e) {
+      debugPrint('[mem] 原生内存整理失败：$e');
+    } on MissingPluginException {
+      // 测试环境或非 iOS 注册：安全忽略
+    }
+  }
+
   /// Android 录音期间启停前台保活服务（`connectedDevice|microphone`），防止锁屏或退后台后系统回收进程。
   Future<void> setRecordingForeground(
     bool enabled, {

@@ -42,6 +42,7 @@ import 'services/schedule/cleaning_tasks.dart';
 import 'services/schedule/in_app_task_runner.dart';
 import 'services/schedule/metered_chat.dart';
 import 'services/schedule/organize_pass_service.dart';
+import 'core/platform/bluetooth_permission.dart';
 import 'services/schedule/task_scheduler.dart';
 import 'services/segment/fast_topic_segment_agent.dart';
 import 'services/segment/rolling_clean_segment_service.dart';
@@ -53,15 +54,20 @@ import 'services/transcribe/system_speech_client.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 限制图片解码缓存上限，避免长 Timeline 相册缩略图堆积触发 iOS Jetsam 杀后台
+  PaintingBinding.instance.imageCache.maximumSize = 80;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 32 << 20;
   // 崩溃兜底要在 runApp 之前装好，否则启动期异常会直接白屏且无迹可查
   installCrashHandlers();
+  KeyValueStore? prefs;
   SettingsStore settings;
   AgentConfigStore agentConfig;
   try {
-    final prefs = await PrefsStore.open();
-    settings = SettingsStore(store: prefs);
+    final opened = await PrefsStore.open();
+    prefs = opened;
+    settings = SettingsStore(store: opened);
     await settings.load();
-    agentConfig = AgentConfigStore(store: prefs);
+    agentConfig = AgentConfigStore(store: opened);
     await agentConfig.load();
   } catch (_) {
     // 平台通道不可用时用内存默认值，保证仍可启动
@@ -93,14 +99,26 @@ Future<void> main() async {
   } catch (_) {
     // 密钥库或偏好临时不可用时不阻塞冷启动。
   }
-  runApp(RecordingCardApp(settings: settings, agentConfig: agentConfig));
+  runApp(
+    RecordingCardApp(
+      settings: settings,
+      agentConfig: agentConfig,
+      prefs: prefs,
+    ),
+  );
 }
 
 class RecordingCardApp extends StatelessWidget {
-  const RecordingCardApp({super.key, required this.settings, this.agentConfig});
+  const RecordingCardApp({
+    super.key,
+    required this.settings,
+    this.agentConfig,
+    this.prefs,
+  });
 
   final SettingsStore settings;
   final AgentConfigStore? agentConfig;
+  final KeyValueStore? prefs;
 
   @override
   Widget build(BuildContext context) {
@@ -119,7 +137,11 @@ class RecordingCardApp extends StatelessWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       locale: const Locale('zh', 'CN'),
-      home: _HomeGate(settings: settings, agentConfig: agentConfig),
+      home: _HomeGate(
+        settings: settings,
+        agentConfig: agentConfig,
+        prefs: prefs,
+      ),
     );
   }
 }
@@ -131,20 +153,20 @@ final GlobalKey _shotKey = GlobalKey();
 final DevDriver? dev = kDebugMode ? DevDriver(_shotKey) : null;
 
 class _HomeGate extends StatefulWidget {
-  const _HomeGate({required this.settings, this.agentConfig});
+  const _HomeGate({required this.settings, this.agentConfig, this.prefs});
 
   final SettingsStore settings;
   final AgentConfigStore? agentConfig;
+  final KeyValueStore? prefs;
 
   @override
   State<_HomeGate> createState() => _HomeGateState();
 }
 
-class _HomeGateState extends State<_HomeGate> {
+class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
   final _auth = AuthService();
   final _store = AppStore();
-  // autoStart：启动即核对链路并开心跳（测试里传 false，避免悬挂定时器）
-  final _device = DeviceStore(autoStart: true);
+  late final DeviceStore _device;
   final _recordingStatus = RecordingStatusController();
   late final SettingsStore _settings = widget.settings;
   late final AgentConfigStore _agentConfig =
@@ -173,6 +195,17 @@ class _HomeGateState extends State<_HomeGate> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _device = DeviceStore(
+      autoStart: true,
+      deferInitialRestore: true,
+      stateStore: JsonStore(store: widget.prefs ?? InMemoryStore()),
+      initialWatchLinkEnabled: _agentConfig.watchLinkEnabled,
+      initialOmiLinkEnabled: _agentConfig.omiLinkEnabled,
+      initialFeishuLinkEnabled: _agentConfig.feishuLinkEnabled,
+      initialIflytekA1LinkEnabled: _agentConfig.iflytekA1LinkEnabled,
+      onAutoSyncMissedData: () => _store.syncRecordings(),
+    );
     _auth.addListener(_onAuthChanged);
     _modelGateway = ModelGateway(
       client: _auth.apiClient,
@@ -203,7 +236,9 @@ class _HomeGateState extends State<_HomeGate> {
       },
     );
     _asr = RoutingSpeechEngine(
-      localEngine: LocalAsrService(),
+      localEngine: LocalAsrService(
+        idleReleaseDelay: const Duration(seconds: 45),
+      ),
       systemSpeech: _systemSpeech,
     );
     _recordingStore = RecordingStore();
@@ -306,17 +341,10 @@ class _HomeGateState extends State<_HomeGate> {
       flushPhone: _device.flushPhoneRecordingSlice,
       pullBleFiles: _device.activeCapabilities.hasFileSync,
     );
-    unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
-    unawaited(
-      _device.setExtHardwareEnabled(
-        omi: _agentConfig.omiLinkEnabled,
-        feishu: _agentConfig.feishuLinkEnabled,
-        iflytekA1: _agentConfig.iflytekA1LinkEnabled,
-      ),
-    );
     _cloudSelection = _currentCloudSelection;
     _modelProviders.addListener(_onCloudSelectionChanged);
     _agentConfig.addListener(_onCloudSelectionChanged);
+    unawaited(_initDeviceAndRestore());
     unawaited(_boot());
     if (dev != null) {
       dev!
@@ -505,6 +533,51 @@ class _HomeGateState extends State<_HomeGate> {
     _wasSignedIn = signedIn;
   }
 
+  Future<void> _initDeviceAndRestore() async {
+    await _device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled);
+    await _device.setExtHardwareEnabled(
+      omi: _agentConfig.omiLinkEnabled,
+      feishu: _agentConfig.feishuLinkEnabled,
+      iflytekA1: _agentConfig.iflytekA1LinkEnabled,
+    );
+    if (!mounted) return;
+    await _device.restoreLink();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _device.handleAppResumed();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _device.handleAppBackgrounded();
+      unawaited(_trimMemoryForBackground());
+    }
+  }
+
+  @override
+  void didHaveMemoryPressure() {
+    unawaited(_trimMemoryForBackground(aggressive: true));
+  }
+
+  Future<void> _trimMemoryForBackground({bool aggressive = false}) async {
+    try {
+      final cache = PaintingBinding.instance.imageCache;
+      cache.clear();
+      if (aggressive) {
+        cache.clearLiveImages();
+      }
+    } on Object {
+      // 测试环境未初始化图片缓存时忽略
+    }
+    _recordingStore.clearMemoryCache();
+    if (!_device.isPhoneRecording) {
+      _device.phoneRingBuffer.clear();
+    }
+    await _asr.releaseMemory();
+    await const BluetoothPermission().trimNativeMemory();
+  }
+
   void _syncTranscribeCycle() {
     _store.transcribeCycleMinutes = _agentConfig.transcribeCycleMinutes;
     _recordingStatus.transcribeCycleMinutes =
@@ -513,6 +586,7 @@ class _HomeGateState extends State<_HomeGate> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _agentConfig.removeListener(_syncTranscribeCycle);
     _taskRunner?.stop();
     _scheduler?.dispose();

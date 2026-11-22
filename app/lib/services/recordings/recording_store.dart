@@ -69,6 +69,13 @@ class RecordingStore {
   List<_CachedMeta>? _sortedCache;
   int _mutationEpoch = 0;
 
+  /// 清空内存索引缓存，降低后台常驻内存；下次读取按需从磁盘重载。
+  void clearMemoryCache() {
+    _cacheByDir = null;
+    _sortedCache = null;
+    _mutationEpoch++;
+  }
+
   Future<Directory> root() async {
     final existing = _resolvedRoot;
     if (existing != null) return existing;

@@ -728,8 +728,21 @@ impl DyjV1Session {
             }
         }
 
-        // 2) 先向系统层取回可能已连接的 FF10 外设，再按 id_hint 或广播名匹配直连。
-        crate::retrieve_os_connected_peripherals(adapter).await;
+        // 2) 向 CoreBluetooth 找回缓存 UUID / 系统已连 FF10 外设，按 id_hint 或广播名匹配直连。
+        let mut query_services = Vec::new();
+        if let Ok(u) = uuid::Uuid::parse_str("6e400001-b5a3-f393-e0a9-e50e24dcca9e") {
+            query_services.push(u);
+        }
+        query_services.push(uuid::Uuid::from_u128(0x0000ff10_0000_1000_8000_00805f9b34fb));
+        let id_hint_arr = [id_hint];
+        let id_hints: &[&str] = if id_hint.is_empty() { &[] } else { &id_hint_arr };
+        let retrieved = crate::retrieve_cached_or_connected_peripherals(
+            adapter,
+            id_hints,
+            &query_services,
+        )
+        .await;
+
         if !id_hint.is_empty() && tried_id.as_deref() != Some(id_hint) {
             if let Ok(peripherals) = adapter.peripherals().await {
                 if let Some(cached) = peripherals
@@ -749,6 +762,33 @@ impl DyjV1Session {
                             Err(e) => last_err = Some(e),
                         }
                     }
+                }
+            }
+        }
+
+        for cached in retrieved {
+            let pid = cached.id().to_string();
+            if pid == id_hint || tried_id.as_deref() == Some(pid.as_str()) {
+                continue;
+            }
+            let is_conn = matches!(
+                tokio::time::timeout(Duration::from_millis(350), cached.is_connected()).await,
+                Ok(Ok(true))
+            );
+            if !is_conn {
+                continue;
+            }
+            if Self::peripheral_matches_target(&cached, id_hint, trimmed_name).await {
+                match Self::try_connect_candidate(
+                    &cached,
+                    name,
+                    Duration::from_secs(4),
+                    connecting_slot,
+                )
+                .await
+                {
+                    Ok(()) => return Ok(cached),
+                    Err(e) => last_err = Some(e),
                 }
             }
         }

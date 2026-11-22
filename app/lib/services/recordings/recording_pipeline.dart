@@ -2040,8 +2040,9 @@ class RecordingPipeline {
     int fullSampleRate = 16000,
   }) async {
     await engine.loadSpeakerEmbedding(embeddingPath);
-    final cache = <String, WavPcm>{};
-    final pcmCache = <String, Float32List>{};
+    String? lastSliceId;
+    WavPcm? lastWav;
+    Float32List? lastPcm;
     final samples = <SpeakerSample>[];
     for (final utterance in file.utterances) {
       if (conditionedFull != null && conditionedFull.isNotEmpty) {
@@ -2073,7 +2074,18 @@ class RecordingPipeline {
         }
       }
       if (slice == null) continue;
-      final wav = cache[slice.id] ??= readWavFile(slice.wavPath);
+      final WavPcm wav;
+      Float32List? cachedPcm;
+      if (lastSliceId == slice.id && lastWav != null) {
+        wav = lastWav;
+        cachedPcm = lastPcm;
+      } else {
+        wav = readWavFile(slice.wavPath);
+        lastSliceId = slice.id;
+        lastWav = wav;
+        lastPcm = null;
+        cachedPcm = null;
+      }
       final startFrame =
           ((utterance.startMs - slice.startMs) * wav.sampleRate / 1000).round();
       final endFrame =
@@ -2081,7 +2093,7 @@ class RecordingPipeline {
       final start = startFrame.clamp(0, wav.frames);
       final end = endFrame.clamp(start, wav.frames);
       if (end - start < wav.sampleRate * 6 ~/ 10) continue; // <0.6s 不做声纹
-      final pcm = pcmCache[slice.id] ??= wav.toSpeechFloat32();
+      final pcm = cachedPcm ?? (lastPcm = wav.toSpeechFloat32());
       final vector = await engine.embedSpeaker(pcm.sublist(start, end));
       if (vector.isEmpty) continue;
       samples.add(

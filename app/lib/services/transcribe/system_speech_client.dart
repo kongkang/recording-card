@@ -438,4 +438,12 @@ class RoutingSpeechEngine implements SpeechEngine {
 
   @override
   Future<void> dispose() => localEngine.dispose();
+
+  /// 退后台或内存紧张时释放底层端侧 Isolate 与模型内存。
+  Future<void> releaseMemory() async {
+    final local = localEngine;
+    if (local is LocalAsrService) {
+      await local.releaseMemory();
+    }
+  }
 }
