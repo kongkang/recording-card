@@ -854,7 +854,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#sync-rel', x => /刚刚|秒前|分钟前/.test(x.innerText)));
   assert.equal(await p.$$eval('#dev-main .syncico', x => x.length), 0);
   assert(await p.$eval('[data-testid="sync-now"]', x => x.innerText.includes('自动同步') && !!x.querySelector('.syncidle svg')));
-  assert(await p.$eval('[data-testid="wifi-row"]', x => x.textContent.includes('已配置 · 2 个网络') && !!x.querySelector('.rowchev')));
+  assert(await p.$eval('[data-testid="wifi-row"]', x => x.hidden === true));
   await shot('hardware-capsule');
   await p.click('[data-testid="sync-now"]');
   assert(await p.$eval('#sync-ico.spin svg', x => !!x));
@@ -868,31 +868,9 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#sync-ico.okcheck', x => !!x));
   await p.click('[data-testid="fw-update"]');
   assert(await p.$eval('#dev-upg', x => !x.hidden && x.innerText.includes('主控芯片') && x.innerText.includes('2.1.0 → 2.2.0') && x.innerText.includes('1.4.2 → 1.5.0')));
-  // 录音进行中点升级：弹出确认弹窗，确认后停硬件录音、自动切本机录音（灵动岛显示 App Logo），升级完成后关闭本机录音
-  await p.click('#upg-btn');
-  assert(await p.$eval('[data-testid="ota-rec-confirm-dialog"]', x => !x.hidden && x.innerText.includes('当前正在录音')));
-  assert.equal(await p.$eval('#upg-back', x => x.disabled), false);
-  await p.click('[data-testid="ota-rec-confirm"]');
-  await new Promise(r => setTimeout(r, 120));
-  assert(await p.evaluate(() => phoneRec.on === true && rec.on === false));
-  assert(await p.$eval('#dyn-island', x => x.classList.contains('show') && !x.querySelector('[data-testid="di-app-logo"]').hidden));
-  assert(await p.$eval('#upg-back', x => x.disabled));
-  assert(await p.$eval('#upg-warn', x => !x.hidden));
-  // 更新中锁定：点空白处弹层不消失
-  await p.click('#sheet .backdrop');
-  assert(await p.$eval('#sheet', x => x.classList.contains('show')));
-  await new Promise(r => setTimeout(r, 1200));
-  assert(await p.$eval('#upg-stage', x => x.innerText.includes('主控芯片')));
-  await p.waitForFunction(() => document.getElementById('upg-back') && document.getElementById('upg-back').disabled === false, { timeout: 15000 });
-  assert(await p.evaluate(() => phoneRec.on === false));
-  assert.equal(await p.$eval('#fw-val', x => x.innerText.trim()), '已是最新');
-  assert(await p.$eval('#dev-state', x => x.innerText.includes('已更新到 主控 2.2.0 / Wi-Fi 1.5.0')));
-  // 同步冷却结束后恢复箭头，再开启录音以验收 Timeline 顶部实时状态块
-  await p.waitForFunction(() => document.querySelector('#sync-ico.syncidle'), { timeout: 13000 });
-  assert(await p.$eval('#sync-txt', x => x.innerText.includes('手动同步')));
-  await p.click('[data-testid="rec-toggle"]');
-  // Wi-Fi 二级页：已保存置顶（前3+展开）→ 扫描 → 范围外置灰 → 直连 → 新网络保存
-  await p.click('[data-testid="wifi-row"]');
+  assert(await p.$eval('[data-testid="upg-wifi-row"]', x => !x.hidden && x.textContent.includes('已配置 · 2 个网络') && !!x.querySelector('.rowchev')));
+  // Wi-Fi 二级页（仅 Wi-Fi 芯片有升级时从固件更新页进入）：已保存置顶（前3+展开）→ 扫描 → 范围外置灰 → 直连 → 新网络保存 → 返回固件更新页
+  await p.click('[data-testid="upg-wifi-row"]');
   assert(await p.$eval('#dev-wifi', x => !x.hidden));
   assert.equal(await p.$('#dev-wifi .tbc-badge'), null);
   assert.equal(await p.$$eval('#wsaved .witem', x => x.length), 3);
@@ -914,10 +892,38 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('#wlist .wform', x => x.innerText.includes('正在验证')));
   await p.waitForFunction(() => document.getElementById('wstate') && document.getElementById('wstate').textContent.includes('Office-2.4G 连接成功'), { timeout: 8000 });
   assert(await p.$eval('#wlist', x => x.innerText.includes('已连接')));
-  assert.equal(await p.$eval('#wifi-n', x => x.innerText), '5');
+  assert.equal(await p.$eval('#upg-wifi-n', x => x.innerText), '5');
   await p.click('[data-testid="wifi-back"]');
+  assert(await p.$eval('#dev-upg', x => !x.hidden));
+  assert(await p.$eval('[data-testid="upg-wifi-row"]', x => !x.hidden && x.textContent.includes('5 个网络')));
+  // 录音进行中点升级：弹出确认弹窗，确认后停硬件录音、自动切本机录音（灵动岛显示 App Logo），升级完成后关闭本机录音并隐藏 Wi-Fi 入口
+  await p.click('#upg-btn');
+  assert(await p.$eval('[data-testid="ota-rec-confirm-dialog"]', x => !x.hidden && x.innerText.includes('当前正在录音')));
+  assert.equal(await p.$eval('#upg-back', x => x.disabled), false);
+  await p.click('[data-testid="ota-rec-confirm"]');
+  await new Promise(r => setTimeout(r, 120));
+  assert(await p.evaluate(() => phoneRec.on === true && rec.on === false));
+  assert(await p.$eval('#dyn-island', x => x.classList.contains('show') && !x.querySelector('[data-testid="di-app-logo"]').hidden));
+  assert(await p.$eval('#upg-back', x => x.disabled));
+  assert(await p.$eval('#upg-warn', x => !x.hidden));
+  // 更新中锁定：点空白处弹层不消失
+  await p.click('#sheet .backdrop');
+  assert(await p.$eval('#sheet', x => x.classList.contains('show')));
+  await new Promise(r => setTimeout(r, 1200));
+  assert(await p.$eval('#upg-stage', x => x.innerText.includes('主控芯片')));
+  await p.waitForFunction(() => document.getElementById('upg-back') && document.getElementById('upg-back').disabled === false, { timeout: 15000 });
+  assert(await p.evaluate(() => phoneRec.on === false));
+  assert.equal(await p.$eval('#fw-val', x => x.innerText.trim()), '已是最新');
+  assert(await p.$eval('#dev-state', x => x.innerText.includes('已更新到 主控 2.2.0 / Wi-Fi 1.5.0')));
+  await p.click('[data-testid="fw-update"]');
+  assert(await p.$eval('#dev-upg', x => !x.hidden));
+  assert(await p.$eval('[data-testid="upg-wifi-row"]', x => x.hidden === true));
+  await p.click('#upg-back');
   assert(await p.$eval('#dev-main', x => !x.hidden));
-  assert(await p.$eval('[data-testid="wifi-row"]', x => x.textContent.includes('5 个网络')));
+  // 同步冷却结束后恢复箭头，再开启录音以验收 Timeline 顶部实时状态块
+  await p.waitForFunction(() => document.querySelector('#sync-ico.syncidle'), { timeout: 13000 });
+  assert(await p.$eval('#sync-txt', x => x.innerText.includes('手动同步')));
+  await p.click('[data-testid="rec-toggle"]');
   await p.click('#dev-main > .btn:last-child');
   // 状态弹层是从 Setting 页打开的；先回 Timeline 再看记录顶部状态块
   await p.click('[data-testid="nav-timeline"]');
@@ -1322,6 +1328,15 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('#conn-list .conn-item');
   await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
   assert.equal(await pCur.$('#dev-main [data-testid="phone-rec-main-row"]'), null, 'current.html 已连硬件不应显示本机录音行');
+  assert(await pCur.$eval('[data-testid="wifi-row"]', x => x.hidden === true), 'current.html 录音卡 V2 主弹层默认隐藏 Wi-Fi 行');
+  await pCur.click('[data-testid="fw-update"]');
+  assert(await pCur.$eval('[data-testid="upg-wifi-row"]', x => !x.hidden && x.textContent.includes('已配置')));
+  await pCur.click('[data-testid="upg-wifi-row"]');
+  assert(await pCur.$eval('#dev-wifi', x => !x.hidden));
+  await pCur.click('[data-testid="wifi-back"]');
+  assert(await pCur.$eval('#dev-upg', x => !x.hidden));
+  await pCur.click('#upg-back');
+  assert(await pCur.$eval('#dev-main', x => !x.hidden));
   await pCur.click('[data-testid="rec-toggle"]');
   assert.deepEqual(await pCur.evaluate(() => ({ hw: rec.on, phone: phoneRec.on, standby: phoneRec.standby })), { hw: true, phone: false, standby: true });
   assert(await pCur.$eval('#dyn-island', x => x.classList.contains('show') && x.innerText.includes('蓝牙录音中') && x.innerText.includes('锁屏实况')));

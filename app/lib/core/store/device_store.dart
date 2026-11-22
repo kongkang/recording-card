@@ -85,6 +85,7 @@ class DeviceStore extends ChangeNotifier {
     OledBitmapRenderer? oledRenderer,
     Duration? oledHardwareEventDelay,
     Duration? restartReconnectDelay,
+    @visibleForTesting Duration? wifiIdleCloseTimeout,
     DateTime Function()? now,
     @visibleForTesting List<Duration>? backgroundReconnectDelays,
     @visibleForTesting Future<CardGateway?> Function()? nativeBridgeRecovery,
@@ -122,6 +123,7 @@ class DeviceStore extends ChangeNotifier {
            (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')
                ? Duration.zero
                : const Duration(seconds: 3)),
+       _wifiIdleCloseTimeout = wifiIdleCloseTimeout,
        _now = now ?? DateTime.now {
     _bindDownloadProgressActivity(_bleGateway);
     _gateway = WatchCompositeCardGateway(
@@ -170,6 +172,7 @@ class DeviceStore extends ChangeNotifier {
   final OledBitmapRenderer _oledRenderer;
   final Duration _oledHardwareEventDelay;
   final Duration _restartReconnectDelay;
+  final Duration? _wifiIdleCloseTimeout;
   Timer? _oledDelayTimer;
   int _syncedControlsEpoch = -1;
   bool _controlsSyncInFlight = false;
@@ -798,6 +801,15 @@ class DeviceStore extends ChangeNotifier {
       await refreshFromDevice();
       if (epoch != _epoch || !isConnected) return;
     }
+    if (isCardV2WifiOtaOnly &&
+        deviceWifiOpen == true &&
+        !fwUpdating &&
+        !_wifiScanInFlight &&
+        !wifiJoining &&
+        !_shouldKeepCardV2WifiOpen()) {
+      await _closeWifiQuietly();
+      if (epoch != _epoch || !isConnected) return;
+    }
     await _syncCardControlsAndDisplayOnConnect(epoch);
     if (epoch != _epoch || !isConnected) return;
     if (includePrefetch) {
@@ -820,6 +832,8 @@ class DeviceStore extends ChangeNotifier {
   /// 顺序：停录音 → 关实时流 → 停同步 → 断开。跳过任一步都可能留下半截会话，
   /// 下次连接时设备状态与 App 对不上（这次 code -2 就吃过这个亏）。
   Future<void> _prepareForHardwareTeardown() async {
+    _cancelWifiIdleCloseTimer();
+    _wifiClosePending = false;
     _phoneStandbyArmed = false;
     _pendingPhoneFailover = false;
     _autoReconnectTarget = null;
@@ -839,6 +853,14 @@ class DeviceStore extends ChangeNotifier {
       await _gw.closeRealtime().timeout(const Duration(seconds: 3));
     } on Object {
       // 同上
+    }
+    if (isCardV2WifiOtaOnly && deviceWifiOpen == true) {
+      try {
+        await _gw.closeWifi().timeout(const Duration(seconds: 4));
+        deviceWifiOpen = false;
+      } on Object {
+        // 断开/重启/关机前尽力关闭 Wi-Fi，不阻断后续释放
+      }
     }
   }
 
@@ -1158,6 +1180,11 @@ class DeviceStore extends ChangeNotifier {
     _wifiSummaryProbed = false;
     _storageFreeMb = null;
     _storageTotalMb = null;
+    _cancelWifiIdleCloseTimer();
+    _wifiScanInFlight = false;
+    _wifiClosePending = false;
+    _wifiClosingInFlight = false;
+    _wifiReturnView = DeviceView.main;
     deviceWifiOpen = null;
     activeKind = DeviceKind.cardV2;
     activeCapabilities = HardwareCapabilities.cardV2;
@@ -2004,6 +2031,7 @@ class DeviceStore extends ChangeNotifier {
         linkState = LinkState.connected;
       }
       linkError = null;
+      _syncCardV2WifiAutoClose();
     } on CardException catch (e) {
       if (epoch != _epoch) return;
       if (e.kind == CardErrorKind.disconnected) {
@@ -3396,10 +3424,102 @@ class DeviceStore extends ChangeNotifier {
   // ── 弹层视图 ───────────────────────────────────────────────
   bool sheetOpen = false;
   DeviceView view = DeviceView.main;
+  DeviceView _wifiReturnView = DeviceView.main;
+  DeviceView get wifiReturnView => _wifiReturnView;
+
+  /// 录音卡 V2（双芯片 OTA + Wi-Fi 模组）现阶段无日常 Wi-Fi 场景：仅在 Wi-Fi 芯片升级时按需开启并随后自动关闭。
+  bool get isCardV2WifiOtaOnly =>
+      activeCapabilities.hasDualChipOta && activeCapabilities.hasWifiConfig;
+
+  /// 状态弹层主视图是否展示 Wi-Fi 行：录音卡 V2 默认隐藏，点一机 V1 等继续展示。
+  bool get showMainWifiRow =>
+      activeCapabilities.hasWifiConfig && !isCardV2WifiOtaOnly;
+
+  /// 固件更新页是否展示「Wi-Fi 设置」行：录音卡 V2 仅在 Wi-Fi 芯片有可用更新时显示。
+  bool get showFirmwareWifiRow =>
+      isCardV2WifiOtaOnly && wifiNeedsUpdate && !fwUpdating;
+
+  static const Duration _wifiViewIdleTimeout = Duration(minutes: 3);
+  static const Duration _wifiUpgIdleTimeout = Duration(seconds: 90);
+  Timer? _wifiIdleCloseTimer;
+  bool _wifiScanInFlight = false;
+  bool _wifiClosePending = false;
+  bool _wifiClosingInFlight = false;
+
+  bool _shouldKeepCardV2WifiOpen() {
+    if (!isCardV2WifiOtaOnly || !isConnected) return false;
+    if (fwUpdating) return true;
+    if (!sheetOpen) return false;
+    if (view == DeviceView.wifi) return true;
+    if (view == DeviceView.upg && wifiNeedsUpdate && wifiLast != null) {
+      return true;
+    }
+    return false;
+  }
+
+  void _cancelWifiIdleCloseTimer() {
+    _wifiIdleCloseTimer?.cancel();
+    _wifiIdleCloseTimer = null;
+  }
+
+  void _syncCardV2WifiAutoClose() {
+    if (!isCardV2WifiOtaOnly || !isConnected || fwUpdating) {
+      _cancelWifiIdleCloseTimer();
+      return;
+    }
+    final wifiActive = deviceWifiOpen == true || _wifiScanInFlight || wifiJoining;
+    if (_shouldKeepCardV2WifiOpen()) {
+      _wifiClosePending = false;
+      if (!wifiActive) {
+        _cancelWifiIdleCloseTimer();
+        return;
+      }
+      if (!_sheetAttached && _wifiIdleCloseTimeout == null && !_autoStart) {
+        return;
+      }
+      _cancelWifiIdleCloseTimer();
+      final timeout = _wifiIdleCloseTimeout ??
+          (view == DeviceView.upg ? _wifiUpgIdleTimeout : _wifiViewIdleTimeout);
+      _wifiIdleCloseTimer = Timer(timeout, _onWifiIdleCloseTimeout);
+      return;
+    }
+    _cancelWifiIdleCloseTimer();
+    if (wifiActive) {
+      _requestCardV2WifiClose();
+    }
+  }
+
+  void _onWifiIdleCloseTimeout() {
+    _wifiIdleCloseTimer = null;
+    if (_disposed || !isCardV2WifiOtaOnly || !isConnected || fwUpdating) {
+      return;
+    }
+    if (deviceWifiOpen != true && !_wifiScanInFlight && !wifiJoining) {
+      return;
+    }
+    _requestCardV2WifiClose();
+    if (view == DeviceView.wifi) {
+      wifiStateText = '长时间未操作，已自动关闭设备 Wi-Fi 以省电';
+      notifyListeners();
+    }
+  }
+
+  void _requestCardV2WifiClose() {
+    if (!isCardV2WifiOtaOnly || !isConnected || fwUpdating) return;
+    if (_wifiScanInFlight || wifiJoining) {
+      _wifiClosePending = true;
+      return;
+    }
+    if (deviceWifiOpen == true && !_wifiClosingInFlight) {
+      _wifiClosePending = false;
+      unawaited(_closeWifiQuietly());
+    }
+  }
 
   void openSheet() {
     sheetOpen = true;
     view = DeviceView.main;
+    _wifiReturnView = DeviceView.main;
     if (isConnected) {
       unawaited(refreshFromDevice());
       unawaited(prefetchSummaryInfo());
@@ -3409,6 +3529,7 @@ class DeviceStore extends ChangeNotifier {
       // 弹层开着时盯住设备侧按钮/开关的录音变化：卡上按了开始，这里要马上跟上，
       // 而不是等 30 秒看门狗或用户再点一次。
       _startSheetWatch();
+      _syncCardV2WifiAutoClose();
     } else if (linkState == LinkState.unknown) {
       unawaited(restoreLink());
     } else {
@@ -3419,17 +3540,33 @@ class DeviceStore extends ChangeNotifier {
 
   void closeSheet() {
     if (fwUpdating) return; // 更新中弹层锁定
-    if (activeCapabilities.hasDualChipOta &&
+    sheetOpen = false;
+    _stopSheetWatch();
+    _stopScanExpiryTimer();
+    if (isCardV2WifiOtaOnly) {
+      _syncCardV2WifiAutoClose();
+    } else if (activeCapabilities.hasDualChipOta &&
         view == DeviceView.wifi &&
         deviceWifiOpen == true &&
         !wifiJoining) {
       unawaited(_closeWifiQuietly());
     }
-    sheetOpen = false;
-    _stopSheetWatch();
-    _stopScanExpiryTimer();
     // 不停录音时钟：录音还在继续，Timeline 顶部状态块要继续计时
     notifyListeners();
+  }
+
+  /// App 切至后台/息屏：若录音卡 V2 的 Wi-Fi 模块处于开启或配网在途，立刻自动关闭（升级期间除外）。
+  void handleAppBackgrounded() {
+    if (!isCardV2WifiOtaOnly || !isConnected || fwUpdating) return;
+    if (deviceWifiOpen != true && !_wifiScanInFlight && !wifiJoining) {
+      return;
+    }
+    _cancelWifiIdleCloseTimer();
+    _requestCardV2WifiClose();
+    if (view == DeviceView.wifi) {
+      wifiStateText = '应用切至后台，已自动关闭设备 Wi-Fi 以省电';
+      notifyListeners();
+    }
   }
 
   /// App 切回前台时：
@@ -3475,10 +3612,18 @@ class DeviceStore extends ChangeNotifier {
     _scheduleScanExpiryTimer();
   }
 
-  void showView(DeviceView v) {
+  void showView(DeviceView v, {DeviceView? wifiReturnTo}) {
     final prev = view;
+    if (v == DeviceView.wifi) {
+      _wifiReturnView = wifiReturnTo ??
+          (prev == DeviceView.upg
+              ? DeviceView.upg
+              : (isCardV2WifiOtaOnly ? DeviceView.upg : DeviceView.main));
+    }
     view = v;
-    if (activeCapabilities.hasDualChipOta &&
+    if (isCardV2WifiOtaOnly) {
+      _syncCardV2WifiAutoClose();
+    } else if (activeCapabilities.hasDualChipOta &&
         prev == DeviceView.wifi &&
         v != DeviceView.wifi &&
         deviceWifiOpen == true &&
@@ -3503,12 +3648,23 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void closeWifiView() {
+    showView(_wifiReturnView);
+  }
+
   Future<void> _closeWifiQuietly() async {
+    _cancelWifiIdleCloseTimer();
+    if (_wifiClosingInFlight || !isConnected) return;
+    _wifiClosingInFlight = true;
     try {
-      await _gw.closeWifi();
+      await _gw.closeWifi().timeout(const Duration(seconds: 6));
       deviceWifiOpen = false;
+      _wifiClosePending = false;
+      notifyListeners();
     } on Object {
       // 忽略关闭失败，后续读文件前管线还会兜底再关一次
+    } finally {
+      _wifiClosingInFlight = false;
     }
   }
 
@@ -3711,10 +3867,13 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
 
-    // 记录升级前设备端 Wi-Fi 开关模式：Stage 1 DFU 重启会把 nRF 的 wifiOpen 复位，
-    // 升级结束后按此模式精准还原，不强制关掉原本就开着的 Wi-Fi。
-    final priorWifiOpen = deviceWifiOpen == true;
+    // 录音卡 V2 现阶段无日常 Wi-Fi 场景：升级完成/中止后一律确保关闭 Wi-Fi；
+    // 其它可能存在的非 OTA-only 设备才沿用升级前开关状态。
+    final cardV2OtaOnly = isCardV2WifiOtaOnly;
+    final priorWifiOpen = !cardV2OtaOnly && deviceWifiOpen == true;
 
+    _cancelWifiIdleCloseTimer();
+    _wifiClosePending = false;
     fwUpdating = true;
     fwError = null;
     fwProgress = 0;
@@ -3795,12 +3954,18 @@ class DeviceStore extends ChangeNotifier {
       }
       await refreshFromDevice();
       doWifi = activeCapabilities.hasDualChipOta && wifiNeedsUpdate;
-      if (!doWifi && priorWifiOpen && deviceWifiOpen != true) {
-        try {
-          await _gw.openWifi();
-          await refreshFromDevice();
-        } on CardException {
-          // 恢复开启失败不覆盖已完成的主控升级结果
+      if (!doWifi) {
+        if (cardV2OtaOnly) {
+          if (deviceWifiOpen == true) {
+            await _closeWifiQuietly();
+          }
+        } else if (priorWifiOpen && deviceWifiOpen != true) {
+          try {
+            await _gw.openWifi();
+            await refreshFromDevice();
+          } on CardException {
+            // 恢复开启失败不覆盖已完成的主控升级结果
+          }
         }
       }
     }
@@ -3813,7 +3978,9 @@ class DeviceStore extends ChangeNotifier {
       fwStateText = '正在检查 Wi-Fi 模块…';
       notifyListeners();
       try {
-        await for (final p in _gw.otaWifi(restoreWifiOpen: priorWifiOpen)) {
+        await for (final p in _gw.otaWifi(
+          restoreWifiOpen: cardV2OtaOnly ? false : priorWifiOpen,
+        )) {
           fwProgress = doMain
               ? 50 + p.percent.clamp(0, 100) * 0.5
               : p.percent.clamp(0, 100) * 1.0;
@@ -3824,6 +3991,9 @@ class DeviceStore extends ChangeNotifier {
       } on CardException catch (e) {
         await refreshFromDevice();
         _failFw('Wi-Fi 模组升级失败：${e.message}');
+        if (cardV2OtaOnly && deviceWifiOpen == true) {
+          await _closeWifiQuietly();
+        }
         return;
       }
       await refreshFromDevice();
@@ -3837,6 +4007,10 @@ class DeviceStore extends ChangeNotifier {
     _otaMainInfo = null;
     _otaWifiInfo = null;
     _otaChecked = true;
+    if (cardV2OtaOnly && deviceWifiOpen == true) {
+      await _closeWifiQuietly();
+    }
+    _syncCardV2WifiAutoClose();
     if (_otaHandoverPhoneRecording && _phoneRecording) {
       await stopPhoneRecording();
     }
@@ -3944,6 +4118,7 @@ class DeviceStore extends ChangeNotifier {
     fwStage = FwStage.failed;
     fwError = message;
     fwStateText = message;
+    _syncCardV2WifiAutoClose();
     notifyListeners();
   }
 
@@ -4026,6 +4201,9 @@ class DeviceStore extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    _wifiScanInFlight = true;
+    _wifiClosePending = false;
+    _cancelWifiIdleCloseTimer();
     wifiSelName = null;
     wifiJoining = false;
     wifiJoinName = '';
@@ -4035,13 +4213,17 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
     try {
       await _ensureWifiPasswordsLoaded();
+      if (isCardV2WifiOtaOnly && _wifiClosePending) return;
       // 设备侧 Wi-Fi 模块需先开启
       if (deviceWifiOpen != true) {
         await _gw.openWifi();
         deviceWifiOpen = true;
       }
+      if (isCardV2WifiOtaOnly && _wifiClosePending) return;
       final creds = await _gw.wifiCredentials();
+      if (isCardV2WifiOtaOnly && _wifiClosePending) return;
       final nets = await _gw.scanWifi();
+      if (isCardV2WifiOtaOnly && _wifiClosePending) return;
       wifiSaved = creds.map((c) => SavedWifi(c.ssid)).toList();
       wifiScanRes = nets
           .where((n) => n.ssid.isNotEmpty)
@@ -4056,8 +4238,18 @@ class DeviceStore extends ChangeNotifier {
       wifiScanDone = false;
       wifiError = e.message;
       wifiStateText = '扫描失败：${e.message}';
+    } finally {
+      _wifiScanInFlight = false;
+      if (isCardV2WifiOtaOnly &&
+          deviceWifiOpen == true &&
+          (_wifiClosePending || !_shouldKeepCardV2WifiOpen())) {
+        _wifiClosePending = false;
+        await _closeWifiQuietly();
+      } else {
+        _syncCardV2WifiAutoClose();
+      }
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   static int _signalOf(int rssi) {
@@ -4077,12 +4269,17 @@ class DeviceStore extends ChangeNotifier {
     wifiJoining = true;
     wifiJoinName = n;
     wifiError = null;
+    _wifiClosePending = false;
+    _cancelWifiIdleCloseTimer();
     notifyListeners();
     var usedPwd = '';
     try {
       final cache = _wifiPasswordsCache ?? await _ensureWifiPasswordsLoaded();
       usedPwd = cache[n.trim()] ?? cache[n] ?? '';
       await _gw.connectWifi(n, usedPwd);
+      if (isCardV2WifiOtaOnly) {
+        deviceWifiOpen = true;
+      }
       wifiLast = n;
       wifiStateText = '$n 连接成功';
       wifiSelName = null;
@@ -4105,16 +4302,26 @@ class DeviceStore extends ChangeNotifier {
         wifiError = rawMsg;
         wifiStateText = '连接 $n 失败：$rawMsg';
       }
+    } finally {
+      wifiJoining = false;
+      wifiJoinName = '';
+      if (isCardV2WifiOtaOnly &&
+          deviceWifiOpen == true &&
+          (_wifiClosePending || !_shouldKeepCardV2WifiOpen())) {
+        _wifiClosePending = false;
+        await _closeWifiQuietly();
+      } else {
+        _syncCardV2WifiAutoClose();
+      }
+      notifyListeners();
     }
-    wifiJoining = false;
-    wifiJoinName = '';
-    notifyListeners();
   }
 
   void wifiPick(String n) {
     if (wifiJoining) return;
     wifiSelName = n;
     wifiError = null;
+    _syncCardV2WifiAutoClose();
     notifyListeners();
   }
 
@@ -4136,21 +4343,37 @@ class DeviceStore extends ChangeNotifier {
     wifiJoining = true;
     wifiJoinName = sel;
     wifiError = null;
+    _wifiClosePending = false;
+    _cancelWifiIdleCloseTimer();
     notifyListeners();
     try {
       await _gw.connectWifi(sel, pwd);
+      if (isCardV2WifiOtaOnly) {
+        deviceWifiOpen = true;
+      }
       await _saveWifiPassword(sel, pwd);
       wifiLast = sel;
       wifiStateText = '$sel 连接成功';
       wifiSelName = null;
-      // 刷新凭据清单
-      await wifiScan();
+      // 刷新凭据清单（若用户已经离开配网流程则跳过扫描，交由 finally 立即关闭设备 Wi-Fi）
+      if (!(isCardV2WifiOtaOnly && _wifiClosePending)) {
+        await wifiScan();
+      }
     } on CardException catch (e) {
       wifiError = e.message;
+    } finally {
+      wifiJoining = false;
+      wifiJoinName = '';
+      if (isCardV2WifiOtaOnly &&
+          deviceWifiOpen == true &&
+          (_wifiClosePending || !_shouldKeepCardV2WifiOpen())) {
+        _wifiClosePending = false;
+        await _closeWifiQuietly();
+      } else {
+        _syncCardV2WifiAutoClose();
+      }
+      notifyListeners();
     }
-    wifiJoining = false;
-    wifiJoinName = '';
-    notifyListeners();
   }
 
   /// 忘记一个已保存网络（设备端删除 + 本机 Keychain 清除）。
@@ -4199,6 +4422,7 @@ class DeviceStore extends ChangeNotifier {
     _eventWatch?.cancel();
     _stopSheetWatch();
     _stopScanExpiryTimer();
+    _cancelWifiIdleCloseTimer();
     if (_ownsPhoneMicRecorder) {
       _phoneMicRecorder.dispose();
     }

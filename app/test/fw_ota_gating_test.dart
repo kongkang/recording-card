@@ -264,7 +264,7 @@ void main() {
       ),
       failWifiOta: const CardException(
         CardErrorKind.device,
-        '录音卡尚未配置 Wi-Fi 网络，请先在录音卡弹层「Wi-Fi」中连接 2.4GHz 路由器后再升级',
+        '录音卡尚未配置 Wi-Fi 网络，请在当前固件更新页点击「Wi-Fi 设置」连接 2.4GHz 路由器后再升级',
       ),
       wifiProgress: const [
         CardProgress(stage: 'wifi', percent: 100, text: 'Wi-Fi 升级完成'),
@@ -307,13 +307,12 @@ void main() {
     await tester.pump();
     expect(gw.lastWifiSsid, 'Studio-2.4G');
 
-    // 清除失败注入，回到固件升级页重试 → 成功
+    // 清除失败注入，点返回直达固件升级页重试 → 成功
     gw.failWifiOta = null;
     await tester.tap(find.byKey(const Key('wifi-back')));
     await tester.pump();
-    await tester.tap(find.byKey(const Key('fw-update')));
     await tester.pump();
-    await tester.pump();
+    expect(find.byKey(const Key('dev-upg')), findsOneWidget);
     await tester.tap(find.byKey(const Key('upg-btn')));
     await tester.pump();
     await tester.pump();
@@ -419,8 +418,8 @@ void main() {
     expect(store.deviceWifiOpen, isFalse);
   });
 
-  testWidgets('⑦ Wi-Fi 初始开启时升级：单 Wi-Fi / 双模块 / 仅主控均恢复开启模式', (tester) async {
-    // (a) 双模块升级：Stage 1 主控 DFU 重启后 wifiOpen=false，Stage 2 仍按 priorWifiOpen=true 还原为开启
+  testWidgets('⑦ 录音卡 V2 残留 Wi-Fi 开启态：建连自动关闭，双模块与仅主控升级结束后均不恢复开启', (tester) async {
+    // (a) 初始快照带残留 wifiOpen=true：连接收尾即自动关闭；双模块升级传 restoreWifiOpen=false 且结束为关闭
     final dualGw = FakeCardGateway(
       initialSnapshot: _cardSnap(
         fwVersion: '0.3.12',
@@ -435,14 +434,14 @@ void main() {
         fwVersionCode: 317,
         wifiVersion: '0.1.3',
         wifiVersionCode: 103,
-        wifiOpen: false, // 主控 DFU 重启后硬件默认关闭
+        wifiOpen: false,
       ),
       postWifiOtaSnapshot: _cardSnap(
         fwVersion: '0.3.17',
         fwVersionCode: 317,
         wifiVersion: '0.1.4',
         wifiVersionCode: 104,
-        wifiOpen: false,
+        wifiOpen: true, // 即便升级中途曾开启，CardV2 OTA-only 策略也必须以 restoreWifiOpen=false 收口
       ),
       clearAfterMainOta: true,
       mainOta: const CardOtaInfo(
@@ -461,7 +460,9 @@ void main() {
     addTearDown(dualStore.dispose);
     await dualStore.restoreLink();
     await dualStore.checkFirmware();
-    expect(dualStore.deviceWifiOpen, isTrue);
+    await tester.pump();
+    expect(dualStore.deviceWifiOpen, isFalse);
+    expect(dualGw.closeWifiCalls, greaterThanOrEqualTo(1));
 
     final doneDual = dualStore.startFwUpdate();
     for (var i = 0; i < 6; i++) {
@@ -470,10 +471,10 @@ void main() {
     await doneDual;
 
     expect(dualStore.fwStage, FwStage.done);
-    expect(dualGw.lastOtaWifiRestoreOpen, isTrue);
-    expect(dualStore.deviceWifiOpen, isTrue);
+    expect(dualGw.lastOtaWifiRestoreOpen, isFalse);
+    expect(dualStore.deviceWifiOpen, isFalse);
 
-    // (b) 仅主控升级且初始 Wi-Fi 开启：重连后自动恢复 openWifi
+    // (b) 仅主控升级且初始 Wi-Fi 开启：重连后不恢复 openWifi，保持关闭
     final mainOnlyGw = FakeCardGateway(
       initialSnapshot: _cardSnap(
         fwVersion: '0.3.12',
@@ -507,7 +508,8 @@ void main() {
     addTearDown(mainOnlyStore.dispose);
     await mainOnlyStore.restoreLink();
     await mainOnlyStore.checkFirmware();
-    expect(mainOnlyStore.deviceWifiOpen, isTrue);
+    await tester.pump();
+    expect(mainOnlyStore.deviceWifiOpen, isFalse);
 
     final doneMain = mainOnlyStore.startFwUpdate();
     for (var i = 0; i < 6; i++) {
@@ -516,9 +518,9 @@ void main() {
     await doneMain;
 
     expect(mainOnlyStore.fwStage, FwStage.done);
-    expect(mainOnlyGw.callLog, contains('wifi.open'));
+    expect(mainOnlyGw.callLog, isNot(contains('wifi.open')));
     expect(mainOnlyGw.callLog, isNot(contains('ota.wifi')));
-    expect(mainOnlyStore.deviceWifiOpen, isTrue);
+    expect(mainOnlyStore.deviceWifiOpen, isFalse);
   });
 
   test('蓝牙短编号解析与 connectedDisplayName：去掉产品前缀，保留原始 connectedName', () {
