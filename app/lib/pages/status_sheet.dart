@@ -1179,6 +1179,19 @@ class _ConnectView extends StatelessWidget {
               Text('正在连接录音卡…', style: TextStyle(fontSize: 13)),
             ],
           )
+        else if (store.linkState == LinkState.reconnecting)
+          Row(
+            key: const Key('dev-reconnecting-state'),
+            children: const [
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(width: 8),
+              Text('正在自动重连上次设备…', style: TextStyle(fontSize: 13)),
+            ],
+          )
         else if (bleExpired)
           const Text(
             '蓝牙设备列表已过期，请重新扫描',

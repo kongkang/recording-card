@@ -81,7 +81,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late final DeviceStore _device = widget.device ?? DeviceStore();
   late final RecordingStatusController _recording =
       widget.recordingStatus ?? RecordingStatusController();
@@ -114,10 +114,12 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.device == null) widget.onDeviceCreated?.call(_device);
     // 让 store 知道设备在不在：没连卡时下拉不要去取回录音，更不该报"整理中断"。
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
     widget.store.deviceConnected ??= () => _device.isConnected;
+    _device.onAutoSyncMissedData ??= () => widget.store.syncRecordings();
     widget.store.deviceRecording ??= () =>
         _device.isRecording || _device.isPhoneRecording;
     widget.store.flushActiveRecordingSlice ??= () async {
@@ -202,8 +204,27 @@ class _AppShellState extends State<AppShell> {
     _device.retainClock();
     _device.addListener(_syncRecordingStatus);
     _syncRecordingStatus();
-    // 启动即核对一次蓝牙链路：连着卡就直接展示真实状态，没连就等用户点胶囊去扫描
-    unawaited(_device.restoreLink());
+    // 启动即核对一次蓝牙链路：若 _HomeGate 尚未发起或测试直接挂载外壳，核对上次设备与实况状态
+    if (_device.linkState == LinkState.unknown &&
+        !_device.isLinkBusy &&
+        !_device.isRestoreInFlight) {
+      unawaited(_device.restoreLink());
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _device.handleAppResumed();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      if (!_liveAudio.isRunning) {
+        _liveAudio.ringBuffer.clear();
+      }
+      if (!_device.isPhoneRecording) {
+        _device.phoneRingBuffer.clear();
+      }
+    }
   }
 
   Future<void> _loadLiveActivityCaps() async {
@@ -306,6 +327,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _agentConfig.removeListener(_syncAgentIslandConfig);
     _device.liveActivityService.onActionButtonAgent = null;
     _device.liveActivityService.onActionButtonToggle = null;

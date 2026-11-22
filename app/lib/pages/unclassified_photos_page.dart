@@ -210,7 +210,7 @@ class _AlbumTile extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   if (hasFile)
-                    Image.file(File(photo.path), fit: BoxFit.cover)
+                    Image.file(File(photo.path), fit: BoxFit.cover, cacheWidth: 480)
                   else
                     ColoredBox(
                       color: const Color(0xFFEAEAE4),

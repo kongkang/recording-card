@@ -25,6 +25,7 @@ import '../../services/platform/live_activity_service.dart';
 import '../../services/watch/watch_hardware_service.dart';
 import '../device/card_gateway.dart';
 import '../platform/bluetooth_permission.dart';
+import '../storage/json_store.dart';
 
 enum SyncState { idle, busy, done }
 
@@ -70,6 +71,13 @@ class DeviceStore extends ChangeNotifier {
     LiveActivityService? liveActivityService,
     WatchHardwareService? watchHardware,
     LegacyUpgradeController? legacyUpgrade,
+    JsonStore? stateStore,
+    bool initialWatchLinkEnabled = false,
+    bool initialGetSeedLinkEnabled = false,
+    bool initialOmiLinkEnabled = false,
+    bool initialFeishuLinkEnabled = false,
+    bool deferInitialRestore = false,
+    this.onAutoSyncMissedData,
     DateTime Function()? now,
   }) : _bleGateway = gateway ?? realOrUnsupported(),
        _ownsWatchHardware = watchHardware == null,
@@ -80,7 +88,11 @@ class DeviceStore extends ChangeNotifier {
        _phoneMicRecorder = phoneMicRecorder ?? PhoneMicRecorder(),
        _liveActivityService = liveActivityService ?? LiveActivityService(),
        _ownsLegacyUpgrade = legacyUpgrade == null,
+       _stateStore = stateStore,
        _now = now ?? DateTime.now {
+    _getSeedLinkEnabled = initialGetSeedLinkEnabled;
+    _omiLinkEnabled = initialOmiLinkEnabled;
+    _feishuLinkEnabled = initialFeishuLinkEnabled;
     _gateway = WatchCompositeCardGateway(
       bleGateway: _bleGateway,
       watchService: _watchHardware,
@@ -91,11 +103,39 @@ class DeviceStore extends ChangeNotifier {
           onAutoReconnect: _autoReconnectAfterLegacyUpgrade,
         );
     _watchHardware.addListener(_onWatchHardwareChanged);
+    if (initialWatchLinkEnabled && !deferInitialRestore) {
+      unawaited(_watchHardware.setLinkEnabled(true));
+    }
     if (autoStart) {
-      unawaited(restoreLink());
+      if (!deferInitialRestore) {
+        unawaited(restoreLink());
+      }
       _startHeartbeat();
     }
   }
+
+  static const String _lastDeviceStoreKey = 'last_device';
+  static const Duration _resumeReconcileCooldown = Duration(seconds: 3);
+
+  final JsonStore? _stateStore;
+  int _persistGen = 0;
+  bool _restoreInFlight = false;
+  DateTime? _lastResumeReconcileAt;
+  bool _autoMissedSyncInFlight = false;
+  bool _scanInFlight = false;
+  bool _disposed = false;
+
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  /// 是否正在执行启动/回前台设备状态恢复。
+  bool get isRestoreInFlight => _restoreInFlight;
+
+  /// 恢复连接且检测到后台停录或存在漏传数据时触发自动补传/冲刷回调。
+  Future<String?> Function()? onAutoSyncMissedData;
 
   /// 生产环境在启动时开启心跳；widget 测试传 false，避免悬挂定时器。
   final bool _autoStart;
@@ -254,39 +294,408 @@ class DeviceStore extends ChangeNotifier {
       linkState == LinkState.connecting ||
       linkState == LinkState.reconnecting;
 
-  /// 启动时核对一次：桥可用且已连着卡 → 已连接；否则未连接。
-  Future<void> restoreLink() async {
-    final epoch = ++_epoch;
-    bleAuth = await _permission.status();
-    if (!_gateway.available) {
-      linkState = LinkState.unsupported;
-      linkError = '此设备不支持连接录音卡';
-      notifyListeners();
-      return;
-    }
+  /// 启动或回前台时核对链路：优先恢复上次连接硬件与灵动岛/手表活跃录音态，失败再按未连接呈现。
+  Future<void> restoreLink({bool fromResume = false}) async {
+    if (_restoreInFlight || isLinkBusy) return;
+    _restoreInFlight = true;
     try {
-      final snapshot = await _gw.snapshot();
+      final epoch = ++_epoch;
+      bleAuth = await _permission.status();
       if (epoch != _epoch) return;
-      _stopScanExpiryTimer();
+      if (!_gateway.available) {
+        linkState = LinkState.unsupported;
+        linkError = '此设备不支持连接录音卡';
+        notifyListeners();
+        return;
+      }
+
+      final persisted = _stateStore != null
+          ? await _loadPersistedLastDevice()
+          : null;
+      final liveActivity = await _liveActivityService.queryActiveActivity();
+      if (_watchHardware.linkEnabled) {
+        try {
+          await _watchHardware.refreshStatus();
+        } on Object {
+          // 忽略 Watch 临时查询失败，继续后续检查
+        }
+      }
+      if (epoch != _epoch) return;
+
+      try {
+        final snapshot = await _gw.snapshot().timeout(_snapshotTimeout);
+        if (epoch != _epoch) return;
+        _stopScanExpiryTimer();
+        linkState = LinkState.connected;
+        linkError = null;
+        if (_stateStore != null &&
+            _lastDevice == null &&
+            (snapshot.deviceId.isNotEmpty ||
+                snapshot.effectiveKind == DeviceKind.appleWatch)) {
+          final id = snapshot.deviceId.isNotEmpty
+              ? snapshot.deviceId
+              : WatchHardwareService.watchDeviceId;
+          final name = snapshot.deviceName.isNotEmpty
+              ? snapshot.deviceName
+              : snapshot.modelLabel;
+          _lastDevice = CardDevice(
+            id: id,
+            name: name,
+            kind: snapshot.effectiveKind,
+            displayModel: snapshot.modelLabel,
+            capabilities: snapshot.resolvedCapabilities,
+          );
+          connectedName ??= name;
+        } else if (connectedName == null && snapshot.deviceName.isNotEmpty) {
+          connectedName = snapshot.deviceName;
+        }
+        final startedAtHint = _resolveRecordingStartedAtHint(
+          snapshot: snapshot,
+          persisted: persisted,
+          liveActivity: liveActivity,
+        );
+        _applySnapshot(snapshot, recordingStartedAtHint: startedAtHint);
+        await _reconcileRecordingOnConnect();
+        if (epoch != _epoch) return;
+        await _postRestoreSync(
+          snapshot: snapshot,
+          persisted: persisted,
+          liveActivity: liveActivity,
+          reconnected: false,
+        );
+        if (epoch != _epoch) return;
+        _persistCurrentDeviceState();
+        _startHeartbeat();
+        if (sheetOpen) {
+          _startSheetWatch();
+          unawaited(prefetchSummaryInfo());
+        } else if (_autoStart) {
+          unawaited(prefetchSummaryInfo());
+        }
+        notifyListeners();
+        return;
+      } on CardException catch (e) {
+        if (epoch != _epoch) return;
+        if (e.kind != CardErrorKind.disconnected) {
+          linkState = LinkState.disconnected;
+          linkError = e.message;
+          notifyListeners();
+          return;
+        }
+      } on TimeoutException {
+        if (epoch != _epoch) return;
+      }
+
+      final target = _resolveRestoreTarget(
+        persisted: persisted,
+        liveActivity: liveActivity,
+      );
+      if (target != null) {
+        final bleBlocked =
+            target.deviceKind != DeviceKind.appleWatch &&
+            (bleAuth == BluetoothAuthorization.denied ||
+                bleAuth == BluetoothAuthorization.restricted);
+        if (!bleBlocked) {
+          await _reconnectCachedTarget(
+            target,
+            epoch: epoch,
+            persisted: persisted,
+            liveActivity: liveActivity,
+          );
+          return;
+        }
+      }
+
+      linkState = LinkState.disconnected;
+      linkError = null;
+      if (liveActivity.active &&
+          liveActivity.isLocalPhoneOnly &&
+          !_phoneRecording) {
+        unawaited(_liveActivityService.stopLocalRecordingActivity());
+      }
+      if (fromResume) {
+        _handleScanExpiryOnResume();
+      }
+      notifyListeners();
+    } finally {
+      _restoreInFlight = false;
+    }
+  }
+
+  bool _isKindAllowedForRestore(DeviceKind kind) => switch (kind) {
+    DeviceKind.appleWatch => _watchHardware.linkEnabled,
+    DeviceKind.getSeedGsc10 => _getSeedLinkEnabled,
+    DeviceKind.omiCv1 => _omiLinkEnabled,
+    DeviceKind.feishuD3200 => _feishuLinkEnabled,
+    DeviceKind.cardV2 || DeviceKind.dyjV1 || DeviceKind.boardV21 => true,
+  };
+
+  Future<PersistedLastDevice?> _loadPersistedLastDevice() async {
+    final store = _stateStore;
+    if (store == null) return null;
+    try {
+      final raw = await store.read(_lastDeviceStoreKey);
+      return PersistedLastDevice.fromJson(raw);
+    } on Object catch (e) {
+      debugPrint('[device] 读取持久化设备失败：$e');
+      return null;
+    }
+  }
+
+  void _persistCurrentDeviceState({
+    CardDevice? overrideDevice,
+    bool? recordingOverride,
+  }) {
+    final store = _stateStore;
+    if (store == null) return;
+    final dev = overrideDevice ?? _lastDevice;
+    if (dev == null || dev.id.trim().isEmpty) return;
+    final rec = recordingOverride ?? isRecording;
+    final startedAtMs = rec
+        ? (_hwRecordingStartedAt ??
+                  _now().subtract(Duration(seconds: _clockTicks)))
+              .millisecondsSinceEpoch
+        : null;
+    final record = PersistedLastDevice(
+      id: dev.id,
+      name: dev.name.isNotEmpty ? dev.name : dev.modelLabel,
+      deviceKind: dev.deviceKind,
+      displayModel: dev.modelLabel,
+      wasRecording: rec,
+      recordingStartedAtMs: startedAtMs,
+      savedAtMs: _now().millisecondsSinceEpoch,
+    );
+    _persistGen++;
+    unawaited(
+      store.write(_lastDeviceStoreKey, record.toJson()).catchError((Object e) {
+        debugPrint('[device] 持久化设备状态失败：$e');
+      }),
+    );
+  }
+
+  void _clearPersistedLastDevice() {
+    final store = _stateStore;
+    if (store == null) return;
+    _persistGen++;
+    unawaited(
+      store.remove(_lastDeviceStoreKey).catchError((Object e) {
+        debugPrint('[device] 清理持久化设备失败：$e');
+      }),
+    );
+  }
+
+  Future<void> _clearPersistedIfMatching(DeviceKind kind) async {
+    final clearMem = _lastDevice?.deviceKind == kind;
+    if (clearMem) {
+      _lastDevice = null;
+    }
+    final store = _stateStore;
+    if (store == null) return;
+    final genBefore = _persistGen;
+    final existing = await _loadPersistedLastDevice();
+    if (genBefore != _persistGen) return;
+    if (clearMem || existing?.deviceKind == kind) {
+      _persistGen++;
+      await store.remove(_lastDeviceStoreKey);
+    }
+  }
+
+  CardDevice? _resolveRestoreTarget({
+    required PersistedLastDevice? persisted,
+    required ActiveLiveActivityState liveActivity,
+  }) {
+    final mem = _lastDevice;
+    if (mem != null && _isKindAllowedForRestore(mem.deviceKind)) {
+      return mem;
+    }
+    if (persisted != null && _isKindAllowedForRestore(persisted.deviceKind)) {
+      if (persisted.deviceKind == DeviceKind.appleWatch) {
+        return _watchHardware.asCardDevice ?? persisted.toCardDevice();
+      }
+      return persisted.toCardDevice();
+    }
+    if (liveActivity.isAppleWatch &&
+        _watchHardware.linkEnabled &&
+        _watchHardware.availableForScan) {
+      return _watchHardware.asCardDevice;
+    }
+    if (_watchHardware.linkEnabled &&
+        _watchHardware.availableForScan &&
+        (_watchHardware.currentStatus.isRecording ||
+            _watchHardware.currentStatus.pendingCount > 0)) {
+      return _watchHardware.asCardDevice;
+    }
+    return null;
+  }
+
+  DateTime? _resolveRecordingStartedAtHint({
+    required CardSnapshot snapshot,
+    required PersistedLastDevice? persisted,
+    required ActiveLiveActivityState liveActivity,
+  }) {
+    if (!snapshot.recording) return null;
+    if (liveActivity.active &&
+        liveActivity.isHardwareRecording &&
+        liveActivity.startedAt != null) {
+      return liveActivity.startedAt;
+    }
+    if (snapshot.effectiveKind == DeviceKind.appleWatch &&
+        _watchHardware.currentStatus.startedAtMs > 0) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        _watchHardware.currentStatus.startedAtMs,
+      );
+    }
+    if (persisted != null &&
+        persisted.wasRecording &&
+        persisted.recordingStartedAtMs != null &&
+        persisted.recordingStartedAtMs! > 0) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        persisted.recordingStartedAtMs!,
+      );
+    }
+    return null;
+  }
+
+  Future<void> _reconnectCachedTarget(
+    CardDevice target, {
+    required int epoch,
+    required PersistedLastDevice? persisted,
+    required ActiveLiveActivityState liveActivity,
+  }) async {
+    _stopScanExpiryTimer();
+    linkState = LinkState.reconnecting;
+    linkError = null;
+    notifyListeners();
+    _markLinkActivity();
+
+    try {
+      var snapshot = await _gateway
+          .connect(
+            target.id,
+            name: target.name,
+            deviceKind: target.deviceKind.code,
+          )
+          .timeout(_retryConnectTimeout);
+      if (epoch != _epoch) return;
+      snapshot ??= await _gw.snapshot().timeout(_snapshotTimeout);
+      if (epoch != _epoch) return;
+
+      _markLinkActivity();
+      activeKind = target.deviceKind;
+      activeCapabilities = target.resolvedCapabilities;
+      activeModelLabel = target.modelLabel;
+      connectedName = target.name;
+      _lastDevice = target;
       linkState = LinkState.connected;
       linkError = null;
-      _applySnapshot(snapshot);
+
+      final startedAtHint = _resolveRecordingStartedAtHint(
+        snapshot: snapshot,
+        persisted: persisted,
+        liveActivity: liveActivity,
+      );
+      _applySnapshot(snapshot, recordingStartedAtHint: startedAtHint);
       await _reconcileRecordingOnConnect();
       if (epoch != _epoch) return;
+      await _postRestoreSync(
+        snapshot: snapshot,
+        persisted: persisted,
+        liveActivity: liveActivity,
+        reconnected: true,
+      );
+      if (epoch != _epoch) return;
+      _persistCurrentDeviceState(overrideDevice: target);
+      _eventSeq = 0;
       _startHeartbeat();
       if (sheetOpen) {
         _startSheetWatch();
-        unawaited(prefetchSummaryInfo());
-      } else if (_autoStart) {
-        unawaited(prefetchSummaryInfo());
       }
-    } on CardException catch (e) {
+      unawaited(_afterConnect(epoch));
+    } on Object catch (e) {
       if (epoch != _epoch) return;
-      // 未连接是正常初始态，不算错误；其它错误如实呈现
+      debugPrint('[device] 恢复上次设备 ${target.id} 失败：$e');
       linkState = LinkState.disconnected;
-      linkError = e.kind == CardErrorKind.disconnected ? null : e.message;
+      linkError = null;
+      if (liveActivity.active &&
+          liveActivity.isLocalPhoneOnly &&
+          !_phoneRecording) {
+        unawaited(_liveActivityService.stopLocalRecordingActivity());
+      }
     }
     notifyListeners();
+  }
+
+  Future<void> _postRestoreSync({
+    required CardSnapshot snapshot,
+    required PersistedLastDevice? persisted,
+    required ActiveLiveActivityState liveActivity,
+    required bool reconnected,
+  }) async {
+    if (snapshot.effectiveKind == DeviceKind.appleWatch) {
+      final status = _watchHardware.currentStatus;
+      final expectedWatchActive =
+          status.pendingCount > 0 ||
+          status.isRecording ||
+          snapshot.recording ||
+          (persisted?.deviceKind == DeviceKind.appleWatch &&
+              persisted?.wasRecording == true) ||
+          liveActivity.isAppleWatch;
+      if (expectedWatchActive) {
+        unawaited(_watchHardware.flushAndDrain());
+      } else {
+        unawaited(_watchHardware.drainPendingSlices());
+      }
+      if (!snapshot.recording &&
+          liveActivity.active &&
+          !_phoneRecording &&
+          (liveActivity.isAppleWatch || liveActivity.isHardwareRecording)) {
+        unawaited(_liveActivityService.stopLocalRecordingActivity());
+      }
+      return;
+    }
+
+    final currentId = _lastDevice?.id ?? snapshot.deviceId;
+    final persistedMatches =
+        persisted != null &&
+        persisted.wasRecording &&
+        (persisted.id == currentId || currentId.isEmpty);
+    final expectedRecording =
+        persistedMatches || liveActivity.isHardwareRecording;
+
+    if (expectedRecording && !snapshot.recording) {
+      if (liveActivity.active && !_phoneRecording) {
+        unawaited(_liveActivityService.stopLocalRecordingActivity());
+      }
+      _triggerAutoSyncMissedData();
+    } else if (expectedRecording &&
+        snapshot.recording &&
+        activeCapabilities.hasFileSync &&
+        (reconnected || !activeCapabilities.realtimeAudio)) {
+      _triggerAutoSyncMissedData();
+    } else if (!snapshot.recording &&
+        liveActivity.active &&
+        !_phoneRecording &&
+        liveActivity.isLocalPhoneOnly) {
+      unawaited(_liveActivityService.stopLocalRecordingActivity());
+    }
+  }
+
+  void _triggerAutoSyncMissedData() {
+    final cb = onAutoSyncMissedData;
+    if (cb == null || _autoMissedSyncInFlight) return;
+    _autoMissedSyncInFlight = true;
+    unawaited(() async {
+      try {
+        final err = await cb();
+        if (err == null) {
+          noteSyncFinished(manual: false);
+        }
+      } on Object catch (e) {
+        debugPrint('[device] 恢复后自动补传失败：$e');
+      } finally {
+        _autoMissedSyncInFlight = false;
+      }
+    }());
   }
 
   /// 支持的硬件蓝牙广播名前缀族：
@@ -348,6 +757,15 @@ class DeviceStore extends ChangeNotifier {
         (!nextFeishu && isConnected && activeKind == DeviceKind.feishuD3200)) {
       await disconnectSafely();
     }
+    if (!nextGetSeed) {
+      await _clearPersistedIfMatching(DeviceKind.getSeedGsc10);
+    }
+    if (!nextOmi) {
+      await _clearPersistedIfMatching(DeviceKind.omiCv1);
+    }
+    if (!nextFeishu) {
+      await _clearPersistedIfMatching(DeviceKind.feishuD3200);
+    }
     if (discovered.isNotEmpty) {
       discovered = discovered
           .where(
@@ -375,8 +793,13 @@ class DeviceStore extends ChangeNotifier {
   /// 开启或关闭 Apple Watch 硬件联动；关闭时若当前正连着 Watch 则安全断开。
   Future<void> setWatchLinkEnabled(bool enabled) async {
     await _watchHardware.setLinkEnabled(enabled);
-    if (!enabled && isConnected && activeKind == DeviceKind.appleWatch) {
-      await disconnectSafely();
+    if (!enabled) {
+      if (isConnected && activeKind == DeviceKind.appleWatch) {
+        await disconnectSafely();
+      } else {
+        await _clearPersistedIfMatching(DeviceKind.appleWatch);
+        notifyListeners();
+      }
     } else {
       notifyListeners();
     }
@@ -430,7 +853,7 @@ class DeviceStore extends ChangeNotifier {
 
   /// 扫描附近硬件（DYJ / REAI_VB 前缀蓝牙硬件 + 开启联动后的已配对 Apple Watch）。
   Future<void> startScan() async {
-    if (isLinkBusy || !_gateway.available) {
+    if (_scanInFlight || isLinkBusy || !_gateway.available) {
       if (!_gateway.available) {
         linkState = LinkState.unsupported;
         linkError = '此设备不支持连接录音卡';
@@ -438,62 +861,68 @@ class DeviceStore extends ChangeNotifier {
       }
       return; // 防重入：扫描中再点不重复发起（SDK 要求串行）
     }
-    // 读一次授权状态用于解释失败原因。**不在这里阻塞等待用户点弹窗**：
-    // 底层（Rust/CoreBluetooth）在扫描时会自己触发同一个系统对话框，
-    // 这里若同步等 30 秒，用户看到的会是"点了扫描没反应"。
-    bleAuth = await _permission.status();
-    if (!_watchHardware.availableForScan &&
-        (bleAuth == BluetoothAuthorization.denied ||
-            bleAuth == BluetoothAuthorization.restricted)) {
-      linkState = LinkState.disconnected;
-      linkError = bleAuth.hint;
-      notifyListeners();
-      return;
-    }
-
-    final epoch = ++_epoch;
-    _stopScanExpiryTimer();
-    _bleScanSeenAt = null;
-    _scanExpiredByTimer = false;
-    linkState = LinkState.scanning;
-    linkError = null;
-    discovered = const [];
-    notifyListeners();
+    _scanInFlight = true;
     try {
-      final list = await _gw.scan();
-      if (epoch != _epoch) return;
-      // 近的设备排前面：RSSI 越大信号越强（-50 比 -80 近）。无 RSSI 的排最后。
-      discovered = [
-        for (final device in list)
-          if (isOurDevice(
-            device,
-            allowWatch: watchHardware.linkEnabled,
-            allowGetSeed: _getSeedLinkEnabled,
-            allowOmi: _omiLinkEnabled,
-            allowFeishu: _feishuLinkEnabled,
-          ))
-            device,
-      ]..sort((a, b) => (b.rssi ?? -100).compareTo(a.rssi ?? -100));
-      final completedAt = _now();
-      _bleScanSeenAt = _computeBleScanAnchor(discovered, completedAt);
-      _scanExpiredByTimer = false;
-      linkState = LinkState.disconnected;
-      linkError = discovered.isEmpty
-          ? (bleAuth == BluetoothAuthorization.notDetermined
-              ? '请允许「录音卡」使用蓝牙后重试'
-              : '没有找到附近的录音卡，请确认录音卡已开机')
-          : null;
-      _scheduleScanExpiryTimer();
-    } on CardException catch (e) {
-      if (epoch != _epoch) return;
+      // 读一次授权状态用于解释失败原因。**不在这里阻塞等待用户点弹窗**：
+      // 底层（Rust/CoreBluetooth）在扫描时会自己触发同一个系统对话框，
+      // 这里若同步等 30 秒，用户看到的会是"点了扫描没反应"。
+      bleAuth = await _permission.status();
+      if (_disposed) return;
+      if (!_watchHardware.availableForScan &&
+          (bleAuth == BluetoothAuthorization.denied ||
+              bleAuth == BluetoothAuthorization.restricted)) {
+        linkState = LinkState.disconnected;
+        linkError = bleAuth.hint;
+        notifyListeners();
+        return;
+      }
+
+      final epoch = ++_epoch;
       _stopScanExpiryTimer();
       _bleScanSeenAt = null;
       _scanExpiredByTimer = false;
+      linkState = LinkState.scanning;
+      linkError = null;
       discovered = const [];
-      linkState = LinkState.disconnected;
-      linkError = e.message;
+      notifyListeners();
+      try {
+        final list = await _gw.scan();
+        if (epoch != _epoch) return;
+        // 近的设备排前面：RSSI 越大信号越强（-50 比 -80 近）。无 RSSI 的排最后。
+        discovered = [
+          for (final device in list)
+            if (isOurDevice(
+              device,
+              allowWatch: watchHardware.linkEnabled,
+              allowGetSeed: _getSeedLinkEnabled,
+              allowOmi: _omiLinkEnabled,
+              allowFeishu: _feishuLinkEnabled,
+            ))
+              device,
+        ]..sort((a, b) => (b.rssi ?? -100).compareTo(a.rssi ?? -100));
+        final completedAt = _now();
+        _bleScanSeenAt = _computeBleScanAnchor(discovered, completedAt);
+        _scanExpiredByTimer = false;
+        linkState = LinkState.disconnected;
+        linkError = discovered.isEmpty
+            ? (bleAuth == BluetoothAuthorization.notDetermined
+                ? '请允许「录音卡」使用蓝牙后重试'
+                : '没有找到附近的录音卡，请确认录音卡已开机')
+            : null;
+        _scheduleScanExpiryTimer();
+      } on CardException catch (e) {
+        if (epoch != _epoch) return;
+        _stopScanExpiryTimer();
+        _bleScanSeenAt = null;
+        _scanExpiredByTimer = false;
+        discovered = const [];
+        linkState = LinkState.disconnected;
+        linkError = e.message;
+      }
+      notifyListeners();
+    } finally {
+      _scanInFlight = false;
     }
-    notifyListeners();
   }
 
   Future<void> connectTo(CardDevice device) async {
@@ -530,6 +959,7 @@ class DeviceStore extends ChangeNotifier {
       _applySnapshot(snapshot);
       await _reconcileRecordingOnConnect();
       if (epoch != _epoch) return;
+      _persistCurrentDeviceState(overrideDevice: device);
       _eventSeq = 0;
       _startHeartbeat();
       if (sheetOpen) {
@@ -590,6 +1020,7 @@ class DeviceStore extends ChangeNotifier {
   Future<void> disconnectSafely() async {
     _phoneStandbyArmed = false;
     _hwRecordingStartedAt = null;
+    _clearPersistedLastDevice();
     if (isRecording) {
       try {
         await _gw.stopRecording().timeout(const Duration(seconds: 5));
@@ -616,6 +1047,7 @@ class DeviceStore extends ChangeNotifier {
     _eventWatch = null;
     _stopSheetWatch();
     _lastDevice = null;
+    _clearPersistedLastDevice();
     CardDisconnectReport? report;
     String? failure;
     try {
@@ -791,6 +1223,7 @@ class DeviceStore extends ChangeNotifier {
     if (!recording) {
       _stopClock();
       _hwRecordingStartedAt = null;
+      _persistCurrentDeviceState(recordingOverride: false);
       if (hasDeviceFault && _phoneStandbyArmed) {
         // 硬件因故障/存储满意外停止录音（非用户主动停录）：自动启动手机麦克风保底接力
         unawaited(_triggerPhoneFailover(carrySecOverride: carrySec));
@@ -803,8 +1236,9 @@ class DeviceStore extends ChangeNotifier {
       }
       return;
     }
-    _hwRecordingStartedAt = DateTime.now();
+    _hwRecordingStartedAt = _now();
     _phoneStandbyArmed = true;
+    _persistCurrentDeviceState(recordingOverride: true);
     if (_clockUsers > 0) _startClock();
     if (_phoneRecording && !_otaHandoverPhoneRecording) {
       unawaited(
@@ -988,6 +1422,7 @@ class DeviceStore extends ChangeNotifier {
       _applySnapshot(snapshot);
       await _reconcileRecordingOnConnect();
       if (epoch != _epoch) return;
+      _persistCurrentDeviceState();
       // 重连成功后必须把看门狗重新挂上：只在首次 connect 启表的话，
       // 一次掉线重连之后就再也没人探测了。
       _startHeartbeat();
@@ -1069,7 +1504,7 @@ class DeviceStore extends ChangeNotifier {
   /// 设备端 Wi-Fi 模块是否开启（null = 未知，不冒充"已关闭"）。
   bool? deviceWifiOpen;
 
-  void _applySnapshot(CardSnapshot s) {
+  void _applySnapshot(CardSnapshot s, {DateTime? recordingStartedAtHint}) {
     activeKind = s.effectiveKind;
     activeCapabilities = s.resolvedCapabilities;
     activeModelLabel = s.modelLabel;
@@ -1103,21 +1538,35 @@ class DeviceStore extends ChangeNotifier {
     }
     deviceWifiOpen = s.wifiOpen;
     final prevRecording = _liveRecording ?? false;
+    final hintElapsed = recordingStartedAtHint != null
+        ? _now().difference(recordingStartedAtHint).inSeconds
+        : 0;
     if (s.recording != prevRecording) {
       _liveRecording = s.recording;
-      _clockTicks = 0;
+      _clockTicks = (s.recording && hintElapsed > 0) ? hintElapsed : 0;
       // 录音计时跨页面持续走：Timeline 顶部状态块与弹层用的是同一个时钟。
       // 只有 UI 持有（retainClock）时才真正起表；停止录音/断开立即停表。
       if (s.recording) {
-        _hwRecordingStartedAt = _phoneRecordingStartedAt ?? DateTime.now();
+        _hwRecordingStartedAt =
+            recordingStartedAtHint ?? _phoneRecordingStartedAt ?? _now();
         _phoneStandbyArmed = true;
       } else {
         _hwRecordingStartedAt = null;
         _stopClock();
       }
+      if (isConnected) {
+        _persistCurrentDeviceState(recordingOverride: s.recording);
+      }
     } else if (s.recording) {
       _phoneStandbyArmed = true;
-      _hwRecordingStartedAt ??= DateTime.now();
+      if (recordingStartedAtHint != null) {
+        _hwRecordingStartedAt = recordingStartedAtHint;
+        if (hintElapsed > _clockTicks) {
+          _clockTicks = hintElapsed;
+        }
+      } else {
+        _hwRecordingStartedAt ??= _now();
+      }
     }
     if (s.recording && _clockUsers > 0) _startClock();
     if (isConnected) {
@@ -1267,7 +1716,7 @@ class DeviceStore extends ChangeNotifier {
       await refreshFromDevice();
       if (wantStart && isRecording) {
         _phoneStandbyArmed = true;
-        _hwRecordingStartedAt ??= DateTime.now();
+        _hwRecordingStartedAt ??= _now();
         _syncLiveActivity();
         unawaited(_prewarmStandbyMicPermission());
       } else if (!wantStart) {
@@ -1277,6 +1726,7 @@ class DeviceStore extends ChangeNotifier {
           unawaited(_liveActivityService.stopLocalRecordingActivity());
         }
       }
+      _persistCurrentDeviceState();
       return null;
     } on TimeoutException {
       if (wantStart && !isRecording) _phoneStandbyArmed = false;
@@ -1399,7 +1849,7 @@ class DeviceStore extends ChangeNotifier {
     if (isConnected && isRecording) {
       final startedAt =
           _hwRecordingStartedAt ??
-          DateTime.now().subtract(Duration(seconds: _clockTicks));
+          _now().subtract(Duration(seconds: _clockTicks));
       _hwRecordingStartedAt = startedAt;
       unawaited(
         _liveActivityService.startHardwareRecordingActivity(
@@ -1410,7 +1860,7 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
     if (_phoneRecording) {
-      final activityStartedAt = DateTime.now().subtract(
+      final activityStartedAt = _now().subtract(
         Duration(seconds: _phoneRecSec),
       );
       if (_failoverPhoneRecording) {
@@ -1663,6 +2113,8 @@ class DeviceStore extends ChangeNotifier {
   Future<void> stopAllRecordingsForSignOut() async {
     _phoneStandbyArmed = false;
     _hwRecordingStartedAt = null;
+    _lastDevice = null;
+    _clearPersistedLastDevice();
     if (_phoneRecording || _phoneRecordingBusy) {
       await stopPhoneRecording();
     } else {
@@ -1910,6 +2362,8 @@ class DeviceStore extends ChangeNotifier {
       _startSheetWatch();
     } else if (linkState == LinkState.unknown) {
       unawaited(restoreLink());
+    } else if (isLinkBusy || _restoreInFlight || _scanInFlight) {
+      // 正在执行自动重连或扫描：打开弹层直接展示重连中/扫描中状态，不中断打断成二次扫描
     } else {
       unawaited(startScan());
     }
@@ -1933,7 +2387,83 @@ class DeviceStore extends ChangeNotifier {
 
   /// App 切回前台时对扫描结果做真实墙钟过期校准：
   /// 若弹层停在「连接设备」页且列表已超过 TTL，立即自动重扫一次；否则按真实剩余时间重排定时器。
-  void handleAppResumed() {
+  void _resyncWallClockIfRecording() {
+    var changed = false;
+    if (isConnected && isRecording && _hwRecordingStartedAt != null) {
+      final elapsed = _now().difference(_hwRecordingStartedAt!).inSeconds;
+      if (elapsed > _clockTicks) {
+        _clockTicks = elapsed;
+        changed = true;
+      }
+    }
+    if (_phoneRecording && _phoneRecordingStartedAt != null) {
+      final elapsed = _now().difference(_phoneRecordingStartedAt!).inSeconds;
+      if (elapsed > _phoneRecSec) {
+        _phoneRecSec = elapsed;
+        changed = true;
+      }
+    }
+    if (changed) notifyListeners();
+  }
+
+  Future<void> _reconcileConnectedOnResume() async {
+    if (!isConnected || isLinkBusy || _restoreInFlight) return;
+    final epoch = _epoch;
+    if (activeKind == DeviceKind.appleWatch) {
+      try {
+        await _watchHardware.refreshStatus();
+        if (epoch != _epoch) return;
+        if (_watchHardware.consumeUnexpectedDisconnect()) {
+          unawaited(_retryReconnect());
+          return;
+        }
+        final snap = _watchHardware.toSnapshot();
+        final wasRecording = _liveRecording == true;
+        final status = _watchHardware.currentStatus;
+        final watchStartedAt = status.startedAtMs > 0
+            ? DateTime.fromMillisecondsSinceEpoch(status.startedAtMs)
+            : _hwRecordingStartedAt;
+        _applySnapshot(snap, recordingStartedAtHint: watchStartedAt);
+        _persistCurrentDeviceState();
+        if (status.pendingCount > 0 || status.isRecording || wasRecording) {
+          unawaited(_watchHardware.flushAndDrain());
+        }
+        if (wasRecording && !snap.recording && !_phoneRecording) {
+          unawaited(_liveActivityService.stopLocalRecordingActivity());
+        }
+        notifyListeners();
+      } on Object catch (e) {
+        debugPrint('[resume] 刷新 Watch 状态失败：$e');
+      }
+      return;
+    }
+
+    try {
+      final snapshot = await _gw.snapshot().timeout(_snapshotTimeout);
+      if (epoch != _epoch) return;
+      final wasRecording = _liveRecording == true;
+      _markLinkActivity();
+      _applySnapshot(snapshot, recordingStartedAtHint: _hwRecordingStartedAt);
+      _persistCurrentDeviceState();
+      if (wasRecording && !snapshot.recording) {
+        if (!_phoneRecording) {
+          unawaited(_liveActivityService.stopLocalRecordingActivity());
+        }
+        _triggerAutoSyncMissedData();
+      }
+      _startHeartbeat();
+      notifyListeners();
+    } on CardException catch (e) {
+      if (epoch != _epoch) return;
+      if (e.kind == CardErrorKind.disconnected) {
+        unawaited(_retryReconnect());
+      }
+    } on TimeoutException {
+      // 链路被同步占用时跳过本次对账
+    }
+  }
+
+  void _handleScanExpiryOnResume() {
     if (!sheetOpen || isConnected || isLinkBusy || view != DeviceView.main) {
       return;
     }
@@ -1951,6 +2481,36 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
     _scheduleScanExpiryTimer();
+  }
+
+  void handleAppResumed() {
+    _resyncWallClockIfRecording();
+    if (isLinkBusy || _restoreInFlight || _scanInFlight) {
+      return;
+    }
+    if (isConnected) {
+      final now = _now();
+      if (_lastResumeReconcileAt == null ||
+          now.difference(_lastResumeReconcileAt!) >= _resumeReconcileCooldown) {
+        _lastResumeReconcileAt = now;
+        unawaited(_reconcileConnectedOnResume());
+      }
+      return;
+    }
+    final hasRestoreSource =
+        _lastDevice != null || _stateStore != null || _watchHardware.linkEnabled;
+    if (!hasRestoreSource) {
+      _handleScanExpiryOnResume();
+      return;
+    }
+    final now = _now();
+    if (_lastResumeReconcileAt != null &&
+        now.difference(_lastResumeReconcileAt!) < _resumeReconcileCooldown) {
+      _handleScanExpiryOnResume();
+      return;
+    }
+    _lastResumeReconcileAt = now;
+    unawaited(restoreLink(fromResume: true));
   }
 
   void showView(DeviceView v) {
@@ -2558,6 +3118,8 @@ class DeviceStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    ++_epoch;
     if (fwUpdating) {
       unawaited(_setKeepScreenOn(false));
     }
@@ -2583,4 +3145,69 @@ class DeviceStore extends ChangeNotifier {
 
     super.dispose();
   }
+}
+
+/// 持久化保存的最近一次已连接硬件及录音上下文，用于重启或回前台时无扫描直连恢复。
+@immutable
+class PersistedLastDevice {
+  const PersistedLastDevice({
+    required this.id,
+    required this.name,
+    required this.deviceKind,
+    this.displayModel,
+    this.wasRecording = false,
+    this.recordingStartedAtMs,
+    this.savedAtMs = 0,
+  });
+
+  final String id;
+  final String name;
+  final DeviceKind deviceKind;
+  final String? displayModel;
+  final bool wasRecording;
+  final int? recordingStartedAtMs;
+  final int savedAtMs;
+
+  static PersistedLastDevice? fromJson(Map<String, dynamic>? json) {
+    if (json == null || json.isEmpty) return null;
+    final id = (json['id'] as String?)?.trim() ?? '';
+    final name = (json['name'] as String?)?.trim() ?? '';
+    if (id.isEmpty) return null;
+    final kind = DeviceKind.fromCode(
+      json['deviceKind'] as String?,
+      fallbackName: name,
+    );
+    final rawStart = json['recordingStartedAtMs'];
+    final rawSaved = json['savedAtMs'];
+    return PersistedLastDevice(
+      id: id,
+      name: name.isNotEmpty
+          ? name
+          : (json['displayModel'] as String? ?? kind.displayModel),
+      deviceKind: kind,
+      displayModel: json['displayModel'] as String?,
+      wasRecording: json['wasRecording'] == true,
+      recordingStartedAtMs: rawStart is num ? rawStart.toInt() : null,
+      savedAtMs: rawSaved is num ? rawSaved.toInt() : 0,
+    );
+  }
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'id': id,
+    'name': name,
+    'deviceKind': deviceKind.code,
+    if (displayModel != null && displayModel!.isNotEmpty)
+      'displayModel': displayModel,
+    'wasRecording': wasRecording,
+    if (recordingStartedAtMs != null && recordingStartedAtMs! > 0)
+      'recordingStartedAtMs': recordingStartedAtMs,
+    'savedAtMs': savedAtMs,
+  };
+
+  CardDevice toCardDevice() => CardDevice(
+    id: id,
+    name: name,
+    kind: deviceKind,
+    displayModel: displayModel,
+  );
 }

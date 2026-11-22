@@ -83,6 +83,8 @@ final class LiveActivityBridge {
     switch call.method {
     case "capabilities":
       result(capabilitiesPayload())
+    case "activeActivity":
+      result(activeActivityPayload())
     case "start":
       let args = call.arguments as? [String: Any]
       let startedAtMs = (args?["startedAtMs"] as? NSNumber)?.int64Value
@@ -142,6 +144,37 @@ final class LiveActivityBridge {
       "areActivitiesEnabled": enabled,
       "deviceModel": model,
     ]
+  }
+
+  private func activeActivityPayload() -> [String: Any] {
+    #if canImport(ActivityKit)
+    if #available(iOS 16.1, *) {
+      let activities = Activity<RecordingCardActivityAttributes>.activities
+      let current = activities.first(where: { activity in
+        if #available(iOS 16.2, *) {
+          return activity.activityState == .active || activity.activityState == .stale
+        }
+        return activity.activityState == .active
+      })
+      if let activity = current {
+        let state: RecordingCardActivityAttributes.ContentState
+        if #available(iOS 16.2, *) {
+          state = activity.content.state
+        } else {
+          state = activity.contentState
+        }
+        return [
+          "active": true,
+          "id": activity.id,
+          "title": state.title,
+          "subtitle": state.subtitle,
+          "startedAtMs": NSNumber(value: state.startedAtMs),
+          "isRecording": state.isRecording,
+        ]
+      }
+    }
+    #endif
+    return ["active": false]
   }
 
   private func startActivity(

@@ -562,7 +562,22 @@ impl DyjV1Session {
         let trimmed_name = name.trim();
         let mut last_err: Option<String> = None;
 
-        // 1) 若刚刚扫到精确 ID，用 4 秒短超时尝试直连；若设备发生 RPA 轮换或已离线，立刻 cancel 掉，转入实时扫描。
+        // 1) 先向 CoreBluetooth 找回缓存 UUID / 系统已连外设，用 4 秒短超时尝试直连；
+        //    若设备发生 RPA 轮换或已离线，立刻 cancel 掉，转入实时扫描。
+        let mut query_services = Vec::new();
+        if let Ok(u) = uuid::Uuid::parse_str("6e400001-b5a3-f393-e0a9-e50e24dcca9e") {
+            query_services.push(u);
+        }
+        query_services.push(uuid::Uuid::from_u128(0x0000ff10_0000_1000_8000_00805f9b34fb));
+        let id_hint_arr = [id_hint];
+        let id_hints: &[&str] = if id_hint.is_empty() { &[] } else { &id_hint_arr };
+        let retrieved = crate::retrieve_cached_or_connected_peripherals(
+            adapter,
+            id_hints,
+            &query_services,
+        )
+        .await;
+
         if !id_hint.is_empty() {
             if let Ok(peripherals) = adapter.peripherals().await {
                 if let Some(cached) = peripherals
@@ -582,6 +597,32 @@ impl DyjV1Session {
                             Err(e) => last_err = Some(e),
                         }
                     }
+                }
+            }
+        }
+
+        for cached in retrieved {
+            if cached.id().to_string() == id_hint {
+                continue;
+            }
+            let is_conn = matches!(
+                tokio::time::timeout(Duration::from_millis(350), cached.is_connected()).await,
+                Ok(Ok(true))
+            );
+            if !is_conn {
+                continue;
+            }
+            if Self::peripheral_matches_target(&cached, id_hint, trimmed_name).await {
+                match Self::try_connect_candidate(
+                    &cached,
+                    name,
+                    Duration::from_secs(4),
+                    connecting_slot,
+                )
+                .await
+                {
+                    Ok(()) => return Ok(cached),
+                    Err(e) => last_err = Some(e),
                 }
             }
         }

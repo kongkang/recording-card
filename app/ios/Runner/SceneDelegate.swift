@@ -20,6 +20,11 @@ class SceneDelegate: FlutterSceneDelegate {
     }
   }
 
+  override func sceneDidEnterBackground(_ scene: UIScene) {
+    AppDelegate.trimNativeMemory()
+    super.sceneDidEnterBackground(scene)
+  }
+
   private func handleRecordingCardActionURLs(
     _ contexts: Set<UIOpenURLContext>
   ) -> Set<UIOpenURLContext> {

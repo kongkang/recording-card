@@ -982,7 +982,7 @@ class _PhotoStackThumb extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           if (hasFile)
-            Image.file(File(p.path), fit: BoxFit.cover)
+            Image.file(File(p.path), fit: BoxFit.cover, cacheWidth: (size * 3).round().clamp(120, 320))
           else
             const ColoredBox(
               color: Color(0xFFE6E6E0),

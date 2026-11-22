@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreBluetooth
+import Darwin
 import Flutter
 import Photos
 import Speech
@@ -36,9 +37,33 @@ import AppIntents
       RecordingCardAppShortcuts.updateAppShortcutParameters()
     }
     #endif
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
+      object: nil,
+      queue: .main
+    ) { _ in
+      Self.trimNativeMemory()
+    }
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didReceiveMemoryWarningNotification,
+      object: nil,
+      queue: .main
+    ) { _ in
+      Self.trimNativeMemory()
+    }
     // UIScene 迁移：插件注册移至 didInitializeImplicitFlutterEngine
     //（scene 生命周期下 didFinishLaunching 早于隐式引擎初始化，直接注册失效）
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  override func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
+    Self.trimNativeMemory()
+    super.applicationDidReceiveMemoryWarning(application)
+  }
+
+  static func trimNativeMemory() {
+    URLCache.shared.removeAllCachedResponses()
+    malloc_zone_pressure_relief(nil, 0)
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
@@ -101,6 +126,9 @@ import AppIntents
         UIApplication.shared.isIdleTimerDisabled = enabled
         result(true)
       }
+    case "trimMemory":
+      Self.trimNativeMemory()
+      result(true)
 
     default:
       result(FlutterMethodNotImplemented)
@@ -156,6 +184,7 @@ import AppIntents
   private func flushPending() {
     guard let result = pendingResult else { return }
     pendingResult = nil
+    centralManager = nil
     result(statusText())
   }
 
@@ -253,36 +282,38 @@ import AppIntents
           let assets = PHAsset.fetchAssets(with: .image, options: fetchOpts)
           let limit = min(assets.count, 12)
           for idx in 0..<limit {
-            let asset = assets.object(at: idx)
-            let safeId = asset.localIdentifier
-              .replacingOccurrences(of: "/", with: "_")
-              .replacingOccurrences(of: ":", with: "_")
-            let filePath = (outputDir as NSString).appendingPathComponent("album_\(safeId).jpg")
-            if !fm.fileExists(atPath: filePath) {
-              var wrote = false
-              imageManager.requestImage(
-                for: asset,
-                targetSize: CGSize(width: 1280, height: 1280),
-                contentMode: .aspectFit,
-                options: reqOpts
-              ) { image, _ in
-                if let img = image, let data = img.jpegData(compressionQuality: 0.82) {
-                  try? data.write(to: URL(fileURLWithPath: filePath), options: .atomic)
-                  wrote = true
+            autoreleasepool {
+              let asset = assets.object(at: idx)
+              let safeId = asset.localIdentifier
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: ":", with: "_")
+              let filePath = (outputDir as NSString).appendingPathComponent("album_\(safeId).jpg")
+              if !fm.fileExists(atPath: filePath) {
+                var wrote = false
+                imageManager.requestImage(
+                  for: asset,
+                  targetSize: CGSize(width: 1280, height: 1280),
+                  contentMode: .aspectFit,
+                  options: reqOpts
+                ) { image, _ in
+                  if let img = image, let data = img.jpegData(compressionQuality: 0.82) {
+                    try? data.write(to: URL(fileURLWithPath: filePath), options: .atomic)
+                    wrote = true
+                  }
+                }
+                if !wrote && !fm.fileExists(atPath: filePath) {
+                  return
                 }
               }
-              if !wrote && !fm.fileExists(atPath: filePath) {
-                continue
-              }
+              let capturedMs = Int64((asset.creationDate?.timeIntervalSince1970 ?? (startMs / 1000.0)) * 1000.0)
+              exported.append([
+                "id": "alb_\(safeId)",
+                "eventId": eventId,
+                "path": filePath,
+                "capturedAtMs": capturedMs,
+                "source": "system_album",
+              ])
             }
-            let capturedMs = Int64((asset.creationDate?.timeIntervalSince1970 ?? (startMs / 1000.0)) * 1000.0)
-            exported.append([
-              "id": "alb_\(safeId)",
-              "eventId": eventId,
-              "path": filePath,
-              "capturedAtMs": capturedMs,
-              "source": "system_album",
-            ])
           }
         }
         DispatchQueue.main.async {

@@ -63,7 +63,7 @@ Future<void> showPhotoPreviewSheet(
                     child: AspectRatio(
                       aspectRatio: 4 / 3,
                       child: hasFile
-                          ? Image.file(File(photo.path), fit: BoxFit.cover)
+                          ? Image.file(File(photo.path), fit: BoxFit.cover, cacheWidth: 1440)
                           : ColoredBox(
                               color: const Color(0xFFEAEAE4),
                               child: Center(

@@ -1422,7 +1422,7 @@ class _InlineSummaryFigure extends StatelessWidget {
                   width: 56,
                   height: 56,
                   child: hasFile
-                      ? Image.file(File(p.path), fit: BoxFit.cover)
+                      ? Image.file(File(p.path), fit: BoxFit.cover, cacheWidth: 200)
                       : ColoredBox(
                           color: const Color(0xFFEAEAE4),
                           child: Center(

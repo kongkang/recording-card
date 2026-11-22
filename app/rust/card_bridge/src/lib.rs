@@ -706,6 +706,71 @@ fn now_unix_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// 已知全部蓝牙录音硬件服务 UUID（用于向 CoreBluetooth 查询已被系统保持连接的设备，
+/// 避免已连接设备不对外广播而进入扫描死循环）。
+pub(crate) fn known_hardware_service_uuids() -> Vec<uuid::Uuid> {
+    let mut out = Vec::new();
+    for s in [NUS_SERVICE_UUID, reai_card_sdk::DFU_SERVICE_UUID] {
+        if let Ok(u) = uuid::Uuid::parse_str(s) {
+            out.push(u);
+        }
+    }
+    out.push(uuid::Uuid::from_u128(0x0000ff10_0000_1000_8000_00805f9b34fb));
+    out.push(reai_board_sdk::kernel::protocol_gatt::SERVICE_UUID);
+    out.push(uuid::Uuid::from_u128(0x0000fe60_0000_1000_8000_00805f9b34fb));
+    out.push(reai_getseed_sdk::protocol::SVC_CTL_UUID);
+    out.push(reai_omi_sdk::protocol::SVC_OMI_AUDIO_UUID);
+    out.push(reai_feishu_sdk::SERVICE_UUID);
+    out
+}
+
+#[cfg(target_vendor = "apple")]
+pub(crate) async fn retrieve_cached_or_connected_peripherals(
+    adapter: &btleplug::platform::Adapter,
+    id_hints: &[&str],
+    services: &[uuid::Uuid],
+) -> Vec<btleplug::platform::Peripheral> {
+    let identifiers: Vec<uuid::Uuid> = id_hints
+        .iter()
+        .filter_map(|raw| uuid::Uuid::parse_str(raw.trim()).ok())
+        .collect();
+    if identifiers.is_empty() && services.is_empty() {
+        return Vec::new();
+    }
+    match tokio::time::timeout(
+        Duration::from_secs(2),
+        adapter.retrieve_peripherals(&identifiers, services),
+    )
+    .await
+    {
+        Ok(Ok(list)) => list,
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(not(target_vendor = "apple"))]
+pub(crate) async fn retrieve_cached_or_connected_peripherals(
+    _adapter: &btleplug::platform::Adapter,
+    _id_hints: &[&str],
+    _services: &[uuid::Uuid],
+) -> Vec<btleplug::platform::Peripheral> {
+    Vec::new()
+}
+
+pub(crate) async fn retrieve_system_connected_ids(
+    adapter: &btleplug::platform::Adapter,
+    services: &[uuid::Uuid],
+) -> HashSet<String> {
+    if services.is_empty() {
+        return HashSet::new();
+    }
+    retrieve_cached_or_connected_peripherals(adapter, &[], services)
+        .await
+        .into_iter()
+        .map(|p| p.id().to_string())
+        .collect()
+}
+
 /// droidplug 的 properties() 是同步 Mutex 锁（真机实测会被 Java 回调线程卡死，
 /// 直接 await 会把 tokio worker 整个挂住）。丢进 blocking 池 + 有界超时。
 pub(crate) async fn read_peripheral_props_bounded(
@@ -769,11 +834,27 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
     let scan_completed_at_ms = now_unix_ms();
     alog::info("unified_scan: stopped");
 
+    // 主动向系统蓝牙栈找回“已被系统连接因此不再广播”的本系硬件，防止回 App 扫描为空陷入死循环。
+    let last_id = state()
+        .last_device_id
+        .lock()
+        .expect("device id lock")
+        .clone();
+    let known_services = known_hardware_service_uuids();
+    let system_connected = retrieve_system_connected_ids(adapter, &known_services).await;
+    if let Some(lid) = last_id.as_deref() {
+        let _ = retrieve_cached_or_connected_peripherals(adapter, &[lid], &[]).await;
+    }
+
     let peripherals = adapter
         .peripherals()
         .await
         .map_err(|e| BridgeError::from(format!("BLE peripherals failed: {e}")))?;
-    alog::info(&format!("unified_scan: {} peripherals", peripherals.len()));
+    alog::info(&format!(
+        "unified_scan: {} peripherals ({} system-connected)",
+        peripherals.len(),
+        system_connected.len()
+    ));
 
     let mut discovered: Vec<(i16, String, String, String, Value)> = Vec::new();
     let mut cache_updates: Vec<(String, CachedScanEntry)> = Vec::new();
@@ -786,14 +867,29 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
             alog::info(&format!("unified_scan: loop[{idx}] properties 卡死/失败，跳过"));
             continue;
         };
+        let id = p.id().to_string();
+        let is_system_connected = system_connected.contains(&id);
         // 2026-11-16 调试直连结束，恢复过滤基线：未识别设备直接跳过
         // （classify 覆盖自有 3 款硬件 + 开启联动的 Get/Omi/Watch）。
-        let Some((name, kind, caps)) = classify_ble_advertisement(
-            &p.id().to_string(),
+        let classified = classify_ble_advertisement(
+            &id,
             props.local_name.as_deref(),
             &props.services,
             &props.manufacturer_data,
-        ) else {
+        )
+        .or_else(|| {
+            if !is_system_connected {
+                return None;
+            }
+            let cached = state()
+                .scan_cache
+                .lock()
+                .expect("scan cache lock")
+                .get(&id)
+                .cloned()?;
+            Some((cached.name, cached.kind, cached.kind.capabilities()))
+        });
+        let Some((name, kind, caps)) = classified else {
             continue;
         };
         let kind_str = kind.as_str();
@@ -801,7 +897,6 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         let caps_json = serde_json::to_value(&caps).unwrap_or(serde_json::Value::Null);
         // CoreBluetooth 本地缓存但未广播的旧外设通常无 RSSI；若已系统连接则仍展示。
         // RSSI 0/127 为无效值（CoreBluetooth 偶发上报 127），一并走兜底。
-        let id = p.id().to_string();
         let last_seen_at_ms = seen_this_scan.get(&id).copied();
         let advertised_now = last_seen_at_ms.is_some();
         let props_rssi = props.rssi.filter(|r| *r < 0);
@@ -809,6 +904,8 @@ async fn unified_scan(duration: Duration) -> Result<Vec<Value>, BridgeError> {
         // 若本扫描窗口完全没收到它的广播，仅当系统仍处于已连接状态时才保留，绝不把过期 RPA 当作新发现返回。
         let rssi = if advertised_now {
             props_rssi.unwrap_or(-60)
+        } else if is_system_connected {
+            props_rssi.unwrap_or(-55)
         } else {
             let p = p.clone();
             let is_conn = match tokio::time::timeout(
@@ -899,7 +996,7 @@ async fn connect_device(payload: Value) -> Result<Value, BridgeError> {
         .or_else(|| cached.as_ref().map(|c| c.kind))
         .unwrap_or(DeviceKind::CardV2);
 
-    release_device().await;
+    release_device_except((!id.is_empty()).then_some(id.as_str())).await;
 
     let mut res = match target_kind {
         DeviceKind::CardV2 => connect_card_v2(&id, target_name.as_deref()).await?,
@@ -1078,6 +1175,15 @@ where
     let _guard = SlotGuard(connecting_slot);
     let mut last_err: Option<BridgeError> = None;
 
+    let id_hint_arr = [id_hint];
+    let id_hints: &[&str] = if id_hint.is_empty() { &[] } else { &id_hint_arr };
+    let retrieved = retrieve_cached_or_connected_peripherals(
+        adapter,
+        id_hints,
+        &known_hardware_service_uuids(),
+    )
+    .await;
+
     if !id_hint.is_empty() {
         if let Ok(peripherals) = adapter.peripherals().await {
             if let Some(cached) = peripherals.into_iter().find(|p| p.id().to_string() == id_hint) {
@@ -1095,6 +1201,34 @@ where
                         Err(e) => last_err = Some(e),
                     }
                 }
+            }
+        }
+    }
+
+    for cached in retrieved {
+        let pid = cached.id().to_string();
+        if pid == id_hint {
+            continue;
+        }
+        let is_conn = matches!(
+            tokio::time::timeout(Duration::from_millis(350), cached.is_connected()).await,
+            Ok(Ok(true))
+        );
+        if !is_conn {
+            continue;
+        }
+        let props = read_peripheral_props_bounded(&cached).await;
+        if let Some(display_name) = matcher(&pid, props.as_ref()) {
+            match try_connect_peripheral_with_slot(
+                &cached,
+                label,
+                Duration::from_secs(4),
+                connecting_slot,
+            )
+            .await
+            {
+                Ok(()) => return Ok((cached, display_name)),
+                Err(e) => last_err = Some(e),
             }
         }
     }
@@ -1481,6 +1615,10 @@ async fn active_device() -> Result<ActiveDevice, BridgeError> {
 }
 
 async fn release_device() -> Value {
+    release_device_except(None).await
+}
+
+async fn release_device_except(keep_id: Option<&str>) -> Value {
     if let Some(pump) = state().event_pump.lock().await.take() {
         pump.abort();
     }
@@ -1491,12 +1629,18 @@ async fn release_device() -> Value {
     let active = state().device.lock().await.take();
     let connecting = state().connecting_peripheral.lock().unwrap().take();
     if let Some(p) = connecting {
-        let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
+        if keep_id != Some(p.id().to_string().as_str()) {
+            let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
+        }
     }
     // 兜底释放：若此前某次 connect 超时或半连接遗留在 CoreBluetooth，把 adapter 里仍连着的 DYJ_/DYJV2_/DFU 外设也断开。
+    // 当正在直接重连 keep_id 时，保留该系统连接句柄以免把刚找回的 OS 链接先掐断再重扫。
     if let Some(adapter) = state().scan_adapter.get() {
         if let Ok(peripherals) = adapter.peripherals().await {
             for p in peripherals {
+                if keep_id == Some(p.id().to_string().as_str()) {
+                    continue;
+                }
                 if let Ok(true) = tokio::time::timeout(Duration::from_millis(350), p.is_connected())
                     .await
                     .unwrap_or(Ok(false))
@@ -4790,6 +4934,32 @@ mod tests {
             Some("D3200-C3A1".to_string())
         );
         assert!(now_unix_ms() > 0);
+    }
+
+    #[test]
+    fn known_service_uuids_and_cached_id_matching_cover_all_hardware() {
+        let services = known_hardware_service_uuids();
+        let nus_uuid = uuid::Uuid::parse_str(NUS_SERVICE_UUID).unwrap();
+        let dfu_uuid = uuid::Uuid::parse_str(reai_card_sdk::DFU_SERVICE_UUID).unwrap();
+        assert!(services.contains(&nus_uuid));
+        assert!(services.contains(&dfu_uuid));
+        assert!(services.contains(&reai_board_sdk::kernel::protocol_gatt::SERVICE_UUID));
+        assert!(services.contains(&reai_getseed_sdk::protocol::SVC_CTL_UUID));
+        assert!(services.contains(&reai_omi_sdk::protocol::SVC_OMI_AUDIO_UUID));
+        assert!(services.contains(&reai_feishu_sdk::SERVICE_UUID));
+
+        // CoreBluetooth retrievePeripheralsWithIdentifiers 常返回无 local_name 的外设对象，
+        // 只要 UUID 命中缓存即应允许按提示名快速直连。
+        assert_eq!(
+            matches_card_v2_candidate(
+                "cached-uuid-1",
+                "cached-uuid-1",
+                Some("DYJV2_9920"),
+                None,
+                &[],
+            ),
+            Some("DYJV2_9920".to_string())
+        );
     }
 
     #[test]

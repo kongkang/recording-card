@@ -827,7 +827,7 @@ class _DetailPageState extends State<DetailPage> {
                       width: 72,
                       height: 72,
                       child: hasFile
-                          ? Image.file(File(p.path), fit: BoxFit.cover)
+                          ? Image.file(File(p.path), fit: BoxFit.cover, cacheWidth: 240)
                           : ColoredBox(
                               color: const Color(0xFFEAEAE4),
                               child: Center(

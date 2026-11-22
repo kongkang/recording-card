@@ -6,6 +6,8 @@
 ///   Setting 页不展示「灵动岛与操作按钮」入口。
 library;
 
+import 'dart:io' show Platform;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -106,6 +108,23 @@ class LiveActivityService {
     }
   }
 
+  /// 查询当前系统是否已有正在展示的灵动岛 / 锁屏实况（用于冷启动或恢复时与硬件状态对账）。
+  Future<ActiveLiveActivityState> queryActiveActivity() async {
+    if (kIsWeb || !Platform.isIOS) {
+      return const ActiveLiveActivityState.inactive();
+    }
+    try {
+      final map = await _channel.invokeMethod<Map<Object?, Object?>>(
+        'activeActivity',
+      );
+      return ActiveLiveActivityState.fromMap(map);
+    } on MissingPluginException {
+      return const ActiveLiveActivityState.inactive();
+    } on PlatformException {
+      return const ActiveLiveActivityState.inactive();
+    }
+  }
+
   /// 启动/更新录音灵动岛与锁屏实况卡片（图标固定为 App Logo，而非麦克风图标）。
   Future<void> startRecordingActivity({
     required DateTime startedAt,
@@ -163,4 +182,74 @@ class LiveActivityService {
       debugPrint('[LiveActivityService] stop failed: ${e.message}');
     }
   }
+}
+
+/// 系统当前正在展示的灵动岛 / 锁屏实况快照。
+class ActiveLiveActivityState {
+  const ActiveLiveActivityState({
+    required this.active,
+    this.id,
+    this.title = '',
+    this.subtitle = '',
+    this.startedAtMs,
+    this.isRecording = false,
+  });
+
+  const ActiveLiveActivityState.inactive()
+      : active = false,
+        id = null,
+        title = '',
+        subtitle = '',
+        startedAtMs = null,
+        isRecording = false;
+
+  factory ActiveLiveActivityState.fromMap(Map<Object?, Object?>? map) {
+    if (map == null || map['active'] != true) {
+      return const ActiveLiveActivityState.inactive();
+    }
+    final rawStarted = map['startedAtMs'];
+    final startedAtMs = switch (rawStarted) {
+      int v => v,
+      num v => v.toInt(),
+      String s => int.tryParse(s),
+      _ => null,
+    };
+    return ActiveLiveActivityState(
+      active: true,
+      id: map['id'] as String?,
+      title: (map['title'] as String?) ?? '',
+      subtitle: (map['subtitle'] as String?) ?? '',
+      startedAtMs: startedAtMs,
+      isRecording: map['isRecording'] == true,
+    );
+  }
+
+  final bool active;
+  final String? id;
+  final String title;
+  final String subtitle;
+  final int? startedAtMs;
+  final bool isRecording;
+
+  DateTime? get startedAt => startedAtMs != null && startedAtMs! > 0
+      ? DateTime.fromMillisecondsSinceEpoch(startedAtMs!)
+      : null;
+
+  bool get isAppleWatch =>
+      active &&
+      (title.contains('Apple Watch') ||
+          subtitle.contains('Apple Watch') ||
+          title.contains('Watch') ||
+          subtitle.contains('Watch'));
+
+  bool get isLocalPhoneOnly {
+    if (!active || isAppleWatch) return false;
+    return title.contains('本机') ||
+        title.contains('手机') ||
+        subtitle.contains('本机') ||
+        subtitle.contains('手机');
+  }
+
+  bool get isHardwareRecording =>
+      active && isRecording && !isLocalPhoneOnly;
 }
