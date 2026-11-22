@@ -81,6 +81,20 @@ class _GetNoteSyncBodyState extends State<GetNoteSyncBody> {
     setState(() {});
   }
 
+  Future<void> _handleAutoImportToggle(BuildContext context) async {
+    final appStore = widget.appStore ?? StoreScope.maybeOf(context);
+    if (_dirtyCreds &&
+        _clientIdCtrl.text.trim().isNotEmpty &&
+        _apiKeyCtrl.text.trim().isNotEmpty) {
+      _dirtyCreds = false;
+      await _store.saveCredentials(
+        clientId: _clientIdCtrl.text,
+        apiKey: _apiKeyCtrl.text,
+      );
+    }
+    await _store.setAutoImport(!_store.autoImport, appStore: appStore);
+  }
+
   Future<void> _handleTest() async {
     _dirtyCreds = false;
     await _store.testConnection(
@@ -139,15 +153,16 @@ class _GetNoteSyncBodyState extends State<GetNoteSyncBody> {
 
     final syncBtnLabel = !_store.syncing
         ? '立即同步'
-        : (_store.syncProgressTotal > 0
-              ? '同步中 ${_store.syncProgressDone}/${_store.syncProgressTotal}…'
+        : (_store.syncCurrentPage > 0
+              ? '第 ${_store.syncCurrentPage} 页 · 已处理 ${_store.syncFetchedTotal} 条…'
               : '同步中…');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          '通过官方 Get 笔记（得到大脑）OpenAPI（openapi.biji.com）合规拉取笔记到本机时间轴。'
+          '通过官方 Get 笔记（得到大脑）OpenAPI（openapi.biji.com）连续翻页拉取全部笔记到本机时间轴，'
+          '每页同步后实时落盘并按 note_id 幂等去重；支持开启每小时自动检查与导入。'
           '请在 biji.com/openapi 申请应用获取 Client ID 与 API Key；凭据仅保存在本机系统密钥库（Keychain）。',
           style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
         ),
@@ -218,6 +233,12 @@ class _GetNoteSyncBodyState extends State<GetNoteSyncBody> {
                         : () => unawaited(_handleSync(context)),
                     child: Text(syncBtnLabel),
                   ),
+                  if (_store.syncing)
+                    OutlinedButton(
+                      key: const Key('getnote-cancel-btn'),
+                      onPressed: _store.cancelling ? null : _store.cancelSync,
+                      child: Text(_store.cancelling ? '正在停止…' : '停止同步'),
+                    ),
                   if (hasAnyCreds)
                     TextButton(
                       key: const Key('getnote-clear-btn'),
@@ -302,6 +323,73 @@ class _GetNoteSyncBodyState extends State<GetNoteSyncBody> {
         ),
         const SizedBox(height: 12),
         Container(
+          decoration: BoxDecoration(
+            color: c.card,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: c.sep),
+          ),
+          child: Semantics(
+            container: true,
+            button: true,
+            toggled: _store.autoImport,
+            label: '自动导入开关（每小时检查一次）',
+            onTap: _store.testing
+                ? null
+                : () => unawaited(_handleAutoImportToggle(context)),
+            child: GestureDetector(
+              key: const Key('getnote-auto-import-row'),
+              behavior: HitTestBehavior.opaque,
+              onTap: _store.testing
+                  ? null
+                  : () => unawaited(_handleAutoImportToggle(context)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '开启后自动导入（每小时检查）',
+                            style: TextStyle(
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w600,
+                              color: c.label,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            '开启后每 ${_store.checkIntervalMinutes} 分钟自动检查新增笔记并连续翻页导入，'
+                            '回到前台时如已到期也会立即补检',
+                            style: TextStyle(
+                              fontSize: 12,
+                              height: 1.4,
+                              color: c.sec,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    ExcludeSemantics(
+                      child: RCSwitch(
+                        key: const Key('getnote-auto-import-switch'),
+                        on: _store.autoImport,
+                        busy: _store.testing,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
           key: const Key('getnote-status-card'),
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -340,17 +428,30 @@ class _GetNoteSyncBodyState extends State<GetNoteSyncBody> {
                   style: TextStyle(fontSize: 12, color: c.sec),
                 ),
               ],
-              if (_store.lastSyncSummary != null) ...[
+              if (_store.lastAutoCheckAtMs != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  '上次自动检查：${_formatEpoch(_store.lastAutoCheckAtMs!)}',
+                  style: TextStyle(fontSize: 12, color: c.sec),
+                ),
+              ],
+              if (_store.syncing && _store.statusMessage != null) ...[
                 const SizedBox(height: 4),
                 Text(
-                  _store.lastSyncSummary!,
-                  style: TextStyle(fontSize: 12.5, color: c.sec, height: 1.4),
+                  _store.statusMessage!,
+                  style: TextStyle(fontSize: 12.5, color: c.ink, height: 1.4),
                 ),
               ] else if (_store.statusMessage != null) ...[
                 const SizedBox(height: 4),
                 Text(
                   _store.statusMessage!,
                   style: TextStyle(fontSize: 12.5, color: c.ok, height: 1.4),
+                ),
+              ] else if (_store.lastSyncSummary != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _store.lastSyncSummary!,
+                  style: TextStyle(fontSize: 12.5, color: c.sec, height: 1.4),
                 ),
               ],
               if (_store.errorMessage != null) ...[

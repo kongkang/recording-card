@@ -87,7 +87,7 @@ class RecordValueClassifier {
     required bool hasActivePhotos,
   }) {
     if (e.live) return true;
-    if (e.id.startsWith('getnote-')) return true;
+    if (e.id.startsWith('getnote-') || e.id.startsWith('ext-')) return true;
     if (hasActivePhotos && !isSilentEvent(e) && !isSilentPlaceholderEvent(e)) {
       return true;
     }

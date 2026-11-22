@@ -137,6 +137,7 @@ class GetNoteClient {
     http.Client? httpClient,
     this.requestDelay = const Duration(milliseconds: 520),
     this.timeout = const Duration(seconds: 15),
+    this.maxRetries = 2,
   }) : _clientFactory = clientFactory,
        _sharedClient = httpClient;
 
@@ -147,6 +148,7 @@ class GetNoteClient {
   final http.Client? _sharedClient;
   final Duration requestDelay;
   final Duration timeout;
+  final int maxRetries;
 
   DateTime? _lastRequestAt;
 
@@ -192,51 +194,65 @@ class GetNoteClient {
       throw const GetNoteApiException('请先填写 Client ID 与 API Key');
     }
 
-    await _throttle();
     final uri = _buildUri(path, query);
     final owned = _sharedClient == null;
     final client = _sharedClient ?? (_clientFactory?.call() ?? http.Client());
     try {
-      final resp = await client
-          .get(
-            uri,
-            headers: <String, String>{
-              'Authorization': key,
-              'X-Client-ID': cid,
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(timeout);
+      for (var attempt = 0; attempt <= maxRetries; attempt++) {
+        await _throttle();
+        final resp = await client
+            .get(
+              uri,
+              headers: <String, String>{
+                'Authorization': key,
+                'X-Client-ID': cid,
+                'Accept': 'application/json',
+              },
+            )
+            .timeout(timeout);
 
-      final rawBody = utf8.decode(resp.bodyBytes, allowMalformed: true);
-      final decoded = _tryDecodeMap(rawBody);
+        final rawBody = utf8.decode(resp.bodyBytes, allowMalformed: true);
+        final decoded = _tryDecodeMap(rawBody);
 
-      if (resp.statusCode == 401 || resp.statusCode == 403) {
-        throw GetNoteApiException(
-          '鉴权失败，请检查 Client ID 与 API Key 是否正确或已开通 OpenAPI 权限',
-          statusCode: resp.statusCode,
-        );
-      }
-      if (resp.statusCode == 429) {
-        throw GetNoteApiException(
-          '请求过于频繁，触发得到大脑 OpenAPI 限流，请稍后重试',
-          statusCode: resp.statusCode,
-        );
-      }
-      if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        final serverMsg = _extractErrorMessage(decoded);
-        throw GetNoteApiException(
-          serverMsg != null
-              ? '请求失败（HTTP ${resp.statusCode}）：$serverMsg'
-              : '请求失败（HTTP ${resp.statusCode}）',
-          statusCode: resp.statusCode,
-        );
-      }
+        if (resp.statusCode == 401 || resp.statusCode == 403) {
+          throw GetNoteApiException(
+            '鉴权失败，请检查 Client ID 与 API Key 是否正确或已开通 OpenAPI 权限',
+            statusCode: resp.statusCode,
+          );
+        }
 
-      if (decoded == null) {
-        throw const GetNoteApiException('得到大脑服务返回了无法解析的数据');
+        final retryable =
+            resp.statusCode == 429 ||
+            resp.statusCode == 502 ||
+            resp.statusCode == 503 ||
+            resp.statusCode == 504;
+        if (retryable && attempt < maxRetries) {
+          await _backoffWait(attempt, retryAfter: resp.headers['retry-after']);
+          continue;
+        }
+
+        if (resp.statusCode == 429) {
+          throw GetNoteApiException(
+            '请求过于频繁，触发得到大脑 OpenAPI 限流，请稍后重试',
+            statusCode: resp.statusCode,
+          );
+        }
+        if (resp.statusCode < 200 || resp.statusCode >= 300) {
+          final serverMsg = _extractErrorMessage(decoded);
+          throw GetNoteApiException(
+            serverMsg != null
+                ? '请求失败（HTTP ${resp.statusCode}）：$serverMsg'
+                : '请求失败（HTTP ${resp.statusCode}）',
+            statusCode: resp.statusCode,
+          );
+        }
+
+        if (decoded == null) {
+          throw const GetNoteApiException('得到大脑服务返回了无法解析的数据');
+        }
+        return _unwrapEnvelope(decoded, statusCode: resp.statusCode);
       }
-      return _unwrapEnvelope(decoded, statusCode: resp.statusCode);
+      throw const GetNoteApiException('请求得到大脑 OpenAPI 失败，请稍后重试');
     } on GetNoteApiException {
       rethrow;
     } on TimeoutException {
@@ -248,6 +264,15 @@ class GetNoteClient {
     } finally {
       if (owned) client.close();
     }
+  }
+
+  Future<void> _backoffWait(int attempt, {String? retryAfter}) async {
+    if (requestDelay <= Duration.zero) return;
+    final parsedSec = int.tryParse((retryAfter ?? '').trim());
+    final wait = parsedSec != null && parsedSec > 0
+        ? Duration(seconds: parsedSec.clamp(1, 10))
+        : Duration(milliseconds: 1000 * (1 << attempt));
+    await Future<void>.delayed(wait);
   }
 
   static Map<String, dynamic>? _tryDecodeMap(String raw) {
@@ -346,16 +371,16 @@ class GetNoteClient {
         : const <String, dynamic>{};
 
     final rawHasMore = data['has_more'] ?? pagination['has_more'];
-    final hasMore = rawHasMore == true || rawHasMore == 1 || rawHasMore == 'true';
+    final explicitHasMore = rawHasMore == null
+        ? null
+        : (rawHasMore == true || rawHasMore == 1 || rawHasMore == 'true');
 
-    final rawCursor = pagination['next_cursor'] ?? data['next_cursor'];
-    var nextCursor = rawCursor == null ? null : '$rawCursor'.trim();
-    if (nextCursor != null &&
-        (nextCursor.isEmpty ||
-            nextCursor == 'null' ||
-            (!hasMore && nextCursor == '0'))) {
-      nextCursor = null;
-    }
+    final nextCursor = _extractNextCursor(
+      data,
+      pagination,
+      hasMore: explicitHasMore == true,
+    );
+    final hasMore = explicitHasMore ?? (nextCursor != null);
 
     final total =
         (data['total'] as num?)?.toInt() ??
@@ -364,9 +389,37 @@ class GetNoteClient {
     return GetNoteListPage(
       notes: notes,
       hasMore: hasMore,
-      nextCursor: nextCursor,
+      nextCursor: hasMore ? nextCursor : null,
       total: total,
     );
+  }
+
+  /// 按契约优先级提取下一页游标：
+  /// 新模式 `pagination.next_cursor` / `pagination.cursor` → 兼容字段 `data.cursor` → 旧 int64 `data.next_cursor`。
+  static String? _extractNextCursor(
+    Map<String, dynamic> data,
+    Map<String, dynamic> pagination, {
+    required bool hasMore,
+  }) {
+    final candidates = <Object?>[
+      pagination['next_cursor'],
+      pagination['cursor'],
+      data['cursor'],
+      data['next_cursor'],
+    ];
+    String? fallbackZero;
+    for (final raw in candidates) {
+      if (raw == null) continue;
+      final s = '$raw'.trim();
+      if (s.isEmpty || s.toLowerCase() == 'null') continue;
+      if (s == '0') {
+        fallbackZero ??= s;
+        continue;
+      }
+      return s;
+    }
+    if (hasMore && fallbackZero != null) return fallbackZero;
+    return null;
   }
 
   /// 获取单条笔记详情。

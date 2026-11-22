@@ -33,6 +33,8 @@ import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/auth_service.dart';
+import '../services/external_data/external_connector.dart';
+import '../services/external_data/external_data_hub_store.dart';
 import '../services/external_data/getnote_sync_store.dart';
 import '../services/health/health_signal_controller.dart';
 import '../services/memory/memory_search_scope.dart';
@@ -60,6 +62,7 @@ class SettingPage extends StatefulWidget {
     this.photoLibrary,
     this.healthSignals,
     this.getNoteStore,
+    this.externalDataHub,
     this.supportsDynamicIsland = false,
     this.crashStore,
     this.accountHttpClient,
@@ -91,6 +94,9 @@ class SettingPage extends StatefulWidget {
   /// 得到大脑 / Get 笔记 OpenAPI 同步控制器。
   final GetNoteSyncStore? getNoteStore;
 
+  /// 其他第三方笔记、阅读与录音软件 API 接入控制中心。
+  final ExternalDataHubStore? externalDataHub;
+
   /// 是否显示「灵动岛与操作按钮」（仅支持灵动岛机型显示）。
   final bool supportsDynamicIsland;
 
@@ -120,6 +126,9 @@ class _SettingPageState extends State<SettingPage> {
   late final bool _ownsGetNoteStore =
       widget.getNoteStore == null &&
       Platform.environment.containsKey('FLUTTER_TEST');
+  late final bool _ownsExternalDataHub =
+      widget.externalDataHub == null &&
+      Platform.environment.containsKey('FLUTTER_TEST');
 
   late SettingsStore _store;
   late AgentConfigStore _agent;
@@ -131,6 +140,14 @@ class _SettingPageState extends State<SettingPage> {
               prefsStore: InMemoryStore(),
             )
           : GetNoteSyncStore.instance);
+  late final ExternalDataHubStore _externalDataHub =
+      widget.externalDataHub ??
+      (_ownsExternalDataHub
+          ? ExternalDataHubStore(
+              secureStore: InMemorySecureStore(),
+              prefsStore: InMemoryStore(),
+            )
+          : ExternalDataHubStore.instance);
   String? _photoImportHint;
   CrashRecord? _lastCrash;
   bool _deletingAccount = false;
@@ -175,6 +192,7 @@ class _SettingPageState extends State<SettingPage> {
     widget.device?.addListener(_onStoreChanged);
     widget.healthSignals?.addListener(_onStoreChanged);
     unawaited(_getNoteStore.load());
+    unawaited(_externalDataHub.load());
     unawaited(_loadLastCrash());
   }
 
@@ -317,6 +335,7 @@ class _SettingPageState extends State<SettingPage> {
       await _store.resetAll();
       await _agent.resetAll();
       await _getNoteStore.clearAll();
+      await _externalDataHub.clearAll();
       await clearLastCrash(store: widget.crashStore);
     } on Object {
       // 忽略内存偏好清理异常
@@ -554,6 +573,7 @@ class _SettingPageState extends State<SettingPage> {
     _agent.removeListener(_onStoreChanged);
     if (_ownsAgent) _agent.dispose();
     if (_ownsGetNoteStore) _getNoteStore.dispose();
+    if (_ownsExternalDataHub) _externalDataHub.dispose();
     super.dispose();
   }
 
@@ -608,6 +628,7 @@ class _SettingPageState extends State<SettingPage> {
           authService: widget.authService,
           healthSignals: widget.healthSignals,
           getNoteStore: widget.getNoteStore,
+          externalDataHub: widget.externalDataHub,
           standalone: true,
         ),
       ),
@@ -859,6 +880,34 @@ class _SettingPageState extends State<SettingPage> {
                     value: _getNoteStore.summaryStatusText,
                     valueKey: const Key('sv-extdata'),
                     onTap: () => _openSub(context, 'extdata'),
+                  ),
+                ),
+                const _RowDivider(),
+                ListenableBuilder(
+                  listenable: _externalDataHub,
+                  builder: (context, _) => _navRow(
+                    context,
+                    keyName: 'set-ext-notes',
+                    label: '笔记与阅读软件（API）',
+                    value: _externalDataHub.categorySummaryText(
+                      ExternalConnectorCategory.notes,
+                    ),
+                    valueKey: const Key('sv-extnotes'),
+                    onTap: () => _openSub(context, 'extnotes'),
+                  ),
+                ),
+                const _RowDivider(),
+                ListenableBuilder(
+                  listenable: _externalDataHub,
+                  builder: (context, _) => _navRow(
+                    context,
+                    keyName: 'set-ext-recorders',
+                    label: '第三方录音软件（API）',
+                    value: _externalDataHub.categorySummaryText(
+                      ExternalConnectorCategory.recorders,
+                    ),
+                    valueKey: const Key('sv-extrecorders'),
+                    onTap: () => _openSub(context, 'extrecorders'),
                   ),
                 ),
               ],

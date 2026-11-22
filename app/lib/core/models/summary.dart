@@ -29,7 +29,7 @@ int substantiveCharCount(String text) {
 /// 有完整话题的短句（如「询问深圳晚间天气」）字数超过 4，会保留。
 bool isFragmentRecord(RecordEvent e) {
   if (e.live) return false;
-  if (e.id.startsWith('getnote-')) return false;
+  if (e.id.startsWith('getnote-') || e.id.startsWith('ext-')) return false;
   if (isSilentPlaceholderEvent(e)) return true;
   final speech = <String>[
     for (final t in e.dialog) t.text,
