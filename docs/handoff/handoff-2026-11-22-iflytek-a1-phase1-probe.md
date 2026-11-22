@@ -1,173 +1,138 @@
-# 讯飞智能录音笔 A1 · Phase 1 连线态实测评估与续测方案（2026-11-22）
+# 讯飞智能录音笔 A1 · Phase 1 全量实测评估与换机续测手册（2026-11-22）
 
-- **状态**：Phase 1 连线态摸底完成；只读诊断探针与 `btsnoop_hci.log` 解析工具已落地并自测通过（**本分支仅包含调研工具与评估文档，不含任何业务代码修改，暂不合并**）。
+- **状态**：Phase 1 四态实机摸底全部闭环，**Gate 1 乐观通过**；只读诊断探针与 `btsnoop_hci.log` 解析工具已自测全绿（**本分支仅含调研工具与实测文档，不含任何业务代码修改，暂不合并**）。
 - **基线提交**：`master @ 52eb2c8`
-- **目标硬件**：讯飞智能录音笔 A1（主控：炬芯 Actions ATS2837 双模蓝牙 SoC；历史现场已目击 BLE 广播名 `讯飞录音笔A1_11E0`，详见 [handoff-2026-11-16-omi-android-ble-e2e.md](handoff-2026-11-16-omi-android-ble-e2e.md)）
-- **协作对齐原则（Owner 已确认，2026-11-22）**：
-  1. 当前暂无 Android 测试机与独立离线环境，次日补齐实体测试条件后继续推进；
-  2. 先完成 USB 与蓝牙全面评估，摸清真实能力与平台边界（iOS / Android / macOS）后再决策接入范围；
-  3. 当前 USB 连线态与蓝牙无线态均纳入检测；
-  4. 待协议与能力矩阵冻结进入 Phase 3 开发时，同步更新 `prototype/current.html`、`prototype/index.html` 与 `prototype/verify.cjs`。
+- **分支 / PR**：`feat/iflytek-a1-phase1-probe` · Draft PR #116
+- **目标硬件**：讯飞智能录音笔 A1（主控：炬芯 Actions ATS2837 + Zephyr RTOS 固件；实机 `讯飞录音笔A1_11E0`）
 
 ---
 
-## 一、Phase 1 连线态实测证据（2026-11-22 01:15~01:26 CST）
+## 一、Phase 1 实机四态对照总表（2026-11-22 01:15~10:24 CST）
 
-### 1.1 宿主环境
-- **宿主机**：macOS（蓝牙控制器 `BCM_4364B0`，`Address: 38:F9:D3:51:2D:6E`，`State: On`，固件 `v122 c4439`，支持 `HFP AVRCP A2DP HID Braille LEA AACP GATT SerialPort`）。
-- **物理连接状态**：讯飞录音笔 A1 通过 Type-C 数据线接入 Mac 下游 USB 2.1 Hub，且本机「讯飞听见」桌面客户端（Electron `9.4.4` / `v3.0.2249`）正在运行。
+宿主机环境：macOS（蓝牙控制器 `BCM_4364B0`，`38:F9:D3:51:2D:6E`，`State: On`）。
 
-### 1.2 USB 总线与存储枚举实测
-
-通过 `system_profiler SPUSBDataType`、`ioreg -r -n "CDC ACM" -l`、`diskutil list external`、`ls -la /Volumes/` 与 `lsof` 取得只读总线状态：
-
-| 检测项 | 实测值 | 说明 |
-|---|---|---|
-| 上游链路 | `USB2.1 Hub` (`0x0bda:0x5411`, `PortNum=3`) → `Location ID: 0x14130000 / 47` | USB 2.0 High-Speed（480 Mb/s） |
-| 厂商 / 设备标识 | `Vendor ID: 0x10d7` (`Actions`) / `Product ID: 0xb00a` | 炬芯半导体 USB VID/PID |
-| 设备描述符 | `Product Name: "CDC ACM"`, `Serial Number: "00.01"`, `bcdUSB: 0x0200`, `bcdDevice: 0.00`, `bDeviceClass: 2` | 通信设备类（非复合 MSC 设备） |
-| 供电参数 | `Bus Power Available: 500 mA`, `Current Required: 100 mA` | 正常枚举供电 |
-| USB Interface 0 | `bInterfaceClass=2, SubClass=2, Protocol=1, Endpoints=1` (`AppleUSBACMControl`) | CDC ACM 控制接口 |
-| USB Interface 1 | `bInterfaceClass=10, SubClass=0, Protocol=0, Endpoints=2` (`AppleUSBACMData`) | CDC ACM 数据接口 |
-| 串口节点 | `/dev/cu.usbmodem00_011` 与 `/dev/tty.usbmodem00_011` | 由 `IOSerialBSDClient` 注册 |
-| 外部磁盘 / MSC | `/Volumes/` 仅见 `Macintosh HD`；`diskutil list external` 为空 | **当前未暴露 U 盘（MSC）接口** |
-| 宿主进程占用 | `lsof` 显示 PID `59072`（`讯飞听见`）持有 `/dev/tty.usbmodem00_011`（`FD 65u`）；`ioreg` 见 `AppleUSBHostDeviceUserClient` | 串口当前被官方桌面端独占通信 |
-
-### 1.3 蓝牙射频扫描实测（USB 连线态）
-
-在保持上述 USB 连接的状态下，分别运行 `card_bridge` `raw_scan`（`btleplug` 10s）、macOS 原生 `CoreBluetooth` 扫描（8s，含 `ManufacturerData` 与 `ServiceData`）与经典蓝牙 `IOBluetoothDeviceInquiry`（6s）：
-
-| 扫描通道 | 时长 | 发现设备明细 | 是否发现 A1 |
-|---|---:|---|---|
-| `raw_scan` (`btleplug`) | 10s | 共 7 台：`DYJ_YKAUP3`、3 台无名设备（`-43` / `-75` / `-75` `FDAA`）、`Aura Studio 5`（`-71`）、`Get-A7769D`（`-78`）、`KK's 📱16pro`（`-49`） | **否** |
-| `CoreBluetooth`（原生全字段） | 8s | 共 8 台：`DYJ_YKAUP3`（`-58`）、`Get-A7769D`（`-61`, mfd `0x544A`）、`Omi`（`-80`, svc `19B10000-...`）、`Aura Studio 5`（`-68`, `FDDF`）、小米设备（`-83`, `FDAA` / mfd `0x038F`）、3 台 Apple `0x004C`（`-51` / `-73` / `-78`） | **否** |
-| `IOBluetoothDeviceInquiry`（经典蓝牙） | 6s | 仅 1 台 `9C:12:21:B8:AD:8C`（`-76`, `cod=0x3a0114`）；已配对经典设备列表 8 台均为 Apple 外设 | **否** |
-
-### 1.4 阶段性结论与关键发现
-
-1. **USB 连线态下射频静默**：A1 插上 Mac USB 进入 `0x10d7:0xb00a`（Actions CDC ACM）工作态后，**既不广播 BLE，也不开启经典蓝牙可发现态**；因此 BLE GATT / Classic SDP 验证必须拔掉主机 USB 线、开机进入蓝灯闪烁态后再测。
-2. **打破“插线即出 U 盘”假设**：虽然公开评测通常提及 A1 支持电脑导出音频，但实测在「讯飞听见」运行环境下 A1 枚举为纯 **CDC ACM 虚拟串口**（无 MSC 存储卷），说明官方桌面端极可能通过串口私有指令协商取文件或切换模式（需在明日 Step A 中对照退出「讯飞听见」后重插 USB 的枚举行为）。
-3. **本阶段交付物已验证就绪**：
-   - 只读诊断探针：[iflytek_a1_probe.rs](../../app/rust/card_bridge/examples/iflytek_a1_probe.rs)（支持 `usb` / `scan` / `dump` / `listen`，严格隔离旁侧自研及已接第三方设备，UTF-8 安全前缀匹配）。
-   - 零依赖抓包分析器：[parse_btsnoop_hci.py](../../scripts/parse_btsnoop_hci.py)（无需 Wireshark/tshark，直接解析 `btsnoop_hci.log` 的 BLE ATT 与动态 L2CAP/RFCOMM 报文并自动统计通道占比）。
+| 测试场景 | USB 枚举（`VID:PID` / 描述） | 外部存储（U 盘） | BLE 广播 (`讯飞录音笔A1_11E0`) | 经典蓝牙可发现态 |
+|---|---|---|---|---|
+| **1. 脱线开机（蓝灯常亮）**<br>*(10:01~10:09)* | 无 | 无 | ✅ **在线**（`RSSI -50 dBm`，mfd `0x3332` + 14B = ASCII `"2303051401437265"`） | ❌ **未广播**（Inquiry 见 `0c-cd-b4-b5-90-ba` 经 SDP 核验为旁侧 `我的Z6X Pro` 投影仪） |
+| **2. 开机 + 插 USB-C（无官方软件）**<br>*(10:11~10:12)* | ✅ `0x10d7:0xb00b`（`Actions / MSC Sample / ZEPHYR USB DISK`，USB 2.0 High-Speed 480Mb/s，`Serial: 0.01`，100 mA） | ✅ 挂载 **15.63 GB MS-DOS FAT32**（`/Volumes/NO NAME`，`disk2`） | ✅ **同时在线**（`RSSI -49 dBm`） | — |
+| **3. 彻底关机 + 插 USB-C（无官方软件）**<br>*(10:15~10:16)* | ✅ **自动唤醒**并枚举 `0x10d7:0xb00b`（`Actions / MSC Sample / ZEPHYR USB DISK`） | ✅ 挂载 **15.63 GB MS-DOS FAT32**（`/Volumes/NO NAME`，`disk2`） | ✅ **同步唤醒在线**（`RSSI -63 dBm`） | — |
+| **4. 插 USB-C + 运行官方「讯飞听见」**<br>*(01:15~01:17)* | ✅ 切换为 **`0x10d7:0xb00a`**（`Actions / CDC ACM`，`Serial: 00.01`，Interface 0 `AppleUSBACMControl` + Interface 1 `AppleUSBACMData`，`/dev/tty.usbmodem00_011` 被 PID `59072` 独占） | ❌ **无 MSC 接口** / `/Volumes/` 无外部卷 | ❌ **射频静默**（BLE 广播关闭） | ❌ 未广播 |
 
 ---
 
-## 二、两道 Go/No-Go 决策门控
+## 二、BLE 广播、GATT 全量拓扑与 8 秒握手看门狗实证
 
-```mermaid
-flowchart TD
-    P1["明日 Step A/B: 拔线蓝牙摸底 + 退客户端 USB 对照"] --> G1{"Gate 1: 无线通道判定"}
-    G1 -->|"仅 Classic SPP 且 iOS 无 BLE/MFi"| STOP1["暂停并汇报平台边界\n由 Owner 决定: 仅 Android/macOS 或止损"]
-    G1 -->|"存在可用 BLE GATT 控制/同步通道"| P2["Step C: Android HCI 抓包 + 独立 Rust 探针回放"]
-    P2 --> G2{"Gate 2: 鉴权与能力矩阵冻结"}
-    G2 -->|"Level C: 云端动态挑战锁死"| STOP2["输出实证报告\n如实收口，不造假/不合半残驱动"]
-    G2 -->|"Level A/B: 能力边界清晰可复现"| P3["Phase 3: reai-iflytek-sdk + card_bridge + Flutter + Prototype"]
-```
+### 2.1 BLE 广播载荷实测
+- **Local / Advertisement Name**：`讯飞录音笔A1_11E0`（UTF-8 hex：`e8 ae af e9 a3 9e e5 bd 95 e9 9f b3 e7 ac 94 41 31 5f 31 31 45 30`；剥离尾号 `11E0`）。
+- **Manufacturer Data**：Company ID `0x3332`（小端字节 `"23"`）+ 负载 `30 33 30 35 31 34 30 31 34 33 37 32 36 35`（ASCII `"03051401437265"`）→ 拼接为完整 16 字符 ASCII 串 **`"2303051401437265"`**（疑似批次/固件/SN 编码）。
+- **广播声明 Service UUIDs**（芯片 SDK 模板广播头）：`0x180D`（HRS）、`0x180F`（BAS）、`0x1805`（CTS）。
 
-- **Gate 1（传输通道判定）**：
-  - 优先核验是否存在可用的 **BLE GATT** 控制与文件同步通道（覆盖 iOS / Android / macOS 三端）。
-  - 若音频同步在芯片层（ATS2837）**仅走经典蓝牙 SPP/RFCOMM**，因 iOS 受 MFi（`ExternalAccessory`）硬件授权限制无法直连，将立即汇报边界，由 Owner 决策是否仅做 Android/macOS、BLE 最小状态监控，或止损。
-- **Gate 2（鉴权与能力定级）**：
-  - **Level A（完整可用）**：BLE 状态、目录、音频拉取稳定可用（含或不含远程控录/实时流）。
-  - **Level B（部分受限）**：例如仅机身按键控录（`hasRemoteRecordControl = false`）或无实时流（`realtimeAudio = false`），按实测能力裁剪 UI 后接入。
-  - **Level C（硬阻断）**：参考 GetSeed GSC10 `v0.2.5+` 案例，若存在云端「一机一码」动态鉴权挑战，只输出证据报告，不合并半残或伪造实现；同步评估 USB-C 有线（MSC 或无客户端态）是否作为独立桌面能力备选。
+### 2.2 GATT 实际服务与特征表（`dump` 实测）
 
----
+CoreBluetooth 实测建连后自动协商大 MTU：**`maximumWriteValueLength(.withoutResponse) = 244 B`**、**`maximumWriteValueLength(.withResponse) = 512 B`**（`btleplug` 静态读 `mtu()` 报默认值 `23`）。**实际 GATT 表内无标准 BAS（`0x180F`）与 DIS（`0x180A`）**，仅暴露以下 2 个私有服务：
 
-## 三、明日实机续测 Runbook（按顺序执行）
+| Service UUID | 归属 | Characteristic UUID | 属性（Properties） | 描述符 / 只读结果 / 备注 |
+|---|---|---|---|---|
+| `001120a0-2233-4455-6677-889912345678` | **讯飞 A1 私有业务服务** | `001120a1-2233-4455-6677-889912345678` | `WRITE_WITHOUT_RESPONSE` | 含 `0x2902` |
+| 同上 | 同上 | `001120a2-2233-4455-6677-889912345678` | `WRITE` | 无描述符 |
+| 同上 | 同上 | **`001120a3-2233-4455-6677-889912345678`** | `WRITE_WITHOUT_RESPONSE \| NOTIFY` | 含 CCCD `0x2902`；**主通知通道，已实测上推明文 JSON** |
+| 同上 | 同上 | `001120a4-2233-4455-6677-889912345678` | `WRITE_WITHOUT_RESPONSE \| NOTIFY` | 缺 `0x2902` 描述符；直接订阅报 `The attribute could not be found.` |
+| `e49a25f8-f69a-11e8-8eb2-f2801f1b9fd1` | **Actions 炬芯 OTA 服务** | `e49a25e0-f69a-11e8-8eb2-f2801f1b9fd1` | `READ \| WRITE_WITHOUT_RESPONSE` | 只读返回 `Reading is not permitted.` |
+| 同上 | 同上 | `e49a28e1-f69a-11e8-8eb2-f2801f1b9fd1` | `READ \| NOTIFY` | 含 `0x2902`；只读返回 `Reading is not permitted.` |
 
-> [!CAUTION]
-> 全程确保旁侧 `DYJ_YKAUP3`、`Get-A7769D`、`Omi` 等设备不被连接或写入；`iflytek_a1_probe` 已内置名称拦截守卫，请勿传入其他设备 ID 强连。
+### 2.3 明文 JSON 协议与 8 秒握手超时踢断实证
 
-### Step A · USB 拔插对照（核验是否存在 MSC U 盘模式）
+三次独立只读连接订阅 `001120a3`（主机不发送任何写指令）均出现完全一致的精确时间轴：
+- **`listen` #1（60s）**：`+7898ms` 在 `001120a3` 收到 `len=25`：`7b 22 6f 70 74 22 3a 36 31 30 30 39 2c 22 6f 70 74 4e 75 6d 22 3a 30 7d 00` → **`{"opt":61009,"optNum":0}\0`**；
+- **`listen` #2（120s）**：`+7915ms` 收到完全一致的 25 字节明文 JSON；
+- **Swift `CoreBluetooth` 连接态复核**：`+8007ms` 收到 `{"opt":61009,"optNum":0}\0`，随后 **`+8177ms`（170ms 后）设备主动断开 BLE 连接**（`CBErrorDomain Code=7: "The specified device has disconnected from us."`）。
 
-1. 完全退出本机 Mac 上的「讯飞听见」桌面客户端；
-2. 拔掉 A1 Type-C 线等待 5 秒后重新插入 Mac（不启动「讯飞听见」）；
-3. 运行只读 USB 枚举，观察是否仍为 `0x10d7:0xb00a CDC ACM`，或切换为 USB Mass Storage（`externalVolumes` 非空）：
-
-```bash
-export PATH="$HOME/.cargo/bin:$PATH"
-cargo run --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe -- usb --out /tmp/a1_usb_no_client.json
-```
-
-4. **若出现外部磁盘卷**：仅只读检查目录树、文件名规则以及任意一段录音前 64 字节魔数（判断 `RIFF/WAVE`、`OggS`、裸 `Opus`、`Speex`、`MP3`、`AAC` 或加密头），严禁写入或格式化该磁盘。
-
-### Step B · 离线脱线蓝牙摸底（Mac BLE + Classic SDP，完成 Gate 1）
-
-1. 拔掉 A1 的 Type-C 线；若已关机，长按左侧电源键约 2 秒开机，确认正面**蓝色呼吸灯闪烁**（进入可发现配对态）；
-2. **BLE 广播扫描**：
-
-```bash
-cargo run --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe -- scan --secs 12 --all --out /tmp/a1_ble_scan.json
-```
-
-   - 若发现 `讯飞录音笔A1_*`（或名称有变体时用 `--match`），记录 `localName`、`localNameUtf8Hex`、`rssi`、`services`、`manufacturerDataHex`。
-3. **BLE GATT 全量拓扑导出与只读特征读取**：
-
-```bash
-cargo run --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe -- dump --secs 12 --out /tmp/a1_gatt_dump.json
-```
-
-   - 重点核对：是否包含标准 BAS（`0x180F` / `0x2A19` 电量）与 DIS（`0x180A` 型号/SN/固件版本），以及全部私有 Service/Characteristic UUID 与属性。
-4. **BLE 被动事件监听（物理键行为摸底）**：
-
-```bash
-cargo run --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe -- listen --secs 30 --out /tmp/a1_ble_listen.json
-```
-
-   - 在 30 秒窗口内短按 A1 物理录音键开始录音，说话 5 秒后再短按停止，观察是否产生通知帧及格式。
-5. **经典蓝牙可见性与 SDP 核验（macOS）** + **iPhone 对照（如有）**：
-   - 运行 `IOBluetoothDeviceInquiry` 检查蓝灯闪烁态下 A1 是否广播 BR/EDR 经典蓝牙及是否暴露 `0x1101` SPP / iAP2 UUID；
-   - 若手头有 iPhone 且安装「讯飞听见」，连接 A1 后查看「iOS 设置 → 蓝牙」是否出现经典蓝牙已配对设备，直接确认 iOS 无线通道类型。
-
-### Step C · Android 测试机 6 步原子 HCI 抓包与解码（完成 Gate 2）
-
-1. 在 Android 测试机「设置 → 开发者选项」中开启 **启用蓝牙 HCI 信息收集日志**，重启一次蓝牙后保持开启状态；尽量远离旁侧无关蓝牙设备。
-2. 用官方「讯飞听见」App 对 A1 依次执行以下 6 个动作（**每步间隔 ≥ 5 秒，精确记录墙钟时间**）：
-   1. 扫描并连接 A1（捕获握手、鉴权、校时、电量、存储与版本号）；
-   2. 静置 10 秒（捕获心跳包周期）；
-   3. App 内点「开始录音」→ 朗读 5 秒测试语料 →「停止录音」（验证远程控录与是否推实时流）；
-   4. 机身物理键按「开始录音」→ 朗读 5 秒 →「停止录音」（捕获设备主动通知）；
-   5. App 内刷新文件列表并同步刚才录制的 5 秒录音（捕获目录列表、下载命令、分片、ACK 与音频载荷）；
-   6. *（仅限刚录制的 5 秒测试文件）* 在 App 内删除该单条文件（验证单文件删除命令，严禁触发清空/格式化）。
-3. 导出 `btsnoop_hci.log` 到 Mac（如 `/tmp/a1_btsnoop_hci.log`），使用本分支脚本解析并判定通道归属：
-
-```bash
-# 1) 总览 ATT vs 动态 L2CAP/RFCOMM 包占比
-python3 scripts/parse_btsnoop_hci.py --file /tmp/a1_btsnoop_hci.log --limit 120 --json /tmp/a1_hci_summary.json
-
-# 2) 若主要走 BLE ATT，过滤目标控制 Handle 深入拆帧
-python3 scripts/parse_btsnoop_hci.py --file /tmp/a1_btsnoop_hci.log --only-att --handle 0x0025
-```
-
-4. 在 `iflytek_a1_probe.rs` 上验证独立闭环（连接 → 读状态/电量 → 列文件 → 下载 1 段实录 → 转 16kHz Mono PCM WAV），冻结实测版 `SdkCapabilities`。
+**协议推论**：
+1. 私有控制信道采用 **无加密、`\0` 结尾的明文 JSON（`{"opt":<int>,"optNum":<int>,...}\0`）**；
+2. 建连后固件启动 **8 秒握手看门狗**：若未在 8 秒内下发合法握手包，发送 `opt: 61009` 后踢断连接（因此纯只读监听无法捕获 8 秒后的物理键状态上报，需在 Phase 2 抓包取得握手帧后测试）；
+3. 结合 U 盘内 `.cache/.dat` 日志中的 `clean userId` / `5min timeout`，握手帧极可能包含 `userId` 字段。
 
 ---
 
-## 四、Phase 3 正式接入预研蓝图（已核对代码落点）
+## 三、FAT32 存储目录与双轨音频编码实锤
 
-待 Gate 2 放行后再动业务代码，全部沿用既有第三方硬件解耦架构（参考 `reai-omi-sdk` / `reai-feishu-sdk`）：
+在无官方软件介入的 USB 挂载态（`/Volumes/NO NAME`，`MS-DOS FAT32`，`15,634,268,160 B`），根目录直接存放成对、无加密的录音文件：
 
-| 层级 | 文件路径 | 预期改动内容 |
-|---|---|---|
-| Rust SDK Crate | `app/rust/sdks/reai-iflytek-sdk/` (`Cargo.toml`, `src/{lib,protocol,session}.rs`) | 实现 `IflytekSdkDriver`（`device_kind = "iflytek_a1"`，`display_model = "讯飞录音笔 A1"`）与 `IflytekSession`；UTF-8 安全前缀匹配；基于 `IflytekLink` trait + `MemLink` 的离线抓包夹具单测；输出标准 16kHz / 16-bit LE / Mono PCM WAV |
-| 公共解码（按需） | `app/rust/sdks/reai-ext-sdk/src/audio.rs` | 仅当 A1 使用现有清单（Ogg Opus / Raw Opus / LC3 / μ-law / PCM / WAV）之外编码时，补充纯 Rust 零 C 依赖解码器 |
-| 统一 FFI 桥 | `app/rust/card_bridge/{Cargo.toml,src/capabilities.rs,src/lib.rs}` | 引入 `reai-iflytek-sdk`；`DeviceKind::IflytekA1` 注册进 `external_drivers()`、`from_hint` 与 `connect_external_sdk`；补 UTF-8 安全前缀与 RPA 匹配单测 |
-| Flutter 网关 & Store | `app/lib/core/device/card_gateway.dart`<br>`app/lib/core/store/{agent_config_store,device_store}.dart`<br>`app/lib/{main.dart,pages/app_shell.dart}` | 新增 `DeviceKind.iflytekA1`、`bleShortId`（安全剥离 `讯飞录音笔A1_`）与冻结版 `HardwareCapabilities.iflytekA1`；默认关闭 `iflytekLinkEnabled` 开关，关闭时安全断连 |
-| Flutter 设置 UI & 图标 | `app/lib/pages/settings/setting_sub_page.dart`<br>`app/lib/pages/setting_page.dart`<br>`app/lib/core/theme/rc_icons.dart` | 「第三方硬件联动」增加 `Key('ext-iflytek-card')` / `Key('ext-iflytek-switch')`，连接摘要与徽章配色对齐；`status_sheet.dart` 维持纯能力位裁剪 |
-| 测试与原型文档 | `app/test/ext_sdk_hardware_test.dart`<br>`prototype/{current.html,index.html,verify.cjs}`<br>`docs/{SDK-CAPABILITY.md,MULTI-DEVICE-ARCHITECTURE.md}` | 补全默认屏蔽/开启可见/能力裁剪/关闭断连测试；同步双版本原型开关与 `verify.cjs` 断言；更新能力对照矩阵与新交接报告 |
+| 文件示例 | 大小（Bytes） | 实测格式与结构结论 |
+|---|---:|---|
+| `2026_11_21_13_12_55.wav`<br>`2026_11_21_17_14_02.wav` | `460,800,044`<br>`460,800,044` | 满 **4.000 小时**（`14,400 s` × `32,000 B/s` + `44 B`）自动切分分段；原生无加密 **16kHz / 16-bit LE / Mono PCM** |
+| `2026_11_21_13_12_55.sbc`<br>`2026_11_21_17_14_02.sbc` | `230,400,000`<br>`230,400,000` | 与 `.wav` 严格成对，**精确 1/2 压缩率（`16 KB/s`）** |
+| `2026_11_22_10_05_24.wav`<br>`2026_11_22_10_05_24.sbc` | `292,908`<br>`146,432` | 本次 10:05 短录测试样本；`.sbc` 恰好 `1,144 × 128 B` 整帧；`.wav` 实际 PCM `292,864 B`（`9.152 s`） |
+| `2026_11_22_10_08_35.wav`<br>`2026_11_22_10_08_35.sbc` | `390,188`<br>`195,072` | 本次 10:08 短录测试样本；`.sbc` 恰好 `1,524 × 128 B` 整帧 |
+| `.cache/.dat` | `120,224` | 3,757 条 × 32 B 定长日志（记录 `start adv`、`ble Connected`、`clean userId`、`reason 19`、`5min timeout`、`satrt rec key`、`close rec key`、`usb drawout`、`key poweroff`） |
+
+### 编码与固件细节实锤
+1. **`.wav`（原生兼容 SenseVoice，但含固件头大小瑕疵）**：
+   - `xxd` 实测标准 `RIFF/WAVE/fmt /data` 16kHz 16-bit 单声道头；
+   - **重要兼容注意**：`2026_11_22_10_05_24.wav` 的 `RIFF` chunk size 写入 `0x00027048`（`159,816`），而 `data` chunk size 写入 `0x00047824`（`292,900`），导致 `afinfo` 误判时长为 `4.993250 sec`（实际 PCM `292,864 B` = `9.152 s`）。后续做桌面端 U 盘导入或校准 `.wav` 时，必须按实际 `data` 块 / 文件总长减去头偏移计算音频长度并修正 RIFF 头。
+2. **`.sbc`（无加密标准蓝牙 SIG SBC 帧）**：
+   - `xxd` 检查偏移 `0x00`、`0x80 (128)`、`0x100 (256)` 均以 **`9c 35 1d <crc>`** 起始：
+     - `0x9C`：标准蓝牙 SBC Syncword；
+     - `0x35`：`00`（16kHz）| `11`（16 blocks）| `01`（Dual Channel）| `0`（Loudness）| `1`（8 subbands）；
+     - `0x1D`：Bitpool = 29（固定 **128 字节/帧**，对应 128 采样 / 8 ms，恰好是 256 B PCM 的 `1/2`）。
 
 ---
 
-## 五、本分支当前验证记录（2026-11-22）
+## 四、Gate 1 结论与当前能力问答
 
-以下检查均在独立 worktree（`feat/iflytek-a1-phase1-probe`，基线 `52eb2c8`）内实际执行并验证通过：
+1. **Gate 1（传输通道判定）：乐观通过**
+   - 脱线态仅广播 BLE GATT，不依赖经典蓝牙 SDP/SPP，且支持 `244 B / 512 B` 大 MTU 与明文 JSON 控制帧；配合无加密 `.sbc`（`16 KB/s`）与 `.wav`，iOS / Android / macOS 均可通过统一 `btleplug` 接入，无 MFi 硬件墙阻断。
+2. **关于「蓝牙持续推流 / 自动切片 / 蓝牙开关录音」的现状答复**：
+   - **实时推流与远程开关录音**：目前因缺少 8 秒握手命令尚无法保活触发，需在 Phase 2 抓包确认官方 App 是否支持 BLE 实时推 `.sbc` 流及远程启停 `opt` 指令；
+   - **自动切片**：硬件本地每满 **4 小时**切一个文件；若 Phase 2 确认支持 BLE 实时流，App 侧可直接做 **1 分钟滚动切片 + 本地 SenseVoice 转写**；若仅支持离线同步，则需确认是否可对录制中的 `.sbc` 做偏移增量拉取，否则在停录后整段取回。
+3. **桌面端保底方案**：即使云端鉴权（如握手 `userId`）后续遇到锁死，A1 在 Mac 上无需官方客户端即可稳定挂载 15.63 GB FAT32 U 盘并直出无加密 16kHz WAV，具备 100% 开放的桌面端有线快速导入能力。
+
+---
+
+## 五、换电脑 + 自动化 Android 续测清单（Phase 2 / Gate 2）
+
+在新机器检出本分支后，即可依托自动化 Android（`adb` + `btsnoop_hci.log`）一次性跑通剩余协议验证：
+
+```bash
+git fetch origin
+git checkout -b feat/iflytek-a1-phase1-probe origin/feat/iflytek-a1-phase1-probe
+```
+
+1. **已完成（Phase 1 已打钩）**：
+   - [x] USB 双态对照（`0x10d7:0xb00a CDC ACM` vs `0x10d7:0xb00b FAT32 U盘`）
+   - [x] BLE 广播、MTU（`244/512 B`）与完整 GATT 表（`001120a0..a4` + `e49a25f8`）
+   - [x] 8 秒握手超时看门狗与明文 JSON（`{"opt":61009,"optNum":0}\0`）验证
+   - [x] 本地 `.wav`（16kHz Mono PCM + 头尺寸瑕疵）与 `.sbc`（128B/帧 标准 SBC）编码实锤
+2. **下一轮自动化 Android 待办（一次性全抓全测）**：
+   - [ ] 开启 Android 开发者选项 `btsnoop_hci.log`（或 `adb bugreport` 拉取），用「讯飞听见」App 连续完成 6 步动作：建连握手 → 静置 10s → App 远程启停/实时转写（若有）→ 机身按键启停 → 拉取文件列表与同步刚才那段测试录音 → 删除该单条测试文件；
+   - [ ] 用 [parse_btsnoop_hci.py](../../scripts/parse_btsnoop_hci.py) 一键导出全部 `001120a1`/`a2`/`a3`/`a4` ATT 明文 JSON（含 `opt` 字典表）；
+   - [ ] **回答 5 个 Gate 2 决策问题**：
+     1. 握手 JSON 中的 `userId`/签名是否涉及云端动态挑战锁（Level A/B vs Level C）？
+     2. 是否存在 BLE 远程开始/停止录音 `opt` 命令（决定 `hasRemoteRecordControl`）？
+     3. 是否存在 BLE 实时音频流推包（决定 `realtimeAudio` 与 1 分钟自动切片）？
+     4. 离线文件列表、断点偏移下载与单删的 `opt` 命令与流控格式是什么（是否直接传 `.sbc` 帧）？
+     5. 是否在握手后支持机身按物理键向 `001120a3` 实时推送录音状态/电量事件？
+   - [ ] 在 [iflytek_a1_probe.rs](../../app/rust/card_bridge/examples/iflytek_a1_probe.rs) 补齐最小握手与拉取闭环验证后，冻结 `SdkCapabilities` 并按第四节（原 Phase 3 蓝图）正式开发 `reai-iflytek-sdk`、`card_bridge`、Flutter 门控、`ext_sdk_hardware_test.dart` 及 `prototype` 双版本同步。
+
+---
+
+## 六、Phase 3 正式接入预研蓝图（已核对代码落点）
+
+待 Gate 2 冻结后按以下模块推进（均沿用 `reai-ext-sdk` 体系，开关默认关闭）：
+- `app/rust/sdks/reai-iflytek-sdk/`：`IflytekSdkDriver`（`iflytek_a1`）+ `IflytekSession` + `MemLink` 抓包夹具单测；
+- `app/rust/sdks/reai-ext-sdk/src/audio.rs`：按需接入**零 C/CMake 依赖的纯 Rust SBC 解码器**（将实锤的 16kHz / 128 B/帧 `.sbc` 转为 16kHz Mono PCM WAV；WAV 直通需校正 `RIFF`/`data` 头长度）；
+- `app/rust/card_bridge/{Cargo.toml,src/capabilities.rs,src/lib.rs}`：注册 `DeviceKind::IflytekA1`；
+- `app/lib/core/device/card_gateway.dart`、`agent_config_store.dart`、`device_store.dart`、`main.dart`、`app_shell.dart`、`setting_page.dart`、`setting_sub_page.dart`、`rc_icons.dart`、`status_sheet.dart`：按冻结能力位门控裁剪；
+- `app/test/ext_sdk_hardware_test.dart`、`prototype/{current.html,index.html,verify.cjs}`、`docs/{SDK-CAPABILITY.md,MULTI-DEVICE-ARCHITECTURE.md}`：测试、双版本原型与文档同步。
+
+---
+
+## 七、本分支验证记录（2026-11-22 10:24 CST 最新）
 
 | 检查项 | 命令 | 实测结果 |
 |---|---|---|
-| `btsnoop` 解析器自测 | `python3 scripts/parse_btsnoop_hci.py --self-test` | `OK`（3 条合成帧：2 ATT + 1 动态 L2CAP/RFCOMM，解码与过滤断言全通过） |
-| 探针单元测试 | `cargo test --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe` | `4 passed; 0 failed`（UTF-8 前缀、尾号提取、受保护设备硬拦截、SIG UUID 映射） |
-| `card_bridge` 既有单测 | `cargo test --manifest-path app/rust/card_bridge/Cargo.toml` | `43 passed; 0 failed; 1 ignored`（`dyj_v1_live_ble_probe` 需物理 `DYJ_*` 在旁，其余全绿） |
-| 实机 USB 只读冒烟 | `cargo run --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe -- usb` | `exit 0`：准确检出 `Actions CDC ACM (0x10d7:0xb00a)`、`serial_num: 00.01`、`/dev/cu.usbmodem00_011` 及空 `externalVolumes` |
-| 实机 BLE 扫描冒烟 | `cargo run --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe -- scan --secs 4` | `exit 0`：扫描 20 台周边设备，`Get-A7769D`/`Omi`/`DYJ_YKAUP3` 均标记 `isProtectedOther=true`，`iflytekCandidateCount=0` |
+| 探针内置单元测试 | `RUST_MIN_STACK=16777216 CARGO_INCREMENTAL=0 cargo test --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe` | **`5 passed; 0 failed`**（含 `manufacturerDataAscii` 解码与已知讯飞/炬芯 UUID 识别） |
+| `card_bridge` 既有单测 | `RUST_MIN_STACK=16777216 CARGO_INCREMENTAL=0 cargo test --manifest-path app/rust/card_bridge/Cargo.toml` | **`43 passed; 0 failed; 1 ignored`**（`dyj_v1_live_ble_probe` 需物理 `DYJ_*`） |
+| `btsnoop` 解析器自测 | `python3 scripts/parse_btsnoop_hci.py --self-test` | **`OK`**（3 条合成帧：2 ATT + 1 动态 L2CAP/RFCOMM） |
+| 实机 USB 只读冒烟 | `cargo run --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe -- usb` | **`exit 0`**（10:24 测时线已拔除返回空；此前 10:11/10:16 同命令均检出 `0x10d7:0xb00b` + `/Volumes/NO NAME`） |
+| 实机 BLE 扫描冒烟 | `cargo run --manifest-path app/rust/card_bridge/Cargo.toml --example iflytek_a1_probe -- scan --secs 4` | **`exit 0`**（检出 `讯飞录音笔A1_11E0` `rssi=-51`、`shortId="11E0"`、`manufacturerDataAscii["0x3332"]="2303051401437265"`） |

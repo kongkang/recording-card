@@ -111,7 +111,9 @@ pub fn standard_gatt_name(uuid: Uuid) -> Option<&'static str> {
     match short {
         0x1800 => Some("Generic Access (GAP)"),
         0x1801 => Some("Generic Attribute (GATT)"),
+        0x1805 => Some("Current Time Service (CTS)"),
         0x180A => Some("Device Information (DIS)"),
+        0x180D => Some("Heart Rate Service (HRS)"),
         0x180F => Some("Battery Service (BAS)"),
         0xFE59 => Some("Nordic Secure DFU"),
         0x2A00 => Some("Device Name"),
@@ -133,6 +135,32 @@ pub fn standard_gatt_name(uuid: Uuid) -> Option<&'static str> {
         0x2904 => Some("Characteristic Presentation Format"),
         _ => None,
     }
+}
+
+/// 标注已实测识别的讯飞 A1 / 炬芯（Actions）私有 GATT Service 与 Characteristic UUID。
+pub fn known_iflytek_uuid_name(uuid: Uuid) -> Option<&'static str> {
+    match uuid.to_string().to_ascii_lowercase().as_str() {
+        "001120a0-2233-4455-6677-889912345678" => Some("iFlytek A1 Private Control/Sync Service"),
+        "001120a1-2233-4455-6677-889912345678" => Some("iFlytek A1 Write-NoRsp Channel"),
+        "001120a2-2233-4455-6677-889912345678" => Some("iFlytek A1 Write-WithRsp Channel"),
+        "001120a3-2233-4455-6677-889912345678" => Some("iFlytek A1 JSON Control/Notify Channel (Primary)"),
+        "001120a4-2233-4455-6677-889912345678" => Some("iFlytek A1 Aux Notify/Write Channel (No CCCD)"),
+        "e49a25f8-f69a-11e8-8eb2-f2801f1b9fd1" => Some("Actions ATS28xx OTA Service"),
+        "e49a25e0-f69a-11e8-8eb2-f2801f1b9fd1" => Some("Actions OTA RX (Write)"),
+        "e49a28e1-f69a-11e8-8eb2-f2801f1b9fd1" => Some("Actions OTA TX (Notify)"),
+        _ => None,
+    }
+}
+
+/// 将 Manufacturer Data 的小端 Company ID 与负载拼接，若全为可见 ASCII 则返回可读字符串。
+pub fn decode_manufacturer_ascii(company_id: u16, payload: &[u8]) -> Option<String> {
+    let mut full = Vec::with_capacity(2 + payload.len());
+    full.extend_from_slice(&company_id.to_le_bytes());
+    full.extend_from_slice(payload);
+    if full.is_empty() || !full.iter().all(|&b| (0x20..=0x7e).contains(&b)) {
+        return None;
+    }
+    String::from_utf8(full).ok()
 }
 
 fn hex_string(bytes: &[u8]) -> String {
@@ -297,6 +325,13 @@ impl ScannedDevice {
             .iter()
             .map(|(k, v)| (format!("0x{k:04x}"), hex_string(v)))
             .collect();
+        let mfd_ascii: BTreeMap<String, String> = self
+            .manufacturer_data
+            .iter()
+            .filter_map(|(k, v)| {
+                decode_manufacturer_ascii(*k, v).map(|ascii| (format!("0x{k:04x}"), ascii))
+            })
+            .collect();
         let svc_data_json: BTreeMap<String, String> = self
             .service_data
             .iter()
@@ -315,6 +350,7 @@ impl ScannedDevice {
             "isProtectedOther": self.is_protected,
             "services": svcs,
             "manufacturerDataHex": mfd_json,
+            "manufacturerDataAscii": mfd_ascii,
             "serviceDataHex": svc_data_json,
         })
     }
@@ -562,6 +598,7 @@ async fn cmd_dump(args: &CliArgs) -> Result<Value, Box<dyn std::error::Error>> {
                 chars_json.push(json!({
                     "uuid": ch.uuid.to_string(),
                     "standardName": standard_gatt_name(ch.uuid),
+                    "knownVendorName": known_iflytek_uuid_name(ch.uuid),
                     "properties": format_props(ch.properties),
                     "descriptors": descs,
                     "readResult": read_result,
@@ -570,6 +607,7 @@ async fn cmd_dump(args: &CliArgs) -> Result<Value, Box<dyn std::error::Error>> {
             service_list.push(json!({
                 "uuid": svc.uuid.to_string(),
                 "standardName": standard_gatt_name(svc.uuid),
+                "knownVendorName": known_iflytek_uuid_name(svc.uuid),
                 "primary": svc.primary,
                 "characteristics": chars_json,
             }));
@@ -615,6 +653,7 @@ async fn cmd_listen(args: &CliArgs) -> Result<Value, Box<dyn std::error::Error>>
     connect_and_discover(target).await?;
 
     let result = async {
+        let mut adapter_events = adapter.events().await?;
         let mut notifications = target.peripheral.notifications().await?;
         let chars = target.peripheral.characteristics();
         let mut subscribed = Vec::new();
@@ -646,10 +685,21 @@ async fn cmd_listen(args: &CliArgs) -> Result<Value, Box<dyn std::error::Error>>
         let deadline = tokio::time::sleep(Duration::from_secs(args.secs));
         tokio::pin!(deadline);
         let mut events = Vec::new();
+        let mut disconnected_at_ms: Option<u128> = None;
 
         loop {
             tokio::select! {
                 _ = &mut deadline => break,
+                maybe_ev = adapter_events.next() => {
+                    if let Some(CentralEvent::DeviceDisconnected(pid)) = maybe_ev {
+                        if pid.to_string() == target.id {
+                            let elapsed_ms = started.elapsed().as_millis();
+                            eprintln!("[+{elapsed_ms}ms] 目标 A1 主动断开 BLE 连接 (id={})", target.id);
+                            disconnected_at_ms = Some(elapsed_ms);
+                            break;
+                        }
+                    }
+                }
                 maybe_note = notifications.next() => {
                     let Some(note) = maybe_note else {
                         break;
@@ -674,9 +724,11 @@ async fn cmd_listen(args: &CliArgs) -> Result<Value, Box<dyn std::error::Error>>
             }
         }
 
-        for ch in &subscribed {
-            let _ = tokio::time::timeout(Duration::from_secs(2), target.peripheral.unsubscribe(ch))
-                .await;
+        if disconnected_at_ms.is_none() {
+            for ch in &subscribed {
+                let _ = tokio::time::timeout(Duration::from_secs(2), target.peripheral.unsubscribe(ch))
+                    .await;
+            }
         }
 
         Ok::<Value, Box<dyn std::error::Error>>(json!({
@@ -686,6 +738,7 @@ async fn cmd_listen(args: &CliArgs) -> Result<Value, Box<dyn std::error::Error>>
             "device": target.to_json(),
             "subscribedCharacteristics": subscribed_uuids,
             "subscribeErrors": subscribe_errors,
+            "disconnectedAtMs": disconnected_at_ms,
             "eventCount": events.len(),
             "events": events,
         }))
@@ -917,13 +970,36 @@ mod tests {
         let bas = Uuid::parse_str("0000180f-0000-1000-8000-00805f9b34fb").unwrap();
         let bat = Uuid::parse_str("00002a19-0000-1000-8000-00805f9b34fb").unwrap();
         let dis = Uuid::parse_str("0000180a-0000-1000-8000-00805f9b34fb").unwrap();
+        let cts = Uuid::parse_str("00001805-0000-1000-8000-00805f9b34fb").unwrap();
+        let hrs = Uuid::parse_str("0000180d-0000-1000-8000-00805f9b34fb").unwrap();
         let fw = Uuid::parse_str("00002a26-0000-1000-8000-00805f9b34fb").unwrap();
         let custom = Uuid::parse_str("19b10000-e8f2-537e-4f6c-d104768a1214").unwrap();
 
         assert_eq!(standard_gatt_name(bas), Some("Battery Service (BAS)"));
         assert_eq!(standard_gatt_name(bat), Some("Battery Level"));
         assert_eq!(standard_gatt_name(dis), Some("Device Information (DIS)"));
+        assert_eq!(standard_gatt_name(cts), Some("Current Time Service (CTS)"));
+        assert_eq!(standard_gatt_name(hrs), Some("Heart Rate Service (HRS)"));
         assert_eq!(standard_gatt_name(fw), Some("Firmware Revision String"));
         assert_eq!(standard_gatt_name(custom), None);
+    }
+
+    #[test]
+    fn decodes_iflytek_manufacturer_ascii_and_vendor_uuids() {
+        assert_eq!(
+            decode_manufacturer_ascii(0x3332, b"03051401437265").as_deref(),
+            Some("2303051401437265")
+        );
+        assert_eq!(decode_manufacturer_ascii(0x004c, &[0x10, 0x05, 0x24]), None);
+
+        let svc = Uuid::parse_str("001120a0-2233-4455-6677-889912345678").unwrap();
+        let ch3 = Uuid::parse_str("001120a3-2233-4455-6677-889912345678").unwrap();
+        let ota = Uuid::parse_str("e49a25f8-f69a-11e8-8eb2-f2801f1b9fd1").unwrap();
+        let unk = Uuid::parse_str("19b10000-e8f2-537e-4f6c-d104768a1214").unwrap();
+
+        assert!(known_iflytek_uuid_name(svc).is_some());
+        assert!(known_iflytek_uuid_name(ch3).is_some());
+        assert!(known_iflytek_uuid_name(ota).is_some());
+        assert_eq!(known_iflytek_uuid_name(unk), None);
     }
 }
