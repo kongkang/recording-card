@@ -1592,10 +1592,32 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
     return rc.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom;
   });
   assert(curSetGap >= 44, 'current.html Setting 宽屏底部留白不足: ' + curSetGap);
+  // 当前版：全库声纹 × 语义 1-Tap 轻确认横幅 & 单段防污染解绑
+  await pCur.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 });
+  await pCur.click('[data-testid="nav-timeline"]');
+  const e1Open = await pCur.$eval('[data-testid="card-e1"]', x => x.classList.contains('open'));
+  if (!e1Open) await pCur.click('[data-testid="card-e1"]');
+  await pCur.$eval('[data-testid="detail-e1"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="detail-e1"]');
+  await pCur.waitForSelector('#p-detail.show #dt-dlg [data-testid="spk-suggest-bar"]', { timeout: 3000 });
+  assert(await pCur.$eval('#p-detail #dt-dlg [data-testid="spk-suggest-bar"]', x => x.innerText.includes('老陈') && x.innerText.includes('小周')));
+  assert(await pCur.$eval('[data-testid="turn-who-e1-1"]', x => x.innerText.includes('疑似老陈?')));
+  await pCur.click('#p-detail [data-testid="spk-suggest-confirm-e1-1"]');
+  assert(await pCur.$eval('[data-testid="turn-who-e1-1"]', x => x.innerText.trim() === '老陈'));
+  await pCur.click('[data-testid="turn-who-e1-1"]');
+  await pCur.waitForSelector('[data-testid="qspk-detach-btn"]:not([hidden])', { timeout: 2000 });
+  await pCur.click('[data-testid="qspk-detach-btn"]');
+  assert(await pCur.$eval('[data-testid="turn-who-e1-1"]', x => x.innerText.includes('说话人 1')));
+  await pCur.click('[data-testid="crumb-back"]');
+  await pCur.click('[data-testid="nav-setting"]');
+  await pCur.$eval('[data-testid="set-voiceprint"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-voiceprint"]');
+  assert(await pCur.$eval('[data-testid="vp-library-section"]', x => x.innerText.includes('老陈')), '解绑单段后声纹库仍保留人物档案');
+  await pCur.click('[data-testid="crumb-back"]');
   await pCur.close();
 
   assert.equal(errors.length, 0, errors.join(','));
   assert.equal(net.length, 0, net.join(','));
-  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'bedtime-diary', 'diary-likes-annotations', 'dream-card', 'dream-sheet', 'dream-comic-skill', 'unc-triage-sheet', 'voiceprint-context-tag', 'voiceprint-merge-detach', 'memory-graph-triad', 'memory-provenance-metabolism', 'hw-button-island-push', 'tbc-markers', 'parity-drawer', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'raw-seek', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'sum-contextual-photos', 'map-photo-hierarchy', 'todo-progressive-meta', 'point-expand', 'point-trace', 'src-photo-infocards', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'setting-v2-subpages', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'multi-hw-scan', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'dfu-rec-guard', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'apple-watch-hardware-link', 'ble-scan-expiry', 'territory-checkin-map', 'sleep-hr-hrv-emotion', 'sunrise-ai-her-chat', 'no-overflow'] }, null, 2));
+  console.log(JSON.stringify({ pass: true, viewport: '390x844 @2x + 900x1100', navigation: 2, errors, networkRequests: net, checks: ['fixed-chrome', 'crumb-root-hidden', 'feed-time-desc', 'photo-thumbs', 'photo-detail', 'bedtime-diary', 'diary-likes-annotations', 'dream-card', 'dream-sheet', 'dream-comic-skill', 'unc-triage-sheet', 'voiceprint-context-tag', 'voiceprint-merge-detach', 'voiceprint-suggest-confirm-and-detach', 'memory-graph-triad', 'memory-provenance-metabolism', 'hw-button-island-push', 'tbc-markers', 'parity-drawer', 'two-line-card', 'expand-collapse', 'detail-entry', 'subpage-hides-nav', 'detail-tabs-raw', 'raw-audio-player', 'raw-seek', 'select-mode', 'tabs-lock-on-summary', 'action-card', 'range-today', 'range-week', 'range-month', 'tap-toggle', 'sumbar-rows', 'gen-status-view', 'generate-progress', 'sum-tabs', 'default-all-view', 'sum-contextual-photos', 'map-photo-hierarchy', 'todo-progressive-meta', 'point-expand', 'point-trace', 'src-photo-infocards', 'refs-tab', 'detail-backlink', 'history-flatten', 'src-tab-loop', 'export-sheet', 'filter', 'cancel-summary', 'setting-toggle', 'setting-v2-subpages', 'connect-default', 'capsule-nodata', 'scan-dyj-sorted', 'multi-hw-scan', 'rec-default-off', 'rec-switch', 'device-sheet', 'sheet-single-rows', 'battery-capsule', 'battery-row', 'clock-stable', 'row-inline-actions', 'rec-clock-tick', 'rel-sync', 'wifi-count', 'no-sim-labels', 'sync-now', 'sync-cooldown', 'live-card', 'auto-sync', 'live-hide-summary', 'dfu-rec-guard', 'two-stage-fw', 'fw-lock', 'wifi-setup', 'toc-float', 'tabs-sticky', 'pt-default-open', 'wide-two-pane', 'wide-list-stays', 'wide-crumb-off', 'pane-back', 'wide-flatten', 'fresh-from-list', 'session-restore', 'apple-watch-hardware-link', 'ble-scan-expiry', 'territory-checkin-map', 'sleep-hr-hrv-emotion', 'sunrise-ai-her-chat', 'no-overflow'] }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1) });

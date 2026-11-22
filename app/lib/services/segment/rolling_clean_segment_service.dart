@@ -22,6 +22,7 @@ import '../analysis/chat_completion.dart';
 import '../recordings/segment_projection.dart';
 import '../recordings/speaker_profile_store.dart';
 import '../transcribe/utterance_builder.dart';
+import '../voiceprint/joint_speaker_resolver.dart';
 import 'fast_topic_segment_agent.dart';
 import 'section_copy.dart';
 
@@ -32,6 +33,8 @@ class RollingCleanResult {
     this.evaluatedBatches = 0,
     this.skippedRuns = 0,
     this.error,
+    this.resolvedSpeakerAliases = const {},
+    this.suggestions = const [],
   });
 
   final TopicSegmentationState state;
@@ -39,6 +42,8 @@ class RollingCleanResult {
   final int evaluatedBatches;
   final int skippedRuns;
   final Object? error;
+  final Map<String, Map<String, String>> resolvedSpeakerAliases;
+  final List<SpeakerCandidateSuggestion> suggestions;
 }
 
 class _TimedUnit {
@@ -229,6 +234,8 @@ class RollingCleanSegmentService {
     var evaluatedBatches = 0;
     var skippedRuns = 0;
     Object? lastError;
+    final resolvedSpeakerAliasesBySession = <String, Map<String, String>>{};
+    final emittedSuggestions = <SpeakerCandidateSuggestion>[];
 
     for (var i = 0; i < validGroups.length; i++) {
       final group = validGroups[i].group;
@@ -270,6 +277,7 @@ class RollingCleanSegmentService {
       var coveredEndMs = existingRun?.coveredUtteranceEndMs ?? 0;
 
       final batches = _splitIntoCycleBatches(uncovered);
+      final groupCloudClues = <SemanticSpeakerClue>[];
       var groupEvaluatedBatches = 0;
       for (var bi = 0; bi < batches.length; bi++) {
         final batch = batches[bi];
@@ -282,7 +290,8 @@ class RollingCleanSegmentService {
             accumulatedSections: accumulatedSections,
             speakerContext: speakerContext,
           );
-          _mergeBatchSections(accumulatedSections, result, batch);
+          groupCloudClues.addAll(result.clues);
+          _mergeBatchSections(accumulatedSections, result.sections, batch);
           for (final u in batch) {
             coveredIds.add(u.compositeId);
             if (u.absEndMs > coveredEndMs) coveredEndMs = u.absEndMs;
@@ -309,6 +318,14 @@ class RollingCleanSegmentService {
           (latest) => latest.withRollingRun(updatedRun).withOrganizerVersion(2),
         );
         evaluatedRuns++;
+        await _reconcileGroupVoiceprints(
+          sessionId: sessionId,
+          group: group,
+          sections: accumulatedSections,
+          cloudClues: groupCloudClues,
+          resolvedAliasesOut: resolvedSpeakerAliasesBySession,
+          suggestionsOut: emittedSuggestions,
+        );
       }
     }
 
@@ -325,7 +342,97 @@ class RollingCleanSegmentService {
       evaluatedBatches: evaluatedBatches,
       skippedRuns: skippedRuns,
       error: lastError,
+      resolvedSpeakerAliases: resolvedSpeakerAliasesBySession,
+      suggestions: emittedSuggestions,
     );
+  }
+
+  Future<void> _reconcileGroupVoiceprints({
+    required String sessionId,
+    required ProjectedSpeechGroup group,
+    required List<TopicSectionOverride> sections,
+    required List<SemanticSpeakerClue> cloudClues,
+    required Map<String, Map<String, String>> resolvedAliasesOut,
+    required List<SpeakerCandidateSuggestion> suggestionsOut,
+  }) async {
+    final vp = _voiceprintStore;
+    if (vp == null) return;
+    final cleanSes = sessionId.trim();
+    if (cleanSes.isEmpty) return;
+
+    final speakerCentroids = <String, List<double>>{};
+    final speakerSpeechMs = <String, int>{};
+    String? devLabel = group.views.isNotEmpty
+        ? group.views.first.file.resolvedSourceDeviceLabel
+        : null;
+    final sourceLane = group.views.isNotEmpty
+        ? group.views.first.file.resolvedSourceLane.code
+        : null;
+
+    try {
+      final root = await _resolveRoot();
+      final profileSet = await SpeakerProfileStore(root: root).load(cleanSes);
+      if (profileSet.deviceLabel != null &&
+          profileSet.deviceLabel!.trim().isNotEmpty) {
+        devLabel = profileSet.deviceLabel;
+      }
+      for (final p in profileSet.profiles) {
+        if (p.centroid.isEmpty) continue;
+        final slot = '说话人 ${p.index + 1}';
+        speakerCentroids[slot] = p.centroid;
+        speakerSpeechMs[slot] = p.speechMs;
+      }
+    } on Object {
+      // 无声纹文件时仅根据语义线索生成候选建议
+    }
+
+    final turnPairs = <({String speaker, String text})>[
+      for (final sec in sections)
+        for (final p in sec.paragraphs) (speaker: p.speaker, text: p.text),
+    ];
+    final knownNames = vp.preferredRosterNames(limit: 40).toSet();
+    final localClues = SemanticSpeakerClueExtractor.extractFromTurnPairs(
+      turnPairs,
+      knownNames: knownNames,
+    );
+
+    final resolution = JointSpeakerResolver.resolveSession(
+      session: cleanSes,
+      speakerCentroids: speakerCentroids,
+      speakerSpeechMs: speakerSpeechMs,
+      semanticClues: [...cloudClues, ...localClues],
+      voiceprintStore: vp,
+      deviceLabel: devLabel,
+      sourceLane: sourceLane,
+      nowMs: _now().millisecondsSinceEpoch,
+    );
+
+    for (final outcome in resolution.autoConfirmed.values) {
+      vp.clearSuggestion(
+        session: cleanSes,
+        speakerSlot: outcome.speakerSlot,
+        notify: false,
+      );
+      (resolvedAliasesOut[cleanSes] ??= {})[outcome.speakerSlot] =
+          outcome.personName;
+      if (outcome.shouldEnrollChannelCentroid) {
+        final centroid = speakerCentroids[outcome.speakerSlot];
+        if (centroid != null && centroid.isNotEmpty) {
+          vp.upsertPersonAndSample(
+            name: outcome.personName,
+            embedding: centroid,
+            deviceLabel: outcome.deviceLabel,
+            sourceLane: sourceLane,
+            sceneLabel: '跨设备自适应',
+          );
+        }
+      }
+    }
+
+    for (final sug in resolution.suggestions.values) {
+      vp.recordCandidateSuggestion(sug, notify: false);
+      suggestionsOut.add(sug);
+    }
   }
 
   bool _shouldProcessGroup({
@@ -465,6 +572,7 @@ class RollingCleanSegmentService {
     }
 
     final vp = _voiceprintStore;
+    var rosterNames = const <String>[];
     if (vp != null) {
       for (final slot in labels) {
         final hint = vp.fuzzyHintFor(session: sessionId, speakerSlot: slot);
@@ -472,6 +580,7 @@ class RollingCleanSegmentService {
           weakHints.add({'slot': slot, 'candidateName': hint.trim()});
         }
       }
+      rosterNames = vp.preferredRosterNames(limit: 12);
     }
 
     return {
@@ -479,10 +588,12 @@ class RollingCleanSegmentService {
       if (pairwiseSimilarities.isNotEmpty)
         'cluster_similarities': pairwiseSimilarities,
       if (weakHints.isNotEmpty) 'voiceprint_weak_hints': weakHints,
+      if (rosterNames.isNotEmpty) 'known_speaker_roster': rosterNames,
     };
   }
 
-  Future<List<_ParsedRollingSection>> _processBatch({
+  Future<({List<_ParsedRollingSection> sections, List<SemanticSpeakerClue> clues})>
+  _processBatch({
     required List<_TimedUnit> batch,
     required List<TopicSectionOverride> accumulatedSections,
     required Map<String, Object?> speakerContext,
@@ -534,7 +645,10 @@ class RollingCleanSegmentService {
     );
 
     final parsed = _parseResponse(raw, batch);
-    return _normalizeAndFillCoverage(parsed, batch);
+    return (
+      sections: _normalizeAndFillCoverage(parsed.sections, batch),
+      clues: parsed.clues,
+    );
   }
 
   Map<String, Object?> _buildOverlapContext(
@@ -621,7 +735,8 @@ class RollingCleanSegmentService {
       )
       ..writeln(
         '6. **忠实不编造**：严格忠于输入事实，只输出合法 JSON：'
-        '{"sections":[{"continuesPrevious":false,"mergesPreviousParagraph":false,"lowValue":false,"title":"...","summary":"...","brief":"...","overview":"...","tags":["关键词"],"paragraphs":[{"uStart":0,"uEnd":2,"speaker":"说话人 1","text":"..."}]}]}。'
+        '{"sections":[{"continuesPrevious":false,"mergesPreviousParagraph":false,"lowValue":false,"title":"...","summary":"...","brief":"...","overview":"...","tags":["关键词"],"paragraphs":[{"uStart":0,"uEnd":2,"speaker":"说话人 1","text":"..."}]}],"speakerClues":[{"slot":"说话人 1","name":"真实姓名","confidence":0.86,"kind":"vocative","evidence":"原文依据"}]}。'
+        '其中 `speakerClues` 为可选字段：仅当对话中出现自报家门、直接呼语-应答对，且结合 `known_speaker_roster` 能确切对应到某位在场说话人时才填写；严禁把仅仅被提及但未在场发言的第三人（如“让老陈去办”）误标为说话人；不确定请省略或返回 `[]`。'
         '不要输出 Markdown 代码块之外的多余说明。',
       );
     if (customStyle.isNotEmpty) {
@@ -637,16 +752,24 @@ class RollingCleanSegmentService {
     return buf.toString();
   }
 
-  List<_ParsedRollingSection> _parseResponse(
+  ({List<_ParsedRollingSection> sections, List<SemanticSpeakerClue> clues})
+  _parseResponse(
     String raw,
     List<_TimedUnit> batch,
   ) {
     final jsonText = _extractJsonObject(raw);
-    if (jsonText == null) return const [];
+    if (jsonText == null) return (sections: const [], clues: const []);
     final decoded = jsonDecode(jsonText);
-    if (decoded is! Map<String, dynamic>) return const [];
+    if (decoded is! Map<String, dynamic>) {
+      return (sections: const [], clues: const []);
+    }
     final rawSections = decoded['sections'];
-    if (rawSections is! List) return const [];
+    if (rawSections is! List) return (sections: const [], clues: const []);
+    final clues = SemanticSpeakerClueExtractor.parseCloudClues(
+      decoded['speakerClues'],
+      knownNames: _voiceprintStore?.preferredRosterNames(limit: 40).toSet() ??
+          const {},
+    );
 
     final count = batch.length;
     final parsed = <_ParsedRollingSection>[];
@@ -732,7 +855,7 @@ class RollingCleanSegmentService {
         ),
       );
     }
-    return parsed;
+    return (sections: parsed, clues: clues);
   }
 
   /// 确保 `[0 .. batch.length - 1]` 全部原始句都有落脚点，无遗漏也无越界。
