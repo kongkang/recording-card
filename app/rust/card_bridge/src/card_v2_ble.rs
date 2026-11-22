@@ -224,6 +224,13 @@ async fn find_card_v2_in_adapter(
     name_hint: Option<&str>,
     seen_this_scan: Option<&HashSet<String>>,
 ) -> Option<(Peripheral, String, bool)> {
+    if seen_this_scan.is_none() {
+        let _ = tokio::time::timeout(
+            Duration::from_millis(600),
+            adapter.retrieve_connected_peripherals(&crate::known_ble_service_uuids()),
+        )
+        .await;
+    }
     let peripherals = adapter.peripherals().await.ok()?;
     let trimmed_hint = name_hint.map(str::trim).filter(|s| !s.is_empty());
     let mut best: Option<(i16, Peripheral, String, bool)> = None;

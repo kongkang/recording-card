@@ -135,6 +135,46 @@ impl Central for Adapter {
         Ok(self.manager.peripherals())
     }
 
+    async fn retrieve_connected_peripherals(
+        &self,
+        services: &[uuid::Uuid],
+    ) -> Result<Vec<Peripheral>> {
+        if services.is_empty() {
+            return Ok(Vec::new());
+        }
+        let fut = CoreBluetoothReplyFuture::default();
+        self.sender
+            .to_owned()
+            .send(CoreBluetoothMessage::RetrieveConnectedPeripherals {
+                services: services.to_vec(),
+                future: fut.get_state_clone(),
+            })
+            .await?;
+        let uuids = match fut.await {
+            CoreBluetoothReply::Peripherals(uuids) => uuids,
+            CoreBluetoothReply::Err(msg) => return Err(Error::RuntimeError(msg)),
+            _ => return Ok(Vec::new()),
+        };
+        let mut out = Vec::with_capacity(uuids.len());
+        for uuid in uuids {
+            let pid: PeripheralId = uuid.into();
+            let mut found = self.manager.peripheral(&pid);
+            if found.is_none() {
+                for _ in 0..10 {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    found = self.manager.peripheral(&pid);
+                    if found.is_some() {
+                        break;
+                    }
+                }
+            }
+            if let Some(p) = found {
+                out.push(p);
+            }
+        }
+        Ok(out)
+    }
+
     async fn peripheral(&self, id: &PeripheralId) -> Result<Peripheral> {
         self.manager.peripheral(id).ok_or(Error::DeviceNotFound)
     }

@@ -21,6 +21,8 @@ import 'services/ai/summary_generator.dart';
 import 'services/analysis/chat_completion.dart';
 import 'services/audio/recording_status.dart';
 import 'services/auth_service.dart';
+import 'services/external_data/external_data_hub_store.dart';
+import 'services/external_data/external_data_scheduler.dart';
 import 'services/external_data/getnote_sync_store.dart';
 import 'services/health/health_signal_collector.dart';
 import 'services/health/health_signal_controller.dart';
@@ -87,6 +89,7 @@ Future<void> main() async {
   }
   try {
     await GetNoteSyncStore.instance.load();
+    await ExternalDataHubStore.instance.load();
   } catch (_) {
     // 密钥库或偏好临时不可用时不阻塞冷启动。
   }
@@ -296,6 +299,7 @@ class _HomeGateState extends State<_HomeGate> {
     _store.photoSyncEnabled = () => _agentConfig.photoLinkEnabled;
     _store.deviceGateway = () => _device.gateway;
     _device.attachAgentConfig(_agentConfig);
+    _device.isExternalBleSyncBusy = () => _pipeline.isBusy;
     _device.onManualBleSync = () => _store.syncRecordings();
     _device.onBleReconnectedNeedSync = (_) => _store.syncAfterBleReconnect(
       flushWatch: _device.flushWatchRecordingSlice,
@@ -452,9 +456,16 @@ class _HomeGateState extends State<_HomeGate> {
       organize: organize,
       agentConfig: _agentConfig,
     );
-    await scheduler.ensureTasks(
-      defaultCleaningTasks(shortMinutes: _agentConfig.cleanCycleMinutes),
+    registerExternalDataSyncHandler(
+      scheduler: scheduler,
+      appStore: _store,
+      getNoteStore: GetNoteSyncStore.instance,
+      externalHub: ExternalDataHubStore.instance,
     );
+    await scheduler.ensureTasks([
+      ...defaultCleaningTasks(shortMinutes: _agentConfig.cleanCycleMinutes),
+      ...defaultExternalDataTasks(),
+    ]);
     final short = scheduler.taskById(CleaningTaskIds.short);
     if (short != null &&
         short.schedule.mode == 'interval' &&
@@ -539,6 +550,8 @@ class _HomeGateState extends State<_HomeGate> {
               agentConfig: _agentConfig,
               authService: _auth,
               healthSignals: _healthSignals,
+              getNoteStore: GetNoteSyncStore.instance,
+              externalDataHub: ExternalDataHubStore.instance,
               memorySearch: _memorySearch,
               agentChat: _agentChat,
               transcribeSamples: _transcribeSliceForAgent,

@@ -18,6 +18,8 @@ import '../../core/theme/tokens.dart';
 import '../../services/audio/voice_sample_capture.dart';
 import '../../services/auth/oauth_config.dart';
 import '../../services/auth_service.dart';
+import '../../services/external_data/external_connector.dart';
+import '../../services/external_data/external_data_hub_store.dart';
 import '../../services/external_data/getnote_sync_store.dart';
 import '../../services/health/health_signal_controller.dart';
 import '../../services/memory/memory_search_scope.dart';
@@ -30,6 +32,7 @@ import '../../services/watch/watch_hardware_service.dart';
 import '../../widgets/rc_switch.dart';
 import '../../widgets/store_scope.dart';
 import 'developer_schedule_section.dart';
+import 'external_data_hub_body.dart';
 import 'getnote_sync_body.dart';
 import 'health_signal_body.dart';
 import 'memory_search_body.dart';
@@ -45,12 +48,13 @@ class SettingSubPage extends StatelessWidget {
     this.authService,
     this.healthSignals,
     this.getNoteStore,
+    this.externalDataHub,
     this.showPaneBack = false,
     this.standalone = false,
   });
 
   final String
-  subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extdata' | 'health' | 'dev'
+  subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extdata' | 'extnotes' | 'extrecorders' | 'health' | 'dev'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
@@ -58,6 +62,7 @@ class SettingSubPage extends StatelessWidget {
   final AuthService? authService;
   final HealthSignalController? healthSignals;
   final GetNoteSyncStore? getNoteStore;
+  final ExternalDataHubStore? externalDataHub;
   final bool showPaneBack;
   final bool standalone;
 
@@ -73,6 +78,8 @@ class SettingSubPage extends StatelessWidget {
     'watch' => 'Apple Watch 联动',
     'exthw' => '第三方硬件联动',
     'extdata' => '得到大脑 / Get 笔记',
+    'extnotes' => '笔记与阅读软件（API）',
+    'extrecorders' => '第三方录音软件（API）',
     'health' => '行为与健康信号',
     'dev' => '开发者设置',
     _ => '设置详情',
@@ -207,6 +214,14 @@ class SettingSubPage extends StatelessWidget {
                     ),
                     'extdata' => GetNoteSyncBody(
                       store: getNoteStore ?? GetNoteSyncStore.instance,
+                    ),
+                    'extnotes' => ExternalDataHubBody(
+                      store: externalDataHub ?? ExternalDataHubStore.instance,
+                      category: ExternalConnectorCategory.notes,
+                    ),
+                    'extrecorders' => ExternalDataHubBody(
+                      store: externalDataHub ?? ExternalDataHubStore.instance,
+                      category: ExternalConnectorCategory.recorders,
                     ),
                     'health' =>
                       healthSignals == null

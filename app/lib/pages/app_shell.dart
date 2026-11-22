@@ -22,6 +22,7 @@ import '../services/agent/hardware_agent_task_coordinator.dart';
 import '../services/audio/live_audio_recorder.dart';
 import '../services/audio/recording_status.dart';
 import '../services/auth_service.dart';
+import '../services/external_data/external_data_hub_store.dart';
 import '../services/external_data/getnote_sync_store.dart';
 import '../services/health/health_signal_controller.dart';
 import '../services/memory/memory_search_scope.dart';
@@ -161,6 +162,7 @@ class AppShell extends StatefulWidget {
     this.photoLibrary,
     this.healthSignals,
     this.getNoteStore,
+    this.externalDataHub,
     this.memorySearch,
     this.agentChat,
     this.hardwareAgentCoordinator,
@@ -187,6 +189,7 @@ class AppShell extends StatefulWidget {
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
   final GetNoteSyncStore? getNoteStore;
+  final ExternalDataHubStore? externalDataHub;
   final MemorySearchService? memorySearch;
   final AgentChatController? agentChat;
   final HardwareAgentTaskCoordinator? hardwareAgentCoordinator;
@@ -450,6 +453,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         unawaited(_liveAudio.stop());
       }
       if (!_wasRecording) {
+        if (widget.store.pauseOfflineSyncForLiveRecording()) {
+          _device.markPendingPostReconnectSync();
+        }
         widget.store.onLiveRecordingStarted();
         _recording.startRecording();
         unawaited(_ensurePhotoPermissionOnRecordStart());
@@ -618,6 +624,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           photoLibrary: _photoLib,
                           healthSignals: widget.healthSignals,
                           getNoteStore: widget.getNoteStore,
+                          externalDataHub: widget.externalDataHub,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                           crashStore: widget.crashStore,
@@ -634,6 +641,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           photoLibrary: _photoLib,
                           healthSignals: widget.healthSignals,
                           getNoteStore: widget.getNoteStore,
+                          externalDataHub: widget.externalDataHub,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                           crashStore: widget.crashStore,
@@ -1196,6 +1204,7 @@ Widget _stackTopPage(
   AuthService? authService,
   HealthSignalController? healthSignals,
   GetNoteSyncStore? getNoteStore,
+  ExternalDataHubStore? externalDataHub,
 }) {
   final top = store.stackTop;
   if (top == null) return const SizedBox.shrink();
@@ -1221,6 +1230,7 @@ Widget _stackTopPage(
       authService: authService,
       healthSignals: healthSignals,
       getNoteStore: getNoteStore,
+      externalDataHub: externalDataHub,
       showPaneBack: wide && store.showPaneBackSetSub,
     );
   }
@@ -1242,6 +1252,7 @@ class _NarrowLayout extends StatelessWidget {
     this.photoLibrary,
     this.healthSignals,
     this.getNoteStore,
+    this.externalDataHub,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
     this.crashStore,
@@ -1256,6 +1267,7 @@ class _NarrowLayout extends StatelessWidget {
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
   final GetNoteSyncStore? getNoteStore;
+  final ExternalDataHubStore? externalDataHub;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
   final KeyValueStore? crashStore;
@@ -1302,6 +1314,7 @@ class _NarrowLayout extends StatelessWidget {
                         photoLibrary: photoLibrary,
                         healthSignals: healthSignals,
                         getNoteStore: getNoteStore,
+                        externalDataHub: externalDataHub,
                         supportsDynamicIsland: supportsDynamicIsland,
                         crashStore: crashStore,
                         accountHttpClient: accountHttpClient,
@@ -1327,6 +1340,7 @@ class _NarrowLayout extends StatelessWidget {
                         authService,
                         healthSignals,
                         getNoteStore,
+                        externalDataHub,
                       ),
                     ),
                   ),
@@ -1369,6 +1383,7 @@ class _NarrowLayout extends StatelessWidget {
     AuthService? authService,
     HealthSignalController? healthSignals,
     GetNoteSyncStore? getNoteStore,
+    ExternalDataHubStore? externalDataHub,
   ) {
     if (e.type == 'sum') {
       return SummaryResultPage(
@@ -1392,6 +1407,7 @@ class _NarrowLayout extends StatelessWidget {
         authService: authService,
         healthSignals: healthSignals,
         getNoteStore: getNoteStore,
+        externalDataHub: externalDataHub,
         showPaneBack: false,
       );
     }
@@ -1410,6 +1426,7 @@ class _WideLayout extends StatelessWidget {
     this.photoLibrary,
     this.healthSignals,
     this.getNoteStore,
+    this.externalDataHub,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
     this.crashStore,
@@ -1424,6 +1441,7 @@ class _WideLayout extends StatelessWidget {
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
   final GetNoteSyncStore? getNoteStore;
+  final ExternalDataHubStore? externalDataHub;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
   final KeyValueStore? crashStore;
@@ -1468,6 +1486,7 @@ class _WideLayout extends StatelessWidget {
                       photoLibrary: photoLibrary,
                       healthSignals: healthSignals,
                       getNoteStore: getNoteStore,
+                      externalDataHub: externalDataHub,
                       supportsDynamicIsland: supportsDynamicIsland,
                       crashStore: crashStore,
                       accountHttpClient: accountHttpClient,
@@ -1492,6 +1511,7 @@ class _WideLayout extends StatelessWidget {
                             authService: authService,
                             healthSignals: healthSignals,
                             getNoteStore: getNoteStore,
+                            externalDataHub: externalDataHub,
                           ),
                         )
                       : const _EmptyPane(),

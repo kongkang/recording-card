@@ -10,5 +10,6 @@ pub mod types;
 
 pub use types::{
     RecorderDevice, RecorderSdkDriver, SdkAudioChunk, SdkBattery, SdkCapabilities, SdkDeviceEvent,
-    SdkError, SdkFileEntry, SdkRecordStatus, SdkSavedFile, SdkSnapshot, SdkStorage,
+    SdkError, SdkFileEntry, SdkRecordStatus, SdkSavedFile, SdkSavedFilePart, SdkSnapshot,
+    SdkStorage,
 };

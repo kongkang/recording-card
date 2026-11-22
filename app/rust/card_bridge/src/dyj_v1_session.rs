@@ -728,7 +728,8 @@ impl DyjV1Session {
             }
         }
 
-        // 2) 若缓存未命中但传入了非空 id_hint（且未在步骤 1 尝试过同一外设），用 5 秒超时尝试直连。
+        // 2) 先向系统层取回可能已连接的 FF10 外设，再按 id_hint 或广播名匹配直连。
+        crate::retrieve_os_connected_peripherals(adapter).await;
         if !id_hint.is_empty() && tried_id.as_deref() != Some(id_hint) {
             if let Ok(peripherals) = adapter.peripherals().await {
                 if let Some(cached) = peripherals

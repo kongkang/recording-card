@@ -9,7 +9,9 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -61,6 +63,64 @@ class FeedGroup {
   const FeedGroup(this.dayLabel, this.items);
 }
 
+sealed class FeedListEntry {
+  const FeedListEntry();
+}
+
+class FeedDayHeaderEntry extends FeedListEntry {
+  const FeedDayHeaderEntry({
+    required this.dayOffset,
+    required this.dayLabel,
+  });
+  final int dayOffset;
+  final String dayLabel;
+}
+
+class FeedItemEntry extends FeedListEntry {
+  const FeedItemEntry({
+    required this.item,
+    required this.first,
+    required this.last,
+  });
+  final Object item;
+  final bool first;
+  final bool last;
+}
+
+class _ObservablePhotoMap extends MapBase<String, List<EventPhoto>> {
+  _ObservablePhotoMap(this._inner, this._onMutate);
+
+  final Map<String, List<EventPhoto>> _inner;
+  final VoidCallback _onMutate;
+
+  @override
+  List<EventPhoto>? operator [](Object? key) => _inner[key];
+
+  @override
+  void operator []=(String key, List<EventPhoto> value) {
+    _inner[key] = value;
+    _onMutate();
+  }
+
+  @override
+  void clear() {
+    if (_inner.isEmpty) return;
+    _inner.clear();
+    _onMutate();
+  }
+
+  @override
+  Iterable<String> get keys => _inner.keys;
+
+  @override
+  List<EventPhoto>? remove(Object? key) {
+    final hadKey = _inner.containsKey(key);
+    final removed = _inner.remove(key);
+    if (hadKey) _onMutate();
+    return removed;
+  }
+}
+
 /// 生成过程的展示常量：仅用于文案与估算，不驱动真实工作。
 abstract final class GenConst {
   /// 粗略估算：每条记录的转写+整理按 8 秒算，用于"预计还需"的提示。
@@ -76,24 +136,87 @@ class AppStore extends ChangeNotifier {
     RecordingStatusController? status,
     JsonStore? jsonStore,
     bool loadPersistedState = true,
-  }) : events = events ?? const [],
+  }) : _events = events ?? const [],
        _seedOverride = events,
        _recordings = recordings,
        _generator = generator,
        _status = status,
        _json = jsonStore,
        _loadPersisted = loadPersistedState {
+    _eventPhotos = _ObservablePhotoMap({}, _onPhotoMapMutated);
     voiceprintStore.addListener(_onVoiceprintChanged);
+  }
+
+  static const int _isolateProjectionThreshold = 24;
+
+  int _dataVersion = 0;
+  int _photoVersion = 0;
+  int _aliasVersion = 0;
+  int _feedVersion = 0;
+
+  int get dataRevision => _dataVersion + _photoVersion + _aliasVersion;
+
+  Map<String, RecordEvent>? _eventByIdCache;
+  final Map<String, List<EventPhoto>> _activePhotosCache = {};
+  final Map<String, int> _summaryPhotoCountCache = {};
+  (int, int, int, FeedFilter, int, int)? _cachedFeedKey;
+  List<FeedGroup>? _cachedFeedGroups;
+  List<FeedListEntry>? _cachedFeedEntries;
+
+  void _invalidateFeedCache() {
+    _feedVersion++;
+    _cachedFeedKey = null;
+    _cachedFeedGroups = null;
+    _cachedFeedEntries = null;
+  }
+
+  void _onEventsChanged() {
+    _dataVersion++;
+    _eventByIdCache = null;
+    _activePhotosCache.clear();
+    _summaryPhotoCountCache.clear();
+    _invalidateFeedCache();
+  }
+
+  void _onSegmentViewsChanged() {
+    _dataVersion++;
+    _eventByIdCache = null;
+    _activePhotosCache.clear();
+    _summaryPhotoCountCache.clear();
+    _invalidateFeedCache();
+  }
+
+  void _onSummariesChanged() {
+    _dataVersion++;
+    _summaryPhotoCountCache.clear();
+    _invalidateFeedCache();
+  }
+
+  void _onPhotoMapMutated() {
+    _photoVersion++;
+    _activePhotosCache.clear();
+    _summaryPhotoCountCache.clear();
+    _invalidateFeedCache();
+  }
+
+  void _onAliasesMutated() {
+    _aliasVersion++;
   }
 
   void _onVoiceprintChanged() {
     if (_disposed || _restoringState) return;
+    _onAliasesMutated();
     _persist();
     notifyListeners();
   }
 
   /// 录音数据（真实设备同步进来的记录）。
-  List<RecordEvent> events;
+  List<RecordEvent> _events;
+  List<RecordEvent> get events => _events;
+  set events(List<RecordEvent> value) {
+    _events = value;
+    _onEventsChanged();
+  }
 
   /// 测试注入的固定数据集（非 null 时不做网络/设备加载）。
   final List<RecordEvent>? _seedOverride;
@@ -125,10 +248,20 @@ class AppStore extends ChangeNotifier {
   String replayStatus = '';
 
   /// 分段详情视图：Timeline 与详情页共用同一份 turns/utterances。
-  Map<String, SegmentView> segmentViews = const {};
+  Map<String, SegmentView> _segmentViews = const {};
+  Map<String, SegmentView> get segmentViews => _segmentViews;
+  set segmentViews(Map<String, SegmentView> value) {
+    _segmentViews = value;
+    _onSegmentViewsChanged();
+  }
 
   /// 连续无语音切片合并后，被折叠子分段 ID → 锚点分段 ID 映射。
-  Map<String, String> _mergedIdRedirects = const {};
+  Map<String, String> _mergedIdRedirectsStore = const {};
+  Map<String, String> get _mergedIdRedirects => _mergedIdRedirectsStore;
+  set _mergedIdRedirects(Map<String, String> value) {
+    _mergedIdRedirectsStore = value;
+    _onSegmentViewsChanged();
+  }
 
   /// 多路冗余录音比对合并与分叉决策状态。
   MultiTrackReconciliationState _reconciliation =
@@ -171,7 +304,12 @@ class AppStore extends ChangeNotifier {
         await pipeline.transcribeLocalPendingOnly(
           onProgress: _onPipelineProgress,
         );
-        await pipeline.sync(onProgress: _onPipelineProgress);
+        await pipeline.sync(
+          onProgress: _onPipelineProgress,
+          onFileReady: (_) async {
+            if (!_disposed) await refreshFromStore();
+          },
+        );
       }
       await pipeline.reconcileMultiTrack();
       await refreshFromStore();
@@ -186,7 +324,15 @@ class AppStore extends ChangeNotifier {
   }
 
   /// 按记录 ID 存储的关联照片（含点一机 V1 硬件抓拍与系统相册对齐导入，及排除状态）。
-  Map<String, List<EventPhoto>> eventPhotos = {};
+  late _ObservablePhotoMap _eventPhotos;
+  Map<String, List<EventPhoto>> get eventPhotos => _eventPhotos;
+  set eventPhotos(Map<String, List<EventPhoto>> value) {
+    _eventPhotos = _ObservablePhotoMap(
+      Map<String, List<EventPhoto>>.of(value),
+      _onPhotoMapMutated,
+    );
+    _onPhotoMapMutated();
+  }
 
   /// 用户确认后的说话人姓名/称呼映射（key 为 `session:<session>:<slot>` 或 `event:<id>:<slot>`）。
   Map<String, String> _speakerAliases = {};
@@ -230,7 +376,12 @@ class AppStore extends ChangeNotifier {
   final List<String> _selAnchorHistory = [];
   String? activeQuickRange; // 'today' | 'week' | 'month' | null
   SummaryCard? pend; // 勾选模式挂起的 Action Card
-  List<SummaryCard> summaries = [];
+  List<SummaryCard> _summaries = [];
+  List<SummaryCard> get summaries => _summaries;
+  set summaries(List<SummaryCard> value) {
+    _summaries = value;
+    _onSummariesChanged();
+  }
   String? openCardId; // 展开态卡片（互斥）
 
   /// 正式版默认开启延迟批量转写：录音期间切片静默存盘，到达周期或查看/下拉/停录时统一转写并归拢。
@@ -367,7 +518,7 @@ class AppStore extends ChangeNotifier {
           );
           if (_status?.isRecording == true) {
             _status?.setRecordingDetail(
-              '已缓存 $cachedMins 分钟 · 满 $transcribeCycleMinutes 分钟自动转写',
+              '已存 $pendingLocalAudioCount 段（约 $cachedMins 分钟）',
             );
           }
           if (pendingLocalAudioDurationMs >=
@@ -396,7 +547,7 @@ class AppStore extends ChangeNotifier {
               (pendingLocalAudioDurationMs / 60000).round(),
             );
             _status?.setRecordingDetail(
-              '已缓存 $cachedMins 分钟 · 满 $transcribeCycleMinutes 分钟自动转写',
+              '已存 $pendingLocalAudioCount 段（约 $cachedMins 分钟）',
             );
           } else if (!deferNow) {
             _status?.setRecordingDetail(
@@ -498,7 +649,7 @@ class AppStore extends ChangeNotifier {
           (pendingLocalAudioDurationMs / 60000).round(),
         );
         _status?.setRecordingDetail(
-          '已缓存 $cachedMins 分钟 · 满 $transcribeCycleMinutes 分钟自动转写',
+          '已存 $pendingLocalAudioCount 段（约 $cachedMins 分钟）',
         );
       } else {
         _status?.setRecordingDetail(null);
@@ -766,22 +917,35 @@ class AppStore extends ChangeNotifier {
   Future<void> refreshFromStore() async {
     final store = _recordingStore;
     if (store == null) return;
-    loading = true;
-    loadError = null;
-    notifyListeners();
+    final showLoading = _events.isEmpty;
+    if (showLoading) {
+      loading = true;
+      loadError = null;
+      notifyListeners();
+    } else {
+      loadError = null;
+    }
     try {
       final files = await store.loadAll(refresh: true);
       final topicState = await _topicStoreFor()?.load();
       final reconciliation = await _pipeline?.reconciliationStore.load();
-      final projection = SegmentProjection.build(
-        files,
-        topicState: topicState,
-        reconciliation: reconciliation,
-      );
+      final projection = files.length >= _isolateProjectionThreshold
+          ? await Isolate.run(
+              () => SegmentProjection.build(
+                files,
+                topicState: topicState,
+                reconciliation: reconciliation,
+              ),
+            )
+          : SegmentProjection.build(
+              files,
+              topicState: topicState,
+              reconciliation: reconciliation,
+            );
       recordingFiles = files;
+      _mergedIdRedirects = projection.mergedIdRedirects;
       events = projection.events;
       segmentViews = projection.views;
-      _mergedIdRedirects = projection.mergedIdRedirects;
       _reconciliation = reconciliation ?? const MultiTrackReconciliationState();
     } on Object catch (e) {
       loadError = '读取本地录音失败：$e';
@@ -790,21 +954,45 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 已导入的外部平台（如得到大脑）记录去重键集合（形如 `GETNOTE_<noteId>`）。
-  Future<Set<String>> existingExternalDeviceNames() async {
-    final names = <String>{
-      for (final f in recordingFiles)
-        if (f.isExternalImported) f.deviceName,
-      for (final e in events)
-        if (e.id.startsWith('getnote-'))
-          '${RecordingFile.getNoteDevicePrefix}${e.id.substring(8)}',
-    };
+  static String _externalDeviceNameFromEventId(String id) {
+    final rest = id.substring(4);
+    final sep = rest.indexOf('-');
+    if (sep <= 0) return '${RecordingFile.externalDevicePrefix}$rest';
+    final provider = rest.substring(0, sep).toUpperCase();
+    final itemId = rest.substring(sep + 1);
+    return '${RecordingFile.externalDevicePrefix}${provider}_$itemId';
+  }
+
+  /// 已导入的外部平台（得到大脑、Notion、Plaud 等）记录去重键集合（形如 `GETNOTE_<id>` / `EXT_<PROVIDER>_<id>`）。
+  ///
+  /// 传入 [prefix] 时仅返回对应前缀的去重键，避免多源共存时混淆各源计数。
+  Future<Set<String>> existingExternalDeviceNames({String? prefix}) async {
+    bool matches(String name) => prefix == null || name.startsWith(prefix);
+    final names = <String>{};
+    for (final f in recordingFiles) {
+      if (f.isExternalImported && matches(f.deviceName)) {
+        names.add(f.deviceName);
+      }
+    }
+    for (final e in events) {
+      String? devName;
+      if (e.id.startsWith('getnote-')) {
+        devName = '${RecordingFile.getNoteDevicePrefix}${e.id.substring(8)}';
+      } else if (e.id.startsWith('ext-')) {
+        devName = _externalDeviceNameFromEventId(e.id);
+      }
+      if (devName != null && matches(devName)) {
+        names.add(devName);
+      }
+    }
     final store = _recordingStore;
     if (store != null) {
       try {
         final files = await store.loadAll(refresh: true);
         for (final f in files) {
-          if (f.isExternalImported) names.add(f.deviceName);
+          if (f.isExternalImported && matches(f.deviceName)) {
+            names.add(f.deviceName);
+          }
         }
       } on Object catch (e) {
         debugPrint('[store] 读取外部导入去重清单失败：$e');
@@ -813,7 +1001,7 @@ class AppStore extends ChangeNotifier {
     return names;
   }
 
-  /// 写入并投影外部平台（得到大脑 OpenAPI）导入记录，按 `deviceName` 幂等去重。
+  /// 写入并投影外部平台导入记录，按 `deviceName` 幂等去重；返回本次新加入（或更新）并落盘的条目数。
   Future<int> ingestExternalRecordings(List<RecordingFile> files) async {
     if (_disposed || files.isEmpty) return 0;
     final store = _recordingStore;
@@ -1036,11 +1224,54 @@ class AppStore extends ChangeNotifier {
   bool get _isActivelyRecording =>
       (deviceRecording?.call() ?? false) || (_status?.sessionActive ?? false);
 
+  Future<String?>? _syncInFlight;
+  Timer? _pullRefreshTimer;
+
+  bool get isSyncInFlight => _syncInFlight != null;
+
+  /// 若当前正在执行长耗时离线蓝牙拉取，通知管线在当前文件落盘后礼让暂停。
+  bool pauseOfflineSyncForLiveRecording() =>
+      _pipeline?.requestSyncPauseForLiveRecording() ?? false;
+
+  /// 下拉刷新入口：复用在途同步并限定界面转圈最长等待 [maxWait]，
+  /// 避免多段蓝牙拉取把 RefreshIndicator 长期卡住；在途同步转入后台增量刷新时间轴。
+  Future<String?> pullToRefresh({
+    Duration maxWait = const Duration(milliseconds: 600),
+  }) async {
+    final task = _syncInFlight ??= syncRecordings().whenComplete(() {
+      _syncInFlight = null;
+    });
+    final completer = Completer<String?>();
+    _pullRefreshTimer?.cancel();
+    _pullRefreshTimer = Timer(maxWait, () {
+      _pullRefreshTimer = null;
+      if (!completer.isCompleted) completer.complete(null);
+    });
+    unawaited(
+      task.then(
+        (msg) {
+          _pullRefreshTimer?.cancel();
+          _pullRefreshTimer = null;
+          if (!completer.isCompleted) completer.complete(msg);
+        },
+        onError: (Object err, StackTrace st) {
+          _pullRefreshTimer?.cancel();
+          _pullRefreshTimer = null;
+          if (!completer.isCompleted) completer.complete('同步失败：$err');
+        },
+      ),
+    );
+    return completer.future;
+  }
+
   Future<String?> syncRecordings() async {
     // 场景 A · 录音进行中（硬件实时流 / 本机麦克风）：
-    // 不停录、不请求蓝牙 FILE_LIST；若当前缓冲已满 0.5 秒则立即切分封口并送入本地转写，
-    // 同时把已缓存的未转写切片一并转写整理。
+    // 不停录、不请求蓝牙 FILE_LIST；若之前在拉取离线切片则先礼让暂停，
+    // 防止实时刷新在 pipeline._waitUntilIdle() 上无限等待。
     if (_isActivelyRecording) {
+      if (_pipeline?.isBusy == true) {
+        _pipeline!.requestSyncPauseForLiveRecording();
+      }
       syncError = null;
       syncStage = null;
       syncProgress = 0;
@@ -1212,7 +1443,12 @@ class AppStore extends ChangeNotifier {
       final localReport = await pipeline.transcribeLocalPendingOnly(
         onProgress: _onPipelineProgress,
       );
-      final report = await pipeline.sync(onProgress: _onPipelineProgress);
+      final report = await pipeline.sync(
+        onProgress: _onPipelineProgress,
+        onFileReady: (_) async {
+          if (!_disposed) await refreshFromStore();
+        },
+      );
       await pipeline.reconcileMultiTrack();
       await refreshFromStore();
       unawaited(evaluateTopicSegmentationAndRefresh());
@@ -1228,6 +1464,8 @@ class AppStore extends ChangeNotifier {
             ? localReport.failures.first
             : report.failures.first;
         syncError = '$totalFailed 条录音处理失败：$firstFailure';
+      } else if (report.pausedForLiveRecording) {
+        syncError = null;
       }
       return syncError;
     } on Object catch (e) {
@@ -1318,10 +1556,22 @@ class AppStore extends ChangeNotifier {
     final total = p.sliceTotal ?? 0;
     final index = p.sliceIndex ?? 0;
     final remaining = total > 0 ? (total - index).clamp(0, total) : 0;
-    if (p.stage == PipelineStage.done) {
+    final fileTotal = p.fileTotal;
+    final fileDone = p.stage == PipelineStage.done
+        ? (p.fileIndex + 1).clamp(0, fileTotal)
+        : p.fileIndex.clamp(0, fileTotal);
+    final allFilesDone =
+        p.stage == PipelineStage.done &&
+        (fileTotal <= 0 || p.fileIndex + 1 >= fileTotal);
+    if (allFilesDone) {
       _status?.updateQueue(remaining: 0, active: false);
     } else {
-      _status?.updateSync(p.text, remaining: remaining);
+      _status?.updateSync(
+        p.text,
+        remaining: remaining,
+        done: fileTotal > 0 ? fileDone : null,
+        total: fileTotal > 0 ? fileTotal : null,
+      );
     }
     notifyListeners();
   }
@@ -1412,13 +1662,20 @@ class AppStore extends ChangeNotifier {
   SummaryCard? summaryById(String id) =>
       summaries.where((s) => s.id == id).firstOrNull;
 
+  Map<String, RecordEvent> _ensureEventIndex() {
+    final cached = _eventByIdCache;
+    if (cached != null) return cached;
+    final built = <String, RecordEvent>{
+      for (final e in _events) e.id: e,
+    };
+    _eventByIdCache = built;
+    return built;
+  }
+
   /// 按 id 找记录；若为被折叠进连续无语音合并块的子切片 id，自动重定向至锚点记录。
   RecordEvent? eventByIdOrNull(String id) {
     final targetId = _mergedIdRedirects[id] ?? id;
-    for (final e in events) {
-      if (e.id == targetId) return e;
-    }
-    return null;
+    return _ensureEventIndex()[targetId];
   }
 
   RecordEvent? eventByIdOrNullOrFallback(String id) =>
@@ -1475,11 +1732,24 @@ class AppStore extends ChangeNotifier {
   }
 
   /// 未被标记「不属于本段」的有效照片（按时间升序）。
-  List<EventPhoto> activePhotosForEvent(RecordEvent e) =>
-      photosForEvent(e).where((p) => !p.excluded).toList();
+  List<EventPhoto> activePhotosForEvent(RecordEvent e) {
+    final indexed = _ensureEventIndex()[e.id];
+    if (!identical(indexed, e)) {
+      return photosForEvent(e).where((p) => !p.excluded).toList(growable: false);
+    }
+    return _activePhotosCache.putIfAbsent(
+      e.id,
+      () => List<EventPhoto>.unmodifiable(
+        photosForEvent(e).where((p) => !p.excluded),
+      ),
+    );
+  }
 
   /// 总结卡来源记录中未排除的图片总数（右侧箭头下展示「含 X 张图片」）。
   int activePhotoCountForSummary(SummaryCard s) {
+    final key = '${s.id}:${s.srcIds.length}';
+    final cached = _summaryPhotoCountCache[key];
+    if (cached != null) return cached;
     var total = 0;
     for (final id in s.srcIds) {
       final e = eventByIdOrNull(id);
@@ -1487,6 +1757,7 @@ class AppStore extends ChangeNotifier {
         total += activePhotosForEvent(e).length;
       }
     }
+    _summaryPhotoCountCache[key] = total;
     return total;
   }
 
@@ -1531,11 +1802,22 @@ class AppStore extends ChangeNotifier {
     return out;
   }
 
+  /// 预过滤当日可用于图片归位的候选记录，避免相册网格渲染每个格子重复扫描全量记录。
+  List<RecordEvent> candidateDayEvents(int dayOffset) => events
+      .where((e) => e.dayOffset == dayOffset && _canSelectForSummary(e))
+      .toList(growable: false);
+
   /// 按拍照时刻与当日记录时间距离从近到远排序候选记录。
-  List<RecordEvent> candidateEventsForPhoto(int dayOffset, EventPhoto photo) {
-    final cands = events
-        .where((e) => e.dayOffset == dayOffset && _canSelectForSummary(e))
-        .toList();
+  List<RecordEvent> candidateEventsForPhoto(
+    int dayOffset,
+    EventPhoto photo, {
+    List<RecordEvent>? prefilteredDayEvents,
+  }) {
+    final cands = prefilteredDayEvents != null
+        ? List<RecordEvent>.of(prefilteredDayEvents)
+        : events
+              .where((e) => e.dayOffset == dayOffset && _canSelectForSummary(e))
+              .toList();
     final photoMin = _minutesOfClock(photo.time);
     int dist(RecordEvent e) {
       final start = _minutesOfDay(e.time);
@@ -1670,7 +1952,11 @@ class AppStore extends ChangeNotifier {
   }
 
   /// 向指定记录附加或更新照片（若此前已被排除则保留排除状态）。
-  bool attachPhotoToEvent(String eventId, EventPhoto photo) {
+  bool attachPhotoToEvent(
+    String eventId,
+    EventPhoto photo, {
+    bool deferNotify = false,
+  }) {
     final event = eventByIdOrNull(eventId);
     final merged = event != null
         ? List<EventPhoto>.of(photosForEvent(event))
@@ -1692,8 +1978,10 @@ class AppStore extends ChangeNotifier {
       merged.add(photo);
     }
     eventPhotos = _writePhotosForEventId(eventId, merged);
-    _persist();
-    notifyListeners();
+    if (!deferNotify) {
+      _persist();
+      notifyListeners();
+    }
     return idx < 0;
   }
 
@@ -1742,24 +2030,55 @@ class AppStore extends ChangeNotifier {
         '${d.second.toString().padLeft(2, '0')}';
   }
 
-  /// 跨切片精确归位 + 去重：若某照片此前因 ±5 秒快门容差暂挂在相邻切片，
-  /// 当更匹配的切片入库后自动迁移过来（但尊重用户已手动排除的决定）。
-  bool _attachPhotoDeduplicated(String targetEventId, EventPhoto photo) {
-    if (_disposed) return false;
-    final nextMap = Map<String, List<EventPhoto>>.of(eventPhotos);
-    var removedOther = false;
-    for (final e in events) {
-      if (e.id == targetEventId) continue;
-      if (photosForEvent(e).any((p) => p.id == photo.id && p.excluded)) {
-        return false;
+  Map<String, String> _collectExcludedPhotoOwners() {
+    final owners = <String, String>{};
+    for (final e in _events) {
+      for (final p in photosForEvent(e)) {
+        if (p.excluded) owners.putIfAbsent(p.id, () => e.id);
       }
     }
+    for (final entry in _eventPhotos.entries) {
+      final canonical = _mergedIdRedirects[entry.key] ?? entry.key;
+      for (final p in entry.value) {
+        if (p.excluded) owners.putIfAbsent(p.id, () => canonical);
+      }
+    }
+    return owners;
+  }
+
+  /// 跨切片精确归位 + 去重：若某照片此前因 ±5 秒快门容差暂挂在相邻切片，
+  /// 当更匹配的切片入库后自动迁移过来（但尊重用户已手动排除的决定）。
+  bool _attachPhotoDeduplicated(
+    String targetEventId,
+    EventPhoto photo, {
+    bool deferNotify = false,
+    Map<String, String>? excludedOwnerByPhoto,
+  }) {
+    if (_disposed) return false;
+    final canonicalTarget = _mergedIdRedirects[targetEventId] ?? targetEventId;
+    if (excludedOwnerByPhoto != null) {
+      final owner = excludedOwnerByPhoto[photo.id];
+      if (owner != null && owner != canonicalTarget) return false;
+    } else {
+      for (final e in events) {
+        if (e.id == canonicalTarget) continue;
+        if (photosForEvent(e).any((p) => p.id == photo.id && p.excluded)) {
+          return false;
+        }
+      }
+      for (final entry in eventPhotos.entries) {
+        if ((_mergedIdRedirects[entry.key] ?? entry.key) == canonicalTarget) {
+          continue;
+        }
+        if (entry.value.any((p) => p.id == photo.id && p.excluded)) {
+          return false;
+        }
+      }
+    }
+    final nextMap = Map<String, List<EventPhoto>>.of(eventPhotos);
+    var removedOther = false;
     for (final entry in eventPhotos.entries) {
       if (entry.key == targetEventId) continue;
-      final hasExcluded = entry.value.any(
-        (p) => p.id == photo.id && p.excluded,
-      );
-      if (hasExcluded) return false;
       if (entry.value.any((p) => p.id == photo.id)) {
         nextMap[entry.key] = entry.value
             .where((p) => p.id != photo.id)
@@ -1770,8 +2089,12 @@ class AppStore extends ChangeNotifier {
     if (removedOther) {
       eventPhotos = nextMap;
     }
-    final created = attachPhotoToEvent(targetEventId, photo);
-    if (removedOther && !created) {
+    final created = attachPhotoToEvent(
+      targetEventId,
+      photo,
+      deferNotify: deferNotify,
+    );
+    if (!deferNotify && removedOther && !created) {
       _persist();
       notifyListeners();
     }
@@ -1940,6 +2263,8 @@ class AppStore extends ChangeNotifier {
     );
     if (_disposed) return 0;
     var added = 0;
+    final photoVerBefore = _photoVersion;
+    final excludedOwners = _collectExcludedPhotoOwners();
     for (final p in report.photos) {
       final targetEventId =
           _bestEventIdForCapture(p.capturedAtMs, fallbackEventId: p.eventId) ??
@@ -1953,8 +2278,14 @@ class AppStore extends ChangeNotifier {
           capturedAtMs: p.capturedAtMs,
           source: p.source,
         ),
+        deferNotify: true,
+        excludedOwnerByPhoto: excludedOwners,
       );
       if (created) added++;
+    }
+    if (_photoVersion != photoVerBefore) {
+      _persist();
+      notifyListeners();
     }
     return added;
   }
@@ -1976,6 +2307,8 @@ class AppStore extends ChangeNotifier {
     );
     if (_disposed || items.isEmpty || events.isEmpty) return 0;
     var added = 0;
+    final photoVerBefore = _photoVersion;
+    final excludedOwners = _collectExcludedPhotoOwners();
     for (final item in items) {
       final capturedMs = item.capturedAtSec != null
           ? item.capturedAtSec! * 1000
@@ -2017,14 +2350,44 @@ class AppStore extends ChangeNotifier {
           capturedAtMs: capturedMs,
           source: item.source,
         ),
+        deferNotify: true,
+        excludedOwnerByPhoto: excludedOwners,
       );
       if (created) added++;
+    }
+    if (_photoVersion != photoVerBefore) {
+      _persist();
+      notifyListeners();
     }
     return added;
   }
 
   // ── Timeline 渲染数据 ───────────────────────────────────
   List<FeedGroup> get feedGroups {
+    _ensureFeedCache();
+    return _cachedFeedGroups!;
+  }
+
+  List<FeedListEntry> get feedEntries {
+    _ensureFeedCache();
+    return _cachedFeedEntries!;
+  }
+
+  void _ensureFeedCache() {
+    final key = (
+      _dataVersion,
+      _photoVersion,
+      _feedVersion,
+      filter,
+      _events.length,
+      _summaries.length,
+    );
+    if (_cachedFeedKey == key &&
+        _cachedFeedGroups != null &&
+        _cachedFeedEntries != null) {
+      return;
+    }
+
     final f = filter;
     final sums = summaries
         .where((s) => f == FeedFilter.all || f == FeedFilter.summary)
@@ -2178,7 +2541,26 @@ class AppStore extends ChangeNotifier {
     }
 
     final days = byDay.keys.where((d) => byDay[d]!.isNotEmpty).toList()..sort();
-    return [for (final d in days) FeedGroup(dayLabel(d), byDay[d]!)];
+    final groups = <FeedGroup>[];
+    final entries = <FeedListEntry>[];
+    for (final d in days) {
+      final label = dayLabel(d);
+      final items = List<Object>.unmodifiable(byDay[d]!);
+      groups.add(FeedGroup(label, items));
+      entries.add(FeedDayHeaderEntry(dayOffset: d, dayLabel: label));
+      for (var i = 0; i < items.length; i++) {
+        entries.add(
+          FeedItemEntry(
+            item: items[i],
+            first: i == 0,
+            last: i == items.length - 1,
+          ),
+        );
+      }
+    }
+    _cachedFeedKey = key;
+    _cachedFeedGroups = List<FeedGroup>.unmodifiable(groups);
+    _cachedFeedEntries = List<FeedListEntry>.unmodifiable(entries);
   }
 
   int _eventSortMs(RecordEvent e) {
@@ -2271,7 +2653,9 @@ class AppStore extends ChangeNotifier {
   }
 
   void setFilter(FeedFilter f) {
+    if (filter == f) return;
     filter = f;
+    _invalidateFeedCache();
     notifyListeners();
   }
 
@@ -2316,6 +2700,7 @@ class AppStore extends ChangeNotifier {
   void _lockTabs(bool lock) {
     tabsLocked = lock;
     filter = lock ? FeedFilter.event : FeedFilter.all;
+    _invalidateFeedCache();
     notifyListeners();
   }
 
@@ -2335,6 +2720,7 @@ class AppStore extends ChangeNotifier {
     selIds
       ..clear()
       ..addAll(events.where((e) => inRange(e, r)).map((e) => e.id));
+    _invalidateFeedCache();
     notifyListeners();
   }
 
@@ -2343,6 +2729,7 @@ class AppStore extends ChangeNotifier {
     selIds.clear();
     selAnchorId = null;
     _selAnchorHistory.clear();
+    _invalidateFeedCache();
     notifyListeners();
   }
 
@@ -2362,6 +2749,7 @@ class AppStore extends ChangeNotifier {
       _selAnchorHistory.add(id);
       selAnchorId = id;
     }
+    _invalidateFeedCache();
     notifyListeners();
   }
 
@@ -2396,6 +2784,7 @@ class AppStore extends ChangeNotifier {
       _selAnchorHistory.add(id);
     }
     selAnchorId = targetId;
+    _invalidateFeedCache();
     notifyListeners();
     return end - start + 1;
   }
@@ -2430,6 +2819,9 @@ class AppStore extends ChangeNotifier {
       ..rangeLabel = rangeLbl
       ..error = null;
     openCardId = card.id;
+    _dataVersion++;
+    _summaryPhotoCountCache.clear();
+    _invalidateFeedCache();
     _lockTabs(false);
     navSub(RouteEntry('sum', card.id));
     _runGeneration(card, picked);
@@ -2468,6 +2860,7 @@ class AppStore extends ChangeNotifier {
       if (!_disposed) notifyListeners();
     });
     card.progress = 0;
+    _invalidateFeedCache();
     notifyListeners();
 
     final generator = _generator;
@@ -2488,6 +2881,7 @@ class AppStore extends ChangeNotifier {
           _genProgress = progress.clamp(0, 1);
           _genStep = step;
           card.progress = _genProgress * 100;
+          _invalidateFeedCache();
           notifyListeners();
         },
       );
@@ -2514,6 +2908,9 @@ class AppStore extends ChangeNotifier {
         ..srcDesc = sources
             .map((e) => '${dayLabel(e.dayOffset)} ${e.time} ${e.title}')
             .join('；');
+      _dataVersion++;
+      _summaryPhotoCountCache.clear();
+      _invalidateFeedCache();
       _persist();
     } on Object catch (e) {
       if (_disposed ||
@@ -2528,6 +2925,8 @@ class AppStore extends ChangeNotifier {
         ..state = SummaryState.failed
         ..error = message
         ..progress = 100;
+      _dataVersion++;
+      _invalidateFeedCache();
     } finally {
       if (_genEpoch == myEpoch) {
         _genTicker?.cancel();
@@ -2581,6 +2980,8 @@ class AppStore extends ChangeNotifier {
       ..state = SummaryState.generating
       ..error = null
       ..progress = 0;
+    _dataVersion++;
+    _invalidateFeedCache();
     notifyListeners();
     _runGeneration(card, sources);
   }
@@ -2652,6 +3053,8 @@ class AppStore extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _pullRefreshTimer?.cancel();
+    _pullRefreshTimer = null;
     _genTicker?.cancel();
     voiceprintStore.removeListener(_onVoiceprintChanged);
     voiceprintStore.dispose();
@@ -2877,10 +3280,12 @@ class AppStore extends ChangeNotifier {
       firstTurnIndex: firstTurnIndex,
       turnIndices: List<int>.unmodifiable(turnIndices),
     );
+    _onAliasesMutated();
   }
 
   void clearPendingMergedBubbleTurns() {
     _pendingMergedBubbleTurns = null;
+    _onAliasesMutated();
   }
 
   /// 快捷命名：支持仅改本句（或本合并气泡） / 同改其余同类说话人，以及记住声纹（入常用 5 槽位或人物库并回溯历史会话声纹）与记录最近使用名称。
@@ -3056,6 +3461,7 @@ class AppStore extends ChangeNotifier {
     if (_disposed) {
       return (saved: false, frequentFull: false, profile: savedProfile);
     }
+    _onAliasesMutated();
     _persist();
     notifyListeners();
     return (saved: true, frequentFull: frequentFull, profile: savedProfile);
@@ -3185,6 +3591,7 @@ class AppStore extends ChangeNotifier {
       }
     }
     if (!changed) return;
+    _onAliasesMutated();
     _persist();
     notifyListeners();
   }
@@ -3212,6 +3619,7 @@ class AppStore extends ChangeNotifier {
         }
       }
     }
+    _onAliasesMutated();
     _persist();
     notifyListeners();
   }
@@ -3363,6 +3771,7 @@ class AppStore extends ChangeNotifier {
     eventPhotos = {};
     _speakerAliases = {};
     _turnSpeakerOverrides = {};
+    _onAliasesMutated();
     _restoringState = true;
     try {
       voiceprintStore.restoreJson(null);
@@ -3480,6 +3889,8 @@ class AppStore extends ChangeNotifier {
     } finally {
       _restoringState = false;
     }
+    _onAliasesMutated();
+    _invalidateFeedCache();
     notifyListeners();
   }
 
