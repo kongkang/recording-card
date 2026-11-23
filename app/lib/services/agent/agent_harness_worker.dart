@@ -257,20 +257,125 @@ class AgentHarnessWorker {
     ];
   }
 
-  Future<void> clearSession(String agentDirPath) async {
+  Future<List<AgentChatSession>> listSessions(String agentDirPath) async {
+    if (_disposed || agentDirPath.trim().isEmpty) return const [];
+    await _ensureStarted();
+    if (_useInProcess) {
+      return _inProcessFallback!.listSessions(agentDirPath);
+    }
+    final res = await _sendCommand('list_sessions', {'dir': agentDirPath});
+    final list = res['sessions'] as List? ?? const [];
+    return [
+      for (final s in list)
+        if (s is Map) AgentChatSession.fromJson(Map<String, dynamic>.from(s)),
+    ];
+  }
+
+  Future<AgentSessionPage> loadSessionPage(
+    String agentDirPath, {
+    required String sessionId,
+    int? beforeIndex,
+    int limit = 20,
+  }) async {
+    if (_disposed || agentDirPath.trim().isEmpty) {
+      return AgentSessionPage(
+        sessionId: sessionId,
+        messages: const [],
+        totalCount: 0,
+        startIndex: 0,
+      );
+    }
+    await _ensureStarted();
+    if (_useInProcess) {
+      return _inProcessFallback!.loadSessionPage(
+        agentDirPath,
+        sessionId: sessionId,
+        beforeIndex: beforeIndex,
+        limit: limit,
+      );
+    }
+    final res = await _sendCommand('load_session_page', {
+      'dir': agentDirPath,
+      'sessionId': sessionId,
+      'beforeIndex': ?beforeIndex,
+      'limit': limit,
+    });
+    final list = res['messages'] as List? ?? const [];
+    return AgentSessionPage(
+      sessionId: '${res['sessionId'] ?? sessionId}',
+      messages: [
+        for (final m in list)
+          if (m is Map) AgentChatMessage.fromJson(Map<String, dynamic>.from(m)),
+      ],
+      totalCount: (res['totalCount'] as num?)?.toInt() ?? 0,
+      startIndex: (res['startIndex'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Future<AgentChatSession?> appendSessionMessages(
+    String agentDirPath, {
+    required String sessionId,
+    required List<AgentChatMessage> messages,
+  }) async {
+    if (_disposed || agentDirPath.trim().isEmpty || messages.isEmpty) {
+      return null;
+    }
+    await _ensureStarted();
+    if (_useInProcess) {
+      return _inProcessFallback!.appendSessionMessages(
+        agentDirPath,
+        sessionId: sessionId,
+        messages: messages,
+      );
+    }
+    final res = await _sendCommand('append_session_messages', {
+      'dir': agentDirPath,
+      'sessionId': sessionId,
+      'messages': [for (final m in messages) m.toJson()],
+    });
+    final raw = res['session'];
+    if (raw is Map) {
+      return AgentChatSession.fromJson(Map<String, dynamic>.from(raw));
+    }
+    return null;
+  }
+
+  Future<void> deleteSession(String agentDirPath, String sessionId) async {
+    if (_disposed || agentDirPath.trim().isEmpty) return;
+    await _ensureStarted();
+    if (_useInProcess) {
+      await _inProcessFallback!.deleteSession(agentDirPath, sessionId);
+      return;
+    }
+    await _sendCommand('delete_session', {
+      'dir': agentDirPath,
+      'sessionId': sessionId,
+    });
+  }
+
+  Future<void> clearSession(String agentDirPath, {String? sessionId}) async {
     if (_disposed) return;
     await _ensureStarted();
     if (_useInProcess) {
-      await _inProcessFallback!.clearSession(agentDirPath);
+      await _inProcessFallback!.clearSession(
+        agentDirPath,
+        sessionId: sessionId,
+      );
       return;
     }
-    await _sendCommand('clear_session', {'dir': agentDirPath});
+    await _sendCommand('clear_session', {
+      'dir': agentDirPath,
+      'sessionId': ?sessionId,
+    });
   }
 
   Future<AgentTurnResult> runTurn({
     required String userText,
     required List<AgentChatMessage> history,
     required AgentConfigSnapshot config,
+    String? sessionId,
+    String? userMsgId,
+    int? userCreatedAtMs,
     bool viaVoice = false,
     void Function(String reaction)? onReaction,
   }) async {
@@ -280,6 +385,9 @@ class AgentHarnessWorker {
         userText: userText,
         history: history,
         config: config,
+        sessionId: sessionId,
+        userMsgId: userMsgId,
+        userCreatedAtMs: userCreatedAtMs,
         viaVoice: viaVoice,
         onReaction: onReaction,
       );
@@ -289,6 +397,9 @@ class AgentHarnessWorker {
       {
         'text': userText,
         'viaVoice': viaVoice,
+        'sessionId': ?sessionId,
+        'userMsgId': ?userMsgId,
+        'userCreatedAtMs': ?userCreatedAtMs,
         'history': [for (final m in history) m.toJson()],
         'config': config.toJson(),
       },
@@ -416,8 +527,58 @@ void _workerIsolateEntry(SendPort mainPort) {
             'ok': true,
             'messages': [for (final m in loaded) m.toJson()],
           });
+        case 'list_sessions':
+          final list = await engine.listSessions('${payload['dir'] ?? ''}');
+          mainPort.send({
+            'type': 'reply',
+            'id': id,
+            'ok': true,
+            'sessions': [for (final s in list) s.toJson()],
+          });
+        case 'load_session_page':
+          final page = await engine.loadSessionPage(
+            '${payload['dir'] ?? ''}',
+            sessionId: '${payload['sessionId'] ?? ''}',
+            beforeIndex: (payload['beforeIndex'] as num?)?.toInt(),
+            limit: (payload['limit'] as num?)?.toInt() ?? 20,
+          );
+          mainPort.send({
+            'type': 'reply',
+            'id': id,
+            'ok': true,
+            'sessionId': page.sessionId,
+            'totalCount': page.totalCount,
+            'startIndex': page.startIndex,
+            'messages': [for (final m in page.messages) m.toJson()],
+          });
+        case 'append_session_messages':
+          final rawMsgs = payload['messages'] as List? ?? const [];
+          final session = await engine.appendSessionMessages(
+            '${payload['dir'] ?? ''}',
+            sessionId: '${payload['sessionId'] ?? ''}',
+            messages: [
+              for (final m in rawMsgs)
+                if (m is Map)
+                  AgentChatMessage.fromJson(Map<String, dynamic>.from(m)),
+            ],
+          );
+          mainPort.send({
+            'type': 'reply',
+            'id': id,
+            'ok': true,
+            if (session != null) 'session': session.toJson(),
+          });
+        case 'delete_session':
+          await engine.deleteSession(
+            '${payload['dir'] ?? ''}',
+            '${payload['sessionId'] ?? ''}',
+          );
+          mainPort.send({'type': 'reply', 'id': id, 'ok': true});
         case 'clear_session':
-          await engine.clearSession('${payload['dir'] ?? ''}');
+          await engine.clearSession(
+            '${payload['dir'] ?? ''}',
+            sessionId: payload['sessionId'] as String?,
+          );
           mainPort.send({'type': 'reply', 'id': id, 'ok': true});
         case 'run_turn':
           final cfgMap = payload['config'] is Map
@@ -426,6 +587,9 @@ void _workerIsolateEntry(SendPort mainPort) {
           final rawHist = payload['history'] as List? ?? const [];
           final res = await engine.runTurn(
             userText: '${payload['text'] ?? ''}',
+            sessionId: payload['sessionId'] as String?,
+            userMsgId: payload['userMsgId'] as String?,
+            userCreatedAtMs: (payload['userCreatedAtMs'] as num?)?.toInt(),
             viaVoice: payload['viaVoice'] == true,
             history: [
               for (final m in rawHist)
@@ -491,6 +655,7 @@ class _WorkerEngine {
   final WebSearchClient _webSearch;
   final AgentMcpClient _mcpClient;
   final RecordSearchIndex _index = RecordSearchIndex();
+  final Map<String, Future<void>> _sessionQueue = {};
 
   static const int _maxSteps = 5;
   static const int _maxContextChars = 14000;
@@ -499,14 +664,56 @@ class _WorkerEngine {
     _index.replaceCorpus(docs);
   }
 
-  File? _sessionFile(String dirPath) {
+  Future<T> _serialized<T>(String dirPath, Future<T> Function() fn) {
+    final prev = _sessionQueue[dirPath] ?? Future<void>.value();
+    final next = prev.catchError((Object _) {}).then((_) => fn());
+    _sessionQueue[dirPath] = next.then((_) {}, onError: (Object _) {});
+    return next;
+  }
+
+  String? _sanitizeSessionId(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty ||
+        trimmed.contains('..') ||
+        trimmed.contains('/') ||
+        trimmed.contains(r'\')) {
+      return null;
+    }
+    final safe = trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    return safe.isEmpty ? null : safe;
+  }
+
+  File? _legacySessionFile(String dirPath) {
     if (dirPath.trim().isEmpty) return null;
     return File(p.join(dirPath, 'session.jsonl'));
   }
 
-  Future<List<AgentChatMessage>> loadSession(String dirPath) async {
-    final file = _sessionFile(dirPath);
-    if (file == null || !await file.exists()) return const [];
+  Directory? _sessionsDir(String dirPath) {
+    if (dirPath.trim().isEmpty) return null;
+    return Directory(p.join(dirPath, 'sessions'));
+  }
+
+  File? _indexFile(String dirPath) {
+    final dir = _sessionsDir(dirPath);
+    if (dir == null) return null;
+    return File(p.join(dir.path, 'index.json'));
+  }
+
+  File? _sessionFile(String dirPath, String sessionId) {
+    final dir = _sessionsDir(dirPath);
+    final safeId = _sanitizeSessionId(sessionId);
+    if (dir == null || safeId == null) return null;
+    return File(p.join(dir.path, '$safeId.jsonl'));
+  }
+
+  static int _compareSessionsDesc(AgentChatSession a, AgentChatSession b) {
+    final byUpd = b.updatedAtMs.compareTo(a.updatedAtMs);
+    if (byUpd != 0) return byUpd;
+    return b.createdAtMs.compareTo(a.createdAtMs);
+  }
+
+  Future<List<AgentChatMessage>> _readJsonlFile(File file) async {
+    if (!await file.exists()) return const [];
     final out = <AgentChatMessage>[];
     final lines = await file.readAsLines();
     for (final line in lines) {
@@ -524,28 +731,296 @@ class _WorkerEngine {
     return out;
   }
 
-  Future<void> clearSession(String dirPath) async {
-    final file = _sessionFile(dirPath);
-    if (file != null && await file.exists()) {
-      await file.delete();
+  AgentChatSession _buildSessionMeta(
+    String id,
+    List<AgentChatMessage> msgs, {
+    AgentChatSession? existing,
+  }) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    var firstTs = 0;
+    var lastTs = 0;
+    for (final m in msgs) {
+      if (m.createdAtMs > 0) {
+        if (firstTs == 0) firstTs = m.createdAtMs;
+        if (m.createdAtMs > lastTs) lastTs = m.createdAtMs;
+      }
+    }
+    final created = (existing != null && existing.createdAtMs > 0)
+        ? existing.createdAtMs
+        : (firstTs > 0 ? firstTs : nowMs);
+    var updated = lastTs > 0 ? lastTs : nowMs;
+    if (existing != null && existing.updatedAtMs > updated) {
+      updated = existing.updatedAtMs;
+    }
+    final existingTitle = existing?.title.trim() ?? '';
+    final title = (existingTitle.isNotEmpty && existingTitle != '新对话')
+        ? existingTitle
+        : AgentChatSession.deriveTitle(msgs);
+    final derivedPreview = AgentChatSession.derivePreview(msgs);
+    final preview = derivedPreview.isNotEmpty
+        ? derivedPreview
+        : (existing?.preview ?? '');
+    return AgentChatSession(
+      id: id,
+      title: title,
+      preview: preview,
+      createdAtMs: created,
+      updatedAtMs: updated,
+      messageCount: (existing?.messageCount ?? 0) + msgs.length,
+    );
+  }
+
+  Future<List<AgentChatSession>?> _tryReadIndexRaw(String dirPath) async {
+    final idxFile = _indexFile(dirPath);
+    if (idxFile == null || !await idxFile.exists()) return null;
+    try {
+      final decoded = jsonDecode(await idxFile.readAsString());
+      final rawList = decoded is Map ? decoded['sessions'] : decoded;
+      if (rawList is! List) return null;
+      final out = <AgentChatSession>[];
+      for (final item in rawList) {
+        if (item is Map) {
+          final s = AgentChatSession.fromJson(Map<String, dynamic>.from(item));
+          if (s.id.isNotEmpty) out.add(s);
+        }
+      }
+      out.sort(_compareSessionsDesc);
+      return out;
+    } on Object {
+      return null;
     }
   }
 
-  Future<void> _appendSession(String dirPath, AgentChatMessage msg) async {
-    final file = _sessionFile(dirPath);
-    if (file == null) return;
-    await file.parent.create(recursive: true);
-    await file.writeAsString(
-      '${jsonEncode(msg.toJson())}\n',
-      mode: FileMode.append,
+  Future<void> _writeIndexFile(
+    String dirPath,
+    List<AgentChatSession> sessions,
+  ) async {
+    final idxFile = _indexFile(dirPath);
+    if (idxFile == null) return;
+    await idxFile.parent.create(recursive: true);
+    final sorted = List<AgentChatSession>.of(sessions)
+      ..sort(_compareSessionsDesc);
+    await idxFile.writeAsString(
+      jsonEncode({
+        'version': 1,
+        'sessions': [for (final s in sorted) s.toJson()],
+      }),
       flush: true,
     );
+  }
+
+  Future<List<AgentChatSession>> _rebuildIndexFromDisk(String dirPath) async {
+    final dir = _sessionsDir(dirPath);
+    if (dir == null || !await dir.exists()) return <AgentChatSession>[];
+    final out = <AgentChatSession>[];
+    await for (final entity in dir.list(followLinks: false)) {
+      if (entity is! File || !entity.path.endsWith('.jsonl')) continue;
+      final id = p.basenameWithoutExtension(entity.path);
+      if (id.isEmpty) continue;
+      final msgs = await _readJsonlFile(entity);
+      if (msgs.isEmpty) continue;
+      out.add(_buildSessionMeta(id, msgs));
+    }
+    out.sort(_compareSessionsDesc);
+    await _writeIndexFile(dirPath, out);
+    return out;
+  }
+
+  Future<void> _migrateLegacyIfNeeded(String dirPath) async {
+    final legacy = _legacySessionFile(dirPath);
+    if (legacy == null || !await legacy.exists()) return;
+    final msgs = await _readJsonlFile(legacy);
+    if (msgs.isEmpty) {
+      await legacy.delete();
+      return;
+    }
+    final firstTs = msgs.first.createdAtMs;
+    final fallbackMs = DateTime.now().millisecondsSinceEpoch;
+    final baseId = 's-${firstTs > 0 ? firstTs : fallbackMs}-legacy';
+    var targetId = baseId;
+    var suffix = 1;
+    while (await _sessionFile(dirPath, targetId)!.exists()) {
+      targetId = '$baseId-${suffix++}';
+    }
+    final targetFile = _sessionFile(dirPath, targetId)!;
+    await targetFile.parent.create(recursive: true);
+    final buf = StringBuffer();
+    for (final m in msgs) {
+      buf.writeln(jsonEncode(m.toJson()));
+    }
+    await targetFile.writeAsString(buf.toString(), flush: true);
+
+    final existingIdx = await _tryReadIndexRaw(dirPath);
+    if (existingIdx != null) {
+      final next = List<AgentChatSession>.of(existingIdx)
+        ..add(_buildSessionMeta(targetId, msgs));
+      await _writeIndexFile(dirPath, next);
+    } else {
+      await _rebuildIndexFromDisk(dirPath);
+    }
+    await legacy.delete();
+  }
+
+  Future<List<AgentChatSession>> _readOrRebuildIndex(String dirPath) async {
+    await _migrateLegacyIfNeeded(dirPath);
+    final existing = await _tryReadIndexRaw(dirPath);
+    if (existing != null) return existing;
+    return _rebuildIndexFromDisk(dirPath);
+  }
+
+  Future<List<AgentChatSession>> listSessions(String dirPath) async {
+    if (dirPath.trim().isEmpty) return const [];
+    return _serialized(dirPath, () => _readOrRebuildIndex(dirPath));
+  }
+
+  Future<AgentSessionPage> loadSessionPage(
+    String dirPath, {
+    required String sessionId,
+    int? beforeIndex,
+    int limit = 20,
+  }) async {
+    if (dirPath.trim().isEmpty) {
+      return AgentSessionPage(
+        sessionId: sessionId,
+        messages: const [],
+        totalCount: 0,
+        startIndex: 0,
+      );
+    }
+    return _serialized(dirPath, () async {
+      await _migrateLegacyIfNeeded(dirPath);
+      final safeId = _sanitizeSessionId(sessionId);
+      if (safeId == null) {
+        return AgentSessionPage(
+          sessionId: sessionId,
+          messages: const [],
+          totalCount: 0,
+          startIndex: 0,
+        );
+      }
+      final file = _sessionFile(dirPath, safeId);
+      final all = file == null
+          ? const <AgentChatMessage>[]
+          : await _readJsonlFile(file);
+      final total = all.length;
+      final effectiveLimit = limit < 1 ? 20 : limit;
+      final end = beforeIndex == null ? total : beforeIndex.clamp(0, total);
+      final start = (end - effectiveLimit).clamp(0, end);
+      return AgentSessionPage(
+        sessionId: safeId,
+        messages: all.sublist(start, end),
+        totalCount: total,
+        startIndex: start,
+      );
+    });
+  }
+
+  Future<AgentChatSession?> appendSessionMessages(
+    String dirPath, {
+    required String sessionId,
+    required List<AgentChatMessage> messages,
+  }) async {
+    if (dirPath.trim().isEmpty || messages.isEmpty) return null;
+    final safeId = _sanitizeSessionId(sessionId);
+    if (safeId == null) return null;
+    return _serialized(dirPath, () async {
+      final list = List<AgentChatSession>.of(
+        await _readOrRebuildIndex(dirPath),
+      );
+      final file = _sessionFile(dirPath, safeId)!;
+      final existingIdx = list.indexWhere((s) => s.id == safeId);
+      AgentChatSession? existing =
+          existingIdx >= 0 ? list[existingIdx] : null;
+      if (existing == null && await file.exists()) {
+        final prevMsgs = await _readJsonlFile(file);
+        if (prevMsgs.isNotEmpty) {
+          existing = _buildSessionMeta(safeId, prevMsgs);
+        }
+      }
+      await file.parent.create(recursive: true);
+      final buf = StringBuffer();
+      for (final m in messages) {
+        buf.writeln(jsonEncode(m.toJson()));
+      }
+      await file.writeAsString(
+        buf.toString(),
+        mode: FileMode.append,
+        flush: true,
+      );
+      final updated = _buildSessionMeta(safeId, messages, existing: existing);
+      if (existingIdx >= 0) {
+        list[existingIdx] = updated;
+      } else {
+        list.add(updated);
+      }
+      await _writeIndexFile(dirPath, list);
+      return updated;
+    });
+  }
+
+  Future<void> deleteSession(String dirPath, String sessionId) async {
+    if (dirPath.trim().isEmpty) return;
+    final safeId = _sanitizeSessionId(sessionId);
+    if (safeId == null) return;
+    await _serialized(dirPath, () async {
+      final list = List<AgentChatSession>.of(
+        await _readOrRebuildIndex(dirPath),
+      );
+      final file = _sessionFile(dirPath, safeId);
+      if (file != null && await file.exists()) {
+        await file.delete();
+      }
+      list.removeWhere((s) => s.id == safeId);
+      await _writeIndexFile(dirPath, list);
+    });
+  }
+
+  Future<List<AgentChatMessage>> loadSession(String dirPath) async {
+    if (dirPath.trim().isEmpty) return const [];
+    return _serialized(dirPath, () async {
+      final list = await _readOrRebuildIndex(dirPath);
+      if (list.isEmpty) return const [];
+      final file = _sessionFile(dirPath, list.first.id);
+      if (file == null) return const [];
+      return _readJsonlFile(file);
+    });
+  }
+
+  Future<void> clearSession(String dirPath, {String? sessionId}) async {
+    if (dirPath.trim().isEmpty) return;
+    if (sessionId != null && sessionId.trim().isNotEmpty) {
+      await deleteSession(dirPath, sessionId);
+      return;
+    }
+    await _serialized(dirPath, () async {
+      final legacy = _legacySessionFile(dirPath);
+      if (legacy != null && await legacy.exists()) {
+        await legacy.delete();
+      }
+      final dir = _sessionsDir(dirPath);
+      if (dir != null && await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+    });
+  }
+
+  static int _resolveAssistantTimestamp(int? userCreatedAtMs) {
+    final replyNow = DateTime.now().millisecondsSinceEpoch;
+    if (userCreatedAtMs != null &&
+        userCreatedAtMs > 0 &&
+        (replyNow < userCreatedAtMs || replyNow - userCreatedAtMs > 600000)) {
+      return userCreatedAtMs + 1;
+    }
+    return replyNow;
   }
 
   Future<AgentTurnResult> runTurn({
     required String userText,
     required List<AgentChatMessage> history,
     required AgentConfigSnapshot config,
+    String? sessionId,
+    String? userMsgId,
+    int? userCreatedAtMs,
     bool viaVoice = false,
     void Function(String reaction)? onReaction,
   }) async {
@@ -558,15 +1033,21 @@ class _WorkerEngine {
     await skillStore.ensureRoot();
 
     final nowMs = DateTime.now().millisecondsSinceEpoch;
-    await _appendSession(
-      config.agentDirPath,
-      AgentChatMessage(
-        id: 'u-$nowMs',
-        role: 'user',
-        text: cleanUser,
-        createdAtMs: nowMs,
-        viaVoice: viaVoice,
-      ),
+    final targetSessionId =
+        _sanitizeSessionId(sessionId ?? '') ?? 's-$nowMs';
+    final effectiveUserId = (userMsgId != null && userMsgId.trim().isNotEmpty)
+        ? userMsgId.trim()
+        : 'u-$nowMs';
+    final effectiveUserAt =
+        (userCreatedAtMs != null && userCreatedAtMs > 0)
+            ? userCreatedAtMs
+            : nowMs;
+    final userMsg = AgentChatMessage(
+      id: effectiveUserId,
+      role: 'user',
+      text: cleanUser,
+      createdAtMs: effectiveUserAt,
+      viaVoice: viaVoice,
     );
 
     final skills = await skillStore.listSkills();
@@ -604,21 +1085,35 @@ class _WorkerEngine {
           final finalReply = _sanitizeReply(
             parsed.reply.isNotEmpty ? parsed.reply : raw,
           );
+          final reactedUser =
+              (firstReaction != null && firstReaction.isNotEmpty)
+                  ? userMsg.copyWith(reaction: firstReaction)
+                  : userMsg;
           if (finalReply.isEmpty) {
+            await appendSessionMessages(
+              config.agentDirPath,
+              sessionId: targetSessionId,
+              messages: [reactedUser],
+            );
             return AgentTurnResult(
               reply: '',
               reaction: firstReaction,
               error: '模型返回了空内容，请重试',
             );
           }
-          await _appendSession(
+          final assistantAt = _resolveAssistantTimestamp(userCreatedAtMs);
+          await appendSessionMessages(
             config.agentDirPath,
-            AgentChatMessage(
-              id: 'a-${DateTime.now().millisecondsSinceEpoch}',
-              role: 'assistant',
-              text: finalReply,
-              createdAtMs: DateTime.now().millisecondsSinceEpoch,
-            ),
+            sessionId: targetSessionId,
+            messages: [
+              reactedUser,
+              AgentChatMessage(
+                id: 'a-$assistantAt',
+                role: 'assistant',
+                text: finalReply,
+                createdAtMs: assistantAt,
+              ),
+            ],
           );
           return AgentTurnResult(reply: finalReply, reaction: firstReaction);
         }
@@ -660,20 +1155,51 @@ class _WorkerEngine {
       final finalReply = _sanitizeReply(
         parsed.reply.isNotEmpty ? parsed.reply : raw,
       );
-      await _appendSession(
+      final finalReact = firstReaction ?? parsed.reaction;
+      final reactedUser = (finalReact != null && finalReact.isNotEmpty)
+          ? userMsg.copyWith(reaction: finalReact)
+          : userMsg;
+      if (finalReply.isEmpty) {
+        await appendSessionMessages(
+          config.agentDirPath,
+          sessionId: targetSessionId,
+          messages: [reactedUser],
+        );
+        return AgentTurnResult(
+          reply: '',
+          reaction: finalReact,
+          error: '模型返回了空内容，请重试',
+        );
+      }
+      final assistantAt = _resolveAssistantTimestamp(userCreatedAtMs);
+      await appendSessionMessages(
         config.agentDirPath,
-        AgentChatMessage(
-          id: 'a-${DateTime.now().millisecondsSinceEpoch}',
-          role: 'assistant',
-          text: finalReply,
-          createdAtMs: DateTime.now().millisecondsSinceEpoch,
-        ),
+        sessionId: targetSessionId,
+        messages: [
+          reactedUser,
+          AgentChatMessage(
+            id: 'a-$assistantAt',
+            role: 'assistant',
+            text: finalReply,
+            createdAtMs: assistantAt,
+          ),
+        ],
       );
-      return AgentTurnResult(
-        reply: finalReply,
-        reaction: firstReaction ?? parsed.reaction,
-      );
+      return AgentTurnResult(reply: finalReply, reaction: finalReact);
     } on Object catch (e) {
+      try {
+        final reactedUser =
+            (firstReaction != null && firstReaction.isNotEmpty)
+                ? userMsg.copyWith(reaction: firstReaction)
+                : userMsg;
+        await appendSessionMessages(
+          config.agentDirPath,
+          sessionId: targetSessionId,
+          messages: [reactedUser],
+        );
+      } on Object {
+        // 忽略落盘异常，保留原始错误返回
+      }
       return AgentTurnResult(
         reply: '',
         reaction: firstReaction,

@@ -11,6 +11,7 @@ import 'package:recording_card/core/store/agent_config_store.dart';
 import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/services/agent/agent_chat_controller.dart';
 import 'package:recording_card/services/agent/agent_harness_worker.dart';
+import 'package:recording_card/services/agent/agent_models.dart';
 import 'package:recording_card/services/agent/skill_store.dart';
 import 'package:recording_card/services/agent/web_search_client.dart';
 import 'package:recording_card/services/agent/mcp_client.dart';
@@ -368,5 +369,162 @@ void main() {
 
     await ctrl.sendMessage('今天步数多少？');
     expect(ctrl.messages.last.text, contains('还没打开'));
+  });
+
+  test('旧 session.jsonl 自动迁移 + 多会话持久化切换继续聊 + 分页向上加载', () async {
+    final tempDir = await Directory.systemTemp.createTemp('rc-agent-sessions-');
+    addTearDown(() => tempDir.delete(recursive: true));
+
+    // 预写旧版单文件 session.jsonl（12 条消息）
+    final legacyFile = File('${tempDir.path}/session.jsonl');
+    final buf = StringBuffer();
+    for (var i = 0; i < 12; i++) {
+      buf.writeln(
+        jsonEncode(
+          AgentChatMessage(
+            id: 'leg-$i',
+            role: i.isEven ? 'user' : 'assistant',
+            text: '历史消息 $i',
+            createdAtMs: 1700000000000 + i * 10000,
+          ).toJson(),
+        ),
+      );
+    }
+    await legacyFile.writeAsString(buf.toString());
+
+    final config = AgentConfigStore(store: InMemoryStore());
+    addTearDown(config.dispose);
+    await config.load();
+
+    final appStore = AppStore(loadPersistedState: false);
+    addTearDown(appStore.dispose);
+
+    var tick = 0;
+    DateTime nextClock() => DateTime.fromMillisecondsSinceEpoch(
+      1700005000000 + (tick++) * 10000,
+    );
+
+    final completion = _QueuedChatCompletion([
+      (msgs, _) => jsonEncode({
+        'react': '👌',
+        'reply': '新会话回复：${msgs.last.content}',
+      }),
+      (msgs, _) {
+        final hasOldContext = msgs.any(
+          (m) => m.content.contains('历史消息 11'),
+        );
+        expect(hasOldContext, isTrue);
+        return jsonEncode({
+          'react': '✨',
+          'reply': '继续旧会话回复：${msgs.last.content}',
+        });
+      },
+    ]);
+
+    // 使用默认后台 Isolate Worker（非 inProcess）
+    final ctrl1 = AgentChatController(
+      appStore: appStore,
+      agentConfig: config,
+      completion: completion,
+      agentDirResolver: () async => tempDir.path,
+      clock: nextClock,
+      historyPageSize: 5,
+    );
+    addTearDown(ctrl1.dispose);
+    await ctrl1.ensureInitialized();
+
+    expect(await legacyFile.exists(), isFalse, reason: '旧 session.jsonl 应完成迁移');
+    expect(await Directory('${tempDir.path}/sessions').exists(), isTrue);
+    expect(ctrl1.sessions, hasLength(1));
+    final s1 = ctrl1.sessions.first.id;
+    expect(ctrl1.activeSessionId, s1);
+    expect(ctrl1.totalMessageCount, 12);
+    expect(ctrl1.hasMoreOlderMessages, isTrue);
+    expect(
+      [for (final m in ctrl1.messages) m.text],
+      ['历史消息 7', '历史消息 8', '历史消息 9', '历史消息 10', '历史消息 11'],
+    );
+
+    await ctrl1.loadOlderMessages();
+    expect(ctrl1.hasMoreOlderMessages, isTrue);
+    expect(
+      [for (final m in ctrl1.messages) m.text],
+      [
+        '历史消息 2',
+        '历史消息 3',
+        '历史消息 4',
+        '历史消息 5',
+        '历史消息 6',
+        '历史消息 7',
+        '历史消息 8',
+        '历史消息 9',
+        '历史消息 10',
+        '历史消息 11',
+      ],
+    );
+
+    await ctrl1.loadOlderMessages();
+    expect(ctrl1.hasMoreOlderMessages, isFalse);
+    expect(ctrl1.messages, hasLength(12));
+    expect(ctrl1.messages.first.text, '历史消息 0');
+    expect(ctrl1.messages.last.text, '历史消息 11');
+
+    // 开启新对话并发送一条新消息
+    ctrl1.startNewSession();
+    expect(ctrl1.messages, isEmpty);
+    expect(ctrl1.sessions, hasLength(1));
+    await ctrl1.sendMessage('第二段新对话的问题');
+    final s2 = ctrl1.activeSessionId;
+    expect(s2, isNot(s1));
+    expect(ctrl1.sessions, hasLength(2));
+    expect(ctrl1.sessions.first.id, s2);
+
+    // 冷启动新 Controller：默认加载最新会话 s2，并能切回 s1 继续聊天
+    final ctrl2 = AgentChatController(
+      appStore: appStore,
+      agentConfig: config,
+      completion: completion,
+      agentDirResolver: () async => tempDir.path,
+      clock: nextClock,
+      historyPageSize: 5,
+    );
+    addTearDown(ctrl2.dispose);
+    await ctrl2.ensureInitialized();
+    expect(ctrl2.sessions, hasLength(2));
+    expect(ctrl2.activeSessionId, s2);
+    expect(ctrl2.messages.last.text, contains('新会话回复：第二段新对话的问题'));
+
+    await ctrl2.switchSession(s1);
+    expect(ctrl2.activeSessionId, s1);
+    expect(ctrl2.hasMoreOlderMessages, isTrue);
+    expect(
+      [for (final m in ctrl2.messages) m.text],
+      ['历史消息 7', '历史消息 8', '历史消息 9', '历史消息 10', '历史消息 11'],
+    );
+
+    await ctrl2.sendMessage('回到旧对话继续追问');
+    expect(ctrl2.totalMessageCount, 14);
+    expect(ctrl2.messages.last.text, contains('继续旧会话回复：回到旧对话继续追问'));
+    expect(ctrl2.sessions.first.id, s1);
+
+    // 再次冷启动验证旧对话续聊已完整落盘，并验证删除会话
+    final ctrl3 = AgentChatController(
+      appStore: appStore,
+      agentConfig: config,
+      completion: completion,
+      agentDirResolver: () async => tempDir.path,
+      clock: nextClock,
+      historyPageSize: 5,
+    );
+    addTearDown(ctrl3.dispose);
+    await ctrl3.ensureInitialized();
+    expect(ctrl3.activeSessionId, s1);
+    expect(ctrl3.totalMessageCount, 14);
+    expect(ctrl3.messages.last.text, contains('继续旧会话回复：回到旧对话继续追问'));
+
+    await ctrl3.deleteSession(s2);
+    expect(ctrl3.sessions, hasLength(1));
+    expect(ctrl3.sessions.single.id, s1);
+    expect(await File('${tempDir.path}/sessions/$s2.jsonl').exists(), isFalse);
   });
 }
