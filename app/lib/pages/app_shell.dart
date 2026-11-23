@@ -827,84 +827,93 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                             return const SizedBox.shrink();
                           }
                           final c = context.rc;
-                          final headerH = wide
-                              ? RCDims.wideChrome
-                              : RCDims.narrowHeader;
-                          final topPad =
-                              MediaQuery.paddingOf(context).top + headerH + 6;
-                          return Positioned(
-                            top: topPad,
-                            left: 14,
-                            right: 14,
-                            child: Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                key: const Key('ble-disconnect-toast'),
-                                borderRadius: BorderRadius.circular(12),
-                                onTap: _device.openSheet,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
+                          final bottomInset =
+                              MediaQuery.paddingOf(context).bottom;
+                          final toastCard = Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              key: const Key('ble-disconnect-toast'),
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: _device.openSheet,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: c.isDark
+                                      ? const Color(0xF025211A)
+                                      : const Color(0xF5FFF8EB),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: c.warn.withValues(alpha: 0.45),
                                   ),
-                                  decoration: BoxDecoration(
-                                    color: c.isDark
-                                        ? const Color(0xF025211A)
-                                        : const Color(0xF5FFF8EB),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: c.warn.withValues(alpha: 0.45),
+                                  boxShadow: const [
+                                    BoxShadow(
+                                      color: Color(0x22000000),
+                                      blurRadius: 10,
+                                      offset: Offset(0, 3),
                                     ),
-                                    boxShadow: const [
-                                      BoxShadow(
-                                        color: Color(0x22000000),
-                                        blurRadius: 10,
-                                        offset: Offset(0, 3),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        _device.isPendingForegroundPhoneFailover
-                                            ? Icons.mic_off_rounded
-                                            : Icons.bluetooth_disabled_rounded,
-                                        size: 16,
-                                        color: c.warn,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          notice,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontSize: 12.5,
-                                            height: 1.35,
-                                            fontWeight: FontWeight.w500,
-                                            color: c.label,
-                                          ),
+                                  ],
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      _device.isPendingForegroundPhoneFailover
+                                          ? Icons.mic_off_rounded
+                                          : Icons.bluetooth_disabled_rounded,
+                                      size: 16,
+                                      color: c.warn,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        notice,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          height: 1.35,
+                                          fontWeight: FontWeight.w500,
+                                          color: c.label,
                                         ),
                                       ),
-                                      const SizedBox(width: 6),
-                                      GestureDetector(
-                                        key: const Key('ble-disconnect-toast-close'),
-                                        behavior: HitTestBehavior.opaque,
-                                        onTap: _device.dismissDisconnectNotice,
-                                        child: Padding(
-                                          padding: const EdgeInsets.all(4),
-                                          child: Icon(
-                                            Icons.close,
-                                            size: 16,
-                                            color: c.sec,
-                                          ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    GestureDetector(
+                                      key: const Key(
+                                        'ble-disconnect-toast-close',
+                                      ),
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: _device.dismissDisconnectNotice,
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(4),
+                                        child: Icon(
+                                          Icons.close,
+                                          size: 16,
+                                          color: c.sec,
                                         ),
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
+                          );
+                          return Positioned(
+                            bottom: wide
+                                ? bottomInset + 20
+                                : bottomInset + RCDims.wideChrome + 28,
+                            left: wide ? null : 14,
+                            right: wide ? 20 : 14,
+                            child: wide
+                                ? ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 420,
+                                    ),
+                                    child: toastCard,
+                                  )
+                                : toastCard,
                           );
                         },
                       ),

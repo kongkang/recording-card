@@ -1603,6 +1603,17 @@ class DeviceStore extends ChangeNotifier {
             ? '蓝牙链路未确认释放，请重试连接后再断开'
             : null);
     if (linkError != null) debugPrint('[disconnect] $linkError');
+    if (sheetOpen && linkError == null && hasBleDiscovered && isBleScanExpired) {
+      discovered = discovered
+          .where((d) => !isBleDiscoveredDevice(d))
+          .toList(growable: false);
+      _bleScanSeenAt = null;
+      _scanExpiredByTimer = false;
+      _stopScanExpiryTimer();
+      notifyListeners();
+      unawaited(startScan());
+      return;
+    }
     if (sheetOpen && hasBleDiscovered) {
       _scheduleScanExpiryTimer();
     }
