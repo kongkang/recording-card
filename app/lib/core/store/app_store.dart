@@ -643,7 +643,7 @@ class AppStore extends ChangeNotifier {
     syncProgress = 0.05;
     syncText = '正在批量转写本地录音…';
     if (!_isActivelyRecording) {
-      _status?.startSync(detail: syncText);
+      _status?.startSync(detail: syncText, progress: syncProgress);
     } else {
       _status?.setRecordingDetail('正在批量转写已缓存录音…');
     }
@@ -1414,6 +1414,9 @@ class AppStore extends ChangeNotifier {
           syncStage = null;
           syncProgress = 0;
           syncText = '';
+          if (!_isActivelyRecording) {
+            _status?.updateQueue(remaining: 0, active: false);
+          }
           notifyListeners();
         }
       } else if (pipeline != null) {
@@ -1483,7 +1486,7 @@ class AppStore extends ChangeNotifier {
     syncStage = SyncStage.listing;
     syncProgress = 0;
     syncText = '正在读取录音卡文件列表…';
-    _status?.startSync(detail: syncText);
+    _status?.startSync(detail: syncText, progress: 0);
     notifyListeners();
     try {
       final localReport = await pipeline.transcribeLocalPendingOnly(
@@ -1618,16 +1621,13 @@ class AppStore extends ChangeNotifier {
     final allFilesDone =
         p.stage == PipelineStage.done &&
         (fileTotal <= 0 || p.fileIndex + 1 >= fileTotal);
-    if (allFilesDone) {
-      _status?.updateQueue(remaining: 0, active: false);
-    } else {
-      _status?.updateSync(
-        p.text,
-        remaining: remaining,
-        done: fileTotal > 0 ? fileDone : null,
-        total: fileTotal > 0 ? fileTotal : null,
-      );
-    }
+    _status?.updateSync(
+      p.text,
+      remaining: allFilesDone ? 0 : remaining,
+      done: fileTotal > 0 ? fileDone : null,
+      total: fileTotal > 0 ? fileTotal : null,
+      progress: p.progress,
+    );
     notifyListeners();
   }
 

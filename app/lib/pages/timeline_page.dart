@@ -168,6 +168,20 @@ class _TimelinePageState extends State<TimelinePage> {
     _setStickyState(_StickyRangeEdge.none, null, 0);
   }
 
+  Widget _buildStatusBar(
+    AppStore store,
+    RecordingStatusController? recordingStatus,
+  ) {
+    return RecordingStatusBlock(
+      key: const ValueKey('tl-status-block'),
+      controller: recordingStatus,
+      syncActive: store.syncStage != null,
+      loadingActive: store.loading,
+      syncText: store.syncText,
+      syncProgress: store.syncStage != null ? store.syncProgress : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
@@ -177,17 +191,16 @@ class _TimelinePageState extends State<TimelinePage> {
       builder: (context, _) {
         final c = context.rc;
         final entries = store.feedEntries;
-        // 录音/同步状态块只出现在「全部/记录」的内容顶部：
+        // 统一顶部状态条只出现在「全部/记录」的内容顶部：
         // 勾选总结时收起（总结源列表保持干净），切到「总结」Tab 也不显示。
-        final showStatus =
-            recordingStatus != null &&
-            !store.selMode &&
-            store.filter != FeedFilter.summary;
+        final showStatusArea =
+            !store.selMode && store.filter != FeedFilter.summary;
         final showPendingCandidate =
             !store.selMode &&
             store.filter != FeedFilter.summary &&
             store.pendingLocalAudioCount > 0 &&
-            store.syncStage == null;
+            store.syncStage == null &&
+            !store.loading;
         if (!store.selMode && _itemKeys.isNotEmpty) {
           _itemKeys.clear();
         }
@@ -209,18 +222,13 @@ class _TimelinePageState extends State<TimelinePage> {
             _stickyTargetId != null;
 
         final headerCount =
-            (showStatus ? 1 : 0) + (showPendingCandidate ? 1 : 0);
+            (showStatusArea ? 1 : 0) + (showPendingCandidate ? 1 : 0);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _TabsBar(store: store),
             if (store.selMode) _RangeBar(store: store),
-            _SyncBannerHost(
-              store: store,
-              showStatus: showStatus,
-              recordingStatus: recordingStatus,
-            ),
             Expanded(
               child: Stack(
                 key: _viewportKey,
@@ -262,28 +270,20 @@ class _TimelinePageState extends State<TimelinePage> {
                           ? ListView(
                               key: const Key('timeline-empty'),
                               physics: const AlwaysScrollableScrollPhysics(),
-                              padding: const EdgeInsets.only(
-                                top: 16,
-                                bottom: RCDims.pageBottomPad,
+                              padding: const EdgeInsets.fromLTRB(
+                                22,
+                                12,
+                                22,
+                                RCDims.pageBottomPad,
                               ),
                               children: [
-                                if (showStatus)
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 22,
-                                    ),
-                                    child: RecordingStatusBlock(
-                                      controller: recordingStatus,
-                                    ),
-                                  ),
+                                if (showStatusArea)
+                                  _buildStatusBar(store, recordingStatus),
                                 if (showPendingCandidate)
                                   _PendingAudioBannerHost(
                                     store: store,
-                                    showStatus: showStatus,
+                                    showStatus: showStatusArea,
                                     recordingStatus: recordingStatus,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 22,
-                                    ),
                                   ),
                                 Padding(
                                   padding: const EdgeInsets.only(top: 60),
@@ -336,25 +336,25 @@ class _TimelinePageState extends State<TimelinePage> {
                               addAutomaticKeepAlives: false,
                               padding: const EdgeInsets.fromLTRB(
                                 22,
-                                4,
+                                12,
                                 22,
                                 RCDims.pageBottomPad,
                               ),
                               itemCount: headerCount + entries.length,
                               itemBuilder: (context, index) {
-                                if (showStatus && index == 0) {
-                                  return RecordingStatusBlock(
-                                    key: const ValueKey('tl-status-block'),
-                                    controller: recordingStatus,
+                                if (showStatusArea && index == 0) {
+                                  return _buildStatusBar(
+                                    store,
+                                    recordingStatus,
                                   );
                                 }
-                                final pendingIdx = showStatus ? 1 : 0;
+                                final pendingIdx = showStatusArea ? 1 : 0;
                                 if (showPendingCandidate &&
                                     index == pendingIdx) {
                                   return _PendingAudioBannerHost(
                                     key: const ValueKey('tl-pending-banner'),
                                     store: store,
-                                    showStatus: showStatus,
+                                    showStatus: showStatusArea,
                                     recordingStatus: recordingStatus,
                                   );
                                 }
@@ -465,63 +465,25 @@ class _TimelinePageState extends State<TimelinePage> {
   };
 }
 
-class _SyncBannerHost extends StatelessWidget {
-  const _SyncBannerHost({
-    required this.store,
-    required this.showStatus,
-    required this.recordingStatus,
-  });
-
-  final AppStore store;
-  final bool showStatus;
-  final RecordingStatusController? recordingStatus;
-
-  @override
-  Widget build(BuildContext context) {
-    // 设计稿只有一处顶部实时状态块（#live-status）：状态块已经在展示「正在录音 / 正在同步 / 正在转写」时，
-    // 不再叠出第二条 _SyncBanner（「正在取回…」进度条），避免两块同步提示同时出现冲突。
-    final active = store.loading || store.syncStage != null;
-    if (!active) return const SizedBox.shrink();
-    final ctrl = recordingStatus;
-    if (!showStatus || ctrl == null) {
-      return _SyncBanner(store: store);
-    }
-    return ListenableBuilder(
-      listenable: ctrl,
-      builder: (context, _) {
-        if (ctrl.phase != RecordingPhase.idle) {
-          return const SizedBox.shrink();
-        }
-        return _SyncBanner(store: store);
-      },
-    );
-  }
-}
-
 class _PendingAudioBannerHost extends StatelessWidget {
   const _PendingAudioBannerHost({
     super.key,
     required this.store,
     required this.showStatus,
     required this.recordingStatus,
-    this.padding,
   });
 
   final AppStore store;
   final bool showStatus;
   final RecordingStatusController? recordingStatus;
-  final EdgeInsetsGeometry? padding;
 
   @override
   Widget build(BuildContext context) {
-    Widget content() {
-      final banner = _PendingAudioBanner(store: store);
-      return padding != null ? Padding(padding: padding!, child: banner) : banner;
-    }
+    final banner = _PendingAudioBanner(store: store);
 
     final ctrl = recordingStatus;
     if (!showStatus || ctrl == null) {
-      return content();
+      return banner;
     }
     return ListenableBuilder(
       listenable: ctrl,
@@ -529,7 +491,7 @@ class _PendingAudioBannerHost extends StatelessWidget {
         if (ctrl.phase != RecordingPhase.idle) {
           return const SizedBox.shrink();
         }
-        return content();
+        return banner;
       },
     );
   }
@@ -566,6 +528,7 @@ class _TabsBar extends StatelessWidget {
     }
 
     return Container(
+      key: const Key('timeline-tabs-bar'),
       padding: const EdgeInsets.fromLTRB(22, 2, 22, 0),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: c.sep)),
@@ -1514,64 +1477,6 @@ class _SummaryCardView extends StatelessWidget {
           ),
           child: inner,
         ),
-      ),
-    );
-  }
-}
-
-/// 同步/装载提示条：阶段文案 + 真实进度（不做假动画）。
-class _SyncBanner extends StatelessWidget {
-  const _SyncBanner({required this.store});
-  final AppStore store;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.rc;
-    final text = store.syncStage != null ? store.syncText : '正在读取本地录音…';
-    final progress = store.syncStage != null ? store.syncProgress : null;
-    return Container(
-      key: const Key('sync-banner'),
-      margin: const EdgeInsets.fromLTRB(22, 0, 22, 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: c.card,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: c.sep),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const SizedBox(
-                width: 13,
-                height: 13,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  text,
-                  key: const Key('sync-text'),
-                  style: TextStyle(fontSize: 12, color: c.sec),
-                ),
-              ),
-            ],
-          ),
-          if (progress != null) ...[
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: LinearProgressIndicator(
-                key: const Key('sync-progress'),
-                value: progress.clamp(0, 1),
-                minHeight: 3,
-                backgroundColor: c.sep,
-                valueColor: AlwaysStoppedAnimation(c.ok),
-              ),
-            ),
-          ],
-        ],
       ),
     );
   }

@@ -44,6 +44,7 @@ void main() {
 
     expect(recordings.syncCalls, 0, reason: '总结 Tab 下拉不应触发蓝牙同步录音文件');
     expect(find.byKey(const Key('sync-banner')), findsNothing);
+    expect(find.byKey(const Key('recording-status-block')), findsNothing);
   });
 
   testWidgets('相册缩略图 45px 叠放 + 详情对话流按时间插入照片 + 标记「不属于本段」移入当天顶部「未归类图片」', (

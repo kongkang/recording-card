@@ -928,9 +928,16 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   // 状态弹层是从 Setting 页打开的；先回 Timeline 再看记录顶部状态块
   await p.click('[data-testid="nav-timeline"]');
 
-  // 录音中：Timeline 记录顶部有实时状态块（计时跟着走）
+  // 录音中：Timeline 记录顶部有实时状态块（计时跟着走），顶部留白、单行固定高度
   assert(await p.$eval('#live-status', x => x.innerText.includes('正在录音') && !!x.querySelector('#live-clock')));
-  // 停止录音：自动同步，状态块切「正在同步」并在完成后收起
+  const liveRecGeom = await p.evaluate(() => {
+    const tabRow = document.querySelector('#p-timeline .tabs').parentElement.getBoundingClientRect();
+    const live = document.getElementById('live-status').getBoundingClientRect();
+    return { gap: live.top - tabRow.bottom, h: live.height };
+  });
+  assert(liveRecGeom.gap >= 10, '顶部状态条应留有顶部间距 >=10px，实际 ' + liveRecGeom.gap);
+  assert(liveRecGeom.h >= 38 && liveRecGeom.h <= 42, '顶部状态条应保持单行固定高度 ≈40px，实际 ' + liveRecGeom.h);
+  // 停止录音：自动同步，状态块切「正在同步」（条内进度指示、同高度）并在完成后收起
   await p.click('[data-testid="hw-capsule"]');
   await new Promise(r => setTimeout(r, 200));
   await p.click('[data-testid="rec-toggle"]');
@@ -939,6 +946,19 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.evaluate(() => closeSheet());
   await new Promise(r => setTimeout(r, 300));
   assert(await p.$eval('#live-status', x => x.innerText.includes('正在同步')));
+  const liveSyncGeom = await p.evaluate(() => {
+    const tabRow = document.querySelector('#p-timeline .tabs').parentElement.getBoundingClientRect();
+    const el = document.getElementById('live-status');
+    const live = el.getBoundingClientRect();
+    return {
+      gap: live.top - tabRow.bottom,
+      h: live.height,
+      hasProg: !!el.querySelector('[data-testid="recording-status-progress"]'),
+    };
+  });
+  assert(liveSyncGeom.gap >= 10, '同步态状态条应留有顶部间距 >=10px，实际 ' + liveSyncGeom.gap);
+  assert(Math.abs(liveSyncGeom.h - liveRecGeom.h) <= 1, '带进度与录音态状态条高度必须一致，实际 ' + liveSyncGeom.h + ' vs ' + liveRecGeom.h);
+  assert(liveSyncGeom.hasProg, '同步态顶部状态条应在条内展示轻量进度指示');
   await p.waitForFunction(() => !document.getElementById('live-status'), { timeout: 6000 });
   // 勾选总结 / 总结 Tab 时不出现在记录顶部
   await p.click('[data-testid="hw-capsule"]');
