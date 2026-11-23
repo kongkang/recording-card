@@ -1200,6 +1200,251 @@ button:disabled{opacity:.38;cursor:not-allowed}
   max-width:270px;
 }
 </style>
+<style id="huashu-watch-default-theme">
+body {
+  background: #F3F2ED;
+  color: #151517;
+  -webkit-font-smoothing: antialiased;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", sans-serif;
+}
+
+.proto-bar {
+  background: rgba(246,245,241,.90);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  border-bottom: 1px solid rgba(21,21,23,.08);
+  padding: 10px 20px;
+}
+
+.proto-title h1 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #151517;
+}
+
+.proto-title h1::before {
+  content: "";
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  flex: none;
+  background: url("data:image/svg+xml,%3C%3Fxml%20version%3D%221.0%22%20encoding%3D%22UTF-8%22%3F%3E%0A%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%201024%201024%22%3E%0A%20%20%3Cdefs%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22rcBg%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23FDFDFB%22/%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23EFEFE8%22/%3E%0A%20%20%20%20%3C/linearGradient%3E%0A%20%20%3C/defs%3E%0A%0A%20%20%3Crect%20x%3D%220%22%20y%3D%220%22%20fill%3D%22url%28%23rcBg%29%22/%3E%0A%0A%20%20%3Crect%20x%3D%22162%22%20y%3D%22267%22%20width%3D%22700%22%20height%3D%22490%22%20rx%3D%2296%22%20fill%3D%22%231D1D1F%22/%3E%0A%0A%20%20%3Cg%20fill%3D%22%23FAFAF8%22%3E%0A%20%20%20%20%3Crect%20x%3D%22258%22%20y%3D%22452%22%20width%3D%2260%22%20height%3D%22120%22%20rx%3D%2230%22/%3E%0A%20%20%20%20%3Crect%20x%3D%22370%22%20y%3D%22398%22%20width%3D%2260%22%20height%3D%22228%22%20rx%3D%2230%22/%3E%0A%20%20%20%20%3Crect%20x%3D%22482%22%20y%3D%22359%22%20width%3D%2260%22%20height%3D%22306%22%20rx%3D%2230%22/%3E%0A%20%20%20%20%3Crect%20x%3D%22594%22%20y%3D%22398%22%20width%3D%2260%22%20height%3D%22228%22%20rx%3D%2230%22/%3E%0A%20%20%20%20%3Crect%20x%3D%22706%22%20y%3D%22452%22%20width%3D%2260%22%20height%3D%22120%22%20rx%3D%2230%22/%3E%0A%20%20%3C/g%3E%0A%0A%20%20%3Ccircle%20cx%3D%22778%22%20cy%3D%22330%22%20r%3D%2240%22%20fill%3D%22%23FF3B30%22/%3E%0A%3C/svg%3E") center / cover no-repeat;
+  box-shadow: 0 1px 3px rgba(21,21,23,.14), inset 0 0 0 0.5px rgba(21,21,23,.08);
+}
+
+.proto-badge {
+  background: #FFFFFF;
+  color: #1A6E31;
+  border: 1px solid rgba(26,110,49,.18);
+}
+
+.seg {
+  background: #EAE8E1;
+  border: 1px solid rgba(21,21,23,.07);
+}
+
+.seg button.on {
+  background: #FFFFFF;
+  color: #151517;
+  box-shadow: 0 1px 3px rgba(21,21,23,.09);
+}
+
+.tb-btn {
+  background: #FFFFFF;
+  border: 1px solid rgba(21,21,23,.1);
+  color: #151517;
+  box-shadow: 0 1px 2px rgba(21,21,23,.03);
+}
+
+.tb-btn.ok {
+  background: #EDF7F0;
+  border-color: rgba(40,167,69,.26);
+  color: #1A6E31;
+}
+
+.tb-btn.warn {
+  background: #FFF7EB;
+  border-color: rgba(217,119,6,.26);
+  color: #8A4300;
+}
+
+.stage {
+  gap: 40px;
+  padding: 28px 24px var(--page-pad-b);
+}
+
+.dev-caption {
+  color: #151517;
+}
+
+.dev-subcap {
+  color: #6E6E73;
+}
+
+/* iPhone outer hardware frame harmonization */
+.iphone-shell {
+  background: #141416;
+  box-shadow: 0 26px 64px rgba(21,21,23,.22), inset 0 0 0 2px rgba(255,255,255,.11);
+}
+
+.iphone-screen {
+  background: #F6F5F1;
+}
+
+.ios-statusbar {
+  background: #F6F5F1;
+  color: #151517;
+}
+
+.dyn-island {
+  background: #111113;
+}
+
+.di-lcd, .lp-lcd {
+  color: #F6F4EF;
+}
+
+.live-pop {
+  background: #141416;
+}
+
+/* Watch tabs & Warm Editorial titanium shell */
+.watch-tabs {
+  background: #FFFFFF;
+  border: 1px solid rgba(21,21,23,.08);
+  box-shadow: 0 1px 4px rgba(21,21,23,.04);
+}
+
+.watch-tabs button.on {
+  background: #151517;
+  color: #FFFFFF;
+}
+
+.watch-band-top, .watch-band-bot {
+  background: linear-gradient(180deg, #272729, #1A1A1C);
+}
+
+.watch-case {
+  background: linear-gradient(148deg, #333336, #141416);
+  box-shadow: 0 24px 50px rgba(21,21,23,.28), inset 0 0 0 1.5px rgba(255,255,255,.14);
+}
+
+.watch-screen {
+  background: #060607;
+  color: #F6F4EF;
+}
+
+.w-conn, .w-sysclock {
+  color: rgba(246,244,239,.88);
+}
+
+.w-batt-pill {
+  color: rgba(246,244,239,.72);
+}
+
+/* Warm ivory typography & restrained terracotta / warm amber / calm emerald semantics */
+.w-date, .w-mark-pill, .comp-corner, .comp-inline, .comp-rectangular .cr-top, .cc-state {
+  color: #F2A23C;
+}
+
+.w-mark-pill {
+  background: rgba(242,162,60,.18);
+}
+
+.comp-corner {
+  background: #141416;
+  border-color: rgba(246,244,239,.09);
+}
+
+.comp-rectangular {
+  background: rgba(246,244,239,.075);
+  border-color: rgba(246,244,239,.09);
+  color: #F6F4EF;
+}
+
+.comp-rectangular.rec {
+  background: rgba(232,80,53,.14);
+  border-color: rgba(232,80,53,.36);
+}
+
+.comp-rectangular.rec .cr-top,
+.comp-corner.rec,
+.comp-inline.rec,
+.comp-rectangular.rec .wf-wave i {
+  color: #E85035;
+}
+
+.comp-rectangular.rec .wf-wave i,
+.w-dot-live,
+.w-lap-progress {
+  background: #E85035;
+}
+
+.wf-ring-fg {
+  stroke: #F2A23C;
+}
+
+.comp-circular.rec .wf-ring-fg {
+  stroke: #E85035;
+}
+
+.w-bigclock, .w-bighero, .w-face-time {
+  color: #F6F4EF;
+}
+
+.w-remain {
+  color: rgba(246,244,239,.66);
+}
+
+.w-idle-sub, .w-knock-hint {
+  color: rgba(246,244,239,.44);
+}
+
+.w-rec-btn {
+  background: #2DC653;
+  color: #FFFFFF;
+}
+
+.w-rec-btn:hover {
+  background: #27B44A;
+}
+
+.w-stop {
+  background: rgba(232,80,53,.16);
+  border-color: rgba(232,80,53,.38);
+  color: #F28B79;
+}
+
+.w-stop-knob {
+  background: #E85035;
+  background-image: none;
+  box-shadow: none;
+}
+
+.w-slice-bar {
+  background: rgba(246,244,239,.08);
+  color: #F6F4EF;
+}
+
+.w-slice-bar:hover {
+  background: rgba(246,244,239,.13);
+}
+
+.w-slice-bar.pend {
+  background: rgba(242,162,60,.16);
+}
+
+.w-knock-ripple {
+  border-color: #F2A23C;
+}
+
+.watch-hints {
+  color: #6E6E73;
+}
+</style>
 </head>
 <body>
 

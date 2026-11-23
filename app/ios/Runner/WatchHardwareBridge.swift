@@ -21,6 +21,7 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
     private var latestSnapshot: WatchStatusSnapshot?
     private var pendingSlices: [PendingWatchSlice] = []
     private var lastWatchContactAtMs: Int64 = 0
+    private var currentUiStyleId: String = WatchUIStyle.warmPaper.rawValue
 
     private struct PendingWatchSlice: Codable, Equatable {
         let sliceId: String
@@ -102,6 +103,9 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
     }
 
     private override init() {
+        let savedRaw = UserDefaults(suiteName: WatchConstants.appGroupId)?
+            .string(forKey: WatchConstants.uiStyleKey)
+        self.currentUiStyleId = WatchUIStyle.fromRawOrDefault(savedRaw).rawValue
         super.init()
         loadPendingQueue()
     }
@@ -181,9 +185,29 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
             removePendingSlice(sliceId: sliceId)
             result(true)
 
+        case "setUiStyle":
+            let args = call.arguments as? [String: Any]
+            let style = WatchUIStyle.fromRawOrDefault(args?["styleId"] as? String)
+            applyAndBroadcastUiStyle(style.rawValue)
+            result(true)
+
         default:
             result(FlutterMethodNotImplemented)
         }
+    }
+
+    private func applyAndBroadcastUiStyle(_ styleId: String) {
+        let canonical = WatchUIStyle.fromRawOrDefault(styleId).rawValue
+        stateLock.lock()
+        currentUiStyleId = canonical
+        stateLock.unlock()
+        UserDefaults(suiteName: WatchConstants.appGroupId)?
+            .set(canonical, forKey: WatchConstants.uiStyleKey)
+        sendCommandToWatch(
+            WatchControlCommand(action: .setStyle, styleId: canonical),
+            pushContext: true
+        )
+        emitStatusChanged()
     }
 
     private func startWatchRecording(sessionId: String?, result: @escaping FlutterResult) {
@@ -215,9 +239,17 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
         guard session.activationState == .activated else { return }
-        let payload = command.toDictionary()
+        stateLock.lock()
+        let styleId = currentUiStyleId
+        stateLock.unlock()
+        var payload = command.toDictionary()
+        payload[WatchConstants.uiStyleKey] = styleId
         if pushContext {
-            try? session.updateApplicationContext(payload)
+            var merged = session.applicationContext
+            for (key, value) in payload {
+                merged[key] = value
+            }
+            try? session.updateApplicationContext(merged)
         }
         if session.isReachable {
             session.sendMessage(
@@ -325,6 +357,7 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         let snap = latestSnapshot
         let localPending = pendingSlices.count
         let contactMs = lastWatchContactAtMs
+        let uiStyleId = currentUiStyleId
         stateLock.unlock()
 
         var out: [String: Any] = [
@@ -343,6 +376,7 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
             "keepAliveMode": snap?.keepAliveMode.rawValue ?? WatchKeepAliveMode.idle.rawValue,
             "snapshotUpdatedAtMs": NSNumber(value: snap?.updatedAtMs ?? 0),
             "lastWatchContactAtMs": NSNumber(value: contactMs),
+            WatchConstants.uiStyleKey: uiStyleId,
         ]
         if let activeSessionId = snap?.activeSessionId {
             out["activeSessionId"] = activeSessionId
@@ -469,6 +503,16 @@ final class WatchHardwareBridge: NSObject, WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: (any Error)?
     ) {
+        if activationState == .activated {
+            stateLock.lock()
+            let styleId = currentUiStyleId
+            stateLock.unlock()
+            if (session.applicationContext[WatchConstants.uiStyleKey] as? String) != styleId {
+                var merged = session.applicationContext
+                merged[WatchConstants.uiStyleKey] = styleId
+                try? session.updateApplicationContext(merged)
+            }
+        }
         if session.isReachable {
             noteWatchContact()
         }

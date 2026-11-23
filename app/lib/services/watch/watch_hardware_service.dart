@@ -342,6 +342,7 @@ abstract class WatchBridgeBackend {
   Future<WatchBridgeStatus> flushPending();
   Future<List<WatchPendingSlicePayload>> drainPendingSlices();
   Future<void> ackConsumedSlice(String sliceId);
+  Future<void> setUiStyle(String styleId);
 
   Stream<WatchBridgeStatus> get statusStream;
   Stream<WatchPendingSlicePayload> get sliceReadyStream;
@@ -458,6 +459,19 @@ class MethodChannelWatchBackend implements WatchBridgeBackend {
     }
   }
 
+  @override
+  Future<void> setUiStyle(String styleId) async {
+    try {
+      await _channel.invokeMethod<void>('setUiStyle', <String, Object?>{
+        'styleId': styleId,
+      });
+    } on MissingPluginException {
+      // 非 iOS / 测试环境忽略
+    } on PlatformException {
+      // 风格同步失败不阻塞手机端界面切换
+    }
+  }
+
   Future<WatchBridgeStatus> _invokeStatus(
     String method,
     Map<String, Object?>? args,
@@ -515,6 +529,8 @@ class FakeWatchBridgeBackend implements WatchBridgeBackend {
   final List<WatchPendingSlicePayload> _pending = [];
   final List<String> ackedSliceIds = [];
   final List<int?> marks = [];
+  final List<String> syncedUiStyles = [];
+  String? lastUiStyleId;
   int startCalls = 0;
   int stopCalls = 0;
   int flushCalls = 0;
@@ -621,6 +637,12 @@ class FakeWatchBridgeBackend implements WatchBridgeBackend {
     ackedSliceIds.add(sliceId);
     _pending.removeWhere((p) => p.sliceId == sliceId);
     emitStatus(_status.copyWith(pendingCount: _pending.length));
+  }
+
+  @override
+  Future<void> setUiStyle(String styleId) async {
+    lastUiStyleId = styleId;
+    syncedUiStyles.add(styleId);
   }
 
   @override
@@ -811,6 +833,15 @@ class WatchHardwareService extends ChangeNotifier {
   }
 
   Future<void> addMark({int? atMs}) => _backend.addMark(atMs: atMs);
+
+  /// 同步当前选中的界面风格到已配对的 Apple Watch（表端应用与表盘组件）。
+  Future<void> setUiStyle(String styleId) async {
+    try {
+      await _backend.setUiStyle(styleId);
+    } on Object {
+      // Watch 未安装/未配对时不阻塞手机端切换
+    }
+  }
 
   /// 请求手表端立刻冲刷本地队列，并将手机端收到的 `.wav` 切片全部送入管线。
   Future<int> flushAndDrain() async {

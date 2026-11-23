@@ -104,6 +104,46 @@ final class WatchRecorderCoreTests: XCTestCase {
         XCTAssertEqual(store.pendingCount(), 2)
     }
 
+    func testWatchUIStyleProtocolAndComplicationPersistence() {
+        XCTAssertEqual(
+            WatchUIStyle.allCases.map(\.rawValue),
+            ["default", "braun_field", "chronos", "folio", "nocturne", "air"]
+        )
+        XCTAssertEqual(WatchUIStyle.fromRawOrDefault(nil), .warmPaper)
+        XCTAssertEqual(WatchUIStyle.fromRawOrDefault(" unknown "), .warmPaper)
+        XCTAssertEqual(WatchUIStyle.fromRawOrDefault(" nocturne "), .nocturne)
+
+        let styleCmd = WatchControlCommand(
+            commandId: "cmd-style-1",
+            action: .setStyle,
+            requestedAtMs: 1_794_758_500_000,
+            styleId: WatchUIStyle.nocturne.rawValue
+        )
+        XCTAssertEqual(WatchControlCommand.fromDictionary(styleCmd.toDictionary()), styleCmd)
+
+        let suite = "rc.watch.style.xctest.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = ComplicationStateStore(defaults: defaults, suiteName: suite)
+        XCTAssertEqual(store.loadStyle(), .warmPaper)
+
+        store.saveStyle(.braunField)
+        XCTAssertEqual(store.loadStyle(), .braunField)
+
+        let compState = ComplicationDisplayState(
+            isRecording: true,
+            startedAtMs: 1_794_758_400_000,
+            pendingCount: 3,
+            uiStyleId: WatchUIStyle.folio.rawValue,
+            updatedAtMs: 1_794_758_460_000
+        )
+        store.save(compState)
+        let loaded = store.load()
+        XCTAssertEqual(loaded, compState)
+        XCTAssertEqual(loaded.uiStyle, .folio)
+    }
+
     func testWavHeaderEncoding() {
         let wav = WavFileCodec.wrapPCM16Mono(Data(repeating: 0x01, count: 640))
         let parsed = WavFileCodec.parseHeader(wav)

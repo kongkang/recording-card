@@ -60,6 +60,8 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
         if (ctrl.step == LegacyUpgradeStep.selectingWifi) {
           _syncPasswordFieldIfNeeded();
         }
+        final c = context.rc;
+        final s = context.rcStyle;
         final bottomInset = MediaQuery.paddingOf(context).bottom;
         final bottomKeyboard = MediaQuery.viewInsetsOf(context).bottom;
         return Positioned.fill(
@@ -84,18 +86,18 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
                   ),
                   padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
                   decoration: BoxDecoration(
-                    color: RCColors.card,
-                    borderRadius: BorderRadius.circular(18),
+                    color: c.card,
+                    borderRadius: BorderRadius.circular(s.cardRadius + 6),
                   ),
                   child: SingleChildScrollView(
                     primary: false,
                     child: switch (ctrl.step) {
-                      LegacyUpgradeStep.prompt => _buildPrompt(),
-                      LegacyUpgradeStep.scanningWifi => _buildScanningWifi(),
-                      LegacyUpgradeStep.selectingWifi => _buildWifiSelect(),
+                      LegacyUpgradeStep.prompt => _buildPrompt(c, s),
+                      LegacyUpgradeStep.scanningWifi => _buildScanningWifi(c, s),
+                      LegacyUpgradeStep.selectingWifi => _buildWifiSelect(c, s),
                       LegacyUpgradeStep.upgrading ||
-                      LegacyUpgradeStep.reconnecting => _buildProgress(),
-                      LegacyUpgradeStep.failed => _buildFailed(),
+                      LegacyUpgradeStep.reconnecting => _buildProgress(c, s),
+                      LegacyUpgradeStep.failed => _buildFailed(c, s),
                       LegacyUpgradeStep.hidden => const SizedBox.shrink(),
                     },
                   ),
@@ -108,7 +110,12 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
     );
   }
 
-  Widget _buildHeader(String title, {String? subtitle}) {
+  Widget _buildHeader(
+    RCColorScheme c,
+    RCStyleSpec s,
+    String title, {
+    String? subtitle,
+  }) {
     final modelName = ctrl.mismatch?.device.modelLabel ?? '设备';
     final shortName = ctrl.mismatch?.device.shortName ?? '';
     return Row(
@@ -118,14 +125,14 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: RCColors.sep.withValues(alpha: 0.45),
+            color: c.sep.withValues(alpha: 0.45),
             borderRadius: BorderRadius.circular(10),
           ),
           alignment: Alignment.center,
-          child: const RCIcon(
+          child: RCIcon(
             RCIconKind.cloud,
             size: 18,
-            color: RCColors.ink,
+            color: c.ink,
           ),
         ),
         const SizedBox(width: 10),
@@ -135,16 +142,17 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w800,
+                  color: c.label,
                 ),
               ),
               const SizedBox(height: 2),
               Text(
                 subtitle ??
                     '$modelName${shortName.isEmpty ? '' : ' $shortName'}',
-                style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                style: TextStyle(fontSize: 12, color: c.sec),
               ),
             ],
           ),
@@ -153,32 +161,32 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
     );
   }
 
-  Widget _buildPrompt() {
+  Widget _buildPrompt(RCColorScheme c, RCStyleSpec s) {
     final cur = ctrl.currentVersionLabel;
     final target = ctrl.targetVersionLabel;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildHeader('需要升级设备固件'),
+        _buildHeader(c, s, '需要升级设备固件'),
         const SizedBox(height: 14),
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: RCColors.bg,
-            borderRadius: BorderRadius.circular(12),
+            color: c.bg,
+            borderRadius: BorderRadius.circular(s.cardRadius),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 '当前固件（$cur）与新版蓝牙协议不兼容，需要通过 Wi-Fi 自动升级至 $target。',
-                style: const TextStyle(fontSize: 14, color: RCColors.ink),
+                style: TextStyle(fontSize: 14, color: c.ink),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 '• 下一步将扫描并配置 2.4GHz Wi-Fi 网络\n• 下载并静默安装完成后，会自动重新连接蓝牙',
-                style: TextStyle(fontSize: 12, color: RCColors.sec, height: 1.5),
+                style: TextStyle(fontSize: 12, color: c.sec, height: 1.5),
               ),
             ],
           ),
@@ -188,8 +196,8 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
           key: const Key('legacy-upg-start-wifi'),
           onPressed: () => unawaited(ctrl.beginWifiSetup()),
           style: FilledButton.styleFrom(
-            backgroundColor: RCColors.label,
-            foregroundColor: Colors.white,
+            backgroundColor: s.accent,
+            foregroundColor: s.accentFg,
             shape: const StadiumBorder(),
             padding: const EdgeInsets.symmetric(vertical: 13),
           ),
@@ -200,8 +208,8 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
           key: const Key('legacy-upg-cancel'),
           onPressed: () => unawaited(ctrl.dismiss()),
           style: OutlinedButton.styleFrom(
-            foregroundColor: RCColors.ink,
-            side: const BorderSide(color: RCColors.ax),
+            foregroundColor: c.ink,
+            side: BorderSide(color: c.ax),
             shape: const StadiumBorder(),
             padding: const EdgeInsets.symmetric(vertical: 12),
           ),
@@ -211,12 +219,12 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
     );
   }
 
-  Widget _buildScanningWifi() {
+  Widget _buildScanningWifi(RCColorScheme c, RCStyleSpec s) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildHeader('扫描附近 Wi-Fi', subtitle: '正在连接旧版控制通道…'),
+        _buildHeader(c, s, '扫描附近 Wi-Fi', subtitle: '正在连接旧版控制通道…'),
         const SizedBox(height: 22),
         const Center(
           child: SizedBox(
@@ -229,14 +237,14 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
         Text(
           ctrl.statusText.isEmpty ? '正在读取设备网络并扫描 Wi-Fi…' : ctrl.statusText,
           textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 13, color: RCColors.sec),
+          style: TextStyle(fontSize: 13, color: c.sec),
         ),
         const SizedBox(height: 18),
       ],
     );
   }
 
-  Widget _buildWifiSelect() {
+  Widget _buildWifiSelect(RCColorScheme c, RCStyleSpec s) {
     final nets = ctrl.networks;
     final sel = ctrl.selectedNetwork;
     final selName = ctrl.selectedSsid ?? '';
@@ -252,6 +260,8 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
           children: [
             Expanded(
               child: _buildHeader(
+                c,
+                s,
                 '设置升级 Wi-Fi',
                 subtitle: '当前 ${ctrl.currentVersionLabel} → 目标 ${ctrl.targetVersionLabel}',
               ),
@@ -265,12 +275,12 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
         ),
         const SizedBox(height: 10),
         if (nets.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 18),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 18),
             child: Text(
               '未扫描到可用 Wi-Fi，请确认路由器在附近并点击右上角刷新',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: RCColors.sec),
+              style: TextStyle(fontSize: 13, color: c.sec),
             ),
           )
         else
@@ -281,7 +291,7 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
               primary: false,
               itemCount: nets.length,
               separatorBuilder: (_, _) =>
-                  const Divider(height: 1, color: RCColors.sep),
+                  Divider(height: 1, color: c.sep),
               itemBuilder: (context, index) {
                 final n = nets[index];
                 final picked = n.ssid == selName;
@@ -297,7 +307,7 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
                               ? Icons.radio_button_checked
                               : Icons.radio_button_unchecked,
                           size: 18,
-                          color: picked ? RCColors.ok : RCColors.ax,
+                          color: picked ? c.ok : c.ax,
                         ),
                         const SizedBox(width: 8),
                         Expanded(
@@ -309,7 +319,7 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
                               fontSize: 14,
                               fontWeight:
                                   picked ? FontWeight.w600 : FontWeight.w400,
-                              color: RCColors.ink,
+                              color: c.ink,
                             ),
                           ),
                         ),
@@ -321,23 +331,23 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: RCColors.ok.withValues(alpha: 0.14),
+                              color: c.ok.withValues(alpha: 0.14),
                               borderRadius: BorderRadius.circular(6),
                             ),
-                            child: const Text(
+                            child: Text(
                               '已连接',
                               style: TextStyle(
                                 fontSize: 11,
-                                color: RCColors.ok,
+                                color: c.ok,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
                           ),
                         if (n.secure) ...[
-                          const RCIcon(
+                          RCIcon(
                             RCIconKind.lock,
                             size: 12,
-                            color: RCColors.sec,
+                            color: c.sec,
                           ),
                           const SizedBox(width: 5),
                         ],
@@ -351,8 +361,8 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
                                 height: 3.0 + i * 3,
                                 margin: const EdgeInsets.only(left: 2),
                                 color: i <= n.signalLevel
-                                    ? RCColors.ink
-                                    : RCColors.ax,
+                                    ? c.ink
+                                    : c.ax,
                               ),
                           ],
                         ),
@@ -370,7 +380,7 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
                 '设备当前已连上「$selName」，留空密码可直接使用当前连接升级；如要切换或重输密码也可在下方填写。',
-                style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                style: TextStyle(fontSize: 12, color: c.sec),
               ),
             ),
           if (needPassword || alreadyConnected)
@@ -379,7 +389,7 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
               controller: _pwdCtrl,
               obscureText: _obscurePwd,
               onChanged: (_) => setState(() {}),
-              style: const TextStyle(fontSize: 14),
+              style: TextStyle(fontSize: 14, color: c.ink),
               decoration: InputDecoration(
                 hintText: alreadyConnected ? '密码已保存（留空直接升级）' : '输入网络密码',
                 isDense: true,
@@ -389,18 +399,18 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
                 ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: RCColors.ax),
+                  borderSide: BorderSide(color: c.ax),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: RCColors.ax),
+                  borderSide: BorderSide(color: c.ax),
                 ),
                 suffixIcon: IconButton(
                   onPressed: () => setState(() => _obscurePwd = !_obscurePwd),
                   icon: Icon(
                     _obscurePwd ? Icons.visibility_off : Icons.visibility,
                     size: 18,
-                    color: RCColors.sec,
+                    color: c.sec,
                   ),
                 ),
               ),
@@ -412,7 +422,7 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
             child: Text(
               ctrl.formError!,
               key: const Key('legacy-upg-form-error'),
-              style: const TextStyle(fontSize: 12, color: RCColors.danger),
+              style: TextStyle(fontSize: 12, color: c.danger),
             ),
           ),
         const SizedBox(height: 14),
@@ -427,9 +437,9 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
                   ),
                 ),
           style: FilledButton.styleFrom(
-            backgroundColor: RCColors.label,
-            disabledBackgroundColor: RCColors.ax,
-            foregroundColor: Colors.white,
+            backgroundColor: s.accent,
+            disabledBackgroundColor: c.ax,
+            foregroundColor: s.accentFg,
             shape: const StadiumBorder(),
             padding: const EdgeInsets.symmetric(vertical: 13),
           ),
@@ -444,8 +454,8 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
           key: const Key('legacy-upg-cancel'),
           onPressed: () => unawaited(ctrl.dismiss()),
           style: OutlinedButton.styleFrom(
-            foregroundColor: RCColors.ink,
-            side: const BorderSide(color: RCColors.ax),
+            foregroundColor: c.ink,
+            side: BorderSide(color: c.ax),
             shape: const StadiumBorder(),
             padding: const EdgeInsets.symmetric(vertical: 12),
           ),
@@ -455,13 +465,15 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
     );
   }
 
-  Widget _buildProgress() {
+  Widget _buildProgress(RCColorScheme c, RCStyleSpec s) {
     final pct = (ctrl.progress * 100).round().clamp(0, 100);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildHeader(
+          c,
+          s,
           ctrl.step == LegacyUpgradeStep.reconnecting
               ? '正在自动连接蓝牙'
               : '正在自动升级固件',
@@ -474,8 +486,8 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
             key: const Key('legacy-upg-progress'),
             value: ctrl.progress.clamp(0.02, 1.0),
             minHeight: 7,
-            backgroundColor: RCColors.sep,
-            valueColor: const AlwaysStoppedAnimation(RCColors.ok),
+            backgroundColor: c.sep,
+            valueColor: AlwaysStoppedAnimation(c.ok),
           ),
         ),
         const SizedBox(height: 10),
@@ -485,46 +497,46 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
               child: Text(
                 ctrl.statusText,
                 key: const Key('legacy-upg-status'),
-                style: const TextStyle(fontSize: 13, color: RCColors.ink),
+                style: TextStyle(fontSize: 13, color: c.ink),
               ),
             ),
             Text(
               '$pct%',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: RCColors.sec,
+                color: c.sec,
               ),
             ),
           ],
         ),
         const SizedBox(height: 10),
-        const Text(
+        Text(
           '升级与重启期间请保持设备电量充足并放在手机附近，完成后将自动连回蓝牙',
-          style: TextStyle(fontSize: 12, color: RCColors.sec),
+          style: TextStyle(fontSize: 12, color: c.sec),
         ),
         const SizedBox(height: 6),
       ],
     );
   }
 
-  Widget _buildFailed() {
+  Widget _buildFailed(RCColorScheme c, RCStyleSpec s) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildHeader('自动升级未完成'),
+        _buildHeader(c, s, '自动升级未完成'),
         const SizedBox(height: 12),
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: RCColors.danger.withValues(alpha: 0.08),
+            color: c.danger.withValues(alpha: 0.08),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Text(
             ctrl.error ?? '操作失败，请重试',
             key: const Key('legacy-upg-error'),
-            style: const TextStyle(fontSize: 13, color: RCColors.danger),
+            style: TextStyle(fontSize: 13, color: c.danger),
           ),
         ),
         const SizedBox(height: 14),
@@ -532,8 +544,8 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
           key: const Key('legacy-upg-retry'),
           onPressed: () => unawaited(ctrl.retryFailedStep()),
           style: FilledButton.styleFrom(
-            backgroundColor: RCColors.label,
-            foregroundColor: Colors.white,
+            backgroundColor: s.accent,
+            foregroundColor: s.accentFg,
             shape: const StadiumBorder(),
             padding: const EdgeInsets.symmetric(vertical: 12),
           ),
@@ -544,8 +556,8 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
           key: const Key('legacy-upg-back-wifi'),
           onPressed: () => unawaited(ctrl.backToWifiSelection()),
           style: OutlinedButton.styleFrom(
-            foregroundColor: RCColors.ink,
-            side: const BorderSide(color: RCColors.ax),
+            foregroundColor: c.ink,
+            side: BorderSide(color: c.ax),
             shape: const StadiumBorder(),
             padding: const EdgeInsets.symmetric(vertical: 12),
           ),
@@ -555,7 +567,7 @@ class _LegacyUpgradeSheetOverlayState extends State<LegacyUpgradeSheetOverlay> {
         TextButton(
           key: const Key('legacy-upg-cancel'),
           onPressed: () => unawaited(ctrl.dismiss()),
-          child: const Text('关闭', style: TextStyle(color: RCColors.sec)),
+          child: Text('关闭', style: TextStyle(color: c.sec)),
         ),
       ],
     );

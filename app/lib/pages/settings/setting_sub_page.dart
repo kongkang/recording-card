@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import '../../core/device/card_gateway.dart';
 import '../../core/store/agent_config_store.dart';
 import '../../core/store/device_store.dart';
+import '../../core/store/ui_style_store.dart';
 import '../../core/store/voiceprint_library_store.dart';
 import '../../core/theme/tokens.dart';
 import '../../services/audio/voice_sample_capture.dart';
@@ -35,6 +36,7 @@ import 'external_data_hub_body.dart';
 import 'getnote_sync_body.dart';
 import 'health_signal_body.dart';
 import 'memory_search_body.dart';
+import 'ui_style_body.dart';
 
 class SettingSubPage extends StatelessWidget {
   const SettingSubPage({
@@ -48,6 +50,7 @@ class SettingSubPage extends StatelessWidget {
     this.healthSignals,
     this.getNoteStore,
     this.externalDataHub,
+    this.uiStyle,
     this.showPaneBack = false,
     this.backLabel = '返回 Setting',
     this.standalone = false,
@@ -55,7 +58,7 @@ class SettingSubPage extends StatelessWidget {
   });
 
   final String
-  subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extapi' | 'extdata' | 'extapi:<id>' | 'health' | 'dev'
+  subId; // 'login' | 'style' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extapi' | 'extdata' | 'extapi:<id>' | 'health' | 'dev'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
@@ -64,6 +67,7 @@ class SettingSubPage extends StatelessWidget {
   final HealthSignalController? healthSignals;
   final GetNoteSyncStore? getNoteStore;
   final ExternalDataHubStore? externalDataHub;
+  final UIStyleStore? uiStyle;
   final bool showPaneBack;
   final String backLabel;
   final bool standalone;
@@ -79,6 +83,7 @@ class SettingSubPage extends StatelessWidget {
     }
     return switch (subId) {
       'login' => '云端账号授权',
+      'style' => '界面风格',
       'local' => '本地语音引擎',
       'cloud' => '云端模型设置',
       'prompts' => '预设风格与提示词',
@@ -244,6 +249,10 @@ class SettingSubPage extends StatelessWidget {
                       authService: authService,
                       device: device,
                     ),
+                    'style' => UIStyleBody(
+                      styleStore: uiStyle,
+                      device: device,
+                    ),
                     'local' => _LocalEngineBody(
                       controller: modelManager,
                       config: agentConfig,
@@ -283,6 +292,7 @@ class SettingSubPage extends StatelessWidget {
                                       healthSignals: healthSignals,
                                       getNoteStore: getNoteStore,
                                       externalDataHub: externalDataHub,
+                                      uiStyle: uiStyle,
                                       standalone: true,
                                       standaloneBackLabel: '第三方 API 接入',
                                     ),

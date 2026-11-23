@@ -4,18 +4,25 @@ public struct ComplicationDisplayState: Equatable, Sendable {
     public let isRecording: Bool
     public let startedAtMs: Int64?
     public let pendingCount: Int
+    public let uiStyleId: String
     public let updatedAtMs: Int64
 
     public init(
         isRecording: Bool = false,
         startedAtMs: Int64? = nil,
         pendingCount: Int = 0,
+        uiStyleId: String = WatchUIStyle.warmPaper.rawValue,
         updatedAtMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
     ) {
         self.isRecording = isRecording
         self.startedAtMs = startedAtMs
         self.pendingCount = pendingCount
+        self.uiStyleId = uiStyleId
         self.updatedAtMs = updatedAtMs
+    }
+
+    public var uiStyle: WatchUIStyle {
+        WatchUIStyle.fromRawOrDefault(uiStyleId)
     }
 
     public var startedAtDate: Date? {
@@ -31,6 +38,7 @@ public final class ComplicationStateStore {
         static let isRecording = "rc.watch.comp.isRecording"
         static let startedAtMs = "rc.watch.comp.startedAtMs"
         static let pendingCount = "rc.watch.comp.pendingCount"
+        static let uiStyleId = "rc.watch.comp.uiStyleId"
         static let updatedAtMs = "rc.watch.comp.updatedAtMs"
     }
 
@@ -54,6 +62,7 @@ public final class ComplicationStateStore {
             defaults.removeObject(forKey: Keys.startedAtMs)
         }
         defaults.set(state.pendingCount, forKey: Keys.pendingCount)
+        defaults.set(state.uiStyle.rawValue, forKey: Keys.uiStyleId)
         defaults.set(NSNumber(value: state.updatedAtMs), forKey: Keys.updatedAtMs)
     }
 
@@ -61,12 +70,22 @@ public final class ComplicationStateStore {
         let isRecording = defaults.bool(forKey: Keys.isRecording)
         let startedNum = defaults.object(forKey: Keys.startedAtMs) as? NSNumber
         let pendingCount = defaults.integer(forKey: Keys.pendingCount)
+        let uiStyleId = WatchUIStyle.fromRawOrDefault(defaults.string(forKey: Keys.uiStyleId)).rawValue
         let updatedNum = defaults.object(forKey: Keys.updatedAtMs) as? NSNumber
         return ComplicationDisplayState(
             isRecording: isRecording,
             startedAtMs: startedNum?.int64Value,
             pendingCount: max(0, pendingCount),
+            uiStyleId: uiStyleId,
             updatedAtMs: updatedNum?.int64Value ?? 0
         )
+    }
+
+    public func saveStyle(_ style: WatchUIStyle) {
+        defaults.set(style.rawValue, forKey: Keys.uiStyleId)
+    }
+
+    public func loadStyle() -> WatchUIStyle {
+        WatchUIStyle.fromRawOrDefault(defaults.string(forKey: Keys.uiStyleId))
     }
 }
