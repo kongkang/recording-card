@@ -73,6 +73,9 @@ class PipelineProgress {
 
   double get progress {
     if (fileTotal <= 0) return 0;
+    if (stage == PipelineStage.done) {
+      return ((fileIndex + 1) / fileTotal).clamp(0.0, 1.0);
+    }
     final base = fileIndex / fileTotal;
     final step = 1 / fileTotal;
     final slicePart = (sliceTotal ?? 0) <= 0

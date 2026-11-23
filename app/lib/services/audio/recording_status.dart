@@ -18,6 +18,7 @@ class RecordingStatusController extends ChangeNotifier {
   int _syncTotal = 0;
   int _elapsedSeconds = 0;
   int _transcribeCycleMinutes = 15;
+  double? _progress;
 
   /// 用户是否仍处于一次录音会话中；转录完成回到 recording 还是 idle 由它决定。
   bool _sessionActive = false;
@@ -41,6 +42,9 @@ class RecordingStatusController extends ChangeNotifier {
 
   /// 本次录音已持续秒数（由设备时钟同步进来）。
   int get elapsedSeconds => _elapsedSeconds;
+
+  /// 同步/处理真实进度（0.0..1.0）；无确定进度时为 null。
+  double? get progress => _progress;
 
   /// 批量转写与整理周期（分钟）。
   int get transcribeCycleMinutes => _transcribeCycleMinutes;
@@ -69,6 +73,7 @@ class RecordingStatusController extends ChangeNotifier {
       clearError: true,
       clearDetail: true,
       clearSyncProgress: true,
+      clearProgress: true,
     );
   }
 
@@ -94,6 +99,7 @@ class RecordingStatusController extends ChangeNotifier {
       pendingSlices: 0,
       clearDetail: true,
       clearSyncProgress: true,
+      clearProgress: true,
     );
   }
 
@@ -103,11 +109,13 @@ class RecordingStatusController extends ChangeNotifier {
   /// updateQueue(active:false) 才会收起到 idle，而不是回到「正在录音」。
   /// 设备约 5 分钟一个切片，积压最多约 30 分钟；同步期间顶部状态块
   /// 表示「最近一段尚未转录完成」。
-  void startSync({String detail = '正在整理最近一段…'}) {
+  void startSync({String detail = '正在整理最近一段…', double? progress}) {
     _sessionActive = false;
     _commit(
       phase: RecordingPhase.syncing,
       detail: detail,
+      progress: progress,
+      clearProgress: progress == null,
       clearError: true,
       clearSyncProgress: true,
     );
@@ -122,6 +130,7 @@ class RecordingStatusController extends ChangeNotifier {
     int? remaining,
     int? done,
     int? total,
+    double? progress,
   }) {
     if (_sessionActive) {
       _commit(
@@ -132,6 +141,7 @@ class RecordingStatusController extends ChangeNotifier {
         pendingSlices: remaining,
         syncDone: done,
         syncTotal: total,
+        progress: progress,
       );
       return;
     }
@@ -141,6 +151,7 @@ class RecordingStatusController extends ChangeNotifier {
       pendingSlices: remaining,
       syncDone: done,
       syncTotal: total,
+      progress: progress,
     );
   }
 
@@ -186,7 +197,11 @@ class RecordingStatusController extends ChangeNotifier {
 
   /// 进入错误态并保留可读信息；pending 保持不变，便于重试后继续消费。
   void onError(Object error) {
-    _commit(phase: RecordingPhase.error, lastError: error.toString());
+    _commit(
+      phase: RecordingPhase.error,
+      lastError: error.toString(),
+      clearProgress: true,
+    );
   }
 
   /// 处理管线直接更新队列：剩余片数 + 是否仍在处理。
@@ -218,6 +233,7 @@ class RecordingStatusController extends ChangeNotifier {
       pendingSlices: pending,
       clearDetail: true,
       clearSyncProgress: true,
+      clearProgress: true,
     );
   }
 
@@ -228,9 +244,11 @@ class RecordingStatusController extends ChangeNotifier {
     int? syncTotal,
     String? lastError,
     String? detail,
+    double? progress,
     bool clearError = false,
     bool clearDetail = false,
     bool clearSyncProgress = false,
+    bool clearProgress = false,
   }) {
     final phaseBefore = _phase;
     final pendingBefore = _pendingSlices;
@@ -238,6 +256,7 @@ class RecordingStatusController extends ChangeNotifier {
     final syncTotalBefore = _syncTotal;
     final errorBefore = _lastError;
     final detailBefore = _detail;
+    final progressBefore = _progress;
 
     if (phase != null) _phase = phase;
     if (pendingSlices != null) {
@@ -264,13 +283,19 @@ class RecordingStatusController extends ChangeNotifier {
     } else if (lastError != null) {
       _lastError = lastError;
     }
+    if (clearProgress) {
+      _progress = null;
+    } else if (progress != null && progress.isFinite) {
+      _progress = progress.clamp(0.0, 1.0).toDouble();
+    }
 
     final changed = _phase != phaseBefore ||
         _pendingSlices != pendingBefore ||
         _syncDone != syncDoneBefore ||
         _syncTotal != syncTotalBefore ||
         _lastError != errorBefore ||
-        _detail != detailBefore;
+        _detail != detailBefore ||
+        _progress != progressBefore;
     if (changed) notifyListeners();
   }
 }

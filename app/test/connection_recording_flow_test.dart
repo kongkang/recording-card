@@ -181,6 +181,7 @@ void main() {
 
     expect(_statusBlock(), findsOneWidget);
     expect(find.text('正在同步'), findsOneWidget);
+    expect(find.byKey(const Key('recording-status-progress')), findsOneWidget);
     expect(
       find.byKey(const Key('sync-banner')),
       findsNothing,
