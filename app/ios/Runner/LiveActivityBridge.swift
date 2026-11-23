@@ -6,6 +6,71 @@ import UIKit
 import ActivityKit
 #endif
 
+private final class LiveActivityBgTaskToken {
+  private let lock = NSLock()
+  private var taskId: UIBackgroundTaskIdentifier = .invalid
+  private var expired = false
+
+  func begin(name: String) {
+    let startWork = {
+      var created: UIBackgroundTaskIdentifier = .invalid
+      created = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+        self?.handleExpiration()
+      }
+      self.lock.lock()
+      if self.expired {
+        self.lock.unlock()
+        if created != .invalid {
+          UIApplication.shared.endBackgroundTask(created)
+        }
+        return
+      }
+      self.taskId = created
+      self.lock.unlock()
+    }
+    if Thread.isMainThread {
+      startWork()
+    } else {
+      DispatchQueue.main.async(execute: startWork)
+    }
+  }
+
+  private func handleExpiration() {
+    lock.lock()
+    expired = true
+    let id = taskId
+    taskId = .invalid
+    lock.unlock()
+    if id != .invalid {
+      let endWork = {
+        UIApplication.shared.endBackgroundTask(id)
+      }
+      if Thread.isMainThread {
+        endWork()
+      } else {
+        DispatchQueue.main.async(execute: endWork)
+      }
+    }
+  }
+
+  func end() {
+    lock.lock()
+    expired = true
+    let id = taskId
+    taskId = .invalid
+    lock.unlock()
+    guard id != .invalid else { return }
+    let endWork = {
+      UIApplication.shared.endBackgroundTask(id)
+    }
+    if Thread.isMainThread {
+      endWork()
+    } else {
+      DispatchQueue.main.async(execute: endWork)
+    }
+  }
+}
+
 final class LiveActivityBridge {
   static let shared = LiveActivityBridge()
 
@@ -15,6 +80,9 @@ final class LiveActivityBridge {
   private var channel: FlutterMethodChannel?
   private var pendingActionToggle = false
   private var pendingActionAgent = false
+  private var operationSeq: UInt64 = 0
+  private var activeSessionDesired = false
+  private var lastOperationTask: Task<Void, Never>?
   private var hourBlinkTask: Task<Void, Never>?
 
   private init() {
@@ -31,6 +99,35 @@ final class LiveActivityBridge {
       queue: .main
     ) { [weak self] _ in
       self?.triggerActionButtonAgent()
+    }
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.willResignActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.cleanupOrphanedActivitiesIfIdle()
+    }
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.cleanupOrphanedActivitiesIfIdle()
+    }
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.willTerminateNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.handleAppWillTerminate()
+    }
+  }
+
+  private func runOnMain(_ work: @escaping () -> Void) {
+    if Thread.isMainThread {
+      work()
+    } else {
+      DispatchQueue.main.async(execute: work)
     }
   }
 
@@ -54,6 +151,28 @@ final class LiveActivityBridge {
       DispatchQueue.main.async {
         ch.invokeMethod("actionButtonAgent", arguments: nil)
       }
+    }
+  }
+
+  func cleanupOrphanedActivitiesIfIdle() {
+    #if canImport(ActivityKit)
+    if #available(iOS 16.1, *) {
+      runOnMain { [weak self] in
+        guard let self, !self.activeSessionDesired else { return }
+        let hasLingering = Activity<RecordingCardActivityAttributes>.activities.contains {
+          $0.activityState != .dismissed
+        }
+        if hasLingering {
+          self.enqueueStopActivities(result: nil)
+        }
+      }
+    }
+    #endif
+  }
+
+  private func handleAppWillTerminate() {
+    runOnMain { [weak self] in
+      self?.enqueueStopActivities(result: nil)
     }
   }
 
@@ -91,7 +210,14 @@ final class LiveActivityBridge {
         ?? Int64(Date().timeIntervalSince1970 * 1000)
       let title = (args?["title"] as? String) ?? "录音卡"
       let subtitle = (args?["subtitle"] as? String) ?? "本机录音运行中"
-      startActivity(startedAtMs: startedAtMs, title: title, subtitle: subtitle, result: result)
+      let isRecording = (args?["isRecording"] as? Bool) ?? true
+      startActivity(
+        startedAtMs: startedAtMs,
+        title: title,
+        subtitle: subtitle,
+        isRecording: isRecording,
+        result: result
+      )
     case "stop":
       stopActivity(result: result)
     default:
@@ -150,12 +276,7 @@ final class LiveActivityBridge {
     #if canImport(ActivityKit)
     if #available(iOS 16.1, *) {
       let activities = Activity<RecordingCardActivityAttributes>.activities
-      let current = activities.first(where: { activity in
-        if #available(iOS 16.2, *) {
-          return activity.activityState == .active || activity.activityState == .stale
-        }
-        return activity.activityState == .active
-      })
+      let current = activities.first(where: { Self.isLiveActivityState($0.activityState) })
       if let activity = current {
         let state: RecordingCardActivityAttributes.ContentState
         if #available(iOS 16.2, *) {
@@ -181,72 +302,123 @@ final class LiveActivityBridge {
     startedAtMs: Int64,
     title: String,
     subtitle: String,
+    isRecording: Bool,
     result: @escaping FlutterResult
   ) {
     #if canImport(ActivityKit)
     if #available(iOS 16.1, *) {
-      Task { @MainActor in
+      runOnMain { [weak self] in
+        guard let self else {
+          result(nil)
+          return
+        }
+        self.operationSeq &+= 1
+        let seq = self.operationSeq
+        self.activeSessionDesired = true
         self.hourBlinkTask?.cancel()
         self.hourBlinkTask = nil
-
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-          result(nil)
-          return
-        }
-        let elapsedSec = Date().timeIntervalSince1970 - (Double(startedAtMs) / 1000.0)
-        let overHour = elapsedSec >= 3600.0
-        let state = RecordingCardActivityAttributes.ContentState(
-          title: title,
-          subtitle: subtitle,
-          startedAtMs: startedAtMs,
-          isRecording: true,
-          isOverOneHour: overHour,
-          colonVisible: true
-        )
-        let hourSwitchDate: Date? = overHour
-          ? nil
-          : Date(timeIntervalSince1970: (Double(startedAtMs) / 1000.0) + 3600.0)
-        if let existing = Activity<RecordingCardActivityAttributes>.activities.first {
-          if #available(iOS 16.2, *) {
-            await existing.update(ActivityContent(state: state, staleDate: hourSwitchDate))
-          } else {
-            await existing.update(using: state)
+        let previous = self.lastOperationTask
+        let task = Task { @MainActor [weak self] in
+          await previous?.value
+          guard let self,
+                self.operationSeq == seq,
+                self.activeSessionDesired else {
+            result(nil)
+            return
           }
-          self.scheduleHourTransitionAndBlink(
-            startedAtMs: startedAtMs,
-            title: title,
-            subtitle: subtitle
-          )
-          result(existing.id)
-          return
-        }
-        do {
-          let attrs = RecordingCardActivityAttributes(appTitle: title)
-          let createdId: String
-          if #available(iOS 16.2, *) {
-            let created = try Activity.request(
-              attributes: attrs,
-              content: ActivityContent(state: state, staleDate: hourSwitchDate),
-              pushType: nil
-            )
-            createdId = created.id
-          } else {
-            let created = try Activity.request(
-              attributes: attrs,
-              contentState: state,
-              pushType: nil
-            )
-            createdId = created.id
+          guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            result(nil)
+            return
           }
-          self.scheduleHourTransitionAndBlink(
-            startedAtMs: startedAtMs,
+          let elapsedSec = Date().timeIntervalSince1970 - (Double(startedAtMs) / 1000.0)
+          let overHour = isRecording && elapsedSec >= 3600.0
+          let state = RecordingCardActivityAttributes.ContentState(
             title: title,
-            subtitle: subtitle
+            subtitle: subtitle,
+            startedAtMs: startedAtMs,
+            isRecording: isRecording,
+            isOverOneHour: overHour,
+            colonVisible: true
           )
-          result(createdId)
-        } catch {
-          result(nil)
+          let hourSwitchDate: Date? = (!isRecording || overHour)
+            ? nil
+            : Date(timeIntervalSince1970: (Double(startedAtMs) / 1000.0) + 3600.0)
+          let liveActivities = Activity<RecordingCardActivityAttributes>.activities.filter {
+            Self.isLiveActivityState($0.activityState)
+          }
+          if let existing = liveActivities.first {
+            for extra in liveActivities.dropFirst() {
+              await self.endSingleActivity(extra)
+            }
+            guard self.operationSeq == seq, self.activeSessionDesired else {
+              if !self.activeSessionDesired {
+                await self.endAllActivitiesNow()
+              }
+              result(nil)
+              return
+            }
+            if #available(iOS 16.2, *) {
+              await existing.update(ActivityContent(state: state, staleDate: hourSwitchDate))
+            } else {
+              await existing.update(using: state)
+            }
+            guard self.operationSeq == seq, self.activeSessionDesired else {
+              if !self.activeSessionDesired {
+                await self.endAllActivitiesNow()
+              }
+              result(nil)
+              return
+            }
+            if isRecording {
+              self.scheduleHourTransitionAndBlink(
+                seq: seq,
+                startedAtMs: startedAtMs,
+                title: title,
+                subtitle: subtitle
+              )
+            }
+            result(existing.id)
+            return
+          }
+          do {
+            let attrs = RecordingCardActivityAttributes(appTitle: title)
+            let createdId: String
+            if #available(iOS 16.2, *) {
+              let created = try Activity.request(
+                attributes: attrs,
+                content: ActivityContent(state: state, staleDate: hourSwitchDate),
+                pushType: nil
+              )
+              createdId = created.id
+            } else {
+              let created = try Activity.request(
+                attributes: attrs,
+                contentState: state,
+                pushType: nil
+              )
+              createdId = created.id
+            }
+            guard self.operationSeq == seq, self.activeSessionDesired else {
+              if !self.activeSessionDesired {
+                await self.endAllActivitiesNow()
+              }
+              result(nil)
+              return
+            }
+            if isRecording {
+              self.scheduleHourTransitionAndBlink(
+                seq: seq,
+                startedAtMs: startedAtMs,
+                title: title,
+                subtitle: subtitle
+              )
+            }
+            result(createdId)
+          } catch {
+            result(nil)
+          }
         }
+        self.lastOperationTask = task
       }
       return
     }
@@ -256,8 +428,48 @@ final class LiveActivityBridge {
 
   #if canImport(ActivityKit)
   @available(iOS 16.1, *)
+  private static func isLiveActivityState(_ state: ActivityState) -> Bool {
+    if state == .active { return true }
+    if #available(iOS 16.2, *) {
+      if state == .stale { return true }
+    }
+    return false
+  }
+
+  @available(iOS 16.1, *)
+  @MainActor
+  private func endSingleActivity(_ activity: Activity<RecordingCardActivityAttributes>) async {
+    guard activity.activityState != .dismissed else { return }
+    let ended = RecordingCardActivityAttributes.ContentState(
+      title: "录音卡",
+      subtitle: "已停止",
+      startedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
+      isRecording: false,
+      isOverOneHour: false,
+      colonVisible: true
+    )
+    if #available(iOS 16.2, *) {
+      await activity.end(
+        ActivityContent(state: ended, staleDate: nil),
+        dismissalPolicy: .immediate
+      )
+    } else {
+      await activity.end(using: ended, dismissalPolicy: .immediate)
+    }
+  }
+
+  @available(iOS 16.1, *)
+  @MainActor
+  private func endAllActivitiesNow() async {
+    for activity in Activity<RecordingCardActivityAttributes>.activities {
+      await endSingleActivity(activity)
+    }
+  }
+
+  @available(iOS 16.1, *)
   @MainActor
   private func scheduleHourTransitionAndBlink(
+    seq: UInt64,
     startedAtMs: Int64,
     title: String,
     subtitle: String
@@ -271,11 +483,16 @@ final class LiveActivityBridge {
 
     // 仅在满 1 小时（3600s）时刻单次唤醒切换 MM:SS → HH:MM；1Hz 冒号闪烁交由 Widget 端
     // RCLcdBlink-Regular + TimeDataSource(.hourMinuteSecond) 系统级驱动，不再每秒轮询。
-    hourBlinkTask = Task { @MainActor in
+    hourBlinkTask = Task { @MainActor [weak self] in
       let nanos = UInt64(waitBeforeHour * 1_000_000_000)
       try? await Task.sleep(nanoseconds: nanos)
-      guard !Task.isCancelled,
-            let activity = Activity<RecordingCardActivityAttributes>.activities.first else {
+      guard let self,
+            !Task.isCancelled,
+            self.operationSeq == seq,
+            self.activeSessionDesired,
+            let activity = Activity<RecordingCardActivityAttributes>.activities.first(where: {
+              Self.isLiveActivityState($0.activityState)
+            }) else {
         return
       }
       let next = RecordingCardActivityAttributes.ContentState(
@@ -296,35 +513,41 @@ final class LiveActivityBridge {
   #endif
 
   private func stopActivity(result: @escaping FlutterResult) {
+    enqueueStopActivities(result: result)
+  }
+
+  private func enqueueStopActivities(result: FlutterResult?) {
     #if canImport(ActivityKit)
     if #available(iOS 16.1, *) {
-      Task { @MainActor in
+      runOnMain { [weak self] in
+        guard let self else {
+          result?(nil)
+          return
+        }
+        self.operationSeq &+= 1
+        self.activeSessionDesired = false
         self.hourBlinkTask?.cancel()
         self.hourBlinkTask = nil
-
-        let ended = RecordingCardActivityAttributes.ContentState(
-          title: "录音卡",
-          subtitle: "已停止",
-          startedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
-          isRecording: false,
-          isOverOneHour: false,
-          colonVisible: true
-        )
-        for activity in Activity<RecordingCardActivityAttributes>.activities {
-          if #available(iOS 16.2, *) {
-            await activity.end(
-              ActivityContent(state: ended, staleDate: nil),
-              dismissalPolicy: .immediate
-            )
-          } else {
-            await activity.end(using: ended, dismissalPolicy: .immediate)
+        let bgToken = LiveActivityBgTaskToken()
+        bgToken.begin(name: "RCLiveActivityStop")
+        let previous = self.lastOperationTask
+        let task = Task { @MainActor [weak self] in
+          defer { bgToken.end() }
+          await previous?.value
+          guard let self else {
+            result?(nil)
+            return
           }
+          if !self.activeSessionDesired {
+            await self.endAllActivitiesNow()
+          }
+          result?(nil)
         }
-        result(nil)
+        self.lastOperationTask = task
       }
       return
     }
     #endif
-    result(nil)
+    result?(nil)
   }
 }
