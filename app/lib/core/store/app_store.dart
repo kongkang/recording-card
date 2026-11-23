@@ -314,6 +314,7 @@ class AppStore extends ChangeNotifier {
     if (_disposed) return;
     final pipeline = _pipeline;
     if (pipeline == null) return;
+    var touchedSyncBanner = false;
     try {
       if (flushWatch != null) {
         await flushWatch();
@@ -325,6 +326,7 @@ class AppStore extends ChangeNotifier {
       await Future<void>.value();
       await _liveIngestTail;
       if (pullBleFiles && !pipeline.isBusy && _deviceReady) {
+        touchedSyncBanner = true;
         await pipeline.transcribeLocalPendingOnly(
           onProgress: _onPipelineProgress,
         );
@@ -341,8 +343,16 @@ class AppStore extends ChangeNotifier {
     } on Object catch (e) {
       debugPrint('[store] syncAfterBleReconnect failed: $e');
     } finally {
+      if (touchedSyncBanner) {
+        syncStage = null;
+        syncProgress = 0;
+        syncText = '';
+      }
       if (!_isActivelyRecording) {
         _status?.updateQueue(remaining: 0, active: false);
+      }
+      if (!_disposed) {
+        notifyListeners();
       }
     }
   }
@@ -1528,6 +1538,7 @@ class AppStore extends ChangeNotifier {
     if (pipeline == null || pipeline.isBusy || _isActivelyRecording) return;
     if (_pendingRunning) return;
     _pendingRunning = true;
+    var touchedSyncBanner = false;
     try {
       // 1) 纯本机一次性重检此前因直流偏置误判为「未识别到人声」的实时切片（无需连接录音卡）
       try {
@@ -1563,6 +1574,7 @@ class AppStore extends ChangeNotifier {
       _status?.startSync(detail: '正在整理本地录音…');
       // 兜底超时：任一条录音卡死（设备少发字节等）都不能让后台占着链路不放，
       // 否则界面会一直停在"正在整理"，录音/同步全部排队。
+      touchedSyncBanner = true;
       await pipeline
           .processPending(onProgress: _onPipelineProgress)
           .timeout(const Duration(seconds: 90));
@@ -1576,10 +1588,17 @@ class AppStore extends ChangeNotifier {
       debugPrint('[store] 续跑失败：$e');
     } finally {
       _pendingRunning = false;
+      if (touchedSyncBanner) {
+        syncStage = null;
+        syncProgress = 0;
+        syncText = '';
+      }
       if (!_isActivelyRecording) {
         _status?.updateQueue(remaining: 0, active: false);
       }
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
     }
   }
 
