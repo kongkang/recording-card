@@ -1,0 +1,1842 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>录音卡 — Apple Watch 六套风格设计</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;700&family=Plus+Jakarta+Sans:wght@500;600;700&family=Space+Grotesk:wght@500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #F6F6F4;
+      color: #141518;
+      font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", "PingFang SC", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 40px 36px 96px;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+      padding-bottom: 28px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .brand-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      overflow: hidden;
+      flex: 0 0 40px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+    .brand-title {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+    .brand-sub {
+      margin: 4px 0 0;
+      font-size: 14px;
+      color: #6B7280;
+    }
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .tab-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .tab-pill {
+      border: 1px solid #E5E7EB;
+      background: #FFFFFF;
+      color: #374151;
+      border-radius: 999px;
+      padding: 8px 15px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.16s ease;
+      text-decoration: none;
+    }
+    .tab-pill:hover { border-color: #9CA3AF; }
+    .tab-pill.is-active {
+      background: #141518;
+      color: #FFFFFF;
+      border-color: #141518;
+    }
+    .spotlight {
+      background: #FFFFFF;
+      border: 1px solid #E8E8E4;
+      border-radius: 24px;
+      padding: 28px 32px 32px;
+      box-shadow: 0 12px 36px rgba(17, 19, 24, 0.04);
+    }
+    .spotlight-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+    .spotlight-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .spotlight-line {
+      margin: 5px 0 0;
+      font-size: 14px;
+      color: #525866;
+    }
+    .ctl-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .btn-pill {
+      border: 1px solid #D1D5DB;
+      background: #FFFFFF;
+      color: #141518;
+      border-radius: 999px;
+      padding: 8px 15px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .btn-pill:hover { border-color: #9CA3AF; }
+    .btn-pill.is-on {
+      background: #141518;
+      color: #FFFFFF;
+      border-color: #141518;
+    }
+    .btn-solid {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      background: #141518;
+      color: #FFFFFF;
+      padding: 9px 18px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .grid-section {
+      margin-top: 56px;
+    }
+    .grid-title {
+      margin: 0 0 20px;
+      font-size: 15px;
+      font-weight: 600;
+      color: #6B7280;
+    }
+    .watch-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 24px;
+    }
+    .wgrid-card {
+      background: #FFFFFF;
+      border: 1px solid #E8E8E4;
+      border-radius: 20px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+    }
+    .wgrid-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 28px rgba(17, 19, 24, 0.06);
+    }
+    .wgrid-card.is-active {
+      border-color: #141518;
+    }
+    .wgrid-body {
+      padding: 18px 20px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex: 1;
+    }
+    .wgrid-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .wgrid-title {
+      margin: 0;
+      font-size: 15.5px;
+      font-weight: 700;
+      color: #141518;
+    }
+    .swatch-row {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex: none;
+    }
+    .swatch-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(0, 0, 0, 0.16);
+      display: inline-block;
+    }
+    .wgrid-line {
+      margin: 0;
+      font-size: 13px;
+      color: #525866;
+      line-height: 1.5;
+    }
+    .wgrid-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: auto;
+      padding-top: 4px;
+    }
+    .link-primary {
+      font-size: 13px;
+      font-weight: 600;
+      color: #141518;
+      text-decoration: none;
+      background: none;
+      border: 0;
+      padding: 0;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .link-primary:hover { text-decoration: underline; }
+    .link-quiet {
+      font-size: 13px;
+      font-weight: 500;
+      color: #6B7280;
+      text-decoration: none;
+    }
+    .link-quiet:hover { color: #141518; }
+    @media (max-width: 1020px) {
+      .watch-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 680px) {
+      .wrap { padding: 24px 18px 72px; }
+      .watch-grid { grid-template-columns: 1fr; }
+    }
+    /* Shared 6-Style Apple Watch Series 10 (46mm) Showcase Styles */
+.rcw-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+}
+
+.rcw-trio {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 36px;
+  flex-wrap: wrap;
+  width: 100%;
+  padding: 12px 0 6px;
+}
+
+.rcw-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.rcw-slot-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4B5563;
+  letter-spacing: -0.01em;
+}
+
+.gallery-bar-dark ~ #watch-stage-wrap .rcw-slot-label,
+.rcw-on-dark .rcw-slot-label {
+  color: rgba(244, 244, 246, 0.72);
+}
+
+/* Watch physical hardware assembly */
+.rcw-unit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  user-select: none;
+}
+
+.rcw-band-top,
+.rcw-band-bot {
+  width: 138px;
+  height: 30px;
+  background: linear-gradient(180deg, #2D2D31, #1A1A1D);
+  border-radius: 14px 14px 4px 4px;
+  box-shadow: inset 0 1px 4px rgba(255, 255, 255, 0.08);
+}
+
+.rcw-band-bot {
+  border-radius: 4px 4px 14px 14px;
+}
+
+.rcw-case-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.watch-case.rcw-case {
+  width: 252px;
+  height: 304px;
+  border-radius: 54px;
+  padding: 13px;
+  background: linear-gradient(148deg, #343438, #141416);
+  box-shadow: 0 22px 44px rgba(17, 19, 24, 0.24), inset 0 0 0 1.5px rgba(255, 255, 255, 0.14);
+  position: relative;
+  transition: transform 0.12s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.watch-case.rcw-case.knock-hit {
+  transform: translateY(-2px) scale(0.985);
+}
+
+/* Case finish per direction */
+.rcw-theme-dir1 .watch-case.rcw-case {
+  background: linear-gradient(148deg, #474640, #23231F);
+}
+.rcw-theme-dir1 .rcw-band-top,
+.rcw-theme-dir1 .rcw-band-bot {
+  background: linear-gradient(180deg, #3D3C36, #242420);
+}
+.rcw-theme-dir2 .watch-case.rcw-case {
+  background: linear-gradient(148deg, #525763, #232730);
+}
+.rcw-theme-dir3 .watch-case.rcw-case {
+  background: linear-gradient(148deg, #453C34, #1E1915);
+}
+.rcw-theme-dir3 .rcw-band-top,
+.rcw-theme-dir3 .rcw-band-bot {
+  background: linear-gradient(180deg, #383029, #1E1A16);
+}
+.rcw-theme-dir4 .watch-case.rcw-case {
+  background: linear-gradient(148deg, #25272C, #0D0E10);
+}
+.rcw-theme-dir5 .watch-case.rcw-case {
+  background: linear-gradient(148deg, #595F6A, #2A2F38);
+}
+
+.rcw-crown {
+  position: absolute;
+  right: -10px;
+  top: 74px;
+  width: 11px;
+  height: 44px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, #62626A, #2B2B30);
+  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+  padding: 0;
+}
+
+.rcw-sidebtn {
+  position: absolute;
+  right: -6px;
+  top: 148px;
+  width: 7px;
+  height: 58px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: linear-gradient(180deg, #4A4A50, #232327);
+  cursor: pointer;
+  padding: 0;
+}
+
+.rcw-screen {
+  width: 100%;
+  height: 100%;
+  border-radius: 42px;
+  overflow: hidden;
+  background: #060607;
+  color: #F6F4EF;
+  padding: 12px 12px 11px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  transition: opacity 0.2s, filter 0.2s;
+}
+
+.rcw-screen.is-aod {
+  opacity: 0.72;
+  filter: brightness(0.68);
+}
+
+/* Theme screen foundations */
+.rcw-theme-dir1 .rcw-screen {
+  background: #0D0E0C;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 10px 10px;
+  color: #F4F3EE;
+}
+.rcw-theme-dir2 .rcw-screen {
+  background: #080A0F;
+  color: #F5F7FA;
+}
+.rcw-theme-dir3 .rcw-screen {
+  background: #0E0C0A;
+  color: #F4EDE0;
+}
+.rcw-theme-dir4 .rcw-screen {
+  background: #000000;
+  color: #F3F4F6;
+}
+.rcw-theme-dir5 .rcw-screen {
+  background: #080A0D;
+  color: #F4F6F9;
+}
+
+/* Dir 5 Liquid Glass subtle top ambient status glow */
+.rcw-ambient-glow {
+  display: none;
+  position: absolute;
+  left: -10px;
+  right: -10px;
+  top: -12px;
+  height: 104px;
+  pointer-events: none;
+  z-index: 0;
+}
+.rcw-theme-dir5 .rcw-ambient-glow {
+  display: block;
+  background: radial-gradient(ellipse at 50% 0%, rgba(56, 145, 125, 0.34) 0%, transparent 74%);
+}
+.rcw-theme-dir5 .rcw-screen.is-rec .rcw-ambient-glow {
+  background: radial-gradient(ellipse at 50% 0%, rgba(232, 92, 66, 0.38) 0%, transparent 74%);
+}
+
+/* Dir 2 Chronos left vertical time rail */
+.rcw-chrono-rail {
+  display: none;
+  position: absolute;
+  left: 8px;
+  top: 42px;
+  bottom: 48px;
+  width: 3px;
+  border-radius: 99px;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(59, 130, 246, 0.45) 0 2px,
+    transparent 2px 9px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+.rcw-theme-dir2 .rcw-screen.is-app-view .rcw-chrono-rail {
+  display: block;
+}
+
+.rcw-knock-ripple {
+  position: absolute;
+  inset: 16px;
+  border-radius: 28px;
+  border: 2px solid #F2A23C;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 20;
+}
+.rcw-theme-dir1 .rcw-knock-ripple { border-color: #FF5514; border-radius: 16px; }
+.rcw-theme-dir2 .rcw-knock-ripple { border-color: #EF4444; }
+.rcw-theme-dir3 .rcw-knock-ripple { border-color: #C83E2B; }
+.rcw-theme-dir4 .rcw-knock-ripple { border-color: #F5A623; }
+.rcw-theme-dir5 .rcw-knock-ripple { border-color: #E85C42; }
+
+@keyframes rcwKnockRipple {
+  0% { opacity: 0.9; transform: scale(0.76); }
+  100% { opacity: 0; transform: scale(1.03); }
+}
+.rcw-knock-ripple.active {
+  animation: rcwKnockRipple 0.46s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes rcwPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+@keyframes rcwWave {
+  0%, 100% { transform: scaleY(0.5); opacity: 0.65; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+
+/* Status top bar (NO app title) */
+.rcw-top {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  height: 18px;
+  padding: 0 4px;
+  flex: none;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.rcw-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
+  white-space: nowrap;
+}
+
+.rcw-conn-dot {
+  width: 6.5px;
+  height: 6.5px;
+  border-radius: 50%;
+  background: #2DC653;
+  flex: none;
+}
+.rcw-conn.is-off .rcw-conn-dot { background: #F59E0B; }
+.rcw-theme-dir1 .rcw-conn .rcw-conn-dot { background: #A3B86C; border-radius: 1px; }
+.rcw-theme-dir1 .rcw-conn.is-off .rcw-conn-dot { background: #FF5514; }
+.rcw-theme-dir2 .rcw-conn .rcw-conn-dot { background: #3B82F6; }
+
+.rcw-top-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rcw-batt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.72);
+}
+.rcw-batt svg { color: #2DC653; }
+.rcw-theme-dir1 .rcw-batt svg { color: #A3B86C; }
+.rcw-theme-dir4 .rcw-batt svg { color: #F5A623; }
+.rcw-batt.lv-mid svg { color: #F59E0B; }
+.rcw-batt.lv-low svg { color: #EF4444; }
+
+.rcw-clock {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+/* Main Watch App view */
+.rcw-app {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rcw-hero {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.rcw-date {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #F2A23C;
+  letter-spacing: 0.02em;
+}
+.rcw-theme-dir1 .rcw-date { font-family: "Space Mono", ui-monospace, monospace; color: #FF5514; letter-spacing: 0.04em; }
+.rcw-theme-dir2 .rcw-date { color: #60A5FA; }
+.rcw-theme-dir3 .rcw-date { font-family: "Noto Serif SC", Georgia, serif; color: #D96552; }
+.rcw-theme-dir4 .rcw-date { color: #F5A623; }
+.rcw-theme-dir5 .rcw-date { color: #6CD4B9; }
+
+.rcw-bigclock {
+  font-size: 42px;
+  font-weight: 600;
+  line-height: 1.02;
+  letter-spacing: -1.4px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 3px;
+}
+.rcw-theme-dir1 .rcw-bigclock { font-family: "Space Mono", ui-monospace, monospace; font-size: 36px; letter-spacing: -1px; }
+.rcw-theme-dir2 .rcw-bigclock { font-family: "Instrument Serif", Georgia, serif; font-size: 46px; letter-spacing: -0.5px; }
+.rcw-theme-dir3 .rcw-bigclock { font-family: "Noto Serif SC", Georgia, serif; font-size: 40px; }
+.rcw-theme-dir4 .rcw-bigclock { font-family: "Space Grotesk", -apple-system, sans-serif; }
+.rcw-theme-dir5 .rcw-bigclock { font-family: "Plus Jakarta Sans", -apple-system, sans-serif; }
+
+.rcw-idle-hint {
+  font-size: 9.5px;
+  color: rgba(255, 255, 255, 0.44);
+  margin-top: 6px;
+}
+
+.rcw-recline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.rcw-rec-dot {
+  width: 6.5px;
+  height: 6.5px;
+  border-radius: 50%;
+  background: #E85035;
+  animation: rcwPulse 1s infinite;
+}
+.rcw-theme-dir1 .rcw-rec-dot { background: #FF5514; border-radius: 1px; }
+.rcw-theme-dir2 .rcw-rec-dot { background: #EF4444; }
+.rcw-theme-dir3 .rcw-rec-dot { background: #C83E2B; }
+.rcw-theme-dir4 .rcw-rec-dot { background: #F5A623; }
+.rcw-theme-dir5 .rcw-rec-dot { background: #E85C42; }
+
+.rcw-mark-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(242, 162, 60, 0.2);
+  color: #F2A23C;
+  font-size: 9.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.rcw-theme-dir1 .rcw-mark-pill { background: #FF5514; color: #FFFFFF; border-radius: 3px; font-family: "Space Mono", monospace; }
+.rcw-theme-dir2 .rcw-mark-pill { background: rgba(239, 68, 68, 0.22); color: #F87171; }
+.rcw-theme-dir3 .rcw-mark-pill { background: #A62B21; color: #F7F2E8; border-radius: 3px; font-family: "Noto Serif SC", serif; }
+.rcw-theme-dir4 .rcw-mark-pill { background: rgba(245, 166, 35, 0.22); color: #F5A623; }
+.rcw-theme-dir5 .rcw-mark-pill { background: rgba(232, 92, 66, 0.22); color: #FFA28F; }
+
+.rcw-timer {
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.06;
+  letter-spacing: -0.8px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  margin-top: 3px;
+}
+.rcw-theme-dir1 .rcw-timer { font-family: "Space Mono", ui-monospace, monospace; font-size: 30px; letter-spacing: -0.5px; }
+.rcw-theme-dir2 .rcw-timer { font-family: "Space Grotesk", ui-monospace, sans-serif; }
+.rcw-theme-dir3 .rcw-timer { font-family: "Noto Serif SC", Georgia, serif; letter-spacing: 0; }
+.rcw-theme-dir4 .rcw-timer { font-family: "Space Grotesk", ui-monospace, sans-serif; color: #FFFFFF; }
+.rcw-theme-dir5 .rcw-timer { font-family: "Plus Jakarta Sans", -apple-system, sans-serif; }
+
+/* Dir 4 Nocturne signature spectrum bar */
+.rcw-spectrum {
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2.5px;
+  height: 16px;
+  margin-top: 5px;
+}
+.rcw-theme-dir4 .rcw-spectrum {
+  display: inline-flex;
+}
+.rcw-spectrum i {
+  display: block;
+  width: 2.5px;
+  border-radius: 2px;
+  background: rgba(245, 166, 35, 0.78);
+  animation: rcwWave 1.1s ease-in-out infinite;
+}
+.rcw-spectrum i.dim {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.rcw-remain {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rcw-knock-hint {
+  font-size: 9.5px;
+  color: rgba(255, 255, 255, 0.42);
+  margin-top: 4px;
+}
+
+/* Bottom controls */
+.rcw-bottom {
+  flex: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rcw-rec-btn {
+  width: 100%;
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  background: #2DC653;
+  color: #FFFFFF;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rcw-theme-dir1 .rcw-rec-btn { background: #FF5514; border-radius: 8px; font-family: "Space Mono", sans-serif; }
+.rcw-theme-dir2 .rcw-rec-btn { background: #1D4ED8; }
+.rcw-theme-dir3 .rcw-rec-btn { background: #A62B21; border-radius: 10px; font-family: "Noto Serif SC", serif; }
+.rcw-theme-dir4 .rcw-rec-btn { background: #F5A623; color: #111318; font-weight: 700; }
+.rcw-theme-dir5 .rcw-rec-btn { background: #115E63; color: #FFFFFF; }
+
+/* Flat matte slide-to-stop (zero metallic bevels) */
+.rcw-stop {
+  position: relative;
+  height: 34px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(232, 80, 53, 0.16);
+  border: 1px solid rgba(232, 80, 53, 0.38);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #F28B79;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding-left: 16px;
+  touch-action: none;
+  cursor: pointer;
+}
+.rcw-theme-dir1 .rcw-stop { border-radius: 8px; background: rgba(255, 85, 20, 0.16); border-color: rgba(255, 85, 20, 0.45); color: #FF9066; }
+.rcw-theme-dir2 .rcw-stop { background: rgba(239, 68, 68, 0.16); border-color: rgba(239, 68, 68, 0.4); color: #FCA5A5; }
+.rcw-theme-dir3 .rcw-stop { border-radius: 8px; background: rgba(166, 43, 33, 0.22); border-color: rgba(200, 62, 43, 0.45); color: #F2B5AE; font-family: "Noto Serif SC", serif; }
+.rcw-theme-dir4 .rcw-stop { background: rgba(217, 56, 41, 0.18); border-color: rgba(217, 56, 41, 0.42); color: #F59E96; }
+.rcw-theme-dir5 .rcw-stop { background: rgba(232, 92, 66, 0.22); border-color: rgba(255, 255, 255, 0.2); backdrop-filter: blur(8px); color: #FFC1B4; }
+
+.rcw-stop.aod-locked {
+  padding-left: 0;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.rcw-stop-knob {
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  background: #E85035;
+  background-image: none;
+  box-shadow: none;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  touch-action: none;
+}
+.rcw-theme-dir1 .rcw-stop-knob { background: #FF5514; border-radius: 6px; }
+.rcw-theme-dir2 .rcw-stop-knob { background: #EF4444; }
+.rcw-theme-dir3 .rcw-stop-knob { background: #C83E2B; border-radius: 6px; }
+.rcw-theme-dir4 .rcw-stop-knob { background: #D93829; }
+.rcw-theme-dir5 .rcw-stop-knob { background: #E85C42; }
+
+/* Flush 60s single-lap countdown bar */
+.rcw-slice-bar {
+  position: relative;
+  width: 100%;
+  height: 28px;
+  border: 0;
+  border-radius: 11px;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.09);
+  color: #FFFFFF;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.rcw-theme-dir1 .rcw-slice-bar { border-radius: 6px; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.1); }
+.rcw-theme-dir3 .rcw-slice-bar { border-radius: 8px; border: 1px solid rgba(244, 237, 224, 0.14); }
+.rcw-theme-dir5 .rcw-slice-bar { border-radius: 14px; background: rgba(255, 255, 255, 0.11); border: 1px solid rgba(255, 255, 255, 0.14); }
+.rcw-slice-bar.is-pend { background: rgba(245, 166, 35, 0.16); }
+
+.rcw-slice-lap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.rcw-slice-right {
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.72);
+}
+.rcw-slice-bar.is-pend .rcw-slice-right { color: #F5A623; }
+.rcw-slice-bar.is-synced .rcw-slice-right { color: #30D158; }
+.rcw-theme-dir2 .rcw-slice-bar.is-synced .rcw-slice-right { color: #60A5FA; }
+
+.rcw-lap-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: #E85035;
+  transition: width 0.25s linear;
+}
+.rcw-theme-dir1 .rcw-lap-bar { background: #FF5514; }
+.rcw-theme-dir2 .rcw-lap-bar { background: #3B82F6; }
+.rcw-theme-dir3 .rcw-lap-bar { background: #C83E2B; }
+.rcw-theme-dir4 .rcw-lap-bar { background: #F5A623; }
+.rcw-theme-dir5 .rcw-lap-bar { background: #E85C42; }
+
+/* Dir 1 12-block LED lap indicator */
+.rcw-leds {
+  display: none;
+  gap: 2px;
+}
+.rcw-theme-dir1 .rcw-leds {
+  display: inline-flex;
+}
+.rcw-theme-dir1 .rcw-lap-ring-svg {
+  display: none;
+}
+.rcw-leds i {
+  width: 3px;
+  height: 7px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.2);
+}
+.rcw-leds i.on {
+  background: #FF5514;
+}
+
+/* Queue view inside Watch A */
+.rcw-queue {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 4px;
+}
+.rcw-qhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rcw-qback {
+  border: 0;
+  background: rgba(255, 255, 255, 0.14);
+  color: #FFFFFF;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rcw-qtitle {
+  font-size: 12px;
+  font-weight: 700;
+}
+.rcw-qflush {
+  width: 100%;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(45, 198, 83, 0.24);
+  color: #63E686;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.rcw-theme-dir1 .rcw-qflush { background: rgba(255, 85, 20, 0.24); color: #FF8E61; border-radius: 6px; }
+.rcw-theme-dir2 .rcw-qflush { background: rgba(59, 130, 246, 0.24); color: #93C5FD; }
+.rcw-qflush:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.rcw-qlist {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rcw-qitem {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 7px 9px;
+}
+.rcw-qitem-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+}
+.rcw-qbadge.q { color: #F2A23C; }
+.rcw-qbadge.s { color: #2DC653; }
+.rcw-qitem-sub {
+  font-size: 9.5px;
+  color: rgba(255, 255, 255, 0.62);
+  margin-top: 2px;
+}
+
+/* watchOS 11 Modular Complications Watch Face */
+.rcw-face {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 4px 2px 2px;
+}
+.rcw-face-ticks {
+  position: absolute;
+  inset: -4px;
+  width: calc(100% + 8px);
+  height: calc(100% + 8px);
+  pointer-events: none;
+}
+.rcw-face-head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rcw-comp-corner {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: #F2A23C;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+.rcw-theme-dir1 .rcw-comp-corner { color: #FF5514; border-radius: 10px; }
+.rcw-theme-dir2 .rcw-comp-corner { color: #60A5FA; }
+.rcw-theme-dir3 .rcw-comp-corner { color: #D96552; }
+.rcw-theme-dir4 .rcw-comp-corner { color: #F5A623; }
+.rcw-theme-dir5 .rcw-comp-corner { color: #6CD4B9; }
+.rcw-comp-corner.is-rec {
+  background: rgba(232, 80, 53, 0.18);
+  border-color: rgba(232, 80, 53, 0.42);
+  color: #F28B79;
+}
+
+.rcw-face-timestack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.rcw-comp-inline {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: #F2A23C;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.rcw-theme-dir1 .rcw-comp-inline { color: #FF5514; }
+.rcw-theme-dir2 .rcw-comp-inline { color: #60A5FA; }
+.rcw-theme-dir3 .rcw-comp-inline { color: #D96552; font-family: "Noto Serif SC", serif; }
+.rcw-theme-dir4 .rcw-comp-inline { color: #F5A623; }
+.rcw-theme-dir5 .rcw-comp-inline { color: #6CD4B9; }
+.rcw-comp-inline.is-rec { color: #FF5C47; }
+
+.rcw-face-time {
+  font-size: 38px;
+  font-weight: 600;
+  line-height: 0.94;
+  letter-spacing: -1.5px;
+  font-variant-numeric: tabular-nums;
+}
+.rcw-theme-dir1 .rcw-face-time { font-family: "Space Mono", monospace; font-size: 33px; }
+.rcw-theme-dir2 .rcw-face-time { font-family: "Instrument Serif", Georgia, serif; font-size: 42px; }
+.rcw-theme-dir3 .rcw-face-time { font-family: "Noto Serif SC", Georgia, serif; font-size: 36px; }
+
+.rcw-comp-rect {
+  position: relative;
+  z-index: 1;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 15px;
+  padding: 8px 10px;
+  width: 100%;
+  text-align: left;
+  color: #FFFFFF;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+}
+.rcw-theme-dir1 .rcw-comp-rect { border-radius: 8px; }
+.rcw-theme-dir3 .rcw-comp-rect { border-radius: 8px; border-color: rgba(244, 237, 224, 0.16); }
+.rcw-theme-dir5 .rcw-comp-rect { background: rgba(255, 255, 255, 0.11); backdrop-filter: blur(10px); border-color: rgba(255, 255, 255, 0.16); }
+.rcw-comp-rect.is-rec {
+  background: rgba(232, 80, 53, 0.15);
+  border-color: rgba(232, 80, 53, 0.38);
+}
+
+.rcw-cr-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 700;
+  color: #F2A23C;
+}
+.rcw-theme-dir1 .rcw-cr-top { color: #FF5514; }
+.rcw-theme-dir2 .rcw-cr-top { color: #60A5FA; }
+.rcw-theme-dir3 .rcw-cr-top { color: #D96552; }
+.rcw-theme-dir4 .rcw-cr-top { color: #F5A623; }
+.rcw-theme-dir5 .rcw-cr-top { color: #6CD4B9; }
+.rcw-comp-rect.is-rec .rcw-cr-top { color: #FF6B59; }
+
+.rcw-cr-midrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.rcw-cr-mid {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.rcw-cr-wave {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+.rcw-cr-wave i {
+  display: block;
+  width: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.28);
+}
+.rcw-comp-rect.is-rec .rcw-cr-wave i {
+  background: #FF5C47;
+  animation: rcwWave 1s ease-in-out infinite;
+}
+.rcw-cr-sub {
+  font-size: 9.5px;
+  color: rgba(255, 255, 255, 0.56);
+}
+
+.rcw-subrow {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 3px;
+}
+.rcw-subdial {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #141417;
+  border: 0;
+  color: #FFFFFF;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.rcw-subdial svg.ring {
+  position: absolute;
+  inset: 0;
+  width: 48px;
+  height: 48px;
+  pointer-events: none;
+}
+.rcw-subdial .lbl { font-size: 8px; font-weight: 700; color: #F2A23C; }
+.rcw-subdial.is-rec .lbl { color: #FF6B59; }
+.rcw-subdial .val { font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rcw-subdial .cal-wd { font-size: 8.5px; font-weight: 700; color: #E85035; }
+.rcw-subdial .cal-d { font-size: 16px; font-weight: 600; line-height: 1.05; }
+.rcw-subdial .bat-s { font-size: 11.5px; font-weight: 700; color: #2DC653; }
+.rcw-theme-dir1 .rcw-subdial .bat-s { color: #A3B86C; }
+.rcw-theme-dir2 .rcw-subdial .bat-s { color: #60A5FA; }
+.rcw-theme-dir3 .rcw-subdial .bat-s { color: #D9C7AE; }
+.rcw-theme-dir4 .rcw-subdial .bat-s { color: #F5A623; }
+.rcw-theme-dir5 .rcw-subdial .bat-s { color: #6CD4B9; }
+.rcw-subdial .bat-l { font-size: 8px; color: rgba(255, 255, 255, 0.52); }
+
+/* Mini live watch preview card inside 6-card comparison grid */
+.rcw-mini-stage {
+  display: flex;
+  justify-content: center;
+  padding: 16px 12px 12px;
+  background: #F4F3EF;
+  border-bottom: 1px solid #ECECE6;
+}
+.rcw-mini-stage .watch-case.rcw-case {
+  transform: scale(0.75);
+  transform-origin: top center;
+  margin-bottom: -75px;
+}
+
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-icon"><?xml version="1.0" encoding="UTF-8"?>
+<!--
+  录音卡 App 图标源文件（1024×1024，不含 alpha，iOS/Android 图标的唯一设计真源）
+
+  意象：录音卡本体（深色圆角卡片）+ 录音电平波形 + 右上角红色录音指示点。
+  色值取自 lib/core/theme/tokens.dart：
+    米白背景 #FAFAF8（渐变收边避免小尺寸发灰）、卡片墨黑 #1D1D1F、
+    波形米白 #FAFAF8、录音红 #FF3B30。
+  约束：无文字、无细描边；卡片占画布 68% 宽，缩到 20pt 仍能靠「浅底上的深色圆角卡片」辨认。
+
+  修改后执行 assets/icon/render_icons.sh 重新生成 iOS / Android 全套图标。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" style="display:block;" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="rcBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FDFDFB"/>
+      <stop offset="1" stop-color="#EFEFE8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景：铺满整块画布，圆角交给系统蒙版处理 -->
+  <rect x="0" y="0" width="100%" height="100%" style="display:block;" fill="url(#rcBg)"/>
+
+  <!-- 卡片主体（700×490，圆角 96） -->
+  <rect x="162" y="267" width="700" height="490" rx="96" fill="#1D1D1F"/>
+
+  <!-- 录音电平波形：五根等宽胶囊，居中对称 -->
+  <g fill="#FAFAF8">
+    <rect x="258" y="452" width="60" height="120" rx="30"/>
+    <rect x="370" y="398" width="60" height="228" rx="30"/>
+    <rect x="482" y="359" width="60" height="306" rx="30"/>
+    <rect x="594" y="398" width="60" height="228" rx="30"/>
+    <rect x="706" y="452" width="60" height="120" rx="30"/>
+  </g>
+
+  <!-- 录音指示点 -->
+  <circle cx="778" cy="330" r="40" fill="#FF3B30"/>
+</svg>
+</div>
+        <div>
+          <h1 class="brand-title">录音卡 Apple Watch 方案</h1>
+          <p class="brand-sub">六套腕表风格与手机端一一对应，双击表盘打点，向右滑停录</p>
+        </div>
+      </div>
+      <div class="nav-right">
+        <nav class="tab-strip" aria-label="切换手表风格">
+          <button type="button" class="tab-pill is-active" data-wtheme="default">默认静纸</button><button type="button" class="tab-pill " data-wtheme="dir1">1. 声波仪</button><button type="button" class="tab-pill " data-wtheme="dir2">2. 昼夜声轴</button><button type="button" class="tab-pill " data-wtheme="dir3">3. 卷宗</button><button type="button" class="tab-pill " data-wtheme="dir4">4. 暗房</button><button type="button" class="tab-pill " data-wtheme="dir5">5. 灵动卡片</button>
+        </nav>
+        <a class="tab-pill" href="index.html">手机总览</a>
+      </div>
+    </header>
+
+    <section class="spotlight">
+      <div class="spotlight-head">
+        <div>
+          <h2 class="spotlight-title" id="wspot-title">默认版 静纸声录 Warm Paper</h2>
+          <p class="spotlight-line" id="wspot-line">暖白纸感 OLED 配哑光朱红停录滑块与琥珀打点，延续主端零干扰秩序</p>
+        </div>
+        <div class="ctl-row">
+          <button type="button" class="btn-pill" id="wctl-knock">敲表壳打点</button>
+          <button type="button" class="btn-pill" id="wctl-aod">息屏预览</button>
+          <button type="button" class="btn-pill" id="wctl-cut">切 60s 切片</button>
+          <button type="button" class="btn-pill" id="wctl-offline">已连手机</button>
+          <a class="btn-solid" id="wspot-phone-link" href="http://127.0.0.1:8766/current.html">打开默认版手机稿</a>
+        </div>
+      </div>
+      <div id="watch-spotlight-stage"></div>
+    </section>
+
+    <section class="grid-section">
+      <h2 class="grid-title">全部 6 套手表风格</h2>
+      <div class="watch-grid" id="watch-grid"></div>
+    </section>
+  </div>
+
+  <script>
+    (function (global) {
+  'use strict';
+
+  var WATCH_THEMES = {
+    default: {
+      id: 'default',
+      short: '默认静纸',
+      name: '默认版 静纸声录 Warm Paper',
+      line: '暖白纸感 OLED 配哑光朱红停录滑块与琥珀打点，延续主端零干扰秩序',
+      phoneHref: 'http://127.0.0.1:8766/current.html',
+      phoneLabel: '打开默认版手机稿',
+      swatch: ['#060607', '#F6F4EF', '#E85035'],
+      ringAccent: '#F2A23C',
+      ringRec: '#E85035',
+      calDay: '23',
+      calWd: '周四'
+    },
+    dir1: {
+      id: 'dir1',
+      short: '声波仪',
+      name: '方案 1 声波仪 Braun Field',
+      line: '削角矩形物理滑块与 12 格 LED 单圈计拍，腕上盲操如掌上仪器',
+      phoneHref: 'dir-1.html',
+      phoneLabel: '打开方案 1 展示板',
+      swatch: ['#0D0E0C', '#FF5514', '#A3B86C'],
+      ringAccent: '#FF5514',
+      ringRec: '#FF5514',
+      calDay: '23',
+      calWd: 'THU'
+    },
+    dir2: {
+      id: 'dir2',
+      short: '昼夜声轴',
+      name: '方案 2 昼夜声轴 Chronos',
+      line: '左侧保留精密分时标尺与衬线时标，钴蓝追踪单圈切段节奏',
+      phoneHref: 'dir-2.html',
+      phoneLabel: '打开方案 2 展示板',
+      swatch: ['#080A0F', '#3B82F6', '#EF4444'],
+      ringAccent: '#3B82F6',
+      ringRec: '#EF4444',
+      calDay: '23',
+      calWd: '周四'
+    },
+    dir3: {
+      id: 'dir3',
+      short: '卷宗',
+      name: '方案 3 卷宗 Folio',
+      line: '宣纸暖白衬线读时配朱砂印章打点签与细线框，把归档感缩进 46mm 表盘',
+      phoneHref: 'dir-3.html',
+      phoneLabel: '打开方案 3 展示板',
+      swatch: ['#0E0C0A', '#F4EDE0', '#C83E2B'],
+      ringAccent: '#C83E2B',
+      ringRec: '#C83E2B',
+      calDay: '廿三',
+      calWd: '星期四'
+    },
+    dir4: {
+      id: 'dir4',
+      short: '暗房',
+      name: '方案 4 暗房 Nocturne',
+      line: '纯黑零眩光夜航视图，秒表下方嵌入实时声学频谱柱与琥珀重点峰',
+      phoneHref: 'dir-4.html',
+      phoneLabel: '打开方案 4 展示板',
+      swatch: ['#000000', '#F5A623', '#D93829'],
+      ringAccent: '#F5A623',
+      ringRec: '#D93829',
+      calDay: '23',
+      calWd: '周四'
+    },
+    dir5: {
+      id: 'dir5',
+      short: '灵动卡片',
+      name: '方案 5 灵动卡片 Air',
+      line: '顶部随录音状态流转鼠尾草/珊瑚微光，底部液态玻璃胶囊贴合指腹',
+      phoneHref: 'dir-5.html',
+      phoneLabel: '打开方案 5 展示板',
+      swatch: ['#080A0D', '#E85C42', '#38917D'],
+      ringAccent: '#6CD4B9',
+      ringRec: '#E85C42',
+      calDay: '23',
+      calWd: '周四'
+    }
+  };
+
+  function createDefaultWatchState(themeId) {
+    return {
+      themeId: themeId || 'default',
+      isRec: true,
+      elapsedSec: 758, // 00:12:38
+      marks: 1,
+      aod: false,
+      phoneConnected: true,
+      batteryTier: '电量高',
+      remainText: '还可录 约 3.5 小时',
+      queueOpen: false,
+      knockFlash: false,
+      slices: [
+        { id: 's3', title: '当前切片 第 13 段', dur: '38s / 60s', status: 'pending', label: '待传 1 段' },
+        { id: 's2', title: '片段 #12', dur: '60s', status: 'synced', label: '已同步' },
+        { id: 's1', title: '片段 #11', dur: '60s', status: 'synced', label: '已同步' }
+      ]
+    };
+  }
+
+  function fmtWatchHms(sec) {
+    var s = Math.max(0, sec | 0);
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var r = s % 60;
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(r).padStart(2, '0');
+  }
+
+  function fmtMinSec(sec) {
+    var s = Math.max(0, sec | 0);
+    var m = Math.floor(s / 60);
+    var r = s % 60;
+    return m + ':' + String(r).padStart(2, '0');
+  }
+
+  function watchEsc(str) {
+    return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function battIconSvg() {
+    return '<svg width="16" height="9" viewBox="0 0 23 11" aria-hidden="true">' +
+      '<rect x="0.75" y="0.75" width="18.5" height="9.5" rx="2.75" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
+      '<rect x="3" y="3" width="12.3" height="5" rx="1.25" fill="currentColor"/>' +
+      '<rect x="20.75" y="3.25" width="1.5" height="4.5" rx="0.75" fill="currentColor"/>' +
+      '</svg>';
+  }
+
+  function sliceQueueLabel(st) {
+    var pend = st.slices.filter(function (x) { return x.status === 'pending'; }).length;
+    var synced = st.slices.filter(function (x) { return x.status === 'synced'; }).length;
+    if (pend > 0) return { cls: 'is-pend', txt: '待传 ' + pend + ' 段' };
+    if (synced > 0) return { cls: 'is-synced', txt: '已同步 ' + synced + ' 段' };
+    return { cls: '', txt: '队列 0' };
+  }
+
+  function topBarHtml(st) {
+    var connCls = st.phoneConnected ? '' : ' is-off';
+    var connTxt = st.phoneConnected ? '已连手机' : '离线暂存';
+    var lvCls = st.batteryTier === '电量低' ? ' lv-low' : (st.batteryTier === '电量中' ? ' lv-mid' : '');
+    return '<div class="rcw-top">' +
+      '<span class="rcw-conn' + connCls + '"><span class="rcw-conn-dot"></span><span>' + connTxt + '</span></span>' +
+      '<span class="rcw-top-right">' +
+        '<span class="rcw-batt' + lvCls + '">' + battIconSvg() + '<span>' + watchEsc(st.batteryTier) + '</span></span>' +
+        '<span class="rcw-clock">14:38</span>' +
+      '</span>' +
+    '</div>';
+  }
+
+  function lapFooterHtml(st, theme) {
+    var lap = st.isRec ? (st.elapsedSec % 60) : 0;
+    var rem = 60 - lap;
+    var ratio = st.isRec ? (lap / 60) : 0;
+    var pct = Math.round(ratio * 100);
+    var offset = (31.42 * (1 - ratio)).toFixed(2);
+    var sq = sliceQueueLabel(st);
+    var leds = '';
+    for (var i = 0; i < 10; i++) {
+      leds += '<i class="' + ((st.isRec && i < Math.ceil(ratio * 10)) ? 'on' : '') + '"></i>';
+    }
+    var strokeCol = st.isRec ? theme.ringRec : theme.ringAccent;
+    return '<button type="button" class="rcw-slice-bar ' + sq.cls + '" data-wact="open-queue">' +
+      '<span class="rcw-slice-lap">' +
+        '<svg class="rcw-lap-ring-svg" width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">' +
+          '<circle cx="7" cy="7" r="5" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="1.8"/>' +
+          '<circle cx="7" cy="7" r="5" fill="none" stroke="' + strokeCol + '" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="31.42" stroke-dashoffset="' + (st.isRec ? offset : 0) + '" transform="rotate(-90 7 7)"/>' +
+        '</svg>' +
+        '<span class="rcw-leds">' + leds + '</span>' +
+        '<span>' + (st.isRec ? ('单圈 ' + rem + 's') : '单圈 60s') + '</span>' +
+      '</span>' +
+      '<span class="rcw-slice-right">' + sq.txt + ' ›</span>' +
+      '<span class="rcw-lap-bar" style="width:' + pct + '%"></span>' +
+    '</button>';
+  }
+
+  function spectrumBarsHtml(isRec) {
+    var heights = [5, 11, 8, 14, 10, 15, 7, 13, 16, 9, 12, 6, 14, 10, 7, 5];
+    return '<div class="rcw-spectrum">' + heights.map(function (h, idx) {
+      return '<i class="' + (isRec ? '' : 'dim') + '" style="height:' + (isRec ? h : 4) + 'px;animation-delay:' + ((idx * 0.08).toFixed(2)) + 's"></i>';
+    }).join('') + '</div>';
+  }
+
+  function renderWatchCase(opts) {
+    var st = opts.state;
+    var theme = WATCH_THEMES[st.themeId] || WATCH_THEMES.default;
+    var mode = opts.mode; // 'rec' | 'idle' | 'face' | 'mini'
+    var isAod = (mode === 'idle' && st.aod) || opts.forceAod;
+    var showRec = (mode === 'rec' || mode === 'mini') ? st.isRec : (mode === 'idle' ? false : st.isRec);
+    var showQueue = (mode === 'rec') && st.queueOpen;
+    var isApp = mode !== 'face' && !showQueue;
+
+    var inner = '';
+    if (showQueue) {
+      var pendCnt = st.slices.filter(function (x) { return x.status === 'pending'; }).length;
+      inner = topBarHtml(st) +
+        '<div class="rcw-queue">' +
+          '<div class="rcw-qhead">' +
+            '<button type="button" class="rcw-qback" data-wact="close-queue">‹ 返回</button>' +
+            '<span class="rcw-qtitle">本地队列</span>' +
+          '</div>' +
+          '<button type="button" class="rcw-qflush" data-wact="flush-queue"' + (pendCnt === 0 ? ' disabled' : '') + '>' +
+            (pendCnt > 0 ? ('立即同步到手机 (' + pendCnt + ')') : '已全部同步到手机') +
+          '</button>' +
+          '<div class="rcw-qlist">' +
+            st.slices.map(function (sl) {
+              var badgeCls = sl.status === 'pending' ? 'q' : 's';
+              var badgeTxt = sl.status === 'pending' ? '待传' : '已同步';
+              return '<div class="rcw-qitem">' +
+                '<div class="rcw-qitem-top"><span>' + watchEsc(sl.title) + '</span><span class="rcw-qbadge ' + badgeCls + '">' + badgeTxt + '</span></div>' +
+                '<div class="rcw-qitem-sub">' + watchEsc(sl.dur) + '</div>' +
+              '</div>';
+            }).join('') +
+          '</div>' +
+        '</div>';
+    } else if (mode === 'face') {
+      var strokeCol = showRec ? theme.ringRec : theme.ringAccent;
+      var circOff = showRec ? (131.95 * (1 - ((st.elapsedSec % 60) / 60))).toFixed(1) : '0';
+      var pendC = st.slices.filter(function (x) { return x.status === 'pending'; }).length;
+      inner = '<div class="rcw-face">' +
+        '<svg class="rcw-face-ticks" viewBox="0 0 226 278" aria-hidden="true">' +
+          '<rect x="5" y="5" width="216" height="268" rx="38" fill="none" stroke="rgba(255,255,255,.11)" stroke-width="2" stroke-dasharray="1 10.6"/>' +
+          '<rect x="5" y="5" width="216" height="268" rx="38" fill="none" stroke="rgba(255,255,255,.24)" stroke-width="3.2" stroke-dasharray="1.5 21.7"/>' +
+        '</svg>' +
+        '<div class="rcw-face-head">' +
+          '<button type="button" class="rcw-comp-corner' + (showRec ? ' is-rec' : '') + '" data-wact="comp-toggle">' +
+            (theme.id === 'dir1'
+              ? '<svg class="rcw-ring-corner" viewBox="0 0 42 42" style="position:absolute;inset:0;width:42px;height:42px;pointer-events:none" aria-hidden="true"><rect x="2" y="2" width="38" height="38" rx="9" fill="none" stroke="currentColor" stroke-opacity="0.38" stroke-width="2" stroke-dasharray="106 40"/></svg>'
+              : '<svg class="rcw-ring-corner" viewBox="0 0 42 42" style="position:absolute;inset:0;width:42px;height:42px;pointer-events:none" aria-hidden="true"><circle cx="21" cy="21" r="19" fill="none" stroke="currentColor" stroke-opacity="0.38" stroke-width="2" stroke-dasharray="88 32" transform="rotate(-140 21 21)"/></svg>') +
+            '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">' +
+              '<rect x="5.5" y="2" width="5" height="8" rx="2.5"/><path d="M3.5 7.8a4.5 4.5 0 0 0 9 0M8 12.3V14.5"/>' +
+            '</svg>' +
+            '<span>' + (showRec ? '停止' : '开录') + '</span>' +
+          '</button>' +
+          '<div class="rcw-face-timestack">' +
+            '<button type="button" class="rcw-comp-inline' + (showRec ? ' is-rec' : '') + '" data-wact="comp-toggle">' +
+              '<span>' + (showRec ? ('录音中 ' + fmtMinSec(st.elapsedSec)) : '录音卡 点击开录') + '</span>' +
+            '</button>' +
+            '<b class="rcw-face-time">14:38</b>' +
+          '</div>' +
+        '</div>' +
+        '<button type="button" class="rcw-comp-rect' + (showRec ? ' is-rec' : '') + '" data-wact="comp-toggle">' +
+          '<div class="rcw-cr-top"><span>录音卡</span><span>' + (showRec ? ('打点 ' + st.marks) : '就绪') + '</span></div>' +
+          '<div class="rcw-cr-midrow">' +
+            '<span class="rcw-cr-mid">' + (showRec ? ('录音中 ' + fmtWatchHms(st.elapsedSec)) : '轻点开始持续录音') + '</span>' +
+            '<span class="rcw-cr-wave"><i style="height:5px"></i><i style="height:10px"></i><i style="height:12px"></i><i style="height:7px"></i><i style="height:11px"></i><i style="height:6px"></i></span>' +
+          '</div>' +
+          '<div class="rcw-cr-sub">' + (st.phoneConnected ? '已连手机' : '离线暂存') + ' / ' + watchEsc(st.batteryTier) + (pendC > 0 ? (' / 待传 ' + pendC + ' 段') : '') + '</div>' +
+        '</button>' +
+        '<div class="rcw-subrow">' +
+          '<button type="button" class="rcw-subdial' + (showRec ? ' is-rec' : '') + '" data-wact="comp-toggle">' +
+            '<svg class="ring" viewBox="0 0 48 48"><circle cx="24" cy="24" r="21" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="2.5"/><circle cx="24" cy="24" r="21" fill="none" stroke="' + strokeCol + '" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="131.95" stroke-dashoffset="' + circOff + '" transform="rotate(-90 24 24)"/></svg>' +
+            '<span class="lbl">' + (showRec ? '单圈' : '待机') + '</span>' +
+            '<span class="val">' + (showRec ? ((60 - (st.elapsedSec % 60)) + 's') : '0:00') + '</span>' +
+          '</button>' +
+          '<div class="rcw-subdial" style="cursor:default">' +
+            '<span class="cal-wd">' + theme.calWd + '</span>' +
+            '<b class="cal-d">' + theme.calDay + '</b>' +
+          '</div>' +
+          '<div class="rcw-subdial" style="cursor:default">' +
+            '<svg class="ring" viewBox="0 0 48 48"><circle cx="24" cy="24" r="21" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="2.5"/><circle cx="24" cy="24" r="21" fill="none" stroke="' + theme.ringAccent + '" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="131.95" stroke-dashoffset="22" transform="rotate(-90 24 24)"/></svg>' +
+            '<span class="bat-s">高</span>' +
+            '<span class="bat-l">电量</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    } else {
+      // Main Watch App ('rec', 'idle', 'mini')
+      var heroHtml = '';
+      if (showRec) {
+        heroHtml = '<div class="rcw-hero" data-wact="hero-knock" title="双击轻敲机身打重点">' +
+          '<div class="rcw-recline">' +
+            '<span class="rcw-rec-dot"></span><span>录音中</span>' +
+            (st.marks > 0 ? '<span class="rcw-mark-pill">已打点 ' + st.marks + '</span>' : '') +
+          '</div>' +
+          '<div class="rcw-timer">' + fmtWatchHms(st.elapsedSec) + '</div>' +
+          spectrumBarsHtml(true) +
+          '<div class="rcw-remain">' + watchEsc(st.remainText) + '</div>' +
+          '<div class="rcw-knock-hint">轻敲两下机身打点</div>' +
+        '</div>';
+      } else {
+        heroHtml = '<div class="rcw-hero">' +
+          '<div class="rcw-date">11月23日 周四</div>' +
+          '<div class="rcw-bigclock">14:38</div>' +
+          spectrumBarsHtml(false) +
+          '<div class="rcw-idle-hint">' + (isAod ? '息屏常显中 按侧键点亮' : '表盘组件亦可一键开录') + '</div>' +
+        '</div>';
+      }
+
+      var ctrlHtml = '';
+      if (isAod) {
+        ctrlHtml = '<div class="rcw-stop aod-locked" data-wact="wake-screen">先点亮屏幕 再滑动停止</div>';
+      } else if (showRec) {
+        ctrlHtml = '<div class="rcw-stop" data-wact="stop-track">' +
+          '<button type="button" class="rcw-stop-knob" data-wact="stop-slide" aria-label="向右滑动停止录音">' +
+            '<svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l4 4-4 4"/></svg>' +
+          '</button>' +
+          '<span>滑动停止录音</span>' +
+        '</div>';
+      } else {
+        ctrlHtml = '<button type="button" class="rcw-rec-btn" data-wact="start-rec">开始录音</button>';
+      }
+
+      inner = topBarHtml(st) +
+        '<div class="rcw-app">' +
+          heroHtml +
+          '<div class="rcw-bottom">' + ctrlHtml + lapFooterHtml(st, theme) + '</div>' +
+        '</div>';
+    }
+
+    var screenCls = 'rcw-screen' +
+      (showRec ? ' is-rec' : '') +
+      (isAod ? ' is-aod' : '') +
+      (isApp ? ' is-app-view' : '');
+
+    return '<div class="rcw-unit rcw-theme-' + theme.id + '" data-lint-skip="">' +
+      (opts.hideBands ? '' : '<div class="rcw-band-top" aria-hidden="true"></div>') +
+      '<div class="rcw-case-wrap">' +
+        '<div class="watch-case rcw-case' + (st.knockFlash && showRec ? ' knock-hit' : '') + '">' +
+          '<div class="' + screenCls + '">' +
+            '<span class="rcw-ambient-glow" aria-hidden="true"></span>' +
+            '<span class="rcw-chrono-rail" aria-hidden="true"></span>' +
+            '<span class="rcw-knock-ripple' + (st.knockFlash && showRec ? ' active' : '') + '" aria-hidden="true"></span>' +
+            inner +
+          '</div>' +
+          '<button type="button" class="rcw-crown" data-wact="crown-press" aria-label="数码表冠"></button>' +
+          '<button type="button" class="rcw-sidebtn" data-wact="wake-screen" aria-label="侧边按钮点亮屏幕"></button>' +
+        '</div>' +
+      '</div>' +
+      (opts.hideBands ? '' : '<div class="rcw-band-bot" aria-hidden="true"></div>') +
+    '</div>';
+  }
+
+  function renderWatchShowcaseHtml(st) {
+    return '<div class="rcw-stage">' +
+      '<div class="rcw-trio">' +
+        '<div class="rcw-slot">' +
+          renderWatchCase({ state: st, mode: 'rec' }) +
+          '<div class="rcw-slot-label">' + (st.queueOpen ? '本地切片队列' : (st.isRec ? '录音中 / 双击打点或滑停' : '待机状态')) + '</div>' +
+        '</div>' +
+        '<div class="rcw-slot">' +
+          renderWatchCase({ state: Object.assign({}, st, { isRec: st.aod }), mode: 'idle', forceAod: st.aod }) +
+          '<div class="rcw-slot-label">' + (st.aod ? '息屏预览 / 防误触锁定' : '待机表盘 / 一键开录') + '</div>' +
+        '</div>' +
+        '<div class="rcw-slot">' +
+          renderWatchCase({ state: st, mode: 'face' }) +
+          '<div class="rcw-slot-label">表盘复杂组件 / 轻点开录</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function bindWatchInteractions(rootEl, getState, onChange) {
+    if (!rootEl || rootEl.__rcwBound) return;
+    rootEl.__rcwBound = true;
+
+    // Support pointer swipe on slide-to-stop knob
+    rootEl.addEventListener('pointerdown', function (ev) {
+      var knob = ev.target.closest('[data-wact="stop-slide"]');
+      if (!knob) return;
+      var track = knob.closest('.rcw-stop');
+      if (!track) return;
+      ev.preventDefault();
+      var trackRect = track.getBoundingClientRect();
+      var maxDrag = Math.max(10, trackRect.width - knob.offsetWidth - 6);
+      var startX = ev.clientX;
+      var moved = 0;
+
+      function onMove(mv) {
+        moved = Math.max(0, Math.min(maxDrag, mv.clientX - startX));
+        knob.style.transform = 'translateX(' + moved + 'px)';
+      }
+
+      function onUp() {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        if (moved >= maxDrag * 0.8) {
+          stopRecSlice(getState(), onChange);
+        } else {
+          knob.style.transform = 'translateX(0px)';
+        }
+      }
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    });
+
+    rootEl.addEventListener('dblclick', function (ev) {
+      var hero = ev.target.closest('[data-wact="hero-knock"]');
+      if (!hero) return;
+      var st = getState();
+      if (!st.isRec) return;
+      st.marks += 1;
+      st.knockFlash = true;
+      onChange();
+      setTimeout(function () {
+        st.knockFlash = false;
+        onChange();
+      }, 480);
+    });
+
+    rootEl.addEventListener('click', function (ev) {
+      var actEl = ev.target.closest('[data-wact]');
+      if (!actEl) return;
+      var act = actEl.dataset.wact;
+      var st = getState();
+      if (act === 'start-rec') {
+        st.isRec = true;
+        st.queueOpen = false;
+        st.aod = false;
+        onChange();
+      } else if (act === 'comp-toggle') {
+        if (st.isRec) {
+          stopRecSlice(st, onChange);
+        } else {
+          st.isRec = true;
+          st.queueOpen = false;
+          onChange();
+        }
+      } else if (act === 'open-queue') {
+        st.queueOpen = true;
+        onChange();
+      } else if (act === 'close-queue') {
+        st.queueOpen = false;
+        onChange();
+      } else if (act === 'flush-queue') {
+        st.slices.forEach(function (sl) { sl.status = 'synced'; sl.label = '已同步'; });
+        onChange();
+      } else if (act === 'wake-screen') {
+        if (st.aod) {
+          st.aod = false;
+          onChange();
+        }
+      } else if (act === 'stop-slide' && ev.detail === 0) {
+        // Keyboard / direct click fallback for automated testing
+        stopRecSlice(st, onChange);
+      }
+    });
+  }
+
+  function stopRecSlice(st, onChange) {
+    if (!st.isRec) return;
+    st.isRec = false;
+    var lap = (st.elapsedSec % 60) || 42;
+    st.slices.unshift({
+      id: 's-' + Date.now(),
+      title: '片段 #' + (11 + st.slices.length),
+      dur: lap + 's',
+      status: 'pending',
+      label: '待传'
+    });
+    onChange();
+  }
+
+  function triggerWatchKnock(st, onChange) {
+    if (!st.isRec) st.isRec = true;
+    st.marks += 1;
+    st.knockFlash = true;
+    onChange();
+    setTimeout(function () {
+      st.knockFlash = false;
+      onChange();
+    }, 480);
+  }
+
+  function cutWatchSlice(st, onChange) {
+    var nextSec = st.elapsedSec + 60;
+    st.elapsedSec = nextSec;
+    st.slices.unshift({
+      id: 's-' + Date.now(),
+      title: '片段 #' + (11 + st.slices.length),
+      dur: '60s',
+      status: st.phoneConnected ? 'synced' : 'pending',
+      label: st.phoneConnected ? '已同步' : '待传'
+    });
+    onChange();
+  }
+
+  global.RCWatchEngine = {
+    THEMES: WATCH_THEMES,
+    createState: createDefaultWatchState,
+    renderCase: renderWatchCase,
+    renderShowcaseHtml: renderWatchShowcaseHtml,
+    bind: bindWatchInteractions,
+    stopRecSlice: stopRecSlice,
+    triggerKnock: triggerWatchKnock,
+    cutSlice: cutWatchSlice
+  };
+})(window);
+
+  </script>
+  <script>
+    (function () {
+      var order = ['default', 'dir1', 'dir2', 'dir3', 'dir4', 'dir5'];
+      var currentTheme = new URLSearchParams(window.location.search).get('theme') || 'default';
+      if (!RCWatchEngine.THEMES[currentTheme]) currentTheme = 'default';
+
+      var states = {};
+      order.forEach(function (id) {
+        states[id] = RCWatchEngine.createState(id);
+      });
+
+      var stageEl = document.getElementById('watch-spotlight-stage');
+      var gridEl = document.getElementById('watch-grid');
+      var titleEl = document.getElementById('wspot-title');
+      var lineEl = document.getElementById('wspot-line');
+      var phoneLinkEl = document.getElementById('wspot-phone-link');
+      var btnAod = document.getElementById('wctl-aod');
+      var btnOffline = document.getElementById('wctl-offline');
+
+      function renderSpotlight() {
+        var t = RCWatchEngine.THEMES[currentTheme];
+        var st = states[currentTheme];
+        titleEl.textContent = t.name;
+        lineEl.textContent = t.line;
+        phoneLinkEl.href = t.phoneHref;
+        phoneLinkEl.textContent = t.phoneLabel;
+        btnAod.classList.toggle('is-on', !!st.aod);
+        btnOffline.classList.toggle('is-on', !st.phoneConnected);
+        btnOffline.textContent = st.phoneConnected ? '已连手机' : '离线暂存';
+
+        stageEl.innerHTML = RCWatchEngine.renderShowcaseHtml(st);
+        document.querySelectorAll('.tab-pill[data-wtheme]').forEach(function (el) {
+          el.classList.toggle('is-active', el.dataset.wtheme === currentTheme);
+        });
+        document.querySelectorAll('.wgrid-card').forEach(function (el) {
+          el.classList.toggle('is-active', el.dataset.wcard === currentTheme);
+        });
+      }
+
+      function renderGrid() {
+        gridEl.innerHTML = order.map(function (id) {
+          var t = RCWatchEngine.THEMES[id];
+          var st = states[id];
+          var swatches = t.swatch.map(function (c) {
+            return '<span class="swatch-dot" style="background:' + c + '"></span>';
+          }).join('');
+          return '<article class="wgrid-card' + (id === currentTheme ? ' is-active' : '') + '" data-wcard="' + id + '">' +
+            '<div class="rcw-mini-stage">' +
+              RCWatchEngine.renderCase({ state: st, mode: 'mini', hideBands: true }) +
+            '</div>' +
+            '<div class="wgrid-body">' +
+              '<div class="wgrid-head">' +
+                '<h3 class="wgrid-title">' + t.name + '</h3>' +
+                '<div class="swatch-row">' + swatches + '</div>' +
+              '</div>' +
+              '<p class="wgrid-line">' + t.line + '</p>' +
+              '<div class="wgrid-actions">' +
+                '<button type="button" class="link-primary" data-pick-theme="' + id + '">在上方试玩</button>' +
+                '<a class="link-quiet" href="' + t.phoneHref + '">' + (id === 'default' ? '默认手机版' : '手机展示板') + '</a>' +
+              '</div>' +
+            '</div>' +
+          '</article>';
+        }).join('');
+      }
+
+      RCWatchEngine.bind(stageEl, function () { return states[currentTheme]; }, function () {
+        renderSpotlight();
+      });
+
+      document.querySelector('.tab-strip').addEventListener('click', function (ev) {
+        var btn = ev.target.closest('[data-wtheme]');
+        if (!btn) return;
+        currentTheme = btn.dataset.wtheme;
+        renderSpotlight();
+      });
+
+      gridEl.addEventListener('click', function (ev) {
+        var btn = ev.target.closest('[data-pick-theme]');
+        if (!btn) return;
+        currentTheme = btn.dataset.pickTheme;
+        renderSpotlight();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+
+      document.getElementById('wctl-knock').addEventListener('click', function () {
+        RCWatchEngine.triggerKnock(states[currentTheme], renderSpotlight);
+      });
+      btnAod.addEventListener('click', function () {
+        states[currentTheme].aod = !states[currentTheme].aod;
+        renderSpotlight();
+      });
+      document.getElementById('wctl-cut').addEventListener('click', function () {
+        RCWatchEngine.cutSlice(states[currentTheme], renderSpotlight);
+      });
+      btnOffline.addEventListener('click', function () {
+        states[currentTheme].phoneConnected = !states[currentTheme].phoneConnected;
+        renderSpotlight();
+      });
+
+      setInterval(function () {
+        var st = states[currentTheme];
+        if (st.isRec) {
+          st.elapsedSec += 1;
+          renderSpotlight();
+        }
+      }, 1000);
+
+      renderGrid();
+      renderSpotlight();
+    })();
+  </script>
+</body>
+</html>

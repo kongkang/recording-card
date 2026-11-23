@@ -13,6 +13,7 @@ import 'core/store/agent_config_store.dart';
 import 'core/store/app_store.dart';
 import 'core/store/device_store.dart';
 import 'core/store/settings_store.dart';
+import 'core/store/ui_style_store.dart';
 import 'core/theme/tokens.dart';
 import 'pages/app_shell.dart';
 import 'pages/login_page.dart';
@@ -62,6 +63,7 @@ Future<void> main() async {
   KeyValueStore? prefs;
   SettingsStore settings;
   AgentConfigStore agentConfig;
+  UIStyleStore uiStyle;
   try {
     final opened = await PrefsStore.open();
     prefs = opened;
@@ -69,10 +71,13 @@ Future<void> main() async {
     await settings.load();
     agentConfig = AgentConfigStore(store: opened);
     await agentConfig.load();
+    uiStyle = UIStyleStore(store: opened);
+    await uiStyle.load();
   } catch (_) {
     // 平台通道不可用时用内存默认值，保证仍可启动
     settings = SettingsStore(store: InMemoryStore());
     agentConfig = AgentConfigStore(store: InMemoryStore());
+    uiStyle = UIStyleStore(store: InMemoryStore());
   }
   final providers = ModelProviderStore.instance;
   try {
@@ -104,43 +109,82 @@ Future<void> main() async {
       settings: settings,
       agentConfig: agentConfig,
       prefs: prefs,
+      uiStyle: uiStyle,
     ),
   );
 }
 
-class RecordingCardApp extends StatelessWidget {
+class RecordingCardApp extends StatefulWidget {
   const RecordingCardApp({
     super.key,
     required this.settings,
     this.agentConfig,
     this.prefs,
+    this.uiStyle,
   });
 
   final SettingsStore settings;
   final AgentConfigStore? agentConfig;
   final KeyValueStore? prefs;
+  final UIStyleStore? uiStyle;
+
+  @override
+  State<RecordingCardApp> createState() => _RecordingCardAppState();
+}
+
+class _RecordingCardAppState extends State<RecordingCardApp> {
+  UIStyleStore? _ownedStyle;
+  UIStyleStore get _style => widget.uiStyle ?? _ownedStyle!;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.uiStyle == null) {
+      _ownedStyle = UIStyleStore(store: InMemoryStore());
+    }
+  }
+
+  @override
+  void dispose() {
+    _ownedStyle?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '录音卡',
-      debugShowCheckedModeBanner: false,
-      theme: buildRCTheme(),
-      darkTheme: buildRCDarkTheme(),
-      themeMode: ThemeMode.system,
-      scrollBehavior: const RCScrollBehavior(),
-      // 产品当前只有简体中文：显式声明语言，系统组件（日期选择、复制粘贴菜单）才会走中文
-      supportedLocales: const [Locale('zh', 'CN')],
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      locale: const Locale('zh', 'CN'),
-      home: _HomeGate(
-        settings: settings,
-        agentConfig: agentConfig,
-        prefs: prefs,
+    final styleStore = _style;
+    return UIStyleScope(
+      store: styleStore,
+      child: ListenableBuilder(
+        listenable: styleStore,
+        builder: (context, _) {
+          final activeId = styleStore.activeStyleId;
+          return MaterialApp(
+            title: '录音卡',
+            debugShowCheckedModeBanner: false,
+            theme: buildRCThemeForStyle(activeId, brightness: Brightness.light),
+            darkTheme: buildRCThemeForStyle(
+              activeId,
+              brightness: Brightness.dark,
+            ),
+            themeMode: themeModeForStyle(activeId),
+            scrollBehavior: const RCScrollBehavior(),
+            // 产品当前只有简体中文：显式声明语言，系统组件（日期选择、复制粘贴菜单）才会走中文
+            supportedLocales: const [Locale('zh', 'CN')],
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            locale: const Locale('zh', 'CN'),
+            home: _HomeGate(
+              settings: widget.settings,
+              agentConfig: widget.agentConfig,
+              prefs: widget.prefs,
+              uiStyle: styleStore,
+            ),
+          );
+        },
       ),
     );
   }
@@ -153,11 +197,17 @@ final GlobalKey _shotKey = GlobalKey();
 final DevDriver? dev = kDebugMode ? DevDriver(_shotKey) : null;
 
 class _HomeGate extends StatefulWidget {
-  const _HomeGate({required this.settings, this.agentConfig, this.prefs});
+  const _HomeGate({
+    required this.settings,
+    this.agentConfig,
+    this.prefs,
+    this.uiStyle,
+  });
 
   final SettingsStore settings;
   final AgentConfigStore? agentConfig;
   final KeyValueStore? prefs;
+  final UIStyleStore? uiStyle;
 
   @override
   State<_HomeGate> createState() => _HomeGateState();
@@ -344,6 +394,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
     _cloudSelection = _currentCloudSelection;
     _modelProviders.addListener(_onCloudSelectionChanged);
     _agentConfig.addListener(_onCloudSelectionChanged);
+    widget.uiStyle?.addListener(_onUiStyleChanged);
     unawaited(_initDeviceAndRestore());
     unawaited(_boot());
     if (dev != null) {
@@ -533,7 +584,15 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
     _wasSignedIn = signedIn;
   }
 
+  void _onUiStyleChanged() {
+    final style = widget.uiStyle?.activeStyleId ?? RCUIStyleId.warmPaper;
+    unawaited(_device.watchHardware.setUiStyle(style.wireId));
+  }
+
   Future<void> _initDeviceAndRestore() async {
+    await _device.watchHardware.setUiStyle(
+      (widget.uiStyle?.activeStyleId ?? RCUIStyleId.warmPaper).wireId,
+    );
     await _device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled);
     await _device.setExtHardwareEnabled(
       omi: _agentConfig.omiLinkEnabled,
@@ -593,6 +652,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
     _auth.removeListener(_onAuthChanged);
     _modelProviders.removeListener(_onCloudSelectionChanged);
     _agentConfig.removeListener(_onCloudSelectionChanged);
+    widget.uiStyle?.removeListener(_onUiStyleChanged);
     _device.dispose();
     _store.dispose();
     _recordingStatus.dispose();
@@ -631,6 +691,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
               agentChat: _agentChat,
               transcribeSamples: _transcribeSliceForAgent,
               lookupExistingTranscript: _lookupExistingTranscript,
+              uiStyle: widget.uiStyle,
             );
           }
           return LoginPage(

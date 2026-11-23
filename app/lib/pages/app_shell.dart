@@ -16,6 +16,7 @@ import '../core/store/agent_config_store.dart';
 import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
+import '../core/store/ui_style_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/agent/agent_chat_controller.dart';
 import '../services/agent/hardware_agent_task_coordinator.dart';
@@ -176,6 +177,7 @@ class AppShell extends StatefulWidget {
     this.clock,
     this.crashStore,
     this.accountHttpClient,
+    this.uiStyle,
   });
 
   final AppStore store;
@@ -203,6 +205,7 @@ class AppShell extends StatefulWidget {
   final DateTime Function()? clock;
   final KeyValueStore? crashStore;
   final http.Client? accountHttpClient;
+  final UIStyleStore? uiStyle;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -348,7 +351,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     }
     _device.setIslandEnabled(_agentConfig.islandEnabled);
     if (_agentConfig.watchLinkEnabled != _device.watchHardware.linkEnabled) {
-      unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
+      unawaited(
+        _device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled).then((_) {
+          if (_agentConfig.watchLinkEnabled) {
+            final style =
+                widget.uiStyle?.activeStyleId ?? RCUIStyleId.warmPaper;
+            unawaited(_device.watchHardware.setUiStyle(style.wireId));
+          }
+        }),
+      );
     }
     _agentConfig.addListener(_syncAgentIslandConfig);
     _hwAgent =
@@ -420,7 +431,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void _syncAgentIslandConfig() {
     _device.setIslandEnabled(_agentConfig.islandEnabled);
     if (_agentConfig.watchLinkEnabled != _device.watchHardware.linkEnabled) {
-      unawaited(_device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled));
+      unawaited(
+        _device.setWatchLinkEnabled(_agentConfig.watchLinkEnabled).then((_) {
+          if (_agentConfig.watchLinkEnabled) {
+            final style =
+                widget.uiStyle?.activeStyleId ?? RCUIStyleId.warmPaper;
+            unawaited(_device.watchHardware.setUiStyle(style.wireId));
+          }
+        }),
+      );
     }
     if (_ownsLiveAudio) {
       final dur = _agentConfig.recordingSliceDuration;
@@ -643,6 +662,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           healthSignals: widget.healthSignals,
                           getNoteStore: widget.getNoteStore,
                           externalDataHub: widget.externalDataHub,
+                          uiStyle: widget.uiStyle,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                           crashStore: widget.crashStore,
@@ -660,6 +680,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           healthSignals: widget.healthSignals,
                           getNoteStore: widget.getNoteStore,
                           externalDataHub: widget.externalDataHub,
+                          uiStyle: widget.uiStyle,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                           crashStore: widget.crashStore,
@@ -989,6 +1010,7 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
+    final s = context.rcStyle;
     final store = StoreScope.of(context);
     final sub = store.subStack.isNotEmpty;
     return Container(
@@ -1048,6 +1070,9 @@ class _Header extends StatelessWidget {
                       fontSize: 17,
                       fontWeight: FontWeight.w800,
                       color: c.label,
+                      fontFamilyFallback: s.serifTitles
+                          ? rcSerifFontFallback
+                          : rcFontFallback,
                     ),
                   ),
                 ),
@@ -1089,6 +1114,7 @@ class _BottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
+    final s = context.rcStyle;
     final store = StoreScope.of(context);
     Widget item(String label, RootTab tab, String keyName, IconData icon) {
       final on = store.rootTab == tab;
@@ -1149,21 +1175,17 @@ class _BottomNav extends StatelessWidget {
                         height: 48,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          gradient: const RadialGradient(
-                            center: Alignment(-0.28, -0.44),
+                          gradient: RadialGradient(
+                            center: const Alignment(-0.28, -0.44),
                             radius: 0.9,
-                            colors: [
-                              Color(0xFFFFB57A),
-                              Color(0xFFEF653F),
-                              Color(0xFFC5361B),
-                            ],
+                            colors: s.os1OrbColors,
                           ),
                           border: Border.all(color: c.bg, width: 3),
-                          boxShadow: const [
+                          boxShadow: [
                             BoxShadow(
-                              color: Color(0x61D94124),
+                              color: s.accent.withValues(alpha: 0.36),
                               blurRadius: 14,
-                              offset: Offset(0, 5),
+                              offset: const Offset(0, 5),
                             ),
                           ],
                         ),
@@ -1180,9 +1202,7 @@ class _BottomNav extends StatelessWidget {
                           fontSize: 10.5,
                           height: 1.1,
                           fontWeight: FontWeight.w700,
-                          color: c.isDark
-                              ? const Color(0xFFFF8A65)
-                              : const Color(0xFFC5361B),
+                          color: s.os1OrbLabelColor,
                           letterSpacing: 0.3,
                         ),
                       ),
@@ -1232,6 +1252,7 @@ Widget _stackTopPage(
   HealthSignalController? healthSignals,
   GetNoteSyncStore? getNoteStore,
   ExternalDataHubStore? externalDataHub,
+  UIStyleStore? uiStyle,
 }) {
   final top = store.stackTop;
   if (top == null) return const SizedBox.shrink();
@@ -1262,6 +1283,7 @@ Widget _stackTopPage(
       healthSignals: healthSignals,
       getNoteStore: getNoteStore,
       externalDataHub: externalDataHub,
+      uiStyle: uiStyle,
       showPaneBack: wide && store.showPaneBackSetSub,
       backLabel: backLabel,
     );
@@ -1285,6 +1307,7 @@ class _NarrowLayout extends StatelessWidget {
     this.healthSignals,
     this.getNoteStore,
     this.externalDataHub,
+    this.uiStyle,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
     this.crashStore,
@@ -1300,6 +1323,7 @@ class _NarrowLayout extends StatelessWidget {
   final HealthSignalController? healthSignals;
   final GetNoteSyncStore? getNoteStore;
   final ExternalDataHubStore? externalDataHub;
+  final UIStyleStore? uiStyle;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
   final KeyValueStore? crashStore;
@@ -1347,6 +1371,7 @@ class _NarrowLayout extends StatelessWidget {
                         healthSignals: healthSignals,
                         getNoteStore: getNoteStore,
                         externalDataHub: externalDataHub,
+                        uiStyle: uiStyle,
                         supportsDynamicIsland: supportsDynamicIsland,
                         crashStore: crashStore,
                         accountHttpClient: accountHttpClient,
@@ -1373,6 +1398,7 @@ class _NarrowLayout extends StatelessWidget {
                         healthSignals,
                         getNoteStore,
                         externalDataHub,
+                        uiStyle,
                       ),
                     ),
                   ),
@@ -1416,6 +1442,7 @@ class _NarrowLayout extends StatelessWidget {
     HealthSignalController? healthSignals,
     GetNoteSyncStore? getNoteStore,
     ExternalDataHubStore? externalDataHub,
+    UIStyleStore? uiStyle,
   ) {
     if (e.type == 'sum') {
       return SummaryResultPage(
@@ -1440,6 +1467,7 @@ class _NarrowLayout extends StatelessWidget {
         healthSignals: healthSignals,
         getNoteStore: getNoteStore,
         externalDataHub: externalDataHub,
+        uiStyle: uiStyle,
         showPaneBack: false,
       );
     }
@@ -1459,6 +1487,7 @@ class _WideLayout extends StatelessWidget {
     this.healthSignals,
     this.getNoteStore,
     this.externalDataHub,
+    this.uiStyle,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
     this.crashStore,
@@ -1474,6 +1503,7 @@ class _WideLayout extends StatelessWidget {
   final HealthSignalController? healthSignals;
   final GetNoteSyncStore? getNoteStore;
   final ExternalDataHubStore? externalDataHub;
+  final UIStyleStore? uiStyle;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
   final KeyValueStore? crashStore;
@@ -1519,6 +1549,7 @@ class _WideLayout extends StatelessWidget {
                       healthSignals: healthSignals,
                       getNoteStore: getNoteStore,
                       externalDataHub: externalDataHub,
+                      uiStyle: uiStyle,
                       supportsDynamicIsland: supportsDynamicIsland,
                       crashStore: crashStore,
                       accountHttpClient: accountHttpClient,
@@ -1544,6 +1575,7 @@ class _WideLayout extends StatelessWidget {
                             healthSignals: healthSignals,
                             getNoteStore: getNoteStore,
                             externalDataHub: externalDataHub,
+                            uiStyle: uiStyle,
                           ),
                         )
                       : const _EmptyPane(),

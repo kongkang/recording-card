@@ -17,6 +17,7 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
     @Published private(set) var isPhoneReachable = false
     @Published private(set) var isCompanionInstalled = true
     @Published private(set) var lastSyncNote: String?
+    @Published private(set) var uiStyle: WatchUIStyle = .warmPaper
 
     let keepAlive = WatchRuntimeKeepAlive()
     let captureEngine: WatchAudioCaptureEngine
@@ -38,6 +39,7 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
         self.captureEngine = WatchAudioCaptureEngine(manifestStore: self.manifestStore)
         super.init()
 
+        self.uiStyle = complicationStore.loadStyle()
         WKInterfaceDevice.current().isBatteryMonitoringEnabled = true
         self.captureEngine.isPhoneReachableProvider = { [weak self] in
             self?.isPhoneReachable ?? false
@@ -224,13 +226,15 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
                 isRecording: nextSnapshot.isRecording,
                 startedAtMs: nextSnapshot.recordingStartedAtMs,
                 pendingCount: nextSnapshot.pendingSliceCount,
+                uiStyleId: uiStyle.rawValue,
                 updatedAtMs: nextSnapshot.updatedAtMs
             )
         )
         WidgetCenter.shared.reloadAllTimelines()
 
         guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
-        let payload = nextSnapshot.toDictionary()
+        var payload = nextSnapshot.toDictionary()
+        payload[WatchConstants.uiStyleKey] = uiStyle.rawValue
         if WCSession.default.isReachable {
             WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: nil)
         }
@@ -239,7 +243,30 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
         }
     }
 
+    func setLocalStyle(_ style: WatchUIStyle) {
+        let resolved = WatchUIStyle.fromRawOrDefault(style.rawValue)
+        let changed = (uiStyle != resolved)
+        uiStyle = resolved
+        complicationStore.saveStyle(resolved)
+        complicationStore.save(
+            ComplicationDisplayState(
+                isRecording: snapshot.isRecording,
+                startedAtMs: snapshot.recordingStartedAtMs,
+                pendingCount: snapshot.pendingSliceCount,
+                uiStyleId: resolved.rawValue,
+                updatedAtMs: Int64(Date().timeIntervalSince1970 * 1000)
+            )
+        )
+        WidgetCenter.shared.reloadAllTimelines()
+        if changed {
+            refreshSnapshotAndBroadcast(pushContext: false)
+        }
+    }
+
     private func handleIncomingDictionary(_ dict: [String: Any]) {
+        if let rawStyle = dict[WatchConstants.uiStyleKey] as? String {
+            setLocalStyle(WatchUIStyle.fromRawOrDefault(rawStyle))
+        }
         guard let cmd = WatchControlCommand.fromDictionary(dict) else { return }
         if recentHandledCommandIds.contains(cmd.commandId) { return }
         recentHandledCommandIds.append(cmd.commandId)
@@ -266,6 +293,8 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
                 lastSyncNote = "手机已完成转码确认并清理缓存"
                 reloadSlicesAndSnapshot()
             }
+        case .setStyle:
+            setLocalStyle(WatchUIStyle.fromRawOrDefault(cmd.styleId))
         }
     }
 }

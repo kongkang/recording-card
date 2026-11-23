@@ -13,6 +13,54 @@ public enum WatchConstants {
     public static let minFreeBytes: Int64 = 20 * 1024 * 1024
     public static let watchSampleRate: Double = 16_000
     public static let watchBitRate: Int = 32_000
+    public static let uiStyleKey = "uiStyleId"
+}
+
+/// 手机与 Apple Watch 共用的 6 套界面风格真源。
+///
+/// 线协议 ID 与 Flutter `RCUIStyleId` 严格一一对应：
+/// - `default`     ：静纸声录（Warm Paper）
+/// - `braun_field` ：声波仪（Braun Field）
+/// - `chronos`     ：昼夜声轴（Chronos）
+/// - `folio`       ：卷宗（Folio）
+/// - `nocturne`    ：暗房（Nocturne）
+/// - `air`         ：灵动卡片（Air）
+public enum WatchUIStyle: String, CaseIterable, Codable, Sendable, Identifiable {
+    case warmPaper = "default"
+    case braunField = "braun_field"
+    case chronos = "chronos"
+    case folio = "folio"
+    case nocturne = "nocturne"
+    case air = "air"
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .warmPaper: return "静纸声录"
+        case .braunField: return "声波仪"
+        case .chronos: return "昼夜声轴"
+        case .folio: return "卷宗"
+        case .nocturne: return "暗房"
+        case .air: return "灵动卡片"
+        }
+    }
+
+    public var englishName: String {
+        switch self {
+        case .warmPaper: return "Warm Paper"
+        case .braunField: return "Braun Field"
+        case .chronos: return "Chronos"
+        case .folio: return "Folio"
+        case .nocturne: return "Nocturne"
+        case .air: return "Air"
+        }
+    }
+
+    public static func fromRawOrDefault(_ raw: String?) -> WatchUIStyle {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return WatchUIStyle(rawValue: trimmed) ?? .warmPaper
+    }
 }
 
 public enum WatchCommandAction: String, Codable, Sendable, CaseIterable {
@@ -22,6 +70,7 @@ public enum WatchCommandAction: String, Codable, Sendable, CaseIterable {
     case requestStatus
     case flushPending
     case ackSlice
+    case setStyle
 }
 
 /// 手机 ⇄ 手表双向控制指令（可经 `sendMessage` 实时发送，也可经 `applicationContext` 传递）。
@@ -33,19 +82,22 @@ public struct WatchControlCommand: Codable, Equatable, Sendable {
     public let requestedAtMs: Int64
     public let sessionId: String?
     public let sliceId: String?
+    public let styleId: String?
 
     public init(
         commandId: String = UUID().uuidString,
         action: WatchCommandAction,
         requestedAtMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         sessionId: String? = nil,
-        sliceId: String? = nil
+        sliceId: String? = nil,
+        styleId: String? = nil
     ) {
         self.commandId = commandId
         self.action = action
         self.requestedAtMs = requestedAtMs
         self.sessionId = sessionId
         self.sliceId = sliceId
+        self.styleId = styleId
     }
 
     public func toDictionary() -> [String: Any] {
@@ -61,6 +113,9 @@ public struct WatchControlCommand: Codable, Equatable, Sendable {
         if let sliceId, !sliceId.isEmpty {
             dict["sliceId"] = sliceId
         }
+        if let styleId, !styleId.isEmpty {
+            dict["styleId"] = styleId
+        }
         return dict
     }
 
@@ -75,12 +130,14 @@ public struct WatchControlCommand: Codable, Equatable, Sendable {
         let requestedAtMs = (dict["requestedAtMs"] as? NSNumber)?.int64Value ?? 0
         let sessionId = dict["sessionId"] as? String
         let sliceId = dict["sliceId"] as? String
+        let styleId = dict["styleId"] as? String
         return WatchControlCommand(
             commandId: commandId,
             action: action,
             requestedAtMs: requestedAtMs,
             sessionId: sessionId,
-            sliceId: sliceId
+            sliceId: sliceId,
+            styleId: styleId
         )
     }
 }

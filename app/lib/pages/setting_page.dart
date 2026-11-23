@@ -31,6 +31,7 @@ import '../core/storage/storage.dart';
 import '../core/store/agent_config_store.dart';
 import '../core/store/device_store.dart';
 import '../core/store/settings_store.dart';
+import '../core/store/ui_style_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/auth_service.dart';
 import '../services/external_data/external_data_hub_store.dart';
@@ -68,6 +69,7 @@ class SettingPage extends StatefulWidget {
     this.apiBaseOverride,
     this.liveAudioDir,
     this.databasesDirOverride,
+    this.uiStyle,
   });
 
   final SettingsStore? settings;
@@ -113,6 +115,9 @@ class SettingPage extends StatefulWidget {
 
   /// 可选覆盖 SQLite `getDatabasesPath()` 目录（测试验证账号注销删除 `memory_index.db` / `health_signals.db` 用）。
   final Directory? databasesDirOverride;
+
+  /// 可选界面风格状态控制器（缺省通过 [UIStyleScope.maybeOf] 读取）。
+  final UIStyleStore? uiStyle;
 
   @override
   State<SettingPage> createState() => _SettingPageState();
@@ -629,6 +634,7 @@ class _SettingPageState extends State<SettingPage> {
           healthSignals: widget.healthSignals,
           getNoteStore: _getNoteStore,
           externalDataHub: _externalDataHub,
+          uiStyle: widget.uiStyle ?? UIStyleScope.maybeOf(context),
           standalone: true,
         ),
       ),
@@ -741,6 +747,10 @@ class _SettingPageState extends State<SettingPage> {
                     ? auth.session!.account
                     : '已授权')
               : '未登录');
+    final styleStore = widget.uiStyle ?? UIStyleScope.maybeOf(context);
+    final activeStyleName =
+        styleStore?.activeDescriptor.name ??
+        UIStyleDescriptor.byId(RCUIStyleId.warmPaper).name;
     return ColoredBox(
       // 自己的底色：深色主题下即使外层容器仍是浅色也不会出现「深底浅框」
       color: c.bg,
@@ -761,6 +771,32 @@ class _SettingPageState extends State<SettingPage> {
                   valueKey: const Key('sv-auth'),
                   onTap: () => _openSub(context, 'login'),
                 ),
+              ],
+            ),
+            const _GroupTitle(text: '界面外观'),
+            _GroupCard(
+              children: <Widget>[
+                if (styleStore != null)
+                  ListenableBuilder(
+                    listenable: styleStore,
+                    builder: (context, _) => _navRow(
+                      context,
+                      keyName: 'set-ui-style',
+                      label: '界面风格',
+                      value: styleStore.activeDescriptor.name,
+                      valueKey: const Key('sv-ui-style'),
+                      onTap: () => _openSub(context, 'style'),
+                    ),
+                  )
+                else
+                  _navRow(
+                    context,
+                    keyName: 'set-ui-style',
+                    label: '界面风格',
+                    value: activeStyleName,
+                    valueKey: const Key('sv-ui-style'),
+                    onTap: () => _openSub(context, 'style'),
+                  ),
               ],
             ),
             const _GroupTitle(text: '模型与智能体'),
@@ -1111,7 +1147,7 @@ class _SettingPageState extends State<SettingPage> {
                       style: TextStyle(fontSize: 12, color: c.sec),
                     ),
                     trailing: _agent.transcribeCycleMinutes == opt.$1
-                        ? const Icon(Icons.check_circle, color: RCColors.ok)
+                        ? Icon(Icons.check_circle, color: sheetCtx.rc.ok)
                         : null,
                     onTap: () => Navigator.of(sheetCtx).pop(opt.$1),
                   ),
@@ -1271,12 +1307,14 @@ class _GroupCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
+    final s = context.rcStyle;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       decoration: BoxDecoration(
         color: c.card,
         border: Border.all(color: c.sep),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(s.cardRadius),
+        boxShadow: s.cardShadow,
       ),
       child: Column(mainAxisSize: MainAxisSize.min, children: children),
     );
@@ -1322,6 +1360,7 @@ class _AboutSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
+    final s = context.rcStyle;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -1342,7 +1381,8 @@ class _AboutSection extends StatelessWidget {
           decoration: BoxDecoration(
             color: c.card,
             border: Border.all(color: c.sep),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(s.cardRadius),
+            boxShadow: s.cardShadow,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

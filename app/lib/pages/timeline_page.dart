@@ -721,13 +721,15 @@ class _TimelineRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
+    final s = context.rcStyle;
     return CustomPaint(
       painter: _TimelineRailPainter(
         first: first,
         last: last,
-        lineColor: c.sep,
+        lineColor: s.railColor,
         dotFillColor: c.bg,
-        dotBorderColor: c.ax,
+        dotBorderColor: s.railNodeColor,
+        square: s.railNodeSquare,
       ),
       child: Padding(
         padding: const EdgeInsets.only(left: 26),
@@ -744,6 +746,7 @@ class _TimelineRailPainter extends CustomPainter {
     required this.lineColor,
     required this.dotFillColor,
     required this.dotBorderColor,
+    this.square = false,
   });
 
   final bool first;
@@ -751,6 +754,7 @@ class _TimelineRailPainter extends CustomPainter {
   final Color lineColor;
   final Color dotFillColor;
   final Color dotBorderColor;
+  final bool square;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -767,21 +771,24 @@ class _TimelineRailPainter extends CustomPainter {
       }
     }
     const dotCenter = Offset(5.0, 13.0);
-    canvas.drawCircle(
-      dotCenter,
-      4.25,
-      Paint()
-        ..color = dotFillColor
-        ..style = PaintingStyle.fill,
-    );
-    canvas.drawCircle(
-      dotCenter,
-      4.25,
-      Paint()
-        ..color = dotBorderColor
-        ..strokeWidth = 1.5
-        ..style = PaintingStyle.stroke,
-    );
+    final fillPaint = Paint()
+      ..color = dotFillColor
+      ..style = PaintingStyle.fill;
+    final borderPaint = Paint()
+      ..color = dotBorderColor
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    if (square) {
+      final rect = RRect.fromRectAndRadius(
+        Rect.fromCenter(center: dotCenter, width: 8.5, height: 8.5),
+        const Radius.circular(2),
+      );
+      canvas.drawRRect(rect, fillPaint);
+      canvas.drawRRect(rect, borderPaint);
+    } else {
+      canvas.drawCircle(dotCenter, 4.25, fillPaint);
+      canvas.drawCircle(dotCenter, 4.25, borderPaint);
+    }
   }
 
   @override
@@ -790,7 +797,8 @@ class _TimelineRailPainter extends CustomPainter {
       oldDelegate.last != last ||
       oldDelegate.lineColor != lineColor ||
       oldDelegate.dotFillColor != dotFillColor ||
-      oldDelegate.dotBorderColor != dotBorderColor;
+      oldDelegate.dotBorderColor != dotBorderColor ||
+      oldDelegate.square != square;
 }
 
 /// 事件卡：标题、时间、2–3 行生活摘要；点开显示更完整概述与详情按钮。
@@ -807,6 +815,7 @@ class _EventCardView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
+    final s = context.rcStyle;
     final open = store.openCardId == event.id;
     final picked = store.selMode && store.selIds.contains(event.id);
     final isAnchor =
@@ -858,171 +867,190 @@ class _EventCardView extends StatelessWidget {
                 child: InkWell(
                   key: Key('card-${event.id}'),
                   onTap: () => store.tapCard(event.id, isSummary: false),
-                  borderRadius: BorderRadius.circular(12),
-                  // 设计稿 .card 只有 margin-bottom，没有底板/边框/阴影：
-                  // 事件是时间轴上的列表行，卡片形态只属于总结（.sumcard）。
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  event.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w600,
-                                    letterSpacing: -0.1,
-                                    color: c.label,
-                                  ),
-                                ),
-                                if (event.live) ...[
-                                  const SizedBox(height: 6),
-                                  const _EventNoteBadge(
-                                    text: '整理中',
-                                    live: true,
-                                  ),
-                                ],
-                                const SizedBox(height: 4),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 4,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: [
-                                    Text(
-                                      '${event.time} · ${event.dur}',
-                                      key: Key('when-${event.id}'),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: c.sec,
-                                      ),
-                                    ),
-                                    if (event.mergedSliceCount > 1 &&
-                                        event.speakers != '无语音')
-                                      Container(
-                                        key: Key('ev-merge-badge-${event.id}'),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 1.5,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          // 对齐 prototype `.merge-chip`：浅蓝底 + 蓝字（深色下深海蓝底 + 亮蓝字）
-                                          color: mergeBg,
-                                          borderRadius: BorderRadius.circular(
-                                            999,
-                                          ),
-                                          border: Border.all(
-                                            color: mergeBorder,
-                                          ),
-                                        ),
-                                          child: Text(
-                                          '已合并 ${event.mergedSliceCount} 分片',
-                                          style: TextStyle(
-                                            fontSize: 10.5,
-                                            fontWeight: FontWeight.w600,
-                                            color: mergeFg,
-                                          ),
-                                        ),
-                                      ),
-                                    if (isAnchor)
-                                      Container(
-                                        key: Key('sel-anchor-badge-${event.id}'),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 1.5,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: RCColors.ink,
-                                          borderRadius: BorderRadius.circular(
-                                            999,
-                                          ),
-                                        ),
-                                        child: const Text(
-                                          '起点',
-                                          style: TextStyle(
-                                            fontSize: 10.5,
-                                            fontWeight: FontWeight.w600,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                                if (event.brief.trim().isNotEmpty) ...[
-                                  const SizedBox(height: 6),
+                  borderRadius: BorderRadius.circular(s.cardRadius),
+                  // `warmPaper` / `chronos`（`eventAsCard == false`）：事件是时间轴上的无底板列表行；
+                  // 其余风格按模板设计呈现轻量卡片底板。
+                  child: Container(
+                    padding: s.eventAsCard
+                        ? const EdgeInsets.fromLTRB(14, 12, 14, 12)
+                        : EdgeInsets.zero,
+                    decoration: s.eventAsCard
+                        ? BoxDecoration(
+                            color: c.card,
+                            borderRadius: BorderRadius.circular(s.cardRadius),
+                            border: Border.all(color: c.sep),
+                            boxShadow: s.cardShadow,
+                          )
+                        : null,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
                                   Text(
-                                    event.brief.trim(),
-                                    key: Key('card-summary-${event.id}'),
-                                    maxLines: 3,
+                                    event.title,
+                                    maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                      fontSize: 14,
-                                      height: 1.6,
-                                      color: c.ink,
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: -0.1,
+                                      color: c.label,
+                                      fontFamilyFallback: s.serifTitles
+                                          ? rcSerifFontFallback
+                                          : rcFontFallback,
                                     ),
                                   ),
+                                  if (event.live) ...[
+                                    const SizedBox(height: 6),
+                                    const _EventNoteBadge(
+                                      text: '整理中',
+                                      live: true,
+                                    ),
+                                  ],
+                                  const SizedBox(height: 4),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
+                                    crossAxisAlignment: WrapCrossAlignment.center,
+                                    children: [
+                                      Text(
+                                        '${event.time} · ${event.dur}',
+                                        key: Key('when-${event.id}'),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: c.sec,
+                                          fontFamilyFallback: s.monoMeta
+                                              ? rcMonoFontFallback
+                                              : rcFontFallback,
+                                        ),
+                                      ),
+                                      if (event.mergedSliceCount > 1 &&
+                                          event.speakers != '无语音')
+                                        Container(
+                                          key: Key('ev-merge-badge-${event.id}'),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 1.5,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            // 对齐 prototype `.merge-chip`：浅蓝底 + 蓝字（深色下深海蓝底 + 亮蓝字）
+                                            color: mergeBg,
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                            border: Border.all(
+                                              color: mergeBorder,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            '已合并 ${event.mergedSliceCount} 分片',
+                                            style: TextStyle(
+                                              fontSize: 10.5,
+                                              fontWeight: FontWeight.w600,
+                                              color: mergeFg,
+                                            ),
+                                          ),
+                                        ),
+                                      if (isAnchor)
+                                        Container(
+                                          key: Key('sel-anchor-badge-${event.id}'),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 1.5,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: s.accent,
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            '起点',
+                                            style: TextStyle(
+                                              fontSize: 10.5,
+                                              fontWeight: FontWeight.w600,
+                                              color: s.accentFg,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  if (event.brief.trim().isNotEmpty) ...[
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      event.brief.trim(),
+                                      key: Key('card-summary-${event.id}'),
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        height: 1.6,
+                                        color: c.ink,
+                                      ),
+                                    ),
+                                  ],
                                 ],
-                              ],
+                              ),
                             ),
-                          ),
-                          if (activePhotos.isNotEmpty) ...[
-                            const SizedBox(width: 10),
-                            _PhotoStackThumb(
-                              key: Key('pics-${event.id}'),
-                              photos: activePhotos,
+                            if (activePhotos.isNotEmpty) ...[
+                              const SizedBox(width: 10),
+                              _PhotoStackThumb(
+                                key: Key('pics-${event.id}'),
+                                photos: activePhotos,
+                              ),
+                            ],
+                          ],
+                        ),
+                        if (open) ...[
+                          if (event.longText.trim().isNotEmpty &&
+                              event.longText.trim() != event.brief.trim()) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              event.longText,
+                              maxLines: 4,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                height: 1.55,
+                                color: c.ink,
+                              ),
+                            ),
+                          ],
+                          if (!event.live) ...[
+                            const SizedBox(height: 12),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: OutlinedButton(
+                                key: Key('detail-${event.id}'),
+                                onPressed: () =>
+                                    store.openDetail(event.id, fresh: true),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: c.label,
+                                  side: BorderSide(color: c.ax),
+                                  shape: const StadiumBorder(),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  minimumSize: Size.zero,
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  textStyle: const TextStyle(fontSize: 13),
+                                ),
+                                child: const Text('详情'),
+                              ),
                             ),
                           ],
                         ],
-                      ),
-                      if (open) ...[
-                        if (event.longText.trim().isNotEmpty &&
-                            event.longText.trim() != event.brief.trim()) ...[
-                          const SizedBox(height: 10),
-                          Text(
-                            event.longText,
-                            maxLines: 4,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 14,
-                              height: 1.55,
-                              color: c.ink,
-                            ),
-                          ),
-                        ],
-                        if (!event.live) ...[
-                          const SizedBox(height: 12),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: OutlinedButton(
-                              key: Key('detail-${event.id}'),
-                              onPressed: () =>
-                                  store.openDetail(event.id, fresh: true),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: c.label,
-                                side: BorderSide(color: c.ax),
-                                shape: const StadiumBorder(),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 8,
-                                ),
-                                minimumSize: Size.zero,
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                textStyle: const TextStyle(fontSize: 13),
-                              ),
-                              child: const Text('详情'),
-                            ),
-                          ),
-                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -1291,6 +1319,7 @@ class _SummaryCardView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
+    final s = context.rcStyle;
     final locked = card.state != SummaryState.done;
     Widget inner;
     switch (card.state) {
@@ -1425,6 +1454,9 @@ class _SummaryCardView extends StatelessWidget {
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                       color: c.label,
+                      fontFamilyFallback: s.serifTitles
+                          ? rcSerifFontFallback
+                          : rcFontFallback,
                     ),
                   ),
                 ),
@@ -1440,7 +1472,13 @@ class _SummaryCardView extends StatelessWidget {
                     '$rangeText · 已选 ${card.srcIds.length} 片段',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: c.sec),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: c.sec,
+                      fontFamilyFallback: s.monoMeta
+                          ? rcMonoFontFallback
+                          : rcFontFallback,
+                    ),
                   ),
                 ),
                 if (picCount > 0) ...[
@@ -1465,15 +1503,16 @@ class _SummaryCardView extends StatelessWidget {
       child: InkWell(
         key: Key('card-${card.id}'),
         onTap: locked ? null : () => store.tapCard(card.id, isSummary: true),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(s.cardRadius),
         child: Container(
           key: Key('sumcard-${card.id}'),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           // 设计稿 .sumcard：只有总结才是卡片（底板 + 1px 分隔线边框 + 12 圆角）
           decoration: BoxDecoration(
             color: c.card,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(s.cardRadius),
             border: Border.all(color: c.sep),
+            boxShadow: s.cardShadow,
           ),
           child: inner,
         ),

@@ -23,16 +23,22 @@ Future<void> showPhotoPreviewSheet(
   VoidCallback? onPrimaryAction,
   String? primaryActionLabel,
 }) {
+  final outerColors = context.rc;
+  final outerStyle = context.rcStyle;
   return showModalBottomSheet<void>(
     context: context,
     useRootNavigator: true,
     isScrollControlled: true,
-    backgroundColor: RCColors.card,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    backgroundColor: outerColors.card,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(
+        top: Radius.circular(outerStyle.cardRadius + 6),
+      ),
     ),
     clipBehavior: Clip.antiAlias,
     builder: (ctx) {
+      final c = ctx.rc;
+      final s = ctx.rcStyle;
       return SafeArea(
         key: const Key('photo-preview-sheet'),
         child: SingleChildScrollView(
@@ -47,7 +53,7 @@ Future<void> showPhotoPreviewSheet(
                   height: 4,
                   margin: const EdgeInsets.symmetric(vertical: 10),
                   decoration: BoxDecoration(
-                    color: RCColors.sep,
+                    color: c.sep,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -55,7 +61,7 @@ Future<void> showPhotoPreviewSheet(
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(s.cardRadius),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxHeight: 300),
                     child: AspectRatio(
@@ -79,18 +85,19 @@ Future<void> showPhotoPreviewSheet(
                       title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
+                        color: c.label,
                       ),
                     ),
                     if (subtitle != null && subtitle.isNotEmpty) ...[
                       const SizedBox(height: 3),
                       Text(
                         subtitle,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: RCColors.sec,
+                          color: c.sec,
                         ),
                       ),
                     ],
@@ -100,18 +107,18 @@ Future<void> showPhotoPreviewSheet(
                         width: double.infinity,
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: RCColors.bg,
+                          color: c.bg,
                           borderRadius: BorderRadius.circular(9),
-                          border: Border.all(color: RCColors.sep),
+                          border: Border.all(color: c.sep),
                         ),
                         child: Text(
                           quoteText.trim(),
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12.5,
                             height: 1.5,
-                            color: RCColors.ink,
+                            color: c.ink,
                           ),
                         ),
                       ),
