@@ -22,6 +22,7 @@ import '../analysis/chat_completion.dart';
 import '../recordings/segment_projection.dart';
 import '../recordings/speaker_profile_store.dart';
 import '../transcribe/utterance_builder.dart';
+import '../voiceprint/joint_speaker_resolver.dart';
 import 'fast_topic_segment_agent.dart';
 import 'section_copy.dart';
 
@@ -32,6 +33,8 @@ class RollingCleanResult {
     this.evaluatedBatches = 0,
     this.skippedRuns = 0,
     this.error,
+    this.resolvedSpeakerAliases = const {},
+    this.suggestions = const [],
   });
 
   final TopicSegmentationState state;
@@ -39,6 +42,8 @@ class RollingCleanResult {
   final int evaluatedBatches;
   final int skippedRuns;
   final Object? error;
+  final Map<String, Map<String, String>> resolvedSpeakerAliases;
+  final List<SpeakerCandidateSuggestion> suggestions;
 }
 
 class _TimedUnit {
@@ -70,6 +75,7 @@ class _ParsedRollingSection {
     required this.paragraphs,
     this.summary = '',
     this.evidenceSliceIds = const [],
+    this.lowValue = false,
   });
 
   final bool continuesPrevious;
@@ -81,6 +87,7 @@ class _ParsedRollingSection {
   final List<String> tags;
   final List<_ParsedParagraph> paragraphs;
   final List<String> evidenceSliceIds;
+  final bool lowValue;
 }
 
 class _ParsedParagraph {
@@ -125,8 +132,8 @@ class RollingCleanSegmentService {
   final AgentConfigStore? _agentConfig;
   final DateTime Function() _now;
 
-  static const int _maxUtterancesPerBatch = 60;
-  static const int _silenceTriggerMs = 60 * 1000;
+  static const int _maxUtterancesPerBatch = 120;
+  static const int _silenceTriggerMs = 15 * 60 * 1000;
 
   String get effectiveModel {
     final resolved = _modelResolver?.call().trim() ?? '';
@@ -136,9 +143,8 @@ class RollingCleanSegmentService {
   bool get isReady => effectiveModel.isNotEmpty && (_ready?.call() ?? true);
 
   /// 与短轮定时任务的间隔对齐。上限 7 天，避免开发者把间隔改长后被 180 分钟静默截断。
-  /// `< 30s` 合并、`30–59s` 声学拆段、`≥ 1 分钟` 静音触发不在这里改。
   int get _cycleMinutes =>
-      (_agentConfig?.cleanCycleMinutes ?? 10).clamp(1, 10080);
+      (_agentConfig?.cleanCycleMinutes ?? 15).clamp(1, 10080);
   bool get _cleanOnSilenceGap => _agentConfig?.cleanOnSilenceGap ?? true;
   String get _overlapMode =>
       _agentConfig?.cleanOverlapMode == 'minutes' ? 'minutes' : 'paragraphs';
@@ -147,28 +153,39 @@ class RollingCleanSegmentService {
   int get _overlapMinutes =>
       (_agentConfig?.cleanOverlapMinutes ?? 3).clamp(1, 30);
 
-  /// 快速检查是否存在已到达清洗周期或 `>= 1 分钟` 停顿门槛的未整理语料。
+  /// 快速检查是否存在已到达清洗周期或静音停顿门槛的未整理语料。
   bool hasReadyTrigger(
     List<RecordingFile> files,
     TopicSegmentationState state, {
     int? wallClockNowMs,
   }) {
     if (!isReady || files.isEmpty) return false;
-    final groups = SegmentProjection.collectSpeechGroups(files);
-    if (groups.isEmpty) return false;
+    final rawGroups = SegmentProjection.collectActivityGroups(files);
+    if (rawGroups.isEmpty) return false;
+    final validGroups = <({ProjectedSpeechGroup group, List<_TimedUnit> units})>[
+      for (final g in rawGroups)
+        () {
+          final u = _extractUnits(g);
+          return (group: g, units: u);
+        }(),
+    ].where((e) => e.units.isNotEmpty).toList();
+    if (validGroups.isEmpty) return false;
     final nowMs = wallClockNowMs ?? _now().millisecondsSinceEpoch;
-    for (var i = 0; i < groups.length; i++) {
-      final units = _extractUnits(groups[i]);
-      if (units.isEmpty) continue;
-      final existing = state.rollingByAnchor[groups[i].anchorSegmentId];
+    for (var i = 0; i < validGroups.length; i++) {
+      final entry = validGroups[i];
+      final units = entry.units;
+      final existing = state.rollingByAnchor[entry.group.anchorSegmentId];
       final uncovered = _uncoveredUnits(units, existing);
       if (uncovered.isEmpty) continue;
+      final isLastGroup = i == validGroups.length - 1;
       final hasLaterGroup =
-          i + 1 < groups.length &&
-          (groups[i + 1].startAtMs - units.last.absEndMs) >= _silenceTriggerMs;
+          !isLastGroup &&
+          (validGroups[i + 1].units.first.absStartMs - units.last.absEndMs) >=
+              _silenceTriggerMs;
       if (_shouldProcessGroup(
         groupUnits: units,
         uncovered: uncovered,
+        isLastGroup: isLastGroup,
         hasLaterGroup: hasLaterGroup,
         forceRecleanAll: false,
         sessionJustEnded: false,
@@ -188,17 +205,27 @@ class RollingCleanSegmentService {
     int? wallClockNowMs,
     void Function(String status)? onProgress,
   }) async {
-    var state = await topicStore.load();
-    if (forceRecleanAll) {
-      state = state.withoutRollingRuns();
-      await topicStore.save(state);
-    }
+    var state = forceRecleanAll
+        ? await topicStore.readModifyWrite(
+            (current) => current.withoutRollingRuns(),
+          )
+        : await topicStore.load();
     if (!isReady || files.isEmpty) {
       return RollingCleanResult(state: state);
     }
 
-    final groups = SegmentProjection.collectSpeechGroups(files);
-    if (groups.isEmpty) {
+    final rawGroups = SegmentProjection.collectActivityGroups(files);
+    if (rawGroups.isEmpty) {
+      return RollingCleanResult(state: state);
+    }
+    final validGroups = <({ProjectedSpeechGroup group, List<_TimedUnit> units})>[
+      for (final g in rawGroups)
+        () {
+          final u = _extractUnits(g);
+          return (group: g, units: u);
+        }(),
+    ].where((e) => e.units.isNotEmpty).toList();
+    if (validGroups.isEmpty) {
       return RollingCleanResult(state: state);
     }
 
@@ -207,11 +234,12 @@ class RollingCleanSegmentService {
     var evaluatedBatches = 0;
     var skippedRuns = 0;
     Object? lastError;
+    final resolvedSpeakerAliasesBySession = <String, Map<String, String>>{};
+    final emittedSuggestions = <SpeakerCandidateSuggestion>[];
 
-    for (var i = 0; i < groups.length; i++) {
-      final group = groups[i];
-      final units = _extractUnits(group);
-      if (units.isEmpty) continue;
+    for (var i = 0; i < validGroups.length; i++) {
+      final group = validGroups[i].group;
+      final units = validGroups[i].units;
 
       final existingRun = forceRecleanAll
           ? null
@@ -222,12 +250,15 @@ class RollingCleanSegmentService {
         continue;
       }
 
+      final isLastGroup = i == validGroups.length - 1;
       final hasLaterGroup =
-          i + 1 < groups.length &&
-          (groups[i + 1].startAtMs - units.last.absEndMs) >= _silenceTriggerMs;
+          !isLastGroup &&
+          (validGroups[i + 1].units.first.absStartMs - units.last.absEndMs) >=
+              _silenceTriggerMs;
       if (!_shouldProcessGroup(
         groupUnits: units,
         uncovered: uncovered,
+        isLastGroup: isLastGroup,
         hasLaterGroup: hasLaterGroup,
         forceRecleanAll: forceRecleanAll,
         sessionJustEnded: sessionJustEnded,
@@ -246,6 +277,7 @@ class RollingCleanSegmentService {
       var coveredEndMs = existingRun?.coveredUtteranceEndMs ?? 0;
 
       final batches = _splitIntoCycleBatches(uncovered);
+      final groupCloudClues = <SemanticSpeakerClue>[];
       var groupEvaluatedBatches = 0;
       for (var bi = 0; bi < batches.length; bi++) {
         final batch = batches[bi];
@@ -258,7 +290,8 @@ class RollingCleanSegmentService {
             accumulatedSections: accumulatedSections,
             speakerContext: speakerContext,
           );
-          _mergeBatchSections(accumulatedSections, result, batch);
+          groupCloudClues.addAll(result.clues);
+          _mergeBatchSections(accumulatedSections, result.sections, batch);
           for (final u in batch) {
             coveredIds.add(u.compositeId);
             if (u.absEndMs > coveredEndMs) coveredEndMs = u.absEndMs;
@@ -281,9 +314,25 @@ class RollingCleanSegmentService {
           coveredUtteranceEndMs: coveredEndMs,
           coveredUtteranceIds: coveredIds,
         );
-        state = state.withRollingRun(updatedRun);
-        await topicStore.save(state);
+        state = await topicStore.readModifyWrite(
+          (latest) => latest.withRollingRun(updatedRun).withOrganizerVersion(2),
+        );
         evaluatedRuns++;
+        await _reconcileGroupVoiceprints(
+          sessionId: sessionId,
+          group: group,
+          sections: accumulatedSections,
+          cloudClues: groupCloudClues,
+          resolvedAliasesOut: resolvedSpeakerAliasesBySession,
+          suggestionsOut: emittedSuggestions,
+        );
+      }
+    }
+
+    if (evaluatedRuns > 0 || (forceRecleanAll && lastError == null)) {
+      if (state.organizerVersion < 2) {
+        state = state.withOrganizerVersion(2);
+        await topicStore.save(state);
       }
     }
 
@@ -293,12 +342,103 @@ class RollingCleanSegmentService {
       evaluatedBatches: evaluatedBatches,
       skippedRuns: skippedRuns,
       error: lastError,
+      resolvedSpeakerAliases: resolvedSpeakerAliasesBySession,
+      suggestions: emittedSuggestions,
     );
+  }
+
+  Future<void> _reconcileGroupVoiceprints({
+    required String sessionId,
+    required ProjectedSpeechGroup group,
+    required List<TopicSectionOverride> sections,
+    required List<SemanticSpeakerClue> cloudClues,
+    required Map<String, Map<String, String>> resolvedAliasesOut,
+    required List<SpeakerCandidateSuggestion> suggestionsOut,
+  }) async {
+    final vp = _voiceprintStore;
+    if (vp == null) return;
+    final cleanSes = sessionId.trim();
+    if (cleanSes.isEmpty) return;
+
+    final speakerCentroids = <String, List<double>>{};
+    final speakerSpeechMs = <String, int>{};
+    String? devLabel = group.views.isNotEmpty
+        ? group.views.first.file.resolvedSourceDeviceLabel
+        : null;
+    final sourceLane = group.views.isNotEmpty
+        ? group.views.first.file.resolvedSourceLane.code
+        : null;
+
+    try {
+      final root = await _resolveRoot();
+      final profileSet = await SpeakerProfileStore(root: root).load(cleanSes);
+      if (profileSet.deviceLabel != null &&
+          profileSet.deviceLabel!.trim().isNotEmpty) {
+        devLabel = profileSet.deviceLabel;
+      }
+      for (final p in profileSet.profiles) {
+        if (p.centroid.isEmpty) continue;
+        final slot = '说话人 ${p.index + 1}';
+        speakerCentroids[slot] = p.centroid;
+        speakerSpeechMs[slot] = p.speechMs;
+      }
+    } on Object {
+      // 无声纹文件时仅根据语义线索生成候选建议
+    }
+
+    final turnPairs = <({String speaker, String text})>[
+      for (final sec in sections)
+        for (final p in sec.paragraphs) (speaker: p.speaker, text: p.text),
+    ];
+    final knownNames = vp.preferredRosterNames(limit: 40).toSet();
+    final localClues = SemanticSpeakerClueExtractor.extractFromTurnPairs(
+      turnPairs,
+      knownNames: knownNames,
+    );
+
+    final resolution = JointSpeakerResolver.resolveSession(
+      session: cleanSes,
+      speakerCentroids: speakerCentroids,
+      speakerSpeechMs: speakerSpeechMs,
+      semanticClues: [...cloudClues, ...localClues],
+      voiceprintStore: vp,
+      deviceLabel: devLabel,
+      sourceLane: sourceLane,
+      nowMs: _now().millisecondsSinceEpoch,
+    );
+
+    for (final outcome in resolution.autoConfirmed.values) {
+      vp.clearSuggestion(
+        session: cleanSes,
+        speakerSlot: outcome.speakerSlot,
+        notify: false,
+      );
+      (resolvedAliasesOut[cleanSes] ??= {})[outcome.speakerSlot] =
+          outcome.personName;
+      if (outcome.shouldEnrollChannelCentroid) {
+        final centroid = speakerCentroids[outcome.speakerSlot];
+        if (centroid != null && centroid.isNotEmpty) {
+          vp.upsertPersonAndSample(
+            name: outcome.personName,
+            embedding: centroid,
+            deviceLabel: outcome.deviceLabel,
+            sourceLane: sourceLane,
+            sceneLabel: '跨设备自适应',
+          );
+        }
+      }
+    }
+
+    for (final sug in resolution.suggestions.values) {
+      vp.recordCandidateSuggestion(sug, notify: false);
+      suggestionsOut.add(sug);
+    }
   }
 
   bool _shouldProcessGroup({
     required List<_TimedUnit> groupUnits,
     required List<_TimedUnit> uncovered,
+    required bool isLastGroup,
     required bool hasLaterGroup,
     required bool forceRecleanAll,
     required bool sessionJustEnded,
@@ -310,8 +450,12 @@ class RollingCleanSegmentService {
     if (spanMs >= cycleMs) return true;
     if (_cleanOnSilenceGap) {
       if (hasLaterGroup) return true;
-      final elapsedSinceLastSpeech = nowMs - groupUnits.last.absEndMs;
-      if (elapsedSinceLastSpeech >= _silenceTriggerMs) return true;
+      // 仅对最后一组在途语音检查距今静默时间；已闭合且后继停顿仅 30s..59s 的历史组
+      // 严格维持纯声学分段，不误调云端模型。
+      if (isLastGroup) {
+        final elapsedSinceLastSpeech = nowMs - groupUnits.last.absEndMs;
+        if (elapsedSinceLastSpeech >= _silenceTriggerMs) return true;
+      }
     }
     return false;
   }
@@ -428,6 +572,7 @@ class RollingCleanSegmentService {
     }
 
     final vp = _voiceprintStore;
+    var rosterNames = const <String>[];
     if (vp != null) {
       for (final slot in labels) {
         final hint = vp.fuzzyHintFor(session: sessionId, speakerSlot: slot);
@@ -435,6 +580,7 @@ class RollingCleanSegmentService {
           weakHints.add({'slot': slot, 'candidateName': hint.trim()});
         }
       }
+      rosterNames = vp.preferredRosterNames(limit: 12);
     }
 
     return {
@@ -442,10 +588,12 @@ class RollingCleanSegmentService {
       if (pairwiseSimilarities.isNotEmpty)
         'cluster_similarities': pairwiseSimilarities,
       if (weakHints.isNotEmpty) 'voiceprint_weak_hints': weakHints,
+      if (rosterNames.isNotEmpty) 'known_speaker_roster': rosterNames,
     };
   }
 
-  Future<List<_ParsedRollingSection>> _processBatch({
+  Future<({List<_ParsedRollingSection> sections, List<SemanticSpeakerClue> clues})>
+  _processBatch({
     required List<_TimedUnit> batch,
     required List<TopicSectionOverride> accumulatedSections,
     required Map<String, Object?> speakerContext,
@@ -464,6 +612,11 @@ class RollingCleanSegmentService {
             'sliceId': batch[i].utterance.sliceId,
             'offsetSec': ((batch[i].absStartMs - batch.first.absStartMs) / 1000)
                 .round(),
+            'gapSincePrevSec': i == 0
+                ? 0
+                : ((batch[i].absStartMs - batch[i - 1].absEndMs) / 1000)
+                      .round()
+                      .clamp(0, 86400),
             'durSec':
                 ((batch[i].absEndMs - batch[i].absStartMs) / 1000)
                     .clamp(0.2, 3600)
@@ -492,7 +645,10 @@ class RollingCleanSegmentService {
     );
 
     final parsed = _parseResponse(raw, batch);
-    return _normalizeAndFillCoverage(parsed, batch);
+    return (
+      sections: _normalizeAndFillCoverage(parsed.sections, batch),
+      clues: parsed.clues,
+    );
   }
 
   Map<String, Object?> _buildOverlapContext(
@@ -547,7 +703,9 @@ class RollingCleanSegmentService {
       ..writeln()
       ..writeln('核心任务：')
       ..writeln(
-        '1. **丢弃无意义噪音**：若某条仅含感叹/填充/孤立标点且无实质内容，在段落整理时顺滑吸纳或省略，不要生成孤立标点段。',
+        '1. **无内容和短内容不要成卡**：没有识别出语音、只有标点，或去掉「嗯啊呃哎哦」后不足 5 个字且没有独立事实的片段，不要输出 section。'
+        '能并进前后相邻、已经有完整内容的话题就并进去，只保留新增事实；并不进去就整段省略。'
+        '禁止用「未识别到语音」「现在」「哎」「好」「我」这类碎片当标题或单独卡片。',
       )
       ..writeln(
         '2. **语义 + 声纹联合说话人分析**：结合 `speaker`、置信度 `spkConf`、`cluster_similarities`（簇间声纹相似度）以及上下文语义连贯性判断。'
@@ -557,12 +715,17 @@ class RollingCleanSegmentService {
         '3. **按说话人与语义合并成完整自然段**：同一说话人连续发表的完整意思必须合并润色为通顺的书面/口语自然段（`paragraphs`），去掉「嗯啊呃」口水词与卡顿重复，修正明显同音错字，不要按短切片时间戳切碎。',
       )
       ..writeln(
-        '4. **按内容/时间事件切卡**：把当前批次组织为 1 到多个事件卡 `sections`。同一件事（例如前十分钟的一场讨论）合并为一张卡，下一件不同时或不同主题的事另起一张卡。严禁按逐词逐句或原始短切片切碎。每个话题必须具备：\n'
-        '   - `title`: 6-20字准确有信息量的标题（严禁使用"实时切片 #1"等编号标题）；\n'
+        '4. **沉浸式大时段活动归拢（严禁按 1~2 分钟切碎）**：识别用户持续专注的生活/工作/学习状态'
+        '（例如长时间开发写代码、写提示词、开会、系统调研）。即使中间有数分钟敲代码静默（`gapSincePrevSec` 较大），'
+        '或中间短暂分心 1~2 分钟（刷个短视频、随口自言自语），只要前后仍处同一活动/工作主线，必须合并归拢为同一张沉浸记录卡'
+        '（跨批通过 `continuesPrevious=true` 续接并更新标题与阶段概述），完整交代这段时间开发或聊了什么，绝不能切成一两分钟的碎片卡！'
+        '只有明显切换为完全不同的独立事件或大时段休息后，才另起新卡。每个话题必须具备：\n'
+        '   - `title`: 6-20字准确有信息量的标题（严禁使用"实时切片 #1"等编号标题，严禁生成“我”“嗯”等单字标题）；\n'
         '   - `summary`: 2-3句生活化卡片摘要，只写和这件事有关的内容；\n'
         '   - `brief`: 1-2句干练摘要，可与 summary 相同；若只返回 summary，将同时用作 brief；\n'
-        '   - `overview`: 2-4句完整「阶段概述」，交代背景、核心讨论点与结论；若只返回 summary，将同时用作 overview；\n'
-        '   - `continuesPrevious`: 若本批开头话题紧接 `previousSection` 为同一话题的延续则为 true（可提供更新后的完整 title/summary/brief/overview），新话题则为 false；\n'
+        '   - `overview`: 2-4句完整「阶段概述」，交代背景、核心讨论/工作内容与结论；若只返回 summary，将同时用作 overview；\n'
+        '   - `lowValue`: 仅当该独立片段只有 1~2 句且完全没有实质信息价值（例如“我正在说话”、试麦测试、单字、纯口水/寒暄“喂/嗯/好/我看看”）时设为 true，供时间轴折叠收纳；正常专注工作/讨论一律为 false；\n'
+        '   - `continuesPrevious`: 若本批开头话题紧接 `previousSection` 为同一持续活动/话题的延续则为 true（可提供更新后的完整 title/summary/brief/overview），新话题则为 false；\n'
         '   - `mergesPreviousParagraph`: 仅当 `continuesPrevious=true` 且首段与 `tailParagraphs` 末段实为同一人同一句话被打断续说时为 true（只输出新增续接内容，勿重复上文）；\n'
         '   - `paragraphs`: 每项 `{"uStart":起始u,"uEnd":结束u,"speaker":"说话人标签","text":"合并润色后的整段文本"}`。同一人连续完整意思合并为自然段，不要因分片边界拆开。',
       )
@@ -572,7 +735,8 @@ class RollingCleanSegmentService {
       )
       ..writeln(
         '6. **忠实不编造**：严格忠于输入事实，只输出合法 JSON：'
-        '{"sections":[{"continuesPrevious":false,"mergesPreviousParagraph":false,"title":"...","summary":"...","brief":"...","overview":"...","tags":["关键词"],"paragraphs":[{"uStart":0,"uEnd":2,"speaker":"说话人 1","text":"..."}]}]}。'
+        '{"sections":[{"continuesPrevious":false,"mergesPreviousParagraph":false,"lowValue":false,"title":"...","summary":"...","brief":"...","overview":"...","tags":["关键词"],"paragraphs":[{"uStart":0,"uEnd":2,"speaker":"说话人 1","text":"..."}]}],"speakerClues":[{"slot":"说话人 1","name":"真实姓名","confidence":0.86,"kind":"vocative","evidence":"原文依据"}]}。'
+        '其中 `speakerClues` 为可选字段：仅当对话中出现自报家门、直接呼语-应答对，且结合 `known_speaker_roster` 能确切对应到某位在场说话人时才填写；严禁把仅仅被提及但未在场发言的第三人（如“让老陈去办”）误标为说话人；不确定请省略或返回 `[]`。'
         '不要输出 Markdown 代码块之外的多余说明。',
       );
     if (customStyle.isNotEmpty) {
@@ -588,16 +752,24 @@ class RollingCleanSegmentService {
     return buf.toString();
   }
 
-  List<_ParsedRollingSection> _parseResponse(
+  ({List<_ParsedRollingSection> sections, List<SemanticSpeakerClue> clues})
+  _parseResponse(
     String raw,
     List<_TimedUnit> batch,
   ) {
     final jsonText = _extractJsonObject(raw);
-    if (jsonText == null) return const [];
+    if (jsonText == null) return (sections: const [], clues: const []);
     final decoded = jsonDecode(jsonText);
-    if (decoded is! Map<String, dynamic>) return const [];
+    if (decoded is! Map<String, dynamic>) {
+      return (sections: const [], clues: const []);
+    }
     final rawSections = decoded['sections'];
-    if (rawSections is! List) return const [];
+    if (rawSections is! List) return (sections: const [], clues: const []);
+    final clues = SemanticSpeakerClueExtractor.parseCloudClues(
+      decoded['speakerClues'],
+      knownNames: _voiceprintStore?.preferredRosterNames(limit: 40).toSet() ??
+          const {},
+    );
 
     final count = batch.length;
     final parsed = <_ParsedRollingSection>[];
@@ -679,10 +851,11 @@ class RollingCleanSegmentService {
           tags: tags,
           paragraphs: paras,
           evidenceSliceIds: evIds,
+          lowValue: s['lowValue'] == true,
         ),
       );
     }
-    return parsed;
+    return (sections: parsed, clues: clues);
   }
 
   /// 确保 `[0 .. batch.length - 1]` 全部原始句都有落脚点，无遗漏也无越界。
@@ -729,6 +902,7 @@ class RollingCleanSegmentService {
             tags: first.tags,
             paragraphs: [...fallbackParas, ...first.paragraphs],
             evidenceSliceIds: first.evidenceSliceIds,
+            lowValue: first.lowValue,
           );
         } else {
           final last = normalized.last;
@@ -742,6 +916,7 @@ class RollingCleanSegmentService {
             tags: last.tags,
             paragraphs: [...last.paragraphs, ...fallbackParas],
             evidenceSliceIds: last.evidenceSliceIds,
+            lowValue: last.lowValue,
           );
         }
       }
@@ -800,6 +975,7 @@ class RollingCleanSegmentService {
       tags: sec.tags,
       paragraphs: merged,
       evidenceSliceIds: sec.evidenceSliceIds,
+      lowValue: sec.lowValue,
     );
   }
 
@@ -867,6 +1043,7 @@ class RollingCleanSegmentService {
             ...prev.evidenceSliceIds,
             ...sec.evidenceSliceIds,
           }.toList(),
+          lowValue: prev.lowValue && sec.lowValue,
         );
       } else {
         accumulated.add(
@@ -883,6 +1060,7 @@ class RollingCleanSegmentService {
             startAtMs: secStart,
             endAtMs: secEnd,
             evidenceSliceIds: sec.evidenceSliceIds,
+            lowValue: sec.lowValue,
           ),
         );
       }

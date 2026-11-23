@@ -182,7 +182,7 @@ class WatchPendingSlicePayload {
       return v is num ? v.toInt() : fallback;
     }
 
-    final rawMarks = raw['marksMs'];
+    final rawMarks = raw['marksMs'] ?? raw['marksOffsetMs'];
     final marks = rawMarks is List
         ? List<int>.unmodifiable([
             for (final item in rawMarks)
@@ -215,11 +215,14 @@ class WatchPendingSlicePayload {
   final bool offlineRecorded;
   final List<int> marksMs;
 
-  LiveAudioSlice toLiveAudioSlice() {
+  LiveAudioSlice toLiveAudioSlice({String watchName = 'Apple Watch'}) {
     final safeSession = sessionId.isNotEmpty ? sessionId : 'watch';
     final safeSliceId = sliceId.isNotEmpty
         ? sliceId
         : '${safeSession}_$sliceIndex';
+    final resolvedLabel = watchName.trim().isEmpty || watchName.trim() == '我的手表'
+        ? 'Apple Watch'
+        : watchName.trim();
     return LiveAudioSlice(
       sessionId: 'watch_$safeSession',
       deviceSessionId: safeSession,
@@ -230,6 +233,9 @@ class WatchPendingSlicePayload {
       gapCount: gapCount,
       isFinal: isFinal,
       sliceKeyOverride: 'watch_$safeSliceId',
+      marksMs: marksMs,
+      sourceLane: 'watch',
+      sourceDeviceLabel: resolvedLabel,
     );
   }
 }
@@ -891,7 +897,7 @@ class WatchHardwareService extends ChangeNotifier {
       _receivedSlices.removeRange(50, _receivedSlices.length);
     }
     _persistHistorySync();
-    _audioSlicesCtrl.add(p.toLiveAudioSlice());
+    _audioSlicesCtrl.add(p.toLiveAudioSlice(watchName: _status.watchName));
     await _backend.ackConsumedSlice(p.sliceId);
     if (!_disposed) {
       notifyListeners();
@@ -1034,12 +1040,17 @@ class WatchHardwareService extends ChangeNotifier {
 /// 走同一套扫描 / 连接 / 录音 / 同步 / 断连保底状态机。
 class WatchCompositeCardGateway implements CardGateway {
   WatchCompositeCardGateway({
-    required this.bleGateway,
+    required CardGateway bleGateway,
     required this.watchService,
-  });
+  }) : _bleGateway = bleGateway;
 
-  final CardGateway bleGateway;
+  CardGateway _bleGateway;
+  CardGateway get bleGateway => _bleGateway;
   final WatchHardwareService watchService;
+
+  void rebindBleGateway(CardGateway next) {
+    _bleGateway = next;
+  }
 
   bool get _watchActive => watchService.isConnectedAsHardware;
 

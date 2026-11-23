@@ -473,10 +473,13 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const Key('setting-list')), findsOneWidget);
-    // 6 个开关锚点仍在
-    for (var i = 0; i < 6; i++) {
+    // 4 个已接线的核心开关锚点（移除未接线的「持续录音 / 标记重要对话」）
+    for (var i = 0; i < 4; i++) {
       expect(find.byKey(Key('sw-$i')), findsOneWidget, reason: 'sw-$i');
     }
+    expect(find.byKey(const Key('sw-4')), findsNothing);
+    expect(find.text('持续录音'), findsNothing);
+    expect(find.text('标记重要对话'), findsNothing);
 
     Color trackColor(Key k) {
       final w = tester.widget<AnimatedContainer>(

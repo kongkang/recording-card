@@ -7,6 +7,7 @@ library;
 import 'package:flutter/material.dart';
 
 import '../device/card_gateway.dart';
+import 'tokens.dart';
 
 enum RCIconKind {
   disconnect,
@@ -41,7 +42,7 @@ class RCIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final resolved =
-        color ?? IconTheme.of(context).color ?? const Color(0xFF1D1D1F);
+        color ?? IconTheme.of(context).color ?? context.rc.label;
     return SizedBox(
       width: size,
       height: size,
@@ -331,48 +332,91 @@ class DeviceKindBadge extends StatelessWidget {
   final DeviceKind kind;
   final String? label;
 
-  static (Color bg, Color border, Color fg) colorsFor(DeviceKind kind) =>
-      switch (kind) {
+  static (Color bg, Color border, Color fg) colorsFor(
+    DeviceKind kind, {
+    bool isDark = false,
+  }) {
+    if (isDark) {
+      return switch (kind) {
         DeviceKind.dyjV1 => (
-          const Color(0xFFFFFFFF),
-          const Color(0xFFD2D2CE),
-          const Color(0xFF1D1D1F),
+          const Color(0xFF28282D),
+          const Color(0xFF3E3E45),
+          const Color(0xFFEBEBF0),
         ),
         DeviceKind.cardV2 => (
-          const Color(0xFF1D1D1F),
-          const Color(0xFF1D1D1F),
-          const Color(0xFFFFFFFF),
+          const Color(0xFFEBEBF0),
+          const Color(0xFFEBEBF0),
+          const Color(0xFF121214),
         ),
         DeviceKind.boardV21 => (
-          const Color(0xFFE8F2FF),
-          const Color(0xFFBBD8FF),
-          const Color(0xFF1456B8),
-        ),
-        DeviceKind.getSeedGsc10 => (
-          const Color(0xFFFFF7E6),
-          const Color(0xFFFFD591),
-          const Color(0xFFAD6800),
+          const Color(0xFF18263A),
+          const Color(0xFF2A456B),
+          const Color(0xFF7CB4FF),
         ),
         DeviceKind.omiCv1 => (
-          const Color(0xFFF3EEFF),
-          const Color(0xFFD3ADF7),
-          const Color(0xFF531DAB),
+          const Color(0xFF261C38),
+          const Color(0xFF4A356E),
+          const Color(0xFFC8A2FF),
         ),
         DeviceKind.feishuD3200 => (
-          const Color(0xFFFFF1F0),
-          const Color(0xFFFFCCC7),
-          const Color(0xFFCF1322),
+          const Color(0xFF331B1B),
+          const Color(0xFF5C2E2E),
+          const Color(0xFFFF8585),
+        ),
+        DeviceKind.iflytekA1 => (
+          const Color(0xFF112A2C),
+          const Color(0xFF1F4E52),
+          const Color(0xFF5CDBD3),
         ),
         DeviceKind.appleWatch => (
-          const Color(0xFFEAF7EE),
-          const Color(0xFFB7E1C4),
-          const Color(0xFF186A3B),
+          const Color(0xFF172B1F),
+          const Color(0xFF294F38),
+          const Color(0xFF6AD889),
         ),
       };
+    }
+    return switch (kind) {
+      DeviceKind.dyjV1 => (
+        const Color(0xFFFFFFFF),
+        const Color(0xFFD2D2CE),
+        const Color(0xFF1D1D1F),
+      ),
+      DeviceKind.cardV2 => (
+        const Color(0xFF1D1D1F),
+        const Color(0xFF1D1D1F),
+        const Color(0xFFFFFFFF),
+      ),
+      DeviceKind.boardV21 => (
+        const Color(0xFFE8F2FF),
+        const Color(0xFFBBD8FF),
+        const Color(0xFF1456B8),
+      ),
+      DeviceKind.omiCv1 => (
+        const Color(0xFFF3EEFF),
+        const Color(0xFFD3ADF7),
+        const Color(0xFF531DAB),
+      ),
+      DeviceKind.feishuD3200 => (
+        const Color(0xFFFFF1F0),
+        const Color(0xFFFFCCC7),
+        const Color(0xFFCF1322),
+      ),
+      DeviceKind.iflytekA1 => (
+        const Color(0xFFE6FFFB),
+        const Color(0xFF87E8DE),
+        const Color(0xFF006D75),
+      ),
+      DeviceKind.appleWatch => (
+        const Color(0xFFEAF7EE),
+        const Color(0xFFB7E1C4),
+        const Color(0xFF186A3B),
+      ),
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
-    final (bg, border, fg) = colorsFor(kind);
+    final (bg, border, fg) = colorsFor(kind, isDark: context.rc.isDark);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(

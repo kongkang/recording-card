@@ -23,9 +23,10 @@ void main() {
     expect(find.textContaining('还没有录音'), findsOneWidget);
     expect(find.byKey(const Key('timeline-refresh')), findsOneWidget);
     expect(find.byKey(const Key('sync-banner')), findsNothing);
+    expect(find.byKey(const Key('recording-status-block')), findsNothing);
   });
 
-  testWidgets('下拉同步：提示条按真实阶段推进，完成后记录出现在时间轴', (tester) async {
+  testWidgets('下拉同步：统一状态条按真实阶段推进并保持顶部留白，完成后收起', (tester) async {
     final recordings = await FakeRecordingSync.create(
       result: [seedEvents.first],
       stepDelay: const Duration(milliseconds: 300),
@@ -50,17 +51,27 @@ void main() {
 
     expect(recordings.syncCalls, 1, reason: '下拉真的触发了同步');
 
-    // 同步中：提示条 + 阶段文案 + 进度条（数字来自 onProgress 回报）
-    expect(find.byKey(const Key('sync-banner')), findsOneWidget);
-    expect(find.byKey(const Key('sync-text')), findsOneWidget);
-    expect(find.byKey(const Key('sync-progress')), findsOneWidget);
+    // 同步中：统一单行状态条 + 阶段文案 + 条内进度指示（旧 sync-banner 不再存在）
+    expect(find.byKey(const Key('sync-banner')), findsNothing);
+    expect(find.byKey(const Key('recording-status-block')), findsOneWidget);
+    expect(find.byKey(const Key('recording-status-subtitle')), findsOneWidget);
+    expect(find.byKey(const Key('recording-status-progress')), findsOneWidget);
     expect(
-      tester.widget<Text>(find.byKey(const Key('sync-text'))).data,
+      tester.widget<Text>(find.byKey(const Key('recording-status-subtitle'))).data,
       anyOf(
         '正在读取录音卡文件列表…',
         '正在取回 REC001.apm（1/1）',
         '正在转写 REC001.apm',
       ),
+    );
+    final tabsBottom =
+        tester.getBottomLeft(find.byKey(const Key('timeline-tabs-bar'))).dy;
+    final barTop =
+        tester.getTopLeft(find.byKey(const Key('recording-status-block'))).dy;
+    expect(
+      barTop - tabsBottom,
+      greaterThanOrEqualTo(10.0),
+      reason: '同步态顶部状态条与 Tab 栏之间必须保留顶部间距',
     );
 
     // 跑完四个阶段
@@ -68,7 +79,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
     }
 
-    expect(store.syncStage, isNull, reason: '结束后收起提示条');
+    expect(store.syncStage, isNull, reason: '结束后收起状态条');
+    expect(find.byKey(const Key('recording-status-block')), findsNothing);
     expect(find.byKey(const Key('sync-banner')), findsNothing);
     expect(store.syncText, isEmpty);
     // 同步回来的记录上了时间轴

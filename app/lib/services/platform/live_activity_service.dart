@@ -6,6 +6,8 @@
 ///   Setting 页不展示「灵动岛与操作按钮」入口。
 library;
 
+import 'dart:io' show Platform;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -53,6 +55,7 @@ class LiveActivityService {
   VoidCallback? _onActionButtonAgent;
   bool _pendingActionToggle = false;
   bool _pendingActionAgent = false;
+  bool _nextActivityIsRecording = true;
 
   /// 当用户按下绑定的 iPhone 侧边操作按钮触发「切换录音」AppIntent 时回调。
   VoidCallback? get onActionButtonToggle => _onActionButtonToggle;
@@ -106,17 +109,37 @@ class LiveActivityService {
     }
   }
 
+  /// 查询当前系统是否已有正在展示的灵动岛 / 锁屏实况（用于冷启动或恢复时与硬件状态对账）。
+  Future<ActiveLiveActivityState> queryActiveActivity() async {
+    if (kIsWeb || !Platform.isIOS) {
+      return const ActiveLiveActivityState.inactive();
+    }
+    try {
+      final map = await _channel.invokeMethod<Map<Object?, Object?>>(
+        'activeActivity',
+      );
+      return ActiveLiveActivityState.fromMap(map);
+    } on MissingPluginException {
+      return const ActiveLiveActivityState.inactive();
+    } on PlatformException {
+      return const ActiveLiveActivityState.inactive();
+    }
+  }
+
   /// 启动/更新录音灵动岛与锁屏实况卡片（图标固定为 App Logo，而非麦克风图标）。
   Future<void> startRecordingActivity({
     required DateTime startedAt,
     String title = '录音卡',
     String subtitle = '本机录音运行中',
   }) async {
+    final isRecording = _nextActivityIsRecording;
+    _nextActivityIsRecording = true;
     try {
       await _channel.invokeMethod<void>('start', {
         'startedAtMs': startedAt.millisecondsSinceEpoch,
         'title': title,
         'subtitle': subtitle,
+        'isRecording': isRecording,
       });
     } on MissingPluginException {
       // unit test / non-iOS environment
@@ -153,6 +176,31 @@ class LiveActivityService {
     subtitle: '蓝牙断连 · 本机保底录音中',
   );
 
+  /// 启动/更新蓝牙意外断连后由 Apple Watch 接力的实况卡片。
+  Future<void> startWatchFailoverRecordingActivity({
+    required DateTime startedAt,
+  }) => startRecordingActivity(
+    startedAt: startedAt,
+    title: '录音卡',
+    subtitle: '蓝牙断连 · Apple Watch 接力录音中',
+  );
+
+  /// 蓝牙断开且 iOS 后台受限待用户轻点回到前台自动开启手机麦克风的提醒实况卡片。
+  Future<void> startPendingFailoverRecordingActivity({
+    required DateTime startedAt,
+  }) async {
+    _nextActivityIsRecording = false;
+    try {
+      await startRecordingActivity(
+        startedAt: startedAt,
+        title: '录音卡',
+        subtitle: '蓝牙已断连 · 轻点打开恢复本机录音',
+      );
+    } finally {
+      _nextActivityIsRecording = true;
+    }
+  }
+
   /// 关闭灵动岛实况卡片。
   Future<void> stopLocalRecordingActivity() async {
     try {
@@ -163,4 +211,74 @@ class LiveActivityService {
       debugPrint('[LiveActivityService] stop failed: ${e.message}');
     }
   }
+}
+
+/// 系统当前正在展示的灵动岛 / 锁屏实况快照。
+class ActiveLiveActivityState {
+  const ActiveLiveActivityState({
+    required this.active,
+    this.id,
+    this.title = '',
+    this.subtitle = '',
+    this.startedAtMs,
+    this.isRecording = false,
+  });
+
+  const ActiveLiveActivityState.inactive()
+      : active = false,
+        id = null,
+        title = '',
+        subtitle = '',
+        startedAtMs = null,
+        isRecording = false;
+
+  factory ActiveLiveActivityState.fromMap(Map<Object?, Object?>? map) {
+    if (map == null || map['active'] != true) {
+      return const ActiveLiveActivityState.inactive();
+    }
+    final rawStarted = map['startedAtMs'];
+    final startedAtMs = switch (rawStarted) {
+      int v => v,
+      num v => v.toInt(),
+      String s => int.tryParse(s),
+      _ => null,
+    };
+    return ActiveLiveActivityState(
+      active: true,
+      id: map['id'] as String?,
+      title: (map['title'] as String?) ?? '',
+      subtitle: (map['subtitle'] as String?) ?? '',
+      startedAtMs: startedAtMs,
+      isRecording: map['isRecording'] == true,
+    );
+  }
+
+  final bool active;
+  final String? id;
+  final String title;
+  final String subtitle;
+  final int? startedAtMs;
+  final bool isRecording;
+
+  DateTime? get startedAt => startedAtMs != null && startedAtMs! > 0
+      ? DateTime.fromMillisecondsSinceEpoch(startedAtMs!)
+      : null;
+
+  bool get isAppleWatch =>
+      active &&
+      (title.contains('Apple Watch') ||
+          subtitle.contains('Apple Watch') ||
+          title.contains('Watch') ||
+          subtitle.contains('Watch'));
+
+  bool get isLocalPhoneOnly {
+    if (!active || isAppleWatch) return false;
+    return title.contains('本机') ||
+        title.contains('手机') ||
+        subtitle.contains('本机') ||
+        subtitle.contains('手机');
+  }
+
+  bool get isHardwareRecording =>
+      active && isRecording && !isLocalPhoneOnly;
 }

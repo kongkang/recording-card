@@ -18,8 +18,12 @@ import '../../core/theme/tokens.dart';
 import '../../services/audio/voice_sample_capture.dart';
 import '../../services/auth/oauth_config.dart';
 import '../../services/auth_service.dart';
+import '../../services/external_data/external_data_hub_store.dart';
+import '../../services/external_data/getnote_sync_store.dart';
 import '../../services/health/health_signal_controller.dart';
 import '../../services/memory/memory_search_scope.dart';
+import '../../services/net/api_exception.dart';
+import '../../services/net/model_provider_store.dart';
 import '../../services/transcribe/asr_models.dart';
 import '../../services/transcribe/model_manager_controller.dart';
 import '../../services/transcribe/system_speech_client.dart';
@@ -27,6 +31,8 @@ import '../../services/watch/watch_hardware_service.dart';
 import '../../widgets/rc_switch.dart';
 import '../../widgets/store_scope.dart';
 import 'developer_schedule_section.dart';
+import 'external_data_hub_body.dart';
+import 'getnote_sync_body.dart';
 import 'health_signal_body.dart';
 import 'memory_search_body.dart';
 
@@ -37,41 +43,126 @@ class SettingSubPage extends StatelessWidget {
     required this.agentConfig,
     this.device,
     this.modelManager,
+    this.modelProviders,
     this.authService,
     this.healthSignals,
+    this.getNoteStore,
+    this.externalDataHub,
     this.showPaneBack = false,
+    this.backLabel = '返回 Setting',
     this.standalone = false,
+    this.standaloneBackLabel = 'Setting',
   });
 
-  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'dev'
+  final String
+  subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extapi' | 'extdata' | 'extapi:<id>' | 'health' | 'dev'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
+  final ModelProviderStore? modelProviders;
   final AuthService? authService;
   final HealthSignalController? healthSignals;
+  final GetNoteSyncStore? getNoteStore;
+  final ExternalDataHubStore? externalDataHub;
   final bool showPaneBack;
+  final String backLabel;
   final bool standalone;
+  final String standaloneBackLabel;
 
-  String get _title => switch (subId) {
-    'login' => '云端账号授权',
-    'local' => '本地语音引擎',
-    'cloud' => '云端模型设置',
-    'prompts' => '预设风格与提示词',
-    'voiceprint' => '声纹识别',
-    'ext' => '扩展能力（Skills · Tools · MCP）',
-    'mem' => '本机记忆检索',
-    'island' => '灵动岛与操作按钮',
-    'watch' => 'Apple Watch 联动',
-    'exthw' => '第三方硬件联动',
-    'health' => '行为与健康信号',
-    'dev' => '开发者设置',
-    _ => '设置详情',
-  };
+  ExternalDataHubStore get _hub =>
+      externalDataHub ?? ExternalDataHubStore.instance;
+
+  String get _title {
+    if (subId.startsWith('extapi:')) {
+      final cid = subId.substring(7);
+      return _hub.connectorById(cid)?.name ?? '第三方 API 接入';
+    }
+    return switch (subId) {
+      'login' => '云端账号授权',
+      'local' => '本地语音引擎',
+      'cloud' => '云端模型设置',
+      'prompts' => '预设风格与提示词',
+      'voiceprint' => '声纹识别',
+      'ext' => '扩展能力（Skills · Tools · MCP）',
+      'mem' => '本机记忆检索',
+      'island' => '灵动岛与操作按钮',
+      'watch' => 'Apple Watch 联动',
+      'exthw' => '第三方硬件 SDK',
+      'extapi' || 'extnotes' || 'extrecorders' => '第三方 API 接入',
+      'extdata' => 'Get 笔记',
+      'health' => '行为与健康信号',
+      'dev' => '开发者设置',
+      _ => '设置详情',
+    };
+  }
+
+  Widget? _buildTitleHelpButton() {
+    if (subId == 'local') {
+      return _SettingsHelpButton(
+        key: const Key('local-engine-help'),
+        title: _title,
+        message: [
+          '录音在本机转成文字。',
+          if (modelManager?.supportsSystemAsr == true)
+            '系统转写使用${modelManager!.systemCapabilities.effectiveEngineTitle}。'
+          else
+            '此设备可下载增强转写模型。',
+          '增强转写（SenseVoice）约 228 MB，适合多语言和方言录音。',
+          '区分说话人（CAM++）约 27 MB，按声音区分说话人。',
+          '人声检测（Silero VAD）随应用内置，用于跳过静音。',
+        ].join('\n\n'),
+      );
+    }
+    if (subId == 'cloud') {
+      return const _SettingsHelpButton(
+        key: Key('cloud-provider-help'),
+        title: '模型服务',
+        message:
+            '外脑会按场景自动选择模型。第三方服务使用你选择的模型并计入该服务商的用量。提示词、技能与 Agent 流程仍由本机管理，任务所需内容会发给选中的服务商。',
+      );
+    }
+    if (subId == 'exthw') {
+      return const _SettingsHelpButton(
+        key: Key('ext-hw-help'),
+        title: '第三方硬件 SDK',
+        message: '开启对应设备后，可在首页右上角设备列表中扫描连接第三方硬件，固件升级与配网请继续使用各硬件官方 App。',
+      );
+    }
+    if (subId == 'extapi' || subId == 'extnotes' || subId == 'extrecorders') {
+      return const _SettingsHelpButton(
+        key: Key('ext-api-help'),
+        title: '第三方 API 接入',
+        message:
+            '支持通过各平台官方 API 连续翻页拉取全部历史笔记、阅读划线与云端录音记录。\n\n开启「自动导入」后，系统每 60 分钟自动检查新增与更新；所有密钥均仅保存于本机系统密钥库（Keychain）。',
+      );
+    }
+    if (subId == 'extdata') {
+      return const _SettingsHelpButton(
+        key: Key('getnote-help'),
+        title: 'Get 笔记',
+        message:
+            '请在 biji.com/openapi 创建应用并获取 Client ID（cli_...）与 API Key（gk_live_...）。\n\n同步时会从第 1 页起连续游标翻页直至全部历史拉取完成，每页结果实时落盘并按 note_id 幂等去重；凭据仅保存在本机系统密钥库（Keychain）。',
+      );
+    }
+    if (subId.startsWith('extapi:')) {
+      final cid = subId.substring(7);
+      final conn = _hub.connectorById(cid);
+      if (conn == null) return null;
+      return _SettingsHelpButton(
+        key: Key('ext-conn-help-$cid'),
+        title: conn.name,
+        message:
+            '${conn.setupGuide}\n\n所有凭据仅保存于本机系统密钥库（Keychain），开启「自动导入」后每 60 分钟自动检查新增与更新。',
+      );
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
     final appStore = StoreScope.maybeOf(context);
+    final helpBtn = _buildTitleHelpButton();
     return Scaffold(
       backgroundColor: c.bg,
       appBar: standalone
@@ -79,13 +170,13 @@ class SettingSubPage extends StatelessWidget {
               backgroundColor: c.bg,
               surfaceTintColor: Colors.transparent,
               elevation: 0,
-              leadingWidth: 108,
+              leadingWidth: standaloneBackLabel == 'Setting' ? 108 : 164,
               leading: TextButton.icon(
                 key: const Key('standalone-crumb-back'),
                 onPressed: () => Navigator.of(context).maybePop(),
                 icon: Icon(Icons.chevron_left, size: 18, color: c.label),
                 label: Text(
-                  'Setting',
+                  standaloneBackLabel,
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
@@ -108,7 +199,7 @@ class SettingSubPage extends StatelessWidget {
                   key: const Key('pb-setsub'),
                   onPressed: appStore.goBack,
                   icon: const Icon(Icons.chevron_left, size: 18),
-                  label: const Text('返回 Setting'),
+                  label: Text(backLabel),
                   style: TextButton.styleFrom(
                     foregroundColor: c.sec,
                     padding: const EdgeInsets.symmetric(
@@ -131,14 +222,21 @@ class SettingSubPage extends StatelessWidget {
                       (standalone ? MediaQuery.paddingOf(context).bottom : 0),
                 ),
                 children: [
-                  Text(
-                    _title,
-                    key: const Key('setsub-title'),
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      color: c.label,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _title,
+                          key: const Key('setsub-title'),
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            color: c.label,
+                          ),
+                        ),
+                      ),
+                      ?helpBtn,
+                    ],
                   ),
                   const SizedBox(height: 14),
                   switch (subId) {
@@ -150,7 +248,10 @@ class SettingSubPage extends StatelessWidget {
                       controller: modelManager,
                       config: agentConfig,
                     ),
-                    'cloud' => _CloudModelBody(config: agentConfig),
+                    'cloud' => _CloudModelBody(
+                      config: agentConfig,
+                      store: modelProviders ?? ModelProviderStore.instance,
+                    ),
                     'prompts' => _AgentPromptsBody(config: agentConfig),
                     'voiceprint' => _VoiceprintBody(controller: modelManager),
                     'ext' => _AgentExtensionsBody(config: agentConfig),
@@ -164,9 +265,46 @@ class SettingSubPage extends StatelessWidget {
                       config: agentConfig,
                       device: device,
                     ),
-                    'health' => healthSignals == null
-                        ? const Text('采集服务未装载')
-                        : HealthSignalSettingsBody(controller: healthSignals!),
+                    'extapi' || 'extnotes' || 'extrecorders' =>
+                      ExternalApiListBody(
+                        getNoteStore: getNoteStore ?? GetNoteSyncStore.instance,
+                        hubStore: _hub,
+                        onOpenSub: standalone
+                            ? (targetId) {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => SettingSubPage(
+                                      subId: targetId,
+                                      agentConfig: agentConfig,
+                                      device: device,
+                                      modelManager: modelManager,
+                                      modelProviders: modelProviders,
+                                      authService: authService,
+                                      healthSignals: healthSignals,
+                                      getNoteStore: getNoteStore,
+                                      externalDataHub: externalDataHub,
+                                      standalone: true,
+                                      standaloneBackLabel: '第三方 API 接入',
+                                    ),
+                                  ),
+                                );
+                              }
+                            : null,
+                      ),
+                    'extdata' => GetNoteSyncBody(
+                      store: getNoteStore ?? GetNoteSyncStore.instance,
+                    ),
+                    final s when s.startsWith('extapi:') =>
+                      ExternalConnectorDetailBody(
+                        store: _hub,
+                        connectorId: s.substring(7),
+                      ),
+                    'health' =>
+                      healthSignals == null
+                          ? const Text('采集服务未装载')
+                          : HealthSignalSettingsBody(
+                              controller: healthSignals!,
+                            ),
                     'dev' => _DeveloperCleanBody(config: agentConfig),
                     _ => const SizedBox.shrink(),
                   },
@@ -186,6 +324,36 @@ class SettingSubPage extends StatelessWidget {
     }
     return MemorySearchBody(ask: service.ask);
   }
+}
+
+class _SettingsHelpButton extends StatelessWidget {
+  const _SettingsHelpButton({
+    super.key,
+    required this.title,
+    required this.message,
+  });
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: '查看说明',
+    icon: const Icon(Icons.help_outline, size: 20),
+    onPressed: () => showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(child: Text(message)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 // ── 1) 本地语音引擎 ──────────────────────────────────────────
@@ -223,31 +391,14 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     ModelSpec spec,
   ) {
     if (spec.id == senseVoiceSpec.id) {
-      if (ctrl.supportsSystemAsr) {
-        final fallbackName = ctrl.systemCapabilities.effectiveEngineTitle;
-        return (
-          title: '确认删除 SenseVoice 增强模型？',
-          content:
-              '删除后将释放约 228 MB 本机存储空间，并自动回退为「$fallbackName」继续免费离线转写，隐私同样全程留在本机。后续需要方言或中英混杂增强效果时可随时重新下载。',
-        );
-      }
       return (
-        title: '确认删除本地语音模型？',
-        content:
-            '删除后将无法自动离线语音转文字，仅能切换到付费云端模式；原享有的终身本地转写服务也会失效，且语音上行云端存在隐私泄露风险。',
+        title: '删除增强转写？',
+        content: ctrl.supportsSystemAsr
+            ? '删除后使用系统转写。可随时重新下载。'
+            : '删除后将暂停本地转写，直到重新下载。',
       );
     }
-    if (spec.id == campplusEmbeddingSpec.id) {
-      return (
-        title: '确认删除 CAM++ 声纹模型？',
-        content:
-            '删除后可释放约 27 MB 空间，语音转写不受影响；之后的新录音说话人将暂标为「未区分」，可在本地语音引擎页随时重新下载恢复。',
-      );
-    }
-    return (
-      title: '确认删除${spec.displayName}？',
-      content: '删除后可释放本机存储空间，后续可随时在本页重新下载。',
-    );
+    return (title: '删除说话人识别？', content: '新录音将暂时无法区分说话人。可随时重新下载。');
   }
 
   Future<void> _confirmDeleteModel(
@@ -311,12 +462,12 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
       children: [
         _buildStatusCard(context, ctrl, effectiveMode),
         const SizedBox(height: 18),
-        const _SubSectionLabel('语音转写模型'),
+        const _SubSectionLabel('转写方式'),
         const SizedBox(height: 8),
         _buildEngineSelectorCard(context, ctrl, effectiveMode),
         const SizedBox(height: 18),
-        _SubSectionLabel('本地模型文件与存储（共 ${specs.length} 项）'),
-        for (final spec in specs) ...[
+        const _SubSectionLabel('下载管理'),
+        for (final spec in specs.where((spec) => !spec.bundled)) ...[
           const SizedBox(height: 10),
           _buildSpecCard(context, spec, ctrl),
         ],
@@ -335,57 +486,10 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     final speakerReady = ctrl?.speakerReady ?? false;
     final configured = ctrl?.configured ?? false;
 
-    final String title;
-    final String pillText;
-    final Color pillBg;
-    final Color pillFg;
-    final String desc;
-    final bool isReady =
-        effectiveMode == 'system' || effectiveMode == 'sensevoice';
-
-    if (effectiveMode == 'system') {
-      title = '本地转写已就绪';
-      pillText = '系统内置生效中';
-      pillBg = const Color(0xFFEDF7F0);
-      pillFg = const Color(0xFF1F7A34);
-      final engineTitle = sysCaps.effectiveEngineTitle;
-      final devLabel = sysCaps.effectiveDeviceLabel;
-      if (sysCaps.isAndroid) {
-        if (!sysCaps.offlinePackInstalled) {
-          desc =
-              '已识别本机为 $devLabel，默认启用「$engineTitle」；当前系统中文离线语音包未就绪，可先一键拉起系统下载或改用 SenseVoice。';
-        } else {
-          desc = speakerReady
-              ? '已识别本机为 $devLabel，默认启用「$engineTitle」，免下载 228 MB 语音包即可立即离线转写；27 MB 声纹模型已在后台自动就绪。'
-              : '已识别本机为 $devLabel，默认启用「$engineTitle」离线转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。';
-        }
-      } else {
-        desc = speakerReady
-            ? '已识别本机为 $devLabel，默认使用原生端侧引擎（SpeechAnalyzer），免下载 228 MB 语音包即可立即离线转写；27 MB 声纹模型已在后台自动就绪。'
-            : '已识别本机为 $devLabel，默认使用原生端侧引擎（SpeechAnalyzer）离线转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。';
-      }
-    } else if (effectiveMode == 'sensevoice') {
-      title = '本地转写已就绪';
-      pillText = 'SenseVoice 生效中';
-      pillBg = const Color(0xFFEDF7F0);
-      pillFg = const Color(0xFF1F7A34);
-      final devPrefix = sysCaps.deviceSummary.trim().isNotEmpty
-          ? '当前设备为 ${sysCaps.effectiveDeviceLabel}，'
-          : '';
-      desc = speakerReady
-          ? '$devPrefix当前使用 SenseVoice 增强离线模型，针对中英混杂、粤语方言与多人对话深度优化，全程在本机离线处理。'
-          : '$devPrefix当前使用 SenseVoice 增强离线模型转写；27 MB 声纹模型未安装，新录音说话人暂标为「未区分」。';
-    } else {
-      title = (ctrl != null && !configured) ? '模型下载服务未配置' : '待启用本地转写';
-      pillText = (ctrl != null && !configured) ? '未配置' : '待手动下载';
-      pillBg = const Color(0xFFFFF4E0);
-      pillFg = const Color(0xFF8A4300);
-      if (ctrl != null && !configured) {
-        desc = '未配置模型下载地址（RC_MODEL_BASE）；音频与声纹均不上传云端，配置后可下载 SenseVoice 增强模型。';
-      } else {
-        desc = sysCaps.effectiveUnsupportedReason;
-      }
-    }
+    final isReady = effectiveMode == 'system' || effectiveMode == 'sensevoice';
+    final title = isReady
+        ? '本地转写已就绪'
+        : (ctrl != null && !configured ? '下载服务暂不可用' : '等待下载转写模型');
 
     final showActionBtn =
         ctrl != null &&
@@ -399,12 +503,15 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     final String btnLabel;
     if (ctrl != null && ctrl.busy) {
       btnLabel = '下载中…';
-    } else if (ctrl != null && ctrl.hasRemoteUpdates && speakerReady && isReady) {
-      btnLabel = '更新至新版模型';
+    } else if (ctrl != null &&
+        ctrl.hasRemoteUpdates &&
+        speakerReady &&
+        isReady) {
+      btnLabel = '更新模型';
     } else if (isReady && !speakerReady) {
-      btnLabel = '恢复声纹模型（~27 MB）';
+      btnLabel = '下载说话人识别';
     } else {
-      btnLabel = '下载增强模型（~228 MB）';
+      btnLabel = '下载增强转写';
     }
 
     return Container(
@@ -425,7 +532,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                 height: 8,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: isReady ? RCColors.ok : RCColors.warn,
+                  color: isReady ? c.ok : c.warn,
                 ),
               ),
               const SizedBox(width: 8),
@@ -439,23 +546,8 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                   ),
                 ),
               ),
-              _tagPill(pillText, bg: pillBg, fg: pillFg),
             ],
           ),
-          if (sysCaps.deviceSummary.trim().isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              '当前设备：${sysCaps.effectiveDeviceLabel}',
-              key: const Key('local-device-summary'),
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w600,
-                color: c.ink,
-              ),
-            ),
-          ],
-          const SizedBox(height: 6),
-          Text(desc, style: TextStyle(fontSize: 12.5, height: 1.45, color: c.sec)),
           if (showActionBtn || showSysPackDownload) ...[
             const SizedBox(height: 10),
             Wrap(
@@ -468,7 +560,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                     onPressed: ctrl.busy
                         ? null
                         : () => unawaited(ctrl.requestSystemLanguagePack()),
-                    child: const Text('下载系统中文离线语音包'),
+                    child: const Text('下载中文语音包'),
                   ),
                 if (showActionBtn)
                   OutlinedButton(
@@ -502,7 +594,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
           if (ctrl != null && ctrl.error != null) ...[
             const SizedBox(height: 8),
             Text(
-              ctrl.error!,
+              '下载失败，请重试',
               key: const Key('model-error'),
               style: TextStyle(fontSize: 12, height: 1.4, color: c.danger),
             ),
@@ -518,26 +610,16 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     String effectiveMode,
   ) {
     final c = context.rc;
-    final sysCaps =
-        ctrl?.systemCapabilities ?? SystemSpeechCapabilities.unsupported;
     final sysOk = ctrl?.supportsSystemAsr ?? false;
-    final senseInstalled =
-        ctrl?.statusFor(senseVoiceSpec)?.installed ?? false;
+    final senseInstalled = ctrl?.statusFor(senseVoiceSpec)?.installed ?? false;
     final configured = ctrl?.configured ?? false;
 
-    final sysDesc = sysCaps.isAndroid
-        ? '调用「${sysCaps.effectiveEngineTitle}」纯端侧离线识别，音频仅留在本机；${sysCaps.offlinePackInstalled ? '安装即用，免下 228 MB 增强模型。' : '中文离线语音包未就绪时可一键拉起系统下载。'}'
-        : '调用原生 SpeechAnalyzer 纯端侧引擎（未预置长音频资产时自动以系统听写包垫底），刚装好软件即可立即离线使用，音频不出本机。';
-
     final senseStateLabel = senseInstalled
-        ? '~228 MB · 已下载'
+        ? '已下载'
         : (ctrl?.busy == true &&
                   ctrl?.selectedEngine != LocalAsrEngineMode.system
-              ? '~228 MB · 下载中…'
-              : '~228 MB · 按需下载');
-    final senseDesc =
-        '外脑调优多语种离线模型，在中英混杂、粤语/口音与情绪识别场景下效果更佳。'
-        '${senseInstalled ? '' : '默认不随安装自动下载，点此即可下载并启用。'}';
+              ? '下载中…'
+              : '需下载');
 
     return Container(
       key: const Key('asr-engine-group'),
@@ -552,16 +634,16 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
             _buildEngineOptionRow(
               context,
               key: const Key('asr-opt-system'),
-              title: sysCaps.effectiveEngineTitle,
+              title: '系统转写',
               tags: [
-                _tagPill('免下载 · 0 MB', bg: const Color(0xFFF0F0EC), fg: c.sec),
                 _tagPill(
-                  '默认推荐',
-                  bg: const Color(0xFFEDF7F0),
-                  fg: const Color(0xFF1F7A34),
+                  '免下载',
+                  bg: c.isDark
+                      ? const Color(0xFF242428)
+                      : const Color(0xFFF0F0EC),
+                  fg: c.sec,
                 ),
               ],
-              subtitle: sysDesc,
               selected: effectiveMode == 'system',
               onTap: ctrl == null || ctrl.busy
                   ? null
@@ -574,23 +656,22 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
           _buildEngineOptionRow(
             context,
             key: const Key('asr-opt-sensevoice'),
-            title: 'SenseVoice 增强模型',
+            title: '增强转写',
             tags: [
-              _tagPill(senseStateLabel, bg: const Color(0xFFF0F0EC), fg: c.sec),
-              if (!sysOk)
-                _tagPill(
-                  '本机推荐方案',
-                  bg: const Color(0xFFEEF5FF),
-                  fg: const Color(0xFF0F4C81),
-                ),
+              _tagPill(
+                senseStateLabel,
+                bg: c.isDark
+                    ? const Color(0xFF242428)
+                    : const Color(0xFFF0F0EC),
+                fg: c.sec,
+              ),
             ],
-            subtitle: senseDesc,
             selected: effectiveMode == 'sensevoice',
             onTap: ctrl == null || ctrl.busy
                 ? null
                 : () {
                     if (!senseInstalled && !configured) {
-                      _showHint(context, '未配置模型下载地址（RC_MODEL_BASE）');
+                      _showHint(context, '下载服务暂不可用');
                       return;
                     }
                     unawaited(
@@ -608,7 +689,6 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     required Key key,
     required String title,
     required List<Widget> tags,
-    required String subtitle,
     required bool selected,
     required VoidCallback? onTap,
   }) {
@@ -623,30 +703,20 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: c.label,
-                        ),
-                      ),
-                      ...tags,
-                    ],
-                  ),
-                  const SizedBox(height: 4),
                   Text(
-                    subtitle,
-                    style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+                    title,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: c.label,
+                    ),
                   ),
+                  ...tags,
                 ],
               ),
             ),
@@ -654,11 +724,9 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
             Padding(
               padding: const EdgeInsets.only(top: 2),
               child: Icon(
-                selected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_off,
+                selected ? Icons.radio_button_checked : Icons.radio_button_off,
                 size: 20,
-                color: selected ? RCColors.ok : c.ax,
+                color: selected ? c.ok : c.ax,
               ),
             ),
           ],
@@ -667,11 +735,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     );
   }
 
-  Widget _tagPill(
-    String label, {
-    required Color bg,
-    required Color fg,
-  }) {
+  Widget _tagPill(String label, {required Color bg, required Color fg}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
@@ -690,21 +754,14 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     final c = context.rc;
     final status = ctrl?.statusFor(spec);
     final installed = status?.installed ?? false;
-    final meta = _roleMeta(spec);
-    final sizeText = installed
-        ? _formatBytes(status?.presentBytes ?? 0)
-        : meta.expectedSize;
-    final pillLabel = installed
-        ? '已就绪'
-        : (spec.bundled
-              ? '随包内置'
-              : (spec.id == senseVoiceSpec.id ? '未下载（按需）' : '未安装'));
-    final dlBtnKey = Key(
-      spec.id == senseVoiceSpec.id ? 'model-dl-asr' : 'model-dl-spk',
+    final isTranscription = spec.id == senseVoiceSpec.id;
+    final title = isTranscription ? '增强转写' : '区分说话人';
+    final sizeText = _formatBytes(
+      installed ? status?.presentBytes ?? 0 : spec.totalBytes,
     );
-    final dlBtnLabel = spec.id == senseVoiceSpec.id
-        ? '下载并启用（~228 MB）'
-        : '下载模型（~27 MB）';
+    final pillLabel = installed ? '已下载' : '未下载';
+    final dlBtnKey = Key(isTranscription ? 'model-dl-asr' : 'model-dl-spk');
+    final dlBtnLabel = isTranscription ? '下载并启用' : '下载';
 
     return Container(
       key: Key('model-row-${spec.id}'),
@@ -721,7 +778,7 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
             children: [
               Expanded(
                 child: Text(
-                  meta.title,
+                  title,
                   style: TextStyle(
                     fontSize: 14.5,
                     fontWeight: FontWeight.w700,
@@ -732,27 +789,14 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
               _tagPill(
                 pillLabel,
                 bg: installed
-                    ? const Color(0xFFE8F5EA)
-                    : const Color(0xFFF0F0EC),
-                fg: installed ? RCColors.okInk : c.sec,
+                    ? (c.isDark
+                          ? c.ok.withValues(alpha: 0.16)
+                          : const Color(0xFFE8F5EA))
+                    : (c.isDark
+                          ? const Color(0xFF242428)
+                          : const Color(0xFFF0F0EC)),
+                fg: installed ? c.okInk : c.sec,
               ),
-              if (ctrl != null && !installed && !spec.bundled) ...[
-                const SizedBox(width: 4),
-                IconButton(
-                  key: Key('model-install-${spec.id}'),
-                  tooltip: '下载模型',
-                  onPressed: ctrl.busy || !ctrl.configured
-                      ? null
-                      : () => unawaited(ctrl.installSpec(spec)),
-                  icon: Icon(Icons.download_outlined, size: 17, color: c.sec),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 26,
-                    minHeight: 26,
-                  ),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
               if (ctrl != null && installed && !spec.bundled) ...[
                 const SizedBox(width: 4),
                 IconButton(
@@ -760,7 +804,8 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                   tooltip: '删除模型',
                   onPressed: ctrl.busy
                       ? null
-                      : () => unawaited(_confirmDeleteModel(context, ctrl, spec)),
+                      : () =>
+                            unawaited(_confirmDeleteModel(context, ctrl, spec)),
                   icon: Icon(Icons.delete_outline, size: 17, color: c.sec),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(
@@ -772,18 +817,8 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
               ],
             ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            '${meta.stageTag} · $sizeText',
-            style: TextStyle(fontSize: 12, color: c.sec),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            meta.explanation,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 12.5, height: 1.4, color: c.ink),
-          ),
+          if (sizeText != '—')
+            Text(sizeText, style: TextStyle(fontSize: 12, color: c.sec)),
           if (ctrl != null && !installed && !spec.bundled) ...[
             const SizedBox(height: 10),
             OutlinedButton(
@@ -796,40 +831,6 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
           ],
         ],
       ),
-    );
-  }
-
-  static ({String title, String stageTag, String expectedSize, String explanation})
-  _roleMeta(ModelSpec spec) {
-    if (spec.id == senseVoiceSpec.id) {
-      return (
-        title: 'SenseVoice 离线转写',
-        stageTag: '离线语音转文字',
-        expectedSize: '约 228MB',
-        explanation: '离线增强模型，按需下载，随时可删并释放空间。',
-      );
-    }
-    if (spec.id == sileroVadSpec.id) {
-      return (
-        title: 'Silero VAD 人声检测',
-        stageTag: '人声静音切分',
-        expectedSize: '约 644KB',
-        explanation: '随包内置免下载，识别人声起止并跳过空白静音。',
-      );
-    }
-    if (spec.id == campplusEmbeddingSpec.id) {
-      return (
-        title: 'CAM++ 声纹识别',
-        stageTag: '说话人聚类推测',
-        expectedSize: '约 27MB',
-        explanation: '体积小默认后台自动就绪，配合系统内置或增强转写均可区分说话人。',
-      );
-    }
-    return (
-      title: spec.displayName,
-      stageTag: '端侧语音组件',
-      expectedSize: _formatBytes(spec.totalBytes),
-      explanation: '本地离线语音处理组件。',
     );
   }
 
@@ -847,406 +848,445 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
 // ── 2) 云端模型设置 ──────────────────────────────────────────
 
 class _CloudModelBody extends StatefulWidget {
-  const _CloudModelBody({required this.config});
+  const _CloudModelBody({required this.config, required this.store});
 
   final AgentConfigStore config;
+  final ModelProviderStore store;
 
   @override
   State<_CloudModelBody> createState() => _CloudModelBodyState();
 }
 
 class _CloudModelBodyState extends State<_CloudModelBody> {
-  late final TextEditingController _apiCtrl = TextEditingController(
-    text: widget.config.customApiBase,
-  );
-  bool _savedHint = false;
+  ModelProviderStore get _store => widget.store;
+  final _keyCtrl = TextEditingController();
+  final _urlCtrl = TextEditingController();
+  final _manualModelCtrl = TextEditingController();
+  ModelProvider? _editing;
+  bool _advanced = false;
+  bool _dirty = false;
+  bool _busy = false;
+  bool _connected = false;
+  String? _error;
 
-  AgentConfigStore get config => widget.config;
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadProfiles());
+  }
+
+  Future<void> _loadProfiles() async {
+    try {
+      await _store.load();
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } on Exception {
+      if (mounted) setState(() => _error = '暂时无法读取服务设置');
+    }
+  }
 
   @override
   void dispose() {
-    _apiCtrl.dispose();
+    _keyCtrl.dispose();
+    _urlCtrl.dispose();
+    _manualModelCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _saveApi() async {
-    await config.setCustomApiBase(_apiCtrl.text);
-    if (!mounted) return;
-    setState(() => _savedHint = true);
+  void _openProvider(ModelProvider provider) {
+    setState(() {
+      _editing = _editing == provider ? null : provider;
+      _advanced = false;
+      _dirty = false;
+      _connected = false;
+      _error = null;
+      _keyCtrl.clear();
+      _manualModelCtrl.clear();
+      _urlCtrl.text = _store.profileFor(provider).baseUrl;
+    });
   }
 
-  Future<void> _resetApi() async {
-    _apiCtrl.clear();
-    await config.setCustomApiBase('');
+  void _markDirty(String _) {
+    setState(() {
+      _dirty = true;
+      _connected = false;
+      _error = null;
+    });
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await action();
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } on Exception {
+      if (mounted) setState(() => _error = '暂时无法保存设置，请重试');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _connect(ModelProvider provider) => _run(() async {
+    FocusScope.of(context).unfocus();
+    await _store.connect(
+      provider,
+      apiKey: _keyCtrl.text,
+      baseUrl: _urlCtrl.text,
+      manualModel: _manualModelCtrl.text.trim().isEmpty
+          ? null
+          : _manualModelCtrl.text,
+    );
     if (!mounted) return;
-    setState(() => _savedHint = false);
+    setState(() {
+      _keyCtrl.clear();
+      _manualModelCtrl.clear();
+      _urlCtrl.text = _store.profileFor(provider).baseUrl;
+      _dirty = false;
+      _connected = true;
+    });
+  });
+
+  Future<void> _activate(ModelProvider provider) => _run(() async {
+    await _store.selectProvider(provider);
+    await widget.config.setCloudEnabled(true);
+    if (mounted) setState(() => _editing = null);
+  });
+
+  Future<void> _pickModel(ModelProvider provider, ModelScene scene) async {
+    final profile = _store.profileFor(provider);
+    final isSummary = scene == ModelScene.summary;
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _ProviderModelPicker(
+        models: profile.models,
+        selected: isSummary
+            ? profile.summaryModel
+            : profile.sceneModels[scene] ?? '',
+        label: scene.label,
+        isSummary: isSummary,
+      ),
+    );
+    if (!mounted || selected == null) return;
+    await _run(() async {
+      final latest = _store.profileFor(provider);
+      if (isSummary) {
+        await _store.saveProfile(
+          provider,
+          latest.copyWith(summaryModel: selected),
+        );
+      } else {
+        final overrides = Map<ModelScene, String>.of(latest.sceneModels);
+        if (selected.isEmpty) {
+          overrides.remove(scene);
+        } else {
+          overrides[scene] = selected;
+        }
+        await _store.saveProfile(
+          provider,
+          latest.copyWith(sceneModels: overrides),
+        );
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
     return ListenableBuilder(
-      listenable: config,
+      listenable: Listenable.merge([_store, widget.config]),
       builder: (context, _) {
-        final models = config.availableCloudModels;
+        final active = widget.config.cloudEnabled
+            ? _store.activeProvider
+            : null;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              '仅上行本地转写纯文本用于总结与整理；原始音频不上传云端。',
-              style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              decoration: BoxDecoration(
-                color: c.card,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: c.sep),
-              ),
-              child: InkWell(
-                key: const Key('cloud-enable-switch'),
-                borderRadius: BorderRadius.circular(12),
-                onTap: () =>
-                    unawaited(config.setCloudEnabled(!config.cloudEnabled)),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 13,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '开启云端模型',
-                              style: TextStyle(
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.w600,
-                                color: c.label,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              config.cloudEnabled
-                                  ? '已开启，支持云端总结生成'
-                                  : '已关闭，仅使用本地能力',
-                              style: TextStyle(fontSize: 12, color: c.sec),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      RCSwitch(on: config.cloudEnabled),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const _SubSectionLabel('自定义 API 地址'),
+            const _SubSectionLabel('模型服务'),
             const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: c.card,
+            Material(
+              color: c.card,
+              shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: c.sep),
+                side: BorderSide(color: c.sep),
               ),
+              clipBehavior: Clip.antiAlias,
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  TextField(
-                    key: const Key('cloud-custom-api-input'),
-                    controller: _apiCtrl,
-                    style: TextStyle(fontSize: 13.5, color: c.label),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      hintText: 'https://api.example.com（留空走默认网关）',
-                      hintStyle: TextStyle(fontSize: 13, color: c.ax),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(9),
-                        borderSide: BorderSide(color: c.sep),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(9),
-                        borderSide: BorderSide(color: c.sep),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 11,
-                        vertical: 10,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      if (_savedHint)
-                        const Expanded(
-                          child: Text(
-                            '已保存接口地址',
-                            key: Key('cloud-custom-api-saved'),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: RCColors.okInk,
+                  for (final provider in ModelProvider.values) ...[
+                    if (provider != ModelProvider.wainao)
+                      Divider(height: 1, color: c.sep),
+                    ListTile(
+                      key: Key('cloud-provider-${provider.name}'),
+                      title: Text(provider.label),
+                      subtitle: provider == ModelProvider.wainao
+                          ? const Text('按场景自动选择模型')
+                          : null,
+                      trailing: active == provider
+                          ? Icon(Icons.check_circle, color: c.ok, size: 20)
+                          : provider == ModelProvider.wainao
+                          ? Icon(Icons.radio_button_off, color: c.ax, size: 20)
+                          : Icon(
+                              provider == _editing
+                                  ? Icons.expand_less
+                                  : Icons.chevron_right,
+                              color: c.ax,
                             ),
-                          ),
-                        )
-                      else
-                        const Spacer(),
-                      if (config.customApiBase.isNotEmpty ||
-                          _apiCtrl.text.trim().isNotEmpty) ...[
-                        TextButton(
-                          key: const Key('cloud-custom-api-reset'),
-                          onPressed: _resetApi,
-                          child: const Text('恢复默认'),
-                        ),
-                        const SizedBox(width: 6),
-                      ],
-                      FilledButton(
-                        key: const Key('cloud-custom-api-save'),
-                        onPressed: _saveApi,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: c.label,
-                          foregroundColor: Colors.white,
-                          shape: const StadiumBorder(),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        child: const Text('保存', style: TextStyle(fontSize: 12.5)),
-                      ),
-                    ],
-                  ),
+                      onTap: _busy
+                          ? null
+                          : provider == ModelProvider.wainao
+                          ? () => unawaited(_activate(provider))
+                          : () => _openProvider(provider),
+                    ),
+                    if (_editing == provider)
+                      _providerForm(context, provider, active == provider),
+                  ],
                 ],
               ),
             ),
-            if (config.developerMode) ...[
-              const SizedBox(height: 20),
-              const _SubSectionLabel('开发者模式 · 总结与 Agent 推理模型'),
-              const SizedBox(height: 6),
-              Text(
-                '当前生效：${config.effectiveModelLabel}（${config.modelSourceLabel}）。未手动点选时不会把 deepseek-v3 当作已选。清洗模型也可以在「开发者设置」里改，不必先连点版本号。',
-                key: const Key('cloud-effective-model'),
-                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+            if (_editing == null && _error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(_error!, style: TextStyle(color: c.danger)),
               ),
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: c.card,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: c.sep),
-                ),
-                child: Column(
-                  children: [
-                    for (var i = 0; i < models.length; i++) ...[
-                      if (i > 0)
-                        Divider(height: 1, thickness: 1, color: c.sep),
-                      _modelRow(context, models[i]),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              const _SubSectionLabel('上下文组织策略'),
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: c.card,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: c.sep),
-                ),
-                child: Column(
-                  children: [
-                    _ctxRow(
-                      context,
-                      keyName: 'ctx-full-day',
-                      mode: 'full_day',
-                      title: '全天连续单上下文（推荐）',
-                      subtitle: '同一天录音共享上下文线程，增量追加新切片。',
-                    ),
-                    Divider(height: 1, thickness: 1, color: c.sep),
-                    _ctxRow(
-                      context,
-                      keyName: 'ctx-scoped',
-                      mode: 'scoped',
-                      title: '仅所选记录独立上下文',
-                      subtitle: '每次仅发送当前勾选记录文本。这项偏好目前只保存，清洗和总结还没有读取。',
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              const _SubSectionLabel('输出采样温度（Temperature）'),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  _tempChip(context, 0.2, '0.2 严谨纪要'),
-                  const SizedBox(width: 8),
-                  _tempChip(context, 0.5, '0.5 均衡提炼'),
-                  const SizedBox(width: 8),
-                  _tempChip(context, 0.8, '0.8 发散洞察'),
-                ],
-              ),
-            ],
           ],
         );
       },
     );
   }
 
-  Widget _modelRow(BuildContext context, CloudModelOption m) {
+  Widget _providerForm(
+    BuildContext context,
+    ModelProvider provider,
+    bool active,
+  ) {
     final c = context.rc;
-    final selected = config.userPickedCloudModel && config.cloudModel == m.id;
-    return InkWell(
-      key: Key('model-opt-${m.id}'),
-      onTap: () => unawaited(config.setCloudModel(m.id)),
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          m.name,
-                          style: TextStyle(
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w600,
-                            color: c.label,
-                          ),
-                        ),
-                      ),
-                      if (m.fromGateway) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 1.5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFE8F5EA),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: const Text(
-                            '网关可用',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: RCColors.okInk,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    m.desc,
-                    style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
-                  ),
-                ],
-              ),
+    final profile = _store.profileFor(provider);
+    final custom = provider == ModelProvider.custom;
+    final hasCatalog = profile.models.isNotEmpty;
+    final selectedModel = profile.summaryModel;
+    final canActivate =
+        !_dirty &&
+        hasCatalog &&
+        selectedModel.isNotEmpty &&
+        profile.models.contains(selectedModel);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (custom) _addressField(provider),
+          if (custom) const SizedBox(height: 10),
+          TextField(
+            key: const Key('cloud-provider-key'),
+            controller: _keyCtrl,
+            enabled: !_busy,
+            onChanged: _markDirty,
+            onSubmitted: (_) => unawaited(_connect(provider)),
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: InputDecoration(
+              labelText: custom ? 'API Key（可选）' : 'API Key',
+              hintText: hasCatalog && !custom ? '留空沿用已保存密钥' : null,
+              isDense: true,
+              border: const OutlineInputBorder(),
             ),
-            const SizedBox(width: 10),
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Icon(
-                selected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_off,
-                size: 20,
-                color: selected ? RCColors.ok : c.ax,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _ctxRow(
-    BuildContext context, {
-    required String keyName,
-    required String mode,
-    required String title,
-    required String subtitle,
-  }) {
-    final c = context.rc;
-    final selected = config.contextMode == mode;
-    return InkWell(
-      key: Key(keyName),
-      onTap: () => unawaited(config.setContextMode(mode)),
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600,
-                      color: c.label,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 10),
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Icon(
-                selected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_off,
-                size: 20,
-                color: selected ? RCColors.ok : c.ax,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _tempChip(BuildContext context, double value, String label) {
-    final c = context.rc;
-    final active = (config.temperature - value).abs() < 0.05;
-    return Expanded(
-      child: OutlinedButton(
-        key: Key('temp-$value'),
-        onPressed: () => unawaited(config.setTemperature(value)),
-        style: OutlinedButton.styleFrom(
-          backgroundColor: active ? c.label : c.card,
-          foregroundColor: active ? Colors.white : c.ink,
-          side: BorderSide(color: active ? c.label : c.sep),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
           ),
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
-          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              TextButton(
+                key: const Key('cloud-provider-advanced'),
+                onPressed: _busy
+                    ? null
+                    : () => setState(() => _advanced = !_advanced),
+                child: Text(_advanced ? '收起高级设置' : '高级设置'),
+              ),
+              OutlinedButton(
+                key: const Key('cloud-provider-connect'),
+                onPressed: _busy ? null : () => unawaited(_connect(provider)),
+                child: Text(_busy ? '处理中…' : '连接并获取模型'),
+              ),
+            ],
+          ),
+          if (_advanced) ...[
+            const SizedBox(height: 8),
+            if (!custom) _addressField(provider),
+            if (!custom) const SizedBox(height: 10),
+            TextField(
+              key: const Key('cloud-provider-manual-model'),
+              controller: _manualModelCtrl,
+              enabled: !_busy,
+              onChanged: _markDirty,
+              onSubmitted: (_) => unawaited(_connect(provider)),
+              autocorrect: false,
+              decoration: const InputDecoration(
+                labelText: '手动填写模型 ID（可选）',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+          if (_error != null || _connected)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _error ?? '连接正常',
+                key: const Key('cloud-provider-feedback'),
+                style: TextStyle(color: _error == null ? c.okInk : c.danger),
+              ),
+            ),
+          if (!_dirty && hasCatalog) ...[
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              key: const Key('cloud-provider-summary'),
+              title: const Text('总结模型'),
+              subtitle: Text(
+                selectedModel.isEmpty ? '请选择' : selectedModel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _busy
+                  ? null
+                  : () => _pickModel(provider, ModelScene.summary),
+            ),
+            if (_advanced && selectedModel.isNotEmpty)
+              for (final scene in ModelScene.values.where(
+                (scene) => scene != ModelScene.summary,
+              ))
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  key: Key('cloud-provider-scene-${scene.name}'),
+                  title: Text(scene.label),
+                  subtitle: Text(
+                    profile.sceneModels[scene] ?? '跟随总结模型',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _busy ? null : () => _pickModel(provider, scene),
+                ),
+            if (!active)
+              FilledButton(
+                key: const Key('cloud-provider-activate'),
+                onPressed: _busy || !canActivate
+                    ? null
+                    : () => unawaited(_activate(provider)),
+                child: const Text('使用此服务'),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _addressField(ModelProvider provider) => TextField(
+    key: const Key('cloud-provider-url'),
+    controller: _urlCtrl,
+    enabled: !_busy,
+    onChanged: _markDirty,
+    onSubmitted: (_) => unawaited(_connect(provider)),
+    keyboardType: TextInputType.url,
+    autocorrect: false,
+    enableSuggestions: false,
+    decoration: InputDecoration(
+      labelText: 'API 地址',
+      hintText: provider == ModelProvider.custom
+          ? 'https://api.example.com/v1'
+          : provider.defaultBaseUrl,
+      isDense: true,
+      border: const OutlineInputBorder(),
+    ),
+  );
+}
+
+class _ProviderModelPicker extends StatefulWidget {
+  const _ProviderModelPicker({
+    required this.models,
+    required this.selected,
+    required this.label,
+    required this.isSummary,
+  });
+
+  final List<String> models;
+  final String selected;
+  final String label;
+  final bool isSummary;
+
+  @override
+  State<_ProviderModelPicker> createState() => _ProviderModelPickerState();
+}
+
+class _ProviderModelPickerState extends State<_ProviderModelPicker> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final options = [
+      if (!widget.isSummary && _query.isEmpty) '',
+      ...widget.models.where((model) => model.toLowerCase().contains(_query)),
+    ];
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(bottom: keyboard),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.6,
+          child: Column(
+            children: [
+              ListTile(
+                title: Text(widget.label),
+                trailing: IconButton(
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: TextField(
+                  decoration: const InputDecoration(
+                    hintText: '搜索模型',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                  onChanged: (value) =>
+                      setState(() => _query = value.trim().toLowerCase()),
+                ),
+              ),
+              Expanded(
+                child: options.isEmpty
+                    ? const Center(child: Text('没有匹配的模型'))
+                    : ListView.builder(
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        itemCount: options.length,
+                        itemBuilder: (_, i) {
+                          final model = options[i];
+                          return ListTile(
+                            title: Text(model.isEmpty ? '跟随总结模型' : model),
+                            trailing: model == widget.selected
+                                ? Icon(Icons.check, color: c.ok)
+                                : null,
+                            onTap: () => Navigator.of(context).pop(model),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
-        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
     );
   }
@@ -1264,7 +1304,7 @@ class _AgentPromptsBody extends StatefulWidget {
 }
 
 class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
-  String _tab = 'summary'; // 'summary' | 'polish' | 'dream'
+  String _tab = 'summary'; // 'summary' | 'polish'
   late final TextEditingController _ctrl = TextEditingController(
     text: widget.config.promptFor(_tab),
   );
@@ -1512,8 +1552,6 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
                 _stageTab(context, 'summary', '总结生成'),
                 const SizedBox(width: 8),
                 _stageTab(context, 'polish', '口语清洗与分段'),
-                const SizedBox(width: 8),
-                _stageTab(context, 'dream', '日报与做梦'),
               ],
             ),
             const SizedBox(height: 10),
@@ -1542,15 +1580,15 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
             Text(
               _tab == 'summary'
                   ? '注：JSON 结构化字段契约由客户端自动追加在末尾，无需手动编写 JSON 格式说明。'
-                  : '注：本环节提示词已持久化保存，将在全天自动合并与日报/做梦管线启用时生效。',
+                  : '注：口语清洗提示词已接入本机清洗管线，保存后立即生效。',
               style: TextStyle(fontSize: 11.5, color: c.sec),
             ),
             if (_savedToast) ...[
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 '提示词已保存并立即生效',
-                key: Key('prompt-saved-hint'),
-                style: TextStyle(fontSize: 12, color: RCColors.okInk),
+                key: const Key('prompt-saved-hint'),
+                style: TextStyle(fontSize: 12, color: c.okInk),
               ),
             ],
             const SizedBox(height: 14),
@@ -1576,7 +1614,7 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
                     onPressed: _saveCurrent,
                     style: FilledButton.styleFrom(
                       backgroundColor: c.label,
-                      foregroundColor: Colors.white,
+                      foregroundColor: c.onLabel,
                       shape: const StadiumBorder(),
                       padding: const EdgeInsets.symmetric(vertical: 11),
                     ),
@@ -1623,10 +1661,10 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
             ),
             if (_agentSavedToast) ...[
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 'OS1 助手提示词已保存并生效',
-                key: Key('agent-prompt-saved-hint'),
-                style: TextStyle(fontSize: 12, color: RCColors.okInk),
+                key: const Key('agent-prompt-saved-hint'),
+                style: TextStyle(fontSize: 12, color: c.okInk),
               ),
             ],
             const SizedBox(height: 10),
@@ -1666,7 +1704,7 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
                     },
                     style: FilledButton.styleFrom(
                       backgroundColor: c.label,
-                      foregroundColor: Colors.white,
+                      foregroundColor: c.onLabel,
                       shape: const StadiumBorder(),
                       padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
@@ -1694,9 +1732,9 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
       onPressed: interactive ? () => _pickPreset(id) : null,
       style: OutlinedButton.styleFrom(
         backgroundColor: active ? c.label : c.card,
-        foregroundColor: active ? Colors.white : c.ink,
+        foregroundColor: active ? c.onLabel : c.ink,
         disabledBackgroundColor: c.label,
-        disabledForegroundColor: Colors.white,
+        disabledForegroundColor: c.onLabel,
         side: BorderSide(color: active ? c.label : c.sep),
         shape: const StadiumBorder(),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -1716,7 +1754,9 @@ class _AgentPromptsBodyState extends State<_AgentPromptsBody> {
         key: Key('ptab-$id'),
         onPressed: () => _switchTab(id),
         style: OutlinedButton.styleFrom(
-          backgroundColor: active ? const Color(0xFFEAEAE4) : c.card,
+          backgroundColor: active
+              ? (c.isDark ? const Color(0xFF28282D) : const Color(0xFFEAEAE4))
+              : c.card,
           foregroundColor: active ? c.label : c.sec,
           side: BorderSide(color: active ? c.label : c.sep),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
@@ -1796,7 +1836,7 @@ class _AgentExtensionsBodyState extends State<_AgentExtensionsBody> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Skills、Tools、MCP 要分开看。标成「已接入」的才会进入当前清洗或总结；标成「未接入」的只是占位，打开开关也不会调用。',
+              'Skills 会自动注入滚动清洗与总结指令；Tools 联动本机相册对齐；下方可添加自定义 HTTPS MCP 服务供 OS1 对话调用。',
               style: TextStyle(fontSize: 12.5, height: 1.55, color: c.sec),
             ),
             const SizedBox(height: 16),
@@ -1833,7 +1873,21 @@ class _AgentExtensionsBodyState extends State<_AgentExtensionsBody> {
               ],
             ),
             const SizedBox(height: 6),
-            _extGroupCard(context, mcps),
+            if (mcps.isEmpty)
+              Container(
+                decoration: BoxDecoration(
+                  color: c.card,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: c.sep),
+                ),
+                padding: const EdgeInsets.all(14),
+                child: Text(
+                  '尚未添加自定义 MCP 服务，点击右上角「添加服务」可接入 HTTPS JSON-RPC 2.0 外部工具供 OS1 对话调用。',
+                  style: TextStyle(fontSize: 12.5, height: 1.45, color: c.sec),
+                ),
+              )
+            else
+              _extGroupCard(context, mcps),
             const SizedBox(height: 18),
             const _SubSectionLabel('OS1 对话工具权限'),
             const SizedBox(height: 8),
@@ -1935,10 +1989,10 @@ class _AgentExtensionsBodyState extends State<_AgentExtensionsBody> {
                   ),
                   if (_searchSaved) ...[
                     const SizedBox(height: 6),
-                    const Text(
+                    Text(
                       '搜索接口配置已保存',
-                      key: Key('agent-search-saved-hint'),
-                      style: TextStyle(fontSize: 12, color: RCColors.okInk),
+                      key: const Key('agent-search-saved-hint'),
+                      style: TextStyle(fontSize: 12, color: c.okInk),
                     ),
                   ],
                   const SizedBox(height: 10),
@@ -2323,7 +2377,7 @@ class _LoginAuthBodyState extends State<_LoginAuthBody> {
                       height: 8,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: signedIn ? RCColors.ok : c.ax,
+                        color: signedIn ? c.ok : c.ax,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -2942,7 +2996,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                 style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w700,
-                  color: isSelfSlot ? RCColors.okInk : c.sec,
+                  color: isSelfSlot ? c.okInk : c.sec,
                 ),
               ),
               const SizedBox(width: 8),
@@ -2967,7 +3021,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   badgeText,
                   style: TextStyle(
                     fontSize: 11,
-                    color: isSelfSlot ? RCColors.okInk : c.sec,
+                    color: isSelfSlot ? c.okInk : c.sec,
                   ),
                 ),
               ),
@@ -3076,7 +3130,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   inFrequent ? '常用自动识别' : '手动选用',
                   style: TextStyle(
                     fontSize: 11,
-                    color: inFrequent ? RCColors.okInk : c.sec,
+                    color: inFrequent ? c.okInk : c.sec,
                   ),
                 ),
               ),
@@ -3192,7 +3246,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                         installed ? '已就绪' : '待下载',
                         style: TextStyle(
                           fontSize: 12,
-                          color: installed ? RCColors.okInk : c.sec,
+                          color: installed ? c.okInk : c.sec,
                         ),
                       ),
                       if (ctrl != null && !installed) ...[
@@ -3257,7 +3311,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                 key: const Key('vp-hint-text'),
                 style: TextStyle(
                   fontSize: 12,
-                  color: _vpError ? c.danger : RCColors.okInk,
+                  color: _vpError ? c.danger : c.okInk,
                 ),
               ),
             ],
@@ -3277,7 +3331,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                     children: [
                       Expanded(
                         child: Text(
-                          '常用声纹（上限 5 个）',
+                          '核心关注声纹（5 个置顶槽位）',
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w700,
@@ -3293,7 +3347,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '最多设置 5 个常用声纹参与自动识别。',
+                    '全部已入库声纹均会自动识别（跨设备通道自适应）；前 5 槽位仅作界面置顶与语义名录优先参考。',
                     style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
                   ),
                   for (
@@ -3345,7 +3399,7 @@ class _VoiceprintBodyState extends State<_VoiceprintBody> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '命名过的说话人保存在此，方便手动选用。',
+                    '所有已命名的说话人都会参与端侧声纹自动匹配与语义校验，多设备样本自动归并到同一人物。',
                     style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
                   ),
                   if (libPersons.isEmpty)
@@ -3992,15 +4046,6 @@ class _ExtHardwareLinkBody extends StatefulWidget {
 class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
   String? _hint;
 
-  Future<void> _toggleGetSeed(bool next) async {
-    await widget.config.setGetSeedLinkEnabled(next);
-    await widget.device?.setExtHardwareEnabled(getSeed: next);
-    if (!mounted) return;
-    setState(() {
-      _hint = next ? '已开启 Get 笔记录音卡扫描联动' : '已关闭 Get 笔记录音卡联动';
-    });
-  }
-
   Future<void> _toggleOmi(bool next) async {
     await widget.config.setOmiLinkEnabled(next);
     await widget.device?.setExtHardwareEnabled(omi: next);
@@ -4019,6 +4064,15 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
     });
   }
 
+  Future<void> _toggleIflytekA1(bool next) async {
+    await widget.config.setIflytekA1LinkEnabled(next);
+    await widget.device?.setExtHardwareEnabled(iflytekA1: next);
+    if (!mounted) return;
+    setState(() {
+      _hint = next ? '已开启讯飞智能录音笔 A1 扫描联动' : '已关闭讯飞智能录音笔 A1 联动';
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
@@ -4029,17 +4083,17 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
     return ListenableBuilder(
       listenable: listenable,
       builder: (context, _) {
-        final getSeedOn = widget.config.getSeedLinkEnabled;
         final omiOn = widget.config.omiLinkEnabled;
         final feishuOn = widget.config.feishuLinkEnabled;
-        final gsConn =
-            dev?.isConnected == true &&
-            dev?.activeKind == DeviceKind.getSeedGsc10;
+        final iflytekOn = widget.config.iflytekA1LinkEnabled;
         final omiConn =
             dev?.isConnected == true && dev?.activeKind == DeviceKind.omiCv1;
         final feishuConn =
             dev?.isConnected == true &&
             dev?.activeKind == DeviceKind.feishuD3200;
+        final iflytekConn =
+            dev?.isConnected == true &&
+            dev?.activeKind == DeviceKind.iflytekA1;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -4053,32 +4107,14 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                 children: [
                   _extHardwareRow(
                     context,
-                    cardKey: const Key('ext-getseed-card'),
-                    switchKey: const Key('ext-getseed-switch'),
-                    title: '得到 Get 笔记录音卡',
-                    modelTag: 'GSC10',
-                    subtitle: '机身物理按键控录与打点，离线录音靠近手机自动同步',
-                    enabled: getSeedOn,
-                    connected: gsConn,
-                    topRadius: 12,
-                    onChanged: () => unawaited(_toggleGetSeed(!getSeedOn)),
-                  ),
-                  Divider(
-                    height: 1,
-                    thickness: 1,
-                    indent: 16,
-                    endIndent: 16,
-                    color: c.sep,
-                  ),
-                  _extHardwareRow(
-                    context,
                     cardKey: const Key('ext-omi-card'),
                     switchKey: const Key('ext-omi-switch'),
                     title: 'Omi 随身录音器',
                     modelTag: 'Friend',
-                    subtitle: '蓝牙随身拾音，支持按键打点与板载存储同步',
+                    subtitle: '蓝牙实时拾音与板载存储同步，支持单击/双击按键（长按 3 秒为硬件关机）',
                     enabled: omiOn,
                     connected: omiConn,
+                    topRadius: 12,
                     onChanged: () => unawaited(_toggleOmi(!omiOn)),
                   ),
                   Divider(
@@ -4099,8 +4135,26 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
                     subtitle: 'BLE 同步板载录音，支持远程启停；尚未真机验证，固件走官方 App',
                     enabled: feishuOn,
                     connected: feishuConn,
-                    bottomRadius: 12,
                     onChanged: () => unawaited(_toggleFeishu(!feishuOn)),
+                  ),
+                  Divider(
+                    height: 1,
+                    thickness: 1,
+                    indent: 16,
+                    endIndent: 16,
+                    color: c.sep,
+                  ),
+                  _extHardwareRow(
+                    context,
+                    cardKey: const Key('ext-iflytek-card'),
+                    switchKey: const Key('ext-iflytek-switch'),
+                    title: '讯飞智能录音笔',
+                    modelTag: 'A1',
+                    subtitle: '蓝牙实时拾音、远程启停与板载录音同步（本机 SBC 解码），固件走官方 App',
+                    enabled: iflytekOn,
+                    connected: iflytekConn,
+                    bottomRadius: 12,
+                    onChanged: () => unawaited(_toggleIflytekA1(!iflytekOn)),
                   ),
                 ],
               ),
@@ -4243,6 +4297,7 @@ class _DeveloperCleanBody extends StatelessWidget {
 
   final AgentConfigStore config;
 
+  static const _slicePresets = [60, 120, 300, 600, 900];
   static const _cyclePresets = [2, 5, 10, 15, 30, 60, 120];
   static const _paraPresets = [0, 1, 3, 5, 8];
   static const _minutePresets = [1, 2, 3, 5, 10, 15];
@@ -4258,6 +4313,78 @@ class _DeveloperCleanBody extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
         DeveloperModelSection(config: config),
+        const SizedBox(height: 16),
+        _SubSectionLabel('实时录音切片窗口'),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: c.card,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: c.sep),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '切片生成间隔',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: c.label,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    AgentConfigStore.formatSampleWindow(
+                      config.recordingSliceSeconds,
+                    ),
+                    key: const Key('dev-slice-seconds-value'),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: primary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '默认 1 分钟。切换为 5 分钟或其他时长后，对蓝牙实时音频流（含 Omi / 录音卡）与手机本机麦克风切片立即生效。',
+                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final s in _slicePresets)
+                    ChoiceChip(
+                      key: Key('dev-slice-preset-$s'),
+                      label: Text(AgentConfigStore.formatSampleWindow(s)),
+                      selected: config.recordingSliceSeconds == s,
+                      onSelected: (_) =>
+                          unawaited(config.setRecordingSliceSeconds(s)),
+                    ),
+                ],
+              ),
+              Slider(
+                key: const Key('dev-slice-slider'),
+                min: 60,
+                max: 1800,
+                divisions: 58,
+                value: config.recordingSliceSeconds.toDouble().clamp(60, 1800),
+                label: AgentConfigStore.formatSampleWindow(
+                  config.recordingSliceSeconds,
+                ),
+                onChanged: (v) =>
+                    unawaited(config.setRecordingSliceSeconds(v.round())),
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 16),
         _SubSectionLabel('增量清洗与逻辑分段周期'),
         Container(
@@ -4295,7 +4422,7 @@ class _DeveloperCleanBody extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                '持续录音达到该时长阈值后，自动结合声纹与语义对整段语音去口水词、合并同说话人段落并生成阶段标题与概述。',
+                '录音切片先静默存盘，累计到该时长阈值后批量转写并结合声纹与语义归拢成沉浸记录；切回查看、下拉刷新或停录时立即补齐。',
                 style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
               ),
               const SizedBox(height: 10),
@@ -4339,7 +4466,7 @@ class _DeveloperCleanBody extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              '停顿 ≥ 1 分钟自动触发清洗',
+                              '停顿达到阈值自动触发清洗',
                               style: TextStyle(
                                 fontSize: 13.5,
                                 fontWeight: FontWeight.w600,
@@ -4348,7 +4475,7 @@ class _DeveloperCleanBody extends StatelessWidget {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '未满周期但检测到明显沉默空白或停止录音时提前整理',
+                              '未满周期但检测到较长沉默空白或停止录音时提前整理',
                               style: TextStyle(fontSize: 11.5, color: c.sec),
                             ),
                           ],
@@ -4546,9 +4673,9 @@ class _DeveloperCleanBody extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               if (store == null)
-                const Text(
+                Text(
                   '当前为独立预览环境，无法操作本地录音库。',
-                  style: TextStyle(fontSize: 12, color: RCColors.sec),
+                  style: TextStyle(fontSize: 12, color: c.sec),
                 )
               else
                 ListenableBuilder(

@@ -39,14 +39,14 @@ impl<T> BtlePlugFutureState<T> {
     /// corresponding future.
     pub fn set_reply(&mut self, reply: T) {
         if self.reply_msg.is_some() {
-            // TODO Can we stop multiple calls to set_reply_msg at compile time?
-            panic!("set_reply_msg called multiple times on the same future.");
+            log::warn!("set_reply_msg called multiple times on the same future; ignoring duplicate");
+            return;
         }
 
         self.reply_msg = Some(reply);
 
-        if self.waker.is_some() {
-            self.waker.take().unwrap().wake();
+        if let Some(waker) = self.waker.take() {
+            waker.wake();
         }
     }
 }

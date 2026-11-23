@@ -16,6 +16,15 @@ import '../widgets/rc_switch.dart';
 /// 弹层是否展示 Wi-Fi 配网行（随硬件能力 hasWifiConfig 门控）。
 const bool showWifiRow = true;
 
+/// 判断路由器 SSID 名称或错误信息是否涉及疑似 5GHz 频段（如 `KK2BY_5G`、`Home-5G`、`Office 5GHz`）。
+bool isLikely5GhzSsid(String raw) {
+  final normalized = raw.trim().toUpperCase().replaceAll(RegExp(r'[「」"“”]'), ' ');
+  if (normalized.isEmpty) return false;
+  return RegExp(r'(?:^|[_\-\s.])5G(?:HZ)?(?:$|[_\-\s.])').hasMatch(normalized) ||
+      normalized.endsWith('5G') ||
+      normalized.endsWith('5GHZ');
+}
+
 /// 电池图标：仅图形不显数字；<20% 红 / <40% 橙 / ≥40% 绿；充电时内部呼吸并叠加闪电。
 class BatteryIcon extends StatefulWidget {
   const BatteryIcon({
@@ -38,6 +47,14 @@ class _BatteryIconState extends State<BatteryIcon>
     vsync: this,
     duration: const Duration(milliseconds: 1200),
   );
+  late final CurvedAnimation _breatheCurve = CurvedAnimation(
+    parent: _breathe,
+    curve: Curves.easeInOut,
+  );
+  late final Animation<double> _breatheOpacity = Tween<double>(
+    begin: 0.35,
+    end: 1.0,
+  ).animate(_breatheCurve);
 
   @override
   void initState() {
@@ -60,24 +77,27 @@ class _BatteryIconState extends State<BatteryIcon>
 
   @override
   void dispose() {
+    _breatheCurve.dispose();
     _breathe.dispose();
     super.dispose();
   }
 
   // 电量未知（未连接/未回报）显示中性灰，不假装"电量低"
-  Color get _color {
-    if (widget.charging && widget.level <= 0) return RCColors.ok;
+  Color _color(RCColorScheme c) {
+    if (widget.charging && widget.level <= 0) return c.ok;
     return widget.level <= 0
-        ? RCColors.ax
+        ? c.ax
         : widget.level < 20
-        ? RCColors.danger
+        ? c.danger
         : widget.level < 40
-        ? const Color(0xFFFF9500)
-        : RCColors.ok;
+        ? c.warn
+        : c.ok;
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
+    final col = _color(c);
     final s = widget.scale;
     final maxFillWidth = 19 * s - 3.2 * s - 2.6 * s;
     final rawWidth = widget.charging && widget.level <= 0
@@ -85,9 +105,7 @@ class _BatteryIconState extends State<BatteryIcon>
         : (maxFillWidth * widget.level / 100);
     final fillWidth = rawWidth.clamp(1.5, maxFillWidth);
     final opacityAnim = widget.charging
-        ? Tween<double>(begin: 0.35, end: 1.0).animate(
-            CurvedAnimation(parent: _breathe, curve: Curves.easeInOut),
-          )
+        ? _breatheOpacity
         : const AlwaysStoppedAnimation<double>(1.0);
 
     // 原型 SVG 23×11：电池体 + 间隙 + 正极凸起；充电中内部填充呼吸 + 居中闪电覆盖。
@@ -105,7 +123,7 @@ class _BatteryIconState extends State<BatteryIcon>
                 width: 19 * s,
                 height: 11 * s,
                 decoration: BoxDecoration(
-                  border: Border.all(color: _color, width: 1.3),
+                  border: Border.all(color: col, width: 1.3),
                   borderRadius: BorderRadius.circular(3 * s),
                 ),
                 child: Align(
@@ -117,7 +135,7 @@ class _BatteryIconState extends State<BatteryIcon>
                       margin: EdgeInsets.all(1.6 * s),
                       width: fillWidth,
                       decoration: BoxDecoration(
-                        color: _color,
+                        color: col,
                         borderRadius: BorderRadius.circular(1 * s),
                       ),
                     ),
@@ -129,7 +147,7 @@ class _BatteryIconState extends State<BatteryIcon>
                   RCIconKind.bolt,
                   key: const Key('batt-bolt'),
                   size: 10.5 * s,
-                  color: RCColors.label,
+                  color: c.label,
                 ),
             ],
           ),
@@ -138,7 +156,7 @@ class _BatteryIconState extends State<BatteryIcon>
             width: 2 * s,
             height: 4.5 * s,
             decoration: BoxDecoration(
-              color: _color,
+              color: col,
               borderRadius: BorderRadius.circular(1 * s),
             ),
           ),
@@ -163,6 +181,8 @@ class HwCapsule extends StatefulWidget {
     this.reconnecting = false,
     this.charging = false,
     this.phoneRecording = false,
+    this.watchRecording = false,
+    this.pendingFailover = false,
   });
   final VoidCallback onTap;
   final int level;
@@ -182,6 +202,12 @@ class HwCapsule extends StatefulWidget {
   /// 本机麦克风是否在录音（无硬件也可独立运行）。
   final bool phoneRecording;
 
+  /// Apple Watch 是否正在进行断连保底录音。
+  final bool watchRecording;
+
+  /// 蓝牙断开后本机保底因后台受限挂起待恢复。
+  final bool pendingFailover;
+
   @override
   State<HwCapsule> createState() => _HwCapsuleState();
 }
@@ -189,10 +215,14 @@ class HwCapsule extends StatefulWidget {
 class _HwCapsuleState extends State<HwCapsule>
     with SingleTickerProviderStateMixin {
   late final AnimationController _pulse;
+  late final CurvedAnimation _pulseCurve;
+  late final Animation<double> _pulseOpacity;
 
   bool get _isRunning =>
       (widget.connected && widget.recording) ||
-      (!widget.connected && !widget.reconnecting && widget.phoneRecording);
+      (!widget.connected &&
+          !widget.reconnecting &&
+          (widget.phoneRecording || widget.watchRecording));
 
   @override
   void initState() {
@@ -203,6 +233,11 @@ class _HwCapsuleState extends State<HwCapsule>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
+    _pulseCurve = CurvedAnimation(
+      parent: _pulse,
+      curve: const Interval(0, 0.45),
+    );
+    _pulseOpacity = Tween(begin: 0.35, end: 1.0).animate(_pulseCurve);
     if (_isRunning) _pulse.repeat();
   }
 
@@ -219,20 +254,23 @@ class _HwCapsuleState extends State<HwCapsule>
 
   @override
   void dispose() {
+    _pulseCurve.dispose();
     _pulse.dispose();
     super.dispose();
   }
 
-  Widget _dot({bool forceOk = false}) {
+  Widget _dot(RCColorScheme r, {bool forceOk = false, Color? colorOverride}) {
     return Container(
       key: const Key('capsule-dot'),
       width: 7,
       height: 7,
       decoration: BoxDecoration(
-        // 蓝=掉线自动重连中；绿=正在运行（录音中/本机录音）；橙=已连接待机
-        color: widget.reconnecting
-            ? RCColors.info
-            : ((forceOk || widget.recording) ? RCColors.ok : RCColors.warn),
+        // 蓝=掉线自动重连中；绿=正在运行（录音中/本机/手表录音）；橙=已连接待机/待接力
+        color:
+            colorOverride ??
+            (widget.reconnecting
+                ? r.info
+                : ((forceOk || widget.recording) ? r.ok : r.warn)),
         shape: BoxShape.circle,
       ),
     );
@@ -243,85 +281,101 @@ class _HwCapsuleState extends State<HwCapsule>
     final r = context.rc;
     // 重连中也算"有条链路在手"，只是数据暂时不可信
     final linked = widget.connected || widget.reconnecting;
-    final localRec = !linked && widget.phoneRecording;
-    return Semantics(
-      label: linked
-          ? (widget.reconnecting
-                ? '录音卡状态：连接中'
-                : (widget.recording ? '录音卡状态：已连接，录音中' : '录音卡状态：已连接，未录音'))
-          : (localRec ? '录音卡状态：本机录音中' : '录音卡状态：无设备'),
-      button: true,
-      child: InkWell(
-        key: const Key('hw-capsule'),
-        onTap: widget.onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-          decoration: BoxDecoration(
-            border: Border.all(color: r.sep),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (linked)
-                widget.recording && widget.connected
-                    ? FadeTransition(
-                        opacity: Tween(begin: 0.35, end: 1.0).animate(
-                          CurvedAnimation(
-                            parent: _pulse,
-                            curve: const Interval(0, 0.45),
-                          ),
-                        ),
-                        child: _dot(),
-                      )
-                    : _dot()
-              else if (localRec)
-                FadeTransition(
-                  opacity: Tween(begin: 0.35, end: 1.0).animate(
-                    CurvedAnimation(
-                      parent: _pulse,
-                      curve: const Interval(0, 0.45),
+    final watchRec = !linked && widget.watchRecording;
+    final localRec = !linked && !watchRec && widget.phoneRecording;
+    final pendingRec = !linked && !watchRec && !localRec && widget.pendingFailover;
+    return RepaintBoundary(
+      child: Semantics(
+        label: linked
+            ? (widget.reconnecting
+                  ? '录音卡状态：连接中'
+                  : (widget.recording ? '录音卡状态：已连接，录音中' : '录音卡状态：已连接，未录音'))
+            : (watchRec
+                  ? '录音卡状态：手表保底录音中'
+                  : (localRec
+                        ? '录音卡状态：本机录音中'
+                        : (pendingRec ? '录音卡状态：待恢复保底录音' : '录音卡状态：无设备'))),
+        button: true,
+        child: InkWell(
+          key: const Key('hw-capsule'),
+          onTap: widget.onTap,
+          borderRadius: BorderRadius.circular(999),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            decoration: BoxDecoration(
+              border: Border.all(color: r.sep),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (linked)
+                  widget.recording && widget.connected
+                      ? FadeTransition(
+                          opacity: _pulseOpacity,
+                          child: _dot(r),
+                        )
+                      : _dot(r)
+                else if (watchRec || localRec)
+                  FadeTransition(
+                    opacity: _pulseOpacity,
+                    child: _dot(r, forceOk: true),
+                  )
+                else if (pendingRec)
+                  _dot(r, colorOverride: r.warn)
+                else
+                  Container(
+                    key: const Key('capsule-off'),
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: r.ax, width: 1.4),
                     ),
                   ),
-                  child: _dot(forceOk: true),
-                )
-              else
-                Container(
-                  key: const Key('capsule-off'),
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: RCColors.ax, width: 1.4),
+                const SizedBox(width: 6),
+                if (widget.reconnecting)
+                  Text(
+                    '连接中…',
+                    key: const Key('capsule-retry'),
+                    style: TextStyle(fontSize: 12, color: r.sec),
+                  )
+                else if (widget.connected)
+                  BatteryIcon(
+                    level: widget.level,
+                    scale: 0.9,
+                    charging: widget.charging,
+                  )
+                else if (watchRec)
+                  Text(
+                    '手表录音',
+                    key: const Key('capsule-watch-rec'),
+                    style: TextStyle(fontSize: 12, color: r.label),
+                  )
+                else if (localRec)
+                  Text(
+                    '本机录音',
+                    key: const Key('capsule-phone-rec'),
+                    style: TextStyle(fontSize: 12, color: r.label),
+                  )
+                else if (pendingRec)
+                  Text(
+                    '待接力',
+                    key: const Key('capsule-failover-pending'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: r.warn,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  )
+                else
+                  Text(
+                    '无设备',
+                    key: const Key('capsule-nodata'),
+                    style: TextStyle(fontSize: 12, color: r.sec),
                   ),
-                ),
-              const SizedBox(width: 6),
-              if (widget.reconnecting)
-                const Text(
-                  '连接中…',
-                  key: Key('capsule-retry'),
-                  style: TextStyle(fontSize: 12, color: RCColors.sec),
-                )
-              else if (widget.connected)
-                BatteryIcon(
-                  level: widget.level,
-                  scale: 0.9,
-                  charging: widget.charging,
-                )
-              else if (localRec)
-                const Text(
-                  '本机录音',
-                  key: Key('capsule-phone-rec'),
-                  style: TextStyle(fontSize: 12, color: RCColors.label),
-                )
-              else
-                const Text(
-                  '无设备',
-                  key: Key('capsule-nodata'),
-                  style: TextStyle(fontSize: 12, color: RCColors.sec),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -369,6 +423,9 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       store.handleAppResumed();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      store.handleAppBackgrounded();
     }
   }
 
@@ -406,7 +463,7 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay>
                   margin: EdgeInsets.fromLTRB(10, 10, 10, 10 + bottomInset),
                   padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
                   decoration: BoxDecoration(
-                    color: RCColors.card,
+                    color: context.rc.card,
                     borderRadius: BorderRadius.circular(18),
                   ),
                   child: SingleChildScrollView(
@@ -426,6 +483,13 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay>
                         store: store,
                         agentConfig: widget.agentConfig,
                       ),
+                      DeviceView.more =>
+                        store.isConnected
+                            ? _MoreView(store: store)
+                            : _ConnectView(
+                                store: store,
+                                islandEnabled: widget.islandEnabled,
+                              ),
                     },
                   ),
                 ),
@@ -457,7 +521,7 @@ class _Row extends StatelessWidget {
               label,
               overflow: TextOverflow.ellipsis,
               maxLines: 1,
-              style: const TextStyle(fontSize: 14, color: RCColors.ink),
+              style: TextStyle(fontSize: 14, color: context.rc.ink),
             ),
           ),
           const SizedBox(width: 12),
@@ -475,7 +539,9 @@ class _Row extends StatelessWidget {
       ),
     );
     return onTap == null
-        ? row
+        ? (keyName != null
+              ? KeyedSubtree(key: Key(keyName!), child: row)
+              : row)
         : InkWell(
             key: keyName != null ? Key(keyName!) : null,
             onTap: onTap,
@@ -530,6 +596,7 @@ class _PhoneRecRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final on = store.isPhoneRecording;
     final busy = store.phoneRecordingBusy;
     return Column(
@@ -543,9 +610,9 @@ class _PhoneRecRow extends StatelessWidget {
             children: [
               Flexible(
                 child: busy
-                    ? const Text(
+                    ? Text(
                         '处理中…',
-                        style: TextStyle(fontSize: 13, color: RCColors.sec),
+                        style: TextStyle(fontSize: 13, color: c.sec),
                       )
                     : on
                     ? Row(
@@ -554,8 +621,8 @@ class _PhoneRecRow extends StatelessWidget {
                           Container(
                             width: 7,
                             height: 7,
-                            decoration: const BoxDecoration(
-                              color: RCColors.danger,
+                            decoration: BoxDecoration(
+                              color: c.danger,
                               shape: BoxShape.circle,
                             ),
                           ),
@@ -567,7 +634,7 @@ class _PhoneRecRow extends StatelessWidget {
                                   : '本机录音中',
                               overflow: TextOverflow.ellipsis,
                               maxLines: 1,
-                              style: const TextStyle(fontSize: 13),
+                              style: TextStyle(fontSize: 13, color: c.label),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -575,17 +642,18 @@ class _PhoneRecRow extends StatelessWidget {
                             store.phoneRecClockText,
                             key: const Key('phone-rec-clock'),
                             softWrap: false,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 13,
-                              fontFeatures: [FontFeature.tabularFigures()],
+                              color: c.label,
+                              fontFeatures: const [FontFeature.tabularFigures()],
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
                       )
-                    : const Text(
+                    : Text(
                         '使用手机麦克风',
-                        style: TextStyle(fontSize: 13, color: RCColors.sec),
+                        style: TextStyle(fontSize: 13, color: c.sec),
                       ),
               ),
               const SizedBox(width: 10),
@@ -616,7 +684,7 @@ class _PhoneRecRow extends StatelessWidget {
             child: Text(
               store.phoneRecordingError!,
               key: const Key('phone-rec-error'),
-              style: const TextStyle(fontSize: 12, color: RCColors.danger),
+              style: TextStyle(fontSize: 12, color: c.danger),
             ),
           ),
       ],
@@ -636,6 +704,7 @@ class _MainView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     if (!store.isConnected) {
       return _ConnectView(store: store, islandEnabled: islandEnabled);
     }
@@ -655,7 +724,7 @@ class _MainView extends StatelessWidget {
                   height: 9,
                   decoration: BoxDecoration(
                     // 绿=录音中，橙=已连接待机
-                    color: store.isRecording ? RCColors.ok : RCColors.warn,
+                    color: store.isRecording ? c.ok : c.warn,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -672,9 +741,10 @@ class _MainView extends StatelessWidget {
                     key: const Key('dev-name'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w800,
+                      color: c.label,
                     ),
                   ),
                 ),
@@ -685,12 +755,12 @@ class _MainView extends StatelessWidget {
                     key: const Key('dev-disconnect'),
                     behavior: HitTestBehavior.opaque,
                     onTap: () => _confirmDisconnect(context, store),
-                    child: const Padding(
-                      padding: EdgeInsets.all(8),
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
                       child: RCIcon(
                         RCIconKind.disconnect,
                         size: 18,
-                        color: RCColors.sec,
+                        color: c.sec,
                       ),
                     ),
                   ),
@@ -701,11 +771,11 @@ class _MainView extends StatelessWidget {
               padding: const EdgeInsets.only(left: 16, top: 2),
               child: Row(
                 children: [
-                  const RCIcon(
+                  RCIcon(
                     RCIconKind.bluetooth,
-                    key: Key('dev-bt-icon'),
+                    key: const Key('dev-bt-icon'),
                     size: 12,
-                    color: RCColors.sec,
+                    color: c.sec,
                   ),
                   if (store.deviceSubtitleText.isNotEmpty) ...[
                     const SizedBox(width: 4),
@@ -715,9 +785,9 @@ class _MainView extends StatelessWidget {
                         key: const Key('dev-subtitle'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: RCColors.sec,
+                          color: c.sec,
                         ),
                       ),
                     ),
@@ -727,7 +797,7 @@ class _MainView extends StatelessWidget {
             ),
           ],
         ),
-        const Divider(height: 24, color: RCColors.sep),
+        Divider(height: 24, color: c.sep),
         // 录音状态：关闭时显示「未录音」+ 开关；打开后红点 + 录音中 + 正计时。
         // 开关本身就是入口，避免再去别处找「开始录音」。
         _Row(
@@ -753,10 +823,10 @@ class _MainView extends StatelessWidget {
                 child: store.recordingBusy
                     // 命令在跑：这里必须给出可见反馈。蓝牙被占时这一等可能十几秒，
                     // 只在开关上做 50% 半透明肉眼看不出，用户会以为点坏了。
-                    ? const Text(
+                    ? Text(
                         '处理中…',
-                        key: ValueKey('rec-busy'),
-                        style: TextStyle(fontSize: 14, color: RCColors.sec),
+                        key: const ValueKey('rec-busy'),
+                        style: TextStyle(fontSize: 14, color: c.sec),
                       )
                     : store.isRecording
                     ? Row(
@@ -766,19 +836,19 @@ class _MainView extends StatelessWidget {
                           Container(
                             width: 7,
                             height: 7,
-                            decoration: const BoxDecoration(
-                              color: RCColors.danger,
+                            decoration: BoxDecoration(
+                              color: c.danger,
                               shape: BoxShape.circle,
                             ),
                           ),
                           const SizedBox(width: 5),
                           // 「录音中 00:00:00」放不下时省略「录音中」，计时优先保住
-                          const Flexible(
+                          Flexible(
                             child: Text(
                               '录音中',
                               overflow: TextOverflow.ellipsis,
                               maxLines: 1,
-                              style: TextStyle(fontSize: 14),
+                              style: TextStyle(fontSize: 14, color: c.label),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -786,18 +856,19 @@ class _MainView extends StatelessWidget {
                             store.recClockText,
                             key: const Key('rec-clock'),
                             softWrap: false, // 等宽数字单行，不折行
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 14,
-                              fontFeatures: [FontFeature.tabularFigures()],
+                              color: c.label,
+                              fontFeatures: const [FontFeature.tabularFigures()],
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
                       )
-                    : const Text(
+                    : Text(
                         '未录音',
-                        key: ValueKey('rec-off'),
-                        style: TextStyle(fontSize: 14, color: RCColors.sec),
+                        key: const ValueKey('rec-off'),
+                        style: TextStyle(fontSize: 14, color: c.sec),
                       ),
                 ),
               ),
@@ -830,15 +901,17 @@ class _MainView extends StatelessWidget {
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF0F0EC),
+                    color: c.isDark
+                        ? const Color(0xFF242428)
+                        : const Color(0xFFF0F0EC),
                     borderRadius: BorderRadius.circular(999),
                   ),
-                  child: const Text(
+                  child: Text(
                     '机身按键控录',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: RCColors.sec,
+                      color: c.sec,
                     ),
                   ),
                 ),
@@ -860,7 +933,7 @@ class _MainView extends StatelessWidget {
                   key: const Key('batt-eta'),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
-                  style: const TextStyle(fontSize: 14),
+                  style: TextStyle(fontSize: 14, color: c.label),
                 ),
               ),
             ],
@@ -882,7 +955,7 @@ class _MainView extends StatelessWidget {
                     key: const Key('sync-txt'),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
-                    style: const TextStyle(fontSize: 14),
+                    style: TextStyle(fontSize: 14, color: c.label),
                   ),
                 ),
                 const SizedBox(width: 7),
@@ -890,25 +963,25 @@ class _MainView extends StatelessWidget {
                   width: 16,
                   height: 16,
                   child: switch (store.syncState) {
-                    SyncState.idle => const RCIcon(
+                    SyncState.idle => RCIcon(
                       RCIconKind.sync,
-                      key: Key('sync-ico-idle'),
+                      key: const Key('sync-ico-idle'),
                       size: 15,
-                      color: RCColors.sec,
+                      color: c.sec,
                     ),
                     SyncState.busy => const _SpinIcon(key: Key('sync-ico-busy')),
-                    SyncState.done => const RCIcon(
+                    SyncState.done => RCIcon(
                       RCIconKind.check,
-                      key: Key('sync-ico-done'),
+                      key: const Key('sync-ico-done'),
                       size: 15,
-                      color: RCColors.ok,
+                      color: c.ok,
                     ),
                   },
                 ),
               ],
             ),
           ),
-        if (showWifiRow && store.activeCapabilities.hasWifiConfig)
+        if (showWifiRow && store.showMainWifiRow)
           _Row(
             keyName: 'wifi-row',
             label: 'Wi-Fi',
@@ -921,15 +994,15 @@ class _MainView extends StatelessWidget {
                     '已配置 · ${store.wifiCountShown} 个网络',
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
-                    style: const TextStyle(fontSize: 14),
+                    style: TextStyle(fontSize: 14, color: c.label),
                   ),
                 ),
                 const SizedBox(width: 5),
-                const RCIcon(
+                RCIcon(
                   RCIconKind.chevronRight,
-                  key: Key('rowchev-wifi'),
+                  key: const Key('rowchev-wifi'),
                   size: 15,
-                  color: RCColors.ax,
+                  color: c.ax,
                 ),
               ],
             ),
@@ -951,15 +1024,15 @@ class _MainView extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 14,
                       color: store.fwValText == '正在检查…'
-                          ? RCColors.sec
+                          ? c.sec
                           : (store.fwStage == FwStage.failed
-                                ? RCColors.danger
-                                : RCColors.okInk),
+                                ? c.danger
+                                : c.okInk),
                     ),
                   ),
                 ),
                 const SizedBox(width: 5),
-                const RCIcon(RCIconKind.chevronRight, size: 15, color: RCColors.ax),
+                RCIcon(RCIconKind.chevronRight, size: 15, color: c.ax),
               ],
             ),
           ),
@@ -969,27 +1042,49 @@ class _MainView extends StatelessWidget {
             listenable: agentConfig!,
             builder: (context, _) => _Row(
               keyName: 'btn-config',
-              label: '按键行为',
+              label: '按键行为设置',
               onTap: () => store.showView(DeviceView.btn),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Flexible(
                     child: Text(
-                      agentConfig!.dyjButtonSummary,
+                      agentConfig!.buttonConfiguredLabel(
+                        hasConfigurableSwitch:
+                            store.activeCapabilities.hasConfigurableSwitch,
+                        kind: store.activeKind,
+                      ),
+                      key: const Key('btn-config-val'),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
-                      style: const TextStyle(fontSize: 14),
+                      style: TextStyle(fontSize: 14, color: c.label),
                     ),
                   ),
                   const SizedBox(width: 5),
-                  const RCIcon(
+                  RCIcon(
                     RCIconKind.chevronRight,
                     size: 15,
-                    color: RCColors.ax,
+                    color: c.ax,
                   ),
                 ],
               ),
+            ),
+          ),
+        if (store.activeCapabilities.hasMoreDeviceActions)
+          _Row(
+            keyName: 'more-row',
+            label: '更多',
+            onTap: () => store.showView(DeviceView.more),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                RCIcon(
+                  RCIconKind.chevronRight,
+                  key: const Key('rowchev-more'),
+                  size: 15,
+                  color: c.ax,
+                ),
+              ],
             ),
           ),
         if (store.devStateText.isNotEmpty)
@@ -998,7 +1093,7 @@ class _MainView extends StatelessWidget {
             child: Text(
               store.devStateText,
               key: const Key('dev-state'),
-              style: const TextStyle(fontSize: 12, color: RCColors.okInk),
+              style: TextStyle(fontSize: 12, color: c.okInk),
             ),
           ),
         // 录音失败就地展示：弹层盖住整个屏幕，SnackBar 在它下面根本看不见。
@@ -1008,7 +1103,7 @@ class _MainView extends StatelessWidget {
             child: Text(
               store.recordingError!,
               key: const Key('rec-error'),
-              style: const TextStyle(fontSize: 12, color: RCColors.danger),
+              style: TextStyle(fontSize: 12, color: c.danger),
             ),
           ),
         if (store.syncError != null && store.syncError!.isNotEmpty)
@@ -1017,7 +1112,7 @@ class _MainView extends StatelessWidget {
             child: Text(
               store.syncError!,
               key: const Key('sync-error'),
-              style: const TextStyle(fontSize: 12, color: RCColors.sec),
+              style: TextStyle(fontSize: 12, color: c.sec),
             ),
           ),
         const SizedBox(height: 10),
@@ -1027,8 +1122,8 @@ class _MainView extends StatelessWidget {
             key: const Key('sheet-close'),
             onPressed: store.closeSheet,
             style: FilledButton.styleFrom(
-              backgroundColor: RCColors.label,
-              foregroundColor: Colors.white,
+              backgroundColor: c.label,
+              foregroundColor: c.onLabel,
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1059,7 +1154,10 @@ Future<void> _confirmDisconnect(BuildContext context, DeviceStore store) async {
         FilledButton(
           key: const Key('disconnect-confirm'),
           onPressed: () => Navigator.of(ctx).pop(true),
-          style: FilledButton.styleFrom(backgroundColor: RCColors.danger),
+          style: FilledButton.styleFrom(
+            backgroundColor: ctx.rc.danger,
+            foregroundColor: Colors.white,
+          ),
           child: const Text('断开连接'),
         ),
       ],
@@ -1067,6 +1165,18 @@ Future<void> _confirmDisconnect(BuildContext context, DeviceStore store) async {
   );
   if (ok != true) return;
   await store.disconnectSafely();
+}
+
+String _scanFailureHint(String error) {
+  if (error.contains('蓝牙扫描通道异常中断') ||
+      error.contains('蓝牙通道') ||
+      error.contains('Channel closed')) {
+    return '请先开关一次手机蓝牙，或把录音卡关机再开机后重试';
+  }
+  if (error.contains('蓝牙模块没有载入') || error.contains('不支持连接录音卡')) {
+    return '重装当前安装包无法恢复，请安装包含蓝牙桥的真机版本';
+  }
+  return '请确认录音卡已开机，并放在手机附近';
 }
 
 /// 未连接视图：搜索并连接附近的录音卡，并支持无硬件独立开启「本机录音」。
@@ -1080,7 +1190,11 @@ class _ConnectView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final busy = store.isLinkBusy;
+    final scanOrConnectBusy =
+        store.linkState == LinkState.scanning ||
+        store.linkState == LinkState.connecting;
     final bleExpired = store.isBleScanExpired;
     return Column(
       key: const Key('dev-connect'),
@@ -1094,32 +1208,41 @@ class _ConnectView extends StatelessWidget {
               height: 10,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: store.isPhoneRecording ? RCColors.ok : null,
-                border: store.isPhoneRecording
+                color: (store.isPhoneRecording || store.isWatchFallbackRecording)
+                    ? c.ok
+                    : (store.isPendingForegroundPhoneFailover ? c.warn : null),
+                border:
+                    (store.isPhoneRecording ||
+                        store.isWatchFallbackRecording ||
+                        store.isPendingForegroundPhoneFailover)
                     ? null
-                    : Border.all(color: RCColors.ax, width: 1.4),
+                    : Border.all(color: c.ax, width: 1.4),
               ),
             ),
             const SizedBox(width: 8),
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     '录音卡',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: c.label,
+                    ),
                   ),
                   Row(
                     children: [
                       RCIcon(
                         RCIconKind.bluetooth,
                         size: 12,
-                        color: RCColors.sec,
+                        color: c.sec,
                       ),
-                      SizedBox(width: 4),
+                      const SizedBox(width: 4),
                       Text(
                         '待连接硬件',
-                        style: TextStyle(fontSize: 12, color: RCColors.sec),
+                        style: TextStyle(fontSize: 12, color: c.sec),
                       ),
                     ],
                   ),
@@ -1129,39 +1252,181 @@ class _ConnectView extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: const Color(0xFFF0F0EC),
+                color: c.isDark
+                    ? const Color(0xFF242428)
+                    : const Color(0xFFF0F0EC),
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: const Text(
+              child: Text(
                 '未连接',
-                key: Key('dev-link-chip'),
-                style: TextStyle(fontSize: 11, color: RCColors.sec),
+                key: const Key('dev-link-chip'),
+                style: TextStyle(fontSize: 11, color: c.sec),
               ),
             ),
           ],
         ),
-        const Divider(height: 20, color: RCColors.sep),
-        _PhoneRecRow(store: store, islandEnabled: islandEnabled),
-        const Divider(height: 18, color: RCColors.sep),
-        const Text(
+        if (store.disconnectNotice != null &&
+            store.disconnectNotice!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            key: const Key('ble-disconnect-banner'),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: c.isDark
+                  ? const Color(0xFF262016)
+                  : const Color(0xFFFFF7E6),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: c.warn.withValues(alpha: 0.45)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  store.disconnectNotice!,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.4,
+                    fontWeight: FontWeight.w500,
+                    color: c.label,
+                  ),
+                ),
+                if (store.isBackgroundReconnectArmed) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    '后台自动重连已开启，设备回到附近将自动恢复并合并数据',
+                    style: TextStyle(fontSize: 11.5, color: c.sec),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+        Divider(height: 20, color: c.sep),
+        if (store.isWatchFallbackRecording)
+          _Row(
+            keyName: 'watch-failover-row',
+            label: '手表保底',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          color: c.danger,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          'Apple Watch 接力录音中',
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                          style: TextStyle(fontSize: 13, color: c.label),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        store.watchFailoverClockText,
+                        softWrap: false,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: c.label,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                GestureDetector(
+                  key: const Key('watch-failover-toggle'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => unawaited(store.stopWatchFailoverRecording()),
+                  child: const RCSwitch(on: true, busy: false),
+                ),
+              ],
+            ),
+          )
+        else
+          _PhoneRecRow(store: store, islandEnabled: islandEnabled),
+        if (store.isPendingForegroundPhoneFailover &&
+            !store.isPhoneRecording &&
+            !store.isWatchFallbackRecording) ...[
+          const SizedBox(height: 8),
+          Container(
+            key: const Key('phone-failover-pending-banner'),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: c.isDark
+                  ? const Color(0xFF1F242D)
+                  : const Color(0xFFF3F6FC),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: c.sep),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '蓝牙断开时因系统后台限制未直接启用手机麦克风',
+                  style: TextStyle(fontSize: 12, color: c.sec),
+                ),
+                const SizedBox(height: 8),
+                FilledButton(
+                  key: const Key('phone-failover-resume-btn'),
+                  onPressed: store.phoneRecordingBusy
+                      ? null
+                      : () => unawaited(
+                          store.startPhoneRecording(
+                            forFailover: true,
+                            islandEnabled: islandEnabled,
+                          ),
+                        ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: c.label,
+                    foregroundColor: c.onLabel,
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(vertical: 9),
+                  ),
+                  child: const Text(
+                    '立即开启本机保底录音',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        Divider(height: 18, color: c.sep),
+        Text(
           '连接录音卡',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: c.label,
+          ),
         ),
         const SizedBox(height: 4),
         if (store.linkState == LinkState.scanning)
           Row(
             key: const Key('dev-scan-state'),
-            children: const [
-              SizedBox(
+            children: [
+              const SizedBox(
                 width: 14,
                 height: 14,
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   '正在通过蓝牙扫描附近的录音卡…',
-                  style: TextStyle(fontSize: 13),
+                  style: TextStyle(fontSize: 13, color: c.ink),
                 ),
               ),
             ],
@@ -1169,6 +1434,40 @@ class _ConnectView extends StatelessWidget {
         else if (store.linkState == LinkState.connecting)
           Row(
             key: const Key('dev-connecting-state'),
+            children: [
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '正在连接录音卡…',
+                style: TextStyle(fontSize: 13, color: c.ink),
+              ),
+            ],
+          )
+        else if (store.linkState == LinkState.reconnecting)
+          Row(
+            key: const Key('dev-reconnecting-state'),
+            children: [
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '正在重连录音卡…',
+                  style: TextStyle(fontSize: 13, color: c.ink),
+                ),
+              ),
+            ],
+          )
+        else if (store.linkState == LinkState.reconnecting)
+          Row(
+            key: const Key('dev-reconnecting-state'),
             children: const [
               SizedBox(
                 width: 14,
@@ -1176,16 +1475,16 @@ class _ConnectView extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
               SizedBox(width: 8),
-              Text('正在连接录音卡…', style: TextStyle(fontSize: 13)),
+              Text('正在自动重连上次设备…', style: TextStyle(fontSize: 13)),
             ],
           )
         else if (bleExpired)
-          const Text(
+          Text(
             '蓝牙设备列表已过期，请重新扫描',
-            key: Key('dev-scan-expired-hint'),
+            key: const Key('dev-scan-expired-hint'),
             style: TextStyle(
               fontSize: 13,
-              color: Color(0xFF8A5A10),
+              color: c.isDark ? c.warn : const Color(0xFF8A5A10),
               fontWeight: FontWeight.w500,
             ),
           )
@@ -1196,20 +1495,20 @@ class _ConnectView extends StatelessWidget {
             children: [
               Text(
                 store.linkError!,
-                style: const TextStyle(fontSize: 13, color: RCColors.ink),
+                style: TextStyle(fontSize: 13, color: c.ink),
               ),
               const SizedBox(height: 4),
-              const Text(
-                '请确认录音卡已开机，并放在手机附近',
-                style: TextStyle(fontSize: 12, color: RCColors.sec),
+              Text(
+                _scanFailureHint(store.linkError!),
+                style: TextStyle(fontSize: 12, color: c.sec),
               ),
             ],
           )
         else
-          const Text(
+          Text(
             '选择要连接的录音卡（按信号强弱排序）',
-            key: Key('dev-pick-hint'),
-            style: TextStyle(fontSize: 13, color: RCColors.sec),
+            key: const Key('dev-pick-hint'),
+            style: TextStyle(fontSize: 13, color: c.sec),
           ),
         for (final device in store.discovered) ...[
           const SizedBox(height: 10),
@@ -1224,10 +1523,12 @@ class _ConnectView extends StatelessWidget {
         if (bleExpired) ...[
           FilledButton(
             key: const Key('dev-rescan'),
-            onPressed: busy ? null : () => store.startScan(),
+            onPressed: scanOrConnectBusy
+                ? null
+                : () => store.startScan(userInitiated: true),
             style: FilledButton.styleFrom(
-              backgroundColor: RCColors.label,
-              foregroundColor: Colors.white,
+              backgroundColor: c.label,
+              foregroundColor: c.onLabel,
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1238,8 +1539,8 @@ class _ConnectView extends StatelessWidget {
             key: const Key('sheet-close'),
             onPressed: store.closeSheet,
             style: OutlinedButton.styleFrom(
-              foregroundColor: RCColors.label,
-              side: const BorderSide(color: RCColors.ax),
+              foregroundColor: c.label,
+              side: BorderSide(color: c.ax),
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 11),
             ),
@@ -1248,10 +1549,12 @@ class _ConnectView extends StatelessWidget {
         ] else ...[
           OutlinedButton(
             key: const Key('dev-rescan'),
-            onPressed: busy ? null : () => store.startScan(),
+            onPressed: scanOrConnectBusy
+                ? null
+                : () => store.startScan(userInitiated: true),
             style: OutlinedButton.styleFrom(
-              foregroundColor: RCColors.label,
-              side: const BorderSide(color: RCColors.ax),
+              foregroundColor: c.label,
+              side: BorderSide(color: c.ax),
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 11),
             ),
@@ -1262,8 +1565,8 @@ class _ConnectView extends StatelessWidget {
             key: const Key('sheet-close'),
             onPressed: store.closeSheet,
             style: FilledButton.styleFrom(
-              backgroundColor: RCColors.label,
-              foregroundColor: Colors.white,
+              backgroundColor: c.label,
+              foregroundColor: c.onLabel,
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1290,6 +1593,7 @@ class _ConnectDeviceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final disabled = busy || expired;
     return Semantics(
       button: true,
@@ -1301,8 +1605,12 @@ class _ConnectDeviceTile extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: expired ? const Color(0xFFF5F5F2) : null,
-            border: Border.all(color: RCColors.sep),
+            color: expired
+                ? (c.isDark
+                      ? const Color(0xFF202024)
+                      : const Color(0xFFF5F5F2))
+                : null,
+            border: Border.all(color: c.sep),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Opacity(
@@ -1323,9 +1631,10 @@ class _ConnectDeviceTile extends StatelessWidget {
                           device.shortName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
+                            color: c.label,
                           ),
                         ),
                       ),
@@ -1338,18 +1647,18 @@ class _ConnectDeviceTile extends StatelessWidget {
                   Text(
                     '已过期',
                     key: Key('dev-expired-${device.id}'),
-                    style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                    style: TextStyle(fontSize: 12, color: c.sec),
                   )
                 else ...[
-                  const Text(
+                  Text(
                     '连接',
-                    style: TextStyle(fontSize: 12, color: RCColors.okInk),
+                    style: TextStyle(fontSize: 12, color: c.okInk),
                   ),
                   const SizedBox(width: 4),
-                  const RCIcon(
+                  RCIcon(
                     RCIconKind.chevronRight,
                     size: 15,
-                    color: RCColors.ax,
+                    color: c.ax,
                   ),
                 ],
               ],
@@ -1384,7 +1693,7 @@ class _SpinIconState extends State<_SpinIcon>
   @override
   Widget build(BuildContext context) => RotationTransition(
     turns: _c,
-    child: const RCIcon(RCIconKind.sync, size: 15, color: RCColors.ink),
+    child: RCIcon(RCIconKind.sync, size: 15, color: context.rc.ink),
   );
 }
 
@@ -1419,7 +1728,10 @@ class _FirmwareView extends StatelessWidget {
           FilledButton(
             key: const Key('ota-rec-confirm'),
             onPressed: () => Navigator.of(ctx).pop(true),
-            style: FilledButton.styleFrom(backgroundColor: RCColors.label),
+            style: FilledButton.styleFrom(
+              backgroundColor: ctx.rc.label,
+              foregroundColor: ctx.rc.onLabel,
+            ),
             child: const Text('继续更新'),
           ),
         ],
@@ -1459,14 +1771,19 @@ class _FirmwareView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     return Column(
       key: const Key('dev-upg'),
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
+        Text(
           '固件更新',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+            color: c.label,
+          ),
         ),
         const SizedBox(height: 6),
         _Row(
@@ -1474,7 +1791,7 @@ class _FirmwareView extends StatelessWidget {
           child: Text(
             store.mainVersionCompare,
             key: const Key('fw-main-ver'),
-            style: const TextStyle(fontSize: 13),
+            style: TextStyle(fontSize: 13, color: c.label),
           ),
         ),
         if (store.activeCapabilities.hasDualChipOta)
@@ -1483,7 +1800,37 @@ class _FirmwareView extends StatelessWidget {
             child: Text(
               store.wifiVersionCompare,
               key: const Key('fw-wifi-ver'),
-              style: const TextStyle(fontSize: 13),
+              style: TextStyle(fontSize: 13, color: c.label),
+            ),
+          ),
+        if (store.showFirmwareWifiRow)
+          _Row(
+            keyName: 'upg-wifi-row',
+            label: 'Wi-Fi 设置',
+            onTap: () => store.showView(
+              DeviceView.wifi,
+              wifiReturnTo: DeviceView.upg,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    store.wifiSaved.isNotEmpty
+                        ? '已配置 · ${store.wifiCountShown} 个网络'
+                        : '升级前请配网',
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: TextStyle(fontSize: 13, color: c.label),
+                  ),
+                ),
+                const SizedBox(width: 5),
+                RCIcon(
+                  RCIconKind.chevronRight,
+                  size: 15,
+                  color: c.sec,
+                ),
+              ],
             ),
           ),
         if (store.fwError != null)
@@ -1495,9 +1842,9 @@ class _FirmwareView extends StatelessWidget {
                 Text(
                   store.fwError!,
                   key: const Key('fw-error'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: RCColors.danger,
+                    color: c.danger,
                     height: 1.6,
                   ),
                 ),
@@ -1508,9 +1855,12 @@ class _FirmwareView extends StatelessWidget {
                     alignment: Alignment.centerLeft,
                     child: TextButton(
                       key: const Key('upg-goto-wifi'),
-                      onPressed: () => store.showView(DeviceView.wifi),
+                      onPressed: () => store.showView(
+                        DeviceView.wifi,
+                        wifiReturnTo: DeviceView.upg,
+                      ),
                       style: TextButton.styleFrom(
-                        foregroundColor: RCColors.ink,
+                        foregroundColor: c.ink,
                         padding: const EdgeInsets.only(top: 4),
                         minimumSize: Size.zero,
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -1531,7 +1881,7 @@ class _FirmwareView extends StatelessWidget {
             child: Text(
               '更新期间请保持设备连接，切勿退出本页或关闭手机屏幕。',
               key: const Key('upg-warn'),
-              style: const TextStyle(fontSize: 12, color: RCColors.danger),
+              style: TextStyle(fontSize: 12, color: c.danger),
             ),
           ),
         if (store.fwUpdating) ...[
@@ -1542,8 +1892,8 @@ class _FirmwareView extends StatelessWidget {
               key: const Key('upg-bar'),
               value: store.fwProgress / 100,
               minHeight: 5,
-              backgroundColor: RCColors.sep,
-              valueColor: const AlwaysStoppedAnimation(RCColors.ok),
+              backgroundColor: c.sep,
+              valueColor: AlwaysStoppedAnimation(c.ok),
             ),
           ),
           const SizedBox(height: 8),
@@ -1553,14 +1903,15 @@ class _FirmwareView extends StatelessWidget {
               Text(
                 store.fwStageText,
                 key: const Key('upg-stage'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
+                  color: c.label,
                 ),
               ),
               Text(
                 store.fwPctText,
-                style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                style: TextStyle(fontSize: 12, color: c.sec),
               ),
             ],
           ),
@@ -1568,7 +1919,7 @@ class _FirmwareView extends StatelessWidget {
           Text(
             store.fwStateText,
             key: const Key('upg-state'),
-            style: const TextStyle(fontSize: 12, color: RCColors.sec),
+            style: TextStyle(fontSize: 12, color: c.sec),
           ),
         ],
         const SizedBox(height: 12),
@@ -1582,9 +1933,9 @@ class _FirmwareView extends StatelessWidget {
                 ? null
                 : () => unawaited(_onStartPressed(context)),
             style: FilledButton.styleFrom(
-              backgroundColor: RCColors.label,
-              disabledBackgroundColor: RCColors.ax,
-              foregroundColor: Colors.white,
+              backgroundColor: c.label,
+              disabledBackgroundColor: c.ax,
+              foregroundColor: c.onLabel,
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1606,9 +1957,9 @@ class _FirmwareView extends StatelessWidget {
                 ? null
                 : () => store.showView(DeviceView.main),
             style: OutlinedButton.styleFrom(
-              foregroundColor: RCColors.ink,
-              disabledForegroundColor: RCColors.ax,
-              side: const BorderSide(color: RCColors.ax),
+              foregroundColor: c.ink,
+              disabledForegroundColor: c.ax,
+              side: BorderSide(color: c.ax),
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -1626,6 +1977,7 @@ class _SignalBars extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     return Row(
       key: Key('sig-$strength'),
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -1636,7 +1988,7 @@ class _SignalBars extends StatelessWidget {
             width: 3,
             height: 3.0 + i * 3,
             margin: const EdgeInsets.only(left: 2),
-            color: i <= strength ? RCColors.ink : RCColors.ax,
+            color: i <= strength ? c.ink : c.ax,
           ),
       ],
     );
@@ -1662,6 +2014,7 @@ class _WifiViewState extends State<_WifiView> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final store = widget.store;
     final shown = store.wifiMore
         ? store.wifiSaved
@@ -1675,29 +2028,33 @@ class _WifiViewState extends State<_WifiView> {
           children: [
             IconButton(
               key: const Key('wifi-back'),
-              onPressed: () => store.showView(DeviceView.main),
-              icon: const RCIcon(
+              onPressed: store.closeWifiView,
+              icon: RCIcon(
                 RCIconKind.chevronLeft,
                 size: 18,
-                color: RCColors.ink,
+                color: c.ink,
               ),
-              color: RCColors.ink,
+              color: c.ink,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
             ),
             const SizedBox(width: 4),
-            const Text(
+            Text(
               'Wi-Fi 设置',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: c.label,
+              ),
             ),
           ],
         ),
         const SizedBox(height: 4),
-        const Align(
+        Align(
           alignment: Alignment.centerLeft,
           child: Text(
             '已保存',
-            style: TextStyle(fontSize: 12, color: RCColors.sec),
+            style: TextStyle(fontSize: 12, color: c.sec),
           ),
         ),
         for (final w in shown)
@@ -1715,7 +2072,7 @@ class _WifiViewState extends State<_WifiView> {
                       w.name,
                       style: TextStyle(
                         fontSize: 14,
-                        color: inRange ? RCColors.label : RCColors.sec,
+                        color: inRange ? c.label : c.sec,
                       ),
                     ),
                     if (store.wifiLast == w.name) ...[
@@ -1729,7 +2086,7 @@ class _WifiViewState extends State<_WifiView> {
                           : store.wifiScanDone
                           ? (inRange ? '' : '不在范围内')
                           : '—',
-                      style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                      style: TextStyle(fontSize: 12, color: c.sec),
                     ),
                     if (inRange) ...[
                       const SizedBox(width: 6),
@@ -1747,7 +2104,7 @@ class _WifiViewState extends State<_WifiView> {
               key: const Key('wmore'),
               onPressed: store.wifiMoreToggle,
               style: TextButton.styleFrom(
-                foregroundColor: RCColors.sec,
+                foregroundColor: c.sec,
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                 minimumSize: Size.zero,
                 textStyle: const TextStyle(fontSize: 12),
@@ -1759,12 +2116,12 @@ class _WifiViewState extends State<_WifiView> {
               ),
             ),
           ),
-        const Divider(height: 18, color: RCColors.sep),
-        const Align(
+        Divider(height: 18, color: c.sep),
+        Align(
           alignment: Alignment.centerLeft,
           child: Text(
             '可用网络',
-            style: TextStyle(fontSize: 12, color: RCColors.sec),
+            style: TextStyle(fontSize: 12, color: c.sec),
           ),
         ),
         const SizedBox(height: 4),
@@ -1773,7 +2130,7 @@ class _WifiViewState extends State<_WifiView> {
           child: Text(
             store.wifiStateText,
             key: const Key('wstate'),
-            style: const TextStyle(fontSize: 12, color: RCColors.sec),
+            style: TextStyle(fontSize: 12, color: c.sec),
           ),
         ),
         // 连接/密码错误就地展示（用户改密码即可重试，不靠一闪而过的提示）
@@ -1785,7 +2142,22 @@ class _WifiViewState extends State<_WifiView> {
               child: Text(
                 store.wifiError!,
                 key: const Key('wifi-error'),
-                style: const TextStyle(fontSize: 12, color: RCColors.danger),
+                style: TextStyle(fontSize: 12, color: c.danger),
+              ),
+            ),
+          ),
+        if (store.wifiError != null &&
+            (isLikely5GhzSsid(store.wifiJoinName) ||
+                isLikely5GhzSsid(store.wifiSelName ?? '') ||
+                isLikely5GhzSsid(store.wifiError!)))
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '当前硬件仅支持 2.4GHz Wi-Fi，请改用非 5G 频段路由或 2.4GHz 热点',
+                key: const Key('wifi-5g-hint'),
+                style: TextStyle(fontSize: 11.5, color: c.warn),
               ),
             ),
           ),
@@ -1802,13 +2174,15 @@ class _WifiViewState extends State<_WifiView> {
           )
         else
           for (final r in store.wifiScanRes) ...[
-            _availRow(store, r),
-            if (store.wifiSelName == r.name) _joinForm(store, r),
+            _availRow(c, store, r),
+            if (store.wifiSelName == r.name) _joinForm(c, store, r),
           ],
         const SizedBox(height: 8),
-        const Text(
-          '录音卡仅支持 2.4GHz 网络，此处只显示 2.4GHz 接入点',
-          style: TextStyle(fontSize: 11, color: RCColors.sec),
+        Text(
+          store.isCardV2WifiOtaOnly
+              ? '录音卡仅支持 2.4GHz 网络；仅用于 Wi-Fi 固件升级，离开或升级完成后将自动关闭设备 Wi-Fi'
+              : '录音卡仅支持 2.4GHz 网络，此处只显示 2.4GHz 接入点',
+          style: TextStyle(fontSize: 11, color: c.sec),
         ),
         const SizedBox(height: 10),
         SizedBox(
@@ -1816,8 +2190,8 @@ class _WifiViewState extends State<_WifiView> {
           child: OutlinedButton(
             onPressed: store.wifiScan,
             style: OutlinedButton.styleFrom(
-              foregroundColor: RCColors.ink,
-              side: const BorderSide(color: RCColors.ax),
+              foregroundColor: c.ink,
+              side: BorderSide(color: c.ax),
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(vertical: 11),
             ),
@@ -1828,7 +2202,7 @@ class _WifiViewState extends State<_WifiView> {
     );
   }
 
-  Widget _availRow(DeviceStore store, WifiNet r) {
+  Widget _availRow(RCColorScheme c, DeviceStore store, WifiNet r) {
     final saved = store.wifiSaved.any((s) => s.name == r.name);
     final joining = store.wifiJoining && store.wifiJoinName == r.name;
     if (joining) {
@@ -1837,11 +2211,11 @@ class _WifiViewState extends State<_WifiView> {
         padding: const EdgeInsets.symmetric(vertical: 9),
         child: Row(
           children: [
-            Text(r.name, style: const TextStyle(fontSize: 14)),
+            Text(r.name, style: TextStyle(fontSize: 14, color: c.label)),
             const Spacer(),
-            const Text(
+            Text(
               '正在连接…',
-              style: TextStyle(fontSize: 12, color: RCColors.sec),
+              style: TextStyle(fontSize: 12, color: c.sec),
             ),
           ],
         ),
@@ -1856,14 +2230,14 @@ class _WifiViewState extends State<_WifiView> {
         padding: const EdgeInsets.symmetric(vertical: 9),
         child: Row(
           children: [
-            Text(r.name, style: const TextStyle(fontSize: 14)),
+            Text(r.name, style: TextStyle(fontSize: 14, color: c.label)),
             if (saved) ...[
               const SizedBox(width: 6),
               const _Chip('已保存', subtle: true),
             ],
             const Spacer(),
             if (r.lock) ...[
-              const RCIcon(RCIconKind.lock, size: 12, color: RCColors.sec),
+              RCIcon(RCIconKind.lock, size: 12, color: c.sec),
               const SizedBox(width: 5),
             ],
             _SignalBars(strength: r.signal),
@@ -1873,8 +2247,9 @@ class _WifiViewState extends State<_WifiView> {
     );
   }
 
-  Widget _joinForm(DeviceStore store, WifiNet r) {
+  Widget _joinForm(RCColorScheme c, DeviceStore store, WifiNet r) {
     final verifying = store.wifiJoining && store.wifiJoinName == r.name;
+    final warn5g = store.wifiError == null && isLikely5GhzSsid(r.name);
     return Padding(
       key: Key('wform-${r.name}'),
       padding: const EdgeInsets.only(left: 12, bottom: 10),
@@ -1883,13 +2258,25 @@ class _WifiViewState extends State<_WifiView> {
         children: [
           Text(
             r.name,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: c.label,
+            ),
           ),
+          if (warn5g) ...[
+            const SizedBox(height: 4),
+            Text(
+              '提示：SSID 疑似 5GHz 频段；硬件仅支持 2.4GHz Wi-Fi，请确认该热点的 2.4GHz 广播已开启',
+              key: const Key('wifi-5g-hint'),
+              style: TextStyle(fontSize: 11.5, color: c.warn),
+            ),
+          ],
           const SizedBox(height: 6),
           if (verifying)
-            const Text(
+            Text(
               '正在验证连接可行性…',
-              style: TextStyle(fontSize: 12, color: RCColors.sec),
+              style: TextStyle(fontSize: 12, color: c.sec),
             )
           else ...[
             SizedBox(
@@ -1898,7 +2285,7 @@ class _WifiViewState extends State<_WifiView> {
                 key: const Key('wifi-pwd'),
                 controller: _pwdCtrl,
                 obscureText: true,
-                style: const TextStyle(fontSize: 14),
+                style: TextStyle(fontSize: 14, color: c.label),
                 decoration: InputDecoration(
                   hintText: '输入网络密码',
                   isDense: true,
@@ -1908,7 +2295,15 @@ class _WifiViewState extends State<_WifiView> {
                   ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: RCColors.sep),
+                    borderSide: BorderSide(color: c.sep),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: c.sep),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: c.label),
                   ),
                 ),
               ),
@@ -1920,8 +2315,8 @@ class _WifiViewState extends State<_WifiView> {
                   key: const Key('wifi-cancel'),
                   onPressed: store.wifiCancelPick,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: RCColors.ink,
-                    side: const BorderSide(color: RCColors.ax),
+                    foregroundColor: c.ink,
+                    side: BorderSide(color: c.ax),
                     shape: const StadiumBorder(),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -1935,8 +2330,8 @@ class _WifiViewState extends State<_WifiView> {
                   key: const Key('wifi-connect'),
                   onPressed: () => store.wifiJoinNew(_pwdCtrl.text),
                   style: FilledButton.styleFrom(
-                    backgroundColor: RCColors.label,
-                    foregroundColor: Colors.white,
+                    backgroundColor: c.label,
+                    foregroundColor: c.onLabel,
                     shape: const StadiumBorder(),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -1962,7 +2357,9 @@ class _ButtonConfigView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.rc;
     final config = agentConfig;
+    final isCardControl = store.activeCapabilities.hasConfigurableSwitch;
     return Column(
       key: const Key('btn-config-view'),
       mainAxisSize: MainAxisSize.min,
@@ -1973,75 +2370,314 @@ class _ButtonConfigView extends StatelessWidget {
             IconButton(
               key: const Key('btn-cfg-back'),
               onPressed: () => store.showView(DeviceView.main),
-              icon: const RCIcon(
+              icon: RCIcon(
                 RCIconKind.chevronLeft,
                 size: 18,
-                color: RCColors.ink,
+                color: c.ink,
               ),
-              color: RCColors.ink,
+              color: c.ink,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
             ),
             const SizedBox(width: 4),
-            const Text(
+            Text(
               '按键行为设置',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: c.label,
+              ),
             ),
           ],
         ),
         const SizedBox(height: 4),
-        const Text(
-          '配置点一机 V1 物理按键触发的动作；未开启持续录音时触发「语音任务」将自动开启临时录音并在完成后关闭。',
-          style: TextStyle(fontSize: 12, height: 1.45, color: RCColors.sec),
+        Text(
+          isCardControl
+              ? '配置录音卡物理按键与侧边拨杆触发的动作，修改后自动同步到硬件；若软件蓝牙开关与拨杆状态不一致，以软件蓝牙开关为准。'
+              : (store.activeKind == DeviceKind.omiCv1
+                    ? '配置 Omi 录音器物理按键动作。因固件写死长按约 3 秒直接关机且蓝牙不可改，已禁用长按交互以防误触关机；推荐将双击设为「语音任务」（双击开始说话、再双击发送）。'
+                    : '配置点一机 V1 物理按键触发的动作；未开启持续录音时触发「语音任务」将自动开启临时录音并在完成后关闭。'),
+          style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
         ),
         const SizedBox(height: 12),
         if (config == null)
-          const Text(
+          Text(
             '暂无按键配置上下文',
-            style: TextStyle(fontSize: 13, color: RCColors.sec),
+            style: TextStyle(fontSize: 13, color: c.sec),
           )
         else
           ListenableBuilder(
-            listenable: config,
-            builder: (context, _) => Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _gestureSection(
-                  key: const Key('btn-cfg-click'),
-                  gesture: 'click',
-                  title: '单击',
-                  current: config.dyjClickAction,
-                  onPick: (a) => unawaited(config.setDyjButtonAction('click', a)),
-                ),
-                const SizedBox(height: 12),
-                _gestureSection(
-                  key: const Key('btn-cfg-long'),
-                  gesture: 'long_press',
-                  title: '长按',
-                  current: config.dyjLongPressAction,
-                  onPick: (a) =>
-                      unawaited(config.setDyjButtonAction('long_press', a)),
-                ),
-                const SizedBox(height: 12),
-                _gestureSection(
-                  key: const Key('btn-cfg-double'),
-                  gesture: 'double_click',
-                  title: '双击',
-                  current: config.dyjDoubleClickAction,
-                  onPick: (a) =>
-                      unawaited(config.setDyjButtonAction('double_click', a)),
-                ),
-              ],
-            ),
+            listenable: Listenable.merge([config, store]),
+            builder: (context, _) {
+              final rc = context.rc;
+              final err = store.cardControlsError;
+              final isOmi = store.activeKind == DeviceKind.omiCv1;
+              final nonCardActions = isOmi
+                  ? HardwareButtonAction.dyjButtonOptions
+                        .where((a) => a != HardwareButtonAction.photoRecognize)
+                        .toList(growable: false)
+                  : HardwareButtonAction.dyjButtonOptions;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (isCardControl && store.cardControlsSyncing)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          const SizedBox(
+                            width: 13,
+                            height: 13,
+                            child: CircularProgressIndicator(strokeWidth: 1.8),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '正在同步硬件按键设置…',
+                            style: TextStyle(fontSize: 12, color: rc.sec),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (isCardControl && err != null && err.isNotEmpty)
+                    Container(
+                      key: const Key('btn-cfg-error'),
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: rc.danger.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: rc.danger.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              err,
+                              style: TextStyle(fontSize: 12, color: rc.danger),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton(
+                            key: const Key('btn-cfg-retry'),
+                            onPressed: store.cardControlsSyncing
+                                ? null
+                                : () => unawaited(store.retryCardControlsSync()),
+                            style: TextButton.styleFrom(
+                              foregroundColor: rc.danger,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text(
+                              '重试',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (isCardControl) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '物理按钮',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: rc.sec,
+                        ),
+                      ),
+                    ),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-click'),
+                      gesture: 'click',
+                      title: '单击',
+                      actions: HardwareButtonAction.cardButtonOptions,
+                      current: config.cardClickAction,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'click', a),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-double'),
+                      gesture: 'double_click',
+                      title: '双击',
+                      actions: HardwareButtonAction.cardButtonOptions,
+                      current: config.cardDoubleClickAction,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(
+                          config,
+                          'double_click',
+                          a,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-long'),
+                      gesture: 'long_press',
+                      title: '长按',
+                      actions: HardwareButtonAction.cardButtonOptions,
+                      current: config.cardLongPressAction,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'long_press', a),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '侧边拨杆',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: rc.sec,
+                        ),
+                      ),
+                    ),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-switch_on'),
+                      gesture: 'switch_on',
+                      title: '拨杆打开',
+                      actions: HardwareButtonAction.cardSwitchOptions,
+                      current: config.cardSwitchOnAction,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'switch_on', a),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-switch_off'),
+                      gesture: 'switch_off',
+                      title: '拨杆关闭',
+                      actions: HardwareButtonAction.cardSwitchOptions,
+                      current: config.cardSwitchOffAction,
+                      onPick: (a) => unawaited(
+                        store.applyCardControlAction(config, 'switch_off', a),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      key: const Key('btn-cfg-reset-default'),
+                      onPressed: store.cardControlsSyncing
+                          ? null
+                          : () => unawaited(
+                              store.resetCardControlsToDefaults(config),
+                            ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: rc.ink,
+                        side: BorderSide(color: rc.sep),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      ),
+                      child: const Text(
+                        '恢复默认按键行为',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ] else ...[
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-click'),
+                      gesture: 'click',
+                      title: '单击',
+                      actions: nonCardActions,
+                      current: isOmi
+                          ? config.omiClickAction
+                          : config.dyjClickAction,
+                      onPick: (a) => unawaited(
+                        isOmi
+                            ? config.setOmiButtonAction('click', a)
+                            : config.setDyjButtonAction('click', a),
+                      ),
+                    ),
+                    if (!isOmi) ...[
+                      const SizedBox(height: 12),
+                      _gestureSection(
+                        rc: rc,
+                        key: const Key('btn-cfg-long'),
+                        gesture: 'long_press',
+                        title: '长按',
+                        actions: nonCardActions,
+                        current: config.dyjLongPressAction,
+                        onPick: (a) => unawaited(
+                          config.setDyjButtonAction('long_press', a),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    _gestureSection(
+                      rc: rc,
+                      key: const Key('btn-cfg-double'),
+                      gesture: 'double_click',
+                      title: '双击',
+                      actions: nonCardActions,
+                      current: isOmi
+                          ? config.omiDoubleClickAction
+                          : config.dyjDoubleClickAction,
+                      onPick: (a) => unawaited(
+                        isOmi
+                            ? config.setOmiButtonAction('double_click', a)
+                            : config.setDyjButtonAction('double_click', a),
+                      ),
+                    ),
+                    if (isOmi) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        key: const Key('btn-cfg-omi-no-long'),
+                        padding: const EdgeInsets.all(11),
+                        decoration: BoxDecoration(
+                          color: rc.isDark ? const Color(0xFF222226) : rc.bg,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: rc.sep),
+                        ),
+                        child: Text(
+                          '不支持长按：Omi 硬件长按约 3 秒将直接触发关机',
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.45,
+                            color: rc.sec,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ],
+              );
+            },
           ),
       ],
     );
   }
 
   Widget _gestureSection({
+    required RCColorScheme rc,
     required Key key,
     required String gesture,
     required String title,
+    required List<HardwareButtonAction> actions,
     required HardwareButtonAction current,
     required ValueChanged<HardwareButtonAction> onPick,
   }) {
@@ -2049,9 +2685,9 @@ class _ButtonConfigView extends StatelessWidget {
       key: key,
       padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(
-        color: RCColors.bg,
+        color: rc.isDark ? const Color(0xFF222226) : rc.bg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: RCColors.sep),
+        border: Border.all(color: rc.sep),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2060,15 +2696,16 @@ class _ButtonConfigView extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13.5,
                   fontWeight: FontWeight.w700,
+                  color: rc.label,
                 ),
               ),
               const Spacer(),
               Text(
                 current.shortLabel,
-                style: const TextStyle(fontSize: 12, color: RCColors.sec),
+                style: TextStyle(fontSize: 12, color: rc.sec),
               ),
             ],
           ),
@@ -2077,7 +2714,7 @@ class _ButtonConfigView extends StatelessWidget {
             spacing: 6,
             runSpacing: 6,
             children: [
-              for (final act in HardwareButtonAction.values)
+              for (final act in actions)
                 InkWell(
                   key: Key('btn-cfg-$gesture-${act.code}'),
                   borderRadius: BorderRadius.circular(999),
@@ -2088,10 +2725,10 @@ class _ButtonConfigView extends StatelessWidget {
                       vertical: 6,
                     ),
                     decoration: BoxDecoration(
-                      color: current == act ? RCColors.label : RCColors.card,
+                      color: current == act ? rc.label : rc.card,
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(
-                        color: current == act ? RCColors.label : RCColors.sep,
+                        color: current == act ? rc.label : rc.sep,
                       ),
                     ),
                     child: Text(
@@ -2099,7 +2736,7 @@ class _ButtonConfigView extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: current == act ? Colors.white : RCColors.ink,
+                        color: current == act ? rc.onLabel : rc.ink,
                       ),
                     ),
                   ),
@@ -2112,24 +2749,253 @@ class _ButtonConfigView extends StatelessWidget {
   }
 }
 
+class _MoreView extends StatelessWidget {
+  const _MoreView({required this.store});
+
+  final DeviceStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final caps = store.activeCapabilities;
+    final busy = store.devicePowerBusy;
+    final err = store.devicePowerError;
+    return Column(
+      key: const Key('more-view'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            IconButton(
+              key: const Key('more-back'),
+              onPressed: busy ? null : () => store.showView(DeviceView.main),
+              icon: RCIcon(
+                RCIconKind.chevronLeft,
+                size: 18,
+                color: c.ink,
+              ),
+              color: c.ink,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              '更多',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: c.label,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '管理已连接硬件的重启与电源操作。',
+          style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+        ),
+        if (err != null && err.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(
+            err,
+            key: const Key('more-power-error'),
+            style: TextStyle(fontSize: 12, color: c.danger),
+          ),
+        ],
+        if (caps.hasDeviceRestart) ...[
+          const SizedBox(height: 12),
+          _PowerActionCard(
+            rc: c,
+            title: '重启设备',
+            description: '重新启动硬件以恢复异常录音状态，重启后将自动尝试重新连接。',
+            buttonKey: const Key('more-restart-btn'),
+            buttonLabel: busy ? '正在执行…' : '重启设备',
+            onPressed: busy ? null : () => _confirmRestart(context, store),
+          ),
+        ],
+        if (caps.hasDeviceShutdown) ...[
+          const SizedBox(height: 10),
+          _PowerActionCard(
+            rc: c,
+            title: '关机',
+            description: '关闭硬件电源并断开蓝牙连接，下次使用需通过机身按键开机。',
+            buttonKey: const Key('more-shutdown-btn'),
+            buttonLabel: busy ? '正在执行…' : '关机',
+            danger: true,
+            onPressed: busy ? null : () => _confirmShutdown(context, store),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _PowerActionCard extends StatelessWidget {
+  const _PowerActionCard({
+    required this.rc,
+    required this.title,
+    required this.description,
+    required this.buttonKey,
+    required this.buttonLabel,
+    required this.onPressed,
+    this.danger = false,
+  });
+
+  final RCColorScheme rc;
+  final String title;
+  final String description;
+  final Key buttonKey;
+  final String buttonLabel;
+  final VoidCallback? onPressed;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: rc.isDark ? const Color(0xFF222226) : rc.bg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: rc.sep),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: rc.label,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            description,
+            style: TextStyle(fontSize: 12, height: 1.45, color: rc.sec),
+          ),
+          const SizedBox(height: 10),
+          if (danger)
+            OutlinedButton(
+              key: buttonKey,
+              onPressed: onPressed,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: rc.danger,
+                side: BorderSide(color: rc.danger.withValues(alpha: 0.45)),
+                shape: const StadiumBorder(),
+                padding: const EdgeInsets.symmetric(vertical: 11),
+              ),
+              child: Text(buttonLabel),
+            )
+          else
+            FilledButton(
+              key: buttonKey,
+              onPressed: onPressed,
+              style: FilledButton.styleFrom(
+                backgroundColor: rc.label,
+                foregroundColor: rc.onLabel,
+                shape: const StadiumBorder(),
+                padding: const EdgeInsets.symmetric(vertical: 11),
+              ),
+              child: Text(buttonLabel),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<bool> _confirmPowerDialog(
+  BuildContext context, {
+  required String title,
+  required String content,
+  required Key cancelKey,
+  required Key confirmKey,
+  required String confirmLabel,
+  bool danger = false,
+}) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) {
+      final rc = ctx.rc;
+      return AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(
+            key: cancelKey,
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: confirmKey,
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: danger ? rc.danger : rc.label,
+              foregroundColor: danger ? Colors.white : rc.onLabel,
+            ),
+            child: Text(confirmLabel),
+          ),
+        ],
+      );
+    },
+  );
+  return ok == true;
+}
+
+Future<void> _confirmRestart(BuildContext context, DeviceStore store) async {
+  final ok = await _confirmPowerDialog(
+    context,
+    title: '重启硬件设备？',
+    content: '重启将暂时中断当前蓝牙连接与录音（约数秒），完成后将自动尝试重新连接。',
+    cancelKey: const Key('restart-cancel'),
+    confirmKey: const Key('restart-confirm'),
+    confirmLabel: '重启设备',
+  );
+  if (!ok) return;
+  await store.restartDevice();
+}
+
+Future<void> _confirmShutdown(BuildContext context, DeviceStore store) async {
+  final ok = await _confirmPowerDialog(
+    context,
+    title: '关闭硬件电源？',
+    content: '关机后将停止录音并断开蓝牙连接，再次使用需手动按机身按键开机。',
+    cancelKey: const Key('shutdown-cancel'),
+    confirmKey: const Key('shutdown-confirm'),
+    confirmLabel: '确认关机',
+    danger: true,
+  );
+  if (!ok) return;
+  await store.shutdownDevice();
+}
+
 class _Chip extends StatelessWidget {
   const _Chip(this.label, {this.subtle = false});
   final String label;
   final bool subtle;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-    decoration: BoxDecoration(
-      color: subtle ? const Color(0xFFF0F0EC) : const Color(0xFFE8F5EA),
-      borderRadius: BorderRadius.circular(999),
-    ),
-    child: Text(
-      label,
-      style: TextStyle(
-        fontSize: 10,
-        color: subtle ? RCColors.ink : RCColors.okInk,
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: subtle
+            ? (c.isDark ? const Color(0xFF242428) : const Color(0xFFF0F0EC))
+            : (c.isDark
+                  ? c.ok.withValues(alpha: 0.16)
+                  : const Color(0xFFE8F5EA)),
+        borderRadius: BorderRadius.circular(999),
       ),
-    ),
-  );
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          color: subtle ? c.ink : c.okInk,
+        ),
+      ),
+    );
+  }
 }

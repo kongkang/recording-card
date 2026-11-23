@@ -10,6 +10,7 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path_provider/path_provider.dart';
 
@@ -17,15 +18,63 @@ import '../../core/models/recording.dart';
 import '../../core/storage/storage.dart';
 import 'recordings_manifest.dart';
 
+class _CachedMeta {
+  const _CachedMeta({
+    required this.modified,
+    required this.size,
+    required this.startAtMs,
+    required this.json,
+  });
+
+  final DateTime modified;
+  final int size;
+  final int startAtMs;
+  final Map<String, dynamic> json;
+}
+
+class _PendingMeta {
+  const _PendingMeta({
+    required this.dirName,
+    required this.entityDirPath,
+    required this.metaPath,
+    required this.modified,
+    required this.size,
+  });
+
+  final String dirName;
+  final String entityDirPath;
+  final String metaPath;
+  final DateTime modified;
+  final int size;
+}
+
+class _ParsedMeta {
+  const _ParsedMeta({required this.dirName, required this.cached});
+
+  final String dirName;
+  final _CachedMeta cached;
+}
+
 class RecordingStore {
   RecordingStore({Directory? root, JsonStore? jsonStore})
     : _rootOverride = root,
       _json = jsonStore;
 
+  static const int _isolateParseThreshold = 24;
+
   final Directory? _rootOverride;
   JsonStore? _json;
   Directory? _resolvedRoot;
-  List<RecordingFile>? _cache;
+  Map<String, _CachedMeta>? _cacheByDir;
+  List<_CachedMeta>? _sortedCache;
+  int _mutationEpoch = 0;
+
+  /// 清空内存索引缓存，降低后台常驻内存；下次读取按需从磁盘重载。
+  void clearMemoryCache() {
+    _cacheByDir = null;
+    _sortedCache = null;
+    _mutationEpoch++;
+  }
 
   Future<Directory> root() async {
     final existing = _resolvedRoot;
@@ -62,36 +111,72 @@ class RecordingStore {
   Future<String> metaPath(String deviceName) async =>
       '${(await dirFor(deviceName)).path}/meta.json';
 
-  /// 读取全部录音（按 startAtMs 倒序）。带内存缓存；写操作会失效。
-  Future<List<RecordingFile>> loadAll({bool refresh = false}) async {
-    final cached = _cache;
-    if (!refresh && cached != null) return List.unmodifiable(cached);
+  static String _dirBasename(String path) {
+    final slash = path.lastIndexOf('/');
+    final bSlash = path.lastIndexOf('\\');
+    final idx = slash > bSlash ? slash : bSlash;
+    return idx >= 0 ? path.substring(idx + 1) : path;
+  }
 
+  /// 读取全部录音（按 startAtMs 倒序）。带按目录增量内存缓存；
+  /// 每次返回独立实例副本，防止调用方就地改写字段破坏缓存或产生对象别名。
+  Future<List<RecordingFile>> loadAll({bool refresh = false}) async {
+    final sorted = _sortedCache;
+    if (!refresh && sorted != null) {
+      return List.unmodifiable([
+        for (final c in sorted) RecordingFile.fromJson(c.json),
+      ]);
+    }
+
+    final epochAtStart = _mutationEpoch;
     final base = await root();
     final appSupportPath = _inferAppSupportPath(base.path);
-    final out = <RecordingFile>[];
+    final prevByDir = _cacheByDir;
+    final nextByDir = <String, _CachedMeta>{};
+    final pending = <_PendingMeta>[];
+
     await for (final entity in base.list()) {
       if (entity is! Directory) continue;
-      final meta = File('${entity.path}/meta.json');
-      if (!await meta.exists()) continue;
-      try {
-        final decoded = jsonDecode(await meta.readAsString());
-        if (decoded is! Map<String, dynamic>) continue;
-        final file = RecordingFile.fromJson(decoded);
-        if (file.deviceName.isEmpty) continue;
-        _rebaseRecordingPaths(
-          file,
+      final dirName = _dirBasename(entity.path);
+      final metaPath = '${entity.path}/meta.json';
+      final stat = await File(metaPath).stat();
+      if (stat.type != FileSystemEntityType.file) continue;
+      final cached = prevByDir?[dirName];
+      if (cached != null &&
+          cached.modified == stat.modified &&
+          cached.size == stat.size) {
+        nextByDir[dirName] = cached;
+        continue;
+      }
+      pending.add(
+        _PendingMeta(
+          dirName: dirName,
           entityDirPath: entity.path,
-          appSupportPath: appSupportPath,
-        );
-        out.add(file);
-      } on Object {
-        // 单条损坏：跳过，不影响其它录音
+          metaPath: metaPath,
+          modified: stat.modified,
+          size: stat.size,
+        ),
+      );
+    }
+
+    if (pending.isNotEmpty) {
+      final parsed = pending.length >= _isolateParseThreshold
+          ? await Isolate.run(() => _parseMetaBatchSync(pending, appSupportPath))
+          : await _parseMetaBatchAsync(pending, appSupportPath);
+      for (final entry in parsed) {
+        nextByDir[entry.dirName] = entry.cached;
       }
     }
-    out.sort((a, b) => b.startAtMs.compareTo(a.startAtMs));
-    _cache = out;
-    return List.unmodifiable(out);
+
+    final sortedMetas = nextByDir.values.toList()
+      ..sort((a, b) => b.startAtMs.compareTo(a.startAtMs));
+    if (_mutationEpoch == epochAtStart) {
+      _cacheByDir = nextByDir;
+      _sortedCache = sortedMetas;
+    }
+    return List.unmodifiable([
+      for (final c in sortedMetas) RecordingFile.fromJson(c.json),
+    ]);
   }
 
   /// iOS 每次覆盖安装/升级 App 都会轮换沙盒容器 UUID
@@ -202,6 +287,11 @@ class RecordingStore {
   }
 
   Future<RecordingFile?> load(String deviceName) async {
+    final cachedByDir = _cacheByDir;
+    if (cachedByDir != null && _sortedCache != null) {
+      final hit = cachedByDir[dirNameFor(deviceName)];
+      return hit == null ? null : RecordingFile.fromJson(hit.json);
+    }
     final all = await loadAll();
     for (final file in all) {
       if (file.deviceName == deviceName) return file;
@@ -216,13 +306,17 @@ class RecordingStore {
     final tmp = File('${target.path}.tmp');
     await tmp.writeAsString(jsonEncode(file.toJson()), flush: true);
     await tmp.rename(target.path);
-    _cache = null;
+    _mutationEpoch++;
+    _cacheByDir?.remove(dirNameFor(file.deviceName));
+    _sortedCache = null;
   }
 
   Future<void> remove(String deviceName) async {
     final dir = await dirFor(deviceName);
     if (await dir.exists()) await dir.delete(recursive: true);
-    _cache = null;
+    _mutationEpoch++;
+    _cacheByDir?.remove(dirNameFor(deviceName));
+    _sortedCache = null;
   }
 
   /// 删除过期音频文件（WAV/APM），保留 meta 与文本。
@@ -347,4 +441,74 @@ class RecordingStore {
     if (flat.isEmpty) return '尚未转写';
     return flat.length <= 48 ? flat : '${flat.substring(0, 48)}…';
   }
+}
+
+_ParsedMeta? _decodeMetaFile(
+  String rawJson,
+  _PendingMeta item,
+  String? appSupportPath,
+) {
+  try {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is! Map<String, dynamic>) return null;
+    final file = RecordingFile.fromJson(decoded);
+    if (file.deviceName.isEmpty) return null;
+    RecordingStore._rebaseRecordingPaths(
+      file,
+      entityDirPath: item.entityDirPath,
+      appSupportPath: appSupportPath,
+    );
+    return _ParsedMeta(
+      dirName: item.dirName,
+      cached: _CachedMeta(
+        modified: item.modified,
+        size: item.size,
+        startAtMs: file.startAtMs,
+        json: file.toJson(),
+      ),
+    );
+  } on Object {
+    // 单条损坏：跳过，不影响其它录音
+    return null;
+  }
+}
+
+List<_ParsedMeta> _parseMetaBatchSync(
+  List<_PendingMeta> pending,
+  String? appSupportPath,
+) {
+  final out = <_ParsedMeta>[];
+  for (final item in pending) {
+    try {
+      final parsed = _decodeMetaFile(
+        File(item.metaPath).readAsStringSync(),
+        item,
+        appSupportPath,
+      );
+      if (parsed != null) out.add(parsed);
+    } on Object {
+      // 单条读取失败：跳过
+    }
+  }
+  return out;
+}
+
+Future<List<_ParsedMeta>> _parseMetaBatchAsync(
+  List<_PendingMeta> pending,
+  String? appSupportPath,
+) async {
+  final out = <_ParsedMeta>[];
+  for (final item in pending) {
+    try {
+      final parsed = _decodeMetaFile(
+        await File(item.metaPath).readAsString(),
+        item,
+        appSupportPath,
+      );
+      if (parsed != null) out.add(parsed);
+    } on Object {
+      // 单条读取失败：跳过
+    }
+  }
+  return out;
 }

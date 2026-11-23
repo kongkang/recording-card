@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/models/record.dart';
 import 'package:recording_card/core/models/recording.dart';
+import 'package:recording_card/core/models/summary.dart';
 import 'package:recording_card/core/store/app_store.dart';
 import 'package:recording_card/services/recordings/recording_pipeline.dart';
 import 'package:recording_card/services/recordings/recording_store.dart';
@@ -238,7 +239,7 @@ void main() {
     expect(resGap.events.first.title, '未识别到语音');
   });
 
-  testWidgets('合并卡保留全部子切片关联照片，且详情「原始数据」可逐片点选切换原始 WAV 音频', (
+  testWidgets('隐藏静音记录且保留相片、历史总结来源及逐片回听', (
     tester,
   ) async {
     late Directory root;
@@ -310,16 +311,31 @@ void main() {
     expect(mergedEvent.title, '未识别到语音');
     expect(store.activePhotosForEvent(mergedEvent).single.id, 'p_child_2');
 
-    await pumpShell(tester, store: store);
-    expect(find.text('未识别到语音'), findsOneWidget);
+    final childId = 'seg-${f2.deviceName}-0';
+    store.summaries = [
+      SummaryCard(id: 'old-summary', time: '07:32', state: SummaryState.done)
+        ..srcIds = [childId],
+    ];
+    expect(store.eventByIdOrNull(childId), same(mergedEvent));
+    expect(store.unclassifiedPhotosForDay(0).single.photo.id, 'p_child_2');
 
-    // 展开卡片进入详情页
-    await tester.tap(find.byKey(Key('card-${mergedEvent.id}')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.tap(find.byKey(Key('detail-${mergedEvent.id}')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await pumpShell(tester, store: store);
+    expect(find.byKey(Key('card-${mergedEvent.id}')), findsNothing);
+    expect(find.byKey(const Key('card-unc-0')), findsOneWidget);
+
+    store.startSummary();
+    store.selRange('week');
+    store.toggleSel(mergedEvent.id);
+    expect(store.selCount, 0);
+    store.cancelSummary();
+
+    // 历史总结使用原有子分片 ID，仍可进入合并后的详情。
+    store.openSum('old-summary', fresh: true);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('stab-src')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(Key('src-$childId')));
+    await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('detail-silent-empty')), findsOneWidget);
     expect(find.byKey(Key('dphoto-${mergedEvent.id}-0')), findsOneWidget);

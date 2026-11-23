@@ -113,14 +113,14 @@ check('Watch bottom bar does NOT embed GPS·心率 / w-signal-nc clutter', !html
 const phoneCurHtml = fs.readFileSync(phoneCurPath, 'utf8');
 const phoneTargetHtml = fs.readFileSync(phoneTargetPath, 'utf8');
 check(
-  'Phone current.html carries NC health & location Setting row',
+  'Phone current.html carries health & location Setting row',
   phoneCurHtml.includes('set-health-location') && phoneCurHtml.includes('行为与健康信号')
 );
 check(
-  'Phone current.html has NC confirm pill (nc-btn) with health item',
-  phoneCurHtml.includes('data-testid="nc-btn"') && phoneCurHtml.includes('nc-item-health')
+  'Phone current.html has NT pill (nt-btn) and graduated health out of NC',
+  phoneCurHtml.includes('data-testid="nt-btn"') && !phoneCurHtml.includes('nc-item-health')
 );
-check('Phone target index.html synced with health NC block', phoneTargetHtml.includes('set-health-location'));
+check('Phone target index.html synced with health Setting block', phoneTargetHtml.includes('set-health-location'));
 
 // 5. Required data-testid anchors on host & Watch UI (WatchMainView + RecordingCardComplication)
 const staticTestIds = [
@@ -297,7 +297,7 @@ if (pp && chromePath) {
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
     );
 
-    // Flow 1: Version switch 当前版 <-> 目标版·12 inside shared phone iframe
+    // Flow 1: Version switch 当前版 <-> 目标版·11 inside shared phone iframe
     assert.equal(await pf.$eval('[data-testid="parity-btn"]', (el) => el.innerText.trim()), '当前版', 'Current version parity-btn must say 当前版');
     assert.equal(await pf.$$eval('.tbc-badge', (els) => els.length), 0, 'Current version must have zero TBC badges');
     await Promise.all([
@@ -305,7 +305,7 @@ if (pp && chromePath) {
       page.click('[data-testid="phone-version-seg"] button[data-pver="target"]'),
     ]);
     pf = await getPhoneFrame(page);
-    assert.equal(await pf.$eval('[data-testid="parity-btn"]', (el) => el.innerText.trim()), '目标版·12', 'Target version parity-btn must say 目标版·12');
+    assert.equal(await pf.$eval('[data-testid="parity-btn"]', (el) => el.innerText.trim()), '目标版·11', 'Target version parity-btn must say 目标版·11');
     assert((await pf.$$eval('.tbc-badge', (els) => els.length)) > 0, 'Target version must contain TBC badges');
 
     await Promise.all([
@@ -314,7 +314,7 @@ if (pp && chromePath) {
     ]);
     pf = await getPhoneFrame(page);
     assert.equal(await pf.$eval('[data-testid="parity-btn"]', (el) => el.innerText.trim()), '当前版');
-    check('E2E: Dual-version switch (当前版 <-> 目标版·12) syncs real phone iframe', true);
+    check('E2E: Dual-version switch (当前版 <-> 目标版·11) syncs real phone iframe', true);
 
     // Flow 2: Real Setting -> Apple Watch link -> 4-device scan -> capability gating
     await pf.click('[data-testid="hw-capsule"]');
@@ -448,6 +448,31 @@ if (pp && chromePath) {
         );
       })
     );
+    for (const [size, height] of [['ultra', 48], ['series', 48], ['compact', 44]]) {
+      await page.select('[data-testid="watch-size"]', size);
+      check(`E2E: ${size} status in one row, readable dial, and ${height}px control above flush footer`,
+        await page.evaluate((controlHeight) => {
+          const box = (id) => document.getElementById(id).getBoundingClientRect();
+          const screen = box('watch-screen');
+          const hero = box('w-hero');
+          const stop = box('w-stop-slider');
+          const footer = box('w-queue-entry');
+          const status = box('w-conn-status');
+          const battery = box('w-batt-pill');
+          const clock = box('w-top-clock');
+          const midpoint = (rect) => rect.top + rect.height / 2;
+          return status.right <= battery.left && battery.right <= clock.left &&
+            Math.abs(midpoint(status) - midpoint(clock)) <= 1 &&
+            [...document.getElementById('w-hero').children].every((el) => {
+              const rect = el.getBoundingClientRect();
+              return rect.top >= hero.top && rect.bottom <= hero.bottom &&
+                rect.left >= screen.left && rect.right <= screen.right;
+            }) &&
+            Math.abs(stop.height - controlHeight) <= 1 &&
+            Math.abs(footer.bottom - screen.bottom) <= 1;
+        }, height));
+    }
+    await page.select('[data-testid="watch-size"]', 'ultra');
     await page.click('[data-testid="watch-hero"]');
     await page.click('[data-testid="watch-hero"]');
     assert.equal(await page.evaluate(() => S.curMarks), 1, 'Double-knocking watch dial should increment curMarks');
@@ -481,6 +506,8 @@ if (pp && chromePath) {
     await pf.click('[data-testid="raw-audio-toggle"]');
     assert.equal(await pf.$eval('[data-testid="raw-audio-toggle"]', (el) => el.innerText.trim()), '❚❚');
     await pf.click('[data-testid="raw-audio-delete"]');
+    await pf.waitForSelector('[data-testid="raw-audio-delete-confirm"]');
+    await pf.click('[data-testid="raw-audio-delete-confirm"]');
     await pf.waitForSelector('[data-testid="raw-audio-cleared"]');
     check('E2E: Complication start, Compact/LockScreen Live Activity, slice ingestion & real WAV playback', true);
 
@@ -516,16 +543,19 @@ if (pp && chromePath) {
       page.click('[data-testid="proto-reset"]'),
     ]);
 
-    // Flow 5: Phone NC confirm list -> health item-by-item data + redesigned clean exthw subpage
+    // Flow 5: Phone NT list + Setting health item-by-item data + redesigned clean exthw subpage
     pf = await getPhoneFrame(page);
     await pf.click('[data-testid="nav-setting"]');
-    await pf.click('[data-testid="nc-btn"]');
-    assert.equal(await pf.$eval('#nc-pop', (el) => !el.hidden), true, 'NC pill should open confirm list');
-    await pf.click('[data-testid="nc-item-health"]');
+    await pf.click('[data-testid="nt-btn"]');
+    assert.equal(await pf.$eval('#nt-pop', (el) => !el.hidden), true, 'NT pill should open Need Test list');
+    await pf.click('[data-testid="nt-btn"]');
+    assert.equal(await pf.$eval('#nt-pop', (el) => el.hidden), true, 'NT pill should toggle closed');
+    await pf.$eval('[data-testid="set-health-location"]', (el) => el.scrollIntoView({ block: 'center' }));
+    await pf.click('[data-testid="set-health-location"]');
     assert.equal(
       await pf.$eval('#setsub-title', (el) => el.innerText.includes('行为与健康信号')),
       true,
-      'NC item should jump to health sub page'
+      'Setting row should jump to health sub page'
     );
     assert(await pf.$('[data-testid="health-location-card"]'), 'Health NC card should render');
     assert.equal(
@@ -547,7 +577,7 @@ if (pp && chromePath) {
     await pf.click('[data-testid="crumb-back"]');
     await pf.$eval('[data-testid="set-ext-hw"]', (el) => el.scrollIntoView({ block: 'center' }));
     await pf.click('[data-testid="set-ext-hw"]');
-    assert(await pf.$('[data-testid="ext-getseed-switch"]'));
+    assert.equal(await pf.$('[data-testid="ext-getseed-switch"]'), null);
     assert(await pf.$('[data-testid="ext-omi-switch"]'));
     assert.equal(
       await pf.evaluate(() => !document.getElementById('p-setsub').innerText.includes('SDK Crate') && document.documentElement.scrollWidth <= window.innerWidth),

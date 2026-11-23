@@ -1,7 +1,7 @@
 # 多硬件录音设备解耦与无缝多源切换架构设计
 
-> 状态：Phase 1（统一抽象层 + 自研三款设备单连接落地）已实施；第三方独立 SDK 包装层（`reai-ext-sdk` + `reai-getseed-sdk` + `reai-omi-sdk` + `reai-feishu-sdk`）已落地。飞书录音豆当前包只覆盖 BLE 文件同步，SoftAP 与 OTA 未纳入；Priority 3（Plaud Note / Pro）待独立分支推进；Phase 2（多设备并发连接与无缝切源）架构定稿
-> 更新日期：2026-11-18
+> 状态：Phase 1（统一抽象层 + 自研三款设备单连接落地）已实施；第三方独立 SDK 包装层（`reai-ext-sdk` + `reai-getseed-sdk` + `reai-omi-sdk` + `reai-feishu-sdk` + `reai-iflytek-sdk`）已落地。飞书录音豆当前包只覆盖 BLE 文件同步，SoftAP 与 OTA 未纳入；讯飞智能录音笔 A1 已完成实机 BLE 实时流与文件同步全链路接入；Priority 3（Plaud Note / Pro）待独立分支推进；Phase 2（多设备并发连接与无缝切源）架构定稿
+> 更新日期：2026-11-22
 
 ---
 
@@ -103,9 +103,10 @@ UI 与同步调度器**严禁写 `if (deviceKind == 'board_v21')` 之类的型�
 
 - **`app/rust/sdks/reai-ext-sdk`（公共契约层）**：定义 `RecorderDriver` / `RecorderDevice` 异步 trait、`HardwareCapabilities`（含 `hasRemoteRecordControl`）、`DeviceSnapshot`、`DeviceFile`、`RealtimePcmChunk`、`DeviceEvent` 以及统一 Ogg Opus / Raw Opus / LC3 / WAV → `16kHz / i16 / Mono PCM` 纯 Rust 转码（`opus-pure` + `lc3-codec`，无 C/CMake 依赖，确保 iOS `aarch64-apple-ios` 静态库零障碍编译）。
 - **Round 1 已落地（默认关闭，需在 Setting →「硬件设备联动 → 第三方硬件联动」按需启用，保持默认 3 款自研扫描基线不变）**：
-  - **`app/rust/sdks/reai-getseed-sdk`**（得到 Get 笔记录音卡 / GetSeed GSC10，`deviceKind: "getseed_gsc10"`）：厂商广播过滤（Company ID `0x544A` / `Get-*`）、GATT `0xFF00` TLV 命令帧、Ogg Opus / WAV 离线文件拉取、只删单文件（`0x0044`；严禁调用 `0x0041` 全盘擦除）、`hasRemoteRecordControl = false`（UI 裁剪为「机身按键控录」）。
+  - **`app/rust/sdks/reai-getseed-sdk`**（得到 Get 笔记录音卡 / GetSeed GSC10，`deviceKind: "getseed_gsc10"`）：厂商广播过滤（Company ID `0x544A` / `Get-*`）、GATT `0x9000`（AES-128-ECB `Walkiz52832iLock`）只读获取 MAC/固件版本/SN + `0x9100` TLV 命令帧、Ogg Opus / WAV 离线文件拉取、只删单文件（`0x0044`；严禁调用 `0x0041` 全盘擦除）、`v0.2.5+` 云端鉴权锁定显式报错、`hasRemoteRecordControl = false`（UI 裁剪为「机身按键控录」）。
   - **`app/rust/sdks/reai-omi-sdk`**（Omi 量产版 CV1 / Friend Pendant，`deviceKind: "omi_cv1"`）：UUID-only / `Omi-*` / `Friend_*` 广播识别、Opus / PCM / μ-law / LC3 实时分片重组（`19B10000` 服务）、按键手势特征（`23BA7924` → `voice_key` / `mark`）、StorageRing（`30295780`）离线文件下载与单文件清理、标准 BAS（`0x2A19`）电量读取。
   - **`app/rust/sdks/reai-feishu-sdk`**（飞书录音豆 / soundcore Work D3200，`deviceKind: "feishu_d3200"`）：服务 `020cf5da-0000-1000-8000-00805f9b34fb` 或名称 `D3200-*` / `soundcore Work` 识别。本包实现设备信息、时间同步、远程启停、分页目录、ECDH P-256 会话密钥与 AES-CTR 离线 Opus 拉取，再封装 Ogg 并转 16kHz WAV。`realtime_audio = false`，`has_wifi_config = false`，`ota_mode = none`。SoftAP 快传与固件升级仍走官方 App。
+  - **`app/rust/sdks/reai-iflytek-sdk`**（讯飞智能录音笔 A1，`deviceKind: "iflytek_a1"`）：服务 `001120a0-2233-4455-6677-889912345678`、厂商广播 `0x3332` 或名称 `讯飞录音笔A1_*` / `IFLYTEK_A1*` 识别。实现离线免鉴权握手（`0x3332` `userId` → `62012`）、时间同步（`62001`）、电量与存储快照（`62002`）、远程启停与物理键状态事件（`62003` / `61001`）、`001120a4` 实时 16kHz SBC 流与 `.sbc` 分块并发 CRC-8 校验下载（`62004` / `62008` / `62007` / `62005`），通过 `reai-ext-sdk::sbc` 纯 Rust 解码为 16kHz Mono PCM / WAV。`has_wifi_config = false`，`ota_mode = none`。
 - **后续独立分支规划**：
   - Priority 3：Plaud Note / Pro（`reai-plaud-sdk`）
 

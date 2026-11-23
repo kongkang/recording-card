@@ -78,7 +78,17 @@ class ImageExporter {
 
     ui.Image? image;
     try {
-      image = await boundary.toImage(pixelRatio: pixelRatio);
+      const maxRgbaBytes = 36 * 1024 * 1024;
+      var effectiveRatio = pixelRatio;
+      final estBytes =
+          boundary.size.width * boundary.size.height * pixelRatio * pixelRatio * 4;
+      if (estBytes > maxRgbaBytes && boundary.size.width > 0 && boundary.size.height > 0) {
+        final scale = (maxRgbaBytes /
+                (boundary.size.width * boundary.size.height * 4))
+            .clamp(0.25, pixelRatio * pixelRatio);
+        effectiveRatio = scale >= 1.0 ? 1.0 : 0.75;
+      }
+      image = await boundary.toImage(pixelRatio: effectiveRatio);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
       if (data == null) {
         throw const ExportException('图片导出失败：页面截图为空');

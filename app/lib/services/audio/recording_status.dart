@@ -14,7 +14,11 @@ class RecordingStatusController extends ChangeNotifier {
   String? _lastError;
   String? _detail;
   int _pendingSlices = 0;
+  int _syncDone = 0;
+  int _syncTotal = 0;
   int _elapsedSeconds = 0;
+  int _transcribeCycleMinutes = 15;
+  double? _progress;
 
   /// 用户是否仍处于一次录音会话中；转录完成回到 recording 还是 idle 由它决定。
   bool _sessionActive = false;
@@ -30,8 +34,27 @@ class RecordingStatusController extends ChangeNotifier {
   /// 已收到但尚未完成转录的切片数。
   int get pendingSlices => _pendingSlices;
 
+  /// 同步队列已完成段数（已落盘）。
+  int get syncDone => _syncDone;
+
+  /// 同步队列总段数（0 表示当前无批量拉取进度）。
+  int get syncTotal => _syncTotal;
+
   /// 本次录音已持续秒数（由设备时钟同步进来）。
   int get elapsedSeconds => _elapsedSeconds;
+
+  /// 同步/处理真实进度（0.0..1.0）；无确定进度时为 null。
+  double? get progress => _progress;
+
+  /// 批量转写与整理周期（分钟）。
+  int get transcribeCycleMinutes => _transcribeCycleMinutes;
+
+  set transcribeCycleMinutes(int minutes) {
+    final next = minutes.clamp(5, 180);
+    if (next == _transcribeCycleMinutes) return;
+    _transcribeCycleMinutes = next;
+    notifyListeners();
+  }
 
   bool get isRecording => _phase == RecordingPhase.recording;
 
@@ -49,6 +72,8 @@ class RecordingStatusController extends ChangeNotifier {
       pendingSlices: 0,
       clearError: true,
       clearDetail: true,
+      clearSyncProgress: true,
+      clearProgress: true,
     );
   }
 
@@ -59,13 +84,23 @@ class RecordingStatusController extends ChangeNotifier {
         _phase == RecordingPhase.transcribing) {
       return;
     }
-    _commit(phase: RecordingPhase.recording, clearError: true);
+    _commit(
+      phase: RecordingPhase.recording,
+      clearError: true,
+      clearDetail: true,
+    );
   }
 
   /// 停止录音：回到 idle 并把待处理计数归零，避免遗留切片继续触发状态。
   void stopRecording() {
     _sessionActive = false;
-    _commit(phase: RecordingPhase.idle, pendingSlices: 0, clearDetail: true);
+    _commit(
+      phase: RecordingPhase.idle,
+      pendingSlices: 0,
+      clearDetail: true,
+      clearSyncProgress: true,
+      clearProgress: true,
+    );
   }
 
   /// 停止录音后进入自动同步：在拉取/转写/整理完成前保持可见。
@@ -74,17 +109,49 @@ class RecordingStatusController extends ChangeNotifier {
   /// updateQueue(active:false) 才会收起到 idle，而不是回到「正在录音」。
   /// 设备约 5 分钟一个切片，积压最多约 30 分钟；同步期间顶部状态块
   /// 表示「最近一段尚未转录完成」。
-  void startSync({String detail = '正在整理最近一段…'}) {
+  void startSync({String detail = '正在整理最近一段…', double? progress}) {
     _sessionActive = false;
-    _commit(phase: RecordingPhase.syncing, detail: detail, clearError: true);
+    _commit(
+      phase: RecordingPhase.syncing,
+      detail: detail,
+      progress: progress,
+      clearProgress: progress == null,
+      clearError: true,
+      clearSyncProgress: true,
+    );
   }
 
   /// 同步/处理进度：文案来自真实管线（下载 → 切片 → 转写 → 润色 → 分段）。
-  void updateSync(String detail, {int? remaining}) {
+  ///
+  /// 当用户仍处于活跃录音会话（`_sessionActive == true`）时，保持 `recording`/`transcribing`
+  /// 相位并仅刷新简洁的 `[syncDone]/[syncTotal]` 段计数，避免 `_phase` 来回切换导致 UI 抖动。
+  void updateSync(
+    String detail, {
+    int? remaining,
+    int? done,
+    int? total,
+    double? progress,
+  }) {
+    if (_sessionActive) {
+      _commit(
+        phase: (_phase == RecordingPhase.recording ||
+                _phase == RecordingPhase.transcribing)
+            ? null
+            : RecordingPhase.recording,
+        pendingSlices: remaining,
+        syncDone: done,
+        syncTotal: total,
+        progress: progress,
+      );
+      return;
+    }
     _commit(
       phase: RecordingPhase.syncing,
       detail: detail,
       pendingSlices: remaining,
+      syncDone: done,
+      syncTotal: total,
+      progress: progress,
     );
   }
 
@@ -130,7 +197,11 @@ class RecordingStatusController extends ChangeNotifier {
 
   /// 进入错误态并保留可读信息；pending 保持不变，便于重试后继续消费。
   void onError(Object error) {
-    _commit(phase: RecordingPhase.error, lastError: error.toString());
+    _commit(
+      phase: RecordingPhase.error,
+      lastError: error.toString(),
+      clearProgress: true,
+    );
   }
 
   /// 处理管线直接更新队列：剩余片数 + 是否仍在处理。
@@ -140,6 +211,16 @@ class RecordingStatusController extends ChangeNotifier {
   void updateQueue({required int remaining, required bool active}) {
     final pending = remaining < 0 ? 0 : remaining;
     if (active) {
+      if (_sessionActive) {
+        _commit(
+          phase: (_phase == RecordingPhase.recording ||
+                  _phase == RecordingPhase.transcribing)
+              ? null
+              : RecordingPhase.recording,
+          pendingSlices: pending,
+        );
+        return;
+      }
       _commit(
         phase: RecordingPhase.syncing,
         detail: '正在整理最近一段…',
@@ -151,25 +232,46 @@ class RecordingStatusController extends ChangeNotifier {
       phase: _sessionActive ? RecordingPhase.recording : RecordingPhase.idle,
       pendingSlices: pending,
       clearDetail: true,
+      clearSyncProgress: true,
+      clearProgress: true,
     );
   }
 
   void _commit({
     RecordingPhase? phase,
     int? pendingSlices,
+    int? syncDone,
+    int? syncTotal,
     String? lastError,
     String? detail,
+    double? progress,
     bool clearError = false,
     bool clearDetail = false,
+    bool clearSyncProgress = false,
+    bool clearProgress = false,
   }) {
     final phaseBefore = _phase;
     final pendingBefore = _pendingSlices;
+    final syncDoneBefore = _syncDone;
+    final syncTotalBefore = _syncTotal;
     final errorBefore = _lastError;
     final detailBefore = _detail;
+    final progressBefore = _progress;
 
     if (phase != null) _phase = phase;
     if (pendingSlices != null) {
       _pendingSlices = pendingSlices < 0 ? 0 : pendingSlices;
+    }
+    if (clearSyncProgress) {
+      _syncDone = 0;
+      _syncTotal = 0;
+    } else {
+      if (syncDone != null) {
+        _syncDone = syncDone < 0 ? 0 : syncDone;
+      }
+      if (syncTotal != null) {
+        _syncTotal = syncTotal < 0 ? 0 : syncTotal;
+      }
     }
     if (clearDetail) {
       _detail = null;
@@ -181,11 +283,19 @@ class RecordingStatusController extends ChangeNotifier {
     } else if (lastError != null) {
       _lastError = lastError;
     }
+    if (clearProgress) {
+      _progress = null;
+    } else if (progress != null && progress.isFinite) {
+      _progress = progress.clamp(0.0, 1.0).toDouble();
+    }
 
     final changed = _phase != phaseBefore ||
         _pendingSlices != pendingBefore ||
+        _syncDone != syncDoneBefore ||
+        _syncTotal != syncTotalBefore ||
         _lastError != errorBefore ||
-        _detail != detailBefore;
+        _detail != detailBefore ||
+        _progress != progressBefore;
     if (changed) notifyListeners();
   }
 }

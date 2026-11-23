@@ -30,6 +30,20 @@ jobs:
         with:
           gradle-version: "8.13"
 
+      - name: Install Linux Bluetooth build dependencies for Rust bridge
+        working-directory: .
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/rust/card_bridge
+
+      - name: Test Rust card_bridge
+        working-directory: .
+        run: cargo test --manifest-path app/rust/card_bridge/Cargo.toml
+
       - name: Install dependencies
         run: flutter pub get
 

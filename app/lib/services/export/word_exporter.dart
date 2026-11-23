@@ -136,7 +136,7 @@ class WordExporter {
         );
       }
       for (final img in section.images) {
-        final label = img.caption.trim().isNotEmpty ? img.caption.trim() : img.path;
+        final label = _safeImageLabel(img);
         _rtfParagraph(b, '[现场图片] $label', fs: 19, colorIndex: 3, spaceAfter: 100);
       }
     }
@@ -291,8 +291,18 @@ li { margin: 0 0 3pt 0; }
   static String _paragraphHtml(String text) =>
       _escape(text).replaceAll('\r\n', '\n').replaceAll('\n', '<br>');
 
+  static String _safeImageLabel(ExportImageItem img) {
+    if (img.caption.trim().isNotEmpty) return img.caption.trim();
+    final parts = img.path
+        .trim()
+        .split(RegExp(r'[/\\]'))
+        .where((s) => s.trim().isNotEmpty)
+        .toList(growable: false);
+    return parts.isEmpty ? '现场照片' : parts.last;
+  }
+
   static String _imageHtml(ExportImageItem img) {
-    final label = img.caption.trim().isNotEmpty ? img.caption.trim() : img.path;
+    final label = _safeImageLabel(img);
     final path = img.path.trim();
     if (path.isNotEmpty) {
       try {

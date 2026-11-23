@@ -66,8 +66,8 @@ class HealthSignalController extends ChangeNotifier
       platformInfo = await _guardInfo();
       _active = config.healthSignalEnabled;
       // 把开关写回原生，避免上次进程没来得及停采集时后台还在读。
-      await _pushActive(_active);
-      if (_active) {
+      final pushed = await _pushActive(_active);
+      if (_active && pushed) {
         await syncNow();
       } else {
         await refreshPresentation();
@@ -90,12 +90,10 @@ class HealthSignalController extends ChangeNotifier
       try {
         await config.setHealthSignalEnabled(false);
         _active = false;
-        await collector.setCollectionActive(
-          active: false,
-          intervalMs: config.healthSampleIntervalMs,
-          phaseMs: config.healthSamplePhaseMs,
-        );
-        statusMessage = null;
+        final pushed = await _pushActive(false);
+        if (pushed) {
+          statusMessage = null;
+        }
       } finally {
         _applying = false;
       }
@@ -139,12 +137,17 @@ class HealthSignalController extends ChangeNotifier
     try {
       await config.setHealthSignalEnabled(true);
       _active = true;
-      await _pushActive(true);
-      await syncNow();
-      if (sampleCount == 0) {
-        statusMessage = '已向系统申请授权。列表仍为空时，请到系统设置检查健康与定位是否允许';
+      final pushed = await _pushActive(true);
+      if (!pushed) {
+        _active = false;
+        await config.setHealthSignalEnabled(false);
       } else {
-        statusMessage = null;
+        await syncNow();
+        if (sampleCount == 0) {
+          statusMessage = '已向系统申请授权。列表仍为空时，请到系统设置检查健康与定位是否允许';
+        } else {
+          statusMessage = null;
+        }
       }
     } on Object catch (error) {
       statusMessage = '同步没有完成：$error';
@@ -301,12 +304,19 @@ class HealthSignalController extends ChangeNotifier
     }
   }
 
-  Future<void> _pushActive(bool active) {
-    return collector.setCollectionActive(
-      active: active,
-      intervalMs: config.healthSampleIntervalMs,
-      phaseMs: config.healthSamplePhaseMs,
-    );
+  Future<bool> _pushActive(bool active) async {
+    try {
+      await collector.setCollectionActive(
+        active: active,
+        intervalMs: config.healthSampleIntervalMs,
+        phaseMs: config.healthSamplePhaseMs,
+      );
+      return true;
+    } on Object catch (error) {
+      statusMessage = '健康采集通道不可用：$error';
+      _notify();
+      return false;
+    }
   }
 
   Future<HealthPlatformInfo> _guardInfo() async {

@@ -4,12 +4,11 @@
 /// 以及「定位到原始对话流 ›」（`Key('pm-jump-dlg')`）或「不属于本段 / 不归类 / 归入」操作。
 library;
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../core/models/record.dart';
 import '../core/theme/tokens.dart';
+import 'photo_thumbnail.dart';
 
 Future<void> showPhotoPreviewSheet(
   BuildContext context, {
@@ -24,7 +23,6 @@ Future<void> showPhotoPreviewSheet(
   VoidCallback? onPrimaryAction,
   String? primaryActionLabel,
 }) {
-  final hasFile = photo.path.isNotEmpty && File(photo.path).existsSync();
   return showModalBottomSheet<void>(
     context: context,
     useRootNavigator: true,
@@ -62,20 +60,12 @@ Future<void> showPhotoPreviewSheet(
                     constraints: const BoxConstraints(maxHeight: 300),
                     child: AspectRatio(
                       aspectRatio: 4 / 3,
-                      child: hasFile
-                          ? Image.file(File(photo.path), fit: BoxFit.cover)
-                          : ColoredBox(
-                              color: const Color(0xFFEAEAE4),
-                              child: Center(
-                                child: Icon(
-                                  photo.source == 'dyj_camera'
-                                      ? Icons.photo_camera_outlined
-                                      : Icons.photo_outlined,
-                                  size: 44,
-                                  color: RCColors.sec,
-                                ),
-                              ),
-                            ),
+                      child: PhotoThumbnail(
+                        path: photo.path,
+                        logicalWidth: 420,
+                        source: photo.source,
+                        placeholderIconSize: 44,
+                      ),
                     ),
                   ),
                 ),

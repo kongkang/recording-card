@@ -58,10 +58,11 @@ class SpeakerProfileSet {
     required this.session,
     this.profiles = const [],
     this.contributors = const {},
+    this.deviceLabel,
   });
 
-  factory SpeakerProfileSet.empty(String session) =>
-      SpeakerProfileSet(session: session);
+  factory SpeakerProfileSet.empty(String session, {String? deviceLabel}) =>
+      SpeakerProfileSet(session: session, deviceLabel: deviceLabel);
 
   final String session;
 
@@ -70,6 +71,9 @@ class SpeakerProfileSet {
 
   /// 已经并入质心的设备文件名；用于防止重跑重复累加。
   final Set<String> contributors;
+
+  /// 录得该 session 的可读硬件通道标识（如「录音卡 V2」「Apple Watch」「手机本机」）。
+  final String? deviceLabel;
 
   bool get isEmpty => profiles.isEmpty;
 
@@ -80,9 +84,22 @@ class SpeakerProfileSet {
     return null;
   }
 
+  SpeakerProfileSet copyWith({
+    List<SpeakerProfile>? profiles,
+    Set<String>? contributors,
+    String? deviceLabel,
+  }) => SpeakerProfileSet(
+    session: session,
+    profiles: profiles ?? this.profiles,
+    contributors: contributors ?? this.contributors,
+    deviceLabel: deviceLabel ?? this.deviceLabel,
+  );
+
   Map<String, dynamic> toJson() => {
     'v': 1,
     'ses': session,
+    if (deviceLabel != null && deviceLabel!.trim().isNotEmpty)
+      'dev': deviceLabel!.trim(),
     'files': contributors.toList()..sort(),
     'spk': [for (final p in profiles) p.toJson()],
   };
@@ -92,12 +109,14 @@ class SpeakerProfileSet {
       for (final p in (j['spk'] as List? ?? const []))
         if (p is Map<String, dynamic>) SpeakerProfile.fromJson(p),
     ]..sort((a, b) => a.index.compareTo(b.index));
+    final rawDev = (j['dev'] as String?)?.trim();
     return SpeakerProfileSet(
       session: '${j['ses'] ?? ''}',
       profiles: profiles,
       contributors: {
         for (final f in (j['files'] as List? ?? const [])) '$f',
       },
+      deviceLabel: rawDev == null || rawDev.isEmpty ? null : rawDev,
     );
   }
 }
@@ -121,7 +140,7 @@ class SpeakerMatchResult {
 /// 少分配新编号：主导说话人先拿到更小的号。
 class SessionSpeakerMatcher {
   const SessionSpeakerMatcher({
-    this.matchThreshold = 0.75,
+    this.matchThreshold = 0.70,
     this.maxSpeakers = 6,
   });
 
@@ -135,6 +154,7 @@ class SessionSpeakerMatcher {
     required Map<int, List<double>> fileCentroids,
     required Map<int, int> clusterSpeechMs,
     required String deviceName,
+    String? deviceLabel,
   }) {
     final profiles = [...existing.profiles];
     final clusterToSpeaker = <int, int>{};
@@ -152,7 +172,7 @@ class SessionSpeakerMatcher {
 
     final usedProfiles = <int>{};
     for (final pair in pairs) {
-      if (pair.score < matchThreshold) break;
+      if (pair.score <= matchThreshold) break;
       if (clusterToSpeaker.containsKey(pair.cluster) ||
           usedProfiles.contains(pair.profile)) {
         continue;
@@ -233,12 +253,16 @@ class SessionSpeakerMatcher {
     }
 
     profiles.sort((a, b) => a.index.compareTo(b.index));
+    final cleanDev = deviceLabel?.trim();
     return SpeakerMatchResult(
       clusterToSpeaker: clusterToSpeaker,
       profiles: SpeakerProfileSet(
         session: existing.session,
         profiles: profiles,
         contributors: {...existing.contributors, deviceName},
+        deviceLabel: (cleanDev != null && cleanDev.isNotEmpty)
+            ? cleanDev
+            : existing.deviceLabel,
       ),
     );
   }

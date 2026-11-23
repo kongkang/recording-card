@@ -33,11 +33,12 @@ PR #7 已把正式版基线（真实 BLE 桥 + OAuth + 模型网关 + 真实总�
 - `docs/gen-evidence/`——原型生成证据链（Flash prompt/output 留存、核验结果、旧版验收脚本）。**只读**。
 - `archive/`——旧版原型与截图。**只读**，不作为当前结构的依据。
 
-## 设计稿双版本、进度标记（NC / TBC）与发版快照开发规范（2026-11-15 更新）
+## 设计稿双版本、进度标记（NC / NT / TBC）与发版快照开发规范（2026-11-19 更新）
 
 1. **同一服务、两页隔离存储**：同一本地 HTTP 服务运行 `prototype/`，顶栏 `[ 当前版 | 目标版 ]` 互跳（有快照时显示 `▾`）；存储键严格隔离（`current.html`: `rc-*-cur-v1`，`index.html`: `rc-*-v1`，快照按版本隔离）。
-2. **双进度标签语义（`NC` vs `TBC`）**：
+2. **三进度标签语义（`NC` / `NT` / `TBC`）**：
    - **`NC`（Need Confirm · 当前版待确认开发）**：当前版本已完成原型设计、待 owner 确认后立即在 `app/` 开发的功能；先改 `current.html` 并同步 `index.html`，标注 `NC` 与顶栏 `NC·N` 清单，获确认前不提前改 `app/`，开发对齐测试后摘除 `NC`。
+   - **`NT`（Need Test · 已开发待补设计与测试）**：功能已在 `app/` 开发完成，但仍需继续细化设计并完成真机/专项测试验证的功能；在 `current.html` 与 `index.html` 对应入口及子页标注紫色 `NT` 徽章（`.nt-badge`）与顶栏 `NT·N` 清单（`[data-testid="nt-btn"]`），测试闭环后再摘除 `NT`。
    - **`TBC`（To Be Confirmed · 目标版未来规划）**：仅存在于 `index.html` 的未来演进能力，标注 `TBC` 并列入顶栏 `目标版·M` 清单；`current.html` 严格保持零 `TBC`。
 3. **归属与同步流程**：
    - **默认归属当前版**：owner 未明示仅改目标版时，默认改 `current.html` 并同步 `index.html`（若与既有 `TBC` 冲突先确认方案）；推进 PR 合并确认设计后开发 `app/`、对齐 `app/test/`、去标 `NC`、跑 `verify.cjs` 与 `flutter analyze && flutter test` 后合并。

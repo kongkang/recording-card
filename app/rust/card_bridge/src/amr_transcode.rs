@@ -57,9 +57,13 @@ pub async fn amr_wb_to_wav(amr_path: &Path, wav_path: &Path) -> Result<Transcode
         if mode <= 8 {
             if let Some(decoded) = decoder.decode(&raw[cursor..cursor + frame_len]) {
                 pcm.extend_from_slice(&decoded);
+            } else {
+                // Q=0 坏语音帧：同样补齐 20ms（320 样本）静音，避免时间轴缩水
+                pcm.extend(std::iter::repeat_n(0i16, 320));
             }
-        } else if mode == 15 {
-            // NO_DATA 静音帧：填 20ms（320 样本）静音保持时间轴严格对齐
+        } else if mode == 9 || mode == 14 || mode == 15 {
+            // SID 舒适噪声帧 (mode 9, 5B payload) / SPEECH_LOST (mode 14) / NO_DATA (mode 15)：
+            // 统一填充 20ms（320 样本 @ 16kHz）零样本，防止 DTX 吞帧导致 WAV 时长缩短与时间轴/照片漂移
             pcm.extend(std::iter::repeat_n(0i16, 320));
         }
         cursor += frame_len;
@@ -109,6 +113,49 @@ mod tests {
         let written = tokio::fs::read(&wav).await.unwrap();
         assert_eq!(&written[..4], b"RIFF");
         assert_eq!(written.len(), 44 + 640 * 2);
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn preserves_exact_sample_count_across_sid_and_speech_lost_dtx_frames() {
+        // Mode 2 speech frame (1B ToC + 32B payload = 33B -> 320 samples)
+        let speech_frame: [u8; 33] = [
+            0x14, 0x50, 0x46, 0x0c, 0x15, 0x17, 0x57, 0x22, 0x71, 0x71, 0x42, 0x0a, 0x16, 0x97,
+            0x72, 0xbf, 0xbc, 0x56, 0xc6, 0x4e, 0x4c, 0x46, 0xc7, 0xdf, 0xd4, 0x4f, 0x56, 0xd6,
+            0x55, 0x16, 0x5b, 0xc4, 0x50,
+        ];
+        // Mode 9 SID comfort noise frame: ToC = (9 << 3) | 0x04 = 0x4C, plus 5B SID payload = 6B
+        let sid_frame: [u8; 6] = [0x4C, 0x11, 0x22, 0x33, 0x44, 0x55];
+        // Mode 14 SPEECH_LOST frame: ToC = (14 << 3) | 0x04 = 0x74 (0B payload = 1B)
+        let speech_lost_frame: [u8; 1] = [0x74];
+        // Mode 15 NO_DATA frame: ToC = (15 << 3) | 0x04 = 0x7C (0B payload = 1B)
+        let no_data_frame: [u8; 1] = [0x7C];
+
+        // 2 speech + 3 SID + 2 SPEECH_LOST + 1 NO_DATA = 8 frames * 320 samples = 2560 samples
+        let mut bytes = Vec::from(AMR_WB_MAGIC);
+        bytes.extend_from_slice(&speech_frame);
+        bytes.extend_from_slice(&sid_frame);
+        bytes.extend_from_slice(&sid_frame);
+        bytes.extend_from_slice(&sid_frame);
+        bytes.extend_from_slice(&speech_lost_frame);
+        bytes.extend_from_slice(&speech_lost_frame);
+        bytes.extend_from_slice(&no_data_frame);
+        bytes.extend_from_slice(&speech_frame);
+
+        let dir = std::env::temp_dir().join(format!("rc-amr-dtx-test-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let amr = dir.join("dtx_sample.amr");
+        let wav = dir.join("dtx_sample.wav");
+        tokio::fs::write(&amr, &bytes).await.unwrap();
+
+        let out = amr_wb_to_wav(&amr, &wav).await.unwrap();
+        assert_eq!(out.samples, 8 * 320, "all 8 20ms frames must emit 320 samples each");
+        assert!((out.duration_secs - 0.16).abs() < 1e-9);
+        let written = tokio::fs::read(&wav).await.unwrap();
+        assert_eq!(written.len(), 44 + (8 * 320) * 2);
+        // Verify the 6 middle DTX frames (samples 320..2240 -> byte offsets 44 + 640..44 + 4480) are exact zeros
+        let dtx_pcm_bytes = &written[44 + 320 * 2..44 + 7 * 320 * 2];
+        assert!(dtx_pcm_bytes.iter().all(|&b| b == 0));
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 }

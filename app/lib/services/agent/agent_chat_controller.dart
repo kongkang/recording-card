@@ -9,6 +9,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../core/models/record.dart';
 import '../../core/models/summary.dart';
 import '../../core/store/agent_config_store.dart';
 import '../../core/store/app_store.dart';
@@ -16,7 +17,9 @@ import '../analysis/chat_completion.dart';
 import '../health/health_signal_models.dart';
 import '../health/health_signal_rows.dart';
 import '../health/health_signal_store.dart';
+import '../memory/memory_query.dart';
 import '../net/model_gateway.dart';
+import '../net/model_provider_store.dart';
 import 'agent_harness_worker.dart';
 import 'agent_models.dart';
 import 'agent_speech_service.dart';
@@ -48,11 +51,13 @@ class AgentChatController extends ChangeNotifier {
        _agentDirResolver = agentDirResolver,
        _clock = clock ?? DateTime.now,
        _historyPageSize = math.max(1, historyPageSize) {
-    _worker = worker ??
+    _worker =
+        worker ??
         AgentHarnessWorker(
           complete: _completeOnHost,
           queryHealth: _queryHealthOnHost,
           patchConfig: _patchConfigOnHost,
+          clock: _clock,
         );
     _ownsWorker = worker == null;
     _speechSub = _speech.events.listen(_handleSpeechEvent);
@@ -84,11 +89,15 @@ class AgentChatController extends ChangeNotifier {
   bool _initialized = false;
   Future<void>? _initFuture;
   String _agentDirPath = '';
+  String _lastStoreStamp = '';
   String _lastCorpusDigest = '';
   int _sessionSeq = 0;
   int _sessionEpoch = 0;
   bool _explicitNewSession = false;
   final Map<String, List<AgentChatMessage>> _memorySessions = {};
+
+  /// 供测试验证无关 AppStore 通知（如折叠卡片、切换 Tab）不会重复重建全文语料。
+  int debugCollectDocumentsCount = 0;
 
   bool isOpen = false;
   Os1Mode mode = Os1Mode.her;
@@ -115,14 +124,18 @@ class AgentChatController extends ChangeNotifier {
 
   String _newSessionId() => 's-${_clock().millisecondsSinceEpoch}-${++_sessionSeq}';
 
-  Future<void> ensureInitialized() async {
+  Future<void> ensureInitialized({bool syncCorpus = true}) async {
     if (_disposed) return;
     if (!_initialized) {
       _initFuture ??= _runInitialLoad();
       await _initFuture;
     }
     if (_disposed) return;
-    await _syncCorpusNow();
+    if (syncCorpus) {
+      await _syncCorpusNow();
+    } else {
+      unawaited(_syncCorpusNow());
+    }
     if (!_disposed) notifyListeners();
   }
 
@@ -408,7 +421,7 @@ class AgentChatController extends ChangeNotifier {
   }
 
   Future<void> speakText(String text) async {
-    final clean = text.trim();
+    final clean = AgentHarnessWorker.cleanVoiceReplyText(text);
     if (clean.isEmpty) return;
     await _speech.stopSpeaking();
     isSpeaking = true;
@@ -588,6 +601,7 @@ class AgentChatController extends ChangeNotifier {
         userMsgId: userMsgId,
         userCreatedAtMs: nowMs,
         viaVoice: viaVoice,
+        nowMs: nowMs,
         onReaction: (react) {
           if (_disposed) return;
           messages = [
@@ -670,7 +684,7 @@ class AgentChatController extends ChangeNotifier {
       return;
     }
 
-    await ensureInitialized();
+    await ensureInitialized(syncCorpus: false);
     if (_disposed) return;
 
     final targetSessionId = activeSessionId;
@@ -699,24 +713,22 @@ class AgentChatController extends ChangeNotifier {
       final dataUrl = 'data:image/jpeg;base64,${base64Encode(jpegBytes)}';
       final visionMsgs = [
         ChatMessage.system(
-          '你是用户的随身视觉助手。请直接、准确、简洁地描述或解答用户拍摄的画面内容，适合语音播报，不要使用复杂 Markdown 符号。',
+          '你是用户的随身视觉助手。请直接、准确、简洁地描述或解答用户拍摄的画面内容，适合语音播报，不要使用任何 Markdown 符号（如 *、#、-）。',
         ),
         ChatMessage.userWithImage(prompt, imageDataUrl: dataUrl),
       ];
       final rawReply = _visionCompletion != null
-          ? await _visionCompletion(
-              visionMsgs,
-              model: _resolveVisionModel(),
-            )
+          ? await _visionCompletion(visionMsgs, model: _resolveVisionModel())
           : await _gateway!.chat(
               visionMsgs,
               model: _resolveVisionModel(),
+              scene: ModelScene.vision,
               temperature: 0.2,
               maxTokens: 1024,
               timeout: const Duration(seconds: 60),
             );
       if (_disposed) return;
-      final reply = rawReply.trim();
+      final reply = AgentHarnessWorker.cleanVoiceReplyText(rawReply);
       final replyAt = _clock().millisecondsSinceEpoch;
       final assistantMsg = AgentChatMessage(
         id: 'a-$replyAt-${messages.length}',
@@ -773,27 +785,27 @@ class AgentChatController extends ChangeNotifier {
 
   String? _visionPreflightCheck() {
     if (_visionCompletion != null) return null;
-    return _preflightCheck();
+    return _preflightCheck(scene: ModelScene.vision);
   }
 
   String? _resolveVisionModel() {
-    final vm = _gateway?.visionModel.trim() ?? '';
+    final vm = _gateway?.modelFor(ModelScene.vision).trim() ?? '';
     if (vm.isNotEmpty) return vm;
     final tm = _resolveModel().trim();
     return tm.isNotEmpty ? tm : null;
   }
 
-  String? _preflightCheck() {
+  String? _preflightCheck({ModelScene scene = ModelScene.agent}) {
     if (_completion != null) return null;
     final gw = _gateway;
     if (gw == null) return '对话服务尚未初始化，请稍后再试';
     if (!_agentConfig.cloudEnabled || !gw.isCloudEnabled) {
-      return '云端模型已在设置中关闭，开启后即可发起对话';
+      return '请先在设置中选择模型服务';
     }
-    if (!gw.chatAvailable) {
+    if (!gw.chatAvailableFor(scene)) {
       return '尚未配置对话模型端点，请检查模型设置或后端配置';
     }
-    if (!gw.ready) {
+    if (!gw.readyFor(scene)) {
       return '尚未登录云端账号，请前往「Setting → 云端账号授权」登录后再试';
     }
     return null;
@@ -801,7 +813,8 @@ class AgentChatController extends ChangeNotifier {
 
   String _friendlyError(String raw) {
     final lower = raw.toLowerCase();
-    if (lower.contains('401') || lower.contains('未登录')) {
+    if (_gateway?.usesExternalProvider != true &&
+        (lower.contains('401') || lower.contains('未登录'))) {
       return '云端登录已失效，请前往「Setting → 云端账号授权」重新登录';
     }
     return raw.replaceFirst(RegExp(r'^Bad state:\s*'), '');
@@ -845,7 +858,7 @@ class AgentChatController extends ChangeNotifier {
         _agentConfig.cloudModel.trim().isNotEmpty) {
       return _agentConfig.cloudModel.trim();
     }
-    final gwModel = _gateway?.textModel.trim() ?? '';
+    final gwModel = _gateway?.modelFor(ModelScene.agent).trim() ?? '';
     if (gwModel.isNotEmpty) return gwModel;
     return _agentConfig.cloudModel.trim();
   }
@@ -870,6 +883,7 @@ class AgentChatController extends ChangeNotifier {
     return gw.chat(
       messages,
       model: model.trim().isEmpty ? null : model.trim(),
+      scene: ModelScene.agent,
       temperature: temperature,
       maxTokens: maxTokens,
       timeout: const Duration(seconds: 60),
@@ -992,16 +1006,106 @@ class AgentChatController extends ChangeNotifier {
 
   void _scheduleCorpusSync() {
     if (_disposed || !_initialized) return;
+    // 快速比对语料签名：展开卡片、切换 Tab、勾选进度等无关通知直接短路，不触发全量遍历
+    if (_computeStoreStamp() == _lastStoreStamp) return;
     _corpusDebounce?.cancel();
     _corpusDebounce = Timer(const Duration(milliseconds: 250), () {
       if (!_disposed) unawaited(_syncCorpusNow());
     });
   }
 
+  bool _hasNoIndexableContent() {
+    final hasEvent = _appStore.events.any((e) => !e.live);
+    if (hasEvent) return false;
+    final hasSummary = _appStore.summaries.any(
+      (s) => s.state == SummaryState.done,
+    );
+    return !hasSummary;
+  }
+
+  String _computeStoreStamp() {
+    final buf = StringBuffer();
+    for (final e in _appStore.events) {
+      if (e.live) continue;
+      buf
+        ..write(e.id)
+        ..write(':')
+        ..write(e.dayOffset)
+        ..write(':')
+        ..write(e.time)
+        ..write(':')
+        ..write(e.title)
+        ..write(':')
+        ..write(e.brief.length)
+        ..write(':')
+        ..write(e.longText.length)
+        ..write(':')
+        ..write(e.mark)
+        ..write(':')
+        ..write(e.dialog.length)
+        ..write(':')
+        ..write(e.raw.length)
+        ..write(':')
+        ..write(_appStore.displaySpeakersSummary(e));
+      if (_appStore.hasTurnOverridesFor([e])) {
+        final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
+        for (var i = 0; i < turns.length; i++) {
+          buf
+            ..write('/')
+            ..write(_appStore.displayTurnSpeaker(e, i, turns[i].spk));
+        }
+      }
+      buf.write(';');
+    }
+    buf.write('|');
+    for (final s in _appStore.summaries) {
+      if (s.state != SummaryState.done) continue;
+      buf
+        ..write(s.id)
+        ..write(':')
+        ..write(s.time)
+        ..write(':')
+        ..write(s.title ?? '')
+        ..write(':')
+        ..write(s.overview?.length ?? 0)
+        ..write(':')
+        ..write(s.points.length)
+        ..write(':')
+        ..write(s.todos.length)
+        ..write(':')
+        ..write(s.fullText.length)
+        ..write(':')
+        ..write(s.srcIds.join('+'))
+        ..write(';');
+    }
+    buf.write('|');
+    for (final p in _appStore.voiceprintStore.allPersons) {
+      buf
+        ..write(p.id)
+        ..write(':')
+        ..write(p.name)
+        ..write(':')
+        ..write(p.isSelf ? '1' : '0')
+        ..write(',');
+    }
+    return buf.toString();
+  }
+
   Future<void> _syncCorpusNow() async {
+    final stamp = _computeStoreStamp();
+    if (stamp == _lastStoreStamp) return;
+
+    // 首次初始化且语料为空时无需为了同步空数组而提前拉起 Worker Isolate（避免拍照识别等路径被 Isolate 启动拖慢）
+    if (_lastCorpusDigest.isEmpty && _hasNoIndexableContent()) {
+      _lastStoreStamp = stamp;
+      _lastCorpusDigest = '0|';
+      return;
+    }
+
     final docs = _collectDocuments();
+    _lastStoreStamp = stamp;
     final digest =
-        '${docs.length}|${docs.map((d) => '${d.id}:${d.body.length}:${d.summary.length}').join(',')}';
+        '${docs.length}|${docs.map((d) => '${d.id}:${d.dayOffset}:${d.timestampMs}:${d.speakers}:${d.body.length}:${d.summary.length}').join(',')}';
     if (digest == _lastCorpusDigest) return;
     _lastCorpusDigest = digest;
     try {
@@ -1012,15 +1116,31 @@ class AgentChatController extends ChangeNotifier {
   }
 
   List<AgentDocument> _collectDocuments() {
+    debugCollectDocumentsCount += 1;
+    final now = _clock();
+    final eventsById = <String, RecordEvent>{
+      for (final e in _appStore.events) e.id: e,
+    };
     final out = <AgentDocument>[];
+
     for (final e in _appStore.events) {
+      if (e.live) continue;
       final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
-      final body = turns.isNotEmpty
+      final markText = e.mark.trim();
+      final dialogBody = turns.isNotEmpty
           ? [
               for (var i = 0; i < turns.length; i++)
                 '${_appStore.displayTurnSpeaker(e, i, turns[i].spk)}：${turns[i].text}',
             ].join('\n')
           : e.longText;
+      final bodyParts = <String>[
+        if (markText.isNotEmpty) '重点标记：$markText',
+        if (dialogBody.trim().isNotEmpty) dialogBody.trim(),
+      ];
+      final sumParts = <String>[
+        if (markText.isNotEmpty) '重点标记：$markText',
+        if (e.brief.trim().isNotEmpty) e.brief.trim(),
+      ];
       final spks = _appStore.displaySpeakersSummary(e);
       out.add(
         AgentDocument(
@@ -1029,15 +1149,18 @@ class AgentChatController extends ChangeNotifier {
           title: e.title,
           timeLabel: '${_dayText(e.dayOffset)} ${e.time}'.trim(),
           dayOffset: e.dayOffset,
-          timestampMs: e.dayOffset == 0 ? 1 : 0,
+          timestampMs: _computeTimestampMs(now, e.dayOffset, e.time),
           speakers: spks,
-          summary: e.brief,
-          body: body,
+          summary: sumParts.join(' · '),
+          body: bodyParts.join('\n'),
         ),
       );
     }
+
     for (final s in _appStore.summaries) {
       if (s.state != SummaryState.done) continue;
+      final sumDay = _summaryDayOffset(s, eventsById);
+      final sumSpeakers = _summarySpeakers(s, eventsById);
       final pts = [
         for (final p in s.points) '${p.title}：${p.detail}',
       ].join('\n');
@@ -1046,9 +1169,10 @@ class AgentChatController extends ChangeNotifier {
           id: s.id,
           kind: 'summary',
           title: s.title ?? '要点总结',
-          timeLabel: s.time,
-          dayOffset: 0,
-          timestampMs: 2,
+          timeLabel: '${_dayText(sumDay)} ${s.time}'.trim(),
+          dayOffset: sumDay,
+          timestampMs: _computeTimestampMs(now, sumDay, s.time) + 1,
+          speakers: sumSpeakers,
           summary: s.overview ?? '',
           body: [
             if ((s.overview ?? '').isNotEmpty) s.overview!,
@@ -1060,6 +1184,50 @@ class AgentChatController extends ChangeNotifier {
       );
     }
     return out;
+  }
+
+  int _summaryDayOffset(
+    SummaryCard summary,
+    Map<String, RecordEvent> eventsById,
+  ) {
+    var best = 1 << 30;
+    for (final id in summary.srcIds) {
+      final ev = eventsById[id];
+      if (ev != null && ev.dayOffset < best) best = ev.dayOffset;
+    }
+    return best == 1 << 30 ? 0 : best;
+  }
+
+  String _summarySpeakers(
+    SummaryCard summary,
+    Map<String, RecordEvent> eventsById,
+  ) {
+    final names = <String>{};
+    for (final id in summary.srcIds) {
+      final ev = eventsById[id];
+      if (ev == null) continue;
+      final raw = _appStore.displaySpeakersSummary(ev);
+      for (final part in raw.split('/')) {
+        final t = part.trim();
+        if (t.isNotEmpty && t != '未区分' && t != '无语音') {
+          names.add(t);
+        }
+      }
+    }
+    return names.join(' / ');
+  }
+
+  static int _computeTimestampMs(DateTime now, int dayOffset, String hhmm) {
+    final mins = parseClockMinutes(hhmm) ?? 0;
+    final h = mins ~/ 60;
+    final m = mins % 60;
+    return DateTime(
+      now.year,
+      now.month,
+      now.day - dayOffset,
+      h,
+      m,
+    ).millisecondsSinceEpoch;
   }
 
   static String _dayText(int offset) => switch (offset) {
