@@ -4,6 +4,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -38,6 +39,7 @@ class AgentChatController extends ChangeNotifier {
     AgentHarnessWorker? worker,
     Future<String> Function()? agentDirResolver,
     DateTime Function()? clock,
+    int historyPageSize = 20,
   }) : _appStore = appStore,
        _agentConfig = agentConfig,
        _gateway = gateway,
@@ -47,7 +49,8 @@ class AgentChatController extends ChangeNotifier {
        _speech = speech ?? PlatformAgentSpeechBackend(),
        _ownsSpeech = speech == null,
        _agentDirResolver = agentDirResolver,
-       _clock = clock ?? DateTime.now {
+       _clock = clock ?? DateTime.now,
+       _historyPageSize = math.max(1, historyPageSize) {
     _worker =
         worker ??
         AgentHarnessWorker(
@@ -62,6 +65,9 @@ class AgentChatController extends ChangeNotifier {
     _agentConfig.addListener(_onConfigChanged);
   }
 
+  static const String _defaultHerHeadline =
+      '我听着呢，随时按下方麦克风说话，或切到「轻聊」打字问我。';
+
   final AppStore _appStore;
   final AgentConfigStore _agentConfig;
   final ModelGateway? _gateway;
@@ -73,6 +79,7 @@ class AgentChatController extends ChangeNotifier {
   final bool _ownsSpeech;
   final Future<String> Function()? _agentDirResolver;
   final DateTime Function() _clock;
+  final int _historyPageSize;
   late final AgentHarnessWorker _worker;
   late final bool _ownsWorker;
 
@@ -80,9 +87,14 @@ class AgentChatController extends ChangeNotifier {
   Timer? _corpusDebounce;
   bool _disposed = false;
   bool _initialized = false;
+  Future<void>? _initFuture;
   String _agentDirPath = '';
   String _lastStoreStamp = '';
   String _lastCorpusDigest = '';
+  int _sessionSeq = 0;
+  int _sessionEpoch = 0;
+  bool _explicitNewSession = false;
+  final Map<String, List<AgentChatMessage>> _memorySessions = {};
 
   /// 供测试验证无关 AppStore 通知（如折叠卡片、切换 Tab）不会重复重建全文语料。
   int debugCollectDocumentsCount = 0;
@@ -96,35 +108,77 @@ class AgentChatController extends ChangeNotifier {
   String partialSpeech = '';
   String? errorMessage;
 
+  late String activeSessionId = _newSessionId();
+  List<AgentChatSession> sessions = const [];
   List<AgentChatMessage> messages = const [];
-  String herHeadline = '我听着呢，随时按下方麦克风说话，或切到「轻聊」打字问我。';
+  int _loadedStartIndex = 0;
+  int totalMessageCount = 0;
+  bool isLoadingOlder = false;
+  bool justStartedNewSession = false;
+  String herHeadline = _defaultHerHeadline;
   String herSubline = '可查历史录音总结、本机健康状态，也能联网帮你查最新信息';
+
+  bool get hasMoreOlderMessages => _loadedStartIndex > 0;
+
+  DateTime now() => _clock();
+
+  String _newSessionId() => 's-${_clock().millisecondsSinceEpoch}-${++_sessionSeq}';
 
   Future<void> ensureInitialized({bool syncCorpus = true}) async {
     if (_disposed) return;
     if (!_initialized) {
-      _initialized = true;
-      _agentDirPath = await _resolveAgentDir();
-      try {
-        final loaded = await _worker.loadSession(_agentDirPath);
-        if (_disposed) return;
-        if (loaded.isNotEmpty && messages.isEmpty) {
-          messages = loaded;
-          final lastHer = loaded.where((m) => m.role == 'assistant').lastOrNull;
-          if (lastHer != null && lastHer.text.isNotEmpty) {
-            herHeadline = lastHer.text;
-          }
-        }
-      } on Object {
-        // 读取旧会话失败不阻断打开界面
-      }
+      _initFuture ??= _runInitialLoad();
+      await _initFuture;
     }
+    if (_disposed) return;
     if (syncCorpus) {
       await _syncCorpusNow();
     } else {
       unawaited(_syncCorpusNow());
     }
     if (!_disposed) notifyListeners();
+  }
+
+  Future<void> _runInitialLoad() async {
+    final epoch = _sessionEpoch;
+    _agentDirPath = await _resolveAgentDir();
+    if (_disposed) return;
+    if (_agentDirPath.isNotEmpty) {
+      try {
+        final list = await _worker.listSessions(_agentDirPath);
+        if (_disposed) return;
+        sessions = list;
+        if (list.isNotEmpty &&
+            !_explicitNewSession &&
+            messages.isEmpty &&
+            epoch == _sessionEpoch) {
+          final page = await _worker.loadSessionPage(
+            _agentDirPath,
+            sessionId: list.first.id,
+            limit: _historyPageSize,
+          );
+          if (_disposed || _explicitNewSession || epoch != _sessionEpoch) {
+            _initialized = true;
+            return;
+          }
+          if (page.messages.isNotEmpty) {
+            activeSessionId = list.first.id;
+            messages = page.messages;
+            _loadedStartIndex = page.startIndex;
+            totalMessageCount = page.totalCount;
+            final lastHer = page.messages
+                .where((m) => m.role == 'assistant')
+                .lastOrNull;
+            if (lastHer != null && lastHer.text.isNotEmpty) {
+              herHeadline = lastHer.text;
+            }
+          }
+        }
+      } on Object {
+        // 读取旧会话失败不阻断打开界面
+      }
+    }
+    _initialized = true;
   }
 
   Future<String> _resolveAgentDir() async {
@@ -172,15 +226,162 @@ class AgentChatController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> clearHistory() async {
+  /// 开启新对话：保留当前上下文到历史对话列表，切到干净新会话。
+  void startNewSession() {
+    if (_disposed || isBusy) return;
+    final hadMessages = messages.isNotEmpty;
+    _sessionEpoch++;
+    _explicitNewSession = true;
+    activeSessionId = _newSessionId();
     messages = const [];
+    _loadedStartIndex = 0;
+    totalMessageCount = 0;
+    isLoadingOlder = false;
     errorMessage = null;
-    herHeadline = '会话已清空，我们可以重新聊起。';
+    justStartedNewSession = hadMessages;
+    herHeadline = '已开启新对话，原来的对话已存入历史。';
     notifyListeners();
+  }
+
+  /// 切换到指定历史会话并加载最新一页消息，支持直接继续对话。
+  Future<void> switchSession(String sessionId) async {
+    if (_disposed || isBusy) return;
+    if (sessionId == activeSessionId && !justStartedNewSession) return;
+    await ensureInitialized();
+    if (_disposed || isBusy) return;
+    _explicitNewSession = false;
+    justStartedNewSession = false;
+    errorMessage = null;
+    isLoadingOlder = false;
+    final epoch = ++_sessionEpoch;
+    activeSessionId = sessionId;
+
+    late final AgentSessionPage page;
     if (_agentDirPath.isNotEmpty) {
-      await _worker.clearSession(_agentDirPath);
+      page = await _worker.loadSessionPage(
+        _agentDirPath,
+        sessionId: sessionId,
+        limit: _historyPageSize,
+      );
+    } else {
+      final all = _memorySessions[sessionId] ?? const <AgentChatMessage>[];
+      final total = all.length;
+      final start = (total - _historyPageSize).clamp(0, total);
+      page = AgentSessionPage(
+        sessionId: sessionId,
+        messages: all.sublist(start, total),
+        totalCount: total,
+        startIndex: start,
+      );
+    }
+    if (_disposed || epoch != _sessionEpoch) return;
+    messages = page.messages;
+    _loadedStartIndex = page.startIndex;
+    totalMessageCount = page.totalCount;
+    final lastHer = page.messages
+        .where((m) => m.role == 'assistant')
+        .lastOrNull;
+    herHeadline = (lastHer != null && lastHer.text.isNotEmpty)
+        ? lastHer.text
+        : _defaultHerHeadline;
+    notifyListeners();
+  }
+
+  /// 向上翻看历史记录时按页加载更早消息。
+  Future<void> loadOlderMessages() async {
+    if (_disposed || isLoadingOlder || !hasMoreOlderMessages) return;
+    final targetSessionId = activeSessionId;
+    final beforeIndex = _loadedStartIndex;
+    final epoch = _sessionEpoch;
+    isLoadingOlder = true;
+    notifyListeners();
+
+    try {
+      late final AgentSessionPage page;
+      if (_agentDirPath.isNotEmpty) {
+        page = await _worker.loadSessionPage(
+          _agentDirPath,
+          sessionId: targetSessionId,
+          beforeIndex: beforeIndex,
+          limit: _historyPageSize,
+        );
+      } else {
+        final all =
+            _memorySessions[targetSessionId] ?? const <AgentChatMessage>[];
+        final total = all.length;
+        final end = beforeIndex.clamp(0, total);
+        final start = (end - _historyPageSize).clamp(0, end);
+        page = AgentSessionPage(
+          sessionId: targetSessionId,
+          messages: all.sublist(start, end),
+          totalCount: total,
+          startIndex: start,
+        );
+      }
+      if (_disposed ||
+          epoch != _sessionEpoch ||
+          activeSessionId != targetSessionId) {
+        return;
+      }
+      if (_loadedStartIndex == beforeIndex && page.messages.isNotEmpty) {
+        messages = [...page.messages, ...messages];
+      }
+      _loadedStartIndex = page.startIndex;
+      totalMessageCount = math.max(totalMessageCount, page.totalCount);
+    } finally {
+      if (!_disposed && epoch == _sessionEpoch) {
+        isLoadingOlder = false;
+        notifyListeners();
+      }
     }
   }
+
+  /// 删除指定会话（若为当前会话则同步重置为空白新会话）。
+  Future<void> deleteSession(String sessionId) async {
+    if (_disposed || (isBusy && sessionId == activeSessionId)) return;
+    await ensureInitialized();
+    if (_disposed) return;
+
+    sessions = [
+      for (final s in sessions)
+        if (s.id != sessionId) s,
+    ];
+    _memorySessions.remove(sessionId);
+
+    if (_agentDirPath.isNotEmpty) {
+      await _worker.deleteSession(_agentDirPath, sessionId);
+      if (_disposed) return;
+    }
+
+    if (sessionId == activeSessionId) {
+      _sessionEpoch++;
+      _explicitNewSession = true;
+      activeSessionId = _newSessionId();
+      messages = const [];
+      _loadedStartIndex = 0;
+      totalMessageCount = 0;
+      isLoadingOlder = false;
+      justStartedNewSession = false;
+      errorMessage = null;
+      herHeadline = '会话已清空，我们可以重新聊起。';
+    }
+    notifyListeners();
+  }
+
+  /// 刷新历史会话目录（供打开抽屉时对齐后台落盘结果）。
+  Future<void> refreshSessions() async {
+    if (_disposed) return;
+    await ensureInitialized();
+    if (_disposed) return;
+    if (_agentDirPath.isNotEmpty) {
+      final list = await _worker.listSessions(_agentDirPath);
+      if (_disposed) return;
+      sessions = list;
+      notifyListeners();
+    }
+  }
+
+  Future<void> clearHistory() => deleteSession(activeSessionId);
 
   Future<void> toggleListening() async {
     if (isBusy) return;
@@ -283,6 +484,69 @@ class AgentChatController extends ChangeNotifier {
     }
   }
 
+  void _recordSessionMessage(String sessionId, AgentChatMessage msg) {
+    if (_agentDirPath.isEmpty) {
+      final list = _memorySessions.putIfAbsent(
+        sessionId,
+        () => <AgentChatMessage>[],
+      );
+      final idx = list.indexWhere((m) => m.id == msg.id);
+      if (idx >= 0) {
+        list[idx] = msg;
+      } else {
+        list.add(msg);
+      }
+    }
+    final nextCount = _agentDirPath.isEmpty
+        ? (_memorySessions[sessionId]?.length ?? totalMessageCount)
+        : totalMessageCount;
+    final updated = List<AgentChatSession>.of(sessions);
+    final sIdx = updated.indexWhere((s) => s.id == sessionId);
+    final previewText = AgentChatSession.summarizeText(msg.text, maxChars: 60);
+    final ts = msg.createdAtMs > 0
+        ? msg.createdAtMs
+        : _clock().millisecondsSinceEpoch;
+    if (sIdx >= 0) {
+      final prev = updated[sIdx];
+      final nextTitle =
+          (prev.title.trim().isNotEmpty && prev.title != '新对话')
+          ? prev.title
+          : AgentChatSession.deriveTitle([msg]);
+      updated[sIdx] = prev.copyWith(
+        title: nextTitle,
+        preview: previewText.isNotEmpty ? previewText : prev.preview,
+        updatedAtMs: ts >= prev.updatedAtMs ? ts : prev.updatedAtMs,
+        messageCount: math.max(prev.messageCount, nextCount),
+      );
+    } else {
+      updated.add(
+        AgentChatSession(
+          id: sessionId,
+          title: AgentChatSession.deriveTitle([msg]),
+          preview: previewText,
+          createdAtMs: ts,
+          updatedAtMs: ts,
+          messageCount: math.max(1, nextCount),
+        ),
+      );
+    }
+    updated.sort((a, b) {
+      final byUpd = b.updatedAtMs.compareTo(a.updatedAtMs);
+      if (byUpd != 0) return byUpd;
+      return b.createdAtMs.compareTo(a.createdAtMs);
+    });
+    sessions = updated;
+  }
+
+  void _updateMemoryReaction(String sessionId, String msgId, String react) {
+    final list = _memorySessions[sessionId];
+    if (list == null) return;
+    final idx = list.indexWhere((m) => m.id == msgId);
+    if (idx >= 0) {
+      list[idx] = list[idx].copyWith(reaction: react);
+    }
+  }
+
   Future<void> sendMessage(
     String rawText, {
     bool viaVoice = false,
@@ -304,6 +568,9 @@ class AgentChatController extends ChangeNotifier {
     await ensureInitialized();
     if (_disposed) return;
 
+    final targetSessionId = activeSessionId;
+    justStartedNewSession = false;
+    _explicitNewSession = false;
     final nowMs = _clock().millisecondsSinceEpoch;
     final userMsgId = 'u-$nowMs-${messages.length}';
     final userMsg = AgentChatMessage(
@@ -315,6 +582,8 @@ class AgentChatController extends ChangeNotifier {
     );
     final prevHistory = List<AgentChatMessage>.of(messages);
     messages = [...messages, userMsg];
+    totalMessageCount += 1;
+    _recordSessionMessage(targetSessionId, userMsg);
     isBusy = true;
     errorMessage = null;
     if (mode == Os1Mode.her) {
@@ -328,6 +597,9 @@ class AgentChatController extends ChangeNotifier {
         userText: text,
         history: prevHistory,
         config: _buildConfigSnapshot(),
+        sessionId: targetSessionId,
+        userMsgId: userMsgId,
+        userCreatedAtMs: nowMs,
         viaVoice: viaVoice,
         nowMs: nowMs,
         onReaction: (react) {
@@ -336,6 +608,7 @@ class AgentChatController extends ChangeNotifier {
             for (final m in messages)
               if (m.id == userMsgId) m.copyWith(reaction: react) else m,
           ];
+          _updateMemoryReaction(targetSessionId, userMsgId, react);
           notifyListeners();
         },
       );
@@ -358,14 +631,18 @@ class AgentChatController extends ChangeNotifier {
             for (final m in messages)
               if (m.id == userMsgId) m.copyWith(reaction: react) else m,
           ];
+          _updateMemoryReaction(targetSessionId, userMsgId, react);
         }
+        final replyAt = _clock().millisecondsSinceEpoch;
         final assistantMsg = AgentChatMessage(
-          id: 'a-${_clock().millisecondsSinceEpoch}-${messages.length}',
+          id: 'a-$replyAt-${messages.length}',
           role: 'assistant',
           text: reply,
-          createdAtMs: _clock().millisecondsSinceEpoch,
+          createdAtMs: replyAt,
         );
         messages = [...messages, assistantMsg];
+        totalMessageCount += 1;
+        _recordSessionMessage(targetSessionId, assistantMsg);
         if (mode == Os1Mode.her) {
           herHeadline = reply;
         }
@@ -410,6 +687,9 @@ class AgentChatController extends ChangeNotifier {
     await ensureInitialized(syncCorpus: false);
     if (_disposed) return;
 
+    final targetSessionId = activeSessionId;
+    justStartedNewSession = false;
+    _explicitNewSession = false;
     final nowMs = _clock().millisecondsSinceEpoch;
     final userMsg = AgentChatMessage(
       id: 'u-$nowMs-${messages.length}',
@@ -419,6 +699,8 @@ class AgentChatController extends ChangeNotifier {
       viaVoice: true,
     );
     messages = [...messages, userMsg];
+    totalMessageCount += 1;
+    _recordSessionMessage(targetSessionId, userMsg);
     isBusy = true;
     errorMessage = null;
     if (mode == Os1Mode.her) {
@@ -447,13 +729,27 @@ class AgentChatController extends ChangeNotifier {
             );
       if (_disposed) return;
       final reply = AgentHarnessWorker.cleanVoiceReplyText(rawReply);
+      final replyAt = _clock().millisecondsSinceEpoch;
       final assistantMsg = AgentChatMessage(
-        id: 'a-${_clock().millisecondsSinceEpoch}-${messages.length}',
+        id: 'a-$replyAt-${messages.length}',
         role: 'assistant',
         text: reply,
-        createdAtMs: _clock().millisecondsSinceEpoch,
+        createdAtMs: replyAt,
       );
       messages = [...messages, assistantMsg];
+      totalMessageCount += 1;
+      _recordSessionMessage(targetSessionId, assistantMsg);
+      if (_agentDirPath.isNotEmpty) {
+        try {
+          await _worker.appendSessionMessages(
+            _agentDirPath,
+            sessionId: targetSessionId,
+            messages: [userMsg, assistantMsg],
+          );
+        } on Object {
+          // 落盘失败不阻断回复展示
+        }
+      }
       if (mode == Os1Mode.her && reply.isNotEmpty) {
         herHeadline = reply;
       }
@@ -462,6 +758,17 @@ class AgentChatController extends ChangeNotifier {
       }
     } on Object catch (e) {
       if (_disposed) return;
+      if (_agentDirPath.isNotEmpty) {
+        try {
+          await _worker.appendSessionMessages(
+            _agentDirPath,
+            sessionId: targetSessionId,
+            messages: [userMsg],
+          );
+        } on Object {
+          // 忽略异常
+        }
+      }
       errorMessage = _friendlyError('$e');
       if (mode == Os1Mode.her) herHeadline = errorMessage!;
       if (speakError && errorMessage != null && errorMessage!.isNotEmpty) {
