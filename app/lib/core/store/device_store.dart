@@ -498,6 +498,9 @@ class DeviceStore extends ChangeNotifier {
           reconnected: false,
         );
         if (epoch != _epoch) return;
+        if (!hasActiveRecording) {
+          _stopLiveActivity();
+        }
         _persistCurrentDeviceState();
         _startHeartbeat();
         if (sheetOpen) {
@@ -547,9 +550,9 @@ class DeviceStore extends ChangeNotifier {
       linkState = LinkState.disconnected;
       linkError = null;
       if (liveActivity.active &&
-          liveActivity.isLocalPhoneOnly &&
-          !_phoneRecording) {
-        unawaited(_liveActivityService.stopLocalRecordingActivity());
+          !hasActiveRecording &&
+          !_pendingPhoneFailover) {
+        _stopLiveActivity(force: true);
       }
       if (fromResume) {
         _handleScanExpiryOnResume();
@@ -766,9 +769,9 @@ class DeviceStore extends ChangeNotifier {
       linkState = LinkState.disconnected;
       linkError = null;
       if (liveActivity.active &&
-          liveActivity.isLocalPhoneOnly &&
-          !_phoneRecording) {
-        unawaited(_liveActivityService.stopLocalRecordingActivity());
+          !hasActiveRecording &&
+          !_pendingPhoneFailover) {
+        _stopLiveActivity(force: true);
       }
     }
     notifyListeners();
@@ -796,9 +799,9 @@ class DeviceStore extends ChangeNotifier {
       }
       if (!snapshot.recording &&
           liveActivity.active &&
-          !_phoneRecording &&
-          (liveActivity.isAppleWatch || liveActivity.isHardwareRecording)) {
-        unawaited(_liveActivityService.stopLocalRecordingActivity());
+          !hasActiveRecording &&
+          !_pendingPhoneFailover) {
+        _stopLiveActivity(force: true);
       }
       return;
     }
@@ -812,8 +815,10 @@ class DeviceStore extends ChangeNotifier {
         persistedMatches || liveActivity.isHardwareRecording;
 
     if (expectedRecording && !snapshot.recording) {
-      if (liveActivity.active && !_phoneRecording) {
-        unawaited(_liveActivityService.stopLocalRecordingActivity());
+      if (liveActivity.active &&
+          !hasActiveRecording &&
+          !_pendingPhoneFailover) {
+        _stopLiveActivity(force: true);
       }
       _triggerAutoSyncMissedData();
     } else if (expectedRecording &&
@@ -823,9 +828,9 @@ class DeviceStore extends ChangeNotifier {
       _triggerAutoSyncMissedData();
     } else if (!snapshot.recording &&
         liveActivity.active &&
-        !_phoneRecording &&
-        liveActivity.isLocalPhoneOnly) {
-      unawaited(_liveActivityService.stopLocalRecordingActivity());
+        !hasActiveRecording &&
+        !_pendingPhoneFailover) {
+      _stopLiveActivity(force: true);
     }
   }
 
@@ -1018,8 +1023,8 @@ class DeviceStore extends ChangeNotifier {
         } else {
           // 用户在手表侧主动正常停录：尊重用户主动意图，解除待命兜底
           _phoneStandbyArmed = false;
-          if (!isConnected && !_phoneRecording) {
-            unawaited(_liveActivityService.stopLocalRecordingActivity());
+          if (!hasActiveRecording) {
+            _stopLiveActivity(force: true);
           }
         }
       }
@@ -1205,6 +1210,9 @@ class DeviceStore extends ChangeNotifier {
       _persistCurrentDeviceState(overrideDevice: device);
       _pendingPhoneFailover = false;
       _pendingFailoverCarrySec = 0;
+      if (!hasActiveRecording) {
+        _stopLiveActivity();
+      }
       _eventSeq = 0;
       _startHeartbeat();
       if (sheetOpen) {
@@ -1381,7 +1389,7 @@ class DeviceStore extends ChangeNotifier {
     try {
       await _prepareForHardwareTeardown();
       if (!_phoneRecording && !_watchFailoverRecording) {
-        unawaited(_liveActivityService.stopLocalRecordingActivity());
+        _stopLiveActivity(force: true);
       }
       final cmdError = await _sendPowerCommand(
         'device.restart',
@@ -1588,7 +1596,7 @@ class DeviceStore extends ChangeNotifier {
     linkState = LinkState.disconnected;
     connectedName = null;
     if (!_phoneRecording && !_watchFailoverRecording) {
-      unawaited(_liveActivityService.stopLocalRecordingActivity());
+      _stopLiveActivity(force: true);
     }
     linkError = failure ??
         (report != null && !report.released
@@ -1754,6 +1762,9 @@ class DeviceStore extends ChangeNotifier {
     if (recording == (_liveRecording ?? false)) {
       if (!recording && !hasDeviceFault) {
         _phoneStandbyArmed = false;
+        if (!hasActiveRecording && !_pendingPhoneFailover) {
+          _stopLiveActivity();
+        }
       }
       return;
     }
@@ -1777,8 +1788,8 @@ class DeviceStore extends ChangeNotifier {
         // 用户在硬件机身拨杆/按键主动停止录音：解除待命并关闭灵动岛实况
         _phoneStandbyArmed = false;
         _pendingPhoneFailover = false;
-        if (!_phoneRecording && !_watchFailoverRecording) {
-          unawaited(_liveActivityService.stopLocalRecordingActivity());
+        if (!hasActiveRecording) {
+          _stopLiveActivity(force: true);
         }
         if (activeCapabilities.hasOledDisplay &&
             (reason == 'switch' || reason == 'button')) {
@@ -1871,8 +1882,15 @@ class DeviceStore extends ChangeNotifier {
   String? get disconnectNotice => _disconnectNotice;
 
   void dismissDisconnectNotice() {
-    if (_disconnectNotice == null) return;
+    final clearPending = _pendingPhoneFailover && !hasActiveRecording;
+    if (_disconnectNotice == null && !clearPending) return;
     _disconnectNotice = null;
+    if (clearPending) {
+      _pendingPhoneFailover = false;
+      _pendingFailoverCarrySec = 0;
+      _phoneStandbyArmed = false;
+      _stopLiveActivity(force: true);
+    }
     notifyListeners();
   }
 
@@ -2021,6 +2039,9 @@ class DeviceStore extends ChangeNotifier {
     _persistCurrentDeviceState(overrideDevice: device);
     _pendingPhoneFailover = false;
     _pendingFailoverCarrySec = 0;
+    if (!hasActiveRecording) {
+      _stopLiveActivity();
+    }
     _startHeartbeat();
     if (sheetOpen) {
       _startSheetWatch();
@@ -2330,6 +2351,8 @@ class DeviceStore extends ChangeNotifier {
           carrySecOverride: carrySec,
         ),
       );
+    } else if (!hasActiveRecording && !_pendingPhoneFailover) {
+      _stopLiveActivity();
     }
     if (sheetOpen && hasBleDiscovered) {
       _scheduleScanExpiryTimer();
@@ -2470,8 +2493,10 @@ class DeviceStore extends ChangeNotifier {
           );
         }
         _syncLiveActivity();
-      } else if (prevRecording && !_phoneRecording && !_watchFailoverRecording) {
-        unawaited(_liveActivityService.stopLocalRecordingActivity());
+      } else if (!hasActiveRecording &&
+          !_pendingPhoneFailover &&
+          (prevRecording || _liveActivityActive)) {
+        _stopLiveActivity(force: true);
       }
     }
   }
@@ -2638,8 +2663,8 @@ class DeviceStore extends ChangeNotifier {
       } else if (!wantStart && !isRecording) {
         _phoneStandbyArmed = false;
         _hwRecordingStartedAt = null;
-        if (!_phoneRecording && !_watchFailoverRecording) {
-          unawaited(_liveActivityService.stopLocalRecordingActivity());
+        if (!hasActiveRecording) {
+          _stopLiveActivity(force: true);
         }
         if (activeCapabilities.hasOledDisplay) {
           unawaited(
@@ -2653,18 +2678,20 @@ class DeviceStore extends ChangeNotifier {
       } else if (!wantStart) {
         _phoneStandbyArmed = false;
         _hwRecordingStartedAt = null;
-        if (!_phoneRecording && !_watchFailoverRecording) {
-          unawaited(_liveActivityService.stopLocalRecordingActivity());
+        if (!hasActiveRecording) {
+          _stopLiveActivity(force: true);
         }
       }
       _persistCurrentDeviceState();
       return null;
     } on TimeoutException {
       if (wantStart && !isRecording) _phoneStandbyArmed = false;
+      if (!wantStart && !hasActiveRecording) _stopLiveActivity();
       recordingError = '录音命令超时，请重试';
       return recordingError;
     } on CardException catch (e) {
       if (wantStart && !isRecording) _phoneStandbyArmed = false;
+      if (!wantStart && !hasActiveRecording) _stopLiveActivity();
       recordingError = e.message;
       return e.message;
     } finally {
@@ -2994,6 +3021,8 @@ class DeviceStore extends ChangeNotifier {
 
   // ── 本机录音 / Apple Watch 级联保底 / OTA 接力 + 统一灵动岛实况 ──
   bool _islandEnabled = true;
+  bool _liveActivityActive = false;
+  bool _backgroundLiveActivityCleaned = false;
   DateTime? _hwRecordingStartedAt;
   bool _phoneStandbyArmed = false;
   bool _failoverPhoneRecording = false;
@@ -3075,11 +3104,22 @@ class DeviceStore extends ChangeNotifier {
   void recordPhoneMark({int? timestampMs}) =>
       _phoneMicRecorder.recordMark(timestampMs: timestampMs);
 
+  void _markLiveActivityStarted() {
+    _liveActivityActive = true;
+    _backgroundLiveActivityCleaned = false;
+  }
+
+  void _stopLiveActivity({bool force = false}) {
+    if (!force && !_liveActivityActive) return;
+    _liveActivityActive = false;
+    unawaited(_liveActivityService.stopLocalRecordingActivity());
+  }
+
   void setIslandEnabled(bool enabled) {
     if (_islandEnabled == enabled) return;
     _islandEnabled = enabled;
     if (!enabled) {
-      unawaited(_liveActivityService.stopLocalRecordingActivity());
+      _stopLiveActivity(force: true);
     } else {
       _syncLiveActivity();
     }
@@ -3103,12 +3143,16 @@ class DeviceStore extends ChangeNotifier {
   }
 
   void _syncLiveActivity() {
-    if (!_islandEnabled) return;
+    if (!_islandEnabled) {
+      _stopLiveActivity(force: true);
+      return;
+    }
     if (isConnected && isRecording) {
       final startedAt =
           _hwRecordingStartedAt ??
           _now().subtract(Duration(seconds: _clockTicks));
       _hwRecordingStartedAt = startedAt;
+      _markLiveActivityStarted();
       unawaited(
         _liveActivityService.startHardwareRecordingActivity(
           startedAt: startedAt,
@@ -3121,6 +3165,7 @@ class DeviceStore extends ChangeNotifier {
       final startedAt =
           _watchFailoverStartedAt ??
           DateTime.now().subtract(Duration(seconds: _watchFailoverRecSec));
+      _markLiveActivityStarted();
       unawaited(
         _liveActivityService.startWatchFailoverRecordingActivity(
           startedAt: startedAt,
@@ -3132,6 +3177,7 @@ class DeviceStore extends ChangeNotifier {
       final activityStartedAt = _now().subtract(
         Duration(seconds: _phoneRecSec),
       );
+      _markLiveActivityStarted();
       if (_failoverPhoneRecording) {
         unawaited(
           _liveActivityService.startFailoverRecordingActivity(
@@ -3148,6 +3194,7 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
     if (_pendingPhoneFailover && _phoneStandbyArmed) {
+      _markLiveActivityStarted();
       unawaited(
         _liveActivityService.startPendingFailoverRecordingActivity(
           startedAt: DateTime.now().subtract(
@@ -3155,7 +3202,9 @@ class DeviceStore extends ChangeNotifier {
           ),
         ),
       );
+      return;
     }
+    _stopLiveActivity();
   }
 
   /// 硬件录音在前台开启时预检手机麦克风权限：
@@ -3213,8 +3262,8 @@ class DeviceStore extends ChangeNotifier {
     } on Object catch (e) {
       debugPrint('[device] stopWatchFailoverRecording failed: $e');
     }
-    if (stopLiveActivity && !(isConnected && isRecording) && !_phoneRecording) {
-      unawaited(_liveActivityService.stopLocalRecordingActivity());
+    if (stopLiveActivity && !hasActiveRecording) {
+      _stopLiveActivity(force: true);
     }
     notifyListeners();
   }
@@ -3453,6 +3502,7 @@ class DeviceStore extends ChangeNotifier {
           _disconnectNotice =
               '$targetLabel 已断开，需开启手机麦克风权限后恢复本机保底录音';
           if (islandEnabled) {
+            _markLiveActivityStarted();
             unawaited(
               _liveActivityService.startPendingFailoverRecordingActivity(
                 startedAt: DateTime.now().subtract(
@@ -3468,6 +3518,8 @@ class DeviceStore extends ChangeNotifier {
               urgent: true,
             ),
           );
+        } else if (!hasActiveRecording) {
+          _stopLiveActivity();
         }
         return false;
       }
@@ -3497,6 +3549,7 @@ class DeviceStore extends ChangeNotifier {
         final activityStartedAt = initialElapsedSec > 0
             ? startedAt.subtract(Duration(seconds: initialElapsedSec))
             : startedAt;
+        _markLiveActivityStarted();
         if (forFailover) {
           unawaited(
             _liveActivityService.startFailoverRecordingActivity(
@@ -3531,6 +3584,7 @@ class DeviceStore extends ChangeNotifier {
           _disconnectNotice =
               '$targetLabel 已断开，iOS 后台限制暂无法启动麦克风，轻点打开 App 即可自动继续录音';
           if (islandEnabled) {
+            _markLiveActivityStarted();
             unawaited(
               _liveActivityService.startPendingFailoverRecordingActivity(
                 startedAt: DateTime.now().subtract(
@@ -3553,6 +3607,9 @@ class DeviceStore extends ChangeNotifier {
       } else {
         _phoneRecordingError = '本机录音暂未启动，请稍后重试';
       }
+      if (!_pendingPhoneFailover && !hasActiveRecording) {
+        _stopLiveActivity();
+      }
       return false;
     } finally {
       _phoneRecordingBusy = false;
@@ -3569,6 +3626,9 @@ class DeviceStore extends ChangeNotifier {
         _phoneStandbyArmed = false;
         _pendingPhoneFailover = false;
         _pendingFailoverCarrySec = 0;
+      }
+      if (stopLiveActivity && !hasActiveRecording && !_pendingPhoneFailover) {
+        _stopLiveActivity();
       }
       return;
     }
@@ -3590,10 +3650,8 @@ class DeviceStore extends ChangeNotifier {
       }
       _phoneRecordingStartedAt = null;
       _phoneRecordingBusy = false;
-      if (stopLiveActivity &&
-          !(isConnected && isRecording) &&
-          !_watchFailoverRecording) {
-        unawaited(_liveActivityService.stopLocalRecordingActivity());
+      if (stopLiveActivity && !hasActiveRecording) {
+        _stopLiveActivity(force: true);
       }
       notifyListeners();
     }
@@ -3665,12 +3723,11 @@ class DeviceStore extends ChangeNotifier {
     }
     if (_phoneRecording || _phoneRecordingBusy) {
       await stopPhoneRecording();
-    } else {
-      unawaited(_liveActivityService.stopLocalRecordingActivity());
     }
     if (isConnected && isRecording) {
       await stopHardwareRecordingIfActive();
     }
+    _stopLiveActivity(force: true);
   }
 
   String get batteryLevelText {
@@ -4028,8 +4085,15 @@ class DeviceStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// App 切至后台/息屏：若录音卡 V2 的 Wi-Fi 模块处于开启或配网在途，立刻自动关闭（升级期间除外）。
+  /// App 切至后台/息屏：
+  /// 1. 未处于任何真实录音态时，强制收口灵动岛与锁屏实况，防止残留或孤儿计时；
+  /// 2. 若录音卡 V2 的 Wi-Fi 模块处于开启或配网在途，立刻自动关闭（升级期间除外）。
   void handleAppBackgrounded() {
+    if (!hasActiveRecording &&
+        (_liveActivityActive || !_backgroundLiveActivityCleaned)) {
+      _backgroundLiveActivityCleaned = true;
+      _stopLiveActivity(force: true);
+    }
     if (!isCardV2WifiOtaOnly || !isConnected || fwUpdating) return;
     if (deviceWifiOpen != true && !_wifiScanInFlight && !wifiJoining) {
       return;
@@ -4083,8 +4147,8 @@ class DeviceStore extends ChangeNotifier {
         if (status.pendingCount > 0 || status.isRecording || wasRecording) {
           unawaited(_watchHardware.flushAndDrain());
         }
-        if (wasRecording && !snap.recording && !_phoneRecording) {
-          unawaited(_liveActivityService.stopLocalRecordingActivity());
+        if (wasRecording && !snap.recording && !hasActiveRecording) {
+          _stopLiveActivity(force: true);
         }
         notifyListeners();
       } on Object catch (e) {
@@ -4101,8 +4165,8 @@ class DeviceStore extends ChangeNotifier {
       _applySnapshot(snapshot, recordingStartedAtHint: _hwRecordingStartedAt);
       _persistCurrentDeviceState();
       if (wasRecording && !snapshot.recording) {
-        if (!_phoneRecording) {
-          unawaited(_liveActivityService.stopLocalRecordingActivity());
+        if (!hasActiveRecording) {
+          _stopLiveActivity(force: true);
         }
         _triggerAutoSyncMissedData();
       }
@@ -4144,7 +4208,11 @@ class DeviceStore extends ChangeNotifier {
   /// 3. 若已挂载后台重连目标，探测直连；若仍处于已连接或有缓存历史设备，单次对账并恢复连接；
   /// 4. 对「连接设备」弹窗内的蓝牙扫描列表做真实墙钟过期校准。
   void handleAppResumed() {
+    _backgroundLiveActivityCleaned = false;
     _resyncWallClockIfRecording();
+    if (!hasActiveRecording && !_pendingPhoneFailover && _liveActivityActive) {
+      _stopLiveActivity(force: true);
+    }
     if (_pendingPhoneFailover &&
         _phoneStandbyArmed &&
         !_phoneRecording &&

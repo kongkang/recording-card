@@ -55,6 +55,7 @@ class LiveActivityService {
   VoidCallback? _onActionButtonAgent;
   bool _pendingActionToggle = false;
   bool _pendingActionAgent = false;
+  bool _nextActivityIsRecording = true;
 
   /// 当用户按下绑定的 iPhone 侧边操作按钮触发「切换录音」AppIntent 时回调。
   VoidCallback? get onActionButtonToggle => _onActionButtonToggle;
@@ -131,11 +132,14 @@ class LiveActivityService {
     String title = '录音卡',
     String subtitle = '本机录音运行中',
   }) async {
+    final isRecording = _nextActivityIsRecording;
+    _nextActivityIsRecording = true;
     try {
       await _channel.invokeMethod<void>('start', {
         'startedAtMs': startedAt.millisecondsSinceEpoch,
         'title': title,
         'subtitle': subtitle,
+        'isRecording': isRecording,
       });
     } on MissingPluginException {
       // unit test / non-iOS environment
@@ -184,11 +188,18 @@ class LiveActivityService {
   /// 蓝牙断开且 iOS 后台受限待用户轻点回到前台自动开启手机麦克风的提醒实况卡片。
   Future<void> startPendingFailoverRecordingActivity({
     required DateTime startedAt,
-  }) => startRecordingActivity(
-    startedAt: startedAt,
-    title: '录音卡',
-    subtitle: '蓝牙已断连 · 轻点打开恢复本机录音',
-  );
+  }) async {
+    _nextActivityIsRecording = false;
+    try {
+      await startRecordingActivity(
+        startedAt: startedAt,
+        title: '录音卡',
+        subtitle: '蓝牙已断连 · 轻点打开恢复本机录音',
+      );
+    } finally {
+      _nextActivityIsRecording = true;
+    }
+  }
 
   /// 关闭灵动岛实况卡片。
   Future<void> stopLocalRecordingActivity() async {
