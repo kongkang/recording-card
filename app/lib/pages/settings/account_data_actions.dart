@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/platform/crash_guard.dart';
 import '../../core/store/device_store.dart';
+import '../../core/store/membership_store.dart';
 import '../../core/theme/tokens.dart';
 import '../../services/health/health_signal_controller.dart';
 import '../../services/memory/memory_search_scope.dart';
@@ -22,11 +23,13 @@ Future<void> Function() createLocalDataWipeAction(
   }
   final appStore = StoreScope.maybeOf(context);
   final memorySearch = MemorySearchScope.maybeOf(context);
+  final membership = MembershipScope.maybeOf(context);
   return () async {
     await device?.stopAllRecordingsForSignOut();
     await appStore?.clearAllLocalData();
     await healthSignals?.clearAllSamples();
     await memorySearch?.clearAll();
+    await membership?.resetLocalUsage();
     await clearLastCrash();
   };
 }

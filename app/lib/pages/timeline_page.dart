@@ -15,6 +15,7 @@ import '../core/store/device_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/audio/recording_status.dart';
 import '../widgets/photo_thumbnail.dart';
+import '../widgets/quota_soft_banner.dart';
 import '../widgets/recording_status_block.dart';
 import '../widgets/selection_marker.dart';
 import '../widgets/store_scope.dart';
@@ -174,6 +175,20 @@ class _TimelinePageState extends State<TimelinePage> {
     _setStickyState(_StickyRangeEdge.none, null, 0);
   }
 
+  Widget _buildStatusArea(
+    AppStore store,
+    RecordingStatusController? recordingStatus,
+  ) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _buildStatusBar(store, recordingStatus),
+      QuotaSoftBanner(
+        onOpenMembership: () => store.openSettingSub('membership'),
+      ),
+    ],
+  );
+
   Widget _buildStatusBar(
     AppStore store,
     RecordingStatusController? recordingStatus,
@@ -295,7 +310,7 @@ class _TimelinePageState extends State<TimelinePage> {
                               ),
                               children: [
                                 if (showStatusArea)
-                                  _buildStatusBar(store, recordingStatus),
+                                  _buildStatusArea(store, recordingStatus),
                                 if (showPendingCandidate)
                                   _PendingAudioBannerHost(
                                     store: store,
@@ -360,7 +375,7 @@ class _TimelinePageState extends State<TimelinePage> {
                               itemCount: headerCount + entries.length,
                               itemBuilder: (context, index) {
                                 if (showStatusArea && index == 0) {
-                                  return _buildStatusBar(
+                                  return _buildStatusArea(
                                     store,
                                     recordingStatus,
                                   );

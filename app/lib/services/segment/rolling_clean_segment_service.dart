@@ -144,7 +144,7 @@ class RollingCleanSegmentService {
 
   /// 与短轮定时任务的间隔对齐。上限 7 天，避免开发者把间隔改长后被 180 分钟静默截断。
   int get _cycleMinutes =>
-      (_agentConfig?.cleanCycleMinutes ?? 15).clamp(1, 10080);
+      (_agentConfig?.cleanCycleMinutes ?? 30).clamp(1, 10080);
   bool get _cleanOnSilenceGap => _agentConfig?.cleanOnSilenceGap ?? true;
   String get _overlapMode =>
       _agentConfig?.cleanOverlapMode == 'minutes' ? 'minutes' : 'paragraphs';

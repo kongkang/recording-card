@@ -156,10 +156,17 @@ class RecordingPipeline {
     this.network = const NetworkPolicy(),
     this.liveAudioBaseDir,
     this.skipLegacyCloudPolishWhenRollingActive = true,
+    this.localQuotaAllowTranscribe,
+    this.onLocalTranscribed,
   }) : _topicStore = topicStore,
        _reconciliationStore = reconciliationStore;
 
+  static const String quotaExhaustedMessage =
+      '本月 3,600 分钟免费本地转写额度已用完，录音已安全保存在本机队列；次月 1 日恢复免费转写或升级 Local Pro 立即继续';
+
   final bool skipLegacyCloudPolishWhenRollingActive;
+  final bool Function()? localQuotaAllowTranscribe;
+  final void Function(int durationMs)? onLocalTranscribed;
 
   final CardGateway gateway;
   final RecordingStore store;
@@ -754,6 +761,18 @@ class RecordingPipeline {
       return file;
     }
 
+    if (localQuotaAllowTranscribe != null && !localQuotaAllowTranscribe!()) {
+      file
+        ..stage = RecordingStage.transcribing
+        ..error = quotaExhaustedMessage;
+      await store.save(file);
+      report(
+        PipelineStage.transcribing,
+        '本月免费转写额度已满，录音已安全保存在本机队列',
+      );
+      return file;
+    }
+
     if (file.slices.isNotEmpty) {
       await engine.load(
         modelPath: paths.asrModelPath,
@@ -762,6 +781,7 @@ class RecordingPipeline {
       );
       final conditioned = ensureConditioned();
       final total = file.slices.length;
+      var newlyTranscribedMs = 0;
       for (var i = 0; i < total; i++) {
         final sub = file.slices[i];
         if (sub.stage == SliceStage.transcribed ||
@@ -799,6 +819,16 @@ class RecordingPipeline {
           clearError: true,
         );
         await store.save(file);
+        final sliceDurMs = (sub.endMs - sub.startMs).clamp(
+          0,
+          file.durationMs > 0 ? file.durationMs : 600000,
+        );
+        newlyTranscribedMs += sliceDurMs > 0
+            ? sliceDurMs
+            : (total == 1 ? file.durationMs : 0);
+      }
+      if (newlyTranscribedMs > 0) {
+        onLocalTranscribed?.call(newlyTranscribedMs);
       }
       if (usedAcousticFallback && file.utterances.isEmpty) {
         file.slices = [];
@@ -1785,6 +1815,18 @@ class RecordingPipeline {
       return;
     }
 
+    if (localQuotaAllowTranscribe != null && !localQuotaAllowTranscribe!()) {
+      file
+        ..stage = RecordingStage.transcribing
+        ..error = quotaExhaustedMessage;
+      await store.save(file);
+      report(
+        PipelineStage.transcribing,
+        text: '本月免费转写额度已满，录音已安全保存在本机队列',
+      );
+      return;
+    }
+
     // 5) 逐片本地转写（单次信号预处理复用，每片完成立即落盘）
     await engine.load(
       modelPath: paths.asrModelPath,
@@ -1793,6 +1835,7 @@ class RecordingPipeline {
     );
     final conditioned = ensureConditioned();
     final total = file.slices.length;
+    var newlyTranscribedMs = 0;
     for (var i = 0; i < total; i++) {
       final slice = file.slices[i];
       if (slice.stage == SliceStage.transcribed ||
@@ -1833,6 +1876,13 @@ class RecordingPipeline {
           clearError: true,
         );
         await store.save(file);
+        final sliceDurMs = (slice.endMs - slice.startMs).clamp(
+          0,
+          file.durationMs > 0 ? file.durationMs : 600000,
+        );
+        newlyTranscribedMs += sliceDurMs > 0
+            ? sliceDurMs
+            : (total == 1 ? file.durationMs : 0);
       } on Object catch (e) {
         file.slices[i] = slice.copyWith(
           stage: SliceStage.failed,
@@ -1841,6 +1891,9 @@ class RecordingPipeline {
         await store.save(file);
         throw PipelineException('切片 ${slice.id} 转写失败：$e');
       }
+    }
+    if (newlyTranscribedMs > 0) {
+      onLocalTranscribed?.call(newlyTranscribedMs);
     }
     if (usedAcousticFallback && file.utterances.isEmpty) {
       file.slices = [];

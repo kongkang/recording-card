@@ -18,6 +18,7 @@ import '../../core/store/device_store.dart';
 import '../../core/theme/tokens.dart';
 import '../../services/audio/recording_status.dart';
 import '../../widgets/photo_thumbnail.dart';
+import '../../widgets/quota_soft_banner.dart';
 import '../../widgets/recording_status_block.dart';
 import 'styled_chrome.dart';
 
@@ -231,13 +232,23 @@ Widget _styledStatusHeader(
 ) {
   final show = !store.selMode && store.filter != FeedFilter.summary;
   if (!show) return const SizedBox.shrink();
-  return RecordingStatusBlock(
-    key: const Key('tl-status-block'),
-    controller: recordingStatus,
-    syncActive: store.syncStage != null,
-    loadingActive: store.loading,
-    syncText: store.syncText,
-    syncProgress: store.syncStage != null ? store.syncProgress : null,
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      RecordingStatusBlock(
+        key: const Key('tl-status-block'),
+        controller: recordingStatus,
+        syncActive: store.syncStage != null,
+        loadingActive: store.loading,
+        syncText: store.syncText,
+        syncProgress: store.syncStage != null ? store.syncProgress : null,
+      ),
+      QuotaSoftBanner(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        onOpenMembership: () => store.openSettingSub('membership'),
+      ),
+    ],
   );
 }
 

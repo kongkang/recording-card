@@ -554,8 +554,8 @@ class AgentConfigStore extends ChangeNotifier {
   double temperature = 0.2;
 
   // ── 开发者设置：连续录音清洗周期与层叠重叠策略 ─────────────
-  /// 阶段清洗触发周期（分钟，支持 1..180 分钟，从分钟到小时可调）。
-  int cleanCycleMinutes = 15;
+  /// 阶段清洗触发周期（分钟，支持 1..180 分钟，默认 30 分钟以降低冗余清洗开销）。
+  int cleanCycleMinutes = 30;
 
   /// 录音静默切片落盘后的批量转写与归拢周期（分钟，支持 15 / 30 / 60 等，默认 15 分钟）。
   int transcribeCycleMinutes = 15;

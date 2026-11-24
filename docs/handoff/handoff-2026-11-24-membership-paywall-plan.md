@@ -1,7 +1,7 @@
 # 录音卡 · 会员体系、云端成本核算与付费墙设计（NC · 2026-11-24）
 
-> 状态：**NC（Need Confirm · 已出原型待 owner 最终视觉确认后落 `1.1.0` 开发）**
-> 关联原型：`prototype/current.html` & `prototype/index.html`（`NC·1` →「设置 → 会员与订阅」）
+> 状态：**已开发落地（App + iOS StoreKit 2 原生桥 + 测试已对齐，待真机实测）**
+> 关联代码与原型：`app/lib/services/billing/storekit_service.dart`、`app/lib/core/store/membership_store.dart`、`app/lib/pages/settings/membership_body.dart`、`app/lib/widgets/quota_soft_banner.dart`、`prototype/current.html` & `prototype/index.html`（「设置 → 会员与订阅」）
 
 ---
 
@@ -37,7 +37,7 @@
 
 ### 2.4 云端 AI 会员 · 专业版（Cloud Pro）
 - **模型底座**：**混合旗舰路由**——后台高频清洗/话题分段与睡眠常规汇总仍走 `DeepSeek-V4.1-Flash`（¥0.135/h），用户肉眼可见的**核心总结、睡前日记与复杂记忆推理调用海外旗舰 `Gemini 3.1 Pro`**（$2/$12 per 1M ≈ ¥14.4/¥86.4，含思考 Token）。
-- **定价**：**¥88 / 月** · **¥848 / 年**（海外 **$12.99 / \$129.99**）
+- **定价**：**¥88 / 月** · **¥848 / 年**（海外 **$12.99 / \$119.99**）
   - 15% 苹果税后实收：月付 **¥74.80** / 年均 **¥60.07**
 - **内含权益**：**打包包含全部 Local Pro 权益** + **120 小时 Flash 云端清洗** + **每月 50 次 Gemini Pro 旗舰深度总结/睡前日记 + 50 次 Pro 记忆问答**；当 Pro 旗舰次数用尽后，**自动无缝切换至 DeepSeek Flash 续用**，绝不突然断档。
 - **成本与毛利（高峰无缓存锚定）**：
@@ -46,24 +46,24 @@
 
 ### 2.5 云端 AI 积分加量包（消耗型 IAP）
 - **Pack 500**：`500 积分 · ¥18`（海外 **$2.99**），90 天有效，15% 税后实收 ¥15.30，对应成本上限 ≤ ¥9。
-- **Pack 1200**：`1,200 积分 · ¥38`（海外 **$5.99**），90 天有效，15% 税后实收 ¥32.30，对应成本上限 ≤ ¥19。
+- **Pack 1200**：`1,200 积分 · ¥38`（海外 **$4.99**），90 天有效，15% 税后实收 ¥32.30，对应成本上限 ≤ ¥19。
 
 ---
 
-## 3. App Store Connect StoreKit 2 商品规划清单
+## 3. App Store Connect StoreKit 2 商品实际配置清单
 
-- **订阅群组（Subscription Group）**：`Recording Card Membership`（简体中文显示名：`录音卡会员`）
-  1. Level 1：`com.reai.recordingcard.cloud_pro.yearly`（1 年，¥848 / \$129.99）
-  2. Level 1：`com.reai.recordingcard.cloud_pro.monthly`（1 个月，¥88 / \$12.99）
-  3. Level 2：`com.reai.recordingcard.cloud_basic.yearly`（1 年，¥268 / \$39.99）
-  4. Level 2：`com.reai.recordingcard.cloud_basic.monthly`（1 个月，¥28 / \$3.99）
-  5. Level 3：`com.reai.recordingcard.local_pro.yearly`（1 年，¥68 / \$9.99）
-  6. Level 3：`com.reai.recordingcard.local_pro.monthly`（1 个月，¥6 / \$0.99）
+- **订阅群组（Subscription Group）**：`Recording Card Membership`（Apple ID：`22614344`，简体中文显示名：`录音卡会员`，App 名称：`录音卡`）
+  1. Lv1：`com.reai.recordingcard.cloud_pro.yearly`（Apple ID：`6838781458`，1 年，¥848.00 / \$119.99）
+  2. Lv2：`com.reai.recordingcard.cloud_pro.monthly`（Apple ID：`6838782958`，1 个月，¥88.00 / \$12.99）
+  3. Lv3：`com.reai.recordingcard.cloud_basic.yearly`（Apple ID：`6838783405`，1 年，¥268.00 / \$39.99）
+  4. Lv4：`com.reai.recordingcard.cloud_basic.monthly`（Apple ID：`6838784633`，1 个月，¥28.00 / \$3.99）
+  5. Lv5：`com.reai.recordingcard.local_pro.yearly`（Apple ID：`6838785047`，1 年，¥68.00 / \$9.99）
+  6. Lv6：`com.reai.recordingcard.local_pro.monthly`（Apple ID：`6838785525`，1 个月，¥6.00 / \$0.99）
 - **非消耗型（Non-Consumable）**：
-  - `com.reai.recordingcard.local_pro.lifetime`（¥198 / \$29.99）
+  - `com.reai.recordingcard.local_pro.lifetime`（Apple ID：`6838786440`，¥198.00 / \$29.99）
 - **消耗型（Consumable）**：
-  - `com.reai.recordingcard.credits.pack500`（¥18 / \$2.99）
-  - `com.reai.recordingcard.credits.pack1200`（¥38 / \$5.99）
+  - `com.reai.recordingcard.credits.pack500`（Apple ID：`6838787313`，¥18.00 / \$2.99）
+  - `com.reai.recordingcard.credits.pack1200`（Apple ID：`6838787971`，¥38.00 / \$4.99）
 
 ---
 

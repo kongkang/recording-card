@@ -15,6 +15,7 @@ import '../core/storage/storage.dart';
 import '../core/store/agent_config_store.dart';
 import '../core/store/app_store.dart';
 import '../core/store/device_store.dart';
+import '../core/store/membership_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/store/ui_style_store.dart';
 import '../core/theme/tokens.dart';
@@ -180,6 +181,7 @@ class AppShell extends StatefulWidget {
     this.clock,
     this.crashStore,
     this.uiStyle,
+    this.membership,
     this.onClearAllLocalData,
   });
 
@@ -209,6 +211,7 @@ class AppShell extends StatefulWidget {
   final DateTime Function()? clock;
   final KeyValueStore? crashStore;
   final UIStyleStore? uiStyle;
+  final MembershipStore? membership;
   final Future<void> Function()? onClearAllLocalData;
 
   @override
@@ -431,6 +434,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     await widget.store.wipeAllLocalData();
     await widget.healthSignals?.clearAllSamples();
     await widget.memorySearch?.clearAll();
+    await widget.membership?.resetLocalUsage();
     await _agentChat.clearHistory();
     await clearLastCrash(store: widget.crashStore);
   }
@@ -693,6 +697,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           getNoteStore: widget.getNoteStore,
                           externalDataHub: widget.externalDataHub,
                           uiStyle: widget.uiStyle,
+                          membership: widget.membership,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                           crashStore: widget.crashStore,
@@ -712,6 +717,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           getNoteStore: widget.getNoteStore,
                           externalDataHub: widget.externalDataHub,
                           uiStyle: widget.uiStyle,
+                          membership: widget.membership,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                           crashStore: widget.crashStore,
@@ -1301,6 +1307,7 @@ Widget _stackTopPage(
   GetNoteSyncStore? getNoteStore,
   ExternalDataHubStore? externalDataHub,
   UIStyleStore? uiStyle,
+  MembershipStore? membership,
   Future<void> Function()? onClearAllLocalData,
 }) {
   final top = store.stackTop;
@@ -1334,6 +1341,7 @@ Widget _stackTopPage(
       getNoteStore: getNoteStore,
       externalDataHub: externalDataHub,
       uiStyle: uiStyle,
+      membership: membership,
       onClearAllLocalData: onClearAllLocalData,
       showPaneBack: wide && store.showPaneBackSetSub,
       backLabel: backLabel,
@@ -1360,6 +1368,7 @@ class _NarrowLayout extends StatelessWidget {
     this.getNoteStore,
     this.externalDataHub,
     this.uiStyle,
+    this.membership,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
     this.crashStore,
@@ -1377,6 +1386,7 @@ class _NarrowLayout extends StatelessWidget {
   final GetNoteSyncStore? getNoteStore;
   final ExternalDataHubStore? externalDataHub;
   final UIStyleStore? uiStyle;
+  final MembershipStore? membership;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
   final KeyValueStore? crashStore;
@@ -1418,6 +1428,7 @@ class _NarrowLayout extends StatelessWidget {
                   getNoteStore: getNoteStore,
                   externalDataHub: externalDataHub,
                   uiStyle: uiStyle,
+                  membership: membership,
                   supportsDynamicIsland: supportsDynamicIsland,
                   crashStore: crashStore,
                   onClearAllLocalData: onClearAllLocalData,
@@ -1446,6 +1457,7 @@ class _NarrowLayout extends StatelessWidget {
                   getNoteStore,
                   externalDataHub,
                   uiStyle,
+                  membership,
                   onClearAllLocalData,
                 ),
               ),
@@ -1519,6 +1531,7 @@ class _NarrowLayout extends StatelessWidget {
     GetNoteSyncStore? getNoteStore,
     ExternalDataHubStore? externalDataHub,
     UIStyleStore? uiStyle,
+    MembershipStore? membership,
     Future<void> Function()? onClearAllLocalData,
   ) {
     if (e.type == 'sum') {
@@ -1546,6 +1559,7 @@ class _NarrowLayout extends StatelessWidget {
         getNoteStore: getNoteStore,
         externalDataHub: externalDataHub,
         uiStyle: uiStyle,
+        membership: membership,
         onClearAllLocalData: onClearAllLocalData,
         showPaneBack: false,
       );
@@ -1568,6 +1582,7 @@ class _WideLayout extends StatelessWidget {
     this.getNoteStore,
     this.externalDataHub,
     this.uiStyle,
+    this.membership,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
     this.crashStore,
@@ -1585,6 +1600,7 @@ class _WideLayout extends StatelessWidget {
   final GetNoteSyncStore? getNoteStore;
   final ExternalDataHubStore? externalDataHub;
   final UIStyleStore? uiStyle;
+  final MembershipStore? membership;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
   final KeyValueStore? crashStore;
@@ -1633,6 +1649,7 @@ class _WideLayout extends StatelessWidget {
                       getNoteStore: getNoteStore,
                       externalDataHub: externalDataHub,
                       uiStyle: uiStyle,
+                      membership: membership,
                       supportsDynamicIsland: supportsDynamicIsland,
                       crashStore: crashStore,
                       onClearAllLocalData: onClearAllLocalData,
@@ -1660,6 +1677,7 @@ class _WideLayout extends StatelessWidget {
                             getNoteStore: getNoteStore,
                             externalDataHub: externalDataHub,
                             uiStyle: uiStyle,
+                            membership: membership,
                             onClearAllLocalData: onClearAllLocalData,
                           ),
                         )
