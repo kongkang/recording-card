@@ -103,6 +103,11 @@ class FakeCardGateway implements CardGateway {
   /// 记录收到的 LED 提示模式（`dyj_led_hint`）。
   final List<String> ledHintModes = [];
 
+  /// 记录通过点一机扬声器播报的文本（`dyj_tts_speak`）。
+  final List<String> dyjTtsSpokenTexts = [];
+  bool dyjTtsSupported = true;
+  Object? failDyjTts;
+
   /// 录音卡 V2（CardV2）物理按键与拨杆 KV 绑定状态（`card_controls.get`/`set`）。
   final Map<String, String> cardControls;
   int cardControlsGetCalls = 0;
@@ -819,6 +824,17 @@ class FakeCardGateway implements CardGateway {
         final mode = '${payload?['mode'] ?? ''}';
         if (mode.isNotEmpty) ledHintModes.add(mode);
         return {'applied': true, 'mode': mode};
+      case 'dyj_tts_speak':
+        if (failDyjTts != null) throw failDyjTts!;
+        if (!dyjTtsSupported) {
+          throw const CardException(
+            CardErrorKind.device,
+            'unsupported: 点一机固件（v0.8.15）暂不支持 tts.speak 语音播报',
+          );
+        }
+        final text = '${payload?['text'] ?? ''}'.trim();
+        if (text.isNotEmpty) dyjTtsSpokenTexts.add(text);
+        return {'supported': true, 'spoken': true};
       case 'dyj_button_status':
         return {
           'buttons': const [],

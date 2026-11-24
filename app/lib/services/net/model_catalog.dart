@@ -35,10 +35,42 @@ class ModelCatalog {
     return null;
   }
 
+  static const List<String> _nonChatTokens = <String>[
+    'asr',
+    'stt',
+    'whisper',
+    'embedding',
+    'tts',
+    'rerank',
+    'moderation',
+    'dall-e',
+    'transcribe',
+    'realtime',
+    'sora',
+  ];
+
+  static bool _isNonChatId(String id) {
+    final lower = id.toLowerCase();
+    return _nonChatTokens.any(lower.contains);
+  }
+
   String? get asrModel => firstWith('asr');
 
-  /// 文本能力：不同版本后端可能标成 `text` / `chat`。
-  String? get textModel => firstWith('text') ?? firstWith('chat');
+  /// 文本能力：不同版本后端可能标成 `text` / `chat`；若网关未附带 capabilities
+  /// 字段，则回退挑选首个非语音/向量类模型，避免标准 OpenAI 列表误判为空。
+  String? get textModel {
+    final explicit = firstWith('text') ?? firstWith('chat');
+    if (explicit != null) return explicit;
+    for (final m in models) {
+      if (m.capabilities.isNotEmpty &&
+          m.capabilities.every(_nonChatTokens.contains)) {
+        continue;
+      }
+      if (_isNonChatId(m.id)) continue;
+      return m.id;
+    }
+    return null;
+  }
 
   /// 多模态视觉能力：优先匹配 `vision` / `image` / `multimodal`，兜底复用文本对话模型。
   String? get visionModel =>

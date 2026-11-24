@@ -38,6 +38,7 @@ import '../services/external_data/external_data_hub_store.dart';
 import '../services/external_data/getnote_sync_store.dart';
 import '../services/health/health_signal_controller.dart';
 import '../services/memory/memory_search_scope.dart';
+import '../services/net/model_gateway.dart';
 import '../services/net/model_provider_store.dart';
 import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/asr_models.dart';
@@ -58,6 +59,7 @@ class SettingPage extends StatefulWidget {
     this.settings,
     this.device,
     this.modelManager,
+    this.modelGateway,
     this.agentConfig,
     this.authService,
     this.photoLibrary,
@@ -81,6 +83,9 @@ class SettingPage extends StatefulWidget {
 
   /// 本地转写模型管理；二级页「本地语音引擎」使用。
   final ModelManagerController? modelManager;
+
+  /// 云端模型网关；供「云端模型设置」查看外脑默认端点、可用模型并刷新列表。
+  final ModelGateway? modelGateway;
 
   /// Agent 与云端模型设置状态。
   final AgentConfigStore? agentConfig;
@@ -642,6 +647,7 @@ class _SettingPageState extends State<SettingPage> {
           agentConfig: _agent,
           device: widget.device,
           modelManager: widget.modelManager,
+          modelGateway: widget.modelGateway,
           authService: widget.authService,
           healthSignals: widget.healthSignals,
           getNoteStore: _getNoteStore,

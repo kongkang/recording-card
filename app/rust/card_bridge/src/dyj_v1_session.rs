@@ -31,6 +31,23 @@ pub const LEGACY_GEN1_ALT_CHAR_UUID: &str = "0000180e-0000-1000-8000-00805f9b34f
 const NOTIFY_SETTLE: Duration = Duration::from_millis(40);
 const GATT_OP_TIMEOUT: Duration = Duration::from_secs(6);
 
+fn epoch_ms_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+pub(crate) fn should_send_dyj_keepalive(
+    now_ms: u64,
+    last_io_ms: u64,
+    last_attempt_ms: u64,
+    interval_ms: u64,
+) -> bool {
+    now_ms.saturating_sub(last_io_ms) >= interval_ms
+        && now_ms.saturating_sub(last_attempt_ms) >= interval_ms
+}
+
 /// 查找最早一代（`dyj-app-v1`，v0.5.x–v0.6.12）点一机自定义通信特征（优先 `0x2A29`，回退 `0x180E`）。
 ///
 /// 要求同时具备 `NOTIFY` 和写属性，避免把标准蓝牙设备信息服务（DIS）中只读的 `0x2A29` 厂商名误判成初代固件。
@@ -321,6 +338,7 @@ pub struct DyjV1Session {
     event_tx: broadcast::Sender<DeviceEvent>,
     audio_tx: broadcast::Sender<PcmChunk>,
     disconnected: Arc<AtomicBool>,
+    last_io_ms: Arc<AtomicU64>,
     _keepalive: mpsc::Sender<()>,
 }
 
@@ -525,30 +543,35 @@ impl DyjV1Session {
         let pending: Arc<PendingMap> = Arc::new(PendingMap(Mutex::new(HashMap::new())));
         let (keep_tx, mut keep_rx) = mpsc::channel::<()>(1);
         let disconnected = Arc::new(AtomicBool::new(false));
+        let last_io_ms = Arc::new(AtomicU64::new(epoch_ms_now()));
 
         // 1) BLE notify 原始字节拆包任务（FF11 文本帧 / FF12 二进制帧）
-        tokio::spawn(async move {
-            let mut stream = notifications;
-            let mut text_asm = FrameAssembler::default();
-            let mut bin_asm = BinaryFrameAssembler::default();
-            while let Some(note) = stream.next().await {
-                let uuid = note.uuid.to_string().to_lowercase();
-                if uuid == DATA_UUID {
-                    for bf in bin_asm.feed(&note.value) {
-                        if binary_tx.send(bf).await.is_err() {
-                            return;
+        {
+            let last_io_notify = last_io_ms.clone();
+            tokio::spawn(async move {
+                let mut stream = notifications;
+                let mut text_asm = FrameAssembler::default();
+                let mut bin_asm = BinaryFrameAssembler::default();
+                while let Some(note) = stream.next().await {
+                    last_io_notify.store(epoch_ms_now(), Ordering::Relaxed);
+                    let uuid = note.uuid.to_string().to_lowercase();
+                    if uuid == DATA_UUID {
+                        for bf in bin_asm.feed(&note.value) {
+                            if binary_tx.send(bf).await.is_err() {
+                                return;
+                            }
                         }
-                    }
-                } else {
-                    let chunk = String::from_utf8_lossy(&note.value);
-                    for line in text_asm.feed(&chunk) {
-                        if frame_tx.send(line).await.is_err() {
-                            return;
+                    } else {
+                        let chunk = String::from_utf8_lossy(&note.value);
+                        for line in text_asm.feed(&chunk) {
+                            if frame_tx.send(line).await.is_err() {
+                                return;
+                            }
                         }
                     }
                 }
-            }
-        });
+            });
+        }
 
         // 2) 文本帧路由任务（RSP → pending，EVT → broadcast，非标准行 → legacy_tx）
         {
@@ -648,6 +671,7 @@ impl DyjV1Session {
             event_tx,
             audio_tx,
             disconnected,
+            last_io_ms,
             _keepalive: keep_tx,
         });
 
@@ -668,10 +692,12 @@ impl DyjV1Session {
             }
         };
 
-        // 6) 3 秒连接态看门狗：链路静默断开时主动广播 Disconnected
+        // 6) 3 秒连接态看门狗 + 60 秒 BLE 保活心跳（防点一机固件 180s STALE_LINK_TIMEOUT_MS 主动断链）
         {
+            const DYJ_KEEPALIVE_INTERVAL_MS: u64 = 60_000;
             let weak = Arc::downgrade(&session);
             tokio::spawn(async move {
+                let mut last_keepalive_attempt_ms: u64 = 0;
                 loop {
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     let Some(sess) = weak.upgrade() else {
@@ -681,7 +707,19 @@ impl DyjV1Session {
                         break;
                     }
                     match sess.peripheral.is_connected().await {
-                        Ok(true) => continue,
+                        Ok(true) => {
+                            let now = epoch_ms_now();
+                            let last_io = sess.last_io_ms.load(Ordering::Relaxed);
+                            if should_send_dyj_keepalive(
+                                now,
+                                last_io,
+                                last_keepalive_attempt_ms,
+                                DYJ_KEEPALIVE_INTERVAL_MS,
+                            ) {
+                                last_keepalive_attempt_ms = now;
+                                let _ = sess.try_keepalive_echo().await;
+                            }
+                        }
                         Ok(false) => {
                             sess.disconnected.store(true, Ordering::SeqCst);
                             let _ = sess.event_tx.send(DeviceEvent::Disconnected);
@@ -945,6 +983,7 @@ impl DyjV1Session {
                 return Err(SdkError::Ble(format!("write FF11: {msg}")));
             }
         }
+        self.last_io_ms.store(epoch_ms_now(), Ordering::Relaxed);
         Ok(())
     }
 
@@ -1100,6 +1139,15 @@ impl DyjV1Session {
             });
         }
         let _guard = self.cmd_lock.lock().await;
+        self.request_locked(cmd, params, timeout).await
+    }
+
+    async fn request_locked(&self, cmd: &str, params: Value, timeout: Duration) -> SdkResult<Value> {
+        if self.disconnected.load(Ordering::SeqCst) {
+            return Err(SdkError::Disconnected {
+                command: cmd.to_string(),
+            });
+        }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, mut rx) = mpsc::channel::<Frame>(32);
         self.pending.0.lock().unwrap().insert(id, tx);
@@ -1171,6 +1219,19 @@ impl DyjV1Session {
                 return Ok(json!({ "total": total, "items": items }));
             }
         }
+    }
+
+    /// 轻量级非阻塞 BLE 保活心跳（不排队阻塞正常命令），防止固件 `STALE_LINK_TIMEOUT_MS` 主动断链。
+    pub async fn try_keepalive_echo(&self) -> bool {
+        if self.disconnected.load(Ordering::SeqCst) {
+            return false;
+        }
+        let Ok(_guard) = self.cmd_lock.try_lock() else {
+            return false;
+        };
+        self.request_locked("proto.echo", json!({ "message": "hb" }), Duration::from_secs(4))
+            .await
+            .is_ok()
     }
 
     pub async fn request_idem(
@@ -1668,17 +1729,41 @@ impl DyjV1Session {
     }
 
     /// 确保物理按键统一处于 `event_only`（由手机端解释手势行为，不触发固件本地自停录）。
-    pub async fn ensure_buttons_event_only(&self) {
-        let current = self.button_bind_get().await.ok();
-        let bindings = current.as_ref().and_then(|v| v.get("bindings"));
-        for gesture in ["click", "double_click", "long_press"] {
-            let cur = bindings
-                .and_then(|b| b.get(gesture))
-                .and_then(Value::as_str);
-            if cur != Some("event_only") {
-                let _ = self.button_bind_set(gesture, "event_only").await;
+    pub async fn ensure_buttons_event_only(&self) -> bool {
+        for attempt in 0..2 {
+            if self.disconnected.load(Ordering::SeqCst) {
+                return false;
+            }
+            if let Ok(current) = self.button_bind_get().await {
+                let bindings = current.get("bindings");
+                let mut all_ok = true;
+                for gesture in ["click", "double_click", "long_press"] {
+                    let cur = bindings.and_then(|b| b.get(gesture)).and_then(Value::as_str);
+                    if cur != Some("event_only") {
+                        if let Err(err) = self.button_bind_set(gesture, "event_only").await {
+                            log::warn!(
+                                "dyj_v1_session: {} ensure_buttons_event_only failed for {gesture}: {err}",
+                                self.name
+                            );
+                            all_ok = false;
+                        }
+                    }
+                }
+                if all_ok {
+                    return true;
+                }
+            } else {
+                log::warn!(
+                    "dyj_v1_session: {} button.bind.get failed (attempt {})",
+                    self.name,
+                    attempt + 1
+                );
+            }
+            if attempt == 0 && !self.disconnected.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(1200)).await;
             }
         }
+        false
     }
 
     pub async fn led_set(
@@ -1890,5 +1975,15 @@ mod tests {
             rebuilt_utf8.push_str(s);
         }
         assert_eq!(rebuilt_utf8, utf8_cmd);
+    }
+
+    #[test]
+    fn dyj_keepalive_gate_respects_recent_io_and_cooldown() {
+        assert!(!should_send_dyj_keepalive(100_000, 99_500, 0, 60_000));
+        assert!(!should_send_dyj_keepalive(159_999, 100_000, 0, 60_000));
+        assert!(should_send_dyj_keepalive(160_000, 100_000, 0, 60_000));
+        // Even if last_io is stale (e.g. attempt failed), do not spam within interval.
+        assert!(!should_send_dyj_keepalive(165_000, 100_000, 160_000, 60_000));
+        assert!(should_send_dyj_keepalive(220_000, 100_000, 160_000, 60_000));
     }
 }

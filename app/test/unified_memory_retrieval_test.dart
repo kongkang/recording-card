@@ -163,6 +163,7 @@ void main() {
         await cfg.load();
         final appStore = AppStore(loadPersistedState: false);
         final gw = FakeCardGateway(initialSnapshot: _dyjSnap());
+        final dyjSpoken = <String>[];
         gw.onBridgeCommand = (kind, payload) async {
           if (kind == 'camera_capture_and_fetch') {
             return {
@@ -174,6 +175,10 @@ void main() {
                 'bytes': 4,
               },
             };
+          }
+          if (kind == 'dyj_tts_speak') {
+            dyjSpoken.add('${payload?['text'] ?? ''}');
+            return {'supported': true, 'spoken': true};
           }
           return {'ok': true};
         };
@@ -213,12 +218,17 @@ void main() {
 
         expect(captured, hasLength(1));
         expect(chat.messages.last.text, '画面里是一份会议纪要白板。');
-        expect(speech.spokenTexts, contains('画面里是一份会议纪要白板。'));
+        expect(dyjSpoken, contains('画面里是一份会议纪要白板。'));
+        expect(speech.spokenTexts, isEmpty);
 
         // Explicit ok: false bridge error must fail honestly without crashing
         gw.onBridgeCommand = (kind, payload) async {
           if (kind == 'camera_capture_and_fetch') {
             return {'ok': false, 'error': '点一机存储卡忙'};
+          }
+          if (kind == 'dyj_tts_speak') {
+            dyjSpoken.add('${payload?['text'] ?? ''}');
+            return {'supported': true, 'spoken': true};
           }
           return {'ok': true};
         };
@@ -226,7 +236,8 @@ void main() {
         await device.pollEventsNow();
         await coord.idle;
         await Future<void>.delayed(Duration.zero);
-        expect(speech.spokenTexts.last, contains('拍照识别失败'));
+        expect(dyjSpoken.last, contains('拍照识别失败'));
+        expect(speech.spokenTexts, isEmpty);
 
         coord.dispose();
         chat.dispose();
@@ -313,7 +324,8 @@ void main() {
 
         expect(mic.stopCalls, 1);
         expect(prompts.any((p) => p.contains('前天看的电影叫什么')), isTrue);
-        expect(speech.spokenTexts, contains('前天下午三点你在电影院看了黄金眼。'));
+        expect(gw.dyjTtsSpokenTexts, contains('前天下午三点你在电影院看了黄金眼。'));
+        expect(speech.spokenTexts, isEmpty);
 
         await gw.realtimeCtrl.close();
         coord.dispose();
@@ -419,14 +431,16 @@ void main() {
 
         expect(capturedSystemPrompt, isNotNull);
         expect(capturedSystemPrompt, contains('Markdown'));
-        final spoken = speech.spokenTexts.last;
+        final spoken = gw.dyjTtsSpokenTexts.last;
         expect(spoken.contains('*'), isFalse);
         expect(spoken.contains('#'), isFalse);
         expect(spoken.contains('-'), isFalse);
+        expect(speech.spokenTexts, ['上一段播报还没说完']);
         expect(lookupStarts.single, greaterThanOrEqualTo(2000));
 
-        // Now finish TTS at 4500ms; next voice query starting at 4300ms (with preRoll)
-        // must clamp lookup startMs >= 4500ms (_lastTtsEndedAtMs)
+        // Now simulate active phone TTS finishing at 4500ms; next voice query starting
+        // at 4300ms (with preRoll) must clamp lookup startMs >= 4500ms (_lastTtsEndedAtMs)
+        await chat.speakText('手机端测试播报');
         nowMs = 4500;
         speech.finishSpeaking();
         await Future<void>.delayed(Duration.zero);
