@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/device/card_gateway.dart';
 import '../core/store/agent_config_store.dart';
@@ -1195,6 +1196,9 @@ class _ConnectView extends StatelessWidget {
     final scanOrConnectBusy =
         store.linkState == LinkState.scanning ||
         store.linkState == LinkState.connecting;
+    final connectingDevice = store.connectingDevice;
+    final isConnectingSelected =
+        store.linkState == LinkState.connecting && connectingDevice != null;
     final bleExpired = store.isBleScanExpired;
     return Column(
       key: const Key('dev-connect'),
@@ -1431,6 +1435,12 @@ class _ConnectView extends StatelessWidget {
               ),
             ],
           )
+        else if (isConnectingSelected)
+          Text(
+            '正在连接选中的设备，请保持设备靠近手机',
+            key: const Key('dev-connecting-state'),
+            style: TextStyle(fontSize: 13, color: c.sec),
+          )
         else if (store.linkState == LinkState.connecting)
           Row(
             key: const Key('dev-connecting-state'),
@@ -1463,19 +1473,6 @@ class _ConnectView extends StatelessWidget {
                   style: TextStyle(fontSize: 13, color: c.ink),
                 ),
               ),
-            ],
-          )
-        else if (store.linkState == LinkState.reconnecting)
-          Row(
-            key: const Key('dev-reconnecting-state'),
-            children: const [
-              SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              SizedBox(width: 8),
-              Text('正在自动重连上次设备…', style: TextStyle(fontSize: 13)),
             ],
           )
         else if (bleExpired)
@@ -1511,23 +1508,40 @@ class _ConnectView extends StatelessWidget {
             key: const Key('dev-pick-hint'),
             style: TextStyle(fontSize: 13, color: c.sec),
           ),
-        for (final device in store.discovered) ...[
-          const SizedBox(height: 10),
-          _ConnectDeviceTile(
-            device: device,
-            expired: store.isDeviceScanExpired(device),
-            busy: busy,
-            onTap: () => store.connectTo(device),
+        if (isConnectingSelected || store.discovered.isNotEmpty)
+          AnimatedSize(
+            duration: const Duration(milliseconds: 240),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (isConnectingSelected) ...[
+                  const SizedBox(height: 12),
+                  _ConnectingDeviceCard(device: connectingDevice),
+                ] else ...[
+                  for (final device in store.discovered) ...[
+                    const SizedBox(height: 10),
+                    _ConnectDeviceTile(
+                      device: device,
+                      expired: store.isDeviceScanExpired(device),
+                      busy: busy,
+                      onTap: () => store.connectTo(device),
+                    ),
+                  ],
+                  if (!busy && !bleExpired) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      '没找到设备？若机身蓝灯常亮，说明正连在别的设备上，请先断连或重启设备后重扫。',
+                      key: const Key('dev-connect-troubleshoot-hint'),
+                      style: TextStyle(fontSize: 11.5, color: c.sec),
+                    ),
+                  ],
+                ],
+              ],
+            ),
           ),
-        ],
-        if (store.discovered.isNotEmpty && !busy && !bleExpired) ...[
-          const SizedBox(height: 10),
-          Text(
-            '没找到设备？若机身蓝灯常亮，说明正连在别的设备上，请先断连或重启设备后重扫。',
-            key: const Key('dev-connect-troubleshoot-hint'),
-            style: TextStyle(fontSize: 11.5, color: c.sec),
-          ),
-        ],
         const SizedBox(height: 16),
         if (bleExpired) ...[
           FilledButton(
@@ -1609,7 +1623,14 @@ class _ConnectDeviceTile extends StatelessWidget {
       enabled: !disabled,
       child: InkWell(
         key: Key('dev-item-${device.id}'),
-        onTap: disabled ? null : onTap,
+        onTap: disabled
+            ? null
+            : () {
+                unawaited(
+                  HapticFeedback.selectionClick().catchError((Object _) {}),
+                );
+                onTap();
+              },
         borderRadius: BorderRadius.circular(10),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -1702,6 +1723,243 @@ class _ConnectDeviceTile extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 选中设备后立刻放大并聚焦的连接中主卡：高亮边框 + 扩散雷达波纹 + 扫描进度条。
+class _ConnectingDeviceCard extends StatelessWidget {
+  const _ConnectingDeviceCard({required this.device});
+
+  final CardDevice device;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    final accent = c.info;
+    return TweenAnimationBuilder<double>(
+      key: Key('dev-connecting-card-${device.id}'),
+      tween: Tween<double>(begin: 0.94, end: 1.0),
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutBack,
+      builder: (context, scale, child) => Transform.scale(
+        scale: scale,
+        alignment: Alignment.center,
+        child: child,
+      ),
+      child: Container(
+        key: Key('dev-item-${device.id}'),
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: c.isDark ? 0.14 : 0.07),
+          border: Border.all(
+            color: accent.withValues(alpha: 0.65),
+            width: 1.5,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: accent.withValues(alpha: c.isDark ? 0.18 : 0.10),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                _ConnectingRadarIcon(size: 46, color: accent),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          DeviceKindBadge(
+                            key: Key('dev-kind-${device.id}'),
+                            kind: device.deviceKind,
+                            label: device.modelLabel,
+                          ),
+                          if (device.systemConnected)
+                            Container(
+                              key: Key('dev-sys-conn-${device.id}'),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: c.isDark
+                                    ? const Color(0xFF1E3A5F)
+                                    : const Color(0xFFE8F2FF),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                '已连本机',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: c.isDark
+                                      ? const Color(0xFF93C5FD)
+                                      : const Color(0xFF1D4ED8),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        device.shortName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: c.label,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '正在建立蓝牙连接…',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                          color: accent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: accent,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                key: Key('dev-connecting-progress-${device.id}'),
+                minHeight: 3,
+                backgroundColor: accent.withValues(
+                  alpha: c.isDark ? 0.20 : 0.14,
+                ),
+                valueColor: AlwaysStoppedAnimation<Color>(accent),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 蓝牙连接脉冲雷达图标：双环交错向外扩散渐隐，强化“正在握手连接当前设备”的视觉焦点。
+class _ConnectingRadarIcon extends StatefulWidget {
+  const _ConnectingRadarIcon({
+    required this.size,
+    required this.color,
+  });
+
+  final double size;
+  final Color color;
+
+  @override
+  State<_ConnectingRadarIcon> createState() => _ConnectingRadarIconState();
+}
+
+class _ConnectingRadarIconState extends State<_ConnectingRadarIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1500),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: SizedBox(
+        width: widget.size,
+        height: widget.size,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) => CustomPaint(
+                size: Size.square(widget.size),
+                painter: _RadarRingsPainter(
+                  progress: _controller.value,
+                  color: widget.color,
+                ),
+              ),
+            ),
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: widget.color.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              alignment: Alignment.center,
+              child: RCIcon(
+                RCIconKind.bluetooth,
+                size: 17,
+                color: widget.color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RadarRingsPainter extends CustomPainter {
+  const _RadarRingsPainter({
+    required this.progress,
+    required this.color,
+  });
+
+  final double progress;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    const minR = 14.0;
+    final maxR = (size.shortestSide / 2) - 1.5;
+    for (final offset in const [0.0, 0.5]) {
+      final phase = (progress + offset) % 1.0;
+      final radius = minR + (maxR - minR) * phase;
+      final alpha = (1.0 - phase) * 0.42;
+      final paint = Paint()
+        ..color = color.withValues(alpha: alpha)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+      canvas.drawCircle(center, radius, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RadarRingsPainter oldDelegate) =>
+      oldDelegate.progress != progress || oldDelegate.color != color;
 }
 
 /// 几何自绘 loading（绕中心旋转，不用字符/基线图形防偏心）

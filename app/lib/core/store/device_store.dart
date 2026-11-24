@@ -268,6 +268,12 @@ class DeviceStore extends ChangeNotifier {
 
   LinkState linkState = LinkState.unknown;
   List<CardDevice> discovered = const [];
+  CardDevice? _connectingDevice;
+
+  /// 当前正在建立蓝牙连接的设备（仅在 `LinkState.connecting` 期间非空）。
+  CardDevice? get connectingDevice =>
+      linkState == LinkState.connecting ? _connectingDevice : null;
+
   String? linkError;
   String? connectedName;
   DeviceKind activeKind = DeviceKind.cardV2;
@@ -1084,6 +1090,7 @@ class DeviceStore extends ChangeNotifier {
         _stopScanExpiryTimer();
         _bleScanSeenAt = null;
         _scanExpiredByTimer = false;
+        _connectingDevice = null;
         linkState = LinkState.scanning;
         linkError = null;
         discovered = const [];
@@ -1107,6 +1114,7 @@ class DeviceStore extends ChangeNotifier {
               bleAuth == BluetoothAuthorization.restricted ||
               (defaultTargetPlatform == TargetPlatform.android &&
                   !bleAuth.canScan))) {
+        _connectingDevice = null;
         linkState = LinkState.disconnected;
         linkError = bleAuth.hint;
         notifyListeners();
@@ -1116,6 +1124,7 @@ class DeviceStore extends ChangeNotifier {
       _stopScanExpiryTimer();
       _bleScanSeenAt = null;
       _scanExpiredByTimer = false;
+      _connectingDevice = null;
       linkState = LinkState.scanning;
       linkError = null;
       discovered = const [];
@@ -1182,6 +1191,7 @@ class DeviceStore extends ChangeNotifier {
     _autoReconnectTarget = null;
     _stopBackgroundAutoReconnect();
     _stopScanExpiryTimer();
+    _connectingDevice = device;
     linkState = LinkState.connecting;
     linkError = null;
     _powerStatusText = '';
@@ -1212,6 +1222,7 @@ class DeviceStore extends ChangeNotifier {
             ? device.name
             : null;
       }
+      _connectingDevice = null;
       linkState = LinkState.connected;
       linkError = null;
       _applySnapshot(snapshot);
@@ -1232,6 +1243,7 @@ class DeviceStore extends ChangeNotifier {
       unawaited(_localNotifications.cancelDeviceAlert());
     } on CardException catch (e) {
       if (epoch != _epoch) return;
+      _connectingDevice = null;
       final mismatch = LegacyUpgradeMismatch.tryParse(device, e);
       if (mismatch != null) {
         linkState = LinkState.disconnected;
@@ -1249,6 +1261,7 @@ class DeviceStore extends ChangeNotifier {
       unawaited(_releaseLink());
     } on TimeoutException {
       if (epoch != _epoch) return;
+      _connectingDevice = null;
       linkState = LinkState.disconnected;
       linkError = '读取设备状态超时，请重试连接';
       _scheduleScanExpiryTimer();
@@ -1572,6 +1585,7 @@ class DeviceStore extends ChangeNotifier {
 
   Future<void> disconnectDevice() async {
     final epoch = ++_epoch;
+    _connectingDevice = null;
     _resetHeartbeatFailures();
     _phoneStandbyArmed = false;
     _pendingPhoneFailover = false;
@@ -1643,6 +1657,7 @@ class DeviceStore extends ChangeNotifier {
     cardControlsSyncing = false;
     cardControlsError = null;
     _connectedDeviceId = null;
+    _connectingDevice = null;
     devicePowerError = null;
     _powerStatusText = '';
     _hwRecordingStartedAt = null;
@@ -2406,6 +2421,7 @@ class DeviceStore extends ChangeNotifier {
     cardControlsSyncing = false;
     cardControlsError = null;
     _connectedDeviceId = null;
+    _connectingDevice = null;
     devicePowerError = null;
     _powerStatusText = '';
     final target = lostDevice ?? _lastDevice;
