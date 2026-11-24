@@ -93,6 +93,7 @@ enum DeviceKind {
       'DYJV2_',
       'REAI_VB_',
       'DYJ_',
+      'DYJ-',
       'OMI-',
       'OMI_',
       'OMI ',

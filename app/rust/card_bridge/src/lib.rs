@@ -833,7 +833,7 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
         "legacy_upgrade_connect_wifi" => out.ok(legacy_upgrade::connect_wifi(&payload).await?),
         "legacy_upgrade_run_ota" => {
             let stream_out = out;
-            match legacy_upgrade::run_ota(&|p| stream_out.progress(p)).await {
+            match legacy_upgrade::run_ota(&payload, &|p| stream_out.progress(p)).await {
                 Ok(data) => out.ok(data),
                 Err(err) => out.fail(err.message),
             }

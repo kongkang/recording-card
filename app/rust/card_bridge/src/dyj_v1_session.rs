@@ -24,9 +24,40 @@ use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
 
 pub const COMMAND_UUID: &str = "0000ff11-0000-1000-8000-00805f9b34fb";
 pub const DATA_UUID: &str = "0000ff12-0000-1000-8000-00805f9b34fb";
+pub const LEGACY_GEN1_SERVICE_UUID: &str = "0000180a-0000-1000-8000-00805f9b34fb";
+pub const LEGACY_GEN1_CHAR_UUID: &str = "00002a29-0000-1000-8000-00805f9b34fb";
+pub const LEGACY_GEN1_ALT_CHAR_UUID: &str = "0000180e-0000-1000-8000-00805f9b34fb";
 /// 订阅 notify 后到首笔写之间的最小间隔（`subscribe()` 已等蓝牙栈 CCCD ACK 返回，40ms 后立即发首包以避免落入 macOS LSTO=360ms 超时悬崖）。
 const NOTIFY_SETTLE: Duration = Duration::from_millis(40);
 const GATT_OP_TIMEOUT: Duration = Duration::from_secs(6);
+
+/// 查找最早一代（`dyj-app-v1`，v0.5.x–v0.6.12）点一机自定义通信特征（优先 `0x2A29`，回退 `0x180E`）。
+///
+/// 要求同时具备 `NOTIFY` 和写属性，避免把标准蓝牙设备信息服务（DIS）中只读的 `0x2A29` 厂商名误判成初代固件。
+pub fn find_gen1_legacy_char<'a>(
+    chars: impl IntoIterator<Item = &'a Characteristic> + Clone,
+) -> Option<Characteristic> {
+    let has_rw_notify = |c: &Characteristic| {
+        c.properties.contains(CharPropFlags::NOTIFY)
+            && (c.properties.contains(CharPropFlags::WRITE)
+                || c.properties.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE))
+    };
+    chars
+        .clone()
+        .into_iter()
+        .find(|c| {
+            c.uuid.to_string().eq_ignore_ascii_case(LEGACY_GEN1_CHAR_UUID) && has_rw_notify(c)
+        })
+        .or_else(|| {
+            chars.into_iter().find(|c| {
+                c.uuid
+                    .to_string()
+                    .eq_ignore_ascii_case(LEGACY_GEN1_ALT_CHAR_UUID)
+                    && has_rw_notify(c)
+            })
+        })
+        .cloned()
+}
 
 struct PendingMap(Mutex<HashMap<u64, mpsc::Sender<Frame>>>);
 
@@ -86,7 +117,24 @@ pub fn parse_dyj_audio_filename(name: &str) -> Option<ParsedAudioFilename> {
     })
 }
 
-/// 解析旧版固件（`< 0.8.0`）对 `BASE_INFO:{}` 的响应行中的版本号。
+fn extract_version_fields(val: &Value) -> Option<String> {
+    for target in [Some(val), val.get("data")] {
+        let Some(obj) = target else { continue };
+        for key in ["version", "versionName", "app_version", "firmwareVersion"] {
+            if let Some(s) = obj
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                return Some(s.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 解析旧版固件（`v0.7.x` `BASE_INFO:{}` 或 `v0.5/0.6.x` `infoGet(base)`）响应中的版本号。
 pub fn parse_legacy_version_from_line(line: &str) -> Option<String> {
     let trimmed = line.trim();
     let json_part = trimmed
@@ -95,15 +143,26 @@ pub fn parse_legacy_version_from_line(line: &str) -> Option<String> {
         .or_else(|| trimmed.strip_prefix("RSP:"))
         .unwrap_or(trimmed);
     let val: Value = serde_json::from_str(json_part).ok()?;
-    let ver = val
-        .get("version")
-        .or_else(|| val.get("app_version"))
-        .or_else(|| val.get("firmwareVersion"))
-        .or_else(|| val.get("data").and_then(|d| d.get("version")))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())?;
-    Some(ver.to_string())
+    if let Some(ver) = extract_version_fields(&val) {
+        return Some(ver);
+    }
+    if let Some(content) = val.get("content") {
+        match content {
+            Value::String(s) => {
+                if let Ok(inner) = serde_json::from_str::<Value>(s) {
+                    if let Some(ver) = extract_version_fields(&inner) {
+                        return Some(ver);
+                    }
+                }
+            }
+            other => {
+                if let Some(ver) = extract_version_fields(other) {
+                    return Some(ver);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// 判断收到的非标准帧是否为旧版固件（`< 0.8.0`）拒绝 `CMD:{...}` 的错误回包。
@@ -394,6 +453,15 @@ impl DyjV1Session {
         };
 
         let Some(cmd_char) = find_char(COMMAND_UUID) else {
+            if let Some(gen1_char) = find_gen1_legacy_char(&chars) {
+                log::info!(
+                    "dyj_v1_session: {name} 未找到 FF11，命中初代固件特征 ({})，探测版本后转入引导升级",
+                    gen1_char.uuid
+                );
+                let ver = Self::probe_gen1_legacy_version(&peripheral, &gen1_char).await;
+                let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
+                return Err(legacy_firmware_error(ver.as_deref()));
+            }
             let _ = tokio::time::timeout(Duration::from_secs(3), peripheral.disconnect()).await;
             return Err("未找到点一机控制特征 (FF11)，请确认设备状态".to_string());
         };
@@ -878,6 +946,70 @@ impl DyjV1Session {
             }
         }
         Ok(())
+    }
+
+    async fn probe_gen1_legacy_version(
+        peripheral: &Peripheral,
+        ch: &Characteristic,
+    ) -> Option<String> {
+        let Ok(Ok(mut stream)) =
+            tokio::time::timeout(Duration::from_secs(4), peripheral.notifications()).await
+        else {
+            return None;
+        };
+        match tokio::time::timeout(GATT_OP_TIMEOUT, peripheral.subscribe(ch)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                log::warn!(
+                    "dyj_v1_session: 初代特征 ({}) subscribe 返回错误（继续尽力探测）: {e}",
+                    ch.uuid
+                );
+            }
+            Err(_) => {
+                log::warn!("dyj_v1_session: 初代特征 ({}) subscribe 超时", ch.uuid);
+                return None;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(120)).await;
+
+        let write_type = if ch.properties.contains(CharPropFlags::WRITE) {
+            WriteType::WithResponse
+        } else {
+            WriteType::WithoutResponse
+        };
+        let req_bytes = crate::legacy_upgrade::build_gen1_request(
+            "infoGet",
+            &json!({ "key": "base" }),
+        );
+        if !matches!(
+            tokio::time::timeout(Duration::from_secs(4), peripheral.write(ch, &req_bytes, write_type))
+                .await,
+            Ok(Ok(()))
+        ) {
+            return None;
+        }
+
+        let mut assembler = crate::legacy_upgrade::Gen1JsonAssembler::default();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(1800);
+        loop {
+            let rem = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if rem.is_zero() {
+                return None;
+            }
+            match tokio::time::timeout(rem, stream.next()).await {
+                Ok(Some(note)) => {
+                    if note.uuid != ch.uuid {
+                        continue;
+                    }
+                    for obj_str in assembler.feed(&note.value) {
+                        if let Some(ver) = parse_legacy_version_from_line(&obj_str) {
+                            return Some(ver);
+                        }
+                    }
+                }
+                _ => return None,
+            }
+        }
     }
 
     async fn probe_legacy_version(
@@ -1605,6 +1737,35 @@ mod tests {
         let msg = legacy_firmware_error(Some("0.7.2"));
         assert!(msg.starts_with("LEGACY_UPGRADE_REQUIRED|dyj_v1|0.7.2|0.8.12|"));
         assert!(msg.contains("v0.7.2"));
+
+        let gen1_line = r#"{"name":"infoGet","content":{"key":"base","data":{"versionName":"0.6.12","versionCode":612}}}"#;
+        assert_eq!(parse_legacy_version_from_line(gen1_line), Some("0.6.12".to_string()));
+
+        let gen1_str_content = r#"{"name":"infoGet","content":"{\"key\":\"base\",\"data\":{\"versionName\":\"0.5.14\"}}"}"#;
+        assert_eq!(
+            parse_legacy_version_from_line(gen1_str_content),
+            Some("0.5.14".to_string())
+        );
+
+        let dis_readonly = Characteristic {
+            uuid: uuid::Uuid::parse_str(LEGACY_GEN1_CHAR_UUID).unwrap(),
+            service_uuid: uuid::Uuid::parse_str(LEGACY_GEN1_SERVICE_UUID).unwrap(),
+            properties: CharPropFlags::READ,
+            descriptors: Default::default(),
+        };
+        let gen1_char = Characteristic {
+            uuid: uuid::Uuid::parse_str(LEGACY_GEN1_CHAR_UUID).unwrap(),
+            service_uuid: uuid::Uuid::parse_str(LEGACY_GEN1_SERVICE_UUID).unwrap(),
+            properties: CharPropFlags::READ | CharPropFlags::WRITE | CharPropFlags::NOTIFY,
+            descriptors: Default::default(),
+        };
+        assert!(find_gen1_legacy_char(&[dis_readonly.clone()]).is_none());
+        assert_eq!(
+            find_gen1_legacy_char(&[dis_readonly, gen1_char.clone()])
+                .unwrap()
+                .uuid,
+            gen1_char.uuid
+        );
     }
 
     #[test]
