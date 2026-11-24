@@ -2,12 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- 微信登录 Universal Link 回调（https://app.cn.reai.com/link/）；
-	     对应 AASA 见 docs/RELEASE.md「微信登录联调」节。
+	<!-- 微信登录 Universal Link 回调（https://ai-card.app.reai.com/link/）；
+	     AASA 位于 https://ai-card.app.reai.com/.well-known/apple-app-site-association，见 docs/RELEASE.md「微信登录配置」节。
 	     前置：Apple Developer 后台对应 App ID 需开启 Associated Domains capability。 -->
 	<key>com.apple.developer.associated-domains</key>
 	<array>
-		<string>applinks:app.cn.reai.com</string>
+		<string>applinks:ai-card.app.reai.com</string>
 	</array>
 	<!-- 已有 HealthKit。临床病历需要 com.apple.developer.healthkit.access，
 	     当前描述文件没有这项，不要在这里补。后台静默唤醒还需要门户里的

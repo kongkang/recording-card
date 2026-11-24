@@ -27,7 +27,6 @@ class OAuthConfig {
     required this.tokenUrl,
     required this.profileUrl,
     required this.revokeUrl,
-    this.deleteAccountUrl,
     this.socialProvidersUrl,
     this.socialProvidersOverride,
     required this.clientId,
@@ -53,8 +52,9 @@ class OAuthConfig {
     'github',
   };
 
-  /// 微信 Universal Link（与 app.cn.reai.com 的 AASA `/link/*` 路径绑定）。
-  static const String defaultWechatUniversalLink = 'https://app.cn.reai.com/link/';
+  /// 微信 Universal Link（与录音卡专属域名 ai-card.app.reai.com 的 AASA `/link/*` 路径绑定，与外脑域名彻底隔离）。
+  static const String defaultWechatUniversalLink =
+      'https://ai-card.app.reai.com/link/';
 
   /// 微信扩展 grant 的固定协议常量（与后端约定，不随环境变化）。
   static const String wechatGrantType =
@@ -93,25 +93,19 @@ class OAuthConfig {
       return origin == null ? null : '$origin$path';
     }
 
-    final deleteAccountUrl = _resolveUrl(
-      hasDartDefine: bool.hasEnvironment('RC_ACCOUNT_DELETE_URL'),
-      dartDefineValue: const String.fromEnvironment('RC_ACCOUNT_DELETE_URL'),
-      fallback: sibling('/account'),
-    );
-
     return OAuthConfig(
       baseUrl: base,
       authUrl: authUrl,
       tokenUrl: tokenUrl,
       profileUrl: sibling('/profile'),
       revokeUrl: sibling('/oauth/revoke'),
-      deleteAccountUrl: deleteAccountUrl,
       socialProvidersUrl: sibling('/auth/social/providers'),
       socialProvidersOverride: _resolveSocialProvidersOverride(),
       clientId: cfg.normalizedOAuthClientId,
       redirectUri: redirect,
       scope: scope,
       wechatAppId: _resolveWechatAppId(),
+      wechatUniversalLink: _resolveWechatUniversalLink(),
     );
   }
 
@@ -149,6 +143,33 @@ class OAuthConfig {
     return '';
   }
 
+  /// 微信 Universal Link：`RC_WECHAT_UNIVERSAL_LINK` 覆盖（须为合法 https 且无 query/fragment），
+  /// 缺省或非法回落 [defaultWechatUniversalLink]。
+  static String _resolveWechatUniversalLink() {
+    if (!const bool.hasEnvironment('RC_WECHAT_UNIVERSAL_LINK')) {
+      return defaultWechatUniversalLink;
+    }
+    return normalizeWechatUniversalLink(
+      const String.fromEnvironment('RC_WECHAT_UNIVERSAL_LINK'),
+    );
+  }
+
+  /// 校验并规范化微信 Universal Link（须为干净 `https` 地址且补齐尾部 `/`；非法值回落默认）。
+  static String normalizeWechatUniversalLink(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return defaultWechatUniversalLink;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host.isEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      return defaultWechatUniversalLink;
+    }
+    final base = trimmed.replaceFirst(RegExp(r'/+$'), '');
+    return '$base/';
+  }
+
   /// 当前编译产物使用的配置（全局单例语义，测试请直接 new 自己的实例）。
   static OAuthConfig get current => OAuthConfig.fromEnvironment();
 
@@ -166,9 +187,6 @@ class OAuthConfig {
 
   /// 撤销端点（登出时尽力而为）；null = 未配置。
   final String? revokeUrl;
-
-  /// 账号注销端点（`DELETE /account`）；null = 未配置。
-  final String? deleteAccountUrl;
 
   /// 社会化登录渠道公开查询端点（`/auth/social/providers`）；null = 未配置。
   final String? socialProvidersUrl;
@@ -233,7 +251,6 @@ class OAuthConfig {
     String? tokenUrl,
     String? profileUrl,
     String? revokeUrl,
-    String? deleteAccountUrl,
     String? socialProvidersUrl,
     Set<String>? socialProvidersOverride,
     String? clientId,
@@ -253,7 +270,6 @@ class OAuthConfig {
       tokenUrl: tokenUrl ?? this.tokenUrl,
       profileUrl: profileUrl ?? this.profileUrl,
       revokeUrl: revokeUrl ?? this.revokeUrl,
-      deleteAccountUrl: deleteAccountUrl ?? this.deleteAccountUrl,
       socialProvidersUrl: socialProvidersUrl ?? this.socialProvidersUrl,
       socialProvidersOverride:
           socialProvidersOverride ?? this.socialProvidersOverride,

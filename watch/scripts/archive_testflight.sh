@@ -57,8 +57,8 @@ if [[ "$WECHAT_CFG_ID" == wx* ]]; then
   echo "    注入微信 AppID (--dart-define=RC_WECHAT_APP_ID=$WECHAT_CFG_ID)"
   DART_DEFINE_ARGS+=("--dart-define=RC_WECHAT_APP_ID=$WECHAT_CFG_ID")
 fi
-if [ -n "${RC_ACCOUNT_DELETE_URL:-}" ]; then
-  DART_DEFINE_ARGS+=("--dart-define=RC_ACCOUNT_DELETE_URL=$RC_ACCOUNT_DELETE_URL")
+if [ -n "${RC_WECHAT_UNIVERSAL_LINK:-}" ]; then
+  DART_DEFINE_ARGS+=("--dart-define=RC_WECHAT_UNIVERSAL_LINK=$RC_WECHAT_UNIVERSAL_LINK")
 fi
 if [ -n "${RC_SOCIAL_PROVIDERS:-}" ]; then
   DART_DEFINE_ARGS+=("--dart-define=RC_SOCIAL_PROVIDERS=$RC_SOCIAL_PROVIDERS")

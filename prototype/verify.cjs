@@ -1141,11 +1141,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$('[data-testid="health-to-territory"]'), '目标版保留 GPS 圈地 TBC');
   assert(await p.$('[data-testid="health-to-bio-detail"]'), '目标版保留生理信号 TBC');
   await p.click('[data-testid="crumb-back"]');
-  await p.$eval('[data-testid="account-delete-entry"]', x => x.scrollIntoView({ block: 'center' }));
-  await p.click('[data-testid="account-delete-entry"]');
-  assert(await p.$eval('#account-del-wrap', x => x.classList.contains('show')));
-  await p.click('[data-testid="account-delete-cancel"]');
-  assert(!(await p.$eval('#account-del-wrap', x => x.classList.contains('show'))));
+  assert.equal(await p.$('[data-testid="account-delete-entry"]'), null, 'index.html 不应提供注销账号入口');
 
   // 当前版本基线（current.html · App 已有功能）：零 TBC 标记、保持两栏底栏、无日出 AI 与目标版新项
   const pCur = await b.newPage();
@@ -1208,6 +1204,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$eval('[data-testid="sum-fulltext-body"]', x => x.innerText.trim().length > 10));
   assert.equal(await pCur.$('[data-testid="sum-mark-speaker-btn"]'), null, '全文直接点击说话人命名，不再展示复杂按钮');
   assert.equal(await pCur.$('[data-testid="nc-ft-merge"]'), null);
+  assert.equal(await pCur.$('[data-testid="account-delete-entry"]'), null, 'current.html 不应提供注销账号入口');
   // 全文同说话人连续发言应合并为单段整段（e2 共 5 条 dlg，首两条均为说话人 2，合并后为 4 组）
   assert.equal(await pCur.$$eval('#sec-ft [data-testid^="sum-ft-group-e2-"]', e => e.length), 4);
   assert(await pCur.$eval('[data-testid="sum-ft-group-e2-0"]', x => x.innerText.includes('偏慢') && x.innerText.includes('两三秒')));

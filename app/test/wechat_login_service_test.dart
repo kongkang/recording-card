@@ -9,6 +9,7 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:recording_card/services/auth/oauth_config.dart';
 import 'package:recording_card/services/wechat_login/wechat_login_service.dart';
 
 class _FakeWechatSdk implements WechatSdkAdapter {
@@ -109,7 +110,7 @@ void main() {
       // requestAuth 已发出（listener 已挂、state 已生成）
       await Future<void>.delayed(Duration.zero);
       expect(sdk.lastAppId, 'wx1234567890abcdef');
-      expect(sdk.lastUniversalLink, 'https://app.cn.reai.com/link/');
+      expect(sdk.lastUniversalLink, 'https://ai-card.app.reai.com/link/');
       expect(sdk.lastScope, 'snsapi_userinfo');
       expect(sdk.lastState, hasLength(64));
       expect(sdk.lastState, matches(RegExp(r'^[0-9a-f]{64}$')));
@@ -291,6 +292,33 @@ void main() {
     test('WechatLoginService 默认适配器同样懒创建（构造无 Binding 不炸）', () {
       final service = WechatLoginService(wechatAppId: 'wx1234567890abcdef');
       expect(service.isConfigured, isTrue);
+    });
+
+    test('默认微信 Universal Link 使用录音卡独立域名并规范化校验覆盖值', () {
+      expect(
+        OAuthConfig.defaultWechatUniversalLink,
+        'https://ai-card.app.reai.com/link/',
+      );
+      expect(
+        OAuthConfig.fromEnvironment().wechatUniversalLink,
+        'https://ai-card.app.reai.com/link/',
+      );
+      expect(
+        OAuthConfig.normalizeWechatUniversalLink('https://example.com/link'),
+        'https://example.com/link/',
+      );
+      expect(
+        OAuthConfig.normalizeWechatUniversalLink('  https://example.com/link///  '),
+        'https://example.com/link/',
+      );
+      expect(
+        OAuthConfig.normalizeWechatUniversalLink('http://insecure.example.com/link/'),
+        'https://ai-card.app.reai.com/link/',
+      );
+      expect(
+        OAuthConfig.normalizeWechatUniversalLink('https://example.com/link/?a=1'),
+        'https://ai-card.app.reai.com/link/',
+      );
     });
   });
 }

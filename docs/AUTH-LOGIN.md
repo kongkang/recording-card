@@ -54,6 +54,7 @@
 | `RC_OAUTH_CLIENT_ID` | `58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo` | OVS OAuth 公共客户端 ID（与 `reai_mobile_app` 共用） |
 | `RC_OAUTH_REDIRECT` | `reai-mobile://callback` | OAuth 授权完成回调 URI（已在 iOS `Info.plist` / Android `AndroidManifest.xml` 注册） |
 | `RC_WECHAT_APP_ID` | 空（未配置） | 微信开放平台移动应用 `AppID`（必须以 `wx` 开头；兼容回退 `WECHAT_APP_ID`） |
+| `RC_WECHAT_UNIVERSAL_LINK` | `https://ai-card.app.reai.com/link/` | 微信登录 Universal Link（须为干净 `https` 地址；需与 `Runner.entitlements` 及微信开放平台保持一致） |
 | `RC_SOCIAL_PROVIDERS` | 未定义（走线上 `/auth/social/providers` 探测） | 联调覆盖社会化登录启用列表，例如 `--dart-define=RC_SOCIAL_PROVIDERS=apple,google` |
 
 ---
@@ -62,15 +63,17 @@
 
 微信开放平台移动应用「录音卡」（`AppID: wx929549126f19f795`，已获「微信登录」能力）审核已通过，客户端已完成如下对齐：
 
-1. **iOS URL Scheme & 编译期配置（已写入）**
+1. **iOS URL Scheme、Universal Link 与编译期配置（已写入）**
    `app/ios/Flutter/Wechat.xcconfig` 已写入正式 `AppID`：
    ```xcconfig
    WECHAT_APP_ID=wx929549126f19f795
    ```
+   `app/ios/Runner/Runner.entitlements` 已声明录音卡专属域名 `applinks:ai-card.app.reai.com`，Dart 侧默认 `OAuthConfig.defaultWechatUniversalLink = 'https://ai-card.app.reai.com/link/'`（支持 `--dart-define=RC_WECHAT_UNIVERSAL_LINK=...` 覆盖）。
+   > **为什么必须与 `app.cn.reai.com/link/` 隔离**：`app.cn.reai.com` 属于外脑 App（`35N5SGDE59.com.reai.reaiApp`），同一台手机同时安装外脑与录音卡时，iOS 不支持两个 App 共用同一 `applinks` 域名与 `/link/*` 路径（永远只路由给排在前面的已安装 App，导致微信授权回跳时错打开外脑 App）。
    > **不变式**：`Wechat.xcconfig` 中的 `WECHAT_APP_ID` 必须与构建参数 `--dart-define=RC_WECHAT_APP_ID=wx929549126f19f795` 完全一致（`watch/scripts/archive_testflight.sh` 会自动读取并注入），否则微信客户端无法跳回 App。`AppSecret` 仅配置在外脑后端，严禁写入客户端仓库。
-2. **线上仍需完成的两项服务端配置（未完成前真机授权会失败）**
-   - **AASA 补全**：`Runner.entitlements` 已配置 `applinks:app.cn.reai.com`（Universal Link `https://app.cn.reai.com/link/`），需在 `https://app.cn.reai.com/.well-known/apple-app-site-association`（及 `/apple-app-site-association`）的 `details` 数组中补充 `35N5SGDE59.com.reai.recordingcard`（`/link/*`）；目前线上文件仅含 `35N5SGDE59.com.reai.reaiApp`。
-   - **后端凭据**：在微信开放平台生成 `wx929549126f19f795` 的 `AppSecret`，并配入外脑后端（`block2-api.wainao.chat`）`POST /oauth/token` 微信扩展 grant 映射表。
+2. **上线端到端生效仍需完成的两项外部配置（未完成前 iOS 真机授权会失败或无法回跳）**
+   - **部署 `ai-card.app.reai.com` 的 AASA 与 `/link/` 着陆页**：将仓库内 `site/.well-known/apple-app-site-association`、`site/apple-app-site-association`（仅包含 `35N5SGDE59.com.reai.recordingcard` 与 `/link/*`）及 `site/link/index.html` 部署到 `ai-card.app.reai.com`，并确认 Nginx 对 `/.well-known/apple-app-site-association` 与 `/apple-app-site-association` 返回 `HTTP 200` 且 `Content-Type: application/json`（不可回落到 SPA `index.html`）。
+   - **微信开放平台更新 Universal Links 与确认后端密钥**：在微信开放平台（`open.weixin.qq.com`，AppID `wx929549126f19f795`）将 iPhone/iPad 的 Universal Links 从 `https://app.cn.reai.com/link/` 修改为 `https://ai-card.app.reai.com/link/`，并确认 `AppSecret` 已配入外脑后端（`block2-api.wainao.chat`）`POST /oauth/token` 微信扩展 grant 映射表。
 3. **带参构建或真机安装**
    ```bash
    cd app

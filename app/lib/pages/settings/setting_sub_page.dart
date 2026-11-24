@@ -320,7 +320,6 @@ class SettingSubPage extends StatelessWidget {
                               controller: healthSignals!,
                             ),
                     'data' => _DataManagementSubBody(
-                      authService: authService,
                       device: device,
                       healthSignals: healthSignals,
                       onClearAllLocalData: onClearAllLocalData,
@@ -4752,16 +4751,14 @@ class _DeveloperCleanBody extends StatelessWidget {
   }
 }
 
-/// 数据管理 —— 清空本机全部数据（保留模型）与注销账号全流程入口。
+/// 数据管理 —— 清空本机全部数据（保留模型）全流程入口。
 class _DataManagementSubBody extends StatefulWidget {
   const _DataManagementSubBody({
-    this.authService,
     this.device,
     this.healthSignals,
     this.onClearAllLocalData,
   });
 
-  final AuthService? authService;
   final DeviceStore? device;
   final HealthSignalController? healthSignals;
   final Future<void> Function()? onClearAllLocalData;
@@ -4796,23 +4793,6 @@ class _DataManagementSubBodyState extends State<_DataManagementSubBody> {
     }
   }
 
-  Future<void> _handleDeleteAccount() async {
-    if (_busy || _dialogOpen) return;
-    _dialogOpen = true;
-    try {
-      await runDeleteAccountFlow(
-        context,
-        authService: widget.authService,
-        onClearAllLocalData: widget.onClearAllLocalData,
-        device: widget.device,
-        healthSignals: widget.healthSignals,
-        onBusyChanged: _setBusy,
-      );
-    } finally {
-      _dialogOpen = false;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
@@ -4820,7 +4800,7 @@ class _DataManagementSubBodyState extends State<_DataManagementSubBody> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          '录音文件、转写文本、总结文档及健康/位置记录默认仅存于本机。你可以在此随时清空本机数据，或注销并彻底删除账号。',
+          '录音文件、转写文本、总结文档及健康/位置记录默认仅存于本机。你可以在此随时清空本机数据；如需退出云端账号，请前往「设置 → 云端账号授权 → 退出登录」。',
           style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
         ),
         const SizedBox(height: 18),
@@ -4872,59 +4852,6 @@ class _DataManagementSubBodyState extends State<_DataManagementSubBody> {
                       )
                     : const Icon(Icons.delete_sweep_outlined, size: 18),
                 label: const Text('清空本机全部数据'),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 18),
-        const _SubSectionLabel('账号注销'),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: c.card,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: c.sep),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                '注销账号',
-                style: TextStyle(
-                  fontSize: 14.5,
-                  fontWeight: FontWeight.w700,
-                  color: c.danger,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '提交账号注销申请并立即清空本机全部数据与登录凭据；服务端历史处理数据将在 15 天内彻底删除且不可恢复。',
-                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
-              ),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                key: const Key('delete-account-btn'),
-                onPressed: _busy ? null : () => unawaited(_handleDeleteAccount()),
-                style: FilledButton.styleFrom(
-                  backgroundColor: c.danger,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size.fromHeight(44),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                icon: _busy
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.person_off_outlined, size: 18),
-                label: const Text('注销账号'),
               ),
             ],
           ),

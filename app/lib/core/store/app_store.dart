@@ -4748,7 +4748,7 @@ class AppStore extends ChangeNotifier {
     ];
   }
 
-  /// 注销账号或清空本机数据时彻底擦除全部本地录音、分段、总结、声纹与路由状态。
+  /// 清空本机数据时彻底擦除全部本地录音、分段、总结、声纹与路由状态。
   ///
   /// 刻意**保留**已下载的离线语音与声纹模型（`models/`），避免用户再次初始化时重复下载 260MB+ 文件。
   Future<void> wipeAllLocalData() async {
