@@ -42,7 +42,7 @@ use objc2_core_bluetooth::{
 };
 use objc2_foundation::{NSArray, NSData, NSMutableDictionary, NSNumber, NSString, NSUUID};
 use std::{
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{BTreeSet, HashMap, VecDeque},
     ffi::{CString, c_void},
     fmt::{self, Debug, Formatter},
     ops::Deref,
@@ -282,7 +282,7 @@ pub enum CoreBluetoothReply {
     ReadRssi(i16),
     Connected,
     ServicesDiscovered(BTreeSet<Service>),
-    Peripherals(Vec<Uuid>),
+    PeripheralsMeta(Vec<(Uuid, Option<String>, Vec<Uuid>)>),
     State(CBPeripheralState),
     Ok,
     Err(String),
@@ -1221,37 +1221,71 @@ impl CoreBluetoothInternal {
         }
     }
 
-    async fn retrieve_connected_peripherals(
-        &mut self,
+    fn collect_connected_peripherals_into(
+        &self,
         services: Vec<Uuid>,
-        fut: CoreBluetoothReplyStateShared,
+        grouped: &mut HashMap<Uuid, (Retained<CBPeripheral>, Option<String>, Vec<Uuid>)>,
+        order: &mut Vec<Uuid>,
     ) {
-        if services.is_empty() {
-            fut.lock()
-                .unwrap()
-                .set_reply(CoreBluetoothReply::Peripherals(Vec::new()));
+        if services.is_empty() || unsafe { self.manager.state() } != CBManagerState::PoweredOn {
             return;
         }
-        let service_uuids: Vec<Retained<CBUUID>> =
-            services.into_iter().map(uuid_to_cbuuid).collect();
-        let array = NSArray::from_vec(service_uuids);
-        let connected = unsafe { self.manager.retrieveConnectedPeripheralsWithServices(&array) };
-        let mut found_uuids = Vec::new();
-        for cbperipheral in connected {
-            let id = unsafe { cbperipheral.identifier() };
-            let uuid = nsuuid_to_uuid(&id);
-            let local_name = unsafe { cbperipheral.name() }.map(|n| n.to_string());
+        for svc in services {
+            let array = NSArray::from_vec(vec![uuid_to_cbuuid(svc)]);
+            let connected = unsafe { self.manager.retrieveConnectedPeripheralsWithServices(&array) };
+            for cbperipheral in connected {
+                let id = unsafe { cbperipheral.identifier() };
+                let uuid = nsuuid_to_uuid(&id);
+                let local_name = unsafe { cbperipheral.name() }.map(|n| n.to_string());
+                if let Some((_, existing_name, svcs)) = grouped.get_mut(&uuid) {
+                    if existing_name.is_none() && local_name.is_some() {
+                        *existing_name = local_name;
+                    }
+                    if !svcs.contains(&svc) {
+                        svcs.push(svc);
+                    }
+                } else {
+                    order.push(uuid);
+                    grouped.insert(uuid, (cbperipheral, local_name, vec![svc]));
+                }
+            }
+        }
+    }
+
+    async fn finalize_retrieved_peripherals(
+        &mut self,
+        mut grouped: HashMap<Uuid, (Retained<CBPeripheral>, Option<String>, Vec<Uuid>)>,
+        order: Vec<Uuid>,
+    ) -> Vec<(Uuid, Option<String>, Vec<Uuid>)> {
+        let mut meta = Vec::with_capacity(order.len());
+        for uuid in order {
+            let Some((cbperipheral, local_name, svcs)) = grouped.remove(&uuid) else {
+                continue;
+            };
             if unsafe { cbperipheral.state() } == CBPeripheralState::Connected {
                 let proto: &ProtocolObject<dyn CBPeripheralDelegate> =
                     ProtocolObject::from_ref(&*self.delegate);
                 unsafe { cbperipheral.setDelegate(Some(proto)) };
             }
-            self.on_discovered_peripheral(cbperipheral, local_name).await;
-            found_uuids.push(uuid);
+            self.on_discovered_peripheral(cbperipheral, local_name.clone())
+                .await;
+            meta.push((uuid, local_name, svcs));
         }
+        meta
+    }
+
+    async fn retrieve_connected_peripherals(
+        &mut self,
+        services: Vec<Uuid>,
+        fut: CoreBluetoothReplyStateShared,
+    ) {
+        let mut grouped = HashMap::new();
+        let mut order = Vec::new();
+        self.collect_connected_peripherals_into(services, &mut grouped, &mut order);
+        let meta = self.finalize_retrieved_peripherals(grouped, order).await;
         fut.lock()
             .unwrap()
-            .set_reply(CoreBluetoothReply::Peripherals(found_uuids));
+            .set_reply(CoreBluetoothReply::PeripheralsMeta(meta));
     }
 
     async fn disconnect_peripheral(
@@ -1300,9 +1334,9 @@ impl CoreBluetoothInternal {
         services: Vec<Uuid>,
         fut: CoreBluetoothReplyStateShared,
     ) {
-        let mut seen = HashSet::new();
-        let mut ordered = Vec::new();
-        let mut found: Vec<Retained<CBPeripheral>> = Vec::new();
+        let mut grouped: HashMap<Uuid, (Retained<CBPeripheral>, Option<String>, Vec<Uuid>)> =
+            HashMap::new();
+        let mut order: Vec<Uuid> = Vec::new();
 
         if !identifiers.is_empty() {
             let ns_uuids: Vec<Retained<NSUUID>> = identifiers
@@ -1318,41 +1352,21 @@ impl CoreBluetoothInternal {
                 for p in peripherals {
                     let id = unsafe { p.identifier() };
                     let uuid = nsuuid_to_uuid(&id);
-                    if seen.insert(uuid) {
-                        ordered.push(uuid);
+                    let local_name = unsafe { p.name() }.map(|n| n.to_string());
+                    if !grouped.contains_key(&uuid) {
+                        order.push(uuid);
+                        grouped.insert(uuid, (p.retain(), local_name, Vec::new()));
                     }
-                    found.push(p.retain());
                 }
             }
         }
 
-        if !services.is_empty() {
-            let cbuuids: Vec<Retained<CBUUID>> = services.into_iter().map(uuid_to_cbuuid).collect();
-            let arr = NSArray::from_vec(cbuuids);
-            let peripherals =
-                unsafe { self.manager.retrieveConnectedPeripheralsWithServices(&arr) };
-            for p in peripherals {
-                let id = unsafe { p.identifier() };
-                let uuid = nsuuid_to_uuid(&id);
-                if seen.insert(uuid) {
-                    ordered.push(uuid);
-                }
-                found.push(p.retain());
-            }
-        }
-
-        for p in found {
-            if unsafe { p.state() } == CBPeripheralState::Connected {
-                unsafe {
-                    p.setDelegate(Some(ProtocolObject::from_ref(&*self.delegate)));
-                }
-            }
-            self.on_discovered_peripheral(p, None).await;
-        }
+        self.collect_connected_peripherals_into(services, &mut grouped, &mut order);
+        let meta = self.finalize_retrieved_peripherals(grouped, order).await;
 
         fut.lock()
             .unwrap()
-            .set_reply(CoreBluetoothReply::Peripherals(ordered));
+            .set_reply(CoreBluetoothReply::PeripheralsMeta(meta));
     }
 
     fn is_connected(&mut self, peripheral_uuid: Uuid, fut: CoreBluetoothReplyStateShared) {

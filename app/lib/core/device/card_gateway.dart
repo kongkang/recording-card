@@ -483,7 +483,38 @@ class CardDevice {
     this.kind,
     this.displayModel,
     this.capabilities,
+    this.systemConnected = false,
   });
+
+  factory CardDevice.fromJson(Map<String, dynamic> d) {
+    final name = (d['name'] as String?) ?? '录音卡';
+    // 调试直连模式：桥对未识别设备上报 deviceKind=unknown，这里按名字兜底、
+    // 兜不上则保持 null（列表无过滤直通展示，连接前再由驱动按需识别）。
+    final rawKind = d['deviceKind'] as String?;
+    final kind = rawKind == 'unknown'
+        ? DeviceKind.fromBleName(name)
+        : DeviceKind.fromCode(rawKind, fallbackName: name);
+    final capsMap = d['capabilities'] is Map<String, dynamic>
+        ? d['capabilities'] as Map<String, dynamic>
+        : null;
+    final lastSeenAtMs = (d['lastSeenAtMs'] as num?)?.toInt();
+    return CardDevice(
+      id: (d['id'] as String?) ?? '',
+      name: name,
+      rssi: (d['rssi'] as num?)?.toInt(),
+      lastSeenAt: lastSeenAtMs != null && lastSeenAtMs > 0
+          ? DateTime.fromMillisecondsSinceEpoch(lastSeenAtMs)
+          : null,
+      kind: kind,
+      displayModel:
+          (d['displayModel'] as String?) ?? kind?.displayModel ?? 'BLE 设备',
+      capabilities: HardwareCapabilities.fromJson(
+        capsMap,
+        fallbackKind: kind ?? DeviceKind.cardV2,
+      ),
+      systemConnected: d['systemConnected'] == true,
+    );
+  }
 
   final String id;
   final String name;
@@ -492,6 +523,7 @@ class CardDevice {
   final DeviceKind? kind;
   final String? displayModel;
   final HardwareCapabilities? capabilities;
+  final bool systemConnected;
 
   DeviceKind get deviceKind =>
       kind ?? DeviceKind.fromBleName(name) ?? DeviceKind.cardV2;
@@ -1806,35 +1838,7 @@ class RealCardGateway implements CardGateway {
     final list = (json['data'] as List<dynamic>? ?? const []);
     return list
         .whereType<Map<String, dynamic>>()
-        .map((d) {
-          final name = (d['name'] as String?) ?? '录音卡';
-          // 调试直连模式：桥对未识别设备上报 deviceKind=unknown，这里按名字兜底、
-          // 兜不上则保持 null（列表无过滤直通展示，连接前再由驱动按需识别）。
-          final rawKind = d['deviceKind'] as String?;
-          final kind =
-              rawKind == 'unknown'
-              ? DeviceKind.fromBleName(name)
-              : DeviceKind.fromCode(rawKind, fallbackName: name);
-          final capsMap = d['capabilities'] is Map<String, dynamic>
-              ? d['capabilities'] as Map<String, dynamic>
-              : null;
-          final lastSeenAtMs = (d['lastSeenAtMs'] as num?)?.toInt();
-          return CardDevice(
-            id: (d['id'] as String?) ?? '',
-            name: name,
-            rssi: (d['rssi'] as num?)?.toInt(),
-            lastSeenAt: lastSeenAtMs != null && lastSeenAtMs > 0
-                ? DateTime.fromMillisecondsSinceEpoch(lastSeenAtMs)
-                : null,
-            kind: kind,
-            displayModel:
-                (d['displayModel'] as String?) ?? kind?.displayModel ?? 'BLE 设备',
-            capabilities: HardwareCapabilities.fromJson(
-              capsMap,
-              fallbackKind: kind ?? DeviceKind.cardV2,
-            ),
-          );
-        })
+        .map(CardDevice.fromJson)
         .where((d) => d.id.isNotEmpty)
         .toList();
   }

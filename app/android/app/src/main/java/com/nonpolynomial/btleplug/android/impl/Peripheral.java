@@ -8,6 +8,7 @@ import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
+import android.os.Build;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -52,6 +53,23 @@ class Peripheral {
     }
 
     @SuppressLint("MissingPermission")
+    private void closeGattLocked() {
+        this.connected = false;
+        BluetoothGatt g = this.gatt;
+        this.gatt = null;
+        if (g != null) {
+            try {
+                g.disconnect();
+            } catch (Throwable ignored) {
+            }
+            try {
+                g.close();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
     public Future<Void> connect() {
         SimpleFuture<Void> future = new SimpleFuture<>();
         synchronized (this) {
@@ -62,11 +80,15 @@ class Peripheral {
                         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
                             Peripheral.this.asyncWithFuture(future, () -> {
                                 if (status != BluetoothGatt.GATT_SUCCESS) {
+                                    Peripheral.this.closeGattLocked();
                                     throw new NotConnectedException();
                                 }
 
                                 if (newState == BluetoothGatt.STATE_CONNECTED) {
                                     Peripheral.this.wakeCommand(future, null);
+                                } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
+                                    Peripheral.this.closeGattLocked();
+                                    throw new NotConnectedException();
                                 }
                             });
                         }
@@ -77,13 +99,21 @@ class Peripheral {
                     } else if (this.gatt == null) {
                         try {
                             this.setCommandCallback(callback);
-                            this.gatt = this.device.connectGatt(null, false, this.callback);
+                            if (Build.VERSION.SDK_INT >= 23) {
+                                this.gatt = this.device.connectGatt(Adapter.getAppContext(), false, this.callback, BluetoothDevice.TRANSPORT_LE);
+                            } else {
+                                this.gatt = this.device.connectGatt(Adapter.getAppContext(), false, this.callback);
+                            }
+                            if (this.gatt == null) {
+                                throw new NotConnectedException();
+                            }
                         } catch (SecurityException ex) {
                             throw new PermissionDeniedException(ex);
                         }
                     } else {
                         this.setCommandCallback(callback);
                         if (!this.gatt.connect()) {
+                            this.closeGattLocked();
                             throw new RuntimeException("Unable to reconnect to device");
                         }
                     }
@@ -100,6 +130,12 @@ class Peripheral {
             this.queueCommand(() -> {
                 this.asyncWithFuture(future, () -> {
                     if (!this.connected) {
+                        if (this.gatt != null) {
+                            this.closeGattLocked();
+                        }
+                        Peripheral.this.wakeCommand(future, null);
+                    } else if (this.gatt == null) {
+                        this.connected = false;
                         Peripheral.this.wakeCommand(future, null);
                     } else {
                         this.setCommandCallback(new CommandCallback() {
@@ -107,12 +143,12 @@ class Peripheral {
                             public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
                                 Peripheral.this.asyncWithFuture(future, () -> {
                                     if (status != BluetoothGatt.GATT_SUCCESS) {
+                                        Peripheral.this.closeGattLocked();
                                         throw new RuntimeException("Unable to disconnect");
                                     }
 
                                     if (newState == BluetoothGatt.STATE_DISCONNECTED) {
-                                        Peripheral.this.gatt.close();
-                                        Peripheral.this.gatt = null;
+                                        Peripheral.this.closeGattLocked();
                                         Peripheral.this.wakeCommand(future, null);
                                     }
                                 });
@@ -582,6 +618,8 @@ class Peripheral {
                 }
                 if (Peripheral.this.commandCallback != null) {
                     Peripheral.this.commandCallback.onConnectionStateChange(gatt, status, newState);
+                } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
+                    Peripheral.this.closeGattLocked();
                 }
             }
             switch (newState) {
