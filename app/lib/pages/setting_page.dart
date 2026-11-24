@@ -32,6 +32,7 @@ import '../services/transcribe/model_manager_controller.dart';
 import '../widgets/rc_switch.dart';
 import '../widgets/store_scope.dart';
 import 'privacy_page.dart';
+import 'settings/account_data_actions.dart';
 import 'settings/setting_sub_page.dart';
 
 class SettingPage extends StatefulWidget {
@@ -48,6 +49,7 @@ class SettingPage extends StatefulWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    this.onClearAllLocalData,
     this.supportsDynamicIsland = false,
   });
 
@@ -70,6 +72,9 @@ class SettingPage extends StatefulWidget {
 
   /// 本机健康与位置采集。未注入时设置行仍可进入，子页提示服务未装载。
   final HealthSignalController? healthSignals;
+
+  /// 清空本机全部用户数据的全量编排回调（由 `AppShell` 注入，空时回落内置清理）。
+  final Future<void> Function()? onClearAllLocalData;
 
   /// 是否显示「灵动岛与操作按钮」（仅支持灵动岛机型显示）。
   final bool supportsDynamicIsland;
@@ -259,6 +264,7 @@ class _SettingPageState extends State<SettingPage> {
           modelManager: widget.modelManager,
           authService: widget.authService,
           healthSignals: widget.healthSignals,
+          onClearAllLocalData: widget.onClearAllLocalData,
           standalone: true,
         ),
       ),
@@ -444,15 +450,17 @@ class _SettingPageState extends State<SettingPage> {
                   valueKey: const Key('sv-memory'),
                   onTap: () => _openSub(context, 'mem'),
                 ),
-                const _RowDivider(),
-                _navRow(
-                  context,
-                  keyName: 'set-developer',
-                  label: '开发者设置',
-                  value: _agent.developerCleanSummary,
-                  valueKey: const Key('sv-developer'),
-                  onTap: () => _openSub(context, 'dev'),
-                ),
+                if (_agent.developerMode) ...<Widget>[
+                  const _RowDivider(),
+                  _navRow(
+                    context,
+                    keyName: 'set-developer',
+                    label: '开发者设置',
+                    value: _agent.developerCleanSummary,
+                    valueKey: const Key('sv-developer'),
+                    onTap: () => _openSub(context, 'dev'),
+                  ),
+                ],
                 if (widget.supportsDynamicIsland) ...<Widget>[
                   const _RowDivider(),
                   _navRow(
@@ -519,10 +527,32 @@ class _SettingPageState extends State<SettingPage> {
                 ],
               ),
             ],
+            const _GroupTitle(text: '数据管理'),
+            _GroupCard(
+              children: <Widget>[
+                _navRow(
+                  context,
+                  keyName: 'set-data-management',
+                  label: '数据管理',
+                  value: '清空数据 · 注销账号',
+                  valueKey: const Key('sv-data-management'),
+                  onTap: () => _openSub(context, 'data'),
+                ),
+              ],
+            ),
             _AboutSection(
               version: _version,
               developerMode: _agent.developerMode,
               onVersionTap: _handleVersionTap,
+              onDeleteAccount: () => unawaited(
+                runDeleteAccountFlow(
+                  context,
+                  authService: widget.authService,
+                  onClearAllLocalData: widget.onClearAllLocalData,
+                  device: widget.device,
+                  healthSignals: widget.healthSignals,
+                ),
+              ),
             ),
           ],
         ),
@@ -758,11 +788,13 @@ class _AboutSection extends StatelessWidget {
     required this.version,
     this.developerMode = false,
     this.onVersionTap,
+    this.onDeleteAccount,
   });
 
   final Future<String> version;
   final bool developerMode;
   final VoidCallback? onVersionTap;
+  final VoidCallback? onDeleteAccount;
 
   static const String _body =
       '录音卡与设备保持蓝牙连接，录音内容边录边实时同步到手机，'
@@ -846,6 +878,10 @@ class _AboutSection extends StatelessWidget {
               ),
               const _RowDivider(),
               _PrivacyEntry(color: c),
+              if (onDeleteAccount != null) ...<Widget>[
+                const _RowDivider(),
+                _DeleteAccountEntry(color: c, onTap: onDeleteAccount!),
+              ],
             ],
           ),
         ),
@@ -892,6 +928,54 @@ class _PrivacyEntry extends StatelessWidget {
                         fontSize: 14,
                         height: 1.3,
                         color: color.label,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.chevron_right, size: 20, color: color.sec),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 注销账号入口（紧邻隐私政策，与 `privacy_text.dart` 路径描述一一对应）。
+class _DeleteAccountEntry extends StatelessWidget {
+  const _DeleteAccountEntry({required this.color, required this.onTap});
+
+  final RCColorScheme color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      button: true,
+      label: '注销账号',
+      onTap: onTap,
+      child: ExcludeSemantics(
+        child: GestureDetector(
+          key: const Key('delete-account-entry'),
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      '注销账号',
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.3,
+                        fontWeight: FontWeight.w500,
+                        color: color.danger,
                       ),
                     ),
                   ),

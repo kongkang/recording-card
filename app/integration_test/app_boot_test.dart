@@ -41,11 +41,9 @@ void main() {
       reason: '重构后的首页登录页不应再有可选账号输入框',
     );
     expect(find.byKey(const Key('login-submit')), findsOneWidget);
-    expect(find.byKey(const Key('login-wechat')), findsOneWidget);
-    expect(find.byKey(const Key('login-apple')), findsOneWidget);
-    expect(find.byKey(const Key('login-google')), findsOneWidget);
+    // 第三方入口仅在配置就绪或服务端启用时渲染，未启用时自动隐藏。
     // ignore: avoid_print
-    print('[boot] 已到登录页（四通道登录按钮已渲染，无多余账号框）');
+    print('[boot] 已到登录页（主登录入口已渲染，无多余账号框）');
 
     final blocked = find.byKey(const Key('login-blocked'));
     if (blocked.evaluate().isNotEmpty) {
@@ -68,21 +66,21 @@ void main() {
       );
       expect(submitButton.onPressed, isNotNull);
 
-      final wechatBtn = tester.widget<OutlinedButton>(
-        find.byKey(const Key('login-wechat')),
-      );
-      // ignore: avoid_print
-      print('[boot] 微信登录按钮 enabled=${wechatBtn.onPressed != null}');
-      final appleBtn = tester.widget<OutlinedButton>(
-        find.byKey(const Key('login-apple')),
-      );
-      // ignore: avoid_print
-      print('[boot] Apple 登录按钮 enabled=${appleBtn.onPressed != null}');
-      final googleBtn = tester.widget<OutlinedButton>(
-        find.byKey(const Key('login-google')),
-      );
-      // ignore: avoid_print
-      print('[boot] Google 登录按钮 enabled=${googleBtn.onPressed != null}');
+      for (final entry in const [
+        ('微信', 'login-wechat'),
+        ('Apple', 'login-apple'),
+        ('Google', 'login-google'),
+      ]) {
+        final finder = find.byKey(Key(entry.$2));
+        if (finder.evaluate().isNotEmpty) {
+          final btn = tester.widget<OutlinedButton>(finder);
+          // ignore: avoid_print
+          print('[boot] ${entry.$1}登录按钮 shown=true enabled=${btn.onPressed != null}');
+        } else {
+          // ignore: avoid_print
+          print('[boot] ${entry.$1}登录按钮 shown=false');
+        }
+      }
     }
   }, timeout: const Timeout(Duration(minutes: 3)));
 }

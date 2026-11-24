@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>隐私政策 · 录音卡（ReAI）</title>
+  <meta name="description" content="录音卡（com.reai.recordingcard）隐私政策：录音文件与转写文本默认只保存在本机，仅在你主动操作时发生云端转写与总结。">
+  <link rel="canonical" href="https://ai-card.app.reai.com/privacy.html">
+  <link rel="icon" type="image/svg+xml" href="./assets/icon.svg">
+  <style>
+    :root {
+      --bg: #FAFAF8;
+      --surface: #FFFFFF;
+      --well: #F2F2ED;
+      --ink: #1D1D1F;
+      --ink-2: #48484D;
+      --muted: #7A7A80;
+      --rule: #E4E4E0;
+      --rule-strong: #C9C9C4;
+      --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      --max-w: 840px;
+      --radius-md: 12px;
+      --radius-lg: 18px;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.7;
+      font-size: 15px;
+    }
+
+    a {
+      color: var(--ink);
+      text-decoration: underline;
+      text-decoration-color: var(--rule-strong);
+      text-underline-offset: 3px;
+    }
+
+    a:hover {
+      text-decoration-color: var(--ink);
+    }
+
+    .container {
+      width: 100%;
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      height: 56px;
+      background: rgba(250, 250, 248, 0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .topbar-inner {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 15px;
+      text-decoration: none;
+    }
+
+    .brand img {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      border: 1px solid var(--rule);
+      display: block;
+    }
+
+    .top-nav {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      font-size: 13.5px;
+      color: var(--ink-2);
+    }
+
+    .top-nav a {
+      text-decoration: none;
+      color: var(--ink-2);
+    }
+
+    .top-nav a:hover,
+    .top-nav a.active {
+      color: var(--ink);
+      font-weight: 600;
+    }
+
+    main {
+      padding: 40px 0 64px;
+    }
+
+    .doc-head {
+      margin-bottom: 28px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-size: 32px;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      margin-bottom: 12px;
+    }
+
+    .meta-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 20px;
+      font-size: 13px;
+      color: var(--ink-2);
+    }
+
+    .summary-box {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: var(--radius-lg);
+      padding: 20px 22px;
+      margin-bottom: 28px;
+    }
+
+    .summary-box h2 {
+      font-size: 17px;
+      margin-bottom: 12px;
+    }
+
+    section.doc-sec {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: var(--radius-md);
+      padding: 22px;
+      margin-bottom: 18px;
+    }
+
+    section.doc-sec h2 {
+      font-size: 18px;
+      margin-bottom: 12px;
+      letter-spacing: -0.01em;
+    }
+
+    p + p {
+      margin-top: 10px;
+    }
+
+    ul, ol {
+      padding-left: 20px;
+      margin-top: 8px;
+    }
+
+    li + li {
+      margin-top: 6px;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      background: var(--well);
+      padding: 1px 6px;
+      border-radius: 5px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      margin-top: 10px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13.5px;
+      line-height: 1.55;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    th {
+      background: var(--well);
+      font-weight: 600;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+
+    footer {
+      border-top: 1px solid var(--rule);
+      padding: 28px 0 calc(48px + env(safe-area-inset-bottom, 0px));
+      font-size: 12.5px;
+      color: var(--muted);
+    }
+
+    .foot-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .foot-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+    }
+
+    .foot-links a {
+      text-decoration: none;
+      color: var(--muted);
+    }
+
+    .foot-links a:hover {
+      color: var(--ink);
+    }
+
+    @media (max-width: 640px) {
+      h1 {
+        font-size: 26px;
+      }
+      section.doc-sec {
+        padding: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="./index.html">
+        <img src="./assets/icon.svg" alt="录音卡">
+        <span>录音卡</span>
+      </a>
+      <nav class="top-nav" aria-label="页面导航">
+        <a href="./index.html">产品首页</a>
+        <a href="./privacy.html" class="active">隐私政策</a>
+        <a href="./support.html">技术支持与账号注销</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="doc-head">
+      <div class="eyebrow">Privacy Policy</div>
+      <h1>录音卡 · 隐私政策</h1>
+      <div class="meta-grid">
+        <span><strong>生效日期：</strong>2026-11-24</span>
+        <span><strong>适用产品：</strong>「录音卡」iOS / watchOS / Android App（<code>com.reai.recordingcard</code>）及配套硬件</span>
+        <span><strong>运营方：</strong>ReAI</span>
+        <span><strong>隐私联系邮箱：</strong><a href="mailto:privacy@reai.chat">privacy@reai.chat</a></span>
+      </div>
+    </div>
+
+    <div class="summary-box">
+      <h2>一、一页读懂</h2>
+      <ol>
+        <li><strong>录音只存本机</strong>：从录音卡、Apple Watch 或本机麦克风采集的音频与端侧转写文本默认只保存在你的手机里，不上传。</li>
+        <li><strong>上传只在你主动操作时发生</strong>：只有你开启云端整理或点击「生成总结」时，对应文本/片段才会经模型网关处理。</li>
+        <li><strong>蓝牙只用来连设备</strong>：扫描结果不用于定位、不做用户画像。</li>
+        <li><strong>Wi-Fi 只用来给录音卡配网</strong>：网络名称与口令只存在本机与硬件设备上。</li>
+        <li><strong>没有广告 SDK</strong>：不收集广告标识（IDFA/OAID），不跨 App 追踪，不出售个人信息。</li>
+        <li><strong>随时可删与注销</strong>：单条删除、清空本机数据、撤回云端授权、注销账号均可在 App 内或通过本网站说明路径完成。</li>
+      </ol>
+    </div>
+
+    <section class="doc-sec">
+      <h2>二、我们处理的信息</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>类别</th>
+              <th>具体内容</th>
+              <th>用途</th>
+              <th>存放位置</th>
+              <th>保留期</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>录音数据</td>
+              <td>同步自硬件录音卡、Apple Watch 或本机麦克风的音频文件、时间戳、打点标记</td>
+              <td>回放、端侧转写、生成总结</td>
+              <td>手机私有沙盒目录</td>
+              <td>直到你删除、清空本机数据或卸载 App</td>
+            </tr>
+            <tr>
+              <td>转写与总结文本</td>
+              <td>端侧生成的转写文本、总结文档、声纹簇推测标签</td>
+              <td>展示、本机检索、导出</td>
+              <td>手机私有沙盒目录</td>
+              <td>同上</td>
+            </tr>
+            <tr>
+              <td>设备信息</td>
+              <td>硬件蓝牙名称、电量、固件版本、Wi-Fi 配置状态</td>
+              <td>连接设备、展示状态、固件更新判断</td>
+              <td>手机本地</td>
+              <td>同上</td>
+            </tr>
+            <tr>
+              <td>配网信息</td>
+              <td>你输入的 Wi-Fi 名称与口令</td>
+              <td>为录音卡配置 2.4GHz 网络</td>
+              <td>手机本地 + 录音卡设备（仅保留最后一次）</td>
+              <td>直到你修改或清除</td>
+            </tr>
+            <tr>
+              <td>账号信息（仅在登录时）</td>
+              <td>账号标识、邮箱与 OAuth 登录令牌（支持外脑账号、微信、Apple / Google 授权）</td>
+              <td>识别账户、同步授权状态</td>
+              <td>系统密钥库（iOS Keychain / Android Keystore）</td>
+              <td>直到退出登录或注销账号</td>
+            </tr>
+            <tr>
+              <td>微信登录（仅在你选择时）</td>
+              <td>通过微信 OpenSDK 获取的一次性授权码</td>
+              <td>向我们的服务端换取本应用登录令牌（不读取微信其他资料）</td>
+              <td>一次性内存态上送服务端换票</td>
+              <td>换取令牌后即时失效</td>
+            </tr>
+            <tr>
+              <td>崩溃诊断（仅本机）</td>
+              <td>最近一条错误的摘要与调用栈</td>
+              <td>你反馈问题时定位原因</td>
+              <td>手机本地（<code>rc.lastCrash</code>）</td>
+              <td>只保留最近一条，可清空</td>
+            </tr>
+            <tr>
+              <td>健康、位置与照片（仅主动开启后）</td>
+              <td>你在系统授权页允许的健康样本、粗略位置与地名、录音时段内的系统相册照片</td>
+              <td>与录音时间对齐供本机查看</td>
+              <td>手机本地数据库与沙盒（不上传云端模型）</td>
+              <td>直到你清空本机数据或卸载 App</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:12px;"><strong>我们不收集：</strong>通讯录、短信、剪贴板内容、无关的已安装应用列表（仅在触发微信登录时检测微信是否安装）以及用于广告投放的设备标识（IDFA / OAID / IMEI）。</p>
+    </section>
+
+    <section class="doc-sec">
+      <h2>三、录音与本地数据的存放</h2>
+      <ul>
+        <li>音频、转写文本、总结文档与健康位置记录统一存放在 App 私有沙盒或加密密钥库中，其他 App 默认无法读取；仅在你主动触发「导出」时写入你选定的位置。</li>
+        <li>卸载 App 会随沙盒一并清除本地录音与转写数据；重要内容请先导出备份。</li>
+        <li>本机录音或蓝牙硬件意外断连自动接力期间会使用手机麦克风，原始音频仅在本机端侧处理。</li>
+      </ul>
+    </section>
+
+    <section class="doc-sec">
+      <h2>四、权限用途说明</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>平台</th>
+              <th>权限</th>
+              <th>用途</th>
+              <th>拒绝后果</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>iOS</td>
+              <td>蓝牙（<code>NSBluetoothAlwaysUsageDescription</code>）</td>
+              <td>连接录音卡、同步录音、读取电量与状态、下发录音/打点命令</td>
+              <td>无法连接蓝牙硬件，历史记录仍可查看</td>
+            </tr>
+            <tr>
+              <td>iOS</td>
+              <td>本地网络与 Bonjour（<code>NSLocalNetworkUsageDescription</code>）</td>
+              <td>Wi-Fi 配网与本地高速通道发现设备</td>
+              <td>无法完成 Wi-Fi 配网，蓝牙同步不受影响</td>
+            </tr>
+            <tr>
+              <td>iOS / watchOS</td>
+              <td>麦克风（<code>NSMicrophoneUsageDescription</code>）</td>
+              <td>本机录音、蓝牙断连接力保底录音、OS1 语音对话及手表端采集</td>
+              <td>无法使用本机/手表录音与语音对话</td>
+            </tr>
+            <tr>
+              <td>iOS</td>
+              <td>语音识别（<code>NSSpeechRecognitionUsageDescription</code>）</td>
+              <td>端侧离线语音识别及 OS1 语音输入</td>
+              <td>无法使用系统端侧引擎，可下载本地 SenseVoice 模型替代</td>
+            </tr>
+            <tr>
+              <td>iOS</td>
+              <td>相册（<code>NSPhotoLibraryUsageDescription</code>）</td>
+              <td>仅在你开启照片对齐后读取录音时段内的照片插入对话流</td>
+              <td>不自动关联相册照片</td>
+            </tr>
+            <tr>
+              <td>iOS / watchOS</td>
+              <td>健康数据（<code>NSHealthShareUsageDescription</code> / <code>NSHealthUpdateUsageDescription</code>）</td>
+              <td>开启「定位与健康采集」后按授权读取健康样本并支持 Apple Watch 连续录音运动会话时间线对齐，数据仅存本机</td>
+              <td>不读取健康样本；手表端改用常规音频会话</td>
+            </tr>
+            <tr>
+              <td>iOS</td>
+              <td>定位（使用期间 / 始终）</td>
+              <td>开启「定位与健康采集」后记录粗略地点并与录音时间对齐，仅存本机</td>
+              <td>不记录地点，健康采集不受影响</td>
+            </tr>
+            <tr>
+              <td>Android</td>
+              <td>蓝牙与附近 Wi-Fi（<code>BLUETOOTH_SCAN</code> / <code>BLUETOOTH_CONNECT</code> / <code>NEARBY_WIFI_DEVICES</code>）</td>
+              <td>扫描连接硬件与配网（均声明 <code>neverForLocation</code>，不用于定位）</td>
+              <td>无法连接蓝牙硬件或配网</td>
+            </tr>
+            <tr>
+              <td>Android</td>
+              <td>老版本蓝牙定位要求（<code>ACCESS_FINE_LOCATION</code>，<code>maxSdkVersion=30</code>）</td>
+              <td>仅 Android 11 及以下系统 BLE 扫描的平台强制要求</td>
+              <td>Android 11 及以下无法扫描蓝牙设备</td>
+            </tr>
+            <tr>
+              <td>Android</td>
+              <td>录音与网络（<code>RECORD_AUDIO</code> / <code>INTERNET</code>）</td>
+              <td>OS1 语音输入、可选云端整理、模型下载与版本检查</td>
+              <td>对应功能不可用</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="doc-sec">
+      <h2>五、云端转写、整理与第三方 SDK</h2>
+      <ul>
+        <li><strong>触发条件</strong>：你在「设置」中开启云端整理，或在详情页/总结页主动点击「生成总结」。关闭开关后不再上传文本片段。</li>
+        <li><strong>接收方与处理原则</strong>：经我们自建模型网关（<code>block2-api.wainao.chat</code>）转发给语音识别与语言模型服务商，仅用于生成转写润色与总结，不用于模型训练或广告投放。</li>
+        <li><strong>保留期与清除</strong>：服务端处理结果最多保留 30 天用于失败重试与排查后自动删除；你在 App 内删除或注销账号后，服务端副本在 15 天内清除。</li>
+        <li><strong>第三方 SDK</strong>：社交登录仅集成微信 OpenSDK（<code>fluwx</code> 封装，且在未安装或未触发登录时不主动采集设备标识），不集成任何广告、归因或第三方统计 SDK。</li>
+      </ul>
+    </section>
+
+    <section class="doc-sec">
+      <h2>六、你的权利与注销账号</h2>
+      <ul>
+        <li><strong>查看与导出</strong>：在记录或总结详情页通过「导出」导出完整文档、Markdown、PDF、图片或 Word。</li>
+        <li><strong>删除单条或清空本机全部数据</strong>：在时间轴左滑/详情页删除单条记录，或在「设置 → 数据管理 → 清空本机全部数据」一键清除本机全部录音、转写、总结、声纹与健康位置记录。</li>
+        <li><strong>注销账号</strong>：在 App 内进入「设置 → 关于录音卡 → 注销账号」或「设置 → 数据管理 → 注销账号」立即清空本机数据并提交服务端注销（15 天内彻底删除服务端数据）。若你已卸载 App 或无法登录，请查看 <a href="./support.html#delete-account">账号注销指引页面</a> 或发送邮件至 <a href="mailto:privacy@reai.chat">privacy@reai.chat</a>，我们将在 15 个工作日内完成处理与答复。</li>
+      </ul>
+    </section>
+
+    <section class="doc-sec">
+      <h2>七、未成年人保护与联系我们</h2>
+      <p>本 App 面向成年用户，不面向 14 周岁以下儿童。若发现未成年人在未获监护人同意的情况下使用本服务，请通过 <a href="mailto:privacy@reai.chat">privacy@reai.chat</a> 联系我们删除相关数据。</p>
+      <p>隐私事务联系：<a href="mailto:privacy@reai.chat">privacy@reai.chat</a> · 客服与技术支持：<a href="mailto:support@reai.chat">support@reai.chat</a></p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container foot-inner">
+      <span>© 2026 ReAI · 录音卡</span>
+      <div class="foot-links">
+        <a href="./index.html">产品首页</a>
+        <a href="./privacy.html">隐私政策</a>
+        <a href="./support.html">技术支持</a>
+        <a href="./support.html#delete-account">账号注销</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

@@ -26,6 +26,7 @@ import '../../services/transcribe/system_speech_client.dart';
 import '../../services/watch/watch_hardware_service.dart';
 import '../../widgets/rc_switch.dart';
 import '../../widgets/store_scope.dart';
+import 'account_data_actions.dart';
 import 'developer_schedule_section.dart';
 import 'health_signal_body.dart';
 import 'memory_search_body.dart';
@@ -39,16 +40,18 @@ class SettingSubPage extends StatelessWidget {
     this.modelManager,
     this.authService,
     this.healthSignals,
+    this.onClearAllLocalData,
     this.showPaneBack = false,
     this.standalone = false,
   });
 
-  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'dev'
+  final String subId; // 'login' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'health' | 'data' | 'dev'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
   final AuthService? authService;
   final HealthSignalController? healthSignals;
+  final Future<void> Function()? onClearAllLocalData;
   final bool showPaneBack;
   final bool standalone;
 
@@ -64,6 +67,7 @@ class SettingSubPage extends StatelessWidget {
     'watch' => 'Apple Watch 联动',
     'exthw' => '第三方硬件联动',
     'health' => '行为与健康信号',
+    'data' => '数据管理',
     'dev' => '开发者设置',
     _ => '设置详情',
   };
@@ -167,6 +171,12 @@ class SettingSubPage extends StatelessWidget {
                     'health' => healthSignals == null
                         ? const Text('采集服务未装载')
                         : HealthSignalSettingsBody(controller: healthSignals!),
+                    'data' => _DataManagementSubBody(
+                      authService: authService,
+                      device: device,
+                      healthSignals: healthSignals,
+                      onClearAllLocalData: onClearAllLocalData,
+                    ),
                     'dev' => _DeveloperCleanBody(config: agentConfig),
                     _ => const SizedBox.shrink(),
                   },
@@ -1030,7 +1040,7 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
               const _SubSectionLabel('开发者模式 · 总结与 Agent 推理模型'),
               const SizedBox(height: 6),
               Text(
-                '当前生效：${config.effectiveModelLabel}（${config.modelSourceLabel}）。未手动点选时不会把 deepseek-v3 当作已选。清洗模型也可以在「开发者设置」里改，不必先连点版本号。',
+                '当前生效：${config.effectiveModelLabel}（${config.modelSourceLabel}）。未手动点选时不会把 deepseek-v3 当作已选。清洗模型也可以在「开发者设置」里调整（连点「版本」7 次可切换开启）。',
                 key: const Key('cloud-effective-model'),
                 style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
               ),
@@ -2298,11 +2308,37 @@ class _LoginAuthBodyState extends State<_LoginAuthBody> {
     Widget buildBody() {
       final signedIn = auth?.isSignedIn ?? false;
       final session = auth?.session;
+      final bindingRows = <Widget>[
+        if (auth == null || auth.shouldShowWechatSignIn)
+          _providerRow(
+            context,
+            keyName: 'auth-bind-wechat',
+            title: '微信绑定',
+            subtitle: '通过外脑鉴权关联微信身份',
+            onTap: () => unawaited(_triggerOAuth(provider: 'wechat')),
+          ),
+        if (auth == null || auth.isAppleSignInEnabled)
+          _providerRow(
+            context,
+            keyName: 'auth-bind-apple',
+            title: 'Apple 绑定',
+            subtitle: '通过外脑认证关联 Apple ID',
+            onTap: () => unawaited(_triggerOAuth(provider: 'apple')),
+          ),
+        if (auth == null || auth.isGoogleSignInEnabled)
+          _providerRow(
+            context,
+            keyName: 'auth-bind-google',
+            title: 'Google 绑定',
+            subtitle: '关联 Google 账号用于跨端会话',
+            onTap: () => unawaited(_triggerOAuth(provider: 'google')),
+          ),
+      ];
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            '统一由外脑（Wainao）账号鉴权；微信、Google、GitHub 与 Facebook 绑定均基于外脑账号体系完成授权。',
+            '统一由外脑（Wainao）账号鉴权；第三方登录方式绑定均基于外脑账号体系完成授权。',
             style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
           ),
           const SizedBox(height: 16),
@@ -2397,51 +2433,26 @@ class _LoginAuthBodyState extends State<_LoginAuthBody> {
               ],
             ),
           ),
-          const SizedBox(height: 18),
-          const _SubSectionLabel('第三方账号绑定'),
-          const SizedBox(height: 8),
-          Container(
-            decoration: BoxDecoration(
-              color: c.card,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: c.sep),
+          if (bindingRows.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            const _SubSectionLabel('第三方账号绑定'),
+            const SizedBox(height: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                children: [
+                  for (var i = 0; i < bindingRows.length; i++) ...[
+                    if (i > 0) Divider(height: 1, thickness: 1, color: c.sep),
+                    bindingRows[i],
+                  ],
+                ],
+              ),
             ),
-            child: Column(
-              children: [
-                _providerRow(
-                  context,
-                  keyName: 'auth-bind-wechat',
-                  title: '微信绑定',
-                  subtitle: '中国地区推荐，通过外脑鉴权关联微信身份',
-                  onTap: () => unawaited(_triggerOAuth(provider: 'wechat')),
-                ),
-                Divider(height: 1, thickness: 1, color: c.sep),
-                _providerRow(
-                  context,
-                  keyName: 'auth-bind-google',
-                  title: 'Google 绑定',
-                  subtitle: '关联 Google 账号用于跨端会话',
-                  onTap: () => unawaited(_triggerOAuth(provider: 'google')),
-                ),
-                Divider(height: 1, thickness: 1, color: c.sep),
-                _providerRow(
-                  context,
-                  keyName: 'auth-bind-github',
-                  title: 'GitHub 绑定',
-                  subtitle: '开发者身份登录与授权',
-                  onTap: () => unawaited(_triggerOAuth(provider: 'github')),
-                ),
-                Divider(height: 1, thickness: 1, color: c.sep),
-                _providerRow(
-                  context,
-                  keyName: 'auth-bind-facebook',
-                  title: 'Facebook 登录',
-                  subtitle: '通过外脑认证关联 Facebook',
-                  onTap: () => unawaited(_triggerOAuth(provider: 'facebook')),
-                ),
-              ],
-            ),
-          ),
+          ],
         ],
       );
     }
@@ -3844,7 +3855,7 @@ class _AppleWatchLinkBodyState extends State<_AppleWatchLinkBody> {
                         border: Border.all(color: c.sep),
                       ),
                       child: Text(
-                        '未安装手表应用：请在 iPhone「Watch」App 底部「可用 App」中点击安装（测试版需先在手表「设置 → 隐私与安全性」开启开发者模式）。',
+                        '未安装手表应用：请在 iPhone「Watch」App 底部「可用 App」中点击安装。',
                         style: TextStyle(
                           fontSize: 12,
                           height: 1.5,
@@ -4600,6 +4611,188 @@ class _DeveloperCleanBody extends StatelessWidget {
         ],
       ],
       ),
+    );
+  }
+}
+
+/// 数据管理 —— 清空本机全部数据（保留模型）与注销账号全流程入口。
+class _DataManagementSubBody extends StatefulWidget {
+  const _DataManagementSubBody({
+    this.authService,
+    this.device,
+    this.healthSignals,
+    this.onClearAllLocalData,
+  });
+
+  final AuthService? authService;
+  final DeviceStore? device;
+  final HealthSignalController? healthSignals;
+  final Future<void> Function()? onClearAllLocalData;
+
+  @override
+  State<_DataManagementSubBody> createState() => _DataManagementSubBodyState();
+}
+
+class _DataManagementSubBodyState extends State<_DataManagementSubBody> {
+  bool _busy = false;
+  bool _dialogOpen = false;
+
+  void _setBusy(bool value) {
+    if (mounted && _busy != value) {
+      setState(() => _busy = value);
+    }
+  }
+
+  Future<void> _handleClearLocalData() async {
+    if (_busy || _dialogOpen) return;
+    _dialogOpen = true;
+    try {
+      await runClearLocalDataFlow(
+        context,
+        onClearAllLocalData: widget.onClearAllLocalData,
+        device: widget.device,
+        healthSignals: widget.healthSignals,
+        onBusyChanged: _setBusy,
+      );
+    } finally {
+      _dialogOpen = false;
+    }
+  }
+
+  Future<void> _handleDeleteAccount() async {
+    if (_busy || _dialogOpen) return;
+    _dialogOpen = true;
+    try {
+      await runDeleteAccountFlow(
+        context,
+        authService: widget.authService,
+        onClearAllLocalData: widget.onClearAllLocalData,
+        device: widget.device,
+        healthSignals: widget.healthSignals,
+        onBusyChanged: _setBusy,
+      );
+    } finally {
+      _dialogOpen = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '录音文件、转写文本、总结文档及健康/位置记录默认仅存于本机。你可以在此随时清空本机数据，或注销并彻底删除账号。',
+          style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
+        ),
+        const SizedBox(height: 18),
+        const _SubSectionLabel('本机存储'),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: c.card,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: c.sep),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '清空本机全部数据',
+                style: TextStyle(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w700,
+                  color: c.label,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '立即删除本机全部录音文件、转写文本、总结结果、照片关联、声纹标记、健康与位置样本及记忆检索索引；已下载的离线语音模型将保留。',
+                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                key: const Key('clear-local-data-btn'),
+                onPressed: _busy ? null : () => unawaited(_handleClearLocalData()),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: c.danger,
+                  side: BorderSide(color: c.danger.withValues(alpha: 0.45)),
+                  minimumSize: const Size.fromHeight(44),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: _busy
+                    ? SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: c.danger,
+                        ),
+                      )
+                    : const Icon(Icons.delete_sweep_outlined, size: 18),
+                label: const Text('清空本机全部数据'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        const _SubSectionLabel('账号注销'),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: c.card,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: c.sep),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '注销账号',
+                style: TextStyle(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w700,
+                  color: c.danger,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '提交账号注销申请并立即清空本机全部数据与登录凭据；服务端历史处理数据将在 15 天内彻底删除且不可恢复。',
+                style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                key: const Key('delete-account-btn'),
+                onPressed: _busy ? null : () => unawaited(_handleDeleteAccount()),
+                style: FilledButton.styleFrom(
+                  backgroundColor: c.danger,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size.fromHeight(44),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: _busy
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.person_off_outlined, size: 18),
+                label: const Text('注销账号'),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

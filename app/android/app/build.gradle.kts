@@ -57,6 +57,21 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        val oauthCallbackScheme = (project.findProperty("rc.oauthScheme") as String?)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: "reai-mobile"
+        manifestPlaceholders["oauthCallbackScheme"] = oauthCallbackScheme
+        resValue("string", "rc_oauth_callback_scheme", oauthCallbackScheme)
+
+        ndk {
+            if (System.getenv("RC_ANDROID_ALL_ABIS") == "1") {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            } else {
+                abiFilters += listOf("arm64-v8a")
+            }
+        }
     }
 
     signingConfigs {

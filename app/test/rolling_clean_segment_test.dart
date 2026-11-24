@@ -590,9 +590,9 @@ void main() {
         root: tmp,
         jsonStore: JsonStore(store: InMemoryStore()),
       );
-      cfg = AgentConfigStore(store: InMemoryStore());
-      await cfg.load();
     });
+    cfg = AgentConfigStore(store: InMemoryStore());
+    await cfg.load();
     addTearDown(() => tester.runAsync(() => tmp.delete(recursive: true)));
 
     final pipeline = RecordingPipeline(
@@ -636,6 +636,10 @@ void main() {
         ),
       ),
     );
+    await tester.pump();
+
+    expect(find.byKey(const Key('set-developer')), findsNothing);
+    await cfg.setDeveloperMode(true);
     await tester.pump();
 
     final entry = find.byKey(const Key('set-developer'));

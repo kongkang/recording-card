@@ -9,9 +9,11 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../data/seed.dart';
 import '../../services/ai/summary_generator.dart';
@@ -2490,5 +2492,75 @@ class AppStore extends ChangeNotifier {
         debugPrint('[store] 会话持久化失败：$e');
       }
     }());
+  }
+
+  /// 清空本机全部用户记录、转写、总结、照片映射、声纹库、任务输出与本地缓存目录。
+  ///
+  /// 刻意**保留**已下载的离线语音与声纹模型（`models/`），避免用户再次初始化时重复下载 260MB+ 文件。
+  Future<void> clearAllLocalData() async {
+    _genTicker?.cancel();
+    _genTicker = null;
+    _genWatch?.stop();
+
+    if (_recordingStore != null) {
+      await _recordingStore!.clearAll();
+    }
+    final topicStore = _topicStoreFor();
+    if (topicStore != null) {
+      await topicStore.clear();
+    }
+    await taskScheduler?.discardOutputs(CleaningTaskIds.all);
+
+    events = const [];
+    recordingFiles = const [];
+    segmentViews = const {};
+    _mergedIdRedirects = const {};
+    summaries = [];
+    pend = null;
+    selMode = false;
+    selIds.clear();
+    tabsLocked = false;
+    filter = FeedFilter.all;
+    openCardId = null;
+    subStack = [];
+    eventPhotos = {};
+    _speakerAliases = {};
+    _turnSpeakerOverrides = {};
+    syncError = null;
+    loadError = null;
+    syncStage = null;
+    syncProgress = 0;
+    syncText = '';
+    recleanStatus = '';
+    replayStatus = '';
+    voiceprintStore.restoreJson(null);
+
+    if (_loadPersisted || _json != null) {
+      try {
+        final store = await _jsonStore();
+        await store.remove('route');
+        if (_recordingStore == null) {
+          await store.remove('recordings');
+          await store.remove('migration');
+        }
+      } on Object catch (e) {
+        debugPrint('[store] 清空持久化状态失败：$e');
+      }
+    }
+
+    await photoLibrary.clearLocalCache();
+    try {
+      final support = await getApplicationSupportDirectory();
+      for (final sub in const ['photos', 'camera_photos', 'voiceprints']) {
+        final dir = Directory('${support.path}/$sub');
+        if (await dir.exists()) {
+          await dir.delete(recursive: true);
+        }
+      }
+    } on Object {
+      // 测试环境无 path_provider 通道或已提前清理时忽略
+    }
+
+    notifyListeners();
   }
 }

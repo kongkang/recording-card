@@ -74,7 +74,7 @@
 	<key>NSHealthShareUsageDescription</key>
 	<string>打开「定位与健康采集」后，录音卡会读取你在系统授权页中允许的健康数据（含心率、睡眠、活动、症状等敏感类型），只保存在这台手机，用来和录音时间对齐。未打开开关时不会读取。唤醒 Apple Watch 录音也不会把健康数据写回系统。</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>录音卡不向「健康」写入新的样本。系统仍要求提供这条说明，因为唤醒 Apple Watch 录音会使用 HealthKit 运动会话。</string>
+	<string>录音卡不向「健康」写入新的样本。该声明仅用于支持「定位与健康采集」及配对 Apple Watch 运动会话时间线同步。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>打开「定位与健康采集」后，录音卡会在使用期间按采样间隔记录粗略位置，并在可以时反查地名，只保存在这台手机，用来和录音时间对齐。不会持续高精度追踪，也不会上传。</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

@@ -48,7 +48,22 @@ if [ -x "$APP_DIR/rust/build-ios.sh" ]; then
 fi
 
 echo "==> [3/5] 准备 Flutter iOS 工程与 CocoaPods..."
-(cd "$APP_DIR" && "$FLUTTER_BIN" pub get && "$FLUTTER_BIN" build ios --config-only --release --no-codesign)
+DART_DEFINE_ARGS=()
+WECHAT_CFG_ID="${RC_WECHAT_APP_ID:-}"
+if [ -z "$WECHAT_CFG_ID" ] && [ -f "$APP_DIR/ios/Flutter/Wechat.xcconfig" ]; then
+  WECHAT_CFG_ID="$(grep -E '^WECHAT_APP_ID=' "$APP_DIR/ios/Flutter/Wechat.xcconfig" | tail -n 1 | cut -d'=' -f2- | tr -d '[:space:]')"
+fi
+if [[ "$WECHAT_CFG_ID" == wx* ]]; then
+  echo "    注入微信 AppID (--dart-define=RC_WECHAT_APP_ID=$WECHAT_CFG_ID)"
+  DART_DEFINE_ARGS+=("--dart-define=RC_WECHAT_APP_ID=$WECHAT_CFG_ID")
+fi
+if [ -n "${RC_ACCOUNT_DELETE_URL:-}" ]; then
+  DART_DEFINE_ARGS+=("--dart-define=RC_ACCOUNT_DELETE_URL=$RC_ACCOUNT_DELETE_URL")
+fi
+if [ -n "${RC_SOCIAL_PROVIDERS:-}" ]; then
+  DART_DEFINE_ARGS+=("--dart-define=RC_SOCIAL_PROVIDERS=$RC_SOCIAL_PROVIDERS")
+fi
+(cd "$APP_DIR" && "$FLUTTER_BIN" pub get && "$FLUTTER_BIN" build ios --config-only --release --no-codesign "${DART_DEFINE_ARGS[@]}")
 
 echo "==> [4/5] 归档统一主端 Runner（内嵌 RecordingCardWatchApp + RecordingCardWatchWidgets）..."
 xcodebuild archive \

@@ -10,6 +10,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -26,7 +27,12 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             // Android：必须从 Java 侧加载 card_bridge，JNI_OnLoad 才会被 ART 调用，
             // 把 JavaVM 交给 btleplug droidplug 后端（裸 dlopen 不触发 JNI_OnLoad）。
             // 加载后 Dart 侧 DynamicLibrary.process() 即可看到桥符号。
-            System.loadLibrary("card_bridge")
+            // 若设备 ABI 缺少对应 .so，捕获异常由 Dart 侧如实提示「不支持硬件连接」，避免冷启动崩溃。
+            try {
+                System.loadLibrary("card_bridge")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.w("MainActivity", "card_bridge unavailable for current ABI: ${e.message}")
+            }
         }
 
         private const val SPEECH_CHANNEL = "com.reai.recordingcard/agent_speech"

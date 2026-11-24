@@ -212,6 +212,15 @@ class HealthSignalController extends ChangeNotifier
     }
   }
 
+  Future<void> clearAllSamples() async {
+    _presentGen++;
+    await store.clearAll();
+    sampleCount = 0;
+    rows = const [];
+    statusMessage = null;
+    _notify();
+  }
+
   Future<void> refreshPresentation() async {
     if (_disposed) return;
     final gen = ++_presentGen;

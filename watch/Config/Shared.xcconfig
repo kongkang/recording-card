@@ -1,5 +1,5 @@
 FLUTTER_BUILD_NAME = 1.0.0
-FLUTTER_BUILD_NUMBER = 2026111901
+FLUTTER_BUILD_NUMBER = 2026112401
 #include? "../../app/ios/Flutter/Generated.xcconfig"
 
 WATCH_COMPANION_BUNDLE_ID = com.reai.recordingcard

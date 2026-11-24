@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/device/card_gateway.dart';
+import '../core/platform/crash_guard.dart';
 import '../core/storage/storage.dart';
 import '../core/store/agent_config_store.dart';
 import '../core/store/app_store.dart';
@@ -57,6 +58,7 @@ class AppShell extends StatefulWidget {
     this.lookupExistingTranscript,
     this.supportsDynamicIslandOverride,
     this.onDeviceCreated,
+    this.onClearAllLocalData,
   });
 
   final AppStore store;
@@ -76,6 +78,7 @@ class AppShell extends StatefulWidget {
   final TranscriptLookupFn? lookupExistingTranscript;
   final bool? supportsDynamicIslandOverride;
   final void Function(DeviceStore)? onDeviceCreated;
+  final Future<void> Function()? onClearAllLocalData;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -212,6 +215,20 @@ class _AppShellState extends State<AppShell> {
     if (_supportsDynamicIsland != caps.supportsDynamicIsland) {
       setState(() => _supportsDynamicIsland = caps.supportsDynamicIsland);
     }
+  }
+
+  Future<void> _clearAllLocalData() async {
+    final custom = widget.onClearAllLocalData;
+    if (custom != null) {
+      await custom();
+      return;
+    }
+    await _device.stopAllRecordingsForSignOut();
+    await widget.store.clearAllLocalData();
+    await widget.healthSignals?.clearAllSamples();
+    await widget.memorySearch?.clearAll();
+    await _agentChat.clearHistory();
+    await clearLastCrash();
   }
 
   /// 上一帧设备是否在录音：用来识别「刚停止录音」这个边沿，冲刷最后一段实时切片。
@@ -359,6 +376,7 @@ class _AppShellState extends State<AppShell> {
                           authService: widget.authService,
                           photoLibrary: _photoLib,
                           healthSignals: widget.healthSignals,
+                          onClearAllLocalData: _clearAllLocalData,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                         )
@@ -372,6 +390,7 @@ class _AppShellState extends State<AppShell> {
                           authService: widget.authService,
                           photoLibrary: _photoLib,
                           healthSignals: widget.healthSignals,
+                          onClearAllLocalData: _clearAllLocalData,
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                         ),
@@ -817,6 +836,7 @@ Widget _stackTopPage(
   ModelManagerController? modelManager,
   AuthService? authService,
   HealthSignalController? healthSignals,
+  Future<void> Function()? onClearAllLocalData,
 }) {
   final top = store.stackTop;
   if (top == null) return const SizedBox.shrink();
@@ -840,6 +860,7 @@ Widget _stackTopPage(
       modelManager: modelManager,
       authService: authService,
       healthSignals: healthSignals,
+      onClearAllLocalData: onClearAllLocalData,
       showPaneBack: wide && store.showPaneBackSetSub,
     );
   }
@@ -860,6 +881,7 @@ class _NarrowLayout extends StatelessWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    this.onClearAllLocalData,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
   });
@@ -871,6 +893,7 @@ class _NarrowLayout extends StatelessWidget {
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
+  final Future<void> Function()? onClearAllLocalData;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
 
@@ -914,6 +937,7 @@ class _NarrowLayout extends StatelessWidget {
                         authService: authService,
                         photoLibrary: photoLibrary,
                         healthSignals: healthSignals,
+                        onClearAllLocalData: onClearAllLocalData,
                         supportsDynamicIsland: supportsDynamicIsland,
                       ),
                     },
@@ -935,6 +959,7 @@ class _NarrowLayout extends StatelessWidget {
                         modelManager,
                         authService,
                         healthSignals,
+                        onClearAllLocalData,
                       ),
                     ),
                   ),
@@ -975,6 +1000,7 @@ class _NarrowLayout extends StatelessWidget {
     ModelManagerController? modelManager,
     AuthService? authService,
     HealthSignalController? healthSignals,
+    Future<void> Function()? onClearAllLocalData,
   ) {
     if (e.type == 'sum') {
       return SummaryResultPage(summaryId: e.id, showPaneBack: false);
@@ -993,6 +1019,7 @@ class _NarrowLayout extends StatelessWidget {
         modelManager: modelManager,
         authService: authService,
         healthSignals: healthSignals,
+        onClearAllLocalData: onClearAllLocalData,
         showPaneBack: false,
       );
     }
@@ -1010,6 +1037,7 @@ class _WideLayout extends StatelessWidget {
     this.authService,
     this.photoLibrary,
     this.healthSignals,
+    this.onClearAllLocalData,
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
   });
@@ -1021,6 +1049,7 @@ class _WideLayout extends StatelessWidget {
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
   final HealthSignalController? healthSignals;
+  final Future<void> Function()? onClearAllLocalData;
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
 
@@ -1054,6 +1083,7 @@ class _WideLayout extends StatelessWidget {
                       authService: authService,
                       photoLibrary: photoLibrary,
                       healthSignals: healthSignals,
+                      onClearAllLocalData: onClearAllLocalData,
                       supportsDynamicIsland: supportsDynamicIsland,
                     ),
                   },
@@ -1075,6 +1105,7 @@ class _WideLayout extends StatelessWidget {
                             modelManager: modelManager,
                             authService: authService,
                             healthSignals: healthSignals,
+                            onClearAllLocalData: onClearAllLocalData,
                           ),
                         )
                       : const _EmptyPane(),

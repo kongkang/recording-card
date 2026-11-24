@@ -48,10 +48,10 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config">
         <!-- allowBackup=false：录音与转写内容不进系统云备份（体积大且涉及隐私）。
-             usesCleartextTraffic=false：所有网络请求强制 HTTPS；若固件配网页只提供
-             局域网 http，需要另加 networkSecurityConfig 例外（见 docs/RELEASE.md 待确认项 2）。 -->
+             usesCleartextTraffic=false + networkSecurityConfig：公网强制 HTTPS，仅放行设备 SoftAP 本地 IP。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -92,7 +92,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="reai-mobile"
+                    android:scheme="${oauthCallbackScheme}"
                     android:host="callback" />
             </intent-filter>
         </activity>

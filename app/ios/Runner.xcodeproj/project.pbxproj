@@ -22,6 +22,11 @@
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		AA11BB22CC33DD44EE55FF77 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FF66 /* SceneDelegate.swift */; };
+		AA2026112400000000000021 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AA2026112400000000000011 /* PrivacyInfo.xcprivacy */; };
+		AA2026112400000000000022 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AA2026112400000000000012 /* PrivacyInfo.xcprivacy */; };
+		AA2026112400000000000023 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AA2026112400000000000013 /* PrivacyInfo.xcprivacy */; };
+		AA2026112400000000000024 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AA2026112400000000000014 /* PrivacyInfo.xcprivacy */; };
+		AA2026112400000000000025 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AA2026112400000000000015 /* PrivacyInfo.xcprivacy */; };
 		BC1122330003000000000001 /* RecordingCardActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000001 /* RecordingCardActivityAttributes.swift */; };
 		BC1122330003000000000002 /* PhoneMicBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000002 /* PhoneMicBridge.swift */; };
 		BC1122330003000000000003 /* LiveActivityBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1122330001000000000003 /* LiveActivityBridge.swift */; };
@@ -175,6 +180,12 @@
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FF66 /* SceneDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		AA2026112400000000000001 /* ExtensionVersion.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = ExtensionVersion.xcconfig; path = Flutter/ExtensionVersion.xcconfig; sourceTree = "<group>"; };
+		AA2026112400000000000011 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		AA2026112400000000000012 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		AA2026112400000000000013 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		AA2026112400000000000014 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		AA2026112400000000000015 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		AE820503CF5E2035444BECC7 /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
 		B00DA80CA6233BE9B872D8BC /* AppleAssetPackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppleAssetPackBridge.swift; sourceTree = "<group>"; };
 		BC1122330001000000000001 /* RecordingCardActivityAttributes.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RecordingCardActivityAttributes.swift; sourceTree = "<group>"; };
@@ -304,6 +315,7 @@
 				9740EEB21CF90195004384FC /* Debug.xcconfig */,
 				7AFA3C8E1D35360C0083082E /* Release.xcconfig */,
 				9740EEB31CF90195004384FC /* Generated.xcconfig */,
+				AA2026112400000000000001 /* ExtensionVersion.xcconfig */,
 			);
 			name = Flutter;
 			sourceTree = "<group>";
@@ -344,6 +356,7 @@
 				97C146FD1CF9000F007C117D /* Assets.xcassets */,
 				97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */,
 				97C147021CF9000F007C117D /* Info.plist */,
+				AA2026112400000000000011 /* PrivacyInfo.xcprivacy */,
 				1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */,
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
@@ -390,6 +403,7 @@
 				BC1122330001000000000005 /* RecordingCardLiveActivityBundle.swift */,
 				BC1122330001000000000006 /* RecordingCardLiveActivityWidget.swift */,
 				BC1122330001000000000007 /* Info.plist */,
+				AA2026112400000000000012 /* PrivacyInfo.xcprivacy */,
 				BC1122330001000000000008 /* Assets.xcassets */,
 			);
 			path = RecordingCardLiveActivity;
@@ -409,6 +423,7 @@
 				EF16A8F5E7BF8208BDB546E7 /* BackgroundDownloadHandler.swift */,
 				C8F37D93C7EA171FC36AAE5F /* Info.plist */,
 				567C35CCBD2FEF6FB70B3FAE /* BackgroundDownloadHandler.entitlements */,
+				AA2026112400000000000013 /* PrivacyInfo.xcprivacy */,
 			);
 			name = BackgroundDownloadHandler;
 			path = BackgroundDownloadHandler;
@@ -431,6 +446,7 @@
 				WC112233000100000000000A /* Assets.xcassets */,
 				WC1122330001000000000003 /* Info.plist */,
 				WC1122330001000000000004 /* WatchApp.entitlements */,
+				AA2026112400000000000014 /* PrivacyInfo.xcprivacy */,
 				WC1122330001000000000005 /* RecordingCardWatchMainApp.swift */,
 				WC1122330001000000000006 /* WatchAudioCaptureEngine.swift */,
 				WC1122330001000000000007 /* WatchMainView.swift */,
@@ -445,6 +461,7 @@
 			children = (
 				WC112233000100000000000C /* Info.plist */,
 				WC112233000100000000000D /* WatchWidgets.entitlements */,
+				AA2026112400000000000015 /* PrivacyInfo.xcprivacy */,
 				WC112233000100000000000B /* RecordingCardComplication.swift */,
 			);
 			path = WatchWidgets;
@@ -655,6 +672,7 @@
 				97C146FC1CF9000F007C117D /* Main.storyboard in Resources */,
 				BC112233000300000000000A /* RCLcdDigital-Regular.ttf in Resources */,
 				BC112233000300000000000C /* RCLcdBlink-Regular.ttf in Resources */,
+				AA2026112400000000000021 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -662,6 +680,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA2026112400000000000023 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -672,6 +691,7 @@
 				BC1122330003000000000008 /* Assets.xcassets in Resources */,
 				BC112233000300000000000B /* RCLcdDigital-Regular.ttf in Resources */,
 				BC112233000300000000000D /* RCLcdBlink-Regular.ttf in Resources */,
+				AA2026112400000000000022 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -680,6 +700,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				WC1122330003000000000008 /* Assets.xcassets in Resources */,
+				AA2026112400000000000024 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -687,6 +708,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA2026112400000000000025 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -924,11 +946,12 @@
 /* Begin XCBuildConfiguration section */
 		0E2234CA6A9070A1C2F237B7 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA2026112400000000000001 /* ExtensionVersion.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
@@ -938,7 +961,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.BackgroundDownloadHandler;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1099,11 +1122,12 @@
 		};
 		93AD6C35A973783C2031C904 /* Profile */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA2026112400000000000001 /* ExtensionVersion.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
@@ -1113,7 +1137,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.BackgroundDownloadHandler;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1330,11 +1354,12 @@
 		};
 		A2B2BFDF51C8C3537DC9D2B8 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA2026112400000000000001 /* ExtensionVersion.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = BackgroundDownloadHandler/BackgroundDownloadHandler.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BackgroundDownloadHandler/Info.plist;
@@ -1344,7 +1369,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.BackgroundDownloadHandler;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1356,11 +1381,12 @@
 		};
 		BC1122330006000000000002 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA2026112400000000000001 /* ExtensionVersion.xcconfig */;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
@@ -1370,7 +1396,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.liveactivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1383,11 +1409,12 @@
 		};
 		BC1122330006000000000003 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA2026112400000000000001 /* ExtensionVersion.xcconfig */;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
@@ -1397,7 +1424,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.liveactivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1409,11 +1436,12 @@
 		};
 		BC1122330006000000000004 /* Profile */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA2026112400000000000001 /* ExtensionVersion.xcconfig */;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2026111901;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = 35N5SGDE59;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RecordingCardLiveActivity/Info.plist;
@@ -1423,7 +1451,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = com.reai.recordingcard.liveactivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

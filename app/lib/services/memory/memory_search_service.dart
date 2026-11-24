@@ -97,6 +97,8 @@ class MemorySearchService {
     }
   }
 
+  Future<void> clearAll() => _index.replaceAll(const []);
+
   Future<void> close() => _index.close();
 
   Future<List<MemoryHit>> _searchIndexed(

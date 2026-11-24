@@ -186,4 +186,9 @@ class RecordingsManifest {
     final items = await load();
     await _saveAll([...items.where((i) => i.deviceName != deviceName)]);
   }
+
+  Future<void> clear() async {
+    final json = await _store();
+    await json.remove('recordings');
+  }
 }

@@ -129,6 +129,26 @@ class PhotoLibraryService {
     return dir;
   }
 
+  /// 清空已导入/缓存到本地沙盒的照片副本（不碰系统相册原图）。
+  Future<void> clearLocalCache() async {
+    try {
+      final dir = _directoryOverride != null
+          ? await _directoryOverride()
+          : Directory('${(await getApplicationSupportDirectory()).path}/photos');
+      if (await dir.exists()) {
+        await for (final entity in dir.list()) {
+          try {
+            await entity.delete(recursive: true);
+          } on FileSystemException {
+            // 忽略单文件占用
+          }
+        }
+      }
+    } on Object {
+      // 无平台通道时忽略
+    }
+  }
+
   Future<PhotoImportReport> importInWindows(
     List<PhotoWindow> windows, {
     String? outputDirOverride,

@@ -143,6 +143,8 @@
       modalTitle: '早鸟免费登记',
       modalLead: '留下常用邮箱，上线第一时间通知你：赠送至少 1 个月会员，并自动参与抽取实体录音卡（价值 ¥1,000）。',
       footCopy: '© 2026 ReAI · 录音卡',
+      footPrivacy: '隐私政策',
+      footSupport: '技术支持与账号注销',
       hwName: '录音卡'
     },
     en: {
@@ -269,6 +271,8 @@
       modalTitle: 'Join the Early-Bird Waitlist',
       modalLead: 'Leave your email for launch access: get at least 1 month of membership and a chance to win a physical AI Card (worth ¥1,000).',
       footCopy: '© 2026 ReAI · AI Card',
+      footPrivacy: 'Privacy Policy',
+      footSupport: 'Support & Account Deletion',
       hwName: 'AI CARD'
     }
   };

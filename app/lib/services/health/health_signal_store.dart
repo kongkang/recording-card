@@ -251,6 +251,14 @@ CREATE TABLE health_sync_state (
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  Future<void> clearAll() async {
+    final db = await _open();
+    await db.transaction((txn) async {
+      await txn.delete('health_samples');
+      await txn.delete('health_sync_state');
+    });
+  }
+
   Future<void> close() async {
     final db = _db;
     _db = null;
