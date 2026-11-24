@@ -29,6 +29,7 @@ import '../audio/live_audio_recorder.dart';
 import '../audio/pcm_ring_buffer.dart';
 import '../audio/phone_mic_service.dart';
 import 'agent_chat_controller.dart';
+import 'agent_harness_worker.dart';
 
 typedef SliceTranscribeFn = Future<String> Function(
   Float32List samples, {
@@ -53,12 +54,14 @@ class _ActiveVoiceSession {
     required this.tStartMs,
     required this.holdMode,
     required this.usedTempCapture,
+    required this.triggeredByHardware,
     this.notBeforeMs,
   });
 
   final int tStartMs;
   final bool holdMode;
   final bool usedTempCapture;
+  final bool triggeredByHardware;
   final int? notBeforeMs;
 
   final BytesBuilder tempPcm = BytesBuilder(copy: false);
@@ -198,6 +201,34 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
     if (mode != null && mode.isNotEmpty) {
       unawaited(_device.sendDyjLedHint(mode));
     }
+  }
+
+  bool _shouldUseHardwareSpeaker({required bool triggeredByHardware}) =>
+      triggeredByHardware &&
+      _device.isConnected &&
+      _device.activeCapabilities.hasSpeaker;
+
+  Future<void> _speakFeedback(
+    String text, {
+    required bool triggeredByHardware,
+  }) async {
+    final clean = AgentHarnessWorker.cleanVoiceReplyText(text);
+    if (clean.isEmpty) return;
+    if (_shouldUseHardwareSpeaker(triggeredByHardware: triggeredByHardware)) {
+      final outcome = await _device.trySpeakOnHardware(clean, interrupt: true);
+      if (outcome == DyjSpeechOutcome.spoken) {
+        final nowMs = _clock().millisecondsSinceEpoch;
+        if (_lastTtsEndedAtMs == null || nowMs > _lastTtsEndedAtMs!) {
+          _lastTtsEndedAtMs = nowMs;
+        }
+      } else {
+        debugPrint(
+          '[hw_agent] 硬件扬声器未播报（$outcome），按约定保持手机静音：${clean.length} 字',
+        );
+      }
+      return;
+    }
+    await _agentChat.speakText(clean);
   }
 
   String _formatButtonToast(
@@ -344,7 +375,11 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
           _enqueue(() async {
             await _interruptSpeechIfActive(timestampMs: ev.receivedAtMs);
             if (_activeVoice != null) return;
-            await _startVoiceSession(tStartMs: tStartMs, holdMode: true);
+            await _startVoiceSession(
+              tStartMs: tStartMs,
+              holdMode: true,
+              triggeredByHardware: true,
+            );
           }),
         );
       } else {
@@ -381,7 +416,11 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
             if (_activeVoice != null) {
               await _finishVoiceSession(triggerMs);
             } else if (phase == HardwareAgentPhase.idle) {
-              await _startVoiceSession(tStartMs: triggerMs, holdMode: false);
+              await _startVoiceSession(
+                tStartMs: triggerMs,
+                holdMode: false,
+                triggeredByHardware: true,
+              );
             }
           }),
         );
@@ -405,7 +444,11 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       if (_activeVoice != null) {
         await _finishVoiceSession(triggerMs);
       } else if (phase == HardwareAgentPhase.idle) {
-        await _startVoiceSession(tStartMs: triggerMs, holdMode: false);
+        await _startVoiceSession(
+          tStartMs: triggerMs,
+          holdMode: false,
+          triggeredByHardware: false,
+        );
       }
     });
   }
@@ -578,7 +621,9 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
   }
 
   PcmRingBuffer? _activeContinuousRing() {
-    if (_device.isRecording && _device.activeCapabilities.realtimeAudio) {
+    if (_device.isRecording &&
+        _device.activeCapabilities.realtimeAudio &&
+        (_liveAudio.isRunning || !_liveAudio.ringBuffer.isEmpty)) {
       return _liveAudio.ringBuffer;
     }
     if (_device.isPhoneRecording) {
@@ -590,6 +635,7 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
   Future<void> _startVoiceSession({
     required int tStartMs,
     required bool holdMode,
+    bool triggeredByHardware = true,
   }) async {
     final continuousRing = _activeContinuousRing();
     final useTemp = continuousRing == null;
@@ -597,6 +643,7 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       tStartMs: tStartMs,
       holdMode: holdMode,
       usedTempCapture: useTemp,
+      triggeredByHardware: triggeredByHardware,
       notBeforeMs: _lastTtsEndedAtMs,
     );
     _activeVoice = session;
@@ -619,7 +666,9 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
           oledLine2: '请重试',
           timeoutMs: 2500,
         );
-        unawaited(_agentChat.speakText(err));
+        unawaited(
+          _speakFeedback(err, triggeredByHardware: session.triggeredByHardware),
+        );
         _setStatus(HardwareAgentPhase.idle, err, transient: true);
         return;
       }
@@ -725,7 +774,9 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         final err = session.captureError ?? '无法启动临时录音采集（$reason）';
         _activeVoice = null;
         unawaited(_device.sendDyjLedHint('error'));
-        unawaited(_agentChat.speakText(err));
+        unawaited(
+          _speakFeedback(err, triggeredByHardware: session.triggeredByHardware),
+        );
         _setStatus(HardwareAgentPhase.idle, err, transient: true);
       }
       return ok;
@@ -820,6 +871,23 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         if (session.usedTempCapture) await _stopTempCapture(session);
         return;
       }
+      if (session.usedTempCapture &&
+          session.usedHwRealtime &&
+          !session.stopped &&
+          session.tempPcm.length < PcmRingBuffer.minSliceBytes) {
+        for (var i = 0; i < 10; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          if (_disposed ||
+              session.stopped ||
+              session.tempPcm.length >= PcmRingBuffer.minSliceBytes) {
+            break;
+          }
+        }
+        if (_disposed) {
+          await _stopTempCapture(session);
+          return;
+        }
+      }
     }
 
     String? transcriptText;
@@ -829,19 +897,27 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         : session.tStartMs;
     final effectiveEndMs = math.max(tEndMs, effectiveStartMs);
 
-    if (!session.usedTempCapture) {
-      final lookup = _lookupExistingTranscript;
-      if (lookup != null) {
-        try {
-          final found = await lookup(effectiveStartMs, effectiveEndMs);
-          if (found != null && found.trim().isNotEmpty) {
-            transcriptText = found.trim();
-          }
-        } on Object {
-          // 查询既有转写失败时回退音频切片识别
+    if (session.usedTempCapture) {
+      await _stopTempCapture(session);
+    }
+
+    final lookup = _lookupExistingTranscript;
+    if (lookup != null &&
+        (!session.usedTempCapture ||
+            _device.isRecording ||
+            _device.isPhoneRecording)) {
+      try {
+        final found = await lookup(effectiveStartMs, effectiveEndMs);
+        if (found != null && found.trim().isNotEmpty) {
+          transcriptText = found.trim();
         }
+      } on Object {
+        // 查询既有转写失败时回退音频切片识别
       }
-      if (transcriptText == null) {
+    }
+
+    if (transcriptText == null) {
+      if (!session.usedTempCapture) {
         final ring = _activeContinuousRing();
         slice = ring?.slice(
           startMs: session.tStartMs,
@@ -850,17 +926,16 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
           postRollMs: 250,
           notBeforeMs: session.notBeforeMs,
         );
-      }
-    } else {
-      await _stopTempCapture(session);
-      final rawBytes = session.tempPcm.takeBytes();
-      if (rawBytes.length >= PcmRingBuffer.minSliceBytes) {
-        slice = PcmWindowSlice(
-          startMs: effectiveStartMs,
-          endMs: effectiveEndMs,
-          sampleRate: session.tempSampleRate,
-          pcm16le: rawBytes,
-        );
+      } else {
+        final rawBytes = session.tempPcm.takeBytes();
+        if (rawBytes.length >= PcmRingBuffer.minSliceBytes) {
+          slice = PcmWindowSlice(
+            startMs: effectiveStartMs,
+            endMs: effectiveEndMs,
+            sampleRate: session.tempSampleRate,
+            pcm16le: rawBytes,
+          );
+        }
       }
     }
 
@@ -872,7 +947,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
           oledLine2: '请重试',
           timeoutMs: 2500,
         );
-        unawaited(_agentChat.speakText('没有听清，请再说一次'));
+        unawaited(
+          _speakFeedback(
+            '没有听清，请再说一次',
+            triggeredByHardware: session.triggeredByHardware,
+          ),
+        );
         _setStatus(HardwareAgentPhase.idle, '未识别到有效语音', transient: true);
         return;
       }
@@ -892,7 +972,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
           timeoutMs: 2500,
         );
         final msg = '本地语音识别失败：$e';
-        unawaited(_agentChat.speakText('本地语音识别失败'));
+        unawaited(
+          _speakFeedback(
+            '本地语音识别失败',
+            triggeredByHardware: session.triggeredByHardware,
+          ),
+        );
         _setStatus(HardwareAgentPhase.idle, msg, transient: true);
         return;
       }
@@ -905,23 +990,35 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         oledLine2: '请重试',
         timeoutMs: 2500,
       );
-      unawaited(_agentChat.speakText('没有听清，请再说一次'));
+      unawaited(
+        _speakFeedback(
+          '没有听清，请再说一次',
+          triggeredByHardware: session.triggeredByHardware,
+        ),
+      );
       _setStatus(HardwareAgentPhase.idle, '未识别到有效语音', transient: true);
       return;
     }
 
     _setStatus(HardwareAgentPhase.thinking, '正在向 Agent 发送：$transcriptText');
     _sendHardwareHint('thinking', oledLine1: '思考中', oledLine2: '正在回复');
+    final useHwSpeaker = _shouldUseHardwareSpeaker(
+      triggeredByHardware: session.triggeredByHardware,
+    );
+    final prevLastId = _agentChat.messages.lastOrNull?.id;
     await _agentChat.sendMessage(
       transcriptText,
       viaVoice: true,
-      speakReply: true,
-      speakError: true,
+      speakReply: !useHwSpeaker,
+      speakError: !useHwSpeaker,
     );
     if (_disposed) return;
 
     final err = _agentChat.errorMessage;
     if (err != null && err.isNotEmpty) {
+      if (useHwSpeaker) {
+        unawaited(_speakFeedback(err, triggeredByHardware: true));
+      }
       _sendHardwareHint(
         'error',
         oledLine1: '未听清',
@@ -930,6 +1027,15 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       );
       _setStatus(HardwareAgentPhase.idle, err, transient: true);
     } else {
+      if (useHwSpeaker) {
+        final last = _agentChat.messages.lastOrNull;
+        if (last != null &&
+            last.role == 'assistant' &&
+            last.id != prevLastId &&
+            last.text.trim().isNotEmpty) {
+          unawaited(_speakFeedback(last.text, triggeredByHardware: true));
+        }
+      }
       _sendHardwareHint(
         'done',
         oledLine1: '已回复',
@@ -943,7 +1049,7 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
   Future<void> _handlePhotoRecognize() async {
     if (!_device.isConnected || !_device.activeCapabilities.hasCameraMedia) {
       const msg = '请先连接支持拍照的点一机设备';
-      unawaited(_agentChat.speakText(msg));
+      unawaited(_speakFeedback(msg, triggeredByHardware: _device.isConnected));
       _setStatus(HardwareAgentPhase.idle, msg, transient: true);
       return;
     }
@@ -984,15 +1090,20 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       if (_disposed) return;
 
       _setStatus(HardwareAgentPhase.thinking, '正在识别画面内容…');
+      final useHwSpeaker = _shouldUseHardwareSpeaker(triggeredByHardware: true);
+      final prevLastId = _agentChat.messages.lastOrNull?.id;
       await _agentChat.sendPhotoRecognitionMessage(
         jpegBytes: bytes,
-        speakReply: true,
-        speakError: true,
+        speakReply: !useHwSpeaker,
+        speakError: !useHwSpeaker,
       );
       if (_disposed) return;
 
       final err = _agentChat.errorMessage;
       if (err != null && err.isNotEmpty) {
+        if (useHwSpeaker) {
+          unawaited(_speakFeedback(err, triggeredByHardware: true));
+        }
         _sendHardwareHint(
           'error',
           oledLine1: '未听清',
@@ -1001,6 +1112,15 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         );
         _setStatus(HardwareAgentPhase.idle, err, transient: true);
       } else {
+        if (useHwSpeaker) {
+          final last = _agentChat.messages.lastOrNull;
+          if (last != null &&
+              last.role == 'assistant' &&
+              last.id != prevLastId &&
+              last.text.trim().isNotEmpty) {
+            unawaited(_speakFeedback(last.text, triggeredByHardware: true));
+          }
+        }
         _sendHardwareHint(
           'done',
           oledLine1: '已回复',
@@ -1019,7 +1139,9 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       );
       final cleanErr = '$e'.replaceFirst(RegExp(r'^Bad state:\s*'), '');
       final msg = '拍照识别失败：$cleanErr';
-      unawaited(_agentChat.speakText('拍照识别失败，请稍后重试'));
+      unawaited(
+        _speakFeedback('拍照识别失败，请稍后重试', triggeredByHardware: true),
+      );
       _setStatus(HardwareAgentPhase.idle, msg, transient: true);
     }
   }

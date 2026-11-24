@@ -80,6 +80,7 @@ impl DeviceKind {
                 has_standalone_realtime_stream: false,
                 has_device_restart: true,
                 has_device_shutdown: true,
+                has_speaker: false,
                 ota_mode: "dual_chip",
             },
             Self::DyjV1 => HardwareCapabilities {
@@ -97,6 +98,7 @@ impl DeviceKind {
                 has_standalone_realtime_stream: true,
                 has_device_restart: true,
                 has_device_shutdown: false,
+                has_speaker: true,
                 ota_mode: "single_ota",
             },
             Self::BoardV21 => HardwareCapabilities {
@@ -114,6 +116,7 @@ impl DeviceKind {
                 has_standalone_realtime_stream: true,
                 has_device_restart: false,
                 has_device_shutdown: false,
+                has_speaker: false,
                 ota_mode: "none",
             },
             Self::OmiCv1 => HardwareCapabilities::from_sdk(OmiSdkDriver.default_capabilities()),
@@ -145,6 +148,7 @@ pub struct HardwareCapabilities {
     pub has_standalone_realtime_stream: bool,
     pub has_device_restart: bool,
     pub has_device_shutdown: bool,
+    pub has_speaker: bool,
     /// `"dual_chip"` | `"single_ota"` | `"none"`
     pub ota_mode: &'static str,
 }
@@ -166,6 +170,7 @@ impl HardwareCapabilities {
             has_standalone_realtime_stream: caps.realtime_audio,
             has_device_restart: false,
             has_device_shutdown: false,
+            has_speaker: false,
             ota_mode: caps.ota_mode,
         }
     }
@@ -210,6 +215,7 @@ pub fn card_v2_dfu_recovery_capabilities() -> HardwareCapabilities {
         has_standalone_realtime_stream: false,
         has_device_restart: false,
         has_device_shutdown: false,
+        has_speaker: false,
         ota_mode: "dual_chip",
     }
 }
@@ -459,7 +465,11 @@ mod tests {
         let caps_0815 = dyj_v1_capabilities_for_firmware(815, Some(255));
         assert!(caps_0815.has_camera_media);
         assert!(caps_0815.realtime_audio);
+        assert!(caps_0815.has_speaker);
+        assert!(!DeviceKind::CardV2.capabilities().has_speaker);
+        assert!(!DeviceKind::BoardV21.capabilities().has_speaker);
         let caps_unknown = dyj_v1_capabilities_for_firmware(0, None);
         assert!(caps_unknown.has_camera_media);
+        assert!(caps_unknown.has_speaker);
     }
 }

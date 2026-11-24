@@ -423,8 +423,25 @@ class AppStore extends ChangeNotifier {
   bool deferredBatchTranscription = false;
   int transcribeCycleMinutes = 15;
   bool _forceImmediateLiveIngest = false;
+  bool _isAppBackgrounded = false;
   bool _batchTranscribeInFlight = false;
   DateTime? _lastAutoResumeTranscribeAt;
+
+  bool get isAppBackgrounded => _isAppBackgrounded;
+
+  void setAppBackgrounded(bool value) {
+    _isAppBackgrounded = value;
+  }
+
+  /// 后台/内存紧张时释放可重建的派生缓存（Timeline 分组视图与照片统计缓存）。
+  void trimMemoryCache() {
+    _eventByIdCache = null;
+    _activePhotosCache.clear();
+    _summaryPhotoCountCache.clear();
+    _cachedFeedKey = null;
+    _cachedFeedGroups = null;
+    _cachedFeedEntries = null;
+  }
 
   List<RouteEntry> subStack = []; // 路由栈：总结↔记录互跳统一历史栈
 
@@ -538,7 +555,9 @@ class AppStore extends ChangeNotifier {
     final pipeline = _pipeline;
     if (pipeline == null) return Future<RecordingFile?>.value(null);
 
-    final deferNow = deferredBatchTranscription && !_forceImmediateLiveIngest;
+    final deferNow =
+        _isAppBackgrounded ||
+        (deferredBatchTranscription && !_forceImmediateLiveIngest);
     _liveSlicesInFlight++;
     if (!deferNow) {
       if (_status?.isRecording == true) {
@@ -567,8 +586,9 @@ class AppStore extends ChangeNotifier {
               '已存 $pendingLocalAudioCount 段（约 $cachedMins 分钟）',
             );
           }
-          if (pendingLocalAudioDurationMs >=
-              transcribeCycleMinutes * 60 * 1000) {
+          if (!_isAppBackgrounded &&
+              pendingLocalAudioDurationMs >=
+                  transcribeCycleMinutes * 60 * 1000) {
             unawaited(transcribeAndOrganizePending(reason: 'cycle'));
           }
           completer.complete(saved);
@@ -618,6 +638,9 @@ class AppStore extends ChangeNotifier {
   }) async {
     final pipeline = _pipeline;
     if (_disposed || pipeline == null) {
+      return (transcribed: 0, failed: 0, error: null);
+    }
+    if (_isAppBackgrounded && reason != 'manual') {
       return (transcribed: 0, failed: 0, error: null);
     }
     if (reason == 'view-resume' || reason == 'tab-view') {

@@ -190,21 +190,22 @@ void main() {
     expect(device.isPhoneRecording, isFalse);
     expect(recStatus.phase, RecordingPhase.recording);
 
-    // 发生意外断连（设备离开距离或没电关机，重连失败）
+    // 发生意外断连（具备板载存储的硬件先快速直连重连，不立即抢启手机麦克风）
     gw.failConnect = CardException.disconnected('设备超出范围');
     gw.pushDisconnectedEvent();
     await device.pollEventsNow();
     await tester.pump();
-    // 断连当即无缝启动手机本机录音，不等重连超时
-    expect(device.isPhoneRecording, isTrue);
-    expect(device.isFailoverPhoneRecording, isTrue);
-    expect(mic.capturing, isTrue);
+    expect(device.linkState, LinkState.reconnecting);
+    expect(device.isPhoneRecording, isFalse);
+    expect(mic.capturing, isFalse);
 
-    // 重连失败落回未连接态：顶栏胶囊展示「本机录音」，Timeline 录音块不中断，灵动岛切换为保底实况
+    // 快速直连重连确认失败落回未连接态后：再拉起手机本机保底，顶栏胶囊展示「本机录音」，Timeline 录音块不中断，灵动岛切换为保底实况
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
     expect(device.linkState, LinkState.disconnected);
     expect(device.isPhoneRecording, isTrue);
+    expect(device.isFailoverPhoneRecording, isTrue);
+    expect(mic.capturing, isTrue);
     expect(recStatus.phase, RecordingPhase.recording);
     expect(find.byKey(const Key('capsule-phone-rec')), findsOneWidget);
     expect(liveAct.subtitles.last, contains('本机保底录音中'));
@@ -262,12 +263,13 @@ void main() {
     expect(device.isPhoneStandbyArmed, isTrue);
     expect(mic.capturing, isFalse);
 
-    // B) 瞬时断连但 400ms 重连成功（硬件仍在录）：保底麦克风短暂兜底后自动关闭，恢复蓝牙录音
+    // B) 瞬时断连但 400ms 重连成功（硬件仍在录）：硬件本地可持续存储，瞬时重连期间不误启手机麦克风
     gw.pushDisconnectedEvent();
     await device.pollEventsNow();
     await tester.pump();
     expect(device.linkState, LinkState.reconnecting);
-    expect(device.isPhoneRecording, isTrue);
+    expect(device.isPhoneRecording, isFalse);
+    expect(mic.capturing, isFalse);
 
     await tester.pump(const Duration(milliseconds: 600));
     await tester.pump();
@@ -275,6 +277,7 @@ void main() {
     expect(device.isRecording, isTrue);
     expect(device.isPhoneRecording, isFalse);
     expect(mic.capturing, isFalse);
+    expect(mic.startCalls, 1, reason: '整个瞬时断连→重连过程不应新增启动手机麦克风');
     expect(device.isPhoneStandbyArmed, isTrue);
 
     // C) 硬件端上报故障错误码自停（如 SD 卡异常 error=2）：自动触发本机录音保底防丢

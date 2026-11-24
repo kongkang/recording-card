@@ -173,6 +173,8 @@ void main() {
       expect(cfg.dyjClickAction, HardwareButtonAction.mark);
       expect(cfg.dyjLongPressAction, HardwareButtonAction.agentVoice);
       expect(cfg.dyjDoubleClickAction, HardwareButtonAction.photoRecognize);
+      expect(HardwareCapabilities.dyjV1.hasSpeaker, isTrue);
+      expect(HardwareCapabilities.cardV2.hasSpeaker, isFalse);
       expect(
         cfg.iphoneActionButtonBehavior,
         IphoneActionButtonBehavior.recordToggle,
@@ -395,7 +397,8 @@ void main() {
         isTrue,
       );
       expect(chat.messages.last.text, '今天下午四点有个产品对齐会。');
-      expect(speech.spokenTexts, contains('今天下午四点有个产品对齐会。'));
+      expect(gw.dyjTtsSpokenTexts, contains('今天下午四点有个产品对齐会。'));
+      expect(speech.spokenTexts, isEmpty);
       expect(gw.ledHintModes, ['listening', 'thinking', 'done']);
 
       coord.dispose();
@@ -476,7 +479,8 @@ void main() {
         completion.userPrompts.any((p) => p.contains('刚才已经转写好的任务内容')),
         isTrue,
       );
-      expect(speech.spokenTexts, contains('好的，已帮你在笔记里标出。'));
+      expect(gw.dyjTtsSpokenTexts, contains('好的，已帮你在笔记里标出。'));
+      expect(speech.spokenTexts, isEmpty);
 
       coord.dispose();
       await worker.dispose();
@@ -560,7 +564,8 @@ void main() {
         completion.userPrompts.any((p) => p.contains('今天北京天气怎么样？')),
         isTrue,
       );
-      expect(speech.spokenTexts, contains('临时语音任务已完成，室外现在多云。'));
+      expect(gw.dyjTtsSpokenTexts, contains('临时语音任务已完成，室外现在多云。'));
+      expect(speech.spokenTexts, isEmpty);
 
       coord.dispose();
       await worker.dispose();
@@ -628,7 +633,8 @@ void main() {
         startsWith('data:image/jpeg;base64,'),
       );
       expect(chat.messages.last.text, '这是一杯拿铁咖啡。');
-      expect(speech.spokenTexts, contains('这是一杯拿铁咖啡。'));
+      expect(gw.dyjTtsSpokenTexts, contains('这是一杯拿铁咖啡。'));
+      expect(speech.spokenTexts, isEmpty);
 
       coord.dispose();
       chat.dispose();
@@ -808,6 +814,249 @@ void main() {
       // pumpWidget 销毁树后清理内部定时器
       await tester.pumpWidget(const SizedBox.shrink());
       coord.dispose();
+      chat.dispose();
+      liveAudio.dispose();
+      device.dispose();
+      cfg.dispose();
+      appStore.dispose();
+      speech.dispose();
+    },
+  );
+
+  test(
+    'Case 8: DYJ V1 固件不支持 tts.speak (0.8.15 code=1001) 时先尝试硬件播报，失败后保持手机静音不断链',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('rc_btn_case8_');
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      final cfg = AgentConfigStore(store: InMemoryStore());
+      await cfg.load();
+      final appStore = AppStore(loadPersistedState: false);
+      final gw = FakeCardGateway(initialSnapshot: _dyjSnapshot(recording: false))
+        ..dyjTtsSupported = false;
+      gw.realtimeEvents.add(
+        RealtimeAudioEvent(
+          kind: RealtimeAudioKind.audio,
+          pcm: _voicedPcm(samples: 3200),
+        ),
+      );
+      final device = DeviceStore(gateway: gw);
+      await device.restoreLink();
+      final liveAudio = LiveAudioRecorder(gateway: gw, baseDir: dir);
+
+      final speech = _FakeSpeechBackend();
+      final completion = _FakeCompletion('今天天气晴朗。');
+      final worker = AgentHarnessWorker(
+        complete: completion.complete,
+        inProcess: true,
+      );
+      final chat = AgentChatController(
+        appStore: appStore,
+        agentConfig: cfg,
+        speech: speech,
+        completion: completion,
+        worker: worker,
+        agentDirResolver: () async => '',
+      );
+
+      final coord = HardwareAgentTaskCoordinator(
+        device: device,
+        agentConfig: cfg,
+        agentChat: chat,
+        liveAudio: liveAudio,
+        postSettleDelay: Duration.zero,
+        transientStatusDuration: Duration.zero,
+        maxVoiceTaskDuration: Duration.zero,
+        transcribeSamples: (samples, {sampleRate = 16000}) async => '今天天气怎么样？',
+      );
+
+      gw.pushButtonEvent(
+        gesture: 'long_press_start',
+        durationMs: 600,
+        receivedAtMs: 20000,
+      );
+      await device.pollEventsNow();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      gw.pushButtonEvent(
+        gesture: 'long_press_end',
+        durationMs: 1800,
+        receivedAtMs: 21200,
+      );
+      await device.pollEventsNow();
+      await coord.idle;
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(gw.callLog, contains('dyj_tts_speak'));
+      expect(gw.dyjTtsSpokenTexts, isEmpty);
+      expect(chat.messages.last.text, '今天天气晴朗。');
+      expect(device.isConnected, isTrue);
+      expect(
+        speech.spokenTexts,
+        isEmpty,
+        reason: '自带扬声器硬件固件暂不支持 tts.speak 时，不能让手机突然外放打扰用户',
+      );
+
+      coord.dispose();
+      await worker.dispose();
+      chat.dispose();
+      liveAudio.dispose();
+      device.dispose();
+      cfg.dispose();
+      appStore.dispose();
+      speech.dispose();
+    },
+  );
+
+  test(
+    'Case 9: 无扬声器硬件（CardV2）触发长按仍走手机/耳机系统 TTS，且不调用 dyj_tts_speak',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('rc_btn_case9_');
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      final cfg = AgentConfigStore(store: InMemoryStore());
+      await cfg.load();
+      final appStore = AppStore(loadPersistedState: false);
+      final gw = FakeCardGateway(initialSnapshot: defaultSnapshot);
+      final device = DeviceStore(gateway: gw);
+      await device.restoreLink();
+      final liveAudio = LiveAudioRecorder(gateway: gw, baseDir: dir);
+
+      final mic = _FakePhoneMicBackend([_voicedPcm(samples: 3200)]);
+      final speech = _FakeSpeechBackend();
+      final completion = _FakeCompletion('下午三点在三号会议室开会。');
+      final worker = AgentHarnessWorker(
+        complete: completion.complete,
+        inProcess: true,
+      );
+      final chat = AgentChatController(
+        appStore: appStore,
+        agentConfig: cfg,
+        speech: speech,
+        completion: completion,
+        worker: worker,
+        agentDirResolver: () async => '',
+      );
+
+      final coord = HardwareAgentTaskCoordinator(
+        device: device,
+        agentConfig: cfg,
+        agentChat: chat,
+        liveAudio: liveAudio,
+        phoneMicBackendFactory: () => mic,
+        postSettleDelay: Duration.zero,
+        transientStatusDuration: Duration.zero,
+        maxVoiceTaskDuration: Duration.zero,
+        transcribeSamples: (samples, {sampleRate = 16000}) async => '下午几点开会？',
+      );
+
+      gw.pushButtonEvent(
+        gesture: 'long_press_start',
+        durationMs: 600,
+        receivedAtMs: 30000,
+      );
+      await device.pollEventsNow();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      gw.pushButtonEvent(
+        gesture: 'long_press_end',
+        durationMs: 1800,
+        receivedAtMs: 31200,
+      );
+      await device.pollEventsNow();
+      await coord.idle;
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(gw.callLog, isNot(contains('dyj_tts_speak')));
+      expect(chat.messages.last.text, '下午三点在三号会议室开会。');
+      expect(speech.spokenTexts, contains('下午三点在三号会议室开会。'));
+
+      coord.dispose();
+      await worker.dispose();
+      chat.dispose();
+      liveAudio.dispose();
+      device.dispose();
+      cfg.dispose();
+      appStore.dispose();
+      speech.dispose();
+    },
+  );
+
+  test(
+    'Case 10: DYJ V1 虽处于录音态但实时环未启动且缓冲为空时，长按自动回退临时实时流完成任务',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('rc_btn_case10_');
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      final cfg = AgentConfigStore(store: InMemoryStore());
+      await cfg.load();
+      final appStore = AppStore(loadPersistedState: false);
+      final gw = FakeCardGateway(initialSnapshot: _dyjSnapshot(recording: true));
+      gw.realtimeEvents.add(
+        RealtimeAudioEvent(
+          kind: RealtimeAudioKind.audio,
+          pcm: _voicedPcm(samples: 3200),
+        ),
+      );
+      final device = DeviceStore(gateway: gw);
+      await device.restoreLink();
+      final liveAudio = LiveAudioRecorder(gateway: gw, baseDir: dir);
+      expect(liveAudio.isRunning, isFalse);
+      expect(liveAudio.ringBuffer.isEmpty, isTrue);
+
+      final speech = _FakeSpeechBackend();
+      final completion = _FakeCompletion('已为你创建待办提醒。');
+      final worker = AgentHarnessWorker(
+        complete: completion.complete,
+        inProcess: true,
+      );
+      final chat = AgentChatController(
+        appStore: appStore,
+        agentConfig: cfg,
+        speech: speech,
+        completion: completion,
+        worker: worker,
+        agentDirResolver: () async => '',
+      );
+
+      final coord = HardwareAgentTaskCoordinator(
+        device: device,
+        agentConfig: cfg,
+        agentChat: chat,
+        liveAudio: liveAudio,
+        postSettleDelay: Duration.zero,
+        transientStatusDuration: Duration.zero,
+        maxVoiceTaskDuration: Duration.zero,
+        transcribeSamples: (samples, {sampleRate = 16000}) async => '帮我加个待办',
+      );
+
+      gw.pushButtonEvent(
+        gesture: 'long_press_start',
+        durationMs: 600,
+        receivedAtMs: 40000,
+      );
+      await device.pollEventsNow();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(gw.realtimeOpenCalls, 1);
+
+      gw.pushButtonEvent(
+        gesture: 'long_press_end',
+        durationMs: 1800,
+        receivedAtMs: 41200,
+      );
+      await device.pollEventsNow();
+      await coord.idle;
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(gw.realtimeCloseCalls, 0);
+      expect(gw.dyjTtsSpokenTexts, contains('已为你创建待办提醒。'));
+      expect(speech.spokenTexts, isEmpty);
+
+      coord.dispose();
+      await worker.dispose();
       chat.dispose();
       liveAudio.dispose();
       device.dispose();
