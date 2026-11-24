@@ -14,6 +14,7 @@ import '../../core/config/remote/model_gateway_config.dart';
 import '../../core/device/card_gateway.dart';
 import '../../core/store/agent_config_store.dart';
 import '../../core/store/device_store.dart';
+import '../../core/store/membership_store.dart';
 import '../../core/store/ui_style_store.dart';
 import '../../core/store/voiceprint_library_store.dart';
 import '../../core/theme/tokens.dart';
@@ -38,6 +39,7 @@ import 'developer_schedule_section.dart';
 import 'external_data_hub_body.dart';
 import 'getnote_sync_body.dart';
 import 'health_signal_body.dart';
+import 'membership_body.dart';
 import 'memory_search_body.dart';
 import 'ui_style_body.dart';
 
@@ -55,6 +57,7 @@ class SettingSubPage extends StatelessWidget {
     this.getNoteStore,
     this.externalDataHub,
     this.uiStyle,
+    this.membership,
     this.onClearAllLocalData,
     this.showPaneBack = false,
     this.backLabel = '返回 Setting',
@@ -63,7 +66,7 @@ class SettingSubPage extends StatelessWidget {
   });
 
   final String
-  subId; // 'login' | 'style' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extapi' | 'extdata' | 'extapi:<id>' | 'health' | 'data' | 'dev'
+  subId; // 'membership' | 'login' | 'style' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extapi' | 'extdata' | 'extapi:<id>' | 'health' | 'data' | 'dev'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
@@ -74,6 +77,7 @@ class SettingSubPage extends StatelessWidget {
   final GetNoteSyncStore? getNoteStore;
   final ExternalDataHubStore? externalDataHub;
   final UIStyleStore? uiStyle;
+  final MembershipStore? membership;
   final Future<void> Function()? onClearAllLocalData;
   final bool showPaneBack;
   final String backLabel;
@@ -89,6 +93,7 @@ class SettingSubPage extends StatelessWidget {
       return _hub.connectorById(cid)?.name ?? '第三方 API 接入';
     }
     return switch (subId) {
+      'membership' => '会员与订阅',
       'login' => '云端账号授权',
       'style' => '界面风格',
       'local' => '本地语音引擎',
@@ -253,6 +258,7 @@ class SettingSubPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 14),
                   switch (subId) {
+                    'membership' => _membershipBody(context),
                     'login' => _LoginAuthBody(
                       authService: authService,
                       device: device,
@@ -304,6 +310,9 @@ class SettingSubPage extends StatelessWidget {
                                       getNoteStore: getNoteStore,
                                       externalDataHub: externalDataHub,
                                       uiStyle: uiStyle,
+                                      membership:
+                                          membership ??
+                                          MembershipScope.maybeOf(context),
                                       standalone: true,
                                       standaloneBackLabel: '第三方 API 接入',
                                     ),
@@ -331,7 +340,11 @@ class SettingSubPage extends StatelessWidget {
                       healthSignals: healthSignals,
                       onClearAllLocalData: onClearAllLocalData,
                     ),
-                    'dev' => _DeveloperCleanBody(config: agentConfig),
+                    'dev' => _DeveloperCleanBody(
+                      config: agentConfig,
+                      membership:
+                          membership ?? MembershipScope.maybeOf(context),
+                    ),
                     _ => const SizedBox.shrink(),
                   },
                 ],
@@ -343,6 +356,14 @@ class SettingSubPage extends StatelessWidget {
     );
   }
 
+  Widget _membershipBody(BuildContext context) {
+    final resolved = membership ?? MembershipScope.maybeOf(context);
+    if (resolved != null) {
+      return MembershipBody(store: resolved);
+    }
+    return const _OwnedMembershipBody();
+  }
+
   Widget _memorySearchBody(BuildContext context) {
     final service = MemorySearchScope.maybeOf(context);
     if (service == null) {
@@ -350,6 +371,27 @@ class SettingSubPage extends StatelessWidget {
     }
     return MemorySearchBody(ask: service.ask);
   }
+}
+
+/// 当独立测试未挂载 [MembershipScope] 时自持一个生命周期受控的 [MembershipStore]。
+class _OwnedMembershipBody extends StatefulWidget {
+  const _OwnedMembershipBody();
+
+  @override
+  State<_OwnedMembershipBody> createState() => _OwnedMembershipBodyState();
+}
+
+class _OwnedMembershipBodyState extends State<_OwnedMembershipBody> {
+  late final MembershipStore _store = MembershipStore();
+
+  @override
+  void dispose() {
+    _store.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => MembershipBody(store: _store);
 }
 
 class _SettingsHelpButton extends StatelessWidget {
@@ -4668,9 +4710,10 @@ class _ExtHardwareLinkBodyState extends State<_ExtHardwareLinkBody> {
 
 /// 开发者设置 —— 语义清洗周期、上轮重叠上下文窗口、静音停顿触发与全量重洗。
 class _DeveloperCleanBody extends StatelessWidget {
-  const _DeveloperCleanBody({required this.config});
+  const _DeveloperCleanBody({required this.config, this.membership});
 
   final AgentConfigStore config;
+  final MembershipStore? membership;
 
   static const _slicePresets = [60, 120, 300, 600, 900];
   static const _cyclePresets = [2, 5, 10, 15, 30, 60, 120];
@@ -5097,6 +5140,86 @@ class _DeveloperCleanBody extends StatelessWidget {
           ),
         ),
         if (config.developerMode) ...[
+          if (membership != null) ...[
+            const SizedBox(height: 16),
+            _SubSectionLabel('会员与月度本地转写额度调试'),
+            ListenableBuilder(
+              listenable: membership!,
+              builder: (context, _) {
+                final cur = membership!.devQuotaOverrideMinutes;
+                Widget quotaChip({
+                  required Key key,
+                  required String label,
+                  required int? value,
+                }) => ChoiceChip(
+                  key: key,
+                  label: Text(label),
+                  selected: cur == value,
+                  onSelected: (_) =>
+                      unawaited(membership!.setDevQuotaOverrideMinutes(value)),
+                );
+                return Container(
+                  key: const Key('dev-membership-quota-debug'),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: c.card,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: c.sep),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '当前显示：已用 ${membership!.effectiveUsedMinutes} / ${MembershipStore.freeMonthlyLimitMinutes} 分钟'
+                        '${cur == null ? '（真实统计）' : '（开发者调试覆盖）'}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: c.label,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '切换调试覆盖可立即在 Timeline 顶部与「设置 → 会员与订阅」验收 90% 预警条及 100% 队列保护效果；点「真实统计」即刻恢复。',
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.45,
+                          color: c.sec,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          quotaChip(
+                            key: const Key('dev-quota-real'),
+                            label: '真实统计',
+                            value: null,
+                          ),
+                          quotaChip(
+                            key: const Key('dev-quota-420'),
+                            label: '正常 420分',
+                            value: 420,
+                          ),
+                          quotaChip(
+                            key: const Key('dev-quota-3360'),
+                            label: '预警 3360分',
+                            value: 3360,
+                          ),
+                          quotaChip(
+                            key: const Key('dev-quota-3600'),
+                            label: '满额 3600分',
+                            value: 3600,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
           const SizedBox(height: 16),
           HealthSamplingDevSection(config: config),
         ],

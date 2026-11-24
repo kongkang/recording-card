@@ -12,6 +12,7 @@ import 'core/storage/storage.dart';
 import 'core/store/agent_config_store.dart';
 import 'core/store/app_store.dart';
 import 'core/store/device_store.dart';
+import 'core/store/membership_store.dart';
 import 'core/store/settings_store.dart';
 import 'core/store/ui_style_store.dart';
 import 'core/theme/tokens.dart';
@@ -22,6 +23,7 @@ import 'services/ai/summary_generator.dart';
 import 'services/analysis/chat_completion.dart';
 import 'services/audio/recording_status.dart';
 import 'services/auth_service.dart';
+import 'services/billing/storekit_service.dart';
 import 'services/external_data/external_data_hub_store.dart';
 import 'services/external_data/external_data_scheduler.dart';
 import 'services/external_data/getnote_sync_store.dart';
@@ -64,6 +66,7 @@ Future<void> main() async {
   SettingsStore settings;
   AgentConfigStore agentConfig;
   UIStyleStore uiStyle;
+  MembershipStore membership;
   try {
     final opened = await PrefsStore.open();
     prefs = opened;
@@ -73,11 +76,20 @@ Future<void> main() async {
     await agentConfig.load();
     uiStyle = UIStyleStore(store: opened);
     await uiStyle.load();
+    membership = MembershipStore(
+      store: opened,
+      gateway: MethodChannelStoreKitGateway(),
+    );
+    await membership.load();
   } catch (_) {
     // 平台通道不可用时用内存默认值，保证仍可启动
     settings = SettingsStore(store: InMemoryStore());
     agentConfig = AgentConfigStore(store: InMemoryStore());
     uiStyle = UIStyleStore(store: InMemoryStore());
+    membership = MembershipStore(
+      store: InMemoryStore(),
+      gateway: MethodChannelStoreKitGateway(),
+    );
   }
   final providers = ModelProviderStore.instance;
   try {
@@ -110,6 +122,7 @@ Future<void> main() async {
       agentConfig: agentConfig,
       prefs: prefs,
       uiStyle: uiStyle,
+      membership: membership,
     ),
   );
 }
@@ -121,12 +134,14 @@ class RecordingCardApp extends StatefulWidget {
     this.agentConfig,
     this.prefs,
     this.uiStyle,
+    this.membership,
   });
 
   final SettingsStore settings;
   final AgentConfigStore? agentConfig;
   final KeyValueStore? prefs;
   final UIStyleStore? uiStyle;
+  final MembershipStore? membership;
 
   @override
   State<RecordingCardApp> createState() => _RecordingCardAppState();
@@ -134,7 +149,9 @@ class RecordingCardApp extends StatefulWidget {
 
 class _RecordingCardAppState extends State<RecordingCardApp> {
   UIStyleStore? _ownedStyle;
+  MembershipStore? _ownedMembership;
   UIStyleStore get _style => widget.uiStyle ?? _ownedStyle!;
+  MembershipStore get _membership => widget.membership ?? _ownedMembership!;
 
   @override
   void initState() {
@@ -142,49 +159,58 @@ class _RecordingCardAppState extends State<RecordingCardApp> {
     if (widget.uiStyle == null) {
       _ownedStyle = UIStyleStore(store: InMemoryStore());
     }
+    if (widget.membership == null) {
+      _ownedMembership = MembershipStore(store: InMemoryStore());
+    }
   }
 
   @override
   void dispose() {
     _ownedStyle?.dispose();
+    _ownedMembership?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final styleStore = _style;
-    return UIStyleScope(
-      store: styleStore,
-      child: ListenableBuilder(
-        listenable: styleStore,
-        builder: (context, _) {
-          final activeId = styleStore.activeStyleId;
-          return MaterialApp(
-            title: '录音卡',
-            debugShowCheckedModeBanner: false,
-            theme: buildRCThemeForStyle(activeId, brightness: Brightness.light),
-            darkTheme: buildRCThemeForStyle(
-              activeId,
-              brightness: Brightness.dark,
-            ),
-            themeMode: themeModeForStyle(activeId),
-            scrollBehavior: const RCScrollBehavior(),
-            // 产品当前只有简体中文：显式声明语言，系统组件（日期选择、复制粘贴菜单）才会走中文
-            supportedLocales: const [Locale('zh', 'CN')],
-            localizationsDelegates: const [
-              GlobalMaterialLocalizations.delegate,
-              GlobalWidgetsLocalizations.delegate,
-              GlobalCupertinoLocalizations.delegate,
-            ],
-            locale: const Locale('zh', 'CN'),
-            home: _HomeGate(
-              settings: widget.settings,
-              agentConfig: widget.agentConfig,
-              prefs: widget.prefs,
-              uiStyle: styleStore,
-            ),
-          );
-        },
+    final membershipStore = _membership;
+    return MembershipScope(
+      store: membershipStore,
+      child: UIStyleScope(
+        store: styleStore,
+        child: ListenableBuilder(
+          listenable: styleStore,
+          builder: (context, _) {
+            final activeId = styleStore.activeStyleId;
+            return MaterialApp(
+              title: '录音卡',
+              debugShowCheckedModeBanner: false,
+              theme: buildRCThemeForStyle(activeId, brightness: Brightness.light),
+              darkTheme: buildRCThemeForStyle(
+                activeId,
+                brightness: Brightness.dark,
+              ),
+              themeMode: themeModeForStyle(activeId),
+              scrollBehavior: const RCScrollBehavior(),
+              // 产品当前只有简体中文：显式声明语言，系统组件（日期选择、复制粘贴菜单）才会走中文
+              supportedLocales: const [Locale('zh', 'CN')],
+              localizationsDelegates: const [
+                GlobalMaterialLocalizations.delegate,
+                GlobalWidgetsLocalizations.delegate,
+                GlobalCupertinoLocalizations.delegate,
+              ],
+              locale: const Locale('zh', 'CN'),
+              home: _HomeGate(
+                settings: widget.settings,
+                agentConfig: widget.agentConfig,
+                prefs: widget.prefs,
+                uiStyle: styleStore,
+                membership: membershipStore,
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -202,12 +228,14 @@ class _HomeGate extends StatefulWidget {
     this.agentConfig,
     this.prefs,
     this.uiStyle,
+    this.membership,
   });
 
   final SettingsStore settings;
   final AgentConfigStore? agentConfig;
   final KeyValueStore? prefs;
   final UIStyleStore? uiStyle;
+  final MembershipStore? membership;
 
   @override
   State<_HomeGate> createState() => _HomeGateState();
@@ -221,6 +249,12 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
   late final SettingsStore _settings = widget.settings;
   late final AgentConfigStore _agentConfig =
       widget.agentConfig ?? AgentConfigStore(store: InMemoryStore());
+  late final MembershipStore _membership =
+      widget.membership ??
+      MembershipStore(
+        store: widget.prefs ?? InMemoryStore(),
+        gateway: MethodChannelStoreKitGateway(),
+      );
 
   final _modelProviders = ModelProviderStore.instance;
   late final ModelGateway _modelGateway;
@@ -354,7 +388,12 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
         ready: () => _modelGateway.readyFor(ModelScene.polish),
       ),
       bleDeviceLabelResolver: () => _device.activeRecordingDeviceLabel,
+      localQuotaAllowTranscribe: () => _membership.canTranscribeLocally,
+      onLocalTranscribed: (ms) =>
+          unawaited(_membership.recordLocalTranscriptionMs(ms)),
     );
+    _membership.onLocalQuotaUnlocked = () =>
+        unawaited(_store.processPendingRecordings());
     _store.attachPipeline(
       pipeline: _pipeline,
       store: _recordingStore,
@@ -457,6 +496,8 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
       ]);
     }
     await _store.init();
+    unawaited(_membership.backfillCurrentMonthUsage(_store.recordingFiles));
+    unawaited(_membership.refreshStoreKit());
     await _startScheduler();
     if (mounted) setState(() => _booted = true);
     // 有本地未完成的录音就继续处理（不访问设备）；等模型目录探测完再触发云端清洗
@@ -580,6 +621,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
       unawaited(
         _discoverAndSyncModels().then((_) => _store.processPendingRecordings()),
       );
+      unawaited(_membership.refreshStoreKit());
     }
     _wasSignedIn = signedIn;
   }
@@ -666,6 +708,8 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
     unawaited(_memorySearch.close());
     _healthSignals.dispose();
     _modelManager.dispose();
+    _membership.onLocalQuotaUnlocked = null;
+    if (widget.membership == null) _membership.dispose();
     if (widget.agentConfig == null) _agentConfig.dispose();
     unawaited(_asr.dispose());
     super.dispose();
@@ -699,6 +743,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
               transcribeSamples: _transcribeSliceForAgent,
               lookupExistingTranscript: _lookupExistingTranscript,
               uiStyle: widget.uiStyle,
+              membership: _membership,
             );
           }
           return LoginPage(

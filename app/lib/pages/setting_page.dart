@@ -24,6 +24,7 @@ import '../core/platform/crash_guard.dart';
 import '../core/storage/storage.dart';
 import '../core/store/agent_config_store.dart';
 import '../core/store/device_store.dart';
+import '../core/store/membership_store.dart';
 import '../core/store/settings_store.dart';
 import '../core/store/ui_style_store.dart';
 import '../core/theme/tokens.dart';
@@ -62,6 +63,7 @@ class SettingPage extends StatefulWidget {
     this.supportsDynamicIsland = false,
     this.crashStore,
     this.uiStyle,
+    this.membership,
     this.onClearAllLocalData,
   });
 
@@ -102,6 +104,9 @@ class SettingPage extends StatefulWidget {
 
   /// 可选界面风格状态控制器（缺省通过 [UIStyleScope.maybeOf] 读取）。
   final UIStyleStore? uiStyle;
+
+  /// 会员与本地月度额度状态（缺省通过 [MembershipScope.maybeOf] 读取）。
+  final MembershipStore? membership;
 
   /// 清空本机全部用户数据的全量编排回调（由 `AppShell` 注入，空时回落内置清理）。
   final Future<void> Function()? onClearAllLocalData;
@@ -348,6 +353,7 @@ class _SettingPageState extends State<SettingPage> {
           getNoteStore: _getNoteStore,
           externalDataHub: _externalDataHub,
           uiStyle: widget.uiStyle ?? UIStyleScope.maybeOf(context),
+          membership: widget.membership ?? MembershipScope.maybeOf(context),
           onClearAllLocalData: widget.onClearAllLocalData,
           standalone: true,
         ),
@@ -462,6 +468,7 @@ class _SettingPageState extends State<SettingPage> {
                     : '已授权')
               : '未登录');
     final styleStore = widget.uiStyle ?? UIStyleScope.maybeOf(context);
+    final memStore = widget.membership ?? MembershipScope.maybeOf(context);
     final activeStyleName =
         styleStore?.activeDescriptor.name ??
         UIStyleDescriptor.byId(RCUIStyleId.warmPaper).name;
@@ -493,6 +500,28 @@ class _SettingPageState extends State<SettingPage> {
                   valueKey: const Key('sv-auth'),
                   onTap: () => _openSub(context, 'login'),
                 ),
+                const _RowDivider(),
+                if (memStore != null)
+                  ListenableBuilder(
+                    listenable: memStore,
+                    builder: (context, _) => _navRow(
+                      context,
+                      keyName: 'set-membership',
+                      label: '会员与订阅',
+                      value: memStore.settingRowSummary(),
+                      valueKey: const Key('sv-membership'),
+                      onTap: () => _openSub(context, 'membership'),
+                    ),
+                  )
+                else
+                  _navRow(
+                    context,
+                    keyName: 'set-membership',
+                    label: '会员与订阅',
+                    value: '免费版',
+                    valueKey: const Key('sv-membership'),
+                    onTap: () => _openSub(context, 'membership'),
+                  ),
               ],
             ),
             const _GroupTitle(text: '界面外观'),

@@ -486,6 +486,7 @@ class AppStore extends ChangeNotifier {
   };
 
   static String settingSubBackLabel(String subId) => switch (subId) {
+    'membership' => '会员与订阅',
     'extapi' || 'extnotes' || 'extrecorders' => '第三方 API 接入',
     'exthw' => '第三方硬件 SDK',
     _ => 'Setting',

@@ -657,20 +657,24 @@ void main() {
           matching: find.byType(Scrollable),
         )
         .first;
-    final cycle = find.byKey(const Key('dev-cycle-preset-30'));
+    final cycle = find.byKey(const Key('dev-cycle-preset-60'));
     await tester.scrollUntilVisible(cycle, 200, scrollable: devScroll);
     await tester.ensureVisible(cycle);
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('dev-cycle-value')), findsOneWidget);
     expect(
       tester.widget<Text>(find.byKey(const Key('dev-cycle-value'))).data,
-      '15 分钟',
+      '30 分钟',
     );
 
     await tester.tap(cycle);
     await tester.pump();
-    expect(cfg.cleanCycleMinutes, 30);
-    expect(find.text('30 分钟'), findsWidgets);
+    expect(cfg.cleanCycleMinutes, 60);
+    expect(
+      tester.widget<Text>(find.byKey(const Key('dev-cycle-value'))).data,
+      '1 小时',
+    );
+    expect(find.text('1 小时'), findsWidgets);
 
     final overlapMin = find.byKey(const Key('dev-overlap-mode-minutes'));
     await tester.scrollUntilVisible(overlapMin, 200, scrollable: devScroll);

@@ -10,6 +10,9 @@ import UserNotifications
 #if canImport(AppIntents)
 import AppIntents
 #endif
+#if canImport(StoreKit)
+import StoreKit
+#endif
 
 /// 蓝牙授权桥：让 Dart 侧能在扫描前主动申请权限并知道真实状态。
 ///
@@ -106,6 +109,7 @@ import AppIntents
     // 健康通道与蓝牙共用同一 messenger：勿依赖可能为空的
     // registrar(forPlugin: "RCHealthSignal")，否则设置页一点开就 MissingPlugin 闪退。
     HealthSignalBridge.shared.register(messenger: registrar.messenger())
+    RCStoreKitBridge.shared.register(with: registrar.messenger())
     if let speechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCSystemSpeech") {
       SystemSpeechBridge.shared.register(with: speechRegistrar.messenger())
     }
@@ -764,6 +768,265 @@ final class LocalNotificationBridge: NSObject, UNUserNotificationCenterDelegate 
       completionHandler([.alert, .sound])
     }
   }
+}
+
+/// 原生 StoreKit 2 内购与订阅桥接：商品查询、发起购买、恢复购买、监听续订/退款并管理订阅。
+final class RCStoreKitBridge {
+  static let shared = RCStoreKitBridge()
+
+  private var channel: FlutterMethodChannel?
+  #if canImport(StoreKit)
+  private var cachedProducts: [String: Any] = [:]
+  private var updatesTask: Task<Void, Never>?
+  #endif
+
+  private init() {}
+
+  func register(with messenger: FlutterBinaryMessenger) {
+    let ch = FlutterMethodChannel(
+      name: "com.reai.recordingcard/storekit",
+      binaryMessenger: messenger
+    )
+    ch.setMethodCallHandler { [weak self] call, result in
+      self?.handle(call, result: result)
+    }
+    channel = ch
+    startObservingUpdatesIfNeeded()
+  }
+
+  private func startObservingUpdatesIfNeeded() {
+    #if canImport(StoreKit)
+    guard updatesTask == nil else { return }
+    if #available(iOS 15.0, *) {
+      updatesTask = Task.detached(priority: .background) { [weak self] in
+        for await verification in Transaction.updates {
+          guard let self else { break }
+          if case .verified(let tx) = verification {
+            await tx.finish()
+            await MainActor.run {
+              self.channel?.invokeMethod("onEntitlementsUpdated", arguments: nil)
+            }
+          }
+        }
+      }
+    }
+    #endif
+  }
+
+  private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    #if canImport(StoreKit)
+    guard #available(iOS 15.0, *) else {
+      result(unavailablePayload(for: call.method, message: "需要 iOS 15.0 及以上系统版本"))
+      return
+    }
+    let args = call.arguments as? [String: Any] ?? [:]
+    switch call.method {
+    case "loadProducts":
+      let ids = args["productIds"] as? [String] ?? []
+      Task { @MainActor [weak self] in
+        guard let self else {
+          result(["products": []])
+          return
+        }
+        result(await self.loadProducts(ids: ids))
+      }
+    case "currentEntitlements":
+      Task { @MainActor [weak self] in
+        guard let self else {
+          result(["entitlements": []])
+          return
+        }
+        let entries = await self.collectCurrentEntitlements()
+        result(["entitlements": entries])
+      }
+    case "purchase":
+      let productId = (args["productId"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+      Task { @MainActor [weak self] in
+        guard let self else {
+          result(["status": "error", "message": "StoreKit 服务未就绪"])
+          return
+        }
+        result(await self.purchaseProduct(productId: productId))
+      }
+    case "restorePurchases":
+      Task { @MainActor [weak self] in
+        guard let self else {
+          result(["status": "error", "message": "StoreKit 服务未就绪"])
+          return
+        }
+        result(await self.restorePurchases())
+      }
+    case "manageSubscriptions":
+      Task { @MainActor [weak self] in
+        guard let self else {
+          result(false)
+          return
+        }
+        result(await self.showManageSubscriptions())
+      }
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+    #else
+    result(unavailablePayload(for: call.method, message: "当前平台未链接 StoreKit"))
+    #endif
+  }
+
+  private func unavailablePayload(for method: String, message: String) -> Any {
+    switch method {
+    case "loadProducts":
+      return ["products": [], "error": message]
+    case "currentEntitlements":
+      return ["entitlements": []]
+    case "purchase", "restorePurchases":
+      return ["status": "unavailable", "message": message]
+    case "manageSubscriptions":
+      return false
+    default:
+      return FlutterMethodNotImplemented
+    }
+  }
+
+  #if canImport(StoreKit)
+  @available(iOS 15.0, *)
+  @MainActor
+  private func loadProducts(ids: [String]) async -> [String: Any] {
+    guard !ids.isEmpty else { return ["products": []] }
+    do {
+      let products = try await Product.products(for: Set(ids))
+      var list: [[String: Any]] = []
+      for product in products {
+        cachedProducts[product.id] = product
+        list.append(productDict(product))
+      }
+      return ["products": list]
+    } catch {
+      return ["products": [], "error": error.localizedDescription]
+    }
+  }
+
+  @available(iOS 15.0, *)
+  private func productDict(_ p: Product) -> [String: Any] {
+    let typeString: String
+    switch p.type {
+    case .consumable:
+      typeString = "consumable"
+    case .nonConsumable:
+      typeString = "nonConsumable"
+    case .autoRenewable:
+      typeString = "autoRenewable"
+    case .nonRenewable:
+      typeString = "nonRenewable"
+    default:
+      typeString = "unknown"
+    }
+    return [
+      "id": p.id,
+      "displayName": p.displayName,
+      "description": p.description,
+      "displayPrice": p.displayPrice,
+      "price": NSDecimalNumber(decimal: p.price).doubleValue,
+      "currencyCode": p.priceFormatStyle.currencyCode,
+      "type": typeString,
+    ]
+  }
+
+  @available(iOS 15.0, *)
+  private func collectCurrentEntitlements() async -> [[String: Any]] {
+    var entries: [[String: Any]] = []
+    for await verification in Transaction.currentEntitlements {
+      guard case .verified(let tx) = verification else { continue }
+      if tx.revocationDate != nil { continue }
+      var entry: [String: Any] = [
+        "productId": tx.productID,
+        "transactionId": String(tx.id),
+        "originalTransactionId": String(tx.originalID),
+        "isUpgraded": tx.isUpgraded,
+      ]
+      if let exp = tx.expirationDate {
+        entry["expirationDateMs"] = Int64(exp.timeIntervalSince1970 * 1000)
+      }
+      entries.append(entry)
+    }
+    return entries
+  }
+
+  @available(iOS 15.0, *)
+  @MainActor
+  private func purchaseProduct(productId: String) async -> [String: Any] {
+    guard !productId.isEmpty else {
+      return ["status": "unavailable", "message": "无效的商品编号"]
+    }
+    do {
+      var product = cachedProducts[productId] as? Product
+      if product == nil {
+        let fetched = try await Product.products(for: [productId])
+        if let first = fetched.first {
+          cachedProducts[first.id] = first
+          product = first
+        }
+      }
+      guard let targetProduct = product else {
+        return [
+          "status": "unavailable",
+          "message": "App Store 暂未返回该商品（请确认已在 App Store Connect 生效并登录 Sandbox/Apple 账号）",
+        ]
+      }
+      let purchaseResult = try await targetProduct.purchase()
+      switch purchaseResult {
+      case .success(.verified(let tx)):
+        await tx.finish()
+        var payload: [String: Any] = [
+          "status": "purchased",
+          "productId": tx.productID,
+          "transactionId": String(tx.id),
+          "originalTransactionId": String(tx.originalID),
+        ]
+        if let exp = tx.expirationDate {
+          payload["expirationDateMs"] = Int64(exp.timeIntervalSince1970 * 1000)
+        }
+        return payload
+      case .success(.unverified(_, let err)):
+        return ["status": "unverified", "message": err.localizedDescription]
+      case .userCancelled:
+        return ["status": "cancelled"]
+      case .pending:
+        return ["status": "pending", "message": "等待家长批准或 Apple 付款确认"]
+      @unknown default:
+        return ["status": "error", "message": "未知购买状态"]
+      }
+    } catch {
+      return ["status": "error", "message": error.localizedDescription]
+    }
+  }
+
+  @available(iOS 15.0, *)
+  @MainActor
+  private func restorePurchases() async -> [String: Any] {
+    do {
+      try await AppStore.sync()
+      let entries = await collectCurrentEntitlements()
+      return ["status": "restored", "entitlements": entries]
+    } catch {
+      return ["status": "error", "message": error.localizedDescription]
+    }
+  }
+
+  @available(iOS 15.0, *)
+  @MainActor
+  private func showManageSubscriptions() async -> Bool {
+    let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+    guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first else {
+      return false
+    }
+    do {
+      try await AppStore.showManageSubscriptions(in: scene)
+      return true
+    } catch {
+      return false
+    }
+  }
+  #endif
 }
 
 
