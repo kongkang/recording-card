@@ -224,13 +224,14 @@ pub fn is_card_v2_dfu_advertisement(local_name: Option<&str>, services: &[Uuid])
 }
 
 fn classify_proprietary_name(trimmed: &str) -> Option<(DeviceKind, HardwareCapabilities)> {
-    if trimmed.starts_with("DYJV2_") {
+    let upper = trimmed.to_ascii_uppercase();
+    if upper.starts_with("DYJV2_") {
         Some((DeviceKind::CardV2, DeviceKind::CardV2.capabilities()))
-    } else if trimmed.starts_with("DYJ_") {
+    } else if upper.starts_with("DYJ_") || upper.starts_with("DYJ-") {
         Some((DeviceKind::DyjV1, DeviceKind::DyjV1.capabilities()))
-    } else if trimmed.starts_with("REAI_VB_") {
+    } else if upper.starts_with("REAI_VB_") {
         Some((DeviceKind::BoardV21, DeviceKind::BoardV21.capabilities()))
-    } else if trimmed.to_ascii_uppercase().starts_with("DFU_DYJ") {
+    } else if upper.starts_with("DFU_DYJ") {
         Some((DeviceKind::CardV2, card_v2_dfu_recovery_capabilities()))
     } else {
         None
@@ -330,6 +331,12 @@ mod tests {
                 && !c1.has_device_shutdown
         );
         assert_eq!(c1.ota_mode, "single_ota");
+
+        for gen1_name in ["DYJ-Ab12Cd", "DYJ-V1", "dyj_abc123", "dyj-998877"] {
+            let (kg1, cg1) = classify_ble_name(gen1_name).expect("dyj v1 gen1");
+            assert_eq!(kg1, DeviceKind::DyjV1);
+            assert!(cg1.has_onboard_storage && cg1.has_camera_media);
+        }
 
         let (kb, cb) = classify_ble_name("REAI_VB_A91C").expect("board v2.1");
         assert_eq!(kb, DeviceKind::BoardV21);

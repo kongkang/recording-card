@@ -5,8 +5,10 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/device/card_gateway.dart';
@@ -21,20 +23,25 @@ class LegacyUpgradeController extends ChangeNotifier {
     required Future<bool> Function(CardDevice updatedDevice) onAutoReconnect,
     Future<String?> Function(String ssid)? loadSavedPassword,
     Future<void> Function(String ssid, String password)? saveWifiPassword,
+    Future<LegacyTargetOtaSpec?> Function()? fetchTargetOta,
     Duration reconnectRetryDelay = const Duration(seconds: 2),
   }) : _gateway = gateway,
        _onAutoReconnect = onAutoReconnect,
        _loadSavedPassword = loadSavedPassword,
        _saveWifiPassword = saveWifiPassword,
+       _fetchTargetOta = fetchTargetOta,
        _reconnectRetryDelay = reconnectRetryDelay;
 
   final LegacyUpgradeGateway _gateway;
   final Future<bool> Function(CardDevice updatedDevice) _onAutoReconnect;
   final Future<String?> Function(String ssid)? _loadSavedPassword;
   final Future<void> Function(String ssid, String password)? _saveWifiPassword;
+  final Future<LegacyTargetOtaSpec?> Function()? _fetchTargetOta;
   final Duration _reconnectRetryDelay;
 
   static const _prefPrefix = 'rc_legacy_wifi_pwd_v1_';
+  static const _defaultTargetOtaUrl =
+      'https://hdd.dev.reai.com/api/ota/info?mod=app';
   final Map<String, String> _memoryPasswords = {};
 
   LegacyUpgradeStep step = LegacyUpgradeStep.hidden;
@@ -76,9 +83,15 @@ class LegacyUpgradeController extends ChangeNotifier {
     return v.startsWith('v') ? v : 'v$v';
   }
 
-  bool isSsidAlreadyConnected(String ssid) =>
-      sessionInfo?.wifiConnected == true &&
-      sessionInfo?.currentSsid?.trim() == ssid.trim();
+  bool isSsidAlreadyConnected(String ssid) {
+    final target = ssid.trim();
+    if (target.isEmpty) return false;
+    if (sessionInfo?.wifiConnected == true &&
+        sessionInfo?.currentSsid?.trim() == target) {
+      return true;
+    }
+    return networks.any((n) => n.connected && n.ssid.trim() == target);
+  }
 
   LegacyWifiNetwork? get selectedNetwork {
     final sel = selectedSsid;
@@ -285,8 +298,14 @@ class LegacyUpgradeController extends ChangeNotifier {
       statusText = 'Wi-Fi 已连接，准备检查并下载新固件…';
       notifyListeners();
 
+      final targetOta = await _resolveTargetOta();
+      if (epoch != _flowEpoch) return;
+
       LegacyUpgradeResult? result;
-      await for (final p in _gateway.runOta((r) => result = r)) {
+      await for (final p in _gateway.runOta(
+        (r) => result = r,
+        targetOta: targetOta,
+      )) {
         if (epoch != _flowEpoch) return;
         progress = (p.percent / 100.0).clamp(0.02, 0.96);
         if (p.text.isNotEmpty) statusText = p.text;
@@ -418,6 +437,31 @@ class LegacyUpgradeController extends ChangeNotifier {
       await prefs.setString('$_prefPrefix$ssid', password);
     } on Object {
       // 测试环境静默跳过
+    }
+  }
+
+  Future<LegacyTargetOtaSpec?> _resolveTargetOta() async {
+    final hook = _fetchTargetOta;
+    if (hook != null) {
+      try {
+        return await hook();
+      } on Object {
+        return null;
+      }
+    }
+    final client = http.Client();
+    try {
+      final resp = await client
+          .get(Uri.parse(_defaultTargetOtaUrl))
+          .timeout(const Duration(seconds: 6));
+      if (resp.statusCode != 200) return null;
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map<String, dynamic>) return null;
+      return LegacyTargetOtaSpec.tryParseManifestJson(decoded);
+    } on Object {
+      return null;
+    } finally {
+      client.close();
     }
   }
 }
