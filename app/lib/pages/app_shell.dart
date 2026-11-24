@@ -42,6 +42,7 @@ import 'detail_page.dart';
 import 'setting_page.dart';
 import 'settings/setting_sub_page.dart';
 import 'status_sheet.dart';
+import 'styles/styled_chrome.dart';
 import 'summary_result_page.dart';
 import 'timeline_page.dart';
 import 'unclassified_photos_page.dart';
@@ -1011,6 +1012,15 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.rc;
     final s = context.rcStyle;
+    if (s.styleId != RCUIStyleId.warmPaper) {
+      return StyledAppHeader(
+        height: height,
+        topInset: topInset,
+        wide: wide,
+        device: device,
+        onTapTop: () => _scrollActiveToTop(context),
+      );
+    }
     final store = StoreScope.of(context);
     final sub = store.subStack.isNotEmpty;
     return Container(
@@ -1115,6 +1125,13 @@ class _BottomNav extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.rc;
     final s = context.rcStyle;
+    if (s.styleId != RCUIStyleId.warmPaper) {
+      return StyledBottomNav(
+        height: height,
+        bottomInset: bottomInset,
+        onOpenOs1: onOpenOs1,
+      );
+    }
     final store = StoreScope.of(context);
     Widget item(String label, RootTab tab, String keyName, IconData icon) {
       final on = store.rootTab == tab;
@@ -1332,11 +1349,82 @@ class _NarrowLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
+    final s = context.rcStyle;
+    final floatingDock = isFloatingDockStyle(s.styleId);
     final sub = store.subStack.isNotEmpty;
     final primaryScroll = PrimaryScrollController.maybeOf(context);
     // 真机安全区：刘海并入顶栏背景，home indicator 并入底栏背景
     // （widget 测试里 padding 为 0，高度与原型/断言一致）
     final insets = MediaQuery.paddingOf(context);
+    final navigatorWidget = Navigator(
+      pages: [
+        MaterialPage(
+          // 覆盖路由包 Offstage：与旧内联渲染语义一致（被盖页不进 hit test/find）
+          child: _withPrimaryScroll(
+            primaryScroll,
+            active: store.subStack.isEmpty,
+            child: Offstage(
+              offstage: store.subStack.isNotEmpty,
+              child: switch (store.rootTab) {
+                RootTab.timeline => TimelinePage(
+                  recordingStatus: recordingStatus,
+                  device: device,
+                ),
+                RootTab.setting => SettingPage(
+                  device: device,
+                  modelManager: modelManager,
+                  settings: settings,
+                  agentConfig: agentConfig,
+                  authService: authService,
+                  photoLibrary: photoLibrary,
+                  healthSignals: healthSignals,
+                  getNoteStore: getNoteStore,
+                  externalDataHub: externalDataHub,
+                  uiStyle: uiStyle,
+                  supportsDynamicIsland: supportsDynamicIsland,
+                  crashStore: crashStore,
+                  accountHttpClient: accountHttpClient,
+                ),
+              },
+            ),
+          ),
+        ),
+        for (final e in store.subStack)
+          MaterialPage(
+            key: ValueKey('sub-${e.type}-${e.id}'),
+            child: _withPrimaryScroll(
+              primaryScroll,
+              active: e == store.subStack.last,
+              child: Offstage(
+                offstage: e != store.subStack.last,
+                child: _subPage(
+                  store,
+                  e,
+                  agentConfig,
+                  device,
+                  modelManager,
+                  authService,
+                  healthSignals,
+                  getNoteStore,
+                  externalDataHub,
+                  uiStyle,
+                ),
+              ),
+            ),
+          ),
+      ],
+      onDidRemovePage: (page) {
+        // 手势/系统返回 → 页面被移除而 store 未收敛：同步栈状态。
+        // store 主动驱动的移除（面包屑/扁平化）在页移除时栈已一致，此处守卫跳过
+        final key = page.key;
+        if (key is ValueKey<String>) {
+          final last = store.subStack.lastOrNull;
+          if (last != null && 'sub-${last.type}-${last.id}' == key.value) {
+            store.onSubPopped();
+          }
+        }
+      },
+    );
     return Column(
       children: [
         _Header(
@@ -1348,84 +1436,32 @@ class _NarrowLayout extends StatelessWidget {
         Expanded(
           // 栈页走 Navigator pages：系统级 iOS 边缘滑动返回
           //（MaterialPage 在 iOS 用 Cupertino 转场自带返回手势），栈仍由 store 单一事实源驱动
-          child: Navigator(
-            pages: [
-              MaterialPage(
-                // 覆盖路由包 Offstage：与旧内联渲染语义一致（被盖页不进 hit test/find）
-                child: _withPrimaryScroll(
-                  primaryScroll,
-                  active: store.subStack.isEmpty,
-                  child: Offstage(
-                    offstage: store.subStack.isNotEmpty,
-                    child: switch (store.rootTab) {
-                      RootTab.timeline => TimelinePage(
-                        recordingStatus: recordingStatus,
+          child: floatingDock
+              ? Stack(
+                  children: [
+                    Positioned.fill(child: navigatorWidget),
+                    if (!sub)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: StyledBottomNav(
+                          bottomInset: insets.bottom,
+                          onOpenOs1: onOpenOs1,
+                        ),
                       ),
-                      RootTab.setting => SettingPage(
-                        device: device,
-                        modelManager: modelManager,
-                        settings: settings,
-                        agentConfig: agentConfig,
-                        authService: authService,
-                        photoLibrary: photoLibrary,
-                        healthSignals: healthSignals,
-                        getNoteStore: getNoteStore,
-                        externalDataHub: externalDataHub,
-                        uiStyle: uiStyle,
-                        supportsDynamicIsland: supportsDynamicIsland,
-                        crashStore: crashStore,
-                        accountHttpClient: accountHttpClient,
-                      ),
-                    },
-                  ),
-                ),
-              ),
-              for (final e in store.subStack)
-                MaterialPage(
-                  key: ValueKey('sub-${e.type}-${e.id}'),
-                  child: _withPrimaryScroll(
-                    primaryScroll,
-                    active: e == store.subStack.last,
-                    child: Offstage(
-                      offstage: e != store.subStack.last,
-                      child: _subPage(
-                        store,
-                        e,
-                        agentConfig,
-                        device,
-                        modelManager,
-                        authService,
-                        healthSignals,
-                        getNoteStore,
-                        externalDataHub,
-                        uiStyle,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-            onDidRemovePage: (page) {
-              // 手势/系统返回 → 页面被移除而 store 未收敛：同步栈状态。
-              // store 主动驱动的移除（面包屑/扁平化）在页移除时栈已一致，此处守卫跳过
-              final key = page.key;
-              if (key is ValueKey<String>) {
-                final last = store.subStack.lastOrNull;
-                if (last != null &&
-                    'sub-${last.type}-${last.id}' == key.value) {
-                  store.onSubPopped();
-                }
-              }
-            },
-          ),
+                  ],
+                )
+              : navigatorWidget,
         ),
         // 子页隐藏底栏，经顶栏面包屑或边缘滑动返回；内容底部让出 home indicator
-        if (!sub)
+        if (!floatingDock && !sub)
           _BottomNav(
             height: 56 + insets.bottom,
             bottomInset: insets.bottom,
             onOpenOs1: onOpenOs1,
           )
-        else if (insets.bottom > 0)
+        else if (sub && insets.bottom > 0)
           SizedBox(height: insets.bottom),
       ],
     );
@@ -1538,6 +1574,7 @@ class _WideLayout extends StatelessWidget {
                     RootTab.timeline => TimelinePage(
                       asLeftPane: true,
                       recordingStatus: recordingStatus,
+                      device: device,
                     ),
                     RootTab.setting => SettingPage(
                       device: device,

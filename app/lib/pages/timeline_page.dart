@@ -11,12 +11,14 @@ import '../core/models/record.dart';
 import '../core/models/recording.dart';
 import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
+import '../core/store/device_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/audio/recording_status.dart';
 import '../widgets/photo_thumbnail.dart';
 import '../widgets/recording_status_block.dart';
 import '../widgets/selection_marker.dart';
 import '../widgets/store_scope.dart';
+import 'styles/styled_timeline_views.dart';
 
 enum _StickyRangeEdge { none, top, bottom }
 
@@ -25,6 +27,7 @@ class TimelinePage extends StatefulWidget {
     super.key,
     this.asLeftPane = false,
     this.recordingStatus,
+    this.device,
   });
 
   /// 宽屏双栏时作为常显左栏
@@ -32,6 +35,9 @@ class TimelinePage extends StatefulWidget {
 
   /// 设备录音态状态块；null 时不展示（旧调用/测试兼容）
   final RecordingStatusController? recordingStatus;
+
+  /// 设备状态机：供非默认风格的实时示波/录控与打点直连
+  final DeviceStore? device;
 
   @override
   State<TimelinePage> createState() => _TimelinePageState();
@@ -182,6 +188,24 @@ class _TimelinePageState extends State<TimelinePage> {
     );
   }
 
+  Future<void> _handlePullRefresh(BuildContext context, AppStore store) async {
+    if (store.filter == FeedFilter.summary) {
+      await store.refreshSummariesOnly();
+      return;
+    }
+    final message = await store.pullToRefresh();
+    if (message != null && message.isNotEmpty && context.mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 2),
+            content: Text(message),
+          ),
+        );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
@@ -190,6 +214,17 @@ class _TimelinePageState extends State<TimelinePage> {
       listenable: store,
       builder: (context, _) {
         final c = context.rc;
+        final styleId = context.rcStyle.styleId;
+        if (styleId != RCUIStyleId.warmPaper) {
+          return StyledTimelineView(
+            store: store,
+            recordingStatus: recordingStatus,
+            device: widget.device,
+            onRefresh: () => _handlePullRefresh(context, store),
+            onOpenTrivialCluster: (t) =>
+                _showTrivialClusterSheet(context, store, t),
+          );
+        }
         final entries = store.feedEntries;
         // 统一顶部状态条只出现在「全部/记录」的内容顶部：
         // 勾选总结时收起（总结源列表保持干净），切到「总结」Tab 也不显示。
@@ -247,25 +282,7 @@ class _TimelinePageState extends State<TimelinePage> {
                     // 下拉刷新：全部/记录 Tab 从设备补传新录音并触发积压转写；总结 Tab 仅刷新本机总结列表
                     child: RefreshIndicator(
                       key: const Key('timeline-refresh'),
-                      onRefresh: () async {
-                        if (store.filter == FeedFilter.summary) {
-                          await store.refreshSummariesOnly();
-                          return;
-                        }
-                        final message = await store.pullToRefresh();
-                        if (message != null &&
-                            message.isNotEmpty &&
-                            context.mounted) {
-                          ScaffoldMessenger.of(context)
-                            ..hideCurrentSnackBar()
-                            ..showSnackBar(
-                              SnackBar(
-                                duration: const Duration(seconds: 2),
-                                content: Text(message),
-                              ),
-                            );
-                        }
-                      },
+                      onRefresh: () => _handlePullRefresh(context, store),
                       child: entries.isEmpty
                           ? ListView(
                               key: const Key('timeline-empty'),

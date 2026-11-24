@@ -283,5 +283,166 @@ void main() {
         <String>['nocturne', 'braun_field', 'default'],
       );
     });
+
+    testWidgets('5 套非默认风格在 Timeline、Detail 与 OS1 呈现真实差异化结构且可恢复默认', (
+      tester,
+    ) async {
+      final kv = InMemoryStore();
+      final styleStore = UIStyleStore(
+        store: kv,
+        appleAssets: AppleAssetPackClient(isIOSOverride: false),
+      );
+      await styleStore.load();
+
+      final model = SummaryModel();
+      final appStore = AppStore(
+        events: seedEvents,
+        generator: await model.generator(),
+        loadPersistedState: false,
+      );
+      final fakeWatch = FakeWatchBridgeBackend();
+      final watchService = WatchHardwareService(backend: fakeWatch);
+      final deviceStore = DeviceStore(
+        gateway: FakeCardGateway(),
+        watchHardware: watchService,
+      );
+
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      addTearDown(styleStore.dispose);
+      addTearDown(deviceStore.dispose);
+      addTearDown(watchService.dispose);
+      addTearDown(appStore.dispose);
+
+      await tester.pumpWidget(
+        UIStyleScope(
+          store: styleStore,
+          child: ListenableBuilder(
+            listenable: styleStore,
+            builder: (context, _) {
+              final activeId = styleStore.activeStyleId;
+              return MaterialApp(
+                theme: buildRCThemeForStyle(
+                  activeId,
+                  brightness: Brightness.light,
+                ),
+                darkTheme: buildRCThemeForStyle(
+                  activeId,
+                  brightness: Brightness.dark,
+                ),
+                themeMode: themeModeForStyle(activeId),
+                scrollBehavior: const RCScrollBehavior(),
+                home: AppShell(
+                  store: appStore,
+                  device: deviceStore,
+                  uiStyle: styleStore,
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // 0) 默认 warmPaper：底部三键 + OS1 旭日球 + 默认顶栏/时间轴列表
+      expect(find.byKey(const Key('app-header')), findsOneWidget);
+      expect(find.byKey(const Key('bottom-nav')), findsOneWidget);
+      expect(find.byKey(const Key('nav-ai-sunrise-orb')), findsOneWidget);
+      expect(find.byKey(const Key('timeline-list')), findsOneWidget);
+
+      Future<void> switchStyle(RCUIStyleId id) async {
+        await styleStore.selectStyle(id);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+
+      // 1) Braun Field：示波屏 + 3D 实体双键 + 悬浮底座 + 详情去头像卡片
+      await switchStyle(RCUIStyleId.braunField);
+      expect(find.byKey(const Key('braun-lcd-panel')), findsOneWidget);
+      expect(find.byKey(const Key('braun-key-pair')), findsOneWidget);
+      expect(find.byKey(const Key('braun-dock')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('card-e1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const Key('braun-turn-e1-0')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('crumb-back')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // 2) Chronos：日段切换条 + 时长比例轴 + 底部 4 槽栏 + 时间账本
+      await switchStyle(RCUIStyleId.chronos);
+      expect(find.byKey(const Key('chronos-day-bar')), findsOneWidget);
+      expect(find.byKey(const Key('chronos-axis-list')), findsOneWidget);
+      expect(find.byKey(const Key('chronos-bottom-bar')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('card-e1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const Key('chronos-ledger-turn-e1-0')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('crumb-back')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // 3) Folio：报纸刊头 + 头版引文 + 日刊底栏 + 右侧边栏批注
+      await switchStyle(RCUIStyleId.folio);
+      expect(find.byKey(const Key('folio-masthead')), findsOneWidget);
+      expect(find.byKey(const Key('folio-lead-quote')), findsOneWidget);
+      expect(find.byKey(const Key('folio-bottom-nav')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('card-e1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const Key('folio-marginalia-turn-e1-0')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('crumb-back')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // 4) Nocturne：遥测条 + 14 柱声学频谱 + 暗房拇指坞 + 详情点选条
+      await switchStyle(RCUIStyleId.nocturne);
+      expect(find.byKey(const Key('nocturne-telemetry-strip')), findsOneWidget);
+      expect(find.byKey(const Key('nocturne-spectrum-e1')), findsOneWidget);
+      expect(find.byKey(const Key('nocturne-thumb-dock')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('card-e1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const Key('nocturne-detail-scrub')), findsOneWidget);
+      expect(find.byKey(const Key('nocturne-turn-e1-0')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('crumb-back')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // 5) Air：珊瑚/青绿渐变状态胶囊 + 磨砂浮岛 + 软阴影卡片 + 珊瑚 OS1 轻聊
+      await switchStyle(RCUIStyleId.air);
+      expect(find.byKey(const Key('air-state-pill')), findsOneWidget);
+      expect(find.byKey(const Key('air-float-nav')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('card-e1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const Key('air-turn-e1-0')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('crumb-back')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.tap(find.byKey(const Key('nav-ai-sunrise')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.byKey(const Key('ai-space')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('ai-mode-chat')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.byKey(const Key('ai-space')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('ai-space-close')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      // 6) 恢复默认 warmPaper：默认结构完好无损
+      await switchStyle(RCUIStyleId.warmPaper);
+      expect(find.byKey(const Key('bottom-nav')), findsOneWidget);
+      expect(find.byKey(const Key('nav-ai-sunrise-orb')), findsOneWidget);
+      expect(find.byKey(const Key('braun-dock')), findsNothing);
+    });
   });
 }

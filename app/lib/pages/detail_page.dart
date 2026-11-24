@@ -25,6 +25,8 @@ import '../widgets/quick_speaker_sheet.dart';
 import '../widgets/raw_audio_player.dart';
 import '../widgets/speaker_suggestion_banner.dart';
 import '../widgets/store_scope.dart';
+import 'styles/styled_detail_parts.dart';
+import 'styles/styled_timeline_views.dart';
 
 class DetailPage extends StatefulWidget {
   const DetailPage({
@@ -186,6 +188,7 @@ class _DetailPageState extends State<DetailPage> {
       GlobalKey<RawAudioPlayerState>();
   final ValueNotifier<int?> _activeFilePosMs = ValueNotifier<int?>(null);
   int _selectedMergedSliceIdx = 0;
+  int _nocturneScrubIdx = 4;
   bool _showForkCompare = false;
   _DetailHeaderMemo? _headerMemo;
   _DetailEntriesMemo? _entriesMemo;
@@ -202,6 +205,7 @@ class _DetailPageState extends State<DetailPage> {
     if (oldWidget.eventId != widget.eventId) {
       _activeFilePosMs.value = null;
       _selectedMergedSliceIdx = 0;
+      _nocturneScrubIdx = 4;
       _showForkCompare = false;
       _headerMemo = null;
       _entriesMemo = null;
@@ -321,6 +325,7 @@ class _DetailPageState extends State<DetailPage> {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
+    final s = context.rcStyle;
     final store = StoreScope.of(context);
     final RecordEvent? e = store.eventByIdOrNull(widget.eventId);
     if (e == null) {
@@ -407,8 +412,13 @@ class _DetailPageState extends State<DetailPage> {
                   key: const Key('dt-h3'),
                   style: TextStyle(
                     fontSize: 20,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: s.styleId == RCUIStyleId.folio
+                        ? FontWeight.w900
+                        : FontWeight.w800,
                     color: c.label,
+                    fontFamilyFallback: s.serifTitles
+                        ? rcSerifFontFallback
+                        : rcFontFallback,
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -504,6 +514,20 @@ class _DetailPageState extends State<DetailPage> {
                       ),
                   ],
                 ),
+                if (s.styleId == RCUIStyleId.nocturne)
+                  NocturneDetailScrubBar(
+                    bars: deriveEventEnergyBars(e, count: 16),
+                    selectedIdx: _nocturneScrubIdx,
+                    onSelectIdx: (idx) {
+                      setState(() => _nocturneScrubIdx = idx);
+                      if (_tab == 'raw') {
+                        final durMs = view?.file.durationMs ?? 0;
+                        if (durMs > 0) {
+                          _seekRawAudio(((idx + 0.5) / 16 * durMs).round());
+                        }
+                      }
+                    },
+                  ),
                 if (sibling != null) ...[
                   const SizedBox(height: 10),
                   Container(
@@ -580,19 +604,30 @@ class _DetailPageState extends State<DetailPage> {
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 22),
-            decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: c.sep)),
-            ),
-            child: Row(
-              children: [
-                _tabBtn(c, '对话详情', 'dlg'),
-                _tabBtn(c, '原始数据', 'raw'),
-                if (refs.isNotEmpty) _tabBtn(c, '被引用总结 ${refs.length}', 'refs'),
+          if (s.styleId != RCUIStyleId.warmPaper)
+            StyledDetailTabBar(
+              currentTab: _tab,
+              tabs: [
+                ('dlg', '对话详情'),
+                ('raw', '原始数据'),
+                if (refs.isNotEmpty) ('refs', '被引用总结 ${refs.length}'),
               ],
+              onSelect: (id) => setState(() => _tab = id),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 22),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: c.sep)),
+              ),
+              child: Row(
+                children: [
+                  _tabBtn(c, '对话详情', 'dlg'),
+                  _tabBtn(c, '原始数据', 'raw'),
+                  if (refs.isNotEmpty) _tabBtn(c, '被引用总结 ${refs.length}', 'refs'),
+                ],
+              ),
             ),
-          ),
           if (_tab == 'raw')
             Builder(
               builder: (context) {
@@ -608,6 +643,47 @@ class _DetailPageState extends State<DetailPage> {
                   return const SizedBox.shrink();
                 }
                 final clip = _audioClipFor(activeAudioView);
+                final player = RawAudioPlayer(
+                  key: _playerKey,
+                  fileKey: activeAudioView?.file.deviceName ?? e.id,
+                  wavPath: currentWavPath,
+                  durationHintMs: activeAudioView?.file.durationMs,
+                  clipStartMs: clip.clipStartMs,
+                  clipEndMs: clip.clipEndMs,
+                  gapCountOverride: clip.gapCountOverride,
+                  padding: EdgeInsets.zero,
+                  onAudioDeleted: () => store.markRawAudioDeleted(
+                    fileId: activeAudioView?.file.id,
+                    deviceName: activeAudioView?.file.deviceName,
+                    wavPath: currentWavPath,
+                  ),
+                  onFilePositionChanged: (ms) {
+                    if (mounted && _activeFilePosMs.value != ms) {
+                      _activeFilePosMs.value = ms;
+                    }
+                  },
+                );
+                if (s.styleId == RCUIStyleId.braunField) {
+                  return Padding(
+                    key: const Key('raw-sticky-player'),
+                    padding: const EdgeInsets.fromLTRB(18, 2, 18, 10),
+                    child: Theme(
+                      data: buildRCThemeForStyle(
+                        RCUIStyleId.nocturne,
+                        brightness: Brightness.dark,
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF131412),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFF242420)),
+                        ),
+                        child: player,
+                      ),
+                    ),
+                  );
+                }
                 return Container(
                   key: const Key('raw-sticky-player'),
                   padding: const EdgeInsets.fromLTRB(22, 10, 22, 8),
@@ -615,26 +691,7 @@ class _DetailPageState extends State<DetailPage> {
                     color: c.bg,
                     border: Border(bottom: BorderSide(color: c.sep)),
                   ),
-                  child: RawAudioPlayer(
-                    key: _playerKey,
-                    fileKey: activeAudioView?.file.deviceName ?? e.id,
-                    wavPath: currentWavPath,
-                    durationHintMs: activeAudioView?.file.durationMs,
-                    clipStartMs: clip.clipStartMs,
-                    clipEndMs: clip.clipEndMs,
-                    gapCountOverride: clip.gapCountOverride,
-                    padding: EdgeInsets.zero,
-                    onAudioDeleted: () => store.markRawAudioDeleted(
-                      fileId: activeAudioView?.file.id,
-                      deviceName: activeAudioView?.file.deviceName,
-                      wavPath: currentWavPath,
-                    ),
-                    onFilePositionChanged: (ms) {
-                      if (mounted && _activeFilePosMs.value != ms) {
-                        _activeFilePosMs.value = ms;
-                      }
-                    },
-                  ),
+                  child: player,
                 );
               },
             ),
@@ -856,6 +913,26 @@ class _DetailPageState extends State<DetailPage> {
               rawSpeaker: entry.rawSpk,
               sampleQuote: entry.paragraphs.join('\n'),
             ).whenComplete(store.clearPendingMergedBubbleTurns),
+          );
+        }
+
+        final s = context.rcStyle;
+        if (s.styleId != RCUIStyleId.warmPaper) {
+          final spk = entry.displaySpk;
+          final isConfirmed =
+              spk != '未区分' &&
+              !spk.startsWith('说话人') &&
+              !spk.contains('疑似');
+          return StyledDetailTurn(
+            eventId: e.id,
+            firstTurnIndex: entry.firstTurnIndex,
+            displaySpk: spk,
+            startClock: entry.startClock,
+            paragraphs: entry.paragraphs,
+            canQuickName: entry.canQuickName,
+            hasMarkedTag: e.mark.isNotEmpty && entry.firstTurnIndex == 0,
+            isConfirmedSpeaker: isConfirmed,
+            onQuickName: openQuickSheet,
           );
         }
 
@@ -1375,6 +1452,22 @@ class _DetailPageState extends State<DetailPage> {
     String? quoteText,
   }) {
     final srcLabel = p.source == 'dyj_camera' ? '点一机抓拍' : '系统相册';
+    if (context.rcStyle.styleId != RCUIStyleId.warmPaper) {
+      return StyledDetailPhotoCard(
+        eventId: e.id,
+        index: index,
+        photo: p,
+        onPreview: () => _showDetailPhotoPreview(
+          context,
+          store,
+          e,
+          p,
+          srcLabel,
+          quoteText: quoteText,
+        ),
+        onExclude: () => store.excludePhoto(e.id, p.id),
+      );
+    }
     return Padding(
       key: Key('dphoto-${e.id}-$index'),
       padding: const EdgeInsets.only(left: 38, bottom: 14),
