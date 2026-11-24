@@ -1,9 +1,10 @@
 # 录音卡 · 隐私政策
 
-- **生效日期**：2026-11-16
+- **生效日期**：2026-11-24
 - **适用产品**：「录音卡」iOS / Android App（bundle id `com.reai.recordingcard`）及配套硬件录音卡
 - **运营方**：ReAI（下称「我们」）
 - **联系邮箱**：privacy@reai.chat
+- **公开访问网址**：https://ai-card.app.reai.com/privacy.html （账号注销说明：https://ai-card.app.reai.com/support.html#delete-account）
 
 > 本文件是完整条款，也是 App 内「设置 → 关于录音卡 → 隐私政策」页面（`app/lib/core/config/privacy_text.dart`）的来源。
 > 两处内容必须同步修改；发版时本文件的生效日期要同步到 App Store Connect / Play Console 的政策链接页面。
@@ -54,12 +55,16 @@
 | --- | --- | --- | --- |
 | iOS | 蓝牙（`NSBluetoothAlwaysUsageDescription`） | 连接录音卡、同步录音、读取电量与录音状态、下发录音/打点命令 | 无法连接设备，历史记录仍可查看 |
 | iOS | 本地网络（`NSLocalNetworkUsageDescription` + Bonjour） | Wi-Fi 配网时发现设备、写入网络配置 | 无法完成配网（可用蓝牙同步不受影响） |
-| iOS | 健康读取（`NSHealthShareUsageDescription`） | 开关打开后，一次申请系统允许第三方 App 读取的健康类型；只保存你点允许的类型 | 不采集健康数据。唤醒 Apple Watch 仍可能使用 HealthKit，但不读取样本 |
-| iOS | 健康写入说明（`NSHealthUpdateUsageDescription`） | 系统要求提供。App 不向「健康」写入新样本 | 无写入 |
+| iOS / watchOS | 麦克风（`NSMicrophoneUsageDescription`） | 本机录音、蓝牙意外断连自动接力保底录音、OS1 语音对话及 Apple Watch 腕上录音 | 无法使用本机或手表录音与语音对话 |
+| iOS | 语音识别（`NSSpeechRecognitionUsageDescription`） | iOS 26+ 端侧离线语音识别及 OS1 语音输入，音频不上传云端 | 无法使用系统离线语音引擎，可改用本地 SenseVoice 模型 |
+| iOS | 相册（`NSPhotoLibraryUsageDescription`） | 仅在开启照片对齐后读取录音时段内的系统相册照片插入对应对话详情 | 无法自动关联系统相册照片 |
+| iOS / watchOS | 健康读取（`NSHealthShareUsageDescription`） | 开关打开后按授权读取健康类型并支持 Apple Watch 运动会话时间线对齐；只保存本机不上传 | 不采集健康数据；手表端改用常规音频会话 |
+| iOS / watchOS | 健康写入说明（`NSHealthUpdateUsageDescription`） | 系统要求提供，支持配对 Apple Watch 运动会话；App 不向「健康」写入新样本 | 无写入 |
 | iOS | 使用期间定位 / 始终定位 | 按采样间隔记录粗略位置；始终定位只用于后台显著位置变化，以便不打开 App 时对齐录音 | 可以只允许使用期间定位。拒绝后不记录地点，健康采集不受影响 |
 | Android | `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT`（Android 12+） | 同上，扫描与连接录音卡 | 无法扫描/连接设备 |
 | Android | `BLUETOOTH` / `BLUETOOTH_ADMIN` / `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION`（仅 Android 11 及以下） | 老系统上 BLE 扫描的系统要求 | 同上 |
 | Android | `NEARBY_WIFI_DEVICES`（Android 13+）、`ACCESS_WIFI_STATE` / `CHANGE_WIFI_STATE` | 列网络、写配置、确认联网 | 无法配网 |
+| Android | `RECORD_AUDIO` | OS1 语音对话输入与本地音频采集（若开启） | 无法语音输入 |
 | Android | `INTERNET` / `ACCESS_NETWORK_STATE` | 可选云端转写、版本检查、固件更新下载 | 云端功能不可用 |
 
 蓝牙与 Wi-Fi 权限在 Android 上声明了 `neverForLocation`：我们不使用蓝牙/ Wi-Fi 扫描结果推断你的地理位置。

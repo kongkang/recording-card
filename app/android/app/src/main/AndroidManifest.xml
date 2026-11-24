@@ -103,7 +103,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="reai-mobile"
+                    android:scheme="${oauthCallbackScheme}"
                     android:host="callback" />
             </intent-filter>
         </activity>

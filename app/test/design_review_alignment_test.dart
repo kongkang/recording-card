@@ -25,6 +25,7 @@ import 'package:recording_card/services/audio/phone_mic_service.dart';
 import 'package:recording_card/services/audio/recording_status.dart';
 import 'package:recording_card/services/auth/auth.dart';
 import 'package:recording_card/services/auth_service.dart';
+import 'package:recording_card/services/wechat_login/wechat_login_service.dart';
 import 'package:recording_card/services/net/api_exception.dart';
 import 'package:recording_card/services/net/authorized_http_client.dart';
 import 'package:recording_card/services/net/model_gateway.dart';
@@ -101,15 +102,41 @@ class _SilentHttpClient extends http.BaseClient {
   }
 }
 
+class _TestWechatGateway implements WechatLoginGateway {
+  @override
+  bool get isSupported => true;
+
+  @override
+  bool get isConfigured => true;
+
+  @override
+  bool? get cachedIsInstalled => true;
+
+  @override
+  Future<bool> initialize() async => true;
+
+  @override
+  Future<WechatAuthorizationCode> authorize() async =>
+      const WechatAuthorizationCode(code: 'wx-code', lang: 'zh_CN');
+
+  @override
+  void cancelPendingAuthorization() {}
+}
+
 class _TestAuthService extends AuthService {
   _TestAuthService({required bool signedIn})
     : super(
+        oauthConfig: kStubOAuthConfig.copyWith(
+          wechatAppId: 'wxtest1234567890abcd',
+        ),
         tokenStore: _FakeTokenStore(signedIn: signedIn),
         oauthClient: OAuthClient(
           config: kStubOAuthConfig,
           httpClient: _SilentHttpClient(),
         ),
         launcher: _MockLauncher(),
+        wechatGateway: _TestWechatGateway(),
+        initialSocialProviders: const {'apple'},
       );
 }
 
@@ -351,7 +378,7 @@ void main() {
     expect(otaMic.stopCalls, greaterThanOrEqualTo(1));
   });
 
-  testWidgets('4. Setting 顶部「云端账号授权」与第三方绑定页（外脑 / 微信 / Google / GitHub / Facebook）', (
+  testWidgets('4. Setting 顶部「云端账号授权」与第三方绑定页（外脑 / 微信 / Apple，过滤未上线入口）', (
     tester,
   ) async {
     final auth = _TestAuthService(signedIn: true);
@@ -400,9 +427,9 @@ void main() {
 
     expect(find.byKey(const Key('auth-signout-btn')), findsOneWidget);
     expect(find.byKey(const Key('auth-bind-wechat')), findsOneWidget);
-    expect(find.byKey(const Key('auth-bind-google')), findsOneWidget);
-    expect(find.byKey(const Key('auth-bind-github')), findsOneWidget);
-    expect(find.byKey(const Key('auth-bind-facebook')), findsOneWidget);
+    expect(find.byKey(const Key('auth-bind-apple')), findsOneWidget);
+    expect(find.byKey(const Key('auth-bind-github')), findsNothing);
+    expect(find.byKey(const Key('auth-bind-facebook')), findsNothing);
   });
 
   testWidgets('5. 本地语音三引擎：移除校验、就绪隐藏下载、卡片右上角垃圾桶删除前必弹风险确认框', (

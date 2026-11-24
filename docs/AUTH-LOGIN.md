@@ -31,16 +31,16 @@
 
 ---
 
-## 2. 按钮显示与禁用态（`disabled`）矩阵
+## 2. 按钮显隐与就绪矩阵
 
-在第三方平台审核尚未通过或后端渠道尚未开启前，**登录页保留按钮展示并置为 `disabled`（`onPressed: null`，半透明灰态）**，避免入口消失造成困惑，同时杜绝点击未就绪渠道报错：
+为避免上线版本出现无法点击的占位入口（App Store 审核 Guideline 2.1），**未配置或服务端未启用的第三方登录入口自动隐藏**；一旦配置正式 `wx...` AppID 或服务端 `/auth/social/providers` 返回对应渠道，登录页自动展示并允许点击：
 
-| 登录入口 | 显示条件（`shouldShow*`） | 可点击条件（`is*Enabled`） | 当前 `master` 默认状态（连 `block2-api.wainao.chat`） |
+| 登录入口 | 显示条件（`shouldShow*`） | 可点击条件（`is*Enabled`） | 默认行为（连 `block2-api.wainao.chat`） |
 | --- | --- | --- | --- |
 | **使用外脑账号登录** | 常驻显示 | `OAuthConfig.isConfigured == true` 且当前无其他登录进行中 | **显示 · 可点击（enabled）** |
-| **微信登录** | 未配置 `RC_WECHAT_APP_ID` 时常驻显示；已配置 `wx...` AppID 时，仅在本机明确未安装微信（`cachedIsInstalled == false`）时按 App Store 4.2.3 规范隐藏 | 已配置合法 `wx...` AppID，且微信客户端未明确缺失，且无其他登录进行中 | **显示 · 禁用（disabled）**（待微信开放平台审核通过后配置 AppID 点亮） |
-| **通过 Apple 登录** | 常驻显示 | `OAuthConfig.isConfigured == true` 且启动预热 `GET /auth/social/providers` 返回含 `"apple"` | **显示 · 可点击（enabled）**（线上已开启 `apple`） |
-| **通过 Google 登录** | 常驻显示 | `OAuthConfig.isConfigured == true` 且启动预热 `GET /auth/social/providers` 返回含 `"google"` | **显示 · 禁用（disabled）**（线上暂未开启 `google`，开启后自动点亮） |
+| **微信登录** | 已配置合法 `wx...` AppID，且本机未明确缺失微信（`cachedIsInstalled != false`；按 App Store 4.2.3 规范未装微信时隐藏） | `OAuthConfig.isConfigured == true` 且无其他登录进行中 | **配置 `RC_WECHAT_APP_ID=wx...` 后自动展示并可点击；未配置则隐藏** |
+| **通过 Apple 登录** | 具备系统安全浏览器能力，且 `/auth/social/providers` 返回含 `"apple"` | `OAuthConfig.isConfigured == true` 且服务端已开启 `apple` | **线上开启 `apple` 时展示 · 可点击；未开启则隐藏** |
+| **通过 Google 登录** | 具备系统安全浏览器能力，且 `/auth/social/providers` 返回含 `"google"` | `OAuthConfig.isConfigured == true` 且服务端已开启 `google` | **线上开启 `google` 时展示 · 可点击；未开启则隐藏** |
 
 > **并发与防重入保护**：四个入口共用 `AuthService.activeChannel` 与 `_signInEpoch` 互斥锁——任一入口发起登录期间，该按钮切换为对应 spinner，其余三个按钮全部临时置灰禁点；退出登录或切换账号时旧授权回调自动作废。
 
@@ -58,27 +58,26 @@
 
 ---
 
-## 4. 微信开放平台审核通过后的启用步骤
+## 4. 微信开放平台启用状态与后续服务端配置
 
-微信开放平台移动应用「录音卡」审核通过、拿到正式 `wx...` AppID 后，按以下三步激活微信登录按钮：
+微信开放平台移动应用「录音卡」（`AppID: wx929549126f19f795`，已获「微信登录」能力）审核已通过，客户端已完成如下对齐：
 
-1. **修改 iOS URL Scheme 配置**
-   编辑 `app/ios/Flutter/Wechat.xcconfig`，将占位符替换为正式 `wx...` AppID：
+1. **iOS URL Scheme & 编译期配置（已写入）**
+   `app/ios/Flutter/Wechat.xcconfig` 已写入正式 `AppID`：
    ```xcconfig
-   WECHAT_APP_ID=wx你的正式AppID
+   WECHAT_APP_ID=wx929549126f19f795
    ```
-   > **不变式**：`Wechat.xcconfig` 中的 `WECHAT_APP_ID` 必须与构建参数 `--dart-define=RC_WECHAT_APP_ID=wx...` 完全一致，否则微信客户端无法跳回 App。AppSecret 仅配置在外脑后端，严禁写入客户端仓库。
-2. **确认 Universal Link 与后端配置**
-   - `Runner.entitlements` 已配置 `applinks:app.cn.reai.com`，默认 Universal Link 为 `https://app.cn.reai.com/link/`；
-   - 确认 `https://app.cn.reai.com/.well-known/apple-app-site-association` 包含 `35N5SGDE59.com.reai.recordingcard` 且覆盖 `/link/*`；
-   - 确认外脑后端已配置该 `wx...` AppID 对应的 AppSecret。
-3. **带参构建或安装**
+   > **不变式**：`Wechat.xcconfig` 中的 `WECHAT_APP_ID` 必须与构建参数 `--dart-define=RC_WECHAT_APP_ID=wx929549126f19f795` 完全一致（`watch/scripts/archive_testflight.sh` 会自动读取并注入），否则微信客户端无法跳回 App。`AppSecret` 仅配置在外脑后端，严禁写入客户端仓库。
+2. **线上仍需完成的两项服务端配置（未完成前真机授权会失败）**
+   - **AASA 补全**：`Runner.entitlements` 已配置 `applinks:app.cn.reai.com`（Universal Link `https://app.cn.reai.com/link/`），需在 `https://app.cn.reai.com/.well-known/apple-app-site-association`（及 `/apple-app-site-association`）的 `details` 数组中补充 `35N5SGDE59.com.reai.recordingcard`（`/link/*`）；目前线上文件仅含 `35N5SGDE59.com.reai.reaiApp`。
+   - **后端凭据**：在微信开放平台生成 `wx929549126f19f795` 的 `AppSecret`，并配入外脑后端（`block2-api.wainao.chat`）`POST /oauth/token` 微信扩展 grant 映射表。
+3. **带参构建或真机安装**
    ```bash
    cd app
    flutter run --release -d 00008140-000C4CE23862201C \
-     --dart-define=RC_WECHAT_APP_ID=wx你的正式AppID
+     --dart-define=RC_WECHAT_APP_ID=wx929549126f19f795
    ```
-   启动后本机装有微信时，「微信登录」按钮将自动由 `disabled` 变为可点击状态。
+   启动后本机装有微信时，「微信登录」按钮将自动展示并可点击。
 
 ---
 

@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>技术支持与账号注销 · 录音卡（ReAI）</title>
+  <meta name="description" content="录音卡（com.reai.recordingcard）官方技术支持、常见问题解答以及账号注销与数据删除指南。">
+  <link rel="canonical" href="https://ai-card.app.reai.com/support.html">
+  <link rel="icon" type="image/svg+xml" href="./assets/icon.svg">
+  <style>
+    :root {
+      --bg: #FAFAF8;
+      --surface: #FFFFFF;
+      --well: #F2F2ED;
+      --ink: #1D1D1F;
+      --ink-2: #48484D;
+      --muted: #7A7A80;
+      --rule: #E4E4E0;
+      --rule-strong: #C9C9C4;
+      --danger: #D93025;
+      --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      --max-w: 840px;
+      --radius-md: 12px;
+      --radius-lg: 18px;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.7;
+      font-size: 15px;
+    }
+
+    a {
+      color: var(--ink);
+      text-decoration: underline;
+      text-decoration-color: var(--rule-strong);
+      text-underline-offset: 3px;
+    }
+
+    a:hover {
+      text-decoration-color: var(--ink);
+    }
+
+    .container {
+      width: 100%;
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      height: 56px;
+      background: rgba(250, 250, 248, 0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .topbar-inner {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 15px;
+      text-decoration: none;
+    }
+
+    .brand img {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      border: 1px solid var(--rule);
+      display: block;
+    }
+
+    .top-nav {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      font-size: 13.5px;
+      color: var(--ink-2);
+    }
+
+    .top-nav a {
+      text-decoration: none;
+      color: var(--ink-2);
+    }
+
+    .top-nav a:hover,
+    .top-nav a.active {
+      color: var(--ink);
+      font-weight: 600;
+    }
+
+    main {
+      padding: 40px 0 64px;
+    }
+
+    .doc-head {
+      margin-bottom: 28px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-size: 32px;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      margin-bottom: 10px;
+    }
+
+    .lead {
+      color: var(--ink-2);
+      font-size: 15px;
+    }
+
+    .cards-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: var(--radius-md);
+      padding: 20px 22px;
+      margin-bottom: 18px;
+    }
+
+    .cards-2 .card {
+      margin-bottom: 0;
+    }
+
+    .card h2 {
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+
+    .card h3 {
+      font-size: 15.5px;
+      margin-top: 14px;
+      margin-bottom: 6px;
+    }
+
+    p + p {
+      margin-top: 8px;
+    }
+
+    ul, ol {
+      padding-left: 20px;
+      margin-top: 8px;
+    }
+
+    li + li {
+      margin-top: 6px;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      background: var(--well);
+      padding: 1px 6px;
+      border-radius: 5px;
+    }
+
+    .danger-card {
+      border-color: rgba(217, 48, 37, 0.28);
+    }
+
+    .danger-tag {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--danger);
+      background: rgba(217, 48, 37, 0.08);
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-bottom: 8px;
+    }
+
+    footer {
+      border-top: 1px solid var(--rule);
+      padding: 28px 0 calc(48px + env(safe-area-inset-bottom, 0px));
+      font-size: 12.5px;
+      color: var(--muted);
+    }
+
+    .foot-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .foot-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+    }
+
+    .foot-links a {
+      text-decoration: none;
+      color: var(--muted);
+    }
+
+    .foot-links a:hover {
+      color: var(--ink);
+    }
+
+    @media (max-width: 700px) {
+      .cards-2 {
+        grid-template-columns: 1fr;
+      }
+      h1 {
+        font-size: 26px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="./index.html">
+        <img src="./assets/icon.svg" alt="录音卡">
+        <span>录音卡</span>
+      </a>
+      <nav class="top-nav" aria-label="页面导航">
+        <a href="./index.html">产品首页</a>
+        <a href="./privacy.html">隐私政策</a>
+        <a href="./support.html" class="active">技术支持与账号注销</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="doc-head">
+      <div class="eyebrow">Support &amp; Account Deletion</div>
+      <h1>技术支持与账号注销</h1>
+      <p class="lead">如在使用「录音卡」App（<code>com.reai.recordingcard</code>）、硬件设备或 Apple Watch 联动过程中遇到问题，可通过以下方式联系团队或自助处理数据。</p>
+    </div>
+
+    <div class="cards-2">
+      <div class="card">
+        <h2>联系技术支持</h2>
+        <p>硬件配对、录音同步、本地语音引擎及版本使用问题：</p>
+        <p><strong>客服邮箱：</strong><a href="mailto:support@reai.chat">support@reai.chat</a></p>
+        <p style="font-size:13px;color:var(--muted);">工作时间：周一至周五 10:00–19:00（UTC+8），一般于 1～2 个工作日内回复。</p>
+      </div>
+      <div class="card">
+        <h2>隐私与合规事务</h2>
+        <p>数据查阅、更正、删除、隐私政策咨询及未成年人保护：</p>
+        <p><strong>隐私邮箱：</strong><a href="mailto:privacy@reai.chat">privacy@reai.chat</a></p>
+        <p style="font-size:13px;color:var(--muted);">我们承诺在收到请求后的 15 个工作日内完成核验处理与回复。</p>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>常见使用指引</h2>
+
+      <h3>1. 蓝牙硬件扫描不到或无法连接</h3>
+      <ul>
+        <li>请在系统「设置 → 录音卡」确认已允许<strong>蓝牙</strong>与<strong>本地网络</strong>权限；Android 设备请在 Android 12+ 授予「附近设备」权限。</li>
+        <li>确认录音卡处于开机广播状态；若连接的是第三方兼容设备（如 Omi / Get 笔记录音卡 / 飞书录音豆），请先在 App「设置 → 第三方硬件联动」中打开对应开关再扫描。</li>
+      </ul>
+
+      <h3>2. Apple Watch 联动与表盘快捷录音</h3>
+      <ul>
+        <li>在手机 App「设置 → 硬件设备联动 → Apple Watch 联动」开启开关，并确保配对的 Apple Watch 已从 iPhone「Watch」App 安装「录音卡手表」。</li>
+        <li>表端采集的音频切片会在靠近 iPhone 时自动传回本地并转写为时间轴记录，表端本身不上传云端。</li>
+      </ul>
+
+      <h3>3. 离线语音转写模型下载慢或未就绪</h3>
+      <ul>
+        <li>模型仅用于手机本地离线转写（原始音频不上传）；在未安装模型前，设备录音会安全保存在本机队列中等待处理，不会丢失。</li>
+        <li>iOS 26+ 优先通过 Apple 托管通道拉取模型，其余平台或弱网场景可在「设置 → 本地语音引擎」中查看或重试下载。</li>
+      </ul>
+    </section>
+
+    <section class="card danger-card" id="delete-account">
+      <span class="danger-tag">Account &amp; Data Deletion</span>
+      <h2>账号注销与数据删除说明</h2>
+      <p>你可以随时在 App 内清空本机数据，或发起不可恢复的账号注销请求：</p>
+
+      <h3>方式一：App 内自助操作（即时生效）</h3>
+      <ol>
+        <li><strong>仅清空本机全部数据（保留账号）</strong>：打开「录音卡」App → 底部 <strong>Setting → 数据管理 → 清空本机全部数据</strong>，确认后将立即不可恢复地删除本机全部录音文件、转写文本、总结文档、照片关联、声纹标记、健康与位置记录及记忆索引（离线模型文件保留）。</li>
+        <li><strong>彻底注销账号</strong>：打开「录音卡」App → 底部 <strong>Setting → 关于录音卡 → 注销账号</strong>（或 <strong>Setting → 数据管理 → 注销账号</strong>），确认后将立即清空本机全部数据并退出登录，同时提交服务端在 <strong>15 天内</strong> 彻底清除账号信息与历史云端处理副本。</li>
+      </ol>
+
+      <h3>方式二：无法打开或已卸载 App 时的申请方式</h3>
+      <p>如果你已卸载 App 或暂时无法登录，可通过注册账号对应的邮箱向 <a href="mailto:privacy@reai.chat?subject=%E7%94%B3%E8%AF%B7%E6%B3%A8%E9%94%80%E5%BD%95%E9%9F%B3%E5%8D%A1%E8%B4%A6%E5%8F%B7">privacy@reai.chat</a> 发送邮件申请注销账号，邮件中请写明：</p>
+      <ul>
+        <li>邮件主题：<code>申请注销录音卡账号</code></li>
+        <li>你的登录方式（外脑账号邮箱 / 微信 / Apple / Google）及用于核验身份的账号标识（如绑定的邮箱或用户名）</li>
+      </ul>
+      <p>核验身份后，我们将在 <strong>15 个工作日内</strong> 完成账号与相关服务端数据的不可恢复删除并邮件回复确认。更多条款请参阅 <a href="./privacy.html">《录音卡隐私政策》</a>。</p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container foot-inner">
+      <span>© 2026 ReAI · 录音卡</span>
+      <div class="foot-links">
+        <a href="./index.html">产品首页</a>
+        <a href="./privacy.html">隐私政策</a>
+        <a href="./support.html">技术支持与账号注销</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

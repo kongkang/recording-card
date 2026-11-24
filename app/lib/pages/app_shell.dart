@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/device/card_gateway.dart';
+import '../core/platform/crash_guard.dart';
 import '../core/storage/storage.dart';
 import '../core/store/agent_config_store.dart';
 import '../core/store/app_store.dart';
@@ -179,6 +180,7 @@ class AppShell extends StatefulWidget {
     this.crashStore,
     this.accountHttpClient,
     this.uiStyle,
+    this.onClearAllLocalData,
   });
 
   final AppStore store;
@@ -207,6 +209,7 @@ class AppShell extends StatefulWidget {
   final KeyValueStore? crashStore;
   final http.Client? accountHttpClient;
   final UIStyleStore? uiStyle;
+  final Future<void> Function()? onClearAllLocalData;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -417,6 +420,20 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   /// 上一帧设备是否在录音：用来识别「刚停止录音」这个边沿，冲刷最后一段实时切片。
   bool _wasRecording = false;
+
+  Future<void> _clearAllLocalData() async {
+    final custom = widget.onClearAllLocalData;
+    if (custom != null) {
+      await custom();
+      return;
+    }
+    await _device.stopAllRecordingsForSignOut();
+    await widget.store.wipeAllLocalData();
+    await widget.healthSignals?.clearAllSamples();
+    await widget.memorySearch?.clearAll();
+    await _agentChat.clearHistory();
+    await clearLastCrash(store: widget.crashStore);
+  }
 
   Future<void> _ensurePhotoPermissionOnRecordStart() async {
     if (!_agentConfig.photoLinkEnabled || _askedPhotoPermThisSession) return;
@@ -668,6 +685,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                           crashStore: widget.crashStore,
                           accountHttpClient: widget.accountHttpClient,
+                          onClearAllLocalData: _clearAllLocalData,
                         )
                       else
                         _NarrowLayout(
@@ -686,6 +704,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                           crashStore: widget.crashStore,
                           accountHttpClient: widget.accountHttpClient,
+                          onClearAllLocalData: _clearAllLocalData,
                         ),
                       ListenableBuilder(
                         listenable: _hwAgent,
@@ -1270,6 +1289,7 @@ Widget _stackTopPage(
   GetNoteSyncStore? getNoteStore,
   ExternalDataHubStore? externalDataHub,
   UIStyleStore? uiStyle,
+  Future<void> Function()? onClearAllLocalData,
 }) {
   final top = store.stackTop;
   if (top == null) return const SizedBox.shrink();
@@ -1301,6 +1321,7 @@ Widget _stackTopPage(
       getNoteStore: getNoteStore,
       externalDataHub: externalDataHub,
       uiStyle: uiStyle,
+      onClearAllLocalData: onClearAllLocalData,
       showPaneBack: wide && store.showPaneBackSetSub,
       backLabel: backLabel,
     );
@@ -1329,6 +1350,7 @@ class _NarrowLayout extends StatelessWidget {
     this.supportsDynamicIsland = false,
     this.crashStore,
     this.accountHttpClient,
+    this.onClearAllLocalData,
   });
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
@@ -1345,6 +1367,7 @@ class _NarrowLayout extends StatelessWidget {
   final bool supportsDynamicIsland;
   final KeyValueStore? crashStore;
   final http.Client? accountHttpClient;
+  final Future<void> Function()? onClearAllLocalData;
 
   @override
   Widget build(BuildContext context) {
@@ -1384,6 +1407,7 @@ class _NarrowLayout extends StatelessWidget {
                   supportsDynamicIsland: supportsDynamicIsland,
                   crashStore: crashStore,
                   accountHttpClient: accountHttpClient,
+                  onClearAllLocalData: onClearAllLocalData,
                 ),
               },
             ),
@@ -1408,6 +1432,7 @@ class _NarrowLayout extends StatelessWidget {
                   getNoteStore,
                   externalDataHub,
                   uiStyle,
+                  onClearAllLocalData,
                 ),
               ),
             ),
@@ -1479,6 +1504,7 @@ class _NarrowLayout extends StatelessWidget {
     GetNoteSyncStore? getNoteStore,
     ExternalDataHubStore? externalDataHub,
     UIStyleStore? uiStyle,
+    Future<void> Function()? onClearAllLocalData,
   ) {
     if (e.type == 'sum') {
       return SummaryResultPage(
@@ -1504,6 +1530,7 @@ class _NarrowLayout extends StatelessWidget {
         getNoteStore: getNoteStore,
         externalDataHub: externalDataHub,
         uiStyle: uiStyle,
+        onClearAllLocalData: onClearAllLocalData,
         showPaneBack: false,
       );
     }
@@ -1528,6 +1555,7 @@ class _WideLayout extends StatelessWidget {
     this.supportsDynamicIsland = false,
     this.crashStore,
     this.accountHttpClient,
+    this.onClearAllLocalData,
   });
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
@@ -1544,6 +1572,7 @@ class _WideLayout extends StatelessWidget {
   final bool supportsDynamicIsland;
   final KeyValueStore? crashStore;
   final http.Client? accountHttpClient;
+  final Future<void> Function()? onClearAllLocalData;
 
   @override
   Widget build(BuildContext context) {
@@ -1590,6 +1619,7 @@ class _WideLayout extends StatelessWidget {
                       supportsDynamicIsland: supportsDynamicIsland,
                       crashStore: crashStore,
                       accountHttpClient: accountHttpClient,
+                      onClearAllLocalData: onClearAllLocalData,
                     ),
                   },
                 ),
@@ -1613,6 +1643,7 @@ class _WideLayout extends StatelessWidget {
                             getNoteStore: getNoteStore,
                             externalDataHub: externalDataHub,
                             uiStyle: uiStyle,
+                            onClearAllLocalData: onClearAllLocalData,
                           ),
                         )
                       : const _EmptyPane(),

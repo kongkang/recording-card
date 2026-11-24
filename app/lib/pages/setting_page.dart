@@ -71,6 +71,7 @@ class SettingPage extends StatefulWidget {
     this.liveAudioDir,
     this.databasesDirOverride,
     this.uiStyle,
+    this.onClearAllLocalData,
   });
 
   final SettingsStore? settings;
@@ -119,6 +120,9 @@ class SettingPage extends StatefulWidget {
 
   /// 可选界面风格状态控制器（缺省通过 [UIStyleScope.maybeOf] 读取）。
   final UIStyleStore? uiStyle;
+
+  /// 清空本机全部用户数据的全量编排回调（由 `AppShell` 注入，空时回落内置清理）。
+  final Future<void> Function()? onClearAllLocalData;
 
   @override
   State<SettingPage> createState() => _SettingPageState();
@@ -273,6 +277,11 @@ class _SettingPageState extends State<SettingPage> {
       await memSearch?.close();
     } on Object {
       // 忽略索引关闭异常
+    }
+    try {
+      await widget.healthSignals?.clearAllSamples();
+    } on Object {
+      // 忽略内存样本清理异常
     }
     try {
       await widget.healthSignals?.store.close();
@@ -478,7 +487,9 @@ class _SettingPageState extends State<SettingPage> {
         content: Text(
           '$failureReason。\n\n'
           '为保障您的数据权利，本应用绝不在服务端未确认成功时假装已注销。'
-          '您可以点击「重试」再次发起请求，或先「仅清空本机并退出」，并发送邮件至 privacy@reai.chat 由团队协助完成云端账号注销。',
+          '您可以点击「重试」再次发起请求，或先「仅清空本机并退出」，并访问 '
+          'https://ai-card.app.reai.com/support.html#delete-account '
+          '或发送邮件至 privacy@reai.chat 由团队协助完成云端账号注销。',
         ),
         actions: <Widget>[
           TextButton(
@@ -636,6 +647,7 @@ class _SettingPageState extends State<SettingPage> {
           getNoteStore: _getNoteStore,
           externalDataHub: _externalDataHub,
           uiStyle: widget.uiStyle ?? UIStyleScope.maybeOf(context),
+          onClearAllLocalData: widget.onClearAllLocalData,
           standalone: true,
         ),
       ),
@@ -869,15 +881,17 @@ class _SettingPageState extends State<SettingPage> {
                   valueKey: const Key('sv-memory'),
                   onTap: () => _openSub(context, 'mem'),
                 ),
-                const _RowDivider(),
-                _navRow(
-                  context,
-                  keyName: 'set-developer',
-                  label: '开发者设置',
-                  value: _agent.developerCleanSummary,
-                  valueKey: const Key('sv-developer'),
-                  onTap: () => _openSub(context, 'dev'),
-                ),
+                if (_agent.developerMode) ...<Widget>[
+                  const _RowDivider(),
+                  _navRow(
+                    context,
+                    keyName: 'set-developer',
+                    label: '开发者设置',
+                    value: _agent.developerCleanSummary,
+                    valueKey: const Key('sv-developer'),
+                    onTap: () => _openSub(context, 'dev'),
+                  ),
+                ],
                 if (widget.supportsDynamicIsland) ...<Widget>[
                   const _RowDivider(),
                   _navRow(
@@ -969,6 +983,19 @@ class _SettingPageState extends State<SettingPage> {
                 ],
               ),
             ],
+            const _GroupTitle(text: '数据管理'),
+            _GroupCard(
+              children: <Widget>[
+                _navRow(
+                  context,
+                  keyName: 'set-data-management',
+                  label: '数据管理',
+                  value: '清空数据 · 注销账号',
+                  valueKey: const Key('sv-data-management'),
+                  onTap: () => _openSub(context, 'data'),
+                ),
+              ],
+            ),
             _AboutSection(
               version: _version,
               developerMode: _agent.developerMode,

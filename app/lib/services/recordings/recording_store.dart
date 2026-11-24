@@ -319,6 +319,32 @@ class RecordingStore {
     _sortedCache = null;
   }
 
+  /// 清空本机所有已保存录音、转写文本、声纹档案及分段缓存，并重置 v1 清单标记。
+  Future<void> clearAll() async {
+    final base = await root();
+    if (await base.exists()) {
+      await for (final entity in base.list()) {
+        try {
+          await entity.delete(recursive: true);
+        } on FileSystemException {
+          // 文件正被系统句柄占用时跳过其它条目继续清理
+        }
+      }
+    } else {
+      await base.create(recursive: true);
+    }
+    _mutationEpoch++;
+    _cacheByDir = null;
+    _sortedCache = null;
+    try {
+      final json = await _store();
+      await json.remove('recordings');
+      await json.remove('migration');
+    } on Object {
+      // 测试环境未注入 JsonStore 且无 shared_preferences 通道时忽略
+    }
+  }
+
   /// 删除过期音频文件（WAV/APM），保留 meta 与文本。
   ///
   /// 返回删除的字节数；[keep] 之前的录音才会被清理。

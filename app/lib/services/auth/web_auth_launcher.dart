@@ -46,9 +46,13 @@ class FlutterWebAuthLauncher implements WebAuthLauncher {
     required String callbackScheme,
   }) async {
     try {
-      // Android 用内嵌页。系统浏览器跳 reai-mobile://callback 时，
-      // 外脑 App 也注册了同一 scheme，会弹出选择框，授权结果回不到本 App。
-      if (defaultTargetPlatform == TargetPlatform.android) {
+      // Android 上当仍复用 reai-mobile 回调时用内嵌页规避外脑 App 同 scheme 抢占选择框；
+      // 若已配置独立回调 scheme 或走 Google 登录（Google 禁止内嵌 WebView），切回 Chrome Custom Tabs。
+      final isGoogleLogin =
+          authorizeUrl.queryParameters['login_type']?.toLowerCase() == 'google';
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          callbackScheme == 'reai-mobile' &&
+          !isGoogleLogin) {
         final raw = await const MethodChannel('com.reai.recordingcard/oauth')
             .invokeMethod<String>('authenticate', {'url': authorizeUrl.toString()});
         if (raw == null || raw.isEmpty) {

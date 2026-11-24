@@ -810,20 +810,15 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('默认构建（审核未通过未配微信 AppID / 社会化渠道未启用）→ 按钮可见但保持 disabled，底部文案不提微信', (tester) async {
+    testWidgets('默认构建（未配微信 AppID / 社会化渠道未启用）→ 第三方入口自动隐藏，仅展示主登录按钮', (tester) async {
       final env = _buildAuth(); // 未注入微信网关（AppID 为空），且未预热开启 Apple/Google
       addTearDown(env.auth.dispose);
       await pumpLogin(tester, env.auth);
 
-      final wechatBtn = find.byKey(const Key('login-wechat'));
-      final appleBtn = find.byKey(const Key('login-apple'));
-      final googleBtn = find.byKey(const Key('login-google'));
-      expect(wechatBtn, findsOneWidget, reason: '审核通过前微信按钮仍展示，但保持 disabled');
-      expect(appleBtn, findsOneWidget, reason: '未开启时 Apple 按钮仍展示，但保持 disabled');
-      expect(googleBtn, findsOneWidget, reason: '未开启时 Google 按钮仍展示，但保持 disabled');
-      expect(tester.widget<OutlinedButton>(wechatBtn).onPressed, isNull);
-      expect(tester.widget<OutlinedButton>(appleBtn).onPressed, isNull);
-      expect(tester.widget<OutlinedButton>(googleBtn).onPressed, isNull);
+      expect(find.byKey(const Key('login-wechat')), findsNothing, reason: '未配微信 AppID 时自动隐藏');
+      expect(find.byKey(const Key('login-apple')), findsNothing, reason: '未开启时自动隐藏');
+      expect(find.byKey(const Key('login-google')), findsNothing, reason: '未开启时自动隐藏');
+      expect(find.text('其他登录方式'), findsNothing);
       expect(
         tester.widget<FilledButton>(find.byKey(const Key('login-submit'))).onPressed,
         isNotNull,
@@ -1029,27 +1024,29 @@ void main() {
   });
 
   group('AuthService（Apple / Google 原生入口与渠道预热）', () {
-    test('prewarmSocialProviders：未开通前按钮可见但 disabled，按服务端返回点亮 enabled，异常不外泄', () async {
+    test('prewarmSocialProviders：未开通前隐藏按钮，按服务端返回展示并点亮 enabled，异常不外泄', () async {
       final env = _buildAuth(socialProviders: ['apple', 'github']);
       addTearDown(env.auth.dispose);
 
-      expect(env.auth.shouldShowAppleSignIn, isTrue);
-      expect(env.auth.shouldShowGoogleSignIn, isTrue);
+      expect(env.auth.shouldShowAppleSignIn, isFalse);
+      expect(env.auth.shouldShowGoogleSignIn, isFalse);
       expect(env.auth.isAppleSignInEnabled, isFalse);
       expect(env.auth.isGoogleSignInEnabled, isFalse);
 
       await env.auth.prewarmSocialProviders();
       expect(env.auth.cachedSocialProviders, equals({'apple', 'github'}));
+      expect(env.auth.shouldShowAppleSignIn, isTrue);
+      expect(env.auth.shouldShowGoogleSignIn, isFalse);
       expect(env.auth.isAppleSignInEnabled, isTrue);
       expect(env.auth.isGoogleSignInEnabled, isFalse);
 
-      // 异常场景：服务端 500 静默吞错、不污染 lastError，按钮保持 disabled
+      // 异常场景：服务端 500 静默吞错、不污染 lastError，未探测渠道保持隐藏
       final failEnv = _buildAuth(socialProviders: const ['apple'], socialProvidersStatus: 500);
       addTearDown(failEnv.auth.dispose);
       await failEnv.auth.prewarmSocialProviders();
       expect(failEnv.auth.cachedSocialProviders, isNull);
       expect(failEnv.auth.lastError, isNull);
-      expect(failEnv.auth.shouldShowAppleSignIn, isTrue);
+      expect(failEnv.auth.shouldShowAppleSignIn, isFalse);
       expect(failEnv.auth.isAppleSignInEnabled, isFalse);
     });
 

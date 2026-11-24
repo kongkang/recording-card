@@ -10,7 +10,8 @@
 | App Apple ID (iOS) | `6834316655` |
 | Android applicationId / namespace | `com.reai.recordingcard` |
 | 显示名 | 录音卡 |
-| 版本 | pubspec `version: 1.0.0+2026111404` → iOS `1.0.0 (2026111404)`、Android versionName `1.0.0` / versionCode `2026111404` |
+| 版本 | pubspec `version: 1.0.0+2026111901` → iOS `1.0.0 (2026111901)`（主 App / 扩展 / Watch 共用 `FLUTTER_BUILD_NAME` / `FLUTTER_BUILD_NUMBER`）、Android versionName `1.0.0` / versionCode `2026111901` |
+| 隐私政策 / 技术支持 / 账号注销网页 | 隐私政策 `https://ai-card.app.reai.com/privacy.html` · 技术支持与账号注销 `https://ai-card.app.reai.com/support.html#delete-account` |
 | 最低系统 | iOS 15.0、Android 7.0（minSdk 24） |
 | 目标系统 | Android targetSdk 36（Play 新应用要求 ≥ 35） |
 
@@ -20,8 +21,8 @@
 
 1. **Apple 侧**：App Store Connect 创建 App（bundle id `com.reai.recordingcard`），拿到 Team ID 后在 Xcode → Runner → Signing & Capabilities 勾选自动签名（或手动配置 Distribution 描述文件）。
 2. **Google 侧**：Play Console 创建应用（包名 `com.reai.recordingcard`），启用 **Play App Signing**（托管签名，你只需要上传密钥）。
-3. **政策与支持**：把 `docs/PRIVACY.md` 发布成可公开访问的网页（商店要求填 URL），隐私政策与支持邮箱填 `privacy@reai.chat` / `support@reai.chat`。
-4. **版本号**：每次提交前递增 pubspec 的 `version: x.y.z+build`（build 必须递增，不能复用）。当前 1.0.0+1 为首次提审版本。
+3. **政策与支持**：`site/privacy.html`（`https://ai-card.app.reai.com/privacy.html`）与 `site/support.html`（`https://ai-card.app.reai.com/support.html#delete-account`）随 `site-pages.yml` 自动部署到官网；隐私政策与支持邮箱填 `privacy@reai.chat` / `support@reai.chat`。
+4. **版本号**：每次提交前递增 pubspec 的 `version: x.y.z+build`（build 必须递增，不能复用）。iOS LiveActivity 与 BackgroundDownloadHandler 通过 `ExtensionVersion.xcconfig` 自动同步主端版本号，Watch targets 通过 `watch/Config/Shared.xcconfig` 自动同步。
 
 ---
 
@@ -172,28 +173,30 @@ $ANDROID_HOME/build-tools/35.0.0/aapt2 compile --dir android/app/src/main/res -o
 
 **通用**
 
-- [ ] 应用图标已替换（两端都不是 Flutter 默认蓝 logo），iOS 图标无 alpha 通道
-- [ ] 显示名为「录音卡」，bundle id / 包名为 `com.reai.recordingcard`
-- [ ] 版本号 1.0.0 (1)，构建号大于上一版
-- [ ] 隐私政策 URL 可公开访问，内容与 `docs/PRIVACY.md` 一致，生效日期同步
+- [x] 应用图标已替换（两端都不是 Flutter 默认蓝 logo），iOS 图标无 alpha 通道
+- [x] 显示名为「录音卡」，bundle id / 包名为 `com.reai.recordingcard`
+- [ ] 版本号已在 `app/pubspec.yaml` 递增，构建号大于上一版（所有 iOS / Watch 扩展自动同步）
+- [ ] 公开隐私政策页（`https://ai-card.app.reai.com/privacy.html`）与账号注销说明页（`https://ai-card.app.reai.com/support.html#delete-account`）已发布上线，生效日期（`2026-11-24`）一致
 - [ ] 商店截图 / 描述 / 关键词 / 分类（工具类）齐全
-- [ ] 崩溃兜底已安装（`installCrashHandlers()`），关于页可显示版本号
+- [x] 崩溃兜底已安装（`installCrashHandlers()`），关于页可显示版本号，设置页「数据管理」与「注销账号」入口已就位
+- [x] 正式版默认隐藏「开发者设置」（连点「版本」7 次开启），登录页未配置/未启用的第三方入口自动隐藏
 
-**iOS**
+**iOS / watchOS**
 
-- [ ] `Info.plist` 蓝牙、本地网络用途文案通过法务确认
+- [x] 5 个 Apple Target（`Runner`、`RecordingCardLiveActivity`、`BackgroundDownloadHandler`、`RecordingCardWatchApp`、`RecordingCardWatchWidgets`）均已配置并挂载 `PrivacyInfo.xcprivacy`
+- [ ] `Info.plist` 蓝牙、本地网络、健康与定位用途文案通过法务确认
 - [ ] `NSBonjourServices` 的服务类型与固件实际广播一致（见下方待确认项）
-- [ ] `ITSAppUsesNonExemptEncryption=false` 与实际情况相符
-- [ ] 审核备注写清「需要硬件设备」，附演示视频或设备借用说明
-- [ ] 真机（非模拟器）验证：蓝牙连接、同步、导出分享
+- [x] `ITSAppUsesNonExemptEncryption=false` 与实际情况相符
+- [ ] 审核备注写清「需要硬件设备」，附演示视频或设备借用说明 + 测试账号
+- [ ] TestFlight 内部测试验证：蓝牙连接、Apple Watch 联动、Apple-Hosted Background Assets、微信 Universal Links、导出分享
 
 **Android**
 
-- [ ] `key.properties` 与 keystore 已备份，且未入库
-- [ ] `app-release.aab` 用的是 release 证书
-- [ ] 数据安全表单与敏感权限声明已提交
+- [ ] `key.properties` 与 keystore 已备份，且未入库（上传密钥指纹需与微信登记签名 `fe80df2054941b4051b7268a8a3fce6b` 对应）
+- [ ] `app-release.aab` 用的是 release 证书，且 `abiFilters` 与 `libcard_bridge.so`（默认仅 `arm64-v8a`，全 ABI 需 `RC_ANDROID_ALL_ABIS=1`）匹配
+- [ ] 数据安全表单（含网页注销链接 `https://ai-card.app.reai.com/support.html#delete-account`）与敏感权限声明已提交
 - [ ] Android 15+ 真机确认 edge-to-edge 下顶栏/底栏未被遮挡
-- [ ] 动态权限首次拒绝、二次拒绝（不再询问）两条路径文案正常
+- [x] 局域网 SoftAP 明文白名单已通过 `network_security_config.xml` 收敛到设备本地热点 IP，公网强制 HTTPS
 
 ---
 
@@ -202,10 +205,10 @@ $ANDROID_HOME/build-tools/35.0.0/aapt2 compile --dir android/app/src/main/res -o
 | # | 事项 | 现状 | 确认人 |
 | --- | --- | --- | --- |
 | 1 | Bonjour 服务类型 `_rc._tcp` / `_http._tcp` 是否与固件广播一致 | 按「Wi-Fi 配网 + 本地 AP」估计填写，未与固件对齐 | 固件负责人 |
-| 2 | Wi-Fi 配网实际使用 HTTP 明文还是 HTTPS | App 端未启用明文流量；若设备只提供 `http://192.168.x.x` 配网页，需要为局域网地址加 `networkSecurityConfig` 例外 | 固件 + 客户端 |
-| 3 | 云端转写服务端「30 天保留 / 15 天内删除」是否有后端实现支撑 | 目前是政策承诺，需后端确认 | 后端负责人 |
-| 4 | 「注销账号」入口是否已在设置页实装 | 本手册按产品设计写入政策，需 UI 落地 | 客户端 |
-| 5 | 隐私 / 支持邮箱域名 `reai.chat` 可用性 | 政策与商店都用该域名，需确认可收信 | 运营 |
+| 2 | 局域网 SoftAP 地址例外与旧版 OTA 域名 | Android `network_security_config.xml` 已仅放行 `192.168.4.1` / `192.168.43.1`；`rust/card_bridge/src/legacy_upgrade.rs` 中 `hdd.dev.reai.com` 需确认是否切生产域名 | 固件 + 客户端 |
+| 3 | 云端转写服务端「30 天保留 / 15 天内删除」与 `DELETE /account` 线上注销接口 | 客户端已接 `DELETE ${RC_API_BASE}/account`（支持 `RC_ACCOUNT_DELETE_URL` 覆盖）；需后端确认线上端点就绪与清理 SLA | 后端负责人 |
+| 4 | 微信开放平台正式 `wx...` AppID 与服务端配置 | 移动应用（`wx929549126f19f795`，iOS/iPad `com.reai.recordingcard` + `https://app.cn.reai.com/link/`、Android `com.reai.recordingcard` + `fe80df2054941b4051b7268a8a3fce6b`）及「微信登录」能力已过审；客户端 `app/ios/Flutter/Wechat.xcconfig` 已写入 `wx929549126f19f795`。**仍需服务端完成两项**：(a) 在开放平台生成该应用的 `AppSecret` 并配入 `block2-api.wainao.chat`；(b) 在 `https://app.cn.reai.com/.well-known/apple-app-site-association` 补入 `35N5SGDE59.com.reai.recordingcard` | Owner + 后端 |
+| 5 | 隐私 / 支持邮箱域名 `reai.chat` 可用性 | 政策与商店都用 `privacy@reai.chat` / `support@reai.chat`，需确认可收信 | 运营 |
 | 6 | iOS 是否需要保留横屏 | 当前 `Info.plist` 保留左右横屏（按既定决策）；若审核或设计改为仅竖屏，删掉两项即可 | 设计 + 客户端 |
 
 ---
@@ -214,26 +217,32 @@ $ANDROID_HOME/build-tools/35.0.0/aapt2 compile --dir android/app/src/main/res -o
 
 ```bash
 cd app
-plutil -lint ios/Runner/Info.plist
-plutil -lint ios/Runner.xcodeproj/project.pbxproj
+plutil -lint ios/Runner/Info.plist ios/Runner/PrivacyInfo.xcprivacy \
+  ios/RecordingCardLiveActivity/PrivacyInfo.xcprivacy \
+  ios/BackgroundDownloadHandler/PrivacyInfo.xcprivacy \
+  ../watch/WatchApp/Info.plist ../watch/WatchApp/PrivacyInfo.xcprivacy \
+  ../watch/WatchWidgets/PrivacyInfo.xcprivacy \
+  ios/Runner.xcodeproj/project.pbxproj
 xmllint --noout ios/Runner/Base.lproj/LaunchScreen.storyboard
-xmllint --noout android/app/src/main/AndroidManifest.xml android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+xmllint --noout android/app/src/main/AndroidManifest.xml \
+  android/app/src/main/res/xml/network_security_config.xml \
+  android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 flutter analyze && flutter test
 ```
 
 ## 登录与模型配置（2026-11-08 起）
 
-> 四通道登录架构、未过审/未开通渠道 `disabled` 状态矩阵、微信过审后启用步骤与真机安装说明详见 [AUTH-LOGIN.md](./AUTH-LOGIN.md)。
+> 四通道登录架构、未配置/未开通渠道自动隐藏规则、微信启用步骤与真机安装说明详见 [AUTH-LOGIN.md](./AUTH-LOGIN.md)。
 
 - **OAuth 客户端**：默认复用 reai_mobile_app 的 public client
   （`RC_OAUTH_CLIENT_ID` 编译默认 `58Ff3x3aEtw2DZHo19CP6Hpw5fpfL1vo`，
   回调 `reai-mobile://callback`，iOS Info.plist 与 Android intent-filter 均已注册该 scheme）。
   换自家客户端时用 `--dart-define=RC_OAUTH_CLIENT_ID=... --dart-define=RC_OAUTH_REDIRECT=...`，
-  并同步改两端回调注册，否则授权回不来。
+  Android 同步用 Gradle 参数 `-Prc.oauthScheme=...`（缺省 `reai-mobile`）保持回调注册一致。
 - **首页四通道登录**：
   - **外脑账号登录**：系统安全浏览器打开 `/oauth/authorize`（PKCE S256）；
-  - **微信登录**：`fluwx` 原生 OpenSDK（微信开放平台审核未通过、未配置 `RC_WECHAT_APP_ID` 时按钮可见但保持 `disabled`；配置合法 `wx...` AppID 后，本机装有微信则可点击，明确未安装微信则按 App Store 4.2.3 隐藏）；
-  - **Apple / Google 登录**：直接渲染原生品牌按钮，借用外脑 `/oauth/authorize?login_type=apple` 或 `login_type=google` 在系统安全浏览器中聚焦对应单点入口；启动预热请求 `GET /auth/social/providers`，线上已启用的渠道点亮可点击，未启用的渠道按钮保持 `disabled`；联调可通过 `--dart-define=RC_SOCIAL_PROVIDERS=apple,google` 显式覆盖可用渠道集合。
+  - **微信登录**：`fluwx` 原生 OpenSDK（配置合法 `wx...` AppID 且未明确缺失微信客户端时自动展示并可点击；未配置或未安装微信时按 App Store 2.1 / 4.2.3 自动隐藏）；
+  - **Apple / Google 登录**：借用外脑 `/oauth/authorize?login_type=apple` 或 `login_type=google`（Android 走 Google 登录时自动切回 Chrome Custom Tabs，规避 WebView 403 拦截）；启动预热请求 `GET /auth/social/providers`，仅展示线上已启用的渠道，未启用的自动隐藏；联调可通过 `--dart-define=RC_SOCIAL_PROVIDERS=apple,google` 显式覆盖可用渠道集合。
 - **模型名**：不再硬编码。登录后 App 调 `GET /api/model-gateway/v1/models`，
   按 `capabilities` 选 ASR（`asr`）与文本（`text`/`chat`）。也可用
   `--dart-define=RC_MODEL_ASR=... --dart-define=RC_MODEL_REFINE=...` 显式覆盖。
@@ -245,13 +254,17 @@ flutter analyze && flutter test
 客户端只持有微信一次性授权码，换 token 由后端 `/oauth/token` 扩展 grant
 （`urn:wainao:params:oauth:grant-type:wechat`）完成；AppSecret 只在后端。
 
-- **AppID 两处同值**（不变式，不一致则授权回不来）：
-  1. `app/ios/Flutter/Wechat.xcconfig` 的 `WECHAT_APP_ID`（展开为 Info.plist 的 `$(WECHAT_APP_ID)` 回调 scheme；未获批前用占位串 `rc-wechat-disabled`，防空 scheme 触发 App Store ITMS-90158）；
-  2. 构建参数 `--dart-define=RC_WECHAT_APP_ID=wx...`（兼容回退 `WECHAT_APP_ID`；Dart 侧 `OAuthConfig.isWechatConfigured` 严格校验 `wx` 前缀，占位串/空串均判未配置 → 登录页微信按钮保持 `disabled` 禁用态，fail-closed）。
-- **iOS 前置（一次性）**：
+- **微信开放平台登记状态（已过审，`AppID: wx929549126f19f795`）**：
+  - iPhone / iPad：Bundle ID `com.reai.recordingcard`，Universal Links `https://app.cn.reai.com/link/`；
+  - Android：应用包名 `com.reai.recordingcard`，应用签名 `fe80df2054941b4051b7268a8a3fce6b`；
+  - 开发者资质认证：`已认证`（深圳点一几科技有限责任公司），「微信登录」能力：`已获得`（`50000/min`）。
+- **AppID 两处同值**（不变式，不一致则授权回不来；`archive_testflight.sh` 会从 `Wechat.xcconfig` 自动注入 `--dart-define=RC_WECHAT_APP_ID`）：
+  1. `app/ios/Flutter/Wechat.xcconfig` 的 `WECHAT_APP_ID` 已写入 `wx929549126f19f795`（展开为 Info.plist 的 `$(WECHAT_APP_ID)` 回调 scheme；未填写时可用占位串 `rc-wechat-disabled` 防空 scheme 触发 ITMS-90158）；
+  2. 构建参数 `--dart-define=RC_WECHAT_APP_ID=wx929549126f19f795`（兼容回退 `WECHAT_APP_ID`；Dart 侧 `OAuthConfig.isWechatConfigured` 严格校验 `wx` 前缀，非 `wx` 开头判未配置并隐藏按钮）。
+- **iOS 前置（需逐项落实）**：
   1. Apple Developer 后台为 App ID（开发 `dev.kongkang.recordingCard` 与正式 `com.reai.recordingcard`）开启 **Associated Domains** capability（`Runner.entitlements` 已声明 `applinks:app.cn.reai.com`，三个 build configuration 均已挂载）；
-  2. `https://app.cn.reai.com/.well-known/apple-app-site-association` 的 `details` 同时包含两个 appID、paths `/link/*`（改 AASA 后 Apple CDN 缓存 24~48h）；
-  3. 微信开放平台登记「录音卡」移动应用：iOS bundle id + Universal Link `https://app.cn.reai.com/link/`；Android 侧补登记包名 + 签名 MD5（登记前 Android 真机微信登录不可用）。
+  2. `https://app.cn.reai.com/.well-known/apple-app-site-association`（及 `/apple-app-site-association`）的 `details` 需同时包含 `35N5SGDE59.com.reai.reaiApp` 与 **`35N5SGDE59.com.reai.recordingcard`**（paths `/link/*`；**当前线上仅含前者**，需服务端补全，Apple CDN 缓存 24~48h）；
+  3. 微信开放平台生成 `wx929549126f19f795` 的 `AppSecret` 并配入外脑后端；Android 打包正式签名 keystore MD5 需匹配 `fe80df2054941b4051b7268a8a3fce6b`。
 - **后端前置**：`/oauth/token` 微信 grant 支持可选 `wechat_app_id` 表单字段（多微信应用路由对应 Secret）；账号归一以 **unionid** 为准（同一主体多应用的 openid 不同）。
 - **联调自检**：
   1. 真机装包后在「设置 → Safari → 高级」清 Cookie 不需要；微信授权页能被 `weixinULAPI://` 拉起即说明 scheme 与 queries 白名单生效；
@@ -263,10 +276,8 @@ flutter analyze && flutter test
 
 | 平台 | 界面/登录/转写/总结/导出 | 蓝牙硬件链路 |
 | --- | --- | --- |
-| iOS | ✅ | ✅ 已验证（Rust 静态库链入，release 二进制有导出符号，真机扫描执行） |
-| Android | ✅ | ⚠️ **未接通**：Rust 桥目前只编了 iOS 静态库，Android 需要交叉编译 `.so` +
-  为 btleplug 提供 JavaVM（`ndk_context` / `JNI_OnLoad`）。当前 Android 包会显示
-  「此设备不支持连接录音卡」，其余功能正常。 |
+| iOS | ✅ | ✅ 已验证（Rust 静态库链入，release 二进制有导出符号，真机扫描/录音/转写/OTA 闭环已验证） |
+| Android | ✅ | ✅ **已打通**：`rust/build-android.sh` 编译 `libcard_bridge.so`（`JNI_OnLoad` 注入 `JavaVM`，默认锁定 `arm64-v8a`，全 ABI 用 `RC_ANDROID_ALL_ABIS=1`），`MainActivity` 捕获 `UnsatisfiedLinkError` 防止缺 ABI 闪退；Omi 真机 E2E 已验证通过（详见 `docs/handoff/handoff-2026-11-16-omi-android-ble-e2e.md`）。 |
 
 ## 验收命令
 

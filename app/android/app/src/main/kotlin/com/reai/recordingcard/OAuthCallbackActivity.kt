@@ -21,10 +21,11 @@ class OAuthCallbackActivity : Activity() {
     }
 
     private fun completeCallback(sourceIntent: Intent?) {
+        val expectedScheme = getString(R.string.rc_oauth_callback_scheme)
         val callbackUri = sourceIntent?.data
         val scheme = callbackUri?.scheme
-        if (scheme != CALLBACK_SCHEME || callbackUri == null) {
-            Log.w(TAG, "忽略无效的 OAuth 回调 scheme=$scheme")
+        if (scheme != expectedScheme || callbackUri == null) {
+            Log.w(TAG, "忽略无效的 OAuth 回调 scheme=$scheme (expected=$expectedScheme)")
             finish()
             return
         }
@@ -59,6 +60,5 @@ class OAuthCallbackActivity : Activity() {
 
     companion object {
         private const val TAG = "OAuthCallbackActivity"
-        private const val CALLBACK_SCHEME = "reai-mobile"
     }
 }

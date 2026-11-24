@@ -6,7 +6,7 @@
 library;
 
 /// 政策生效日期（App Store Connect / Play Console 里填写的隐私政策日期需一致）。
-const String privacyUpdatedAt = '2026-11-16';
+const String privacyUpdatedAt = '2026-11-24';
 
 /// 隐私问题联系邮箱（与商店后台填写的支持邮箱保持一致）。
 const String privacyContactEmail = 'privacy@reai.chat';

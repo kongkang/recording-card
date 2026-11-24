@@ -58,6 +58,13 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
+        val oauthCallbackScheme = (project.findProperty("rc.oauthScheme") as String?)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: "reai-mobile"
+        manifestPlaceholders["oauthCallbackScheme"] = oauthCallbackScheme
+        resValue("string", "rc_oauth_callback_scheme", oauthCallbackScheme)
+
         val includeAllAbis = System.getenv("RC_ANDROID_ALL_ABIS") == "1" ||
             project.findProperty("RC_ANDROID_ALL_ABIS")?.toString() == "1"
         if (!includeAllAbis) {

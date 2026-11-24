@@ -15,6 +15,7 @@ import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../data/seed.dart';
 import '../../services/ai/summary_generator.dart';
@@ -4748,14 +4749,42 @@ class AppStore extends ChangeNotifier {
   }
 
   /// 注销账号或清空本机数据时彻底擦除全部本地录音、分段、总结、声纹与路由状态。
+  ///
+  /// 刻意**保留**已下载的离线语音与声纹模型（`models/`），避免用户再次初始化时重复下载 260MB+ 文件。
   Future<void> wipeAllLocalData() async {
     _genEpoch++;
     _genTicker?.cancel();
     _genTicker = null;
     _genWatch?.stop();
+
+    if (_recordingStore != null) {
+      try {
+        await _recordingStore!.clearAll();
+      } on Object catch (e) {
+        debugPrint('[store] 清理本地录音目录异常：$e');
+      }
+    }
+    final topicStore = _topicStoreFor();
+    if (topicStore != null) {
+      try {
+        await topicStore.clear();
+      } on Object {
+        // 忽略分段缓存清理异常
+      }
+    }
+    try {
+      await taskScheduler?.discardOutputs(CleaningTaskIds.all);
+    } on Object {
+      // 忽略任务输出清理异常
+    }
+
     selMode = false;
+    tabsLocked = false;
+    filter = FeedFilter.all;
     activeQuickRange = null;
     selIds.clear();
+    selAnchorId = null;
+    _selAnchorHistory.clear();
     pend = null;
     openCardId = null;
     subStack = [];
@@ -4770,6 +4799,13 @@ class AppStore extends ChangeNotifier {
     _lastNamingUndo = null;
     _observedChannelKeys.clear();
     _autoEnrolledSessionSlots.clear();
+    syncError = null;
+    loadError = null;
+    syncStage = null;
+    syncProgress = 0;
+    syncText = '';
+    recleanStatus = '';
+    replayStatus = '';
     _onAliasesMutated();
     _restoringState = true;
     try {
@@ -4777,33 +4813,42 @@ class AppStore extends ChangeNotifier {
     } finally {
       _restoringState = false;
     }
-    if (_recordingStore != null) {
-      try {
-        final rootDir = await _recordingStore!.root();
-        if (await rootDir.exists()) {
-          await for (final entity in rootDir.list()) {
-            try {
-              await entity.delete(recursive: true);
-            } on Object {
-              // 忽略单个文件占用异常
-            }
-          }
-        }
-        await _recordingStore!.loadAll(refresh: true);
-      } on Object catch (e) {
-        debugPrint('[store] 清理本地录音目录异常：$e');
-      }
-    }
+
     if (_json != null || _loadPersisted) {
       try {
         final js = await _jsonStore();
         await js.remove('route');
+        if (_recordingStore == null) {
+          await js.remove('recordings');
+          await js.remove('migration');
+        }
       } on Object catch (e) {
         debugPrint('[store] 清理会话持久化异常：$e');
       }
     }
+
+    try {
+      await photoLibrary.clearLocalCache();
+    } on Object {
+      // 忽略相册缓存清理异常
+    }
+    try {
+      final support = await getApplicationSupportDirectory();
+      for (final sub in const ['photos', 'camera_photos', 'voiceprints']) {
+        final dir = Directory('${support.path}/$sub');
+        if (await dir.exists()) {
+          await dir.delete(recursive: true);
+        }
+      }
+    } on Object {
+      // 测试环境无 path_provider 通道或已提前清理时忽略
+    }
+
     if (!_disposed) notifyListeners();
   }
+
+  /// 清空本机全部用户数据（[wipeAllLocalData] 的兼容别名）。
+  Future<void> clearAllLocalData() => wipeAllLocalData();
 
   // ── 会话持久化（对应原型 sessionStorage rc-route-v1） ──
   Map<String, dynamic> exportState() => {
