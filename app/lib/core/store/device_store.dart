@@ -42,6 +42,9 @@ enum SyncTrigger { auto, manual }
 
 enum DeviceView { main, upg, wifi, btn, more }
 
+/// 硬件端侧 TTS 播报结果。
+enum DyjSpeechOutcome { spoken, unsupported, unavailable }
+
 /// 与录音卡的蓝牙连接状态：未连接时顶栏胶囊变灰，点开进扫描流程。
 enum LinkState {
   unknown,
@@ -766,8 +769,14 @@ class DeviceStore extends ChangeNotifier {
     } on Object catch (e) {
       if (epoch != _epoch) return;
       debugPrint('[device] 恢复上次设备 ${target.id} 失败：$e');
+      _lastDevice ??= target;
       linkState = LinkState.disconnected;
       linkError = null;
+      if (target.deviceKind != DeviceKind.appleWatch && _gateway.available) {
+        _autoReconnectTarget = target;
+        _autoReconnectAttempt = 0;
+        _scheduleNextBackgroundReconnect();
+      }
       if (liveActivity.active &&
           !hasActiveRecording &&
           !_pendingPhoneFailover) {
@@ -1169,6 +1178,7 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
     final epoch = ++_epoch;
+    _resetHeartbeatFailures();
     _autoReconnectTarget = null;
     _stopBackgroundAutoReconnect();
     _stopScanExpiryTimer();
@@ -1562,6 +1572,7 @@ class DeviceStore extends ChangeNotifier {
 
   Future<void> disconnectDevice() async {
     final epoch = ++_epoch;
+    _resetHeartbeatFailures();
     _phoneStandbyArmed = false;
     _pendingPhoneFailover = false;
     _autoReconnectTarget = null;
@@ -1859,13 +1870,15 @@ class DeviceStore extends ChangeNotifier {
   // 4. 重连成功回绿/橙；失败回灰「无设备」。
   static const heartbeatIdle = Duration(seconds: 30);
   static const recordingHeartbeatIdle = Duration(seconds: 10);
+  static const int _recordingHeartbeatMissLimit = 2;
+  static const Duration _fastHeartbeatConfirmDelay = Duration(seconds: 2);
   static const _reconnectDelay = Duration(milliseconds: 400);
   static const List<Duration> _defaultBackgroundReconnectDelays = [
-    Duration(seconds: 15),
+    Duration(seconds: 2),
+    Duration(seconds: 5),
+    Duration(seconds: 10),
     Duration(seconds: 20),
     Duration(seconds: 30),
-    Duration(seconds: 45),
-    Duration(seconds: 60),
   ];
 
   /// 重连只发 connect（不再预拉快照），但桥内要先扫描再建链路，
@@ -1873,7 +1886,20 @@ class DeviceStore extends ChangeNotifier {
   static const _retryConnectTimeout = Duration(seconds: 32);
 
   Timer? _heartbeatTimer;
+  Timer? _fastHeartbeatConfirmTimer;
+  int _consecutiveHeartbeatFailures = 0;
   bool _watchdogProbing = false;
+  bool _isAppBackgrounded = false;
+  bool _resumeReconcileInFlight = false;
+
+  bool get _shouldDeferFailoverUntilReconnectFails =>
+      activeCapabilities.hasOnboardStorage;
+
+  void _resetHeartbeatFailures() {
+    _consecutiveHeartbeatFailures = 0;
+    _fastHeartbeatConfirmTimer?.cancel();
+    _fastHeartbeatConfirmTimer = null;
+  }
 
   CardDevice? _autoReconnectTarget;
   Timer? _autoReconnectTimer;
@@ -2027,6 +2053,7 @@ class DeviceStore extends ChangeNotifier {
     CardSnapshot snapshot,
     int epoch,
   ) async {
+    _resetHeartbeatFailures();
     _stopBackgroundAutoReconnect();
     _autoReconnectTarget = null;
     _disconnectNotice = null;
@@ -2105,6 +2132,7 @@ class DeviceStore extends ChangeNotifier {
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
     _eventWatch?.cancel();
+    _resetHeartbeatFailures();
     // widget 测试里 autoStart:false 不启，避免悬挂定时器
     if (!_autoStart) return;
     _sinceLinkActivity = Duration.zero;
@@ -2114,7 +2142,8 @@ class DeviceStore extends ChangeNotifier {
     _refreshEventWatch();
   }
 
-  /// 按当前硬件能力刷新后台事件轮询节拍：具备按键/打点能力时采用 200ms 保证 iOS Omi 物理按键即时响应。
+  /// 按当前硬件能力与前后台状态刷新事件轮询节拍：
+  /// 前台具按键能力时采用 200ms 保证即时响应；进入后台自动降频至 1s / 3s 降低 FFI 与 CPU 占用。
   void _refreshEventWatch() {
     _eventWatch?.cancel();
     _eventWatch = null;
@@ -2122,9 +2151,18 @@ class DeviceStore extends ChangeNotifier {
     final fastButtons =
         activeCapabilities.hasConfigurableButtons ||
         activeCapabilities.hasMarkButton;
-    final eventInterval = fastButtons
-        ? const Duration(milliseconds: 200)
-        : const Duration(seconds: 1);
+    final Duration eventInterval;
+    if (_isAppBackgrounded) {
+      eventInterval = fastButtons
+          ? const Duration(milliseconds: 300)
+          : (isRecording
+                ? const Duration(seconds: 1)
+                : const Duration(seconds: 3));
+    } else {
+      eventInterval = fastButtons
+          ? const Duration(milliseconds: 200)
+          : const Duration(seconds: 1);
+    }
     _eventWatch = Timer.periodic(eventInterval, (_) {
       if (isConnected && !sheetOpen) {
         unawaited(_pullDeviceEvents());
@@ -2133,7 +2171,7 @@ class DeviceStore extends ChangeNotifier {
   }
 
   /// 每 5 秒醒一次累计空闲时长：待机满 30 秒探一次；录音中若超过 10 秒无命令/实时流包，
-  /// 发起轻量非侵入式链路存活探测，确保蓝牙意外失联 <=12s 内拉起本机麦克风保底接力。
+  /// 发起轻量非侵入式链路存活探测；录音期单次超时不立即断链或切手机兜底，连续 2 次失败后再判掉线重连。
   void _heartbeatTick() {
     if (linkState != LinkState.connected) return;
     // 固件升级/同步/外部下载管线/录音命令链路忙：不插队，且这些动作本身已算活动
@@ -2171,6 +2209,7 @@ class DeviceStore extends ChangeNotifier {
             )
             .timeout(const Duration(seconds: 6));
         if (epoch != _epoch) return;
+        _resetHeartbeatFailures();
         _markLinkActivity();
         final data = ping['data'];
         final rec = data is Map<String, dynamic> ? data['record'] : null;
@@ -2184,17 +2223,35 @@ class DeviceStore extends ChangeNotifier {
             : _snapshotTimeout;
         final snapshot = await _gw.snapshot().timeout(probeTimeout);
         if (epoch != _epoch) return;
+        _resetHeartbeatFailures();
         _markLinkActivity();
         _applySnapshot(snapshot);
         notifyListeners();
       }
     } on CardException catch (e) {
       if (epoch != _epoch) return;
+      _resetHeartbeatFailures();
       await _handleWatchdogLinkLoss('（${e.kind}）：${e.message}', epoch);
     } on TimeoutException {
       if (epoch != _epoch) return;
       if (probingWhileRecording) {
-        await _handleWatchdogLinkLoss('（录音存活探测超时）', epoch);
+        _consecutiveHeartbeatFailures++;
+        if (_consecutiveHeartbeatFailures < _recordingHeartbeatMissLimit) {
+          debugPrint(
+            '[watchdog] 录音心跳第 $_consecutiveHeartbeatFailures 次超时，'
+            '${_fastHeartbeatConfirmDelay.inSeconds}s 后二次确认（暂不切本机兜底）',
+          );
+          _fastHeartbeatConfirmTimer?.cancel();
+          _fastHeartbeatConfirmTimer = Timer(_fastHeartbeatConfirmDelay, () {
+            if (epoch == _epoch && isConnected && isRecording) {
+              unawaited(_watchdogProbe());
+            }
+          });
+        } else {
+          final misses = _consecutiveHeartbeatFailures;
+          _resetHeartbeatFailures();
+          await _handleWatchdogLinkLoss('（连续 $misses 次录音心跳超时）', epoch);
+        }
       }
     } finally {
       _watchdogProbing = false;
@@ -2206,13 +2263,16 @@ class DeviceStore extends ChangeNotifier {
     // 先停表：重连只许试一次，不能被后续 tick 叠成无限重试
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
+    _resetHeartbeatFailures();
     final disconnectReason = _inferUnexpectedDisconnectReason(detail);
-    // 若录音待命保底已武装，立即按 Watch 优先 → 手机本机 顺序无缝接力，不等待旧链路释放超时
-    if (_phoneStandbyArmed &&
+    final carrySec = _clockTicks;
+    // 无本地存储的纯流式硬件（如 Omi）掉线立刻拉起伴随兜底；
+    // 具备卡端存储的硬件优先保证由硬件续录，等快速直连重连失败后再启本机兜底。
+    if (!_shouldDeferFailoverUntilReconnectFails &&
+        _phoneStandbyArmed &&
         !_phoneRecording &&
         !_phoneRecordingBusy &&
         !_watchFailoverRecording) {
-      final carrySec = _clockTicks;
       _liveRecording = false;
       _stopClock();
       unawaited(
@@ -2227,7 +2287,12 @@ class DeviceStore extends ChangeNotifier {
     // 停止对外广播，重连也就扫不到它。
     await _releaseLink();
     if (epoch != _epoch) return;
-    unawaited(_retryReconnect(disconnectReason: disconnectReason));
+    unawaited(
+      _retryReconnect(
+        disconnectReason: disconnectReason,
+        carrySecOverride: carrySec,
+      ),
+    );
   }
 
   /// 尽力释放桥里的 BLE 链路；失败只记日志，不阻断重连/断开流程。
@@ -2242,15 +2307,20 @@ class DeviceStore extends ChangeNotifier {
     }
   }
 
-  /// 掉线自动重连：蓝点 → 直连上次设备；失败后挂起后台自动重连并在期间保持伴随路兜底。
-  Future<void> _retryReconnect({String? disconnectReason}) async {
+  /// 掉线自动重连：蓝点 → 直连上次设备；失败后挂起后台自动重连。
+  /// 具备板载存储的硬件在重连期间暂不启动手机本机录音，重连确认失败后再兜底。
+  Future<void> _retryReconnect({
+    String? disconnectReason,
+    int? carrySecOverride,
+  }) async {
     if (linkState == LinkState.reconnecting) return; // 已在重试中，不重复
     if (!isConnected) return;
+    _resetHeartbeatFailures();
     final targetDevice = _lastDevice;
     final reason = disconnectReason ?? _inferUnexpectedDisconnectReason(null);
-    final carrySec = _clockTicks;
-    // 探测失败或收到断连事件说明链路已中断：若录音保底已待命，立即按优先级拉起伴随兜底（Watch > 手机）
-    if (_phoneStandbyArmed &&
+    final carrySec = carrySecOverride ?? _clockTicks;
+    if (!_shouldDeferFailoverUntilReconnectFails &&
+        _phoneStandbyArmed &&
         !_phoneRecording &&
         !_phoneRecordingBusy &&
         !_watchFailoverRecording) {
@@ -2275,6 +2345,7 @@ class DeviceStore extends ChangeNotifier {
         '与录音卡的连接已断开',
         lostDevice: device,
         reason: reason,
+        carrySecOverride: carrySec,
       );
       await _releaseLink();
       return;
@@ -2311,6 +2382,7 @@ class DeviceStore extends ChangeNotifier {
         '与录音卡的连接已断开，请重新连接',
         lostDevice: device,
         reason: reason,
+        carrySecOverride: carrySec,
       );
     }
     notifyListeners();
@@ -2320,8 +2392,10 @@ class DeviceStore extends ChangeNotifier {
     String message, {
     CardDevice? lostDevice,
     String? reason,
+    int? carrySecOverride,
   }) {
-    final carrySec = _clockTicks;
+    final carrySec = carrySecOverride ?? _clockTicks;
+    _resetHeartbeatFailures();
     _oledDelayTimer?.cancel();
     _oledDelayTimer = null;
     _syncedControlsEpoch = -1;
@@ -2575,7 +2649,7 @@ class DeviceStore extends ChangeNotifier {
   }
 
   void _startClock() {
-    if (_clockTimer != null) return;
+    if (_clockTimer != null || _isAppBackgrounded) return;
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _clockTicks++;
       notifyListeners();
@@ -2585,6 +2659,26 @@ class DeviceStore extends ChangeNotifier {
   void _stopClock() {
     _clockTimer?.cancel();
     _clockTimer = null;
+  }
+
+  void _startPhoneClockTimer() {
+    _phoneClockTimer?.cancel();
+    _phoneClockTimer = null;
+    if (_isAppBackgrounded || !_phoneRecording) return;
+    _phoneClockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _phoneRecSec++;
+      notifyListeners();
+    });
+  }
+
+  void _startWatchFailoverClockTimer() {
+    _watchFailoverClockTimer?.cancel();
+    _watchFailoverClockTimer = null;
+    if (_isAppBackgrounded || !_watchFailoverRecording) return;
+    _watchFailoverClockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _watchFailoverRecSec++;
+      notifyListeners();
+    });
   }
 
   String get recClockText {
@@ -3009,7 +3103,7 @@ class DeviceStore extends ChangeNotifier {
   }
 
   /// 前向兼容调用点一机 V1 端侧 TTS 语音播报（`dyj_tts_speak`）：
-  /// `0.8.14` 等尚未实现的固件会返回 `unsupported` 错误且保持蓝牙会话不断开，供上层回退手机 TTS。
+  /// `0.8.14` 等尚未实现的固件会返回 `unsupported` 错误且保持蓝牙会话不断开，供上层决定静默或回退。
   Future<Map<String, dynamic>> speakDyjTts(
     String text, {
     bool? interrupt,
@@ -3023,6 +3117,33 @@ class DeviceStore extends ChangeNotifier {
       },
       const Duration(seconds: 10),
     );
+  }
+
+  /// 通过具备扬声器的连接硬件播报语音；若固件返回 `unsupported`（如点一机 v0.8.15），
+  /// 调用方应保持手机端静音，避免突然从手机扬声器发声打断用户。
+  Future<DyjSpeechOutcome> trySpeakOnHardware(
+    String text, {
+    bool interrupt = true,
+  }) async {
+    final clean = text.trim();
+    if (!isConnected || !activeCapabilities.hasSpeaker || clean.isEmpty) {
+      return DyjSpeechOutcome.unavailable;
+    }
+    try {
+      final res = await speakDyjTts(clean, interrupt: interrupt);
+      if (res['spoken'] == true || res['supported'] == true) {
+        return DyjSpeechOutcome.spoken;
+      }
+      return DyjSpeechOutcome.unsupported;
+    } on CardException catch (e) {
+      final lower = e.message.toLowerCase();
+      if (lower.contains('unsupported') || e.message.contains('1001')) {
+        return DyjSpeechOutcome.unsupported;
+      }
+      return DyjSpeechOutcome.unavailable;
+    } on Object {
+      return DyjSpeechOutcome.unavailable;
+    }
   }
 
   // ── 电量 ───────────────────────────────────────────────────
@@ -3300,20 +3421,16 @@ class DeviceStore extends ChangeNotifier {
         }
         if (_watchHardware.currentStatus.isRecording) {
           final safeCarry = carrySecOverride < 0 ? 0 : carrySecOverride;
+          final now = _now();
           _watchFailoverRecording = true;
-          _watchFailoverStartedAt = DateTime.now();
+          _watchFailoverStartedAt = safeCarry > 0
+              ? now.subtract(Duration(seconds: safeCarry))
+              : now;
           _watchFailoverRecSec = safeCarry;
           _pendingPhoneFailover = false;
           _pendingFailoverCarrySec = 0;
           _phoneRecordingError = null;
-          _watchFailoverClockTimer?.cancel();
-          _watchFailoverClockTimer = Timer.periodic(
-            const Duration(seconds: 1),
-            (_) {
-              _watchFailoverRecSec++;
-              notifyListeners();
-            },
-          );
+          _startWatchFailoverClockTimer();
           final targetLabel = _disconnectTargetLabel(
             _autoReconnectTarget ?? _lastDevice,
           );
@@ -3534,7 +3651,7 @@ class DeviceStore extends ChangeNotifier {
         }
         return false;
       }
-      final startedAt = DateTime.now();
+      final startedAt = _now();
       await _phoneMicRecorder.start(startedAt: startedAt);
       await _phoneMicBackend.startCapture(
         _phoneMicRecorder.ingestPcm,
@@ -3543,19 +3660,18 @@ class DeviceStore extends ChangeNotifier {
           unawaited(stopPhoneRecording());
         },
       );
+      final safeElapsed = initialElapsedSec < 0 ? 0 : initialElapsedSec;
       _phoneRecording = true;
       _pendingPhoneFailover = false;
       _pendingFailoverCarrySec = 0;
-      _phoneRecordingStartedAt = startedAt;
-      _phoneRecSec = initialElapsedSec < 0 ? 0 : initialElapsedSec;
+      _phoneRecordingStartedAt = safeElapsed > 0
+          ? startedAt.subtract(Duration(seconds: safeElapsed))
+          : startedAt;
+      _phoneRecSec = safeElapsed;
       _otaHandoverPhoneRecording = forOtaHandover;
       _failoverPhoneRecording = forFailover;
       _islandEnabled = islandEnabled;
-      _phoneClockTimer?.cancel();
-      _phoneClockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        _phoneRecSec++;
-        notifyListeners();
-      });
+      _startPhoneClockTimer();
       if (islandEnabled) {
         final activityStartedAt = initialElapsedSec > 0
             ? startedAt.subtract(Duration(seconds: initialElapsedSec))
@@ -4097,9 +4213,20 @@ class DeviceStore extends ChangeNotifier {
   }
 
   /// App 切至后台/息屏：
-  /// 1. 未处于任何真实录音态时，强制收口灵动岛与锁屏实况，防止残留或孤儿计时；
-  /// 2. 若录音卡 V2 的 Wi-Fi 模块处于开启或配网在途，立刻自动关闭（升级期间除外）。
+  /// 1. 暂停 1 秒 UI 计时器（回前台用墙钟差对齐），并将 FFI 事件轮询降频省电防 Jetsam；
+  /// 2. 未处于任何真实录音态时，强制收口灵动岛与锁屏实况，防止残留或孤儿计时；
+  /// 3. 若录音卡 V2 的 Wi-Fi 模块处于开启或配网在途，立刻自动关闭（升级期间除外）。
   void handleAppBackgrounded() {
+    final alreadyBg = _isAppBackgrounded;
+    _isAppBackgrounded = true;
+    _stopClock();
+    _phoneClockTimer?.cancel();
+    _phoneClockTimer = null;
+    _watchFailoverClockTimer?.cancel();
+    _watchFailoverClockTimer = null;
+    if (!alreadyBg && isConnected) {
+      _refreshEventWatch();
+    }
     if (!hasActiveRecording &&
         (_liveActivityActive || !_backgroundLiveActivityCleaned)) {
       _backgroundLiveActivityCleaned = true;
@@ -4119,17 +4246,25 @@ class DeviceStore extends ChangeNotifier {
 
   void _resyncWallClockIfRecording() {
     var changed = false;
+    final now = _now();
     if (isConnected && isRecording && _hwRecordingStartedAt != null) {
-      final elapsed = _now().difference(_hwRecordingStartedAt!).inSeconds;
+      final elapsed = now.difference(_hwRecordingStartedAt!).inSeconds;
       if (elapsed > _clockTicks) {
         _clockTicks = elapsed;
         changed = true;
       }
     }
     if (_phoneRecording && _phoneRecordingStartedAt != null) {
-      final elapsed = _now().difference(_phoneRecordingStartedAt!).inSeconds;
+      final elapsed = now.difference(_phoneRecordingStartedAt!).inSeconds;
       if (elapsed > _phoneRecSec) {
         _phoneRecSec = elapsed;
+        changed = true;
+      }
+    }
+    if (_watchFailoverRecording && _watchFailoverStartedAt != null) {
+      final elapsed = now.difference(_watchFailoverStartedAt!).inSeconds;
+      if (elapsed > _watchFailoverRecSec) {
+        _watchFailoverRecSec = elapsed;
         changed = true;
       }
     }
@@ -4214,37 +4349,35 @@ class DeviceStore extends ChangeNotifier {
   }
 
   /// App 切回前台时：
-  /// 1. 同步正在进行的录音耗时计时器；
-  /// 2. 若有因 iOS 后台 `560557684` 受限而挂起的保底本机录音，回到前台立即零点击自动恢复；
-  /// 3. 若已挂载后台重连目标，探测直连；若仍处于已连接或有缓存历史设备，单次对账并恢复连接；
+  /// 1. 同步正在进行的录音耗时并恢复 UI 时钟与事件轮询节拍；
+  /// 2. 若未连接且存在重连/持久化目标：**先尝试 BLE 直连恢复硬件**；若硬件仍不可达且挂起本机保底，再零点击自动恢复本机录音；
+  /// 3. 若仍处于已连接态，单次对账确认硬件实际状态；
   /// 4. 对「连接设备」弹窗内的蓝牙扫描列表做真实墙钟过期校准。
   void handleAppResumed() {
+    final wasBg = _isAppBackgrounded;
+    _isAppBackgrounded = false;
     _backgroundLiveActivityCleaned = false;
     _resyncWallClockIfRecording();
+    if (isConnected && isRecording && _clockUsers > 0) {
+      _startClock();
+    }
+    if (_phoneRecording) {
+      _startPhoneClockTimer();
+    }
+    if (_watchFailoverRecording) {
+      _startWatchFailoverClockTimer();
+    }
+    if (wasBg && isConnected) {
+      _refreshEventWatch();
+    }
     if (!hasActiveRecording && !_pendingPhoneFailover && _liveActivityActive) {
       _stopLiveActivity(force: true);
-    }
-    if (_pendingPhoneFailover &&
-        _phoneStandbyArmed &&
-        !_phoneRecording &&
-        !_phoneRecordingBusy &&
-        !_watchFailoverRecording &&
-        !isConnected) {
-      unawaited(
-        _triggerCompanionFailover(
-          reason: '回到前台自动恢复录音',
-          carrySecOverride: _pendingFailoverCarrySec,
-        ),
-      );
     }
     if (isLinkBusy ||
         _restoreInFlight ||
         _scanInFlight ||
-        _backgroundReconnecting) {
-      return;
-    }
-    if (_autoReconnectTarget != null && !isConnected) {
-      unawaited(_attemptBackgroundReconnect());
+        _backgroundReconnecting ||
+        _resumeReconcileInFlight) {
       return;
     }
     if (isConnected) {
@@ -4256,20 +4389,60 @@ class DeviceStore extends ChangeNotifier {
       }
       return;
     }
-    final hasRestoreSource =
-        _lastDevice != null || _stateStore != null || _watchHardware.linkEnabled;
-    if (!hasRestoreSource) {
+    final hasTarget =
+        _autoReconnectTarget != null ||
+        _lastDevice != null ||
+        _stateStore != null ||
+        _watchHardware.linkEnabled;
+    if (!hasTarget) {
+      if (_pendingPhoneFailover &&
+          _phoneStandbyArmed &&
+          !_phoneRecording &&
+          !_phoneRecordingBusy &&
+          !_watchFailoverRecording) {
+        unawaited(
+          _triggerCompanionFailover(
+            reason: '回到前台自动恢复录音',
+            carrySecOverride: _pendingFailoverCarrySec,
+          ),
+        );
+      }
       _handleScanExpiryOnResume();
       return;
     }
     final now = _now();
-    if (_lastResumeReconcileAt != null &&
+    if (!_pendingPhoneFailover &&
+        _lastResumeReconcileAt != null &&
         now.difference(_lastResumeReconcileAt!) < _resumeReconcileCooldown) {
       _handleScanExpiryOnResume();
       return;
     }
     _lastResumeReconcileAt = now;
-    unawaited(restoreLink(fromResume: true));
+    _resumeReconcileInFlight = true;
+    unawaited(_resumeReconnectThenMaybeFailover());
+  }
+
+  Future<void> _resumeReconnectThenMaybeFailover() async {
+    try {
+      if (_autoReconnectTarget != null && !isConnected) {
+        await _attemptBackgroundReconnect();
+      } else if (!isConnected) {
+        await restoreLink(fromResume: true);
+      }
+      if (!isConnected &&
+          _pendingPhoneFailover &&
+          _phoneStandbyArmed &&
+          !_phoneRecording &&
+          !_phoneRecordingBusy &&
+          !_watchFailoverRecording) {
+        await _triggerCompanionFailover(
+          reason: '硬件未在范围，回到前台自动恢复本机录音',
+          carrySecOverride: _pendingFailoverCarrySec,
+        );
+      }
+    } finally {
+      _resumeReconcileInFlight = false;
+    }
   }
 
   void showView(DeviceView v, {DeviceView? wifiReturnTo}) {
@@ -5078,6 +5251,7 @@ class DeviceStore extends ChangeNotifier {
     _watchFailoverClockTimer?.cancel();
     _autoReconnectTimer?.cancel();
     _heartbeatTimer?.cancel();
+    _resetHeartbeatFailures();
     _oledDelayTimer?.cancel();
     _oledDelayTimer = null;
     _eventWatch?.cancel();

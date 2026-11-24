@@ -29,6 +29,7 @@ import '../services/external_data/getnote_sync_store.dart';
 import '../services/health/health_signal_controller.dart';
 import '../services/memory/memory_search_scope.dart';
 import '../services/memory/memory_search_service.dart';
+import '../services/net/model_gateway.dart';
 import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/asr_models.dart';
 import '../services/transcribe/local_asr_service.dart';
@@ -158,6 +159,7 @@ class AppShell extends StatefulWidget {
     this.device,
     this.recordingStatus,
     this.modelManager,
+    this.modelGateway,
     this.settings,
     this.agentConfig,
     this.liveAudio,
@@ -187,6 +189,7 @@ class AppShell extends StatefulWidget {
   final DeviceStore? device;
   final RecordingStatusController? recordingStatus;
   final ModelManagerController? modelManager;
+  final ModelGateway? modelGateway;
   final SettingsStore? settings;
   final AgentConfigStore? agentConfig;
   final LiveAudioRecorder? liveAudio;
@@ -244,7 +247,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   StreamSubscription<LiveAudioSlice>? _liveSliceSub;
   StreamSubscription<LiveAudioSlice>? _phoneSliceSub;
   StreamSubscription<LiveAudioSlice>? _watchSliceSub;
-  SpeechEngine? _ownedFallbackAsr;
+  LocalAsrService? _ownedFallbackAsr;
   late DateTime _lastCalendarDay = DateUtils.dateOnly(_now());
   bool _supportsDynamicIsland = false;
   bool _askedPhotoPermThisSession = false;
@@ -283,7 +286,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       systemSpeech: widget.systemSpeech,
       localAsr: widget.fallbackLocalAsr,
       resolveLocalAsr: () async => _ownedFallbackAsr ??= LocalAsrService(
-        idleReleaseDelay: const Duration(seconds: 45),
+        idleReleaseDelay: const Duration(seconds: 20),
       ),
       installer: widget.modelInstaller ?? ModelInstaller(),
       preferSenseVoice: preferSv,
@@ -575,6 +578,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      widget.store.setAppBackgrounded(false);
       _device.handleAppResumed();
       final today = DateUtils.dateOnly(_now());
       final diffDays = today.difference(_lastCalendarDay).inDays;
@@ -583,14 +587,19 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         final elapsed = diffDays > 0 ? diffDays : 1;
         unawaited(widget.store.onCalendarDayRollover(daysElapsed: elapsed));
       }
-      if (widget.store.rootTab == RootTab.timeline &&
-          widget.store.pendingLocalAudioCount > 0) {
+      final cycleReached =
+          widget.store.pendingLocalAudioDurationMs >=
+          widget.store.transcribeCycleMinutes * 60 * 1000;
+      if (widget.store.pendingLocalAudioCount > 0 &&
+          (widget.store.rootTab == RootTab.timeline || cycleReached)) {
         unawaited(
           widget.store.transcribeAndOrganizePending(reason: 'view-resume'),
         );
       }
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
+      widget.store.setAppBackgrounded(true);
+      widget.store.trimMemoryCache();
       _device.handleAppBackgrounded();
       if (!_liveAudio.isRunning) {
         _liveAudio.ringBuffer.clear();
@@ -598,6 +607,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       if (!_device.isPhoneRecording) {
         _device.phoneRingBuffer.clear();
       }
+      final fallbackAsr = _ownedFallbackAsr;
+      if (fallbackAsr != null) {
+        unawaited(fallbackAsr.releaseMemory());
+      }
+      unawaited(_agentChat.releaseBackgroundMemory());
     }
   }
 
@@ -673,6 +687,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           device: _device,
                           recordingStatus: _recording,
                           modelManager: widget.modelManager,
+                          modelGateway: widget.modelGateway,
                           settings: widget.settings,
                           agentConfig: _agentConfig,
                           authService: widget.authService,
@@ -692,6 +707,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           device: _device,
                           recordingStatus: _recording,
                           modelManager: widget.modelManager,
+                          modelGateway: widget.modelGateway,
                           settings: widget.settings,
                           agentConfig: _agentConfig,
                           authService: widget.authService,
@@ -1284,6 +1300,7 @@ Widget _stackTopPage(
   required AgentConfigStore agentConfig,
   DeviceStore? device,
   ModelManagerController? modelManager,
+  ModelGateway? modelGateway,
   AuthService? authService,
   HealthSignalController? healthSignals,
   GetNoteSyncStore? getNoteStore,
@@ -1316,6 +1333,7 @@ Widget _stackTopPage(
       agentConfig: agentConfig,
       device: device,
       modelManager: modelManager,
+      modelGateway: modelGateway,
       authService: authService,
       healthSignals: healthSignals,
       getNoteStore: getNoteStore,
@@ -1339,6 +1357,7 @@ class _NarrowLayout extends StatelessWidget {
     required this.recordingStatus,
     required this.agentConfig,
     this.modelManager,
+    this.modelGateway,
     this.settings,
     this.authService,
     this.photoLibrary,
@@ -1355,6 +1374,7 @@ class _NarrowLayout extends StatelessWidget {
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
   final ModelManagerController? modelManager;
+  final ModelGateway? modelGateway;
   final SettingsStore? settings;
   final AgentConfigStore agentConfig;
   final AuthService? authService;
@@ -1396,6 +1416,7 @@ class _NarrowLayout extends StatelessWidget {
                 RootTab.setting => SettingPage(
                   device: device,
                   modelManager: modelManager,
+                  modelGateway: modelGateway,
                   settings: settings,
                   agentConfig: agentConfig,
                   authService: authService,
@@ -1427,6 +1448,7 @@ class _NarrowLayout extends StatelessWidget {
                   agentConfig,
                   device,
                   modelManager,
+                  modelGateway,
                   authService,
                   healthSignals,
                   getNoteStore,
@@ -1499,6 +1521,7 @@ class _NarrowLayout extends StatelessWidget {
     AgentConfigStore agentConfig,
     DeviceStore device,
     ModelManagerController? modelManager,
+    ModelGateway? modelGateway,
     AuthService? authService,
     HealthSignalController? healthSignals,
     GetNoteSyncStore? getNoteStore,
@@ -1525,6 +1548,7 @@ class _NarrowLayout extends StatelessWidget {
         agentConfig: agentConfig,
         device: device,
         modelManager: modelManager,
+        modelGateway: modelGateway,
         authService: authService,
         healthSignals: healthSignals,
         getNoteStore: getNoteStore,
@@ -1544,6 +1568,7 @@ class _WideLayout extends StatelessWidget {
     required this.recordingStatus,
     required this.agentConfig,
     this.modelManager,
+    this.modelGateway,
     this.settings,
     this.authService,
     this.photoLibrary,
@@ -1560,6 +1585,7 @@ class _WideLayout extends StatelessWidget {
   final DeviceStore device;
   final RecordingStatusController recordingStatus;
   final ModelManagerController? modelManager;
+  final ModelGateway? modelGateway;
   final SettingsStore? settings;
   final AgentConfigStore agentConfig;
   final AuthService? authService;
@@ -1608,6 +1634,7 @@ class _WideLayout extends StatelessWidget {
                     RootTab.setting => SettingPage(
                       device: device,
                       modelManager: modelManager,
+                      modelGateway: modelGateway,
                       settings: settings,
                       agentConfig: agentConfig,
                       authService: authService,
@@ -1638,6 +1665,7 @@ class _WideLayout extends StatelessWidget {
                             agentConfig: agentConfig,
                             device: device,
                             modelManager: modelManager,
+                            modelGateway: modelGateway,
                             authService: authService,
                             healthSignals: healthSignals,
                             getNoteStore: getNoteStore,

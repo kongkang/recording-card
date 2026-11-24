@@ -17,6 +17,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
@@ -134,6 +135,24 @@ class ModelGateway {
   List<GatewayModel> _discoveredModels = const [];
   bool _catalogLoaded = false;
   String? _catalogError;
+  Future<void>? _discoverInFlight;
+  final ValueNotifier<int> _catalogRevision = ValueNotifier<int>(0);
+
+  /// 模型目录变更监听（供设置页响应刷新状态与模型列表）。
+  ValueListenable<int> get catalogListenable => _catalogRevision;
+
+  /// 当前是否已有云端登录凭据。
+  bool get hasSession => _client.hasSession;
+
+  /// 当前选中的模型服务是否已具备网关/API 地址配置。
+  bool get endpointConfigured => usesExternalProvider
+      ? (_providers
+                ?.profileFor(_providers.activeProvider)
+                .baseUrl
+                .trim()
+                .isNotEmpty ??
+            false)
+      : _config.configured;
 
   /// 当前配置（只读，便于 UI 展示「哪一项没配」）。
   ModelGatewayConfig get config => _config;
@@ -180,7 +199,7 @@ class ModelGateway {
 
   bool chatAvailableFor(ModelScene scene) =>
       isCloudEnabled &&
-      (usesExternalProvider || _config.configured) &&
+      endpointConfigured &&
       modelFor(scene).isNotEmpty;
 
   bool readyFor(ModelScene scene) =>
@@ -194,20 +213,69 @@ class ModelGateway {
     return _officialModelFor(scene);
   }
 
-  String _officialModelFor(ModelScene scene) {
+  /// 后端/环境默认下发给指定场景的外脑模型名（忽略用户手动覆盖）。
+  String officialDefaultModelFor(ModelScene scene) {
     if (scene == ModelScene.vision) return visionModel;
     if (_config.refineModel.trim().isNotEmpty) return textModel;
     return ModelCatalog(_discoveredModels).firstWith(scene.name) ?? textModel;
   }
 
+  String _officialModelFor(ModelScene scene) {
+    final wainao = _providers?.profileFor(ModelProvider.wainao);
+    final sceneOverride = wainao?.sceneModels[scene]?.trim() ?? '';
+    if (sceneOverride.isNotEmpty) return sceneOverride;
+    final defaultOverride = wainao?.summaryModel.trim() ?? '';
+    if (scene != ModelScene.vision && defaultOverride.isNotEmpty) {
+      return defaultOverride;
+    }
+    if (scene == ModelScene.vision &&
+        (_discoveredVision ?? '').trim().isEmpty &&
+        defaultOverride.isNotEmpty) {
+      return defaultOverride;
+    }
+    return officialDefaultModelFor(scene);
+  }
+
+  /// 确保外脑模型目录在需要时完成拉取（自动去重并发，失败时可按需重试）。
+  Future<void> ensureModelsDiscovered({
+    bool force = false,
+    Duration? timeout,
+  }) async {
+    if (usesExternalProvider || !_config.configured || !_client.hasSession) {
+      return;
+    }
+    if (!force && _discoveredModels.isNotEmpty) return;
+    final inFlight = _discoverInFlight;
+    if (inFlight != null) {
+      await inFlight;
+      if (!force || _discoveredModels.isNotEmpty) return;
+    }
+    await discoverModels(timeout: timeout);
+  }
+
   /// 登录后调用一次：向服务端问有哪些模型可用，填上未显式配置的模型名。
   ///
-  /// 失败不抛异常（探测只是增强），把原因记在 [catalogError] 里供「关于」页排障。
+  /// 失败不抛异常（探测只是增强），把原因记在 [catalogError] 里供设置页与诊断排障。
   Future<void> discoverModels({Duration? timeout}) async {
+    final existing = _discoverInFlight;
+    if (existing != null) return existing;
+    final task = _runDiscoverModels(timeout: timeout);
+    _discoverInFlight = task;
+    try {
+      await task;
+    } finally {
+      if (identical(_discoverInFlight, task)) {
+        _discoverInFlight = null;
+      }
+    }
+  }
+
+  Future<void> _runDiscoverModels({Duration? timeout}) async {
     final cfg = _config;
     if (!cfg.configured) {
       _catalogLoaded = true;
       _catalogError = '未配置后端地址';
+      _catalogRevision.value++;
       return;
     }
     try {
@@ -226,6 +294,7 @@ class ModelGateway {
       _catalogLoaded = true;
       _catalogError = e is ApiException ? e.message : '$e';
     }
+    _catalogRevision.value++;
   }
 
   /// 整体配置可用（ASR 与总结都配齐）。
@@ -325,13 +394,29 @@ class ModelGateway {
 
     final route = await _providers?.activeRoute(scene);
     final url = _config.chatCompletionsUrl;
-    final resolvedModel =
+    var resolvedModel =
         route?.model ??
         (_providers == null
             ? (model ?? _officialModelFor(scene)).trim()
             : _officialModelFor(scene));
+    if (route == null &&
+        resolvedModel.isEmpty &&
+        _config.configured &&
+        _client.hasSession) {
+      await ensureModelsDiscovered(timeout: timeout);
+      resolvedModel = _providers == null
+          ? (model ?? _officialModelFor(scene)).trim()
+          : _officialModelFor(scene);
+    }
     if (resolvedModel.isEmpty || (route == null && url == null)) {
-      throw const ApiNotConfiguredException('请先在设置中选择可用的模型服务');
+      final detail = (_catalogError ?? '').trim();
+      throw ApiNotConfiguredException(
+        route == null && !_client.hasSession
+            ? '尚未登录云端账号，请先登录后再试'
+            : (detail.isNotEmpty
+                  ? '尚未获取到可用模型（$detail）'
+                  : '请先在设置中选择可用的模型服务'),
+      );
     }
     final officialOpenAi =
         route?.provider == ModelProvider.openai &&

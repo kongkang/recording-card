@@ -44,7 +44,15 @@ class InAppTaskRunner with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    if (!_started) return;
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _timer?.cancel();
+      _timer = null;
+    } else if (state == AppLifecycleState.resumed) {
+      _timer ??= Timer.periodic(pollEvery, (_) {
+        unawaited(scheduler.tick(reason: 'interval'));
+      });
       unawaited(scheduler.tick(reason: 'foreground'));
     }
   }

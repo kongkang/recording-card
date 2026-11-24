@@ -1733,6 +1733,29 @@ fn update_dyj_v1_meta_from_info(meta: &Arc<Mutex<DyjV1CachedMeta>>, info: &Value
     }
 }
 
+fn spawn_dyj_v1_post_connect_sync(device: &Arc<DyjV1Session>, fw_version_code: u64) {
+    let bg_device = Arc::downgrade(device);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let Some(dev) = bg_device.upgrade() else {
+            return;
+        };
+        if !dev.is_connected().await.unwrap_or(false) {
+            return;
+        }
+        if fw_version_code == 0 || fw_version_code >= 812 {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            if now_ms > 0 {
+                let _ = dev.device_time(Some(now_ms)).await;
+            }
+        }
+        let _ = dev.ensure_buttons_event_only().await;
+    });
+}
+
 async fn connect_dyj_v1(
     id: &str,
     name: &str,
@@ -1759,26 +1782,7 @@ async fn connect_dyj_v1(
     let meta = Arc::new(Mutex::new(initial_meta));
     // 尽量用 hello 信息建连，首轮 snapshot 会按需补齐 device.info 与 wifi_status；
     // 对时与按键模式检查异步延后执行，避免阻塞握手并挤占首包指令通道。
-    let bg_device = Arc::downgrade(&device);
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(2500)).await;
-        let Some(dev) = bg_device.upgrade() else {
-            return;
-        };
-        if !dev.is_connected().await.unwrap_or(false) {
-            return;
-        }
-        if initial_ver_code == 0 || initial_ver_code >= 812 {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0);
-            if now_ms > 0 {
-                let _ = dev.device_time(Some(now_ms)).await;
-            }
-        }
-        dev.ensure_buttons_event_only().await;
-    });
+    spawn_dyj_v1_post_connect_sync(&device, initial_ver_code);
     let pump = spawn_dyj_v1_event_pump(&device);
     *state().event_pump.lock().await = Some(pump);
     *state().last_device_id.lock().expect("device id lock") = Some(actual_id.clone());
@@ -2020,10 +2024,11 @@ async fn active_device() -> Result<ActiveDevice, BridgeError> {
             .map_err(|_| BridgeError::disconnected())?;
             let actual_id = new_dev.peripheral().id().to_string();
             let actual_pid = new_dev.peripheral().id();
-            {
+            let reconnected_ver_code = {
                 let mut g = dev_meta.lock().unwrap();
                 apply_dyj_v1_hello_to_meta(&mut g, &hello);
-            }
+                g.fw_version_code
+            };
             *state().last_device_id.lock().expect("device id lock") = Some(actual_id.clone());
             state().scan_cache.lock().expect("scan cache lock").insert(
                 actual_id,
@@ -2035,6 +2040,7 @@ async fn active_device() -> Result<ActiveDevice, BridgeError> {
             );
             let pump = spawn_dyj_v1_event_pump(&new_dev);
             *state().event_pump.lock().await = Some(pump);
+            spawn_dyj_v1_post_connect_sync(&new_dev, reconnected_ver_code);
             *guard = Some(ActiveDevice::DyjV1 {
                 device: new_dev,
                 name: dev_name,
@@ -3335,7 +3341,7 @@ async fn realtime_open_dyj_v1(
         }));
         return Ok(());
     }
-    let _ = device.audio_capture_start().await;
+    // 固件 `AudioStreamStartHandler` 会在引擎未运行时自动启动采集，少一次 BLE RTT。
     device.audio_stream_start().await?;
     realtime_active.store(true, Ordering::SeqCst);
     let mut audio = device.subscribe_audio();

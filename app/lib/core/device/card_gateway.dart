@@ -160,6 +160,7 @@ class HardwareCapabilities {
     this.hasStandaloneRealtimeStream = false,
     this.hasDeviceRestart = false,
     this.hasDeviceShutdown = false,
+    this.hasSpeaker = false,
     required this.otaMode,
   });
 
@@ -177,6 +178,7 @@ class HardwareCapabilities {
   final bool hasStandaloneRealtimeStream;
   final bool hasDeviceRestart;
   final bool hasDeviceShutdown;
+  final bool hasSpeaker;
   final String otaMode; // 'dual_chip' | 'single_ota' | 'none'
 
   bool get hasDualChipOta => otaMode == 'dual_chip';
@@ -217,6 +219,7 @@ class HardwareCapabilities {
     hasStandaloneRealtimeStream: true,
     hasDeviceRestart: true,
     hasDeviceShutdown: false,
+    hasSpeaker: true,
     otaMode: 'single_ota',
   );
 
@@ -341,6 +344,7 @@ class HardwareCapabilities {
         'hasDeviceShutdown',
         fallback.hasDeviceShutdown,
       ),
+      hasSpeaker: flag('hasSpeaker', fallback.hasSpeaker),
       otaMode: (json['otaMode'] as String?) ?? fallback.otaMode,
     );
   }

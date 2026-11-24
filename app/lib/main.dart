@@ -287,7 +287,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
     );
     _asr = RoutingSpeechEngine(
       localEngine: LocalAsrService(
-        idleReleaseDelay: const Duration(seconds: 45),
+        idleReleaseDelay: const Duration(seconds: 20),
       ),
       systemSpeech: _systemSpeech,
     );
@@ -606,9 +606,13 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _store.setAppBackgrounded(false);
+      _taskRunner?.start();
       _device.handleAppResumed();
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
+      _store.setAppBackgrounded(true);
+      _taskRunner?.stop();
       _device.handleAppBackgrounded();
       unawaited(_trimMemoryForBackground());
     }
@@ -629,10 +633,12 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
     } on Object {
       // 测试环境未初始化图片缓存时忽略
     }
+    _store.trimMemoryCache();
     _recordingStore.clearMemoryCache();
     if (!_device.isPhoneRecording) {
       _device.phoneRingBuffer.clear();
     }
+    await _agentChat.releaseBackgroundMemory();
     await _asr.releaseMemory();
     await const BluetoothPermission().trimNativeMemory();
   }
@@ -681,6 +687,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
               device: _device,
               recordingStatus: _recordingStatus,
               modelManager: _modelManager,
+              modelGateway: _modelGateway,
               settings: _settings,
               agentConfig: _agentConfig,
               authService: _auth,

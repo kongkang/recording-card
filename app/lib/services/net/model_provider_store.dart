@@ -166,12 +166,16 @@ class ModelProviderStore extends ChangeNotifier {
       final saved = decoded['providers'];
       if (saved is Map) {
         for (final provider in ModelProvider.values) {
-          if (provider == ModelProvider.wainao) continue;
           final entry = saved[provider.name];
           if (entry is Map<String, dynamic>) {
-            _profiles[provider] = ModelProviderProfile._fromJson(entry);
-            if (entry['apiKey'] case final String value) {
-              _apiKeys[provider] = value;
+            final parsed = ModelProviderProfile._fromJson(entry);
+            _profiles[provider] = provider == ModelProvider.wainao
+                ? parsed.copyWith(baseUrl: '', models: const [])
+                : parsed;
+            if (provider != ModelProvider.wainao) {
+              if (entry['apiKey'] case final String value) {
+                _apiKeys[provider] = value;
+              }
             }
           }
           if (active == provider.name) _activeProvider = provider;
@@ -273,6 +277,79 @@ class ModelProviderStore extends ChangeNotifier {
     );
   });
 
+  /// 保存外脑（Wainao）的可选模型覆盖；留空表示跟随后端下发默认模型。
+  Future<void> saveWainaoOverrides({
+    String? summaryModel,
+    Map<ModelScene, String>? sceneModels,
+  }) => _serialized(() async {
+    final current = profileFor(ModelProvider.wainao);
+    final nextSummary = summaryModel != null
+        ? summaryModel.trim()
+        : current.summaryModel;
+    final nextScenes = <ModelScene, String>{};
+    final sourceScenes = sceneModels ?? current.sceneModels;
+    for (final entry in sourceScenes.entries) {
+      if (entry.key == ModelScene.summary) continue;
+      final trimmed = entry.value.trim();
+      if (trimmed.isNotEmpty) {
+        nextScenes[entry.key] = trimmed;
+      }
+    }
+    await _commit(
+      profiles: {
+        ..._profiles,
+        ModelProvider.wainao: ModelProviderProfile(
+          baseUrl: '',
+          summaryModel: nextSummary,
+          models: const [],
+          sceneModels: nextScenes,
+        ),
+      },
+    );
+  });
+
+  static String _pickDefaultSummaryModel(
+    ModelProvider provider,
+    List<String> available, {
+    String manual = '',
+  }) {
+    if (manual.isNotEmpty && available.contains(manual)) return manual;
+    final preferred = switch (provider) {
+      ModelProvider.openai => const [
+        'gpt-4o-mini',
+        'gpt-4o',
+        'gpt-4.1-mini',
+        'gpt-4.1',
+      ],
+      ModelProvider.deepseek => const ['deepseek-chat', 'deepseek-reasoner'],
+      ModelProvider.openrouter => const [
+        'openai/gpt-4o-mini',
+        'anthropic/claude-3.5-sonnet',
+        'google/gemini-2.5-flash',
+      ],
+      _ => const <String>[],
+    };
+    for (final candidate in preferred) {
+      if (available.contains(candidate)) return candidate;
+    }
+    const nonChatTokens = <String>[
+      'embedding',
+      'whisper',
+      'tts',
+      'dall-e',
+      'moderation',
+      'rerank',
+      'transcribe',
+      'realtime',
+      'sora',
+    ];
+    for (final id in available) {
+      final lower = id.toLowerCase();
+      if (!nonChatTokens.any(lower.contains)) return id;
+    }
+    return available.first;
+  }
+
   /// Probe the credential and load the available models before saving.
   /// Reusing a credential requires the exact same endpoint.
   Future<ModelProviderProfile> connect(
@@ -344,12 +421,19 @@ class ModelProviderStore extends ChangeNotifier {
       if (!identical(before, _profiles[provider])) {
         throw const ApiNotConfiguredException('服务配置已更新，请重试');
       }
-      final summary = available.contains(current.summaryModel)
+      var summary = available.contains(current.summaryModel)
           ? current.summaryModel
           : '';
       // A refresh must not leave an active provider unable to handle requests.
       if (_activeProvider == provider && summary.isEmpty) {
         throw const ApiNotConfiguredException('新配置没有当前总结模型，请先切换到其他服务');
+      }
+      if (summary.isEmpty && available.isNotEmpty) {
+        summary = _pickDefaultSummaryModel(
+          provider,
+          available,
+          manual: manual,
+        );
       }
       final profile = target.copyWith(
         summaryModel: summary,

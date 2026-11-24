@@ -10,6 +10,7 @@ import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/config/remote/model_gateway_config.dart';
 import '../../core/device/card_gateway.dart';
 import '../../core/store/agent_config_store.dart';
 import '../../core/store/device_store.dart';
@@ -24,6 +25,7 @@ import '../../services/external_data/getnote_sync_store.dart';
 import '../../services/health/health_signal_controller.dart';
 import '../../services/memory/memory_search_scope.dart';
 import '../../services/net/api_exception.dart';
+import '../../services/net/model_gateway.dart';
 import '../../services/net/model_provider_store.dart';
 import '../../services/transcribe/asr_models.dart';
 import '../../services/transcribe/model_manager_controller.dart';
@@ -47,6 +49,7 @@ class SettingSubPage extends StatelessWidget {
     this.device,
     this.modelManager,
     this.modelProviders,
+    this.modelGateway,
     this.authService,
     this.healthSignals,
     this.getNoteStore,
@@ -65,6 +68,7 @@ class SettingSubPage extends StatelessWidget {
   final DeviceStore? device;
   final ModelManagerController? modelManager;
   final ModelProviderStore? modelProviders;
+  final ModelGateway? modelGateway;
   final AuthService? authService;
   final HealthSignalController? healthSignals;
   final GetNoteSyncStore? getNoteStore;
@@ -264,6 +268,8 @@ class SettingSubPage extends StatelessWidget {
                     'cloud' => _CloudModelBody(
                       config: agentConfig,
                       store: modelProviders ?? ModelProviderStore.instance,
+                      modelGateway: modelGateway,
+                      authService: authService,
                     ),
                     'prompts' => _AgentPromptsBody(config: agentConfig),
                     'voiceprint' => _VoiceprintBody(controller: modelManager),
@@ -292,6 +298,7 @@ class SettingSubPage extends StatelessWidget {
                                       device: device,
                                       modelManager: modelManager,
                                       modelProviders: modelProviders,
+                                      modelGateway: modelGateway,
                                       authService: authService,
                                       healthSignals: healthSignals,
                                       getNoteStore: getNoteStore,
@@ -868,10 +875,17 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
 // ── 2) 云端模型设置 ──────────────────────────────────────────
 
 class _CloudModelBody extends StatefulWidget {
-  const _CloudModelBody({required this.config, required this.store});
+  const _CloudModelBody({
+    required this.config,
+    required this.store,
+    this.modelGateway,
+    this.authService,
+  });
 
   final AgentConfigStore config;
   final ModelProviderStore store;
+  final ModelGateway? modelGateway;
+  final AuthService? authService;
 
   @override
   State<_CloudModelBody> createState() => _CloudModelBodyState();
@@ -903,6 +917,27 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
     } on Exception {
       if (mounted) setState(() => _error = '暂时无法读取服务设置');
     }
+    await _maybeAutoRefreshWainaoCatalog();
+  }
+
+  bool get _hasWainaoSession {
+    final gw = widget.modelGateway;
+    if (gw != null) return gw.hasSession;
+    return widget.authService?.isSignedIn ?? false;
+  }
+
+  Future<void> _maybeAutoRefreshWainaoCatalog() async {
+    final gw = widget.modelGateway;
+    if (gw == null || !_hasWainaoSession || gw.usesExternalProvider) return;
+    if (gw.discoveredTextModels.isNotEmpty) return;
+    await gw.ensureModelsDiscovered();
+    if (!mounted) return;
+    if (gw.discoveredTextModels.isNotEmpty) {
+      widget.config.syncGatewayModels(
+        gw.discoveredTextModels,
+        primaryTextModel: gw.textModel,
+      );
+    }
   }
 
   @override
@@ -914,6 +949,7 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
   }
 
   void _openProvider(ModelProvider provider) {
+    final opening = _editing != provider;
     setState(() {
       _editing = _editing == provider ? null : provider;
       _advanced = false;
@@ -923,6 +959,94 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
       _keyCtrl.clear();
       _manualModelCtrl.clear();
       _urlCtrl.text = _store.profileFor(provider).baseUrl;
+    });
+    if (opening && provider == ModelProvider.wainao) {
+      unawaited(_maybeAutoRefreshWainaoCatalog());
+    }
+  }
+
+  Future<void> _refreshWainaoCatalog() => _run(() async {
+    final gw = widget.modelGateway;
+    if (gw == null) {
+      throw const ApiNotConfiguredException('当前界面未接入外脑网关实例');
+    }
+    if (!gw.hasSession) {
+      throw const ApiUnauthorizedException('尚未登录外脑账号，请先登录后刷新模型列表');
+    }
+    await gw.ensureModelsDiscovered(force: true);
+    if (gw.discoveredTextModels.isNotEmpty) {
+      widget.config.syncGatewayModels(
+        gw.discoveredTextModels,
+        primaryTextModel: gw.textModel,
+      );
+    }
+    final err = gw.catalogError?.trim() ?? '';
+    if (err.isNotEmpty) {
+      throw ApiHttpException(err, statusCode: 500);
+    }
+    if (mounted) {
+      setState(() => _connected = true);
+    }
+  });
+
+  List<String> _wainaoCandidateModels(ModelProviderProfile wainaoProfile) {
+    final ordered = <String>[];
+    void addAll(Iterable<String> items) {
+      for (final raw in items) {
+        final t = raw.trim();
+        if (t.isNotEmpty && !ordered.contains(t)) ordered.add(t);
+      }
+    }
+
+    final gw = widget.modelGateway;
+    if (gw != null) {
+      addAll(gw.discoveredTextModels);
+      addAll(gw.discoveredModels.map((m) => m.id));
+    }
+    addAll(
+      widget.config.availableCloudModels
+          .where((m) => m.fromGateway)
+          .map((m) => m.id),
+    );
+    if (wainaoProfile.summaryModel.trim().isNotEmpty) {
+      addAll([wainaoProfile.summaryModel]);
+    }
+    addAll(wainaoProfile.sceneModels.values);
+    return ordered;
+  }
+
+  Future<void> _pickWainaoModel(ModelScene scene) async {
+    final profile = _store.profileFor(ModelProvider.wainao);
+    final isSummary = scene == ModelScene.summary;
+    final candidates = _wainaoCandidateModels(profile);
+    final currentVal = isSummary
+        ? profile.summaryModel
+        : (profile.sceneModels[scene] ?? '');
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _ProviderModelPicker(
+        models: candidates,
+        selected: currentVal,
+        label: isSummary ? '外脑默认模型（总结 / 对话）' : '外脑 · ${scene.label}',
+        emptyOptionLabel: isSummary ? '跟随后端默认' : '跟随后端默认',
+      ),
+    );
+    if (!mounted || selected == null) return;
+    await _run(() async {
+      final latest = _store.profileFor(ModelProvider.wainao);
+      if (isSummary) {
+        await _store.saveWainaoOverrides(summaryModel: selected);
+      } else {
+        final overrides = Map<ModelScene, String>.of(latest.sceneModels);
+        if (selected.isEmpty) {
+          overrides.remove(scene);
+        } else {
+          overrides[scene] = selected;
+        }
+        await _store.saveWainaoOverrides(sceneModels: overrides);
+      }
     });
   }
 
@@ -990,7 +1114,7 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
             ? profile.summaryModel
             : profile.sceneModels[scene] ?? '',
         label: scene.label,
-        isSummary: isSummary,
+        emptyOptionLabel: isSummary ? null : '跟随总结模型',
       ),
     );
     if (!mounted || selected == null) return;
@@ -1016,11 +1140,43 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
     });
   }
 
+  String _wainaoRowSubtitle() {
+    final gw = widget.modelGateway;
+    final wainaoProfile = _store.profileFor(ModelProvider.wainao);
+    final override = wainaoProfile.summaryModel.trim();
+    if (override.isNotEmpty) {
+      return '默认模型：$override（自定义）';
+    }
+    if (gw == null) {
+      final fallback = widget.config.cloudModel.trim();
+      return fallback.isNotEmpty
+          ? '后端默认：$fallback（按场景自动选择）'
+          : '按场景自动选择后端默认模型';
+    }
+    if (!gw.hasSession) {
+      return '需先登录外脑账号，登录后自动使用后端默认模型';
+    }
+    final defaultModel = gw.officialDefaultModelFor(ModelScene.summary).trim();
+    if (defaultModel.isNotEmpty) {
+      return '后端默认：$defaultModel（点击查看或自定义）';
+    }
+    final err = gw.catalogError?.trim() ?? '';
+    if (err.isNotEmpty) {
+      return '模型目录待刷新（点击查看与重试）';
+    }
+    return '点击查看网关与后端默认模型';
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
     return ListenableBuilder(
-      listenable: Listenable.merge([_store, widget.config]),
+      listenable: Listenable.merge([
+        _store,
+        widget.config,
+        if (widget.modelGateway != null) widget.modelGateway!.catalogListenable,
+        if (widget.authService != null) widget.authService!,
+      ]),
       builder: (context, _) {
         final active = widget.config.cloudEnabled
             ? _store.activeProvider
@@ -1046,26 +1202,33 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
                       key: Key('cloud-provider-${provider.name}'),
                       title: Text(provider.label),
                       subtitle: provider == ModelProvider.wainao
-                          ? const Text('按场景自动选择模型')
+                          ? Text(
+                              _wainaoRowSubtitle(),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            )
                           : null,
-                      trailing: active == provider
-                          ? Icon(Icons.check_circle, color: c.ok, size: 20)
-                          : provider == ModelProvider.wainao
-                          ? Icon(Icons.radio_button_off, color: c.ax, size: 20)
-                          : Icon(
-                              provider == _editing
-                                  ? Icons.expand_less
-                                  : Icons.chevron_right,
-                              color: c.ax,
-                            ),
-                      onTap: _busy
-                          ? null
-                          : provider == ModelProvider.wainao
-                          ? () => unawaited(_activate(provider))
-                          : () => _openProvider(provider),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (active == provider) ...[
+                            Icon(Icons.check_circle, color: c.ok, size: 20),
+                            const SizedBox(width: 6),
+                          ],
+                          Icon(
+                            provider == _editing
+                                ? Icons.expand_less
+                                : Icons.chevron_right,
+                            color: c.ax,
+                          ),
+                        ],
+                      ),
+                      onTap: _busy ? null : () => _openProvider(provider),
                     ),
                     if (_editing == provider)
-                      _providerForm(context, provider, active == provider),
+                      provider == ModelProvider.wainao
+                          ? _wainaoForm(context, active == provider)
+                          : _providerForm(context, provider, active == provider),
                   ],
                 ],
               ),
@@ -1078,6 +1241,190 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
           ],
         );
       },
+    );
+  }
+
+  Widget _wainaoForm(BuildContext context, bool active) {
+    final c = context.rc;
+    final gw = widget.modelGateway;
+    final profile = _store.profileFor(ModelProvider.wainao);
+    final cfg = gw?.config ?? ModelGatewayConfig.fromEnvironment();
+    final endpoint = cfg.gatewayBaseUrl.isNotEmpty
+        ? cfg.gatewayBaseUrl
+        : '未配置网关地址';
+    final signedIn = gw != null
+        ? gw.hasSession
+        : (widget.authService?.isSignedIn ?? false);
+    final candidates = _wainaoCandidateModels(profile);
+    final defaultSummary = gw != null
+        ? gw.officialDefaultModelFor(ModelScene.summary).trim()
+        : widget.config.cloudModel.trim();
+    final summaryOverride = profile.summaryModel.trim();
+    final catalogErr = gw?.catalogError?.trim() ?? '';
+    final appStore = StoreScope.maybeOf(context);
+
+    String sceneSubtitle(ModelScene scene) {
+      final override = profile.sceneModels[scene]?.trim() ?? '';
+      if (override.isNotEmpty) return override;
+      final base = gw != null
+          ? gw.officialDefaultModelFor(scene).trim()
+          : (summaryOverride.isNotEmpty ? summaryOverride : defaultSummary);
+      final effective = summaryOverride.isNotEmpty ? summaryOverride : base;
+      return effective.isNotEmpty ? '跟随后端默认（$effective）' : '跟随后端默认';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: c.bg,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: c.sep),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '外脑默认网关',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: c.sec,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                SelectableText(
+                  endpoint,
+                  key: const Key('cloud-wainao-endpoint'),
+                  style: TextStyle(fontSize: 12.5, color: c.label),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(
+                      signedIn ? Icons.verified_user : Icons.lock_outline,
+                      size: 15,
+                      color: signedIn ? c.ok : c.warn,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        signedIn ? '外脑账号已登录，默认端点自动鉴权' : '尚未登录外脑账号',
+                        key: const Key('cloud-wainao-auth-status'),
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: signedIn ? c.okInk : c.warn,
+                        ),
+                      ),
+                    ),
+                    if (!signedIn && appStore != null)
+                      TextButton(
+                        key: const Key('cloud-wainao-login'),
+                        onPressed: () => appStore.openSettingSub('login'),
+                        child: const Text('前往登录'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  candidates.isNotEmpty
+                      ? '已就绪 ${candidates.length} 个后端模型'
+                      : (catalogErr.isNotEmpty
+                            ? '模型目录：$catalogErr'
+                            : (signedIn ? '尚未获取到模型目录，可点击刷新' : '登录后自动拉取可用模型')),
+                  key: const Key('cloud-wainao-catalog-status'),
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: catalogErr.isNotEmpty && candidates.isEmpty
+                        ? c.danger
+                        : c.sec,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                key: const Key('cloud-wainao-refresh'),
+                onPressed: _busy || gw == null
+                    ? null
+                    : () => unawaited(_refreshWainaoCatalog()),
+                child: Text(_busy ? '刷新中…' : '刷新模型列表'),
+              ),
+            ],
+          ),
+          if (_error != null || (_connected && catalogErr.isEmpty))
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                _error ?? '外脑模型目录已更新',
+                key: const Key('cloud-provider-feedback'),
+                style: TextStyle(color: _error == null ? c.okInk : c.danger),
+              ),
+            ),
+          const SizedBox(height: 4),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            key: const Key('cloud-wainao-summary'),
+            title: const Text('默认模型（总结 / 对话）'),
+            subtitle: Text(
+              summaryOverride.isNotEmpty
+                  ? summaryOverride
+                  : (defaultSummary.isNotEmpty
+                        ? '跟随后端默认（$defaultSummary）'
+                        : '跟随后端默认'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _busy ? null : () => unawaited(_pickWainaoModel(ModelScene.summary)),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              key: const Key('cloud-wainao-advanced'),
+              onPressed: _busy
+                  ? null
+                  : () => setState(() => _advanced = !_advanced),
+              child: Text(_advanced ? '收起分场景模型设置' : '按场景自定义模型（可选）'),
+            ),
+          ),
+          if (_advanced)
+            for (final scene in ModelScene.values.where(
+              (scene) => scene != ModelScene.summary,
+            ))
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                key: Key('cloud-wainao-scene-${scene.name}'),
+                title: Text(scene.label),
+                subtitle: Text(
+                  sceneSubtitle(scene),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _busy ? null : () => unawaited(_pickWainaoModel(scene)),
+              ),
+          if (!active) ...[
+            const SizedBox(height: 6),
+            FilledButton(
+              key: const Key('cloud-wainao-activate'),
+              onPressed: _busy
+                  ? null
+                  : () => unawaited(_activate(ModelProvider.wainao)),
+              child: const Text('使用外脑服务'),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -1180,7 +1527,7 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
                   ? null
                   : () => _pickModel(provider, ModelScene.summary),
             ),
-            if (_advanced && selectedModel.isNotEmpty)
+            if (_advanced)
               for (final scene in ModelScene.values.where(
                 (scene) => scene != ModelScene.summary,
               ))
@@ -1189,7 +1536,10 @@ class _CloudModelBodyState extends State<_CloudModelBody> {
                   key: Key('cloud-provider-scene-${scene.name}'),
                   title: Text(scene.label),
                   subtitle: Text(
-                    profile.sceneModels[scene] ?? '跟随总结模型',
+                    profile.sceneModels[scene] ??
+                        (selectedModel.isNotEmpty
+                            ? '跟随总结模型（$selectedModel）'
+                            : '跟随总结模型'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1235,13 +1585,13 @@ class _ProviderModelPicker extends StatefulWidget {
     required this.models,
     required this.selected,
     required this.label,
-    required this.isSummary,
+    this.emptyOptionLabel,
   });
 
   final List<String> models;
   final String selected;
   final String label;
-  final bool isSummary;
+  final String? emptyOptionLabel;
 
   @override
   State<_ProviderModelPicker> createState() => _ProviderModelPickerState();
@@ -1253,8 +1603,9 @@ class _ProviderModelPickerState extends State<_ProviderModelPicker> {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
+    final emptyLabel = widget.emptyOptionLabel;
     final options = [
-      if (!widget.isSummary && _query.isEmpty) '',
+      if (emptyLabel != null && _query.isEmpty) '',
       ...widget.models.where((model) => model.toLowerCase().contains(_query)),
     ];
     final keyboard = MediaQuery.viewInsetsOf(context).bottom;
@@ -1287,7 +1638,11 @@ class _ProviderModelPickerState extends State<_ProviderModelPicker> {
               ),
               Expanded(
                 child: options.isEmpty
-                    ? const Center(child: Text('没有匹配的模型'))
+                    ? Center(
+                        child: Text(
+                          widget.models.isEmpty ? '暂未发现可用模型，请先刷新或登录' : '没有匹配的模型',
+                        ),
+                      )
                     : ListView.builder(
                         keyboardDismissBehavior:
                             ScrollViewKeyboardDismissBehavior.onDrag,
@@ -1295,7 +1650,7 @@ class _ProviderModelPickerState extends State<_ProviderModelPicker> {
                         itemBuilder: (_, i) {
                           final model = options[i];
                           return ListTile(
-                            title: Text(model.isEmpty ? '跟随总结模型' : model),
+                            title: Text(model.isEmpty ? (emptyLabel ?? '') : model),
                             trailing: model == widget.selected
                                 ? Icon(Icons.check, color: c.ok)
                                 : null,

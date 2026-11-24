@@ -443,6 +443,17 @@ class AgentHarnessWorker {
     _reactionListeners.clear();
   }
 
+  /// App 进入后台时挂起 Worker Isolate 释放检索索引内存，不标记 [_disposed]，
+  /// 下次前台会话按需自动重建。
+  Future<void> suspendForBackground() async {
+    if (_disposed || _pending.isNotEmpty || _spawning != null) return;
+    _inProcessFallback?.close();
+    _inProcessFallback = null;
+    if (_isolate != null || _commandPort != null) {
+      await _resetIsolate();
+    }
+  }
+
   Future<void> dispose() async {
     _disposed = true;
     _inProcessFallback?.close();

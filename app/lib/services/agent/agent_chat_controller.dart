@@ -86,6 +86,7 @@ class AgentChatController extends ChangeNotifier {
   StreamSubscription<AgentSpeechEvent>? _speechSub;
   Timer? _corpusDebounce;
   bool _disposed = false;
+  bool _preflighting = false;
   bool _initialized = false;
   Future<void>? _initFuture;
   String _agentDirPath = '';
@@ -554,9 +555,16 @@ class AgentChatController extends ChangeNotifier {
     bool speakError = false,
   }) async {
     final text = rawText.trim();
-    if (text.isEmpty || isBusy || _disposed) return;
+    if (text.isEmpty || isBusy || _preflighting || _disposed) return;
 
-    final gateError = _preflightCheck();
+    final String? gateError;
+    _preflighting = true;
+    try {
+      gateError = await _preflightCheck();
+    } finally {
+      _preflighting = false;
+    }
+    if (_disposed) return;
     if (gateError != null) {
       errorMessage = gateError;
       if (mode == Os1Mode.her) herHeadline = gateError;
@@ -673,9 +681,16 @@ class AgentChatController extends ChangeNotifier {
     bool speakReply = true,
     bool speakError = true,
   }) async {
-    if (jpegBytes.isEmpty || isBusy || _disposed) return;
+    if (jpegBytes.isEmpty || isBusy || _preflighting || _disposed) return;
 
-    final gateError = _visionPreflightCheck();
+    final String? gateError;
+    _preflighting = true;
+    try {
+      gateError = await _visionPreflightCheck();
+    } finally {
+      _preflighting = false;
+    }
+    if (_disposed) return;
     if (gateError != null) {
       errorMessage = gateError;
       if (mode == Os1Mode.her) herHeadline = gateError;
@@ -783,7 +798,7 @@ class AgentChatController extends ChangeNotifier {
     }
   }
 
-  String? _visionPreflightCheck() {
+  Future<String?> _visionPreflightCheck() async {
     if (_visionCompletion != null) return null;
     return _preflightCheck(scene: ModelScene.vision);
   }
@@ -795,15 +810,40 @@ class AgentChatController extends ChangeNotifier {
     return tm.isNotEmpty ? tm : null;
   }
 
-  String? _preflightCheck({ModelScene scene = ModelScene.agent}) {
+  Future<String?> _preflightCheck({ModelScene scene = ModelScene.agent}) async {
     if (_completion != null) return null;
     final gw = _gateway;
     if (gw == null) return '对话服务尚未初始化，请稍后再试';
     if (!_agentConfig.cloudEnabled || !gw.isCloudEnabled) {
-      return '请先在设置中选择模型服务';
+      return '请先在「Setting → 云端模型设置」中选择模型服务';
     }
-    if (!gw.chatAvailableFor(scene)) {
-      return '尚未配置对话模型端点，请检查模型设置或后端配置';
+    if (!gw.usesExternalProvider && !gw.hasSession) {
+      return '尚未登录云端账号，请前往「Setting → 云端账号授权」登录后再试';
+    }
+    if (!gw.endpointConfigured) {
+      return gw.usesExternalProvider
+          ? '请先在「Setting → 云端模型设置」填写并连接模型服务地址'
+          : '尚未配置外脑模型网关地址，请检查客户端后端配置';
+    }
+    if (!gw.usesExternalProvider && gw.modelFor(scene).isEmpty) {
+      await gw.ensureModelsDiscovered();
+      if (_disposed) return null;
+      if (gw.discoveredTextModels.isNotEmpty) {
+        _agentConfig.syncGatewayModels(
+          gw.discoveredTextModels,
+          primaryTextModel: gw.textModel,
+        );
+      }
+    }
+    if (gw.modelFor(scene).isEmpty) {
+      if (gw.usesExternalProvider) {
+        return '请先在「Setting → 云端模型设置」中选择默认模型';
+      }
+      final detail = (gw.catalogError ?? '').trim();
+      if (detail.isNotEmpty) {
+        return '暂未获取到外脑可用模型（$detail），请前往「Setting → 云端模型设置」刷新重试';
+      }
+      return '外脑暂未下发可用对话模型，请前往「Setting → 云端模型设置」刷新或检查后端配置';
     }
     if (!gw.readyFor(scene)) {
       return '尚未登录云端账号，请前往「Setting → 云端账号授权」登录后再试';
@@ -1236,6 +1276,17 @@ class AgentChatController extends ChangeNotifier {
     2 => '前天',
     _ => '$offset天前',
   };
+
+  /// App 进入后台时主动释放 Worker Isolate 与内存索引缓存，降低 iOS 后台被杀风险；
+  /// 下次前台对话时自动按需重建并重新同步语料。
+  Future<void> releaseBackgroundMemory() async {
+    if (_disposed || isBusy) return;
+    _corpusDebounce?.cancel();
+    _corpusDebounce = null;
+    _lastStoreStamp = '';
+    _lastCorpusDigest = '';
+    await _worker.suspendForBackground();
+  }
 
   @override
   void dispose() {
