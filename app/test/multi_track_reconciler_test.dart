@@ -16,6 +16,7 @@ import 'package:recording_card/services/recordings/multi_track_reconciler.dart';
 import 'package:recording_card/services/recordings/recording_pipeline.dart';
 import 'package:recording_card/services/recordings/recording_store.dart';
 import 'package:recording_card/services/recordings/segment_projection.dart';
+import 'package:recording_card/services/segment/fast_topic_segment_agent.dart';
 import 'package:recording_card/services/transcribe/local_asr_service.dart';
 import 'package:recording_card/services/transcribe/slice_planner.dart';
 import 'package:recording_card/services/transcribe/speech_engine.dart';
@@ -565,6 +566,619 @@ void main() {
         isTrue,
       );
       expect(jsonEncode(allFiles.map((e) => e.toJson()).toList()), contains('REC_BLE.APM'));
+    },
+  );
+
+  test(
+    'Test 6: 静音占位文案不触发假 forkParallel，旧版 v1 脏缓存启动加载时自动自愈，绝不让同设备拆出双路并发',
+    () async {
+      final tmpDir = Directory.systemTemp.createTempSync('rc-self-heal-v1-');
+      addTearDown(() => tmpDir.deleteSync(recursive: true));
+
+      final recStore = RecordingStore(root: tmpDir);
+      final now = DateTime.now();
+      final t0 = DateTime(now.year, now.month, now.day, 20, 58).millisecondsSinceEpoch;
+      const durMs = 300000;
+
+      // 1) 点一机 V1 5 分钟真实语音，被话题切分拆为 3 张话题卡
+      final bleSegId = 'seg-rec-audio202611242058025836271504amr-0';
+      final bleFile = RecordingFile(
+        deviceName: 'audio_20261124-205802_58362715_04.amr',
+        session: '58362715',
+        seq: 4,
+        startAtMs: t0,
+        apmPath: '',
+        wavPath: '/tmp/amr04.wav',
+        createdAtMs: t0,
+        durationMs: durMs,
+        timeSynced: true,
+        stage: RecordingStage.ready,
+        sourceLane: 'ble',
+        sourceDeviceLabel: '点一机 V1 Q2M34R',
+        slices: const [
+          AudioSlice(
+            id: '0001',
+            index: 0,
+            startMs: 0,
+            endMs: durMs,
+            wavPath: '/tmp/amr04.wav',
+            stage: SliceStage.polished,
+          ),
+        ],
+        utterances: const [
+          RawUtterance(
+            id: 'u0',
+            sliceId: '0001',
+            startMs: 0,
+            endMs: 90000,
+            text: '首先检查外脑默认模型设置与配置提示异常。',
+            speakerLabel: '说话人 1',
+          ),
+          RawUtterance(
+            id: 'u1',
+            sliceId: '0001',
+            startMs: 95000,
+            endMs: 190000,
+            text: '其次排查杀后台后蓝牙断连和内存占用偏高问题。',
+            speakerLabel: '说话人 1',
+          ),
+          RawUtterance(
+            id: 'u2',
+            sliceId: '0001',
+            startMs: 195000,
+            endMs: 295000,
+            text: '最后加上蓝牙心跳检测机制并降低兜底误触发概率。',
+            speakerLabel: '说话人 1',
+          ),
+        ],
+        turns: const [
+          PolishedTurn(
+            id: 't0',
+            startMs: 0,
+            endMs: 90000,
+            speakerLabel: '说话人 1',
+            text: '首先检查外脑默认模型设置与配置提示异常。',
+            srcUtteranceIds: ['u0'],
+          ),
+          PolishedTurn(
+            id: 't1',
+            startMs: 95000,
+            endMs: 190000,
+            speakerLabel: '说话人 1',
+            text: '其次排查杀后台后蓝牙断连和内存占用偏高问题。',
+            srcUtteranceIds: ['u1'],
+          ),
+          PolishedTurn(
+            id: 't2',
+            startMs: 195000,
+            endMs: 295000,
+            speakerLabel: '说话人 1',
+            text: '最后加上蓝牙心跳检测机制并降低兜底误触发概率。',
+            srcUtteranceIds: ['u2'],
+          ),
+        ],
+        segments: [
+          SegmentRecord(
+            id: bleSegId,
+            sessionId: '58362715',
+            index: 0,
+            startAtMs: t0,
+            endAtMs: t0 + durMs,
+            title: '配置修复协助',
+            brief: '梳理默认配置、后台蓝牙断开与心跳兜底问题。',
+            longText: '首先检查外脑默认模型设置；其次排查后台蓝牙断开；最后增加心跳检测。',
+            speakerLabels: const ['说话人 1'],
+            speakerCount: 1,
+            status: SegmentStatus.closed,
+            sliceIds: const ['0001'],
+            turnIds: const ['t0', 't1', 't2'],
+          ),
+        ],
+      );
+
+      // 2) 两段同窗口的手机静音切片：utterances/turns 为空，仅含占位文案
+      RecordingFile makeSilentPhoneSlice(String id, int startOffsetMs, int lenMs) {
+        return RecordingFile(
+          deviceName: 'LIVE_PHONE_$id.WAV',
+          session: 'LIVE_PHONE_SES',
+          seq: 1,
+          startAtMs: t0 + startOffsetMs,
+          apmPath: '',
+          wavPath: '/tmp/$id.wav',
+          createdAtMs: t0 + startOffsetMs,
+          durationMs: lenMs,
+          timeSynced: true,
+          stage: RecordingStage.ready,
+          sourceLane: 'phone',
+          sourceDeviceLabel: '手机本机',
+          slices: [
+            AudioSlice(
+              id: '0001',
+              index: 0,
+              startMs: 0,
+              endMs: lenMs,
+              wavPath: '/tmp/$id.wav',
+              stage: SliceStage.polished,
+            ),
+          ],
+          segments: [
+            SegmentRecord(
+              id: 'seg-rec-livephone-$id-0',
+              sessionId: 'LIVE_PHONE_SES',
+              index: 0,
+              startAtMs: t0 + startOffsetMs,
+              endAtMs: t0 + startOffsetMs + lenMs,
+              title: '未识别到语音',
+              brief: '本段未检测到有效人声，原始录音已保存在本机。',
+              longText: '本段未检测到有效人声，原始录音已保存在本机，可在详情「原始数据」回听。',
+              status: SegmentStatus.closed,
+              sliceIds: const ['0001'],
+            ),
+          ],
+        );
+      }
+
+      final phone1 = makeSilentPhoneSlice('0001', 160000, 17600);
+      final phone2 = makeSilentPhoneSlice('0002', 177600, 13200);
+      await recStore.save(bleFile);
+      await recStore.save(phone1);
+      await recStore.save(phone2);
+
+      // 写入话题分段，将单段 5 分钟 BLE 文件拆为 3 张话题卡
+      final runKey = FastTopicSegmentAgent.buildRunKey(bleSegId, t0, t0 + durMs);
+      final topicStore = TopicSegmentationStore(resolveRoot: recStore.root);
+      await topicStore.save(
+        TopicSegmentationState(
+          runsByKey: {
+            runKey: TopicRunSegmentation(
+              runKey: runKey,
+              startAtMs: t0,
+              endAtMs: t0 + durMs,
+              evaluatedAtMs: t0 + durMs,
+              sections: const [
+                TopicSectionOverride(
+                  title: '配置修复协助',
+                  brief: '外脑默认模型配置问题定位',
+                  startTurnIndex: 0,
+                  endTurnIndex: 0,
+                ),
+                TopicSectionOverride(
+                  title: '后台蓝牙丢失与内存问题',
+                  brief: '分析后台蓝牙断开与内存优化',
+                  startTurnIndex: 1,
+                  endTurnIndex: 1,
+                ),
+                TopicSectionOverride(
+                  title: '心跳检测与录音兜底建议',
+                  brief: '建立蓝牙心跳防止误进本机兜底',
+                  startTurnIndex: 2,
+                  endTurnIndex: 2,
+                ),
+              ],
+            ),
+          },
+        ),
+      );
+
+      // 直接验证 MultiTrackReconciler 本身：静音占位文案应判定为 keepNonEmpty，零 forkParallel
+      final directState = await MultiTrackReconciler().reconcile(
+        [bleFile, phone1, phone2],
+        previous: const MultiTrackReconciliationState(),
+      );
+      expect(directState.forks, isEmpty);
+      expect(directState.decisions, hasLength(2));
+      expect(
+        directState.decisions.every(
+          (d) => d.outcome == TrackOverlapOutcome.keepNonEmpty,
+        ),
+        isTrue,
+      );
+      expect(
+        directState.hiddenSegmentIds,
+        containsAll([phone1.segments.single.id, phone2.segments.single.id]),
+      );
+
+      // 模拟用户手机上已落盘的旧版 v1 脏缓存（把两段静音误判成 forkParallel）
+      final reconFile = File('${tmpDir.path}/${MultiTrackReconciliationStore.fileName}');
+      await reconFile.writeAsString(
+        jsonEncode({
+          'v': 1,
+          'dec': [
+            {
+              'pk': '$bleSegId::${phone1.segments.single.id}',
+              'fp': 'stale-fp-1',
+              'out': 'forkParallel',
+              'p': bleSegId,
+              's': phone1.segments.single.id,
+              'rs': '双路文本差异较大，并行保留各自记录',
+              'fk': 'fork-$bleSegId-${phone1.segments.single.id}',
+            },
+            {
+              'pk': '$bleSegId::${phone2.segments.single.id}',
+              'fp': 'stale-fp-2',
+              'out': 'forkParallel',
+              'p': bleSegId,
+              's': phone2.segments.single.id,
+              'rs': '双路文本差异较大，并行保留各自记录',
+              'fk': 'fork-$bleSegId-${phone2.segments.single.id}',
+            },
+          ],
+        }),
+      );
+
+      final pipeline = RecordingPipeline(
+        gateway: FakeCardGateway(),
+        store: recStore,
+        topicStore: topicStore,
+        engine: _StubEngine(),
+        models: _StubModels(),
+      );
+      final fakeSync = await FakeRecordingSync.create(localEvents: const []);
+      final gen = await SummaryModel().generator();
+      final appStore = AppStore(
+        recordings: fakeSync,
+        generator: gen,
+        loadPersistedState: false,
+      );
+      addTearDown(appStore.dispose);
+      appStore.attachPipeline(
+        pipeline: pipeline,
+        store: recStore,
+        generator: gen,
+      );
+
+      // 启动加载 refreshFromStore()：应自动发现 v1 并重算升级到 v2
+      await appStore.refreshFromStore();
+
+      final upgradedJson =
+          jsonDecode(await reconFile.readAsString()) as Map<String, dynamic>;
+      expect(upgradedJson['v'], MultiTrackReconciliationState.currentSchemaVersion);
+      expect(appStore.multiTrackReconciliation.needsReconcile, isFalse);
+      expect(appStore.multiTrackReconciliation.forks, isEmpty);
+
+      final allItems = [for (final g in appStore.feedGroups) ...g.items];
+      expect(allItems.whereType<ForkedEventPair>(), isEmpty);
+
+      final singleEvents = allItems.whereType<RecordEvent>().toList();
+      expect(
+        singleEvents.map((e) => e.title),
+        containsAll(['配置修复协助', '后台蓝牙丢失与内存问题', '心跳检测与录音兜底建议']),
+      );
+      expect(singleEvents.where((e) => e.title == '未识别到语音'), isEmpty);
+    },
+  );
+
+  test(
+    'Test 7: 多话题拆分只把 forkGroupId 赋给实际重叠的那一个话题段，且 Timeline 绝不将同通道/同设备卡片配对',
+    () async {
+      final tmpDir = Directory.systemTemp.createTempSync('rc-topic-fork-only-one-');
+      addTearDown(() => tmpDir.deleteSync(recursive: true));
+
+      final now = DateTime.now();
+      final t0 = DateTime(now.year, now.month, now.day, 16, 0).millisecondsSinceEpoch;
+      const durMs = 300000;
+
+      // 7a) BLE 5 分钟录了 3 个话题，手机仅在中间第 2 话题窗口录到另一场完全不同的真实对话
+      final bleFile = RecordingFile(
+        deviceName: 'BLE_MULTI_TOPIC',
+        session: 'ses_ble_mt',
+        seq: 0,
+        startAtMs: t0,
+        apmPath: '',
+        wavPath: '/tmp/ble_mt.wav',
+        createdAtMs: t0,
+        durationMs: durMs,
+        timeSynced: true,
+        stage: RecordingStage.ready,
+        sourceLane: 'ble',
+        sourceDeviceLabel: '点一机 V1 Q2M34R',
+        utterances: const [
+          RawUtterance(
+            id: 'bu0',
+            sliceId: '0001',
+            startMs: 0,
+            endMs: 85000,
+            text: '早上确定新版本发布节奏以及灰度名单。',
+            speakerLabel: '说话人 1',
+          ),
+          RawUtterance(
+            id: 'bu1',
+            sliceId: '0001',
+            startMs: 95000,
+            endMs: 205000,
+            text: '客户电话沟通年度服务器扩容报价和交付周期。',
+            speakerLabel: '说话人 1',
+          ),
+          RawUtterance(
+            id: 'bu2',
+            sliceId: '0001',
+            startMs: 215000,
+            endMs: 295000,
+            text: '晚上安排团队聚餐地点和采购清单。',
+            speakerLabel: '说话人 1',
+          ),
+        ],
+        turns: const [
+          PolishedTurn(
+            id: 'bt0',
+            startMs: 0,
+            endMs: 85000,
+            speakerLabel: '说话人 1',
+            text: '早上确定新版本发布节奏以及灰度名单。',
+            srcUtteranceIds: ['bu0'],
+          ),
+          PolishedTurn(
+            id: 'bt1',
+            startMs: 95000,
+            endMs: 205000,
+            speakerLabel: '说话人 1',
+            text: '客户电话沟通年度服务器扩容报价和交付周期。',
+            srcUtteranceIds: ['bu1'],
+          ),
+          PolishedTurn(
+            id: 'bt2',
+            startMs: 215000,
+            endMs: 295000,
+            speakerLabel: '说话人 1',
+            text: '晚上安排团队聚餐地点和采购清单。',
+            srcUtteranceIds: ['bu2'],
+          ),
+        ],
+        segments: [
+          SegmentRecord(
+            id: 'ble_mt_seg0',
+            sessionId: 'ses_ble_mt',
+            index: 0,
+            startAtMs: t0,
+            endAtMs: t0 + durMs,
+            title: '全天事项沟通',
+            brief: '包含发版、客户报价与晚间安排。',
+            longText: '包含发版、客户报价与晚间安排。',
+            speakerLabels: const ['说话人 1'],
+            speakerCount: 1,
+            status: SegmentStatus.closed,
+            sliceIds: const ['0001'],
+            turnIds: const ['bt0', 'bt1', 'bt2'],
+          ),
+        ],
+      );
+
+      final phoneFile = _makeTrackFile(
+        id: 'ph_mid',
+        lane: 'phone',
+        devLabel: '手机本机',
+        startAtMs: t0 + 110000,
+        durationMs: 70000,
+        title: '会议室前端重构方案',
+        text: '测试团队在会议室验收前端组件重绘性能基线与动画帧率。',
+      );
+
+      final reconState = await MultiTrackReconciler().reconcile(
+        [bleFile, phoneFile],
+        previous: const MultiTrackReconciliationState(),
+      );
+      expect(reconState.decisions.single.outcome, TrackOverlapOutcome.forkParallel);
+      final forkId = reconState.decisions.single.forkGroupId!;
+
+      final runKey = FastTopicSegmentAgent.buildRunKey(
+        'ble_mt_seg0',
+        t0,
+        t0 + durMs,
+      );
+      final topicState = TopicSegmentationState(
+        runsByKey: {
+          runKey: TopicRunSegmentation(
+            runKey: runKey,
+            startAtMs: t0,
+            endAtMs: t0 + durMs,
+            evaluatedAtMs: t0 + durMs,
+            sections: const [
+              TopicSectionOverride(
+                title: '版本灰度节奏',
+                brief: '灰度名单',
+                startTurnIndex: 0,
+                endTurnIndex: 0,
+              ),
+              TopicSectionOverride(
+                title: '客户扩容报价',
+                brief: '服务器扩容',
+                startTurnIndex: 1,
+                endTurnIndex: 1,
+              ),
+              TopicSectionOverride(
+                title: '团队聚餐清单',
+                brief: '聚餐地点',
+                startTurnIndex: 2,
+                endTurnIndex: 2,
+              ),
+            ],
+          ),
+        },
+      );
+
+      final proj = SegmentProjection.build(
+        [bleFile, phoneFile],
+        topicState: topicState,
+        reconciliation: reconState,
+      );
+      final bleTopic1 = proj.events.singleWhere((e) => e.title == '版本灰度节奏');
+      final bleTopic2 = proj.events.singleWhere((e) => e.title == '客户扩容报价');
+      final bleTopic3 = proj.events.singleWhere((e) => e.title == '团队聚餐清单');
+      final phoneEv = proj.events.singleWhere((e) => e.title == '会议室前端重构方案');
+
+      expect(bleTopic1.forkGroupId, isNull);
+      expect(bleTopic3.forkGroupId, isNull);
+      expect(bleTopic2.forkGroupId, forkId);
+      expect(phoneEv.forkGroupId, forkId);
+
+      // 同时验证滚动清洗分支（rollingByAnchor）也只挂到实际重叠的那 1 张卡上
+      final rollingTopicState = TopicSegmentationState(
+        rollingByAnchor: {
+          'ble_mt_seg0': TopicRunSegmentation(
+            runKey: 'rolling-ble_mt_seg0',
+            startAtMs: t0,
+            endAtMs: t0 + durMs,
+            evaluatedAtMs: t0 + durMs,
+            coveredUtteranceEndMs: t0 + durMs,
+            coveredUtteranceIds: const {'bu0', 'bu1', 'bu2'},
+            sections: [
+              TopicSectionOverride(
+                title: '版本灰度节奏',
+                brief: '灰度名单',
+                startTurnIndex: 0,
+                endTurnIndex: 0,
+                startAtMs: t0,
+                endAtMs: t0 + 85000,
+                paragraphs: [
+                  TopicParagraph(
+                    speaker: '说话人 1',
+                    text: '早上确定新版本发布节奏以及灰度名单。',
+                    startAtMs: t0,
+                    endAtMs: t0 + 85000,
+                    srcUtteranceIds: const ['bu0'],
+                  ),
+                ],
+              ),
+              TopicSectionOverride(
+                title: '客户扩容报价',
+                brief: '服务器扩容',
+                startTurnIndex: 1,
+                endTurnIndex: 1,
+                startAtMs: t0 + 95000,
+                endAtMs: t0 + 205000,
+                paragraphs: [
+                  TopicParagraph(
+                    speaker: '说话人 1',
+                    text: '客户电话沟通年度服务器扩容报价和交付周期。',
+                    startAtMs: t0 + 95000,
+                    endAtMs: t0 + 205000,
+                    srcUtteranceIds: const ['bu1'],
+                  ),
+                ],
+              ),
+              TopicSectionOverride(
+                title: '团队聚餐清单',
+                brief: '聚餐地点',
+                startTurnIndex: 2,
+                endTurnIndex: 2,
+                startAtMs: t0 + 215000,
+                endAtMs: t0 + 295000,
+                paragraphs: [
+                  TopicParagraph(
+                    speaker: '说话人 1',
+                    text: '晚上安排团队聚餐地点和采购清单。',
+                    startAtMs: t0 + 215000,
+                    endAtMs: t0 + 295000,
+                    srcUtteranceIds: const ['bu2'],
+                  ),
+                ],
+              ),
+            ],
+          ),
+        },
+      );
+      final rollingProj = SegmentProjection.build(
+        [bleFile, phoneFile],
+        topicState: rollingTopicState,
+        reconciliation: reconState,
+      );
+      expect(
+        rollingProj.events.singleWhere((e) => e.title == '版本灰度节奏').forkGroupId,
+        isNull,
+      );
+      expect(
+        rollingProj.events.singleWhere((e) => e.title == '客户扩容报价').forkGroupId,
+        forkId,
+      );
+      expect(
+        rollingProj.events.singleWhere((e) => e.title == '团队聚餐清单').forkGroupId,
+        isNull,
+      );
+
+      // 7b) 纵深防御：即使两条同通道/同设备事件错误共用 forkGroupId，AppStore 也绝不组成双路并发卡
+      final fakeSync = await FakeRecordingSync.create(localEvents: const []);
+      final gen = await SummaryModel().generator();
+      final appStore = AppStore(
+        recordings: fakeSync,
+        generator: gen,
+        loadPersistedState: false,
+      );
+      addTearDown(appStore.dispose);
+      appStore.events = [
+        RecordEvent(
+          id: 'same_dev_a',
+          dayOffset: 0,
+          title: '配置修复与模型检查',
+          brief: '讨论外脑默认模型配置提示与默认参数加载链路。',
+          longText: '讨论外脑默认模型配置提示与默认参数加载链路，并验证本地缓存同步逻辑。',
+          time: '21:00',
+          dur: '2分00秒',
+          speakers: '说话人 1',
+          mark: '',
+          srcMap: '',
+          dialog: const [
+            TurnLine('说话人 1', '先检查外脑默认模型设置是否在启动后正确生效并回填端点地址。', '21:00'),
+          ],
+          raw: const [
+            TurnLine('说话人 1', '先检查外脑默认模型设置是否在启动后正确生效并回填端点地址。', '21:00'),
+          ],
+          sourceLane: 'ble',
+          sourceDeviceLabel: '点一机 V1 Q2M34R',
+          forkGroupId: 'fk-same-dev',
+        ),
+        RecordEvent(
+          id: 'same_dev_b',
+          dayOffset: 0,
+          title: '蓝牙保活与心跳机制',
+          brief: '分析蓝牙后台心跳保活机制与断连兜底切换策略。',
+          longText: '分析蓝牙后台心跳保活机制与断连兜底切换策略，避免误入手机本机录音。',
+          time: '21:02',
+          dur: '2分00秒',
+          speakers: '说话人 1',
+          mark: '',
+          srcMap: '',
+          dialog: const [
+            TurnLine('说话人 1', '再核对后台蓝牙心跳检测周期与异常断连之后的本机兜底录音切换条件。', '21:02'),
+          ],
+          raw: const [
+            TurnLine('说话人 1', '再核对后台蓝牙心跳检测周期与异常断连之后的本机兜底录音切换条件。', '21:02'),
+          ],
+          sourceLane: 'ble',
+          sourceDeviceLabel: '点一机 V1 Q2M34R',
+          forkGroupId: 'fk-same-dev',
+        ),
+      ];
+      final items = [for (final g in appStore.feedGroups) ...g.items];
+      expect(items.whereType<ForkedEventPair>(), isEmpty);
+      expect(items.whereType<RecordEvent>(), hasLength(2));
+      expect(appStore.siblingForkEventFor('same_dev_a'), isNull);
+      expect(appStore.siblingForkEventFor('same_dev_b'), isNull);
+
+      // 7c) fromDecisions 1-to-many forkParallel 不互相覆盖导致孤立
+      final multiForkState = MultiTrackReconciliationState.fromDecisions(const [
+        TrackPairDecision(
+          pairKey: 'ble_a::ph_1',
+          fingerprint: 'fp1',
+          outcome: TrackOverlapOutcome.forkParallel,
+          primarySegmentId: 'ble_a',
+          secondarySegmentId: 'ph_1',
+          reason: 'r1',
+          forkGroupId: 'fk1',
+        ),
+        TrackPairDecision(
+          pairKey: 'ble_a::ph_2',
+          fingerprint: 'fp2',
+          outcome: TrackOverlapOutcome.forkParallel,
+          primarySegmentId: 'ble_a',
+          secondarySegmentId: 'ph_2',
+          reason: 'r2',
+          forkGroupId: 'fk2',
+        ),
+      ]);
+      expect(multiForkState.forkGroupBySegmentId['ble_a'], 'fk1');
+      expect(multiForkState.forkGroupBySegmentId['ph_1'], 'fk1');
+      expect(multiForkState.forkGroupBySegmentId.containsKey('ph_2'), isFalse);
+      expect(multiForkState.forks.keys, ['fk1']);
     },
   );
 }

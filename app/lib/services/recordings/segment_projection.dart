@@ -4,6 +4,8 @@
 /// 录音起点。投影时统一换算，详情页再按需展示相对时间。
 library;
 
+import 'dart:math' as math;
+
 import '../../core/models/record.dart';
 import '../../core/models/recording.dart';
 import '../../core/models/segment_view.dart';
@@ -271,6 +273,20 @@ class SegmentProjection {
     final hiddenIds = reconciliation?.hiddenSegmentIds ?? const <String>{};
     final forkGroupBySeg =
         reconciliation?.forkGroupBySegmentId ?? const <String, String>{};
+    final forks = reconciliation?.forks ?? const <String, ForkGroupInfo>{};
+    final segRangeById = <String, ({int startMs, int endMs})>{};
+    for (final file in files) {
+      for (final seg in file.segments) {
+        final rawEnd = seg.endAtMs ??
+            (file.durationMs > 0
+                ? file.startAtMs + file.durationMs
+                : seg.startAtMs + 1000);
+        segRangeById[seg.id] = (
+          startMs: seg.startAtMs,
+          endMs: rawEnd > seg.startAtMs ? rawEnd : seg.startAtMs + 1000,
+        );
+      }
+    }
     final rawViews = _sortedRawViews(files, hiddenSegmentIds: hiddenIds);
     final activeRuns = _collectActiveRuns(topicState);
     final consumedRunKeys = <String>{};
@@ -336,6 +352,8 @@ class SegmentProjection {
           topicState: topicState,
           overrideRollingRun: matchedRun,
           forkGroupBySeg: forkGroupBySeg,
+          forks: forks,
+          segRangeById: segRangeById,
           events: events,
           views: views,
           redirects: redirects,
@@ -419,6 +437,8 @@ class SegmentProjection {
         group: speechGroup,
         topicState: topicState,
         forkGroupBySeg: forkGroupBySeg,
+        forks: forks,
+        segRangeById: segRangeById,
         events: events,
         views: views,
         redirects: redirects,
@@ -535,6 +555,8 @@ class SegmentProjection {
     required TopicSegmentationState? topicState,
     TopicRunSegmentation? overrideRollingRun,
     Map<String, String> forkGroupBySeg = const {},
+    Map<String, ForkGroupInfo> forks = const {},
+    Map<String, ({int startMs, int endMs})> segRangeById = const {},
     required List<RecordEvent> events,
     required Map<String, SegmentView> views,
     required Map<String, String> redirects,
@@ -640,6 +662,9 @@ class SegmentProjection {
         redirects: redirects,
         startMsByEventId: startMsByEventId,
         forkGroupId: groupForkId,
+        forkGroupBySeg: forkGroupBySeg,
+        forks: forks,
+        segRangeById: segRangeById,
       );
       return;
     }
@@ -647,6 +672,8 @@ class SegmentProjection {
     if (topicRun != null &&
         topicRun.sections.length >= 2 &&
         (combinedTurns.isNotEmpty || combinedUtterances.isNotEmpty)) {
+      final pendingTopics =
+          <({String eventId, SegmentView view, int startMs, int endMs})>[];
       final emittedTopics = <({String id, int startMs, int endMs})>[];
       final itemCount = combinedTurns.isNotEmpty
           ? combinedTurns.length
@@ -746,18 +773,38 @@ class SegmentProjection {
               ? List<SegmentView>.unmodifiable(effectiveChildren)
               : const [],
         );
-        views[eventId] = secView;
-        final ev = _eventFor(
-          secView,
-          mergedSliceCount: secView.mergedSliceCount,
-          forkGroupId: groupForkId,
-        );
-        events.add(ev);
-        startMsByEventId[eventId] = secStartMs;
-        emittedTopics.add((
-          id: eventId,
+        pendingTopics.add((
+          eventId: eventId,
+          view: secView,
           startMs: secStartMs,
           endMs: secEndMs,
+        ));
+      }
+
+      final forkBySectionIdx = _assignForkIdsToSections(
+        sections: [
+          for (final item in pendingTopics)
+            (startMs: item.startMs, endMs: item.endMs),
+        ],
+        group: group,
+        forkGroupBySeg: forkGroupBySeg,
+        forks: forks,
+        segRangeById: segRangeById,
+      );
+      for (var si = 0; si < pendingTopics.length; si++) {
+        final item = pendingTopics[si];
+        views[item.eventId] = item.view;
+        final ev = _eventFor(
+          item.view,
+          mergedSliceCount: item.view.mergedSliceCount,
+          forkGroupId: forkBySectionIdx[si],
+        );
+        events.add(ev);
+        startMsByEventId[item.eventId] = item.startMs;
+        emittedTopics.add((
+          id: item.eventId,
+          startMs: item.startMs,
+          endMs: item.endMs,
         ));
       }
 
@@ -874,6 +921,91 @@ class SegmentProjection {
     startMsByEventId[ev.id] = startAtMs;
   }
 
+  static Map<int, String> _assignForkIdsToSections({
+    required List<({int startMs, int endMs})> sections,
+    required List<SegmentView> group,
+    required Map<String, String> forkGroupBySeg,
+    required Map<String, ForkGroupInfo> forks,
+    required Map<String, ({int startMs, int endMs})> segRangeById,
+  }) {
+    if (sections.isEmpty || forkGroupBySeg.isEmpty) return const {};
+    final seenFks = <String>[];
+    for (final c in group) {
+      final fk = forkGroupBySeg[c.segment.id];
+      if (fk != null && fk.isNotEmpty && !seenFks.contains(fk)) {
+        seenFks.add(fk);
+      }
+    }
+    if (seenFks.isEmpty) return const {};
+    final out = <int, String>{};
+    for (final fk in seenFks) {
+      final idx = _pickBestForkSectionIndex(
+        sections: sections,
+        forkGroupId: fk,
+        group: group,
+        forkGroupBySeg: forkGroupBySeg,
+        forks: forks,
+        segRangeById: segRangeById,
+      );
+      out.putIfAbsent(idx, () => fk);
+    }
+    return out;
+  }
+
+  static int _pickBestForkSectionIndex({
+    required List<({int startMs, int endMs})> sections,
+    required String forkGroupId,
+    required List<SegmentView> group,
+    required Map<String, String> forkGroupBySeg,
+    required Map<String, ForkGroupInfo> forks,
+    required Map<String, ({int startMs, int endMs})> segRangeById,
+  }) {
+    final groupSegIds = {for (final c in group) c.segment.id};
+    ({int startMs, int endMs})? targetRange;
+    final info = forks[forkGroupId];
+    if (info != null) {
+      final peerSegId = !groupSegIds.contains(info.leftSegmentId)
+          ? info.leftSegmentId
+          : (!groupSegIds.contains(info.rightSegmentId)
+                ? info.rightSegmentId
+                : null);
+      if (peerSegId != null) {
+        targetRange = segRangeById[peerSegId];
+      }
+    }
+    if (targetRange == null) {
+      for (final c in group) {
+        if (forkGroupBySeg[c.segment.id] == forkGroupId) {
+          targetRange = (startMs: c.segment.startAtMs, endMs: _endMsOf(c));
+          break;
+        }
+      }
+    }
+    if (targetRange == null) return 0;
+
+    final targetMid = (targetRange.startMs + targetRange.endMs) ~/ 2;
+    var bestIdx = 0;
+    var bestOverlap = -1;
+    int? bestDist;
+    for (var i = 0; i < sections.length; i++) {
+      final sec = sections[i];
+      final overlap = math.max<int>(
+        0,
+        math.min<int>(sec.endMs, targetRange.endMs) -
+            math.max<int>(sec.startMs, targetRange.startMs),
+      );
+      final secMid = (sec.startMs + sec.endMs) ~/ 2;
+      final dist = (secMid - targetMid).abs();
+      if (overlap > bestOverlap ||
+          (overlap == bestOverlap && (bestDist == null || dist < bestDist))) {
+        bestOverlap = overlap;
+        bestDist = dist;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }
+
   static void _projectRollingSections({
     required SegmentView anchor,
     required List<SegmentView> group,
@@ -886,7 +1018,12 @@ class SegmentProjection {
     required Map<String, String> redirects,
     required Map<String, int> startMsByEventId,
     String? forkGroupId,
+    Map<String, String> forkGroupBySeg = const {},
+    Map<String, ForkGroupInfo> forks = const {},
+    Map<String, ({int startMs, int endMs})> segRangeById = const {},
   }) {
+    final pendingSections =
+        <({String eventId, SegmentView view, int startMs, int endMs})>[];
     final emittedTopics = <({String id, int startMs, int endMs})>[];
     final anchorStartMs = anchor.file.startAtMs;
 
@@ -964,7 +1101,7 @@ class SegmentProjection {
 
       final eventId =
           explicitId ??
-          (emittedTopics.isEmpty
+          (pendingSections.isEmpty
               ? anchor.segment.id
               : '${anchor.segment.id}#t$sectionIndex');
       final childMarks = <String>{
@@ -988,7 +1125,7 @@ class SegmentProjection {
         turnIds: [for (final t in turns) t.id],
         mark: childMarks.isNotEmpty
             ? childMarks.join(' · ')
-            : (emittedTopics.isEmpty ? anchor.segment.mark : null),
+            : (pendingSections.isEmpty ? anchor.segment.mark : null),
         polishStale: cleanedByCloud
             ? false
             : effectiveChildren.any(
@@ -1013,15 +1150,12 @@ class SegmentProjection {
             ? List<SegmentView>.unmodifiable(effectiveChildren)
             : const [],
       );
-      views[eventId] = secView;
-      final ev = _eventFor(
-        secView,
-        mergedSliceCount: secView.mergedSliceCount,
-        forkGroupId: forkGroupId,
-      );
-      events.add(ev);
-      startMsByEventId[eventId] = secStartMs;
-      emittedTopics.add((id: eventId, startMs: secStartMs, endMs: secEndMs));
+      pendingSections.add((
+        eventId: eventId,
+        view: secView,
+        startMs: secStartMs,
+        endMs: secEndMs,
+      ));
     }
 
     for (var si = 0; si < rollingRun.sections.length; si++) {
@@ -1116,19 +1250,46 @@ class SegmentProjection {
           secStartMs: tStart,
           secEndMs: tEnd,
           cleanedByCloud: false,
-          explicitId: emittedTopics.isEmpty
+          explicitId: pendingSections.isEmpty
               ? anchor.segment.id
               : '${anchor.segment.id}#tail',
         );
       }
     }
 
-    if (emittedTopics.isEmpty) {
+    if (pendingSections.isEmpty) {
       views[anchor.segment.id] = anchor;
       final ev = _eventFor(anchor, forkGroupId: forkGroupId);
       events.add(ev);
       startMsByEventId[ev.id] = anchor.segment.startAtMs;
       return;
+    }
+
+    final forkBySectionIdx = _assignForkIdsToSections(
+      sections: [
+        for (final item in pendingSections)
+          (startMs: item.startMs, endMs: item.endMs),
+      ],
+      group: group,
+      forkGroupBySeg: forkGroupBySeg,
+      forks: forks,
+      segRangeById: segRangeById,
+    );
+    for (var idx = 0; idx < pendingSections.length; idx++) {
+      final item = pendingSections[idx];
+      views[item.eventId] = item.view;
+      final ev = _eventFor(
+        item.view,
+        mergedSliceCount: item.view.mergedSliceCount,
+        forkGroupId: forkBySectionIdx[idx],
+      );
+      events.add(ev);
+      startMsByEventId[item.eventId] = item.startMs;
+      emittedTopics.add((
+        id: item.eventId,
+        startMs: item.startMs,
+        endMs: item.endMs,
+      ));
     }
 
     // 把 group 中所有子切片（含中间穿插静音片段）绑定到最匹配的话题段，确保照片和原音不丢
