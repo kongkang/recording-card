@@ -30,6 +30,7 @@ PR #7 已把正式版基线（真实 BLE 桥 + OAuth + 模型网关 + 真实总�
   - `prototype/verify.cjs`：双版本自动化验收脚本（覆盖 `index.html` 86 项检查与 `current.html` 基线检查）。
 - `docs/handoff/`——阶段交接文档（含开发期启动指令与 owner 硬约束）。
 - `docs/SDK-CAPABILITY.md`——上游 SDK 能力对照（reai-card-sdk v0.0.6 @ 32a1b86，异步 Rust + btleplug，非 Flutter 插件）。
+- `docs/RELEASE.md`——上架发布手册与 TestFlight 分发信息（App Apple ID `6834316655`、内外部测试组 ID、公开邀请链接 `https://testflight.apple.com/join/fMWkZSv5` 与外部构建记录）。
 - `docs/gen-evidence/`——原型生成证据链（Flash prompt/output 留存、核验结果、旧版验收脚本）。**只读**。
 - `archive/`——旧版原型与截图。**只读**，不作为当前结构的依据。
 
