@@ -527,11 +527,16 @@ class RecordingPipeline {
   }
 
   /// 对本地所有已落盘的多路录音执行时间重叠对齐、去重合并与语义分叉判定，并落盘决策表。
-  Future<MultiTrackReconciliationState> reconcileMultiTrack() async {
-    final files = await store.loadAll(refresh: true);
+  Future<MultiTrackReconciliationState> reconcileMultiTrack({
+    List<RecordingFile>? files,
+  }) async {
+    final loadedFiles = files ?? await store.loadAll(refresh: true);
     final prev = await reconciliationStore.load();
     final reconciler = multiTrackReconciler ?? MultiTrackReconciler();
-    final next = await reconciler.reconcile(files, previous: prev);
+    final next = await reconciler.reconcile(
+      loadedFiles,
+      previous: prev.needsReconcile ? null : prev,
+    );
     await reconciliationStore.save(next);
     return next;
   }

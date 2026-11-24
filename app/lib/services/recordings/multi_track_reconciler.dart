@@ -100,63 +100,87 @@ class MultiTrackReconciliationState {
     this.hiddenSegmentIds = const {},
     this.forkGroupBySegmentId = const {},
     this.forks = const {},
+    this.schemaVersion = currentSchemaVersion,
   });
+
+  static const int currentSchemaVersion = 2;
 
   final List<TrackPairDecision> decisions;
   final Set<String> hiddenSegmentIds;
   final Map<String, String> forkGroupBySegmentId;
   final Map<String, ForkGroupInfo> forks;
+  final int schemaVersion;
+
+  bool get needsReconcile => schemaVersion < currentSchemaVersion;
 
   static MultiTrackReconciliationState fromDecisions(
-    List<TrackPairDecision> decisions,
-  ) {
+    List<TrackPairDecision> decisions, {
+    int schemaVersion = currentSchemaVersion,
+  }) {
     final hidden = <String>{};
     final forkGroupBySeg = <String, String>{};
     final forks = <String, ForkGroupInfo>{};
     for (final d in decisions) {
-      switch (d.outcome) {
-        case TrackOverlapOutcome.keepNonEmpty:
-        case TrackOverlapOutcome.dedupKeepPrimary:
-          if (d.secondarySegmentId.isNotEmpty &&
-              d.secondarySegmentId != d.primarySegmentId) {
-            hidden.add(d.secondarySegmentId);
-          }
-        case TrackOverlapOutcome.forkParallel:
-          final fk = (d.forkGroupId != null && d.forkGroupId!.isNotEmpty)
-              ? d.forkGroupId!
-              : 'fork-${d.pairKey}';
-          if (!hidden.contains(d.primarySegmentId) &&
-              !hidden.contains(d.secondarySegmentId)) {
-            forkGroupBySeg[d.primarySegmentId] = fk;
-            forkGroupBySeg[d.secondarySegmentId] = fk;
-            forks[fk] = ForkGroupInfo(
-              forkGroupId: fk,
-              leftSegmentId: d.primarySegmentId,
-              rightSegmentId: d.secondarySegmentId,
-              reason: d.reason,
-            );
-          }
+      if (d.outcome == TrackOverlapOutcome.keepNonEmpty ||
+          d.outcome == TrackOverlapOutcome.dedupKeepPrimary) {
+        if (d.secondarySegmentId.isNotEmpty &&
+            d.secondarySegmentId != d.primarySegmentId) {
+          hidden.add(d.secondarySegmentId);
+        }
       }
+    }
+    for (final d in decisions) {
+      if (d.outcome != TrackOverlapOutcome.forkParallel) continue;
+      if (d.primarySegmentId.isEmpty ||
+          d.secondarySegmentId.isEmpty ||
+          d.primarySegmentId == d.secondarySegmentId) {
+        continue;
+      }
+      if (hidden.contains(d.primarySegmentId) ||
+          hidden.contains(d.secondarySegmentId)) {
+        continue;
+      }
+      // 防止同一段与多个分段并行分叉时互相覆盖导致前者孤立
+      if (forkGroupBySeg.containsKey(d.primarySegmentId) ||
+          forkGroupBySeg.containsKey(d.secondarySegmentId)) {
+        continue;
+      }
+      final fk = (d.forkGroupId != null && d.forkGroupId!.isNotEmpty)
+          ? d.forkGroupId!
+          : 'fork-${d.pairKey}';
+      forkGroupBySeg[d.primarySegmentId] = fk;
+      forkGroupBySeg[d.secondarySegmentId] = fk;
+      forks[fk] = ForkGroupInfo(
+        forkGroupId: fk,
+        leftSegmentId: d.primarySegmentId,
+        rightSegmentId: d.secondarySegmentId,
+        reason: d.reason,
+      );
     }
     return MultiTrackReconciliationState(
       decisions: List.unmodifiable(decisions),
       hiddenSegmentIds: Set.unmodifiable(hidden),
       forkGroupBySegmentId: Map.unmodifiable(forkGroupBySeg),
       forks: Map.unmodifiable(forks),
+      schemaVersion: schemaVersion,
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'v': 1,
+    'v': currentSchemaVersion,
     'dec': [for (final d in decisions) d.toJson()],
   };
 
   factory MultiTrackReconciliationState.fromJson(Map<String, dynamic> j) {
+    final version = (j['v'] as num?)?.toInt() ?? 1;
     final decs = <TrackPairDecision>[
       for (final item in (j['dec'] as List? ?? const []))
         if (item is Map<String, dynamic>) TrackPairDecision.fromJson(item),
     ];
-    return MultiTrackReconciliationState.fromDecisions(decs);
+    return MultiTrackReconciliationState.fromDecisions(
+      decs,
+      schemaVersion: version,
+    );
   }
 }
 
@@ -352,6 +376,7 @@ class MultiTrackReconciler {
 
     for (final ble in bleList) {
       for (final comp in companionList) {
+        if (ble.lane == comp.lane) continue;
         if (consumedCompanion.contains(comp.segment.id)) continue;
         if (!_overlapsSignificantly(ble, comp)) continue;
         final decision = await _evaluatePair(
@@ -411,6 +436,17 @@ class MultiTrackReconciler {
     return overlapMs >= 3000 || (overlapMs / minDur) >= 0.2;
   }
 
+  static bool isSilentPlaceholderText(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return true;
+    return t.contains('未检测到有效人声') ||
+        t.contains('没有识别到人声') ||
+        t.contains('未识别到语音') ||
+        t.contains('暂无原始转写') ||
+        t.contains('原始录音已保存在本机') ||
+        t.contains('原始录音仍保留在本机');
+  }
+
   static String _extractText(RecordingFile file, SegmentRecord seg) {
     final buf = StringBuffer();
     if (file.turns.isNotEmpty) {
@@ -418,7 +454,8 @@ class MultiTrackReconciler {
           ? file.turns.where((t) => seg.turnIds.contains(t.id))
           : file.turns;
       for (final t in matchedTurns) {
-        if (isMeaningfulSpeechText(t.text)) {
+        if (isMeaningfulSpeechText(t.text) &&
+            !isSilentPlaceholderText(t.text)) {
           buf.write(t.text.trim());
         }
       }
@@ -429,19 +466,25 @@ class MultiTrackReconciler {
           ? file.utterances.where((u) => sliceSet.contains(u.sliceId))
           : file.utterances;
       for (final u in matched) {
-        if (isMeaningfulSpeechText(u.text)) {
+        if (isMeaningfulSpeechText(u.text) &&
+            !isSilentPlaceholderText(u.text)) {
           buf.write(u.text.trim());
         }
       }
     }
-    if (buf.isEmpty && isMeaningfulSpeechText(seg.longText)) {
-      buf.write(seg.longText.trim());
-    }
-    if (buf.isEmpty &&
-        isMeaningfulSpeechText(seg.brief) &&
-        !seg.brief.contains('没有识别到人声') &&
-        !seg.brief.contains('未检测到有效人声')) {
-      buf.write(seg.brief.trim());
+    if (buf.isEmpty) {
+      if (file.turns.isEmpty &&
+          file.utterances.isEmpty &&
+          seg.title.trim() == '未识别到语音') {
+        return '';
+      }
+      if (isMeaningfulSpeechText(seg.longText) &&
+          !isSilentPlaceholderText(seg.longText)) {
+        buf.write(seg.longText.trim());
+      } else if (isMeaningfulSpeechText(seg.brief) &&
+          !isSilentPlaceholderText(seg.brief)) {
+        buf.write(seg.brief.trim());
+      }
     }
     return buf.toString();
   }

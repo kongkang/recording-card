@@ -294,13 +294,29 @@ class AppStore extends ChangeNotifier {
 
   MultiTrackReconciliationState get multiTrackReconciliation => _reconciliation;
 
+  static bool _canPairAsFork(RecordEvent a, RecordEvent b) {
+    if (a.id == b.id) return false;
+    final laneA = (a.sourceLane ?? '').trim().toLowerCase();
+    final laneB = (b.sourceLane ?? '').trim().toLowerCase();
+    // 仅允许不同采集通路（ble / watch / phone）且非同一设备的记录配对为双路并发卡
+    if (laneA.isEmpty || laneB.isEmpty || laneA == laneB) return false;
+    final devA = (a.sourceDeviceLabel ?? '').trim();
+    final devB = (b.sourceDeviceLabel ?? '').trim();
+    if (devA.isNotEmpty && devB.isNotEmpty && devA == devB) return false;
+    return true;
+  }
+
   /// 若某条记录处于双路并行语义分叉对中，返回其对侧兄弟事件；否则为 null。
   RecordEvent? siblingForkEventFor(String eventId) {
     final ev = eventByIdOrNull(eventId);
     final fk = ev?.forkGroupId;
-    if (fk == null || fk.isEmpty) return null;
+    if (ev == null || fk == null || fk.isEmpty) return null;
     for (final other in events) {
-      if (other.id != eventId && other.forkGroupId == fk) return other;
+      if (other.id != eventId &&
+          other.forkGroupId == fk &&
+          _canPairAsFork(ev, other)) {
+        return other;
+      }
     }
     return null;
   }
@@ -997,7 +1013,16 @@ class AppStore extends ChangeNotifier {
     try {
       final files = await store.loadAll(refresh: true);
       final topicState = await _topicStoreFor()?.load();
-      final reconciliation = await _pipeline?.reconciliationStore.load();
+      var reconciliation = await _pipeline?.reconciliationStore.load();
+      if (_pipeline != null &&
+          reconciliation != null &&
+          reconciliation.needsReconcile) {
+        try {
+          reconciliation = await _pipeline!.reconcileMultiTrack(files: files);
+        } on Object {
+          reconciliation = const MultiTrackReconciliationState();
+        }
+      }
       final projection = files.length >= _isolateProjectionThreshold
           ? await Isolate.run(
               () => SegmentProjection.build(
@@ -2504,22 +2529,35 @@ class AppStore extends ChangeNotifier {
             };
             return weight(b).compareTo(weight(a));
           });
-        final left = pairList[0];
-        final right = pairList[1];
-        if (left.dayOffset == right.dayOffset) {
-          (entriesByDay[left.dayOffset] ??= []).add((
+        RecordEvent? pairedLeft;
+        RecordEvent? pairedRight;
+        for (var i = 0; i < pairList.length && pairedLeft == null; i++) {
+          for (var j = i + 1; j < pairList.length; j++) {
+            if (pairList[i].dayOffset == pairList[j].dayOffset &&
+                _canPairAsFork(pairList[i], pairList[j])) {
+              pairedLeft = pairList[i];
+              pairedRight = pairList[j];
+              break;
+            }
+          }
+        }
+        if (pairedLeft != null && pairedRight != null) {
+          (entriesByDay[pairedLeft.dayOffset] ??= []).add((
             item: ForkedEventPair(
               forkGroupId: fk,
-              dayOffset: left.dayOffset,
-              time: left.time,
-              left: left,
-              right: right,
+              dayOffset: pairedLeft.dayOffset,
+              time: pairedLeft.time,
+              left: pairedLeft,
+              right: pairedRight,
             ),
-            sortMs: _eventSortMs(left),
+            sortMs: _eventSortMs(pairedLeft),
             priority: 1,
             id: 'fork-$fk',
           ));
-          for (final extra in pairList.skip(2)) {
+          for (final extra in pairList) {
+            if (extra.id == pairedLeft.id || extra.id == pairedRight.id) {
+              continue;
+            }
             (entriesByDay[extra.dayOffset] ??= []).add((
               item: extra,
               sortMs: _eventSortMs(extra),
