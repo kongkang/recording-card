@@ -8,7 +8,6 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 
 import '../core/device/card_gateway.dart';
 import '../core/platform/crash_guard.dart';
@@ -180,7 +179,6 @@ class AppShell extends StatefulWidget {
     this.onDeviceCreated,
     this.clock,
     this.crashStore,
-    this.accountHttpClient,
     this.uiStyle,
     this.onClearAllLocalData,
   });
@@ -210,7 +208,6 @@ class AppShell extends StatefulWidget {
   final void Function(DeviceStore)? onDeviceCreated;
   final DateTime Function()? clock;
   final KeyValueStore? crashStore;
-  final http.Client? accountHttpClient;
   final UIStyleStore? uiStyle;
   final Future<void> Function()? onClearAllLocalData;
 
@@ -699,7 +696,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                           crashStore: widget.crashStore,
-                          accountHttpClient: widget.accountHttpClient,
                           onClearAllLocalData: _clearAllLocalData,
                         )
                       else
@@ -719,7 +715,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           onOpenOs1: () => _agentChat.open(),
                           supportsDynamicIsland: _resolvedSupportsDynamicIsland,
                           crashStore: widget.crashStore,
-                          accountHttpClient: widget.accountHttpClient,
                           onClearAllLocalData: _clearAllLocalData,
                         ),
                       ListenableBuilder(
@@ -1368,7 +1363,6 @@ class _NarrowLayout extends StatelessWidget {
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
     this.crashStore,
-    this.accountHttpClient,
     this.onClearAllLocalData,
   });
   final DeviceStore device;
@@ -1386,7 +1380,6 @@ class _NarrowLayout extends StatelessWidget {
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
   final KeyValueStore? crashStore;
-  final http.Client? accountHttpClient;
   final Future<void> Function()? onClearAllLocalData;
 
   @override
@@ -1427,7 +1420,6 @@ class _NarrowLayout extends StatelessWidget {
                   uiStyle: uiStyle,
                   supportsDynamicIsland: supportsDynamicIsland,
                   crashStore: crashStore,
-                  accountHttpClient: accountHttpClient,
                   onClearAllLocalData: onClearAllLocalData,
                 ),
               },
@@ -1579,7 +1571,6 @@ class _WideLayout extends StatelessWidget {
     required this.onOpenOs1,
     this.supportsDynamicIsland = false,
     this.crashStore,
-    this.accountHttpClient,
     this.onClearAllLocalData,
   });
   final DeviceStore device;
@@ -1597,7 +1588,6 @@ class _WideLayout extends StatelessWidget {
   final VoidCallback onOpenOs1;
   final bool supportsDynamicIsland;
   final KeyValueStore? crashStore;
-  final http.Client? accountHttpClient;
   final Future<void> Function()? onClearAllLocalData;
 
   @override
@@ -1645,7 +1635,6 @@ class _WideLayout extends StatelessWidget {
                       uiStyle: uiStyle,
                       supportsDynamicIsland: supportsDynamicIsland,
                       crashStore: crashStore,
-                      accountHttpClient: accountHttpClient,
                       onClearAllLocalData: onClearAllLocalData,
                     ),
                   },

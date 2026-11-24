@@ -1,0 +1,11 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "35N5SGDE59.com.reai.recordingcard",
+        "paths": ["/link/*"]
+      }
+    ]
+  }
+}

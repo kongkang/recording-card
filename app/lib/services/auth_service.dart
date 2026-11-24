@@ -35,19 +35,6 @@ import 'wechat_login/wechat_login_service.dart';
 /// 当前登录流程的通道（UI 据此决定哪个按钮转圈）。
 enum AuthChannel { none, oauth, wechat, apple, google }
 
-/// 服务端账号注销请求结果（如实区分「已受理」「接口未上线」「失败」）。
-class AccountDeletionResult {
-  const AccountDeletionResult({
-    this.remoteDeleted = false,
-    this.endpointUnavailable = false,
-    this.errorMessage,
-  });
-
-  final bool remoteDeleted;
-  final bool endpointUnavailable;
-  final String? errorMessage;
-}
-
 /// 登录会话（进程内快照；真正的 token 在 [OAuthTokenStore] / 系统密钥库里）。
 class AuthSession {
   const AuthSession({
@@ -562,47 +549,6 @@ class AuthService extends ChangeNotifier {
     _wechat.cancelPendingAuthorization();
     _dropSessionLocally();
     unawaited(_revokeAndClearRemote());
-  }
-
-  /// 向服务端提交注销账号请求，绝不把 404/405/501 或网络错误伪装成注销成功。
-  Future<AccountDeletionResult> requestRemoteAccountDeletion() async {
-    if (!_oauthConfig.isConfigured || !_tokens.hasSession) {
-      return const AccountDeletionResult(
-        errorMessage: '当前未登录或未配置账号服务，无法提交服务端注销请求',
-      );
-    }
-    try {
-      final token = await _tokens.getValidAccessToken();
-      if (token == null || token.trim().isEmpty) {
-        return const AccountDeletionResult(
-          errorMessage: '登录状态已失效，请重新登录后再注销账号',
-        );
-      }
-      final deleted = await _client.deleteAccount(token);
-      if (deleted) {
-        return const AccountDeletionResult(remoteDeleted: true);
-      }
-      return const AccountDeletionResult(endpointUnavailable: true);
-    } on OAuthAuthRequiredException {
-      return const AccountDeletionResult(
-        errorMessage: '登录状态已失效，请重新登录后再注销账号',
-      );
-    } on OAuthException catch (e) {
-      return AccountDeletionResult(errorMessage: e.message);
-    } catch (e) {
-      debugPrint('[AuthService] 注销账号异常: $e');
-      return const AccountDeletionResult(errorMessage: '注销请求失败，请稍后重试');
-    }
-  }
-
-  /// 完成本机账号清理与登出（等待密钥库 token 清除完毕）。
-  Future<void> completeLocalAccountCleanupAndSignOut() async {
-    _authFlowEpoch++;
-    _busy = false;
-    _activeChannel = AuthChannel.none;
-    _wechat.cancelPendingAuthorization();
-    _dropSessionLocally();
-    await _revokeAndClearRemote();
   }
 
   /// 网络客户端（其他模块用它发起带鉴权的请求）。

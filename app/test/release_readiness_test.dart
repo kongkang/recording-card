@@ -144,17 +144,10 @@ class _NoopLauncher implements WebAuthLauncher {
 Future<({
   AuthService auth,
   List<http.Request> requests,
-})> _signedInAuthForDelete(int deleteStatusCode) async {
+})> _signedInAuth() async {
   final requests = <http.Request>[];
   final httpClient = MockClient((req) async {
     requests.add(req);
-    if (req.url.path == '/account' && req.method == 'DELETE') {
-      return http.Response(
-        deleteStatusCode == 500 ? '{"message":"服务端维护中"}' : '{}',
-        deleteStatusCode,
-        headers: {'content-type': 'application/json'},
-      );
-    }
     if (req.url.path == '/profile' && req.method == 'GET') {
       return http.Response(
         jsonEncode({
@@ -188,9 +181,7 @@ Future<({
       },
     }),
   });
-  final stubConfig = kStubOAuthConfig.copyWith(
-    deleteAccountUrl: '$kStubApiBase/account',
-  );
+  final stubConfig = kStubOAuthConfig;
   final oauthClient = OAuthClient(config: stubConfig, httpClient: httpClient);
   final tokenStore = OAuthTokenStore(
     secure: secure,
@@ -207,6 +198,16 @@ Future<({
   await auth.ready;
   return (auth: auth, requests: requests);
 }
+
+String _repoRoot() {
+  final cwd = Directory.current.path;
+  if (cwd.endsWith('/app') || cwd.endsWith(r'\app')) {
+    return Directory.current.parent.path;
+  }
+  return cwd;
+}
+
+File _repoFile(String relPath) => File('${_repoRoot()}/$relPath');
 
 Future<void> _pumpRealAsyncUntil(
   WidgetTester tester,
@@ -262,8 +263,8 @@ Future<({
           startAtMs: DateTime(2026, 11, 24, 10, 0).millisecondsSinceEpoch,
           endAtMs: DateTime(2026, 11, 24, 10, 1).millisecondsSinceEpoch,
           title: '发布前检查会议',
-          brief: '核对隐私清单和注销账号流程',
-          longText: '核对隐私清单和注销账号流程',
+          brief: '核对隐私清单和退出登录流程',
+          longText: '核对隐私清单和退出登录流程',
           status: SegmentStatus.closed,
           turnIds: const ['t-1'],
         ),
@@ -274,7 +275,7 @@ Future<({
           startMs: 0,
           endMs: 10000,
           speakerLabel: '说话人 1（推测）',
-          text: '核对隐私清单和注销账号流程',
+          text: '核对隐私清单和退出登录流程',
           srcUtteranceIds: ['u-1'],
         ),
       ],
@@ -424,7 +425,8 @@ void main() {
       250,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.byKey(const Key('account-delete-entry')), findsOneWidget);
+    expect(find.byKey(const Key('account-delete-entry')), findsNothing);
+    expect(find.text('注销账号'), findsNothing);
 
     for (var i = 0; i < 7; i++) {
       await tester.tap(find.byKey(const Key('setting-version')));
@@ -465,7 +467,7 @@ void main() {
           }
         }));
 
-    final authRes = await tester.runAsync(() => _signedInAuthForDelete(200));
+    final authRes = await tester.runAsync(_signedInAuth);
     final auth = authRes!.auth;
     addTearDown(auth.dispose);
 
@@ -502,6 +504,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('clear-local-data-btn')), findsOneWidget);
+    expect(find.byKey(const Key('delete-account-btn')), findsNothing);
+    expect(find.text('注销账号'), findsNothing);
     await tester.tap(find.byKey(const Key('clear-local-data-btn')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('clear-local-data-dialog')), findsOneWidget);
@@ -527,223 +531,89 @@ void main() {
     expect(auth.isSignedIn, isTrue);
   });
 
-  group('设置 → 关于录音卡 → 注销账号（诚实后端分支）', () {
-    testWidgets('DELETE /account 返回 200 → 清空本机数据并退出登录', (tester) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
+  testWidgets('设置 → 云端账号授权 → 退出登录正常退出并撤销令牌，且无注销账号入口', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
 
-      final ctx = await tester.runAsync(_createPopulatedStores);
-      addTearDown(() => tester.runAsync(() async {
-            await ctx!.healthStore.close();
-            await ctx.memorySearch.close();
-            ctx.healthController.dispose();
-            ctx.appStore.dispose();
-            ctx.agentConfig.dispose();
-            ctx.device.dispose();
-            if (ctx.rootDir.existsSync()) {
-              await ctx.rootDir.delete(recursive: true);
-            }
-          }));
+    final store = AppStore(events: seedEvents, loadPersistedState: false);
+    addTearDown(store.dispose);
+    final device = DeviceStore(gateway: FakeCardGateway());
+    addTearDown(device.dispose);
+    final agentConfig = AgentConfigStore(store: InMemoryStore());
+    addTearDown(agentConfig.dispose);
 
-      final authRes = await tester.runAsync(() => _signedInAuthForDelete(200));
-      final auth = authRes!.auth;
-      addTearDown(auth.dispose);
+    final authRes = await tester.runAsync(_signedInAuth);
+    final auth = authRes!.auth;
+    addTearDown(auth.dispose);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: testTheme(),
-          home: AppShell(
-            store: ctx!.appStore,
-            device: ctx.device,
-            agentConfig: ctx.agentConfig,
-            settings: SettingsStore(store: InMemoryStore()),
-            authService: auth,
-            healthSignals: ctx.healthController,
-            memorySearch: ctx.memorySearch,
-            recordingStatus: RecordingStatusController(),
-          ),
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: testTheme(),
+        home: AppShell(
+          store: store,
+          device: device,
+          agentConfig: agentConfig,
+          settings: SettingsStore(store: InMemoryStore()),
+          authService: auth,
+          recordingStatus: RecordingStatusController(),
         ),
-      );
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('nav-setting')));
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('nav-setting')));
+    await tester.pump();
 
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('set-data-management')),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.tap(find.byKey(const Key('set-data-management')));
-      await tester.pumpAndSettle();
+    expect(find.byKey(const Key('account-delete-entry')), findsNothing);
+    expect(find.text('注销账号'), findsNothing);
 
-      await tester.tap(find.byKey(const Key('delete-account-btn')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('delete-account-dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('set-auth-entry')));
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('delete-account-confirm')));
-      await _pumpRealAsyncUntil(
-        tester,
-        () =>
-            !auth.isSignedIn &&
-            ctx.appStore.events.isEmpty &&
-            ctx.healthController.sampleCount == 0,
-      );
+    expect(find.byKey(const Key('auth-signout-btn')), findsOneWidget);
+    expect(find.text('注销账号'), findsNothing);
 
+    await tester.tap(find.byKey(const Key('auth-signout-btn')));
+    await _pumpRealAsyncUntil(
+      tester,
+      () => !auth.isSignedIn && authRes.requests.any((r) => r.url.path == '/oauth/revoke'),
+    );
+
+    expect(auth.isSignedIn, isFalse);
+    expect(
+      authRes.requests.any((r) => r.url.path == '/oauth/revoke'),
+      isTrue,
+    );
+  });
+
+  test('微信 Universal Link 与 AASA 配置隔离：仅绑定 ai-card.app.reai.com 与录音卡 Bundle ID', () {
+    final entitlements = _repoFile('app/ios/Runner/Runner.entitlements').readAsStringSync();
+    final applinks = RegExp(r'<string>(applinks:[^<]+)</string>')
+        .allMatches(entitlements)
+        .map((m) => m.group(1)!)
+        .toList();
+    expect(applinks, ['applinks:ai-card.app.reai.com']);
+
+    for (final aasaRelPath in const [
+      'site/.well-known/apple-app-site-association',
+      'site/apple-app-site-association',
+    ]) {
+      final raw = _repoFile(aasaRelPath).readAsStringSync();
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      final applinksObj = decoded['applinks'] as Map<String, dynamic>;
+      final details = (applinksObj['details'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      expect(details, isNotEmpty);
       expect(
-        authRes.requests.any((r) => r.method == 'DELETE' && r.url.path == '/account'),
+        details.any(
+          (entry) =>
+              entry['appID'] == '35N5SGDE59.com.reai.recordingcard' &&
+              (entry['paths'] as List<dynamic>).contains('/link/*'),
+        ),
         isTrue,
+        reason: '$aasaRelPath 必须绑定 35N5SGDE59.com.reai.recordingcard 的 /link/*',
       );
-      expect(ctx.appStore.events, isEmpty);
-      expect(ctx.healthController.sampleCount, 0);
-      expect(auth.isSignedIn, isFalse);
-    });
-
-    testWidgets('DELETE /account 返回 404 → 不撒谎，弹出兜底指引且点「仅清空本机数据并退出」生效', (tester) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
-      final ctx = await tester.runAsync(_createPopulatedStores);
-      addTearDown(() => tester.runAsync(() async {
-            await ctx!.healthStore.close();
-            await ctx.memorySearch.close();
-            ctx.healthController.dispose();
-            ctx.appStore.dispose();
-            ctx.agentConfig.dispose();
-            ctx.device.dispose();
-            if (ctx.rootDir.existsSync()) {
-              await ctx.rootDir.delete(recursive: true);
-            }
-          }));
-
-      final authRes = await tester.runAsync(() => _signedInAuthForDelete(404));
-      final auth = authRes!.auth;
-      addTearDown(auth.dispose);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: testTheme(),
-          home: AppShell(
-            store: ctx!.appStore,
-            device: ctx.device,
-            agentConfig: ctx.agentConfig,
-            settings: SettingsStore(store: InMemoryStore()),
-            authService: auth,
-            healthSignals: ctx.healthController,
-            memorySearch: ctx.memorySearch,
-            recordingStatus: RecordingStatusController(),
-          ),
-        ),
-      );
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('nav-setting')));
-      await tester.pump();
-
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('set-data-management')),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.tap(find.byKey(const Key('set-data-management')));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const Key('delete-account-btn')));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const Key('delete-account-confirm')));
-      await _pumpRealAsyncUntil(
-        tester,
-        () => find
-            .byKey(const Key('delete-account-unavailable-dialog'))
-            .evaluate()
-            .isNotEmpty,
-      );
-
-      expect(find.byKey(const Key('delete-account-unavailable-dialog')), findsOneWidget);
-      expect(auth.isSignedIn, isTrue);
-      expect(ctx.appStore.events, isNotEmpty);
-
-      await tester.tap(find.byKey(const Key('delete-account-local-fallback')));
-      await _pumpRealAsyncUntil(
-        tester,
-        () =>
-            !auth.isSignedIn &&
-            ctx.appStore.events.isEmpty &&
-            ctx.healthController.sampleCount == 0,
-      );
-
-      expect(ctx.appStore.events, isEmpty);
-      expect(ctx.healthController.sampleCount, 0);
-      expect(auth.isSignedIn, isFalse);
-    });
-
-    testWidgets('DELETE /account 返回 500 → 明确提示错误，不误删本地数据或登出', (tester) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
-      final ctx = await tester.runAsync(_createPopulatedStores);
-      addTearDown(() => tester.runAsync(() async {
-            await ctx!.healthStore.close();
-            await ctx.memorySearch.close();
-            ctx.healthController.dispose();
-            ctx.appStore.dispose();
-            ctx.agentConfig.dispose();
-            ctx.device.dispose();
-            if (ctx.rootDir.existsSync()) {
-              await ctx.rootDir.delete(recursive: true);
-            }
-          }));
-
-      final authRes = await tester.runAsync(() => _signedInAuthForDelete(500));
-      final auth = authRes!.auth;
-      addTearDown(auth.dispose);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: testTheme(),
-          home: AppShell(
-            store: ctx!.appStore,
-            device: ctx.device,
-            agentConfig: ctx.agentConfig,
-            settings: SettingsStore(store: InMemoryStore()),
-            authService: auth,
-            healthSignals: ctx.healthController,
-            memorySearch: ctx.memorySearch,
-            recordingStatus: RecordingStatusController(),
-          ),
-        ),
-      );
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('nav-setting')));
-      await tester.pump();
-
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('set-data-management')),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.tap(find.byKey(const Key('set-data-management')));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const Key('delete-account-btn')));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const Key('delete-account-confirm')));
-      await _pumpRealAsyncUntil(
-        tester,
-        () => find
-            .byKey(const Key('delete-account-error-dialog'))
-            .evaluate()
-            .isNotEmpty,
-      );
-
-      expect(find.byKey(const Key('delete-account-error-dialog')), findsOneWidget);
-      expect(find.text('服务端暂时不可用，请稍后重试'), findsOneWidget);
-      expect(auth.isSignedIn, isTrue);
-      expect(ctx.appStore.events, isNotEmpty);
-      expect(ctx.healthController.sampleCount, 1);
-    });
+      expect(raw.contains('com.reai.reaiApp'), isFalse);
+    }
   });
 }

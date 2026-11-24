@@ -1,11 +1,8 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:recording_card/core/device/card_gateway.dart';
 import 'package:recording_card/core/models/record.dart';
 import 'package:recording_card/core/models/recording.dart';
@@ -21,11 +18,8 @@ import 'package:recording_card/data/seed.dart';
 import 'package:recording_card/pages/app_shell.dart';
 import 'package:recording_card/pages/privacy_page.dart';
 import 'package:recording_card/pages/setting_page.dart';
-import 'package:recording_card/services/auth/auth.dart';
-import 'package:recording_card/services/auth_service.dart';
 import 'package:recording_card/services/memory/local_memory_index.dart';
 import 'package:recording_card/services/memory/memory_indexer.dart';
-import 'package:recording_card/services/memory/memory_search_scope.dart';
 import 'package:recording_card/services/memory/memory_search_service.dart';
 import 'package:recording_card/services/recordings/recording_pipeline.dart';
 import 'package:recording_card/services/recordings/recording_store.dart';
@@ -38,7 +32,6 @@ import 'package:recording_card/services/transcribe/speech_models.dart';
 import 'package:recording_card/services/transcribe/system_speech_client.dart';
 import 'package:recording_card/services/transcribe/wav_io.dart';
 import 'package:recording_card/widgets/raw_audio_player.dart';
-import 'package:recording_card/widgets/store_scope.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'support/fake_gateway.dart';
@@ -171,74 +164,6 @@ class _RecordingFakeSenseVoiceEngine extends _NoopEngine {
       audioMs: 1000,
     );
   }
-}
-
-class _EchoWebAuthLauncher implements WebAuthLauncher {
-  @override
-  bool get isSupported => true;
-
-  @override
-  Future<Uri> launch({
-    required Uri authorizeUrl,
-    required String callbackScheme,
-  }) async {
-    final state = authorizeUrl.queryParameters['state'] ?? '';
-    return Uri.parse('recording-card://callback?code=test-code&state=$state');
-  }
-}
-
-Future<({AuthService auth, InMemorySecureStore secure})>
-_createSignedInAuth() async {
-  final secure = InMemorySecureStore();
-  final authHttp = MockClient((req) async {
-    if (req.url.path.endsWith('/oauth/token')) {
-      return http.Response.bytes(
-        utf8.encode(
-          jsonEncode({
-            'access_token': 'access-1',
-            'refresh_token': 'refresh-1',
-            'token_type': 'Bearer',
-            'expires_in': 3600,
-            'refresh_expires_in': 2592000,
-          }),
-        ),
-        200,
-        headers: {'content-type': 'application/json; charset=utf-8'},
-      );
-    }
-    if (req.url.path.endsWith('/profile')) {
-      return http.Response.bytes(
-        utf8.encode(
-          jsonEncode({
-            'user_id': 'u-del',
-            'display_name': '测试用户',
-            'email': 'u@example.com',
-          }),
-        ),
-        200,
-        headers: {'content-type': 'application/json; charset=utf-8'},
-      );
-    }
-    if (req.url.path.endsWith('/oauth/revoke')) {
-      return http.Response('', 200);
-    }
-    return http.Response('{}', 200);
-  });
-  final oauthClient = OAuthClient(
-    config: kStubOAuthConfig,
-    httpClient: authHttp,
-  );
-  final auth = AuthService(
-    oauthConfig: kStubOAuthConfig,
-    oauthClient: oauthClient,
-    launcher: _EchoWebAuthLauncher(),
-    secureStore: secure,
-  );
-  await auth.ready;
-  final err = await auth.signInWithOAuth();
-  expect(err, isNull);
-  expect(auth.isSignedIn, isTrue);
-  return (auth: auth, secure: secure);
 }
 
 void main() {
@@ -1311,156 +1236,23 @@ void main() {
   );
 
   testWidgets(
-    '3b. Setting 关于录音卡 displays readLastCrash() diagnostic summary & 注销账号 handles 404 honestly then wipes on 200',
+    '3b. Setting 关于录音卡 displays readLastCrash() diagnostic summary & hides 注销账号',
     (tester) async {
-      sqfliteFfiInit();
-      final tmp = Directory.systemTemp.createTempSync('rc_acct_wipe_');
-      addTearDown(() {
-        if (tmp.existsSync()) tmp.deleteSync(recursive: true);
-      });
-      final recDir = Directory('${tmp.path}/recordings')
-        ..createSync(recursive: true);
-      final liveAudioDir = Directory('${tmp.path}/live_audio');
-      final liveSessionDir = Directory('${liveAudioDir.path}/ses-live-1')
-        ..createSync(recursive: true);
-      final liveWavFile = File('${liveSessionDir.path}/audio.wav')
-        ..writeAsBytesSync(encodeWav(Float32List(1600), sampleRate: 16000));
-      File('${liveSessionDir.path}/session.json')
-          .writeAsStringSync('{"id":"ses-live-1"}');
-
-      final dbDir = Directory('${tmp.path}/databases')
-        ..createSync(recursive: true);
-      final memDbPath = '${dbDir.path}/memory_index.db';
-      final healthDbFile = File('${dbDir.path}/health_signals.db')
-        ..writeAsBytesSync([1, 2, 3, 4]);
-      final healthWalFile = File('${dbDir.path}/health_signals.db-wal')
-        ..writeAsBytesSync([5, 6]);
-
       final kv = InMemoryStore();
       await kv.setString(
         lastCrashKey,
         '{"t":"2026-11-19T12:00:00.000","kind":"FlutterError","message":"RenderFlex overflowed"}',
       );
-
-      final signedIn = await tester.runAsync(_createSignedInAuth);
-      final auth = signedIn!.auth;
-      addTearDown(auth.dispose);
-
-      final recStore = RecordingStore(
-        root: recDir,
-        jsonStore: JsonStore(store: InMemoryStore()),
-      );
-      final recSubDir = Directory('${recDir.path}/WIPE_001.WAV')
-        ..createSync(recursive: true);
-      final recWavFile = File('${recSubDir.path}/audio.wav')
-        ..writeAsBytesSync(encodeWav(Float32List(1600), sampleRate: 16000));
-      final nowMs = DateTime(2026, 11, 19, 10, 0).millisecondsSinceEpoch;
-      final model = SummaryModel();
-      final appStore = AppStore(loadPersistedState: false);
-      appStore.attachPipeline(
-        pipeline: RecordingPipeline(
-          gateway: FakeCardGateway(),
-          store: recStore,
-          engine: _NoopEngine(),
-          models: _NoopModels(),
-        ),
-        store: recStore,
-        generator: await model.generator(),
-      );
-      addTearDown(appStore.dispose);
-
-      late MemorySearchService memService;
-      await tester.runAsync(() async {
-        await recStore.save(
-          RecordingFile(
-            deviceName: 'WIPE_001.WAV',
-            session: 'ses-wipe',
-            seq: 1,
-            startAtMs: nowMs,
-            apmPath: '',
-            wavPath: recWavFile.path,
-            durationMs: 5000,
-            stage: RecordingStage.ready,
-            turns: const [
-              PolishedTurn(
-                id: 'wt1',
-                startMs: 0,
-                endMs: 4000,
-                speakerLabel: '1',
-                text: '敏感本地对话测试内容',
-                srcUtteranceIds: ['wu1'],
-              ),
-            ],
-            utterances: const [
-              RawUtterance(
-                id: 'wu1',
-                sliceId: 'ws1',
-                startMs: 0,
-                endMs: 4000,
-                text: '敏感本地对话测试内容',
-              ),
-            ],
-            segments: [
-              SegmentRecord(
-                id: 'ev-to-wipe',
-                sessionId: 'ses-wipe',
-                index: 0,
-                startAtMs: nowMs,
-                endAtMs: nowMs + 5000,
-                title: '待注销清理记录',
-                brief: '敏感本地对话测试内容',
-                longText: '敏感本地对话测试内容',
-                status: SegmentStatus.closed,
-                turnIds: const ['wt1'],
-              ),
-            ],
-            createdAtMs: nowMs,
-          ),
-        );
-        await appStore.refreshFromStore();
-
-        memService = MemorySearchService(
-          index: LocalMemoryIndex(
-            factory: databaseFactoryFfi,
-            path: () async => memDbPath,
-          ),
-          corpus: () => MemoryCorpus(
-            events: appStore.eventsWithResolvedSpeakers(),
-            summaries: appStore.summariesWithResolvedSpeakers(),
-          ),
-          chat: (_) async => '',
-        );
-        await memService.reindex();
-        final preHits = await memService.search('敏感本地对话');
-        expect(preHits, isNotEmpty);
-      });
-      addTearDown(() => tester.runAsync(memService.close));
-
-      var nextStatus = 404;
-      final deleteRequests = <http.Request>[];
-      final accountClient = MockClient((req) async {
-        deleteRequests.add(req);
-        return http.Response('{"status":"handled"}', nextStatus);
-      });
+      final agentConfig = AgentConfigStore(store: InMemoryStore());
+      addTearDown(agentConfig.dispose);
 
       await tester.pumpWidget(
         MaterialApp(
           theme: testTheme(),
-          home: StoreScope(
-            store: appStore,
-            child: MemorySearchScope(
-              service: memService,
-              child: Scaffold(
-                body: SettingPage(
-                  agentConfig: AgentConfigStore(store: InMemoryStore()),
-                  authService: auth,
-                  crashStore: kv,
-                  accountHttpClient: accountClient,
-                  apiBaseOverride: 'https://api.example.test',
-                  liveAudioDir: liveAudioDir,
-                  databasesDirOverride: dbDir,
-                ),
-              ),
+          home: Scaffold(
+            body: SettingPage(
+              agentConfig: agentConfig,
+              crashStore: kv,
             ),
           ),
         ),
@@ -1468,75 +1260,22 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.scrollUntilVisible(
-        find.byKey(const Key('account-delete-entry')),
+        find.byKey(const Key('setting-about')),
         200,
         scrollable: find.byType(Scrollable).first,
       );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('account-delete-entry')), findsOneWidget);
+      expect(find.byKey(const Key('setting-about')), findsOneWidget);
       expect(find.byKey(const Key('setting-last-crash')), findsOneWidget);
       expect(find.textContaining('RenderFlex overflowed'), findsOneWidget);
+      expect(find.byKey(const Key('account-delete-entry')), findsNothing);
+      expect(find.text('注销账号'), findsNothing);
 
       // 清除最近异常诊断摘要
       await tester.tap(find.byKey(const Key('setting-last-crash-clear')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('setting-last-crash')), findsNothing);
-
-      // 第一次点击注销账号：服务端返回 404，绝不能伪造云端已注销（保持已登录与本地记录未删）
-      await tester.tap(find.byKey(const Key('account-delete-entry')));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const Key('account-delete-confirm-dialog')),
-        findsOneWidget,
-      );
-
-      await tester.tap(find.byKey(const Key('account-delete-confirm-btn')));
-      await tester.pumpAndSettle();
-
-      expect(deleteRequests.length, 1);
-      expect(deleteRequests.single.method, 'DELETE');
-      expect(deleteRequests.single.url.toString(), 'https://api.example.test/api/account');
-      expect(
-        deleteRequests.single.headers['Authorization'],
-        'Bearer access-1',
-      );
-      expect(
-        find.byKey(const Key('account-delete-error-dialog')),
-        findsOneWidget,
-      );
-      expect(find.textContaining('HTTP 404'), findsOneWidget);
-      expect(find.textContaining('privacy@reai.chat'), findsOneWidget);
-      expect(auth.isSignedIn, isTrue);
-      expect(appStore.events, isNotEmpty);
-      expect(liveWavFile.existsSync(), isTrue);
-      expect(healthDbFile.existsSync(), isTrue);
-
-      // 点击「重试」且服务端返回 200：擦除 OAuth 令牌并清空本机全部记录、SQLite 库与 live_audio WAV
-      nextStatus = 200;
-      await tester.tap(find.byKey(const Key('account-delete-retry')));
-      await tester.pump(const Duration(milliseconds: 350));
-      for (var i = 0; i < 60; i++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 15)),
-        );
-        await tester.pump(const Duration(milliseconds: 20));
-        if (!auth.isSignedIn && !healthWalFile.existsSync()) break;
-      }
-      await tester.pumpAndSettle();
-
-      expect(deleteRequests.length, 2);
-      expect(auth.isSignedIn, isFalse);
-      expect(appStore.events, isEmpty);
-      expect(recWavFile.existsSync(), isFalse);
-      expect(liveWavFile.existsSync(), isFalse);
-      expect(File(memDbPath).existsSync(), isFalse);
-      expect(healthDbFile.existsSync(), isFalse);
-      expect(healthWalFile.existsSync(), isFalse);
-      final postHits = await tester.runAsync(
-        () => memService.search('敏感本地对话'),
-      );
-      expect(postHits, isEmpty);
     },
   );
 }

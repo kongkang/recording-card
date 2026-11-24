@@ -369,59 +369,6 @@ class OAuthClient {
     }
   }
 
-  /// 请求服务端注销当前账号（`DELETE /account`）。
-  ///
-  /// 返回 `true` 表示服务端已受理注销；返回 `false` 表示服务端注销端点尚未上线
-  /// （HTTP 404 / 405 / 501，绝不静默当成已注销）；未授权抛 [OAuthAuthRequiredException]，
-  /// 其它服务端或网络错误抛对应 [OAuthException]。
-  Future<bool> deleteAccount(String accessToken) async {
-    final url = _config.deleteAccountUrl;
-    if (url == null) return false;
-    final response = await _send(
-      () => _httpClient.delete(
-        Uri.parse(url),
-        headers: {
-          'Authorization': 'Bearer $accessToken',
-          'Accept': 'application/json',
-        },
-      ),
-    );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return true;
-    }
-    if (response.statusCode == 404 ||
-        response.statusCode == 405 ||
-        response.statusCode == 501) {
-      return false;
-    }
-    if (response.statusCode == 401) {
-      throw const OAuthAuthRequiredException();
-    }
-    var code = 'delete_account_failed';
-    var detail = '';
-    if (response.bodyBytes.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-        if (decoded is Map<String, dynamic>) {
-          code = (decoded['error'] ?? code).toString();
-          detail = (decoded['error_description'] ?? decoded['message'] ?? '')
-              .toString();
-        }
-      } catch (_) {
-        // 非 JSON 错误体保留默认码
-      }
-    }
-    throw OAuthServerException(
-      code: code,
-      message: response.statusCode >= 500
-          ? '服务端暂时不可用，请稍后重试'
-          : (detail.trim().isNotEmpty
-                ? detail.trim()
-                : '账号注销失败（HTTP ${response.statusCode}）'),
-      statusCode: response.statusCode,
-    );
-  }
-
   /// 释放内部创建的 http.Client（外部注入的由调用方负责）。
   void close() {
     if (_ownsHttpClient) _httpClient.close();

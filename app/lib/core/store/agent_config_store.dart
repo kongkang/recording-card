@@ -1512,7 +1512,7 @@ class AgentConfigStore extends ChangeNotifier {
     await _save();
   }
 
-  /// 注销账号或重置本机配置时删除持久化的 Agent 配置并重新加载默认值。
+  /// 清空本机数据或重置本机配置时删除持久化的 Agent 配置并重新加载默认值。
   Future<void> resetAll() async {
     try {
       await _json.remove(_storageKey);
