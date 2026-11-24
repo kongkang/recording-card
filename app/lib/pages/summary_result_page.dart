@@ -546,6 +546,7 @@ class _ResultView extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
     final rc = context.rc;
+    final styleSpec = context.rcStyle;
     final memo = page._ensureMemo(store, card);
     final subDescText = memo.subDescText;
     // 每个 SummaryResultPageState 持有独立截图 GlobalKey，防止路由切换动画双实例挂载冲突
@@ -577,8 +578,13 @@ class _ResultView extends StatelessWidget {
                               key: const Key('sum-title'),
                               style: TextStyle(
                                 fontSize: 20,
-                                fontWeight: FontWeight.w800,
+                                fontWeight: styleSpec.styleId == RCUIStyleId.folio
+                                    ? FontWeight.w900
+                                    : FontWeight.w800,
                                 color: rc.label,
+                                fontFamilyFallback: styleSpec.serifTitles
+                                    ? rcSerifFontFallback
+                                    : rcFontFallback,
                               ),
                             ),
                             const SizedBox(height: 4),
@@ -832,9 +838,88 @@ class _ResultView extends StatelessWidget {
         ),
       if (show('ov'))
         _section(context, 'sec-ov', '概览', [
-          Text(
-            store.applySpeakerAliasesToText(card.overview ?? '', sourceEvents),
-            style: TextStyle(fontSize: 14, height: 1.6, color: rc.ink),
+          Builder(
+            builder: (context) {
+              final st = context.rcStyle;
+              final overviewText = store.applySpeakerAliasesToText(
+                card.overview ?? '',
+                sourceEvents,
+              );
+              if (st.styleId == RCUIStyleId.warmPaper) {
+                return Text(
+                  overviewText,
+                  style: TextStyle(fontSize: 14, height: 1.6, color: rc.ink),
+                );
+              }
+              final overviewBody = Padding(
+                padding: const EdgeInsets.all(14),
+                child: Text(
+                  overviewText,
+                  style: TextStyle(
+                    fontSize: 14.5,
+                    height: 1.65,
+                    color: rc.ink,
+                    fontFamilyFallback: st.serifTitles
+                        ? rcSerifFontFallback
+                        : rcFontFallback,
+                  ),
+                ),
+              );
+              if (st.styleId == RCUIStyleId.chronos) {
+                return Container(
+                  width: double.infinity,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE2E6EE)),
+                  ),
+                  child: Stack(
+                    children: [
+                      const Positioned(
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: 3,
+                        child: ColoredBox(color: Color(0xFF1D4ED8)),
+                      ),
+                      overviewBody,
+                    ],
+                  ),
+                );
+              }
+              final BoxDecoration deco = switch (st.styleId) {
+                RCUIStyleId.braunField => BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFD2D1C8)),
+                ),
+                RCUIStyleId.chronos => const BoxDecoration(),
+                RCUIStyleId.folio => const BoxDecoration(
+                  color: Color(0xFFFCF9F2),
+                  border: Border(
+                    left: BorderSide(color: Color(0xFFA62B21), width: 3),
+                  ),
+                ),
+                RCUIStyleId.nocturne => const BoxDecoration(
+                  color: Color(0xFF12141A),
+                  border: Border(
+                    bottom: BorderSide(color: Color(0xFF1E222B)),
+                  ),
+                ),
+                RCUIStyleId.air => BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: st.cardShadow,
+                ),
+                RCUIStyleId.warmPaper => const BoxDecoration(),
+              };
+              return Container(
+                width: double.infinity,
+                decoration: deco,
+                child: overviewBody,
+              );
+            },
           ),
           if (allPhotos.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -920,8 +1005,11 @@ class _ResultView extends StatelessWidget {
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: rc.card,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: rc.sep),
+              borderRadius: BorderRadius.circular(context.rcStyle.cardRadius),
+              border: context.rcStyle.styleId == RCUIStyleId.air
+                  ? null
+                  : Border.all(color: rc.sep),
+              boxShadow: context.rcStyle.cardShadow,
             ),
             child: _buildMergedFullTextContent(
               context,
@@ -946,9 +1034,16 @@ class _ResultView extends StatelessWidget {
                   child: Material(
                     color: srcRc.card,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(color: srcRc.sep),
+                      borderRadius: BorderRadius.circular(
+                        context.rcStyle.cardRadius,
+                      ),
+                      side: context.rcStyle.styleId == RCUIStyleId.air
+                          ? BorderSide.none
+                          : BorderSide(color: srcRc.sep),
                     ),
+                    elevation:
+                        context.rcStyle.styleId == RCUIStyleId.air ? 2 : 0,
+                    shadowColor: const Color(0x180F172A),
                     clipBehavior: Clip.antiAlias,
                     child: InkWell(
                       key: Key('src-$id'),
@@ -1352,17 +1447,39 @@ class _ExportButtonState extends State<_ExportButton> {
   @override
   Widget build(BuildContext context) {
     final rc = context.rc;
+    final st = context.rcStyle;
+    final isStyled = st.styleId != RCUIStyleId.warmPaper;
     return KeyedSubtree(
       key: _shareButtonKey,
       child: TextButton(
         key: const Key('export-btn'),
         onPressed: _busy ? null : () => _open(context),
-        style: TextButton.styleFrom(
-          foregroundColor: rc.label,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          minimumSize: Size.zero,
-          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-        ),
+        style: isStyled
+            ? TextButton.styleFrom(
+                backgroundColor: st.accent,
+                foregroundColor: st.accentFg,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                minimumSize: Size.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(st.pillRadius),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              )
+            : TextButton.styleFrom(
+                foregroundColor: rc.label,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                minimumSize: Size.zero,
+                textStyle: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
         child: _busy
             ? const SizedBox(
                 key: Key('export-busy'),
@@ -1680,6 +1797,8 @@ class _StickyTabs extends SliverPersistentHeaderDelegate {
     bool overlapsContent,
   ) {
     final rc = context.rc;
+    final st = context.rcStyle;
+    final isStyled = st.styleId != RCUIStyleId.warmPaper;
     return Container(
       key: const Key('stabs'),
       decoration: BoxDecoration(
@@ -1699,29 +1818,67 @@ class _StickyTabs extends SliverPersistentHeaderDelegate {
                 child: Row(
                   children: [
                     for (final (k, label) in tabs)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 18),
-                        child: TextButton(
-                          key: Key('stab-$k'),
-                          onPressed: () => onTap(k),
-                          style: TextButton.styleFrom(
-                            foregroundColor: current == k ? rc.label : rc.sec,
-                            padding: const EdgeInsets.symmetric(horizontal: 2),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      if (isStyled)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: InkWell(
+                            key: Key('stab-$k'),
+                            borderRadius: BorderRadius.circular(st.pillRadius),
+                            onTap: () => onTap(k),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 11,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: current == k
+                                    ? st.accent
+                                    : rc.card,
+                                borderRadius: BorderRadius.circular(
+                                  st.pillRadius,
+                                ),
+                                border: Border.all(
+                                  color: current == k ? st.accent : rc.sep,
+                                ),
+                              ),
+                              child: Text(
+                                label,
+                                softWrap: false,
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: current == k ? st.accentFg : rc.sec,
+                                ),
+                              ),
+                            ),
                           ),
-                          child: Text(
-                            label,
-                            softWrap: false,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: current == k
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
+                        )
+                      else
+                        Padding(
+                          padding: const EdgeInsets.only(right: 18),
+                          child: TextButton(
+                            key: Key('stab-$k'),
+                            onPressed: () => onTap(k),
+                            style: TextButton.styleFrom(
+                              foregroundColor: current == k ? rc.label : rc.sec,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: Text(
+                              label,
+                              softWrap: false,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: current == k
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
                             ),
                           ),
                         ),
-                      ),
                   ],
                 ),
               ),

@@ -46,6 +46,7 @@ import '../widgets/rc_switch.dart';
 import '../widgets/store_scope.dart';
 import 'privacy_page.dart';
 import 'settings/setting_sub_page.dart';
+import 'styles/styled_chrome.dart';
 
 class SettingPage extends StatefulWidget {
   /// [settings] / [agentConfig] 可选注入（调用方负责 `await store.load()`）。
@@ -756,7 +757,15 @@ class _SettingPageState extends State<SettingPage> {
       color: c.bg,
       child: SingleChildScrollView(
         key: const Key('setting-list'),
-        padding: const EdgeInsets.fromLTRB(22, 8, 22, RCDims.pageBottomPad),
+        padding: EdgeInsets.fromLTRB(
+          22,
+          8,
+          22,
+          styledListBottomPadding(
+            context.rcStyle.styleId,
+            bottomInset: MediaQuery.paddingOf(context).bottom,
+          ),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
@@ -1288,11 +1297,19 @@ class _GroupTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = context.rcStyle;
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 20, 2, 8),
       child: Text(
         text,
-        style: TextStyle(fontSize: 12, height: 1.4, color: context.rc.sec),
+        style: TextStyle(
+          fontSize: 12,
+          height: 1.4,
+          color: context.rc.sec,
+          fontFamilyFallback: s.serifTitles
+              ? rcSerifFontFallback
+              : rcFontFallback,
+        ),
       ),
     );
   }
@@ -1312,7 +1329,7 @@ class _GroupCard extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       decoration: BoxDecoration(
         color: c.card,
-        border: Border.all(color: c.sep),
+        border: s.styleId == RCUIStyleId.air ? null : Border.all(color: c.sep),
         borderRadius: BorderRadius.circular(s.cardRadius),
         boxShadow: s.cardShadow,
       ),
@@ -1373,6 +1390,9 @@ class _AboutSection extends StatelessWidget {
               height: 1.4,
               fontWeight: FontWeight.w600,
               color: c.label,
+              fontFamilyFallback: s.serifTitles
+                  ? rcSerifFontFallback
+                  : rcFontFallback,
             ),
           ),
         ),
@@ -1380,7 +1400,9 @@ class _AboutSection extends StatelessWidget {
           key: const Key('setting-about'),
           decoration: BoxDecoration(
             color: c.card,
-            border: Border.all(color: c.sep),
+            border: s.styleId == RCUIStyleId.air
+                ? null
+                : Border.all(color: c.sep),
             borderRadius: BorderRadius.circular(s.cardRadius),
             boxShadow: s.cardShadow,
           ),
