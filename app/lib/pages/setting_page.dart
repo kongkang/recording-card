@@ -31,7 +31,6 @@ import '../services/auth_service.dart';
 import '../services/external_data/external_data_hub_store.dart';
 import '../services/external_data/getnote_sync_store.dart';
 import '../services/health/health_signal_controller.dart';
-import '../services/memory/memory_search_scope.dart';
 import '../services/net/model_gateway.dart';
 import '../services/net/model_provider_store.dart';
 import '../services/photos/photo_library_service.dart';
