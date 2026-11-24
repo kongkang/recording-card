@@ -130,9 +130,16 @@ struct WatchMainView: View {
     /// 左侧状态贴着系统时间的中线。时间由 watchOS 绘制，这里不画。
     private func statusLeading(theme: WatchThemePalette) -> some View {
         HStack(spacing: 5) {
-            Circle()
-                .fill(engine.isPhoneReachable ? theme.battColor : theme.markColor)
-                .frame(width: 7, height: 7)
+            Group {
+                if theme.style == .braunField {
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(engine.isPhoneReachable ? theme.battColor : theme.markColor)
+                } else {
+                    Circle()
+                        .fill(engine.isPhoneReachable ? theme.battColor : theme.markColor)
+                }
+            }
+            .frame(width: 7, height: 7)
             Text(engine.isPhoneReachable ? "已连手机" : "离线暂存")
                 .lineLimit(1)
             if engine.snapshot.isCharging || engine.snapshot.batteryPercent >= 0 {
@@ -152,20 +159,43 @@ struct WatchMainView: View {
             if engine.snapshot.isRecording {
                 HStack(spacing: 6) {
                     HStack(spacing: 4) {
-                        Circle()
-                            .fill(theme.recordingAccent)
-                            .frame(width: 6, height: 6)
+                        Group {
+                            if theme.style == .braunField {
+                                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                                    .fill(theme.recordingAccent)
+                            } else {
+                                Circle()
+                                    .fill(theme.recordingAccent)
+                            }
+                        }
+                        .frame(width: 6, height: 6)
                         Text("录音中")
                             .font(.system(size: 10.5, weight: .semibold, design: theme.metaDesign))
                             .foregroundStyle(theme.textPrimary.opacity(0.82))
                     }
                     if sessionMarkCount > 0 {
-                        Text("已打点 \(sessionMarkCount)")
-                            .font(.system(size: 9.5, weight: .bold, design: theme.metaDesign).monospacedDigit())
-                            .foregroundStyle(theme.markColor)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(theme.markColor.opacity(0.2), in: Capsule())
+                        if theme.style == .braunField {
+                            Text("已打点 \(sessionMarkCount)")
+                                .font(.system(size: 9.5, weight: .bold, design: .monospaced).monospacedDigit())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(theme.recordingAccent, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+                        } else if theme.style == .folio {
+                            Text("已打点 \(sessionMarkCount)")
+                                .font(.system(size: 9.5, weight: .bold, design: .serif).monospacedDigit())
+                                .foregroundStyle(Color(red: 0.969, green: 0.949, blue: 0.910)) // #F7F2E8
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(Color(red: 0.651, green: 0.169, blue: 0.129), in: RoundedRectangle(cornerRadius: 3, style: .continuous)) // #A62B21
+                        } else {
+                            Text("已打点 \(sessionMarkCount)")
+                                .font(.system(size: 9.5, weight: .bold, design: theme.metaDesign).monospacedDigit())
+                                .foregroundStyle(theme.markColor)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(theme.markColor.opacity(0.2), in: Capsule())
+                        }
                     }
                 }
 
@@ -194,7 +224,11 @@ struct WatchMainView: View {
                     .font(.system(size: 11, weight: .semibold, design: theme.metaDesign))
                     .foregroundStyle(theme.accent)
                 Text(Date(), format: .dateTime.hour().minute())
-                    .font(.system(size: compact ? 36 : 42, weight: .medium, design: theme.timerDesign))
+                    .font(.system(
+                        size: theme.style == .chronos ? (compact ? 40 : 46) : (compact ? 36 : 42),
+                        weight: .medium,
+                        design: theme.timerDesign
+                    ))
                     .monospacedDigit()
                     .foregroundStyle(theme.textPrimary)
                 if theme.style == .nocturne {
@@ -236,13 +270,13 @@ struct WatchMainView: View {
 
     private func nocturneSpectrumStrip(theme: WatchThemePalette) -> some View {
         let tick = engine.snapshot.elapsedSec
-        return HStack(alignment: .center, spacing: 3) {
-            ForEach(0..<11, id: \.self) { idx in
+        return HStack(alignment: .center, spacing: 2.5) {
+            ForEach(0..<14, id: \.self) { idx in
                 let wave = abs((idx * 5 + tick * 3) % 9 - 4)
                 let height = CGFloat(4 + wave * 2)
-                let isPeak = idx == 5 && sessionMarkCount > 0
+                let isPeak = idx == 7 && sessionMarkCount > 0
                 Capsule()
-                    .fill(isPeak ? theme.markColor : theme.battColor.opacity(0.82))
+                    .fill(isPeak ? theme.markColor : theme.accent.opacity(0.85))
                     .frame(width: 2.5, height: height)
             }
         }
@@ -251,11 +285,11 @@ struct WatchMainView: View {
     }
 
     private func nocturneIdleBars(theme: WatchThemePalette) -> some View {
-        HStack(spacing: 3) {
-            ForEach(0..<11, id: \.self) { idx in
+        HStack(spacing: 2.5) {
+            ForEach(0..<14, id: \.self) { idx in
                 Capsule()
-                    .fill(idx == 5 ? theme.accent.opacity(0.6) : Color.white.opacity(0.16))
-                    .frame(width: 2.5, height: idx == 5 ? 6 : 3)
+                    .fill(idx == 7 ? theme.accent.opacity(0.6) : Color.white.opacity(0.16))
+                    .frame(width: 2.5, height: idx == 7 ? 6 : 3)
             }
         }
         .padding(.vertical, 2)
@@ -338,15 +372,30 @@ struct WatchMainView: View {
         return ZStack(alignment: .top) {
             HStack(spacing: 6) {
                 HStack(spacing: 5) {
-                    ZStack {
-                        Circle()
-                            .stroke(Color.white.opacity(0.18), lineWidth: 1.8)
-                        Circle()
-                            .trim(from: engine.snapshot.isRecording ? progress : 0, to: 1)
-                            .stroke(ring, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
+                    if theme.style == .braunField {
+                        let litCount = engine.snapshot.isRecording ? Int(ceil(progress * 10.0)) : 0
+                        HStack(spacing: 2) {
+                            ForEach(0..<10, id: \.self) { idx in
+                                RoundedRectangle(cornerRadius: 1, style: .continuous)
+                                    .fill(
+                                        idx < litCount
+                                            ? Color(red: 1.0, green: 0.333, blue: 0.078) // #FF5514
+                                            : Color.white.opacity(0.20)
+                                    )
+                                    .frame(width: 3, height: 7)
+                            }
+                        }
+                    } else {
+                        ZStack {
+                            Circle()
+                                .stroke(Color.white.opacity(0.18), lineWidth: 1.8)
+                            Circle()
+                                .trim(from: engine.snapshot.isRecording ? progress : 0, to: 1)
+                                .stroke(ring, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                        }
+                        .frame(width: 14, height: 14)
                     }
-                    .frame(width: 14, height: 14)
                     Text(engine.snapshot.isRecording ? "单圈 \(remaining)s" : "单圈 60s")
                         .font(.system(size: 10, weight: .semibold, design: theme.metaDesign))
                         .monospacedDigit()
@@ -376,6 +425,13 @@ struct WatchMainView: View {
         .background {
             footerShape
                 .fill(pending > 0 ? theme.markColor.opacity(0.16) : theme.surface)
+        }
+        .overlay {
+            if theme.style == .braunField || theme.style == .folio || theme.style == .air {
+                footerShape
+                    .stroke(theme.border, lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
         }
         .overlay(alignment: .bottom) {
             if engine.snapshot.isRecording && progress > 0 {
@@ -523,8 +579,8 @@ private struct WatchThemePalette {
             recordingAccent = Color(red: 0.784, green: 0.243, blue: 0.169) // #C83E2B
             markColor = Color(red: 0.91, green: 0.63, blue: 0.38)
             battColor = Color(red: 0.851, green: 0.780, blue: 0.682) // #D9C7AE
-            startBg = Color(red: 0.176, green: 0.776, blue: 0.325)
-            startFg = .white
+            startBg = Color(red: 0.651, green: 0.169, blue: 0.129) // #A62B21
+            startFg = Color(red: 0.969, green: 0.949, blue: 0.910) // #F7F2E8
             textPrimary = Color(red: 0.961, green: 0.937, blue: 0.894) // #F5EFE4
             textSecondary = Color(red: 0.76, green: 0.71, blue: 0.63)
             timerDesign = .serif
@@ -540,7 +596,7 @@ private struct WatchThemePalette {
             recordingAccent = Color(red: 1.0, green: 0.271, blue: 0.227) // #FF453A
             markColor = Color(red: 0.961, green: 0.651, blue: 0.137)
             battColor = Color(red: 0.188, green: 0.820, blue: 0.345) // #30D158
-            startBg = Color(red: 0.176, green: 0.776, blue: 0.325) // #2DC653
+            startBg = Color(red: 0.961, green: 0.651, blue: 0.137) // #F5A623
             startFg = .black
             textPrimary = Color(red: 0.95, green: 0.96, blue: 0.98)
             textSecondary = Color(red: 0.58, green: 0.61, blue: 0.68)
@@ -591,7 +647,14 @@ private struct FlatSlideToStopControl: View {
             ZStack(alignment: .leading) {
                 trackShape
                     .fill(theme.recordingAccent.opacity(0.16))
-                    .overlay(trackShape.stroke(theme.recordingAccent.opacity(0.38), lineWidth: 1))
+                    .overlay(
+                        trackShape.stroke(
+                            theme.style == .air
+                                ? Color.white.opacity(0.22)
+                                : theme.recordingAccent.opacity(0.38),
+                            lineWidth: 1
+                        )
+                    )
 
                 Text("滑动停止录音")
                     .font(.system(size: 11, weight: .semibold))

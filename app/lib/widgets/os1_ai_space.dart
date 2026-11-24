@@ -100,6 +100,7 @@ class _Os1AiSpaceOverlayState extends State<Os1AiSpaceOverlay>
         if (!widget.controller.isOpen) return const SizedBox.shrink();
         final s = context.rcStyle;
         final isHer = widget.controller.mode == Os1Mode.her;
+        final isAirCoralChat = !isHer && s.styleId == RCUIStyleId.air;
         final bg = isHer ? s.os1HerGradient[1] : s.os1ChatBg;
         final topPadding = MediaQuery.paddingOf(context).top;
         final bottomPadding = MediaQuery.paddingOf(context).bottom;
@@ -107,7 +108,21 @@ class _Os1AiSpaceOverlayState extends State<Os1AiSpaceOverlay>
           child: Material(
             key: const Key('ai-space'),
             color: bg,
-            child: LayoutBuilder(
+            child: DecoratedBox(
+              decoration: isAirCoralChat
+                  ? const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0xFFE85D3F),
+                          Color(0xFFC9412C),
+                          Color(0xFFA93026),
+                        ],
+                      ),
+                    )
+                  : const BoxDecoration(),
+              child: LayoutBuilder(
               builder: (context, constraints) {
                 final drawerWidth = math.min(
                   constraints.maxWidth * 0.80,
@@ -266,6 +281,7 @@ class _Os1AiSpaceOverlayState extends State<Os1AiSpaceOverlay>
                 );
               },
             ),
+            ),
           ),
         );
       },
@@ -279,29 +295,35 @@ class _TopBar extends StatelessWidget {
   final AgentChatController controller;
   final bool isHer;
 
-  ButtonStyle _pillButtonStyle(RCColorScheme c) => TextButton.styleFrom(
-    backgroundColor: isHer
-        ? const Color(0x2EFFFFFF)
-        : (c.isDark ? const Color(0x20FFFFFF) : const Color(0x0F000000)),
-    foregroundColor: isHer ? Colors.white : c.label,
-    disabledForegroundColor: isHer
-        ? const Color(0x66FFFFFF)
-        : c.sec.withValues(alpha: 0.55),
-    disabledBackgroundColor: isHer
-        ? const Color(0x18FFFFFF)
-        : const Color(0x08000000),
-    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-    minimumSize: Size.zero,
-    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    shape: const StadiumBorder(),
-    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-  );
+  ButtonStyle _pillButtonStyle(RCColorScheme c, bool darkChrome) =>
+      TextButton.styleFrom(
+        backgroundColor: darkChrome
+            ? const Color(0x2EFFFFFF)
+            : const Color(0x0F000000),
+        foregroundColor: darkChrome ? Colors.white : c.label,
+        disabledForegroundColor: darkChrome
+            ? const Color(0x66FFFFFF)
+            : c.sec.withValues(alpha: 0.55),
+        disabledBackgroundColor: darkChrome
+            ? const Color(0x18FFFFFF)
+            : const Color(0x08000000),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: const StadiumBorder(),
+        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      );
 
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
     final s = context.rcStyle;
-    final pillStyle = _pillButtonStyle(c);
+    final darkChrome =
+        isHer ||
+        c.isDark ||
+        s.styleId == RCUIStyleId.braunField ||
+        s.styleId == RCUIStyleId.air;
+    final pillStyle = _pillButtonStyle(c, darkChrome);
     final canStartNew = !controller.isBusy && controller.messages.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
@@ -321,12 +343,12 @@ class _TopBar extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
-              color: isHer
+              color: darkChrome
                   ? const Color(0x26FFFFFF)
-                  : (c.isDark ? const Color(0x1AFFFFFF) : const Color(0x0F000000)),
+                  : const Color(0x0F000000),
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
-                color: isHer ? const Color(0x38FFFFFF) : c.sep,
+                color: darkChrome ? const Color(0x38FFFFFF) : c.sep,
               ),
             ),
             child: Row(
@@ -339,6 +361,7 @@ class _TopBar extends StatelessWidget {
                   label: '沉浸通话',
                   active: isHer,
                   isHerTheme: isHer,
+                  darkChrome: darkChrome,
                   onTap: () => controller.setMode(Os1Mode.her),
                 ),
                 _modeBtn(
@@ -348,6 +371,7 @@ class _TopBar extends StatelessWidget {
                   label: '轻聊',
                   active: !isHer,
                   isHerTheme: isHer,
+                  darkChrome: darkChrome,
                   onTap: () => controller.setMode(Os1Mode.chat),
                 ),
               ],
@@ -379,17 +403,35 @@ class _TopBar extends StatelessWidget {
     required String label,
     required bool active,
     required bool isHerTheme,
+    required bool darkChrome,
     required VoidCallback onTap,
   }) {
+    final Color activeBg;
+    final Color activeFg;
+    if (isHerTheme) {
+      activeBg = Colors.white;
+      activeFg = s.os1HerGradient[1];
+    } else if (s.styleId == RCUIStyleId.air) {
+      activeBg = Colors.white;
+      activeFg = const Color(0xFFC9412C);
+    } else if (s.styleId == RCUIStyleId.braunField) {
+      activeBg = const Color(0xFFFF5514);
+      activeFg = const Color(0xFF121210);
+    } else if (s.styleId == RCUIStyleId.nocturne) {
+      activeBg = const Color(0xFFF5A623);
+      activeFg = const Color(0xFF111214);
+    } else {
+      activeBg = c.card;
+      activeFg = c.label;
+    }
+
     return GestureDetector(
       key: key,
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         decoration: BoxDecoration(
-          color: active
-              ? (isHerTheme ? Colors.white : c.card)
-              : Colors.transparent,
+          color: active ? activeBg : Colors.transparent,
           borderRadius: BorderRadius.circular(999),
         ),
         child: Text(
@@ -398,8 +440,8 @@ class _TopBar extends StatelessWidget {
             fontSize: 12.5,
             fontWeight: active ? FontWeight.w700 : FontWeight.w500,
             color: active
-                ? (isHerTheme ? s.os1HerGradient[1] : c.label)
-                : (isHerTheme ? const Color(0xE6FFFFFF) : c.sec),
+                ? activeFg
+                : (darkChrome ? const Color(0xE6FFFFFF) : c.sec),
           ),
         ),
       ),
@@ -1004,12 +1046,38 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
     final c = widget.controller;
     final rc = context.rc;
     final s = context.rcStyle;
+    final isAirCoral = s.styleId == RCUIStyleId.air;
+    final isBraunDark = s.styleId == RCUIStyleId.braunField;
+    final isDarkCanvas = rc.isDark || isAirCoral || isBraunDark;
+    final feedBg = isAirCoral ? Colors.transparent : s.os1ChatBg;
+    final mutedText = isAirCoral
+        ? const Color(0xE6FFFFFF)
+        : (isBraunDark ? const Color(0xFFA1A098) : rc.sec);
+    final composerBg = isAirCoral
+        ? Colors.transparent
+        : (isBraunDark ? const Color(0xFF141513) : rc.card);
+    final composerBorder = isAirCoral
+        ? const Color(0x33FFFFFF)
+        : (isBraunDark ? const Color(0xFF282824) : rc.sep);
+    final inputFill = isAirCoral
+        ? Colors.white.withValues(alpha: 0.94)
+        : (isBraunDark ? const Color(0xFF22221E) : s.os1ChatBg);
+    final inputTextColor = isAirCoral
+        ? const Color(0xFF0F172A)
+        : (isBraunDark ? Colors.white : rc.label);
+    final inputHintColor = isAirCoral
+        ? const Color(0xFF64748B)
+        : (isBraunDark ? const Color(0xFF8A8980) : rc.sec);
+    final sendBg = isAirCoral ? const Color(0xFF0F172A) : s.accent;
+    final sendFg = isAirCoral
+        ? Colors.white
+        : (isBraunDark ? const Color(0xFF121210) : s.accentFg);
     return Column(
       key: const Key('ai-chat-pane'),
       children: [
         Expanded(
           child: Container(
-            color: s.os1ChatBg,
+            color: feedBg,
             child: (c.messages.isEmpty && !c.isBusy)
                 ? SingleChildScrollView(
                     key: const Key('ai-chat-feed'),
@@ -1030,13 +1098,18 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
                               '有事直接问我 · 可检索录音记录、健康状态与联网资料',
                               style: TextStyle(
                                 fontSize: 11.5,
-                                color: rc.sec,
+                                color: mutedText,
                               ),
                             ),
                           ),
                         ),
                         if (c.justStartedNewSession) _newChatBanner(rc, s),
-                        _emptyGuideCard(rc, s),
+                        _emptyGuideCard(
+                          rc,
+                          s,
+                          isAirCoral: isAirCoral,
+                          isBraunDark: isBraunDark,
+                        ),
                         if (c.sessions.isNotEmpty && !c.justStartedNewSession)
                           Padding(
                             padding: const EdgeInsets.only(top: 2),
@@ -1045,7 +1118,7 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
                                 '已有 ${c.sessions.length} 段历史对话 · 从右边缘左滑可查看并继续聊',
                                 style: TextStyle(
                                   fontSize: 11.5,
-                                  color: rc.sec,
+                                  color: mutedText,
                                 ),
                               ),
                             ),
@@ -1081,7 +1154,7 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
         ),
         Container(
           height: 44,
-          color: s.os1ChatBg,
+          color: feedBg,
           child: ListView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -1091,6 +1164,9 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
                 s,
                 key: const Key('ai-quick-1'),
                 label: '查一下最近待办',
+                isDarkCanvas: isDarkCanvas,
+                isAirCoral: isAirCoral,
+                isBraunDark: isBraunDark,
                 onTap: () => unawaited(c.sendMessage('帮我查一下最近录音和总结里记了哪些待办事项')),
               ),
               const SizedBox(width: 8),
@@ -1099,6 +1175,9 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
                 s,
                 key: const Key('ai-quick-2'),
                 label: '今天聊了什么',
+                isDarkCanvas: isDarkCanvas,
+                isAirCoral: isAirCoral,
+                isBraunDark: isBraunDark,
                 onTap: () => unawaited(c.sendMessage('帮我回顾一下今天录音里主要讨论了什么内容')),
               ),
               const SizedBox(width: 8),
@@ -1107,6 +1186,9 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
                 s,
                 key: const Key('ai-quick-3'),
                 label: '看看今天状态',
+                isDarkCanvas: isDarkCanvas,
+                isAirCoral: isAirCoral,
+                isBraunDark: isBraunDark,
                 onTap: () => unawaited(c.sendMessage('看看我今天和最近采集的健康数据与活动状态')),
               ),
             ],
@@ -1115,8 +1197,8 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
         Container(
           padding: EdgeInsets.fromLTRB(12, 8, 12, 10 + widget.bottomPadding),
           decoration: BoxDecoration(
-            color: rc.card,
-            border: Border(top: BorderSide(color: rc.sep)),
+            color: composerBg,
+            border: Border(top: BorderSide(color: composerBorder)),
           ),
           child: Row(
             children: [
@@ -1128,7 +1210,7 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
                     : () => unawaited(c.toggleListening()),
                 icon: Icon(
                   c.isListening ? Icons.stop_circle : Icons.mic_none_rounded,
-                  color: c.isListening ? s.accent : rc.sec,
+                  color: c.isListening ? s.accent : mutedText,
                 ),
               ),
               Expanded(
@@ -1137,15 +1219,15 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
                   controller: _inputCtrl,
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => _submit(),
-                  style: TextStyle(color: rc.label),
+                  style: TextStyle(color: inputTextColor),
                   decoration: InputDecoration(
                     isDense: true,
                     filled: true,
-                    fillColor: s.os1ChatBg,
+                    fillColor: inputFill,
                     hintText: '像发微信一样说一句…',
                     hintStyle: TextStyle(
                       fontSize: 14,
-                      color: rc.sec,
+                      color: inputHintColor,
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 14,
@@ -1153,11 +1235,15 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
                     ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide(color: rc.sep),
+                      borderSide: BorderSide(
+                        color: isAirCoral ? Colors.transparent : composerBorder,
+                      ),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide(color: rc.sep),
+                      borderSide: BorderSide(
+                        color: isAirCoral ? Colors.transparent : composerBorder,
+                      ),
                     ),
                   ),
                 ),
@@ -1167,8 +1253,8 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
                 key: const Key('ai-chat-send'),
                 onPressed: c.isBusy ? null : _submit,
                 style: FilledButton.styleFrom(
-                  backgroundColor: s.accent,
-                  foregroundColor: s.accentFg,
+                  backgroundColor: sendBg,
+                  foregroundColor: sendFg,
                   shape: const StadiumBorder(),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
@@ -1347,18 +1433,30 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
     );
   }
 
-  Widget _emptyGuideCard(RCColorScheme rc, RCStyleSpec s) {
+  Widget _emptyGuideCard(
+    RCColorScheme rc,
+    RCStyleSpec s, {
+    bool isAirCoral = false,
+    bool isBraunDark = false,
+  }) {
+    final bg = isAirCoral
+        ? Colors.white.withValues(alpha: 0.20)
+        : (isBraunDark ? const Color(0xFF242420) : rc.card);
+    final border = isAirCoral
+        ? Colors.white.withValues(alpha: 0.35)
+        : (isBraunDark ? const Color(0xFF3C3C35) : rc.sep);
+    final fg = (isAirCoral || isBraunDark) ? const Color(0xFFF4F3EE) : rc.ink;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: rc.card,
+        color: bg,
         borderRadius: BorderRadius.circular(s.cardRadius + 2),
-        border: Border.all(color: rc.sep),
+        border: Border.all(color: border),
       ),
       child: Text(
         '直接问我任何事情：比如“昨天下午那场讨论决定了什么”“查一下最近健康数据”，或者让我顺手帮你联网搜索、沉淀一条常用 Skill。',
-        style: TextStyle(fontSize: 13.5, height: 1.55, color: rc.ink),
+        style: TextStyle(fontSize: 13.5, height: 1.55, color: fg),
       ),
     );
   }
@@ -1368,15 +1466,25 @@ class _HumanChatPaneState extends State<_HumanChatPane> {
     RCStyleSpec s, {
     required Key key,
     required String label,
+    bool isDarkCanvas = false,
+    bool isAirCoral = false,
+    bool isBraunDark = false,
     required VoidCallback onTap,
   }) {
+    final bg = isAirCoral
+        ? Colors.white.withValues(alpha: 0.18)
+        : (isBraunDark ? const Color(0xFF22221E) : rc.card);
+    final border = isAirCoral
+        ? Colors.white.withValues(alpha: 0.45)
+        : (isBraunDark ? const Color(0xFF3C3C35) : rc.sep);
+    final fg = (isAirCoral || isBraunDark) ? const Color(0xFFF4F3EE) : rc.ink;
     return ActionChip(
       key: key,
       onPressed: onTap,
-      backgroundColor: rc.card,
-      side: BorderSide(color: rc.sep),
+      backgroundColor: bg,
+      side: BorderSide(color: border),
       padding: const EdgeInsets.symmetric(horizontal: 6),
-      labelStyle: TextStyle(fontSize: 12, color: rc.ink),
+      labelStyle: TextStyle(fontSize: 12, color: fg),
       label: Text(label),
     );
   }
@@ -1397,7 +1505,37 @@ class _ChatBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
+    final s = context.rcStyle;
     final isMe = message.role == 'user';
+    final Color bubbleBg;
+    final Color bubbleFg;
+    final Border? bubbleBorder;
+    switch (s.styleId) {
+      case RCUIStyleId.braunField:
+        bubbleBg = isMe ? const Color(0xFFFF5514) : const Color(0xFF242420);
+        bubbleFg = isMe ? const Color(0xFF121210) : const Color(0xFFF4F3EE);
+        bubbleBorder = null;
+      case RCUIStyleId.chronos:
+        bubbleBg = isMe ? const Color(0xFF1D4ED8) : Colors.white;
+        bubbleFg = isMe ? Colors.white : const Color(0xFF111318);
+        bubbleBorder = isMe ? null : Border.all(color: const Color(0xFFE2E6EE));
+      case RCUIStyleId.folio:
+        bubbleBg = isMe ? const Color(0xFFA62B21) : Colors.white;
+        bubbleFg = isMe ? const Color(0xFFF7F2E8) : const Color(0xFF1C1917);
+        bubbleBorder = isMe ? null : Border.all(color: const Color(0xFFDDD4C3));
+      case RCUIStyleId.nocturne:
+        bubbleBg = isMe ? const Color(0xFFF5A623) : const Color(0xFF12141A);
+        bubbleFg = isMe ? const Color(0xFF111214) : const Color(0xFFF3F4F6);
+        bubbleBorder = isMe ? null : Border.all(color: const Color(0xFF1E222B));
+      case RCUIStyleId.air:
+        bubbleBg = isMe ? Colors.white : Colors.white.withValues(alpha: 0.22);
+        bubbleFg = isMe ? const Color(0xFF0F172A) : Colors.white;
+        bubbleBorder = null;
+      case RCUIStyleId.warmPaper:
+        bubbleBg = isMe ? c.label : c.card;
+        bubbleFg = isMe ? c.onLabel : c.label;
+        bubbleBorder = isMe ? null : Border.all(color: c.sep);
+    }
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -1414,21 +1552,21 @@ class _ChatBubble extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
-                color: isMe ? c.label : c.card,
+                color: bubbleBg,
                 borderRadius: BorderRadius.only(
                   topLeft: const Radius.circular(16),
                   topRight: const Radius.circular(16),
                   bottomLeft: Radius.circular(isMe ? 16 : 5),
                   bottomRight: Radius.circular(isMe ? 5 : 16),
                 ),
-                border: isMe ? null : Border.all(color: c.sep),
+                border: bubbleBorder,
               ),
               child: SelectableText(
                 message.text,
                 style: TextStyle(
                   fontSize: 14.5,
                   height: 1.5,
-                  color: isMe ? c.onLabel : c.label,
+                  color: bubbleFg,
                 ),
               ),
             ),
@@ -1490,6 +1628,20 @@ class _TypingBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.rc;
+    final s = context.rcStyle;
+    final (Color bg, Color borderCol, Color dotCol) = switch (s.styleId) {
+      RCUIStyleId.air => (
+        const Color(0x38FFFFFF),
+        const Color(0x45FFFFFF),
+        Colors.white,
+      ),
+      RCUIStyleId.braunField => (
+        const Color(0xFF242420),
+        const Color(0xFF35352E),
+        const Color(0xFF9E9D93),
+      ),
+      _ => (c.card, c.sep, c.sec),
+    };
     return Align(
       key: const Key('ai-typing-bubble'),
       alignment: Alignment.centerLeft,
@@ -1497,16 +1649,16 @@ class _TypingBubble extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: c.card,
+          color: bg,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: c.sep),
+          border: Border.all(color: borderCol),
         ),
         child: Text(
           '• • •',
           style: TextStyle(
             fontSize: 15,
             letterSpacing: 2,
-            color: c.sec,
+            color: dotCol,
             fontWeight: FontWeight.w700,
           ),
         ),

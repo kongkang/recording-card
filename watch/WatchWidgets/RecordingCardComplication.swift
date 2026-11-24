@@ -99,9 +99,15 @@ struct RecordingCardComplicationEntryView: View {
         case .accessoryCircular:
             ZStack {
                 AccessoryWidgetBackground()
-                Circle()
-                    .stroke(activeColor.opacity(entry.state.isRecording ? 0.85 : 0.4), lineWidth: 1.5)
-                    .padding(1)
+                if entry.state.uiStyle == .braunField {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(activeColor.opacity(entry.state.isRecording ? 0.9 : 0.45), lineWidth: 1.5)
+                        .padding(1)
+                } else {
+                    Circle()
+                        .stroke(activeColor.opacity(entry.state.isRecording ? 0.85 : 0.4), lineWidth: 1.5)
+                        .padding(1)
+                }
                 VStack(spacing: 1) {
                     Image(systemName: entry.state.isRecording ? "record.circle.fill" : "mic.fill")
                         .font(.system(size: 16, weight: .semibold))
@@ -127,29 +133,41 @@ struct RecordingCardComplicationEntryView: View {
                     }
                 }
         case .accessoryRectangular:
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
                     Image(systemName: entry.state.isRecording ? "record.circle.fill" : "mic.fill")
                         .foregroundStyle(entry.state.isRecording ? palette.recording : palette.accent)
                     Text("录音卡")
                         .font(.system(.headline, design: palette.design))
+                    Spacer(minLength: 4)
+                    Text(entry.state.isRecording ? "录音中" : (entry.state.pendingCount > 0 ? "待传 \(entry.state.pendingCount)" : "就绪"))
+                        .font(.system(size: 10, weight: .semibold, design: palette.design))
+                        .foregroundStyle(entry.state.isRecording ? palette.recording : (entry.state.pendingCount > 0 ? palette.pending : .secondary))
                 }
                 if entry.state.isRecording, let started = entry.state.startedAtDate {
-                    HStack(spacing: 4) {
-                        Text("录音中")
-                            .font(.system(.caption, design: palette.design))
-                            .foregroundStyle(palette.recording)
+                    HStack(alignment: .center, spacing: 6) {
                         Text(started, style: .timer)
                             .font(.system(.caption, design: palette.design).monospacedDigit())
+                            .foregroundStyle(palette.recording)
+                        Spacer(minLength: 4)
+                        miniEqualizerView(color: palette.recording, active: true)
                     }
                 } else if entry.state.pendingCount > 0 {
-                    Text("轻点开录 · 待传 \(entry.state.pendingCount) 段")
-                        .font(.system(.caption, design: palette.design))
-                        .foregroundStyle(palette.pending)
+                    HStack(alignment: .center, spacing: 6) {
+                        Text("轻点开录 · 待同步")
+                            .font(.system(.caption, design: palette.design))
+                            .foregroundStyle(palette.pending)
+                        Spacer(minLength: 4)
+                        miniEqualizerView(color: palette.pending, active: false)
+                    }
                 } else {
-                    Text("轻点开始持续录音")
-                        .font(.system(.caption, design: palette.design))
-                        .foregroundStyle(.secondary)
+                    HStack(alignment: .center, spacing: 6) {
+                        Text("轻点开始持续录音")
+                            .font(.system(.caption, design: palette.design))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 4)
+                        miniEqualizerView(color: palette.accent, active: false)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -165,6 +183,18 @@ struct RecordingCardComplicationEntryView: View {
             Image(systemName: "mic.fill")
                 .foregroundStyle(palette.accent)
         }
+    }
+
+    private func miniEqualizerView(color: Color, active: Bool) -> some View {
+        let heights: [CGFloat] = active ? [5, 11, 7, 13, 8, 5] : [4, 7, 5, 8, 6, 4]
+        return HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<heights.count, id: \.self) { idx in
+                Capsule()
+                    .fill(active ? color : color.opacity(0.45))
+                    .frame(width: 2, height: heights[idx])
+            }
+        }
+        .frame(height: 14, alignment: .bottom)
     }
 }
 
