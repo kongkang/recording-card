@@ -219,6 +219,25 @@ impl Peripheral {
             .map(|p| (p.local_name.clone(), p.advertisement_name.clone()))
             .unwrap_or((None, None))
     }
+
+    pub(super) fn merge_discovered_metadata(
+        &self,
+        local_name: Option<String>,
+        services: &[Uuid],
+    ) {
+        if let Ok(mut props) = self.shared.properties.lock() {
+            if props.local_name.as_deref().is_none_or(|n| n.trim().is_empty()) {
+                if let Some(name) = local_name.filter(|n| !n.trim().is_empty()) {
+                    props.local_name = Some(name);
+                }
+            }
+            for &svc in services {
+                if !props.services.contains(&svc) {
+                    props.services.push(svc);
+                }
+            }
+        }
+    }
 }
 
 impl Display for Peripheral {

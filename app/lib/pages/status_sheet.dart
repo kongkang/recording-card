@@ -1176,7 +1176,7 @@ String _scanFailureHint(String error) {
   if (error.contains('蓝牙模块没有载入') || error.contains('不支持连接录音卡')) {
     return '重装当前安装包无法恢复，请安装包含蓝牙桥的真机版本';
   }
-  return '请确认录音卡已开机，并放在手机附近';
+  return '请确认设备已开机且在手机附近。若机身蓝灯常亮，说明正连在别的设备上（先关其他设备蓝牙，或长按 3 秒重启 / 按住按键插充电线硬复位）。';
 }
 
 /// 未连接视图：搜索并连接附近的录音卡，并支持无硬件独立开启「本机录音」。
@@ -1500,6 +1500,7 @@ class _ConnectView extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 _scanFailureHint(store.linkError!),
+                key: const Key('dev-blue-led-hint'),
                 style: TextStyle(fontSize: 12, color: c.sec),
               ),
             ],
@@ -1517,6 +1518,14 @@ class _ConnectView extends StatelessWidget {
             expired: store.isDeviceScanExpired(device),
             busy: busy,
             onTap: () => store.connectTo(device),
+          ),
+        ],
+        if (store.discovered.isNotEmpty && !busy && !bleExpired) ...[
+          const SizedBox(height: 10),
+          Text(
+            '没找到设备？若机身蓝灯常亮，说明正连在别的设备上，请先断连或重启设备后重扫。',
+            key: const Key('dev-connect-troubleshoot-hint'),
+            style: TextStyle(fontSize: 11.5, color: c.sec),
           ),
         ],
         const SizedBox(height: 16),
@@ -1641,7 +1650,32 @@ class _ConnectDeviceTile extends StatelessWidget {
                     ],
                   ),
                 ),
-                _SignalBars(strength: DeviceStore.signalOf(device.rssi)),
+                if (!expired && device.systemConnected)
+                  Container(
+                    key: Key('dev-sys-conn-${device.id}'),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: c.isDark
+                          ? const Color(0xFF1E3A5F)
+                          : const Color(0xFFE8F2FF),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '已连本机',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: c.isDark
+                            ? const Color(0xFF93C5FD)
+                            : const Color(0xFF1D4ED8),
+                      ),
+                    ),
+                  )
+                else
+                  _SignalBars(strength: DeviceStore.signalOf(device.rssi)),
                 const SizedBox(width: 10),
                 if (expired)
                   Text(
