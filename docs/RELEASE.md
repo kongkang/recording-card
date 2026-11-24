@@ -8,9 +8,12 @@
 | --- | --- |
 | iOS bundle id | `com.reai.recordingcard` |
 | App Apple ID (iOS) | `6834316655` |
+| Apple Team ID | `35N5SGDE59` |
+| App Store Connect SKU | `recording-card-ios` |
+| TestFlight 公开邀请链接 | https://testflight.apple.com/join/fMWkZSv5 （`publicLinkId`: `fMWkZSv5`） |
 | Android applicationId / namespace | `com.reai.recordingcard` |
 | 显示名 | 录音卡 |
-| 版本 | pubspec `version: 1.0.0+2026111901` → iOS `1.0.0 (2026111901)`（主 App / 扩展 / Watch 共用 `FLUTTER_BUILD_NAME` / `FLUTTER_BUILD_NUMBER`）、Android versionName `1.0.0` / versionCode `2026111901` |
+| 版本 | pubspec `version: 1.0.0+2026112403` → iOS `1.0.0 (2026112403)`（主 App / 扩展 / Watch 共用 `FLUTTER_BUILD_NAME` / `FLUTTER_BUILD_NUMBER`）、Android versionName `1.0.0` / versionCode `2026112403`（当前 TestFlight 外部测试构建：`1.0.0 (2026112101)`） |
 | 隐私政策 / 技术支持 / 账号注销网页 | 隐私政策 `https://ai-card.app.reai.com/privacy.html` · 技术支持与账号注销 `https://ai-card.app.reai.com/support.html#delete-account` |
 | 最低系统 | iOS 15.0、Android 7.0（minSdk 24） |
 | 目标系统 | Android targetSdk 36（Play 新应用要求 ≥ 35） |
@@ -132,6 +135,31 @@ App Store Connect 需要填：
 - AppIcon 由 `app/assets/icon/app_icon.svg` 生成，**不带 alpha 通道**（带 alpha 会被 App Store 直接拒）；
 - LaunchScreen 为米白底 + 应用名，符合审核对「启动屏不得像广告」的要求。
 
+### 2.5 TestFlight 分发信息与公开邀请链接
+
+- **公开邀请链接**：https://testflight.apple.com/join/fMWkZSv5 （`publicLinkId`: `fMWkZSv5`，已启用；可直接分享给用户，无需逐个收集邮箱）。
+- **测试用户加入步骤**：
+  1. 在 iPhone 上安装苹果官方 **TestFlight** App；
+  2. 打开上面的邀请链接；
+  3. 在 TestFlight 中点击「接受 / 安装」。
+
+#### 测试组配置
+
+| 测试组名称 | 类型 | Group ID | 公开链接与容量配置 |
+| --- | --- | --- | --- |
+| `Recording Card Internal Testing` | 内部测试组 | `df549b4d-656d-4374-9433-7224b64271db` | `hasAccessToAllBuilds: true` |
+| `Recording Card External Testing` | 外部测试组 | `4fc99575-cdf1-4295-9535-0ba901375c32` | `publicLinkEnabled: true`，`publicLinkId: fMWkZSv5`，`publicLinkLimitEnabled: false`（未设额外上限，受 TestFlight 单 App 10,000 人总上限约束） |
+
+#### 当前已过审外部测试构建（截至 2026-11-24）
+
+- **`1.0.0 (2026112101)`**：Build ID `e059e3ff-06ae-4de5-b241-b600857d83a5`，上传日期 `2026-11-21`，有效期至 `2027-02-18`，状态 `VALID` / `APPROVED` / `IN_BETA_TESTING`，出口合规 `usesNonExemptEncryption=false`（手机与手表同一包）。
+
+#### App Store Connect API 管理说明与安全边界
+
+- **查询 / 更新外部组**：`GET` / `PATCH https://api.appstoreconnect.apple.com/v1/betaGroups/4fc99575-cdf1-4295-9535-0ba901375c32`（可切换 `publicLinkEnabled`，或配置 `publicLinkLimitEnabled` / `publicLinkLimit` 限制加入人数）。
+- **安全边界**：本仓库为公开开源仓库，**严禁将 `.p8` 私钥、ASC API Key ID、Issuer ID、测试员邮箱或个人联系方式提交入库**；本机调用时从 `~/.private_keys/AuthKey_<KEY_ID>.p8` 与环境变量读取。
+- **JWT 注意**：ASC API ES256 JWT 的 `exp - iat` 不得超过 20 分钟（建议 `900s`），否则会返回 `401 NOT_AUTHORIZED`。
+
 ---
 
 ## 3. 重新生成图标
@@ -175,7 +203,7 @@ $ANDROID_HOME/build-tools/35.0.0/aapt2 compile --dir android/app/src/main/res -o
 
 - [x] 应用图标已替换（两端都不是 Flutter 默认蓝 logo），iOS 图标无 alpha 通道
 - [x] 显示名为「录音卡」，bundle id / 包名为 `com.reai.recordingcard`
-- [ ] 版本号已在 `app/pubspec.yaml` 递增，构建号大于上一版（所有 iOS / Watch 扩展自动同步）
+- [x] 版本号已在 `app/pubspec.yaml` 递增，构建号大于上一版（所有 iOS / Watch 扩展自动同步：`1.0.0+2026112403`）
 - [ ] 公开隐私政策页（`https://ai-card.app.reai.com/privacy.html`）与账号注销说明页（`https://ai-card.app.reai.com/support.html#delete-account`）已发布上线，生效日期（`2026-11-24`）一致
 - [ ] 商店截图 / 描述 / 关键词 / 分类（工具类）齐全
 - [x] 崩溃兜底已安装（`installCrashHandlers()`），关于页可显示版本号，设置页「数据管理」与「注销账号」入口已就位
