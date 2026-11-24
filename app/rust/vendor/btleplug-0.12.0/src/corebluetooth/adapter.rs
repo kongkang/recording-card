@@ -142,15 +142,15 @@ impl Adapter {
             })
             .await?;
 
-        let uuids = match fut.await {
-            CoreBluetoothReply::Peripherals(uuids) => uuids,
+        let items = match fut.await {
+            CoreBluetoothReply::PeripheralsMeta(items) => items,
             CoreBluetoothReply::Err(msg) => return Err(Error::RuntimeError(msg)),
             _ => return Err(Error::Other("Unexpected retrieve_peripherals reply".into())),
         };
 
-        let mut out = Vec::with_capacity(uuids.len());
+        let mut out = Vec::with_capacity(items.len());
         let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
-        for uuid in uuids {
+        for (uuid, local_name, svcs) in items {
             let pid: PeripheralId = uuid.into();
             let mut found = self.manager.peripheral(&pid);
             while found.is_none() && tokio::time::Instant::now() < deadline {
@@ -158,6 +158,7 @@ impl Adapter {
                 found = self.manager.peripheral(&pid);
             }
             if let Some(p) = found {
+                p.merge_discovered_metadata(local_name, &svcs);
                 out.push(p);
             }
         }
@@ -208,13 +209,13 @@ impl Central for Adapter {
                 future: fut.get_state_clone(),
             })
             .await?;
-        let uuids = match fut.await {
-            CoreBluetoothReply::Peripherals(uuids) => uuids,
+        let items = match fut.await {
+            CoreBluetoothReply::PeripheralsMeta(items) => items,
             CoreBluetoothReply::Err(msg) => return Err(Error::RuntimeError(msg)),
             _ => return Ok(Vec::new()),
         };
-        let mut out = Vec::with_capacity(uuids.len());
-        for uuid in uuids {
+        let mut out = Vec::with_capacity(items.len());
+        for (uuid, local_name, svcs) in items {
             let pid: PeripheralId = uuid.into();
             let mut found = self.manager.peripheral(&pid);
             if found.is_none() {
@@ -227,6 +228,7 @@ impl Central for Adapter {
                 }
             }
             if let Some(p) = found {
+                p.merge_discovered_metadata(local_name, &svcs);
                 out.push(p);
             }
         }

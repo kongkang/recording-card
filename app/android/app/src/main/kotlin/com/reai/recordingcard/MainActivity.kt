@@ -64,6 +64,7 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        com.nonpolynomial.btleplug.android.impl.Adapter.setAppContext(applicationContext)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
 
         tts = TextToSpeech(this, this)

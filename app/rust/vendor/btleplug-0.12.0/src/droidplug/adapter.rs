@@ -26,6 +26,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Adapter {
@@ -193,6 +194,61 @@ impl Central for Adapter {
     async fn clear_peripherals(&self) -> Result<()> {
         self.manager.clear_peripherals();
         Ok(())
+    }
+
+    async fn retrieve_connected_peripherals(
+        &self,
+        _services: &[Uuid],
+    ) -> Result<Vec<Peripheral>> {
+        let entries: Vec<(BDAddr, Option<String>)> = {
+            let env = global_jvm().get_env()?;
+            let arr_obj = env
+                .call_method(
+                    &self.internal,
+                    "getConnectedGattDevices",
+                    "()[Ljava/lang/String;",
+                    &[],
+                )?
+                .l()?;
+            if arr_obj.is_null() {
+                return Ok(Vec::new());
+            }
+            let arr_local = env.auto_local(arr_obj);
+            let arr = arr_local.as_obj().into_inner();
+            let len = env.get_array_length(arr)?;
+            let mut parsed = Vec::with_capacity(len.max(0) as usize);
+            for i in 0..len {
+                let elem = env.auto_local(env.get_object_array_element(arr, i)?);
+                if elem.as_obj().is_null() {
+                    continue;
+                }
+                let jstr = JString::from(elem.as_obj());
+                let entry = JavaStr::from_env(&env, jstr)?;
+                let entry_str = entry.to_str().map_err(|e| Error::Other(e.into()))?;
+                let (addr_str, name_str) = match entry_str.split_once('\t') {
+                    Some((a, n)) => (a, n),
+                    None => (entry_str, ""),
+                };
+                if let Ok(addr) = BDAddr::from_str(addr_str.trim()) {
+                    let clean_name =
+                        (!name_str.trim().is_empty()).then(|| name_str.trim().to_string());
+                    parsed.push((addr, clean_name));
+                }
+            }
+            parsed
+        };
+
+        let mut out = Vec::with_capacity(entries.len());
+        for (addr, clean_name) in entries {
+            let id = PeripheralId(addr);
+            let peripheral = match self.manager.peripheral(&id) {
+                Some(p) => p,
+                None => self.add(addr)?,
+            };
+            peripheral.merge_connected_properties(addr, clean_name);
+            out.push(peripheral);
+        }
+        Ok(out)
     }
 
     async fn adapter_state(&self) -> Result<CentralState> {

@@ -949,11 +949,22 @@ pub(crate) async fn retrieve_cached_or_connected_peripherals(
 
 #[cfg(not(target_vendor = "apple"))]
 pub(crate) async fn retrieve_cached_or_connected_peripherals(
-    _adapter: &btleplug::platform::Adapter,
+    adapter: &btleplug::platform::Adapter,
     _id_hints: &[&str],
-    _services: &[uuid::Uuid],
+    services: &[uuid::Uuid],
 ) -> Vec<btleplug::platform::Peripheral> {
-    Vec::new()
+    if services.is_empty() {
+        return Vec::new();
+    }
+    match tokio::time::timeout(
+        Duration::from_secs(2),
+        adapter.retrieve_connected_peripherals(services),
+    )
+    .await
+    {
+        Ok(Ok(list)) => list,
+        _ => Vec::new(),
+    }
 }
 
 pub(crate) async fn retrieve_system_connected_ids(
@@ -1086,7 +1097,7 @@ async fn unified_scan_once(
         system_connected.len()
     ));
 
-    let mut discovered: Vec<(i16, String, String, String, Value)> = Vec::new();
+    let mut discovered: Vec<(i16, String, String, String, bool, Value)> = Vec::new();
     let mut cache_updates: Vec<(String, CachedScanEntry)> = Vec::new();
 
     for (idx, p) in peripherals.into_iter().enumerate() {
@@ -1168,6 +1179,7 @@ async fn unified_scan_once(
             id.clone(),
             kind_str.to_string(),
             name.clone(),
+            is_system_connected,
             json!({
                 "id": id,
                 "name": name,
@@ -1176,6 +1188,7 @@ async fn unified_scan_once(
                 "deviceKind": kind_str,
                 "displayModel": display_model,
                 "capabilities": caps_json,
+                "systemConnected": is_system_connected,
             }),
         ));
     }
@@ -1193,12 +1206,14 @@ async fn unified_scan_once(
     let mut seen_names = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(discovered.len());
     alog::info(&format!("unified_scan: classified {} devices", discovered.len()));
-    for (_, id, kind_str, name, val) in discovered {
+    for (_, id, kind_str, name, is_system_connected, val) in discovered {
         if !seen_ids.insert(id) {
             continue;
         }
         let trimmed = name.trim();
-        if !trimmed.is_empty() && !seen_names.insert(format!("{kind_str}:{trimmed}")) {
+        if !trimmed.is_empty()
+            && !seen_names.insert(format!("{kind_str}:{trimmed}:{is_system_connected}"))
+        {
             continue;
         }
         out.push(val);
@@ -2044,59 +2059,6 @@ async fn release_device_except(keep_id: Option<&str>) -> Value {
         let _ = stop.send(());
     }
     let active = state().device.lock().await.take();
-    let connecting = state().connecting_peripheral.lock().unwrap().take();
-    if let Some(p) = connecting {
-        if keep_id != Some(p.id().to_string().as_str()) {
-            let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
-        }
-    }
-    // 兜底释放：若此前某次 connect 超时或半连接遗留在 CoreBluetooth（含 Omi / 飞书 / 讯飞 / DYJ / CardV2 / DFU），
-    // 先取回 OS 级已连接外设再逐一断开（保留正在直连的 keep_id），避免硬件继续保持连接亮蓝灯、不再广播。
-    let cached_adapter = state().scan_adapter.lock().await.clone();
-    if let Some(adapter) = cached_adapter {
-        retrieve_os_connected_peripherals(&adapter).await;
-        if let Ok(peripherals) = adapter.peripherals().await {
-            for p in peripherals {
-                if keep_id == Some(p.id().to_string().as_str()) {
-                    continue;
-                }
-                if let Ok(true) = tokio::time::timeout(Duration::from_millis(350), p.is_connected())
-                    .await
-                    .unwrap_or(Ok(false))
-                {
-                    let props = read_peripheral_props_bounded(&p).await;
-                    let is_managed_ble = props.as_ref().is_some_and(|pr| {
-                        let pid = p.id().to_string();
-                        if classify_ble_advertisement(
-                            &pid,
-                            pr.local_name.as_deref(),
-                            &pr.services,
-                            &pr.manufacturer_data,
-                        )
-                        .is_some()
-                        {
-                            return true;
-                        }
-                        pr.local_name.as_deref().is_some_and(|n| {
-                            let u = n.trim().to_ascii_uppercase();
-                            u.starts_with("DYJ")
-                                || u.starts_with("DFU")
-                                || u.starts_with("OMI")
-                                || u.starts_with("FRIEND")
-                                || u.starts_with("D3200")
-                                || u.starts_with("SOUNDCORE WORK")
-                                || u.starts_with("REAI_VB")
-                                || n.trim().starts_with("讯飞录音笔A1")
-                                || u.starts_with("IFLYTEK")
-                        })
-                    });
-                    if is_managed_ble {
-                        let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
-                    }
-                }
-            }
-        }
-    }
     let device_id = state().last_device_id.lock().expect("device id lock").take();
     let had_device = active.is_some();
     let sdk = match active {
@@ -2135,6 +2097,68 @@ async fn release_device_except(keep_id: Option<&str>) -> Value {
         }
         None => Value::Null,
     };
+    let connecting = state().connecting_peripheral.lock().unwrap().take();
+    if let Some(p) = connecting {
+        if keep_id != Some(p.id().to_string().as_str()) {
+            let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
+        }
+    }
+    // 兜底释放：先让活跃 SDK 正常退订断链后，再取回 OS 级已连接外设清理遗留在本进程内的受支持录音外设
+    // （含 scan_cache 兜底，覆盖 Omi / 飞书 / 讯飞 / DYJ / CardV2 / DFU / 键盘，保留 keep_id），防止硬件亮蓝灯停播。
+    let cached_adapter = state().scan_adapter.lock().await.clone();
+    if let Some(adapter) = cached_adapter {
+        retrieve_os_connected_peripherals(&adapter).await;
+        if let Ok(peripherals) = adapter.peripherals().await {
+            for p in peripherals {
+                let pid = p.id().to_string();
+                if keep_id == Some(pid.as_str()) {
+                    continue;
+                }
+                if let Ok(true) = tokio::time::timeout(Duration::from_millis(350), p.is_connected())
+                    .await
+                    .unwrap_or(Ok(false))
+                {
+                    let cached_in_scan_cache = state()
+                        .scan_cache
+                        .lock()
+                        .expect("scan cache lock")
+                        .contains_key(&pid);
+                    let is_managed_ble = if cached_in_scan_cache {
+                        true
+                    } else {
+                        let props = read_peripheral_props_bounded(&p).await;
+                        props.as_ref().is_some_and(|pr| {
+                            if classify_ble_advertisement(
+                                &pid,
+                                pr.local_name.as_deref(),
+                                &pr.services,
+                                &pr.manufacturer_data,
+                            )
+                            .is_some()
+                            {
+                                return true;
+                            }
+                            pr.local_name.as_deref().is_some_and(|n| {
+                                let u = n.trim().to_ascii_uppercase();
+                                u.starts_with("DYJ")
+                                    || u.starts_with("DFU")
+                                    || u.starts_with("OMI")
+                                    || u.starts_with("FRIEND")
+                                    || u.starts_with("D3200")
+                                    || u.starts_with("SOUNDCORE WORK")
+                                    || u.starts_with("REAI_VB")
+                                    || n.trim().starts_with("讯飞录音笔A1")
+                                    || u.starts_with("IFLYTEK")
+                            })
+                        })
+                    };
+                    if is_managed_ble {
+                        let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
+                    }
+                }
+            }
+        }
+    }
     let released = !had_device || sdk == json!("ok");
     eprintln!(
         "[card_bridge] disconnect had_device={had_device} id={device_id:?} sdk={sdk} released={released}"
@@ -8229,6 +8253,8 @@ mod tests {
         assert!(services.contains(&reai_omi_sdk::protocol::SVC_FRIEND_PENDANT_UUID));
         assert!(services.contains(&reai_feishu_sdk::SERVICE_UUID));
         assert!(services.contains(&reai_iflytek_sdk::SERVICE_UUID));
+        assert!(services.contains(&reai_board_sdk::kernel::protocol_gatt::SERVICE_UUID));
+        assert!(services.contains(&uuid::Uuid::parse_str("0000fe60-0000-1000-8000-00805f9b34fb").unwrap()));
         assert!(services.contains(&uuid::Uuid::parse_str(NUS_SERVICE_UUID).unwrap()));
         assert!(services.contains(&uuid::Uuid::parse_str("0000fe59-0000-1000-8000-00805f9b34fb").unwrap()));
         assert!(services.contains(&uuid::Uuid::parse_str("0000ff10-0000-1000-8000-00805f9b34fb").unwrap()));
