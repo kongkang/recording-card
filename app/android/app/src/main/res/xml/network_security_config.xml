@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- 默认禁用明文传输，公网业务请求强制 HTTPS -->
+    <!-- 全局公网流量强制 HTTPS；仅允许录音卡硬件 SoftAP 局域网地址走明文 HTTP 配网/拉取 -->
     <base-config cleartextTrafficPermitted="false" />
-    <!-- 仅允许硬件录音卡本地 SoftAP 配网与局域网文件通道走 HTTP -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">192.168.4.1</domain>
         <domain includeSubdomains="false">192.168.43.1</domain>

@@ -11,7 +11,10 @@ abstract class LegacyUpgradeGateway {
 
   Future<void> connectWifi({required String ssid, String? password});
 
-  Stream<CardProgress> runOta(void Function(LegacyUpgradeResult result) onDone);
+  Stream<CardProgress> runOta(
+    void Function(LegacyUpgradeResult result) onDone, {
+    LegacyTargetOtaSpec? targetOta,
+  });
 
   Future<void> close();
 }
@@ -68,15 +71,18 @@ class BridgeLegacyUpgradeGateway implements LegacyUpgradeGateway {
         'ssid': ssid,
         if (password != null && password.isNotEmpty) 'password': password,
       },
-      const Duration(seconds: 40),
+      const Duration(seconds: 65),
     );
   }
 
   @override
-  Stream<CardProgress> runOta(void Function(LegacyUpgradeResult result) onDone) {
+  Stream<CardProgress> runOta(
+    void Function(LegacyUpgradeResult result) onDone, {
+    LegacyTargetOtaSpec? targetOta,
+  }) {
     return _gateway.invokeBridgeStream(
       'legacy_upgrade_run_ota',
-      null,
+      targetOta == null ? null : {'targetOta': targetOta.toJson()},
       (finalData) => onDone(LegacyUpgradeResult.fromJson(finalData)),
     );
   }

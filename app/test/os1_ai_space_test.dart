@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +12,7 @@ import 'package:recording_card/data/seed.dart';
 import 'package:recording_card/pages/app_shell.dart';
 import 'package:recording_card/services/agent/agent_chat_controller.dart';
 import 'package:recording_card/services/agent/agent_harness_worker.dart';
+import 'package:recording_card/services/agent/agent_models.dart';
 import 'package:recording_card/services/agent/agent_speech_service.dart';
 import 'package:recording_card/services/analysis/chat_completion.dart';
 
@@ -80,6 +82,22 @@ class _DelayedFakeCompletion implements ChatCompletion {
     return jsonEncode({
       'react': '🫡 get',
       'reply': '午后讨论里你们把导出功能延后两周了，先做小方案稳妥很多。',
+    });
+  }
+}
+
+class _EchoFakeCompletion implements ChatCompletion {
+  @override
+  Future<String> complete(
+    List<ChatMessage> messages, {
+    required String model,
+    double temperature = 0.1,
+    int maxTokens = 2048,
+  }) async {
+    final prompt = messages.last.content;
+    return jsonEncode({
+      'react': '👌',
+      'reply': '已收到：$prompt（附带项目上下文、行动项与时间节奏说明，方便翻阅）',
     });
   }
 }
@@ -319,9 +337,20 @@ void main() {
     await tester.pump(const Duration(milliseconds: 120));
     expect(chatCtrl.messages.length, greaterThanOrEqualTo(2));
 
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('ai-chat-clear')),
+        matching: find.text('新对话'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.refresh_rounded), findsNothing);
+
     await tester.tap(find.byKey(const Key('ai-chat-clear')));
     await tester.pump();
     expect(chatCtrl.messages, isEmpty);
+    expect(chatCtrl.sessions, hasLength(1));
+    expect(find.byKey(const Key('ai-new-chat-banner')), findsOneWidget);
 
     await agentConfig.setCloudEnabled(false);
     final noCloudCtrl = AgentChatController(
@@ -335,5 +364,224 @@ void main() {
     await noCloudCtrl.sendMessage('测试未初始化网关提示');
     expect(noCloudCtrl.messages, isEmpty);
     expect(noCloudCtrl.errorMessage, isNotNull);
+  });
+
+  testWidgets('轻聊默认滚到最新底部 + 向上翻加载更早记录 + 新对话不丢历史 + 右边缘左滑抽屉切换并继续聊', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // 1) 从磁盘预置历史记录进入轻聊：默认加载最新一页并停在最底部最新一条
+    final tempDir = Directory.systemTemp.createTempSync('rc-os1-light-chat-');
+    addTearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+    final sessionsDir = Directory('${tempDir.path}/sessions')..createSync();
+    final preLines = <String>[
+      for (var i = 0; i < 14; i++)
+        jsonEncode(
+          AgentChatMessage(
+            id: 'pre-$i',
+            role: i.isEven ? 'user' : 'assistant',
+            text: '第 $i 条历史记录：确认下周产品迭代排期与测试清单细节。',
+            createdAtMs: 1700000000000 + i * 60000,
+          ).toJson(),
+        ),
+    ];
+    File('${sessionsDir.path}/s-preloaded.jsonl').writeAsStringSync(
+      '${preLines.join('\n')}\n',
+    );
+
+    final agentConfig = AgentConfigStore(store: InMemoryStore());
+    await agentConfig.load();
+    final store = AppStore(events: seedEvents, loadPersistedState: false);
+    final device = DeviceStore(gateway: FakeCardGateway());
+    final speech = _FakeSpeechBackend();
+    final echo = _EchoFakeCompletion();
+    final diskWorker = AgentHarnessWorker(
+      complete: echo.complete,
+      inProcess: true,
+    );
+    final diskCtrl = AgentChatController(
+      appStore: store,
+      agentConfig: agentConfig,
+      speech: speech,
+      completion: echo,
+      worker: diskWorker,
+      agentDirResolver: () async => tempDir.path,
+      historyPageSize: 6,
+    );
+    addTearDown(() async {
+      await diskWorker.dispose();
+      diskCtrl.dispose();
+    });
+    await tester.runAsync(diskCtrl.ensureInitialized);
+    expect(diskCtrl.messages, hasLength(6));
+    expect(diskCtrl.hasMoreOlderMessages, isTrue);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: testTheme(),
+        home: AppShell(
+          store: store,
+          device: device,
+          agentConfig: agentConfig,
+          agentChat: diskCtrl,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('nav-ai-sunrise')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ai-mode-chat')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('第 13 条历史记录'), findsOneWidget);
+    expect(find.textContaining('第 0 条历史记录'), findsNothing);
+    final newestRect = tester.getRect(find.textContaining('第 13 条历史记录'));
+    expect(newestRect.bottom, greaterThan(400));
+
+    // 2) 多轮会话交互：向上翻页加载更早记录 + 新对话不丢历史 + 右边缘左滑历史抽屉切换并继续聊
+    final memWorker = AgentHarnessWorker(
+      complete: echo.complete,
+      inProcess: true,
+    );
+    var tick = 0;
+    final memCtrl = AgentChatController(
+      appStore: store,
+      agentConfig: agentConfig,
+      speech: speech,
+      completion: echo,
+      worker: memWorker,
+      agentDirResolver: () async => '',
+      clock: () => DateTime.fromMillisecondsSinceEpoch(
+        1700001000000 + (tick++) * 30000,
+      ),
+      historyPageSize: 6,
+    );
+    addTearDown(() async {
+      await memWorker.dispose();
+      memCtrl.dispose();
+      agentConfig.dispose();
+      store.dispose();
+      device.dispose();
+      speech.dispose();
+    });
+
+    for (var i = 0; i < 7; i++) {
+      await memCtrl.sendMessage('问题轮次 $i：关于录音卡轻聊历史记录和滚动体验的讨论。');
+    }
+    expect(memCtrl.messages, hasLength(14));
+    final firstSessionId = memCtrl.activeSessionId;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: testTheme(),
+        home: AppShell(
+          key: const Key('shell-mem-chat'),
+          store: store,
+          device: device,
+          agentConfig: agentConfig,
+          agentChat: memCtrl,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    memCtrl.open(initialMode: Os1Mode.chat);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('ai-chat-clear')),
+        matching: find.text('新对话'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.refresh_rounded), findsNothing);
+
+    // 点右上角「新对话」开启干净新会话，同时历史保留
+    await tester.tap(find.byKey(const Key('ai-chat-clear')));
+    await tester.pumpAndSettle();
+    expect(memCtrl.messages, isEmpty);
+    expect(memCtrl.sessions, hasLength(1));
+    expect(find.byKey(const Key('ai-new-chat-banner')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('ai-chat-input')),
+      '第二段新对话的问题',
+    );
+    await tester.tap(find.byKey(const Key('ai-chat-send')));
+    await tester.pumpAndSettle();
+    expect(memCtrl.messages, hasLength(2));
+    expect(memCtrl.sessions, hasLength(2));
+    final secondSessionId = memCtrl.activeSessionId;
+    expect(secondSessionId, isNot(firstSessionId));
+
+    // 从屏幕右边缘向左滑动，呼出历史对话抽屉
+    await tester.dragFrom(const Offset(386, 420), const Offset(-260, 0));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ai-history-drawer')), findsOneWidget);
+    expect(
+      find.byKey(Key('ai-session-item-$firstSessionId')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(Key('ai-session-item-$secondSessionId')),
+      findsOneWidget,
+    );
+
+    // 切回第一段历史对话：默认只加载最新一页（6条）且最新一条立刻停在底部
+    await tester.tap(find.byKey(Key('ai-session-item-$firstSessionId')));
+    await tester.pumpAndSettle();
+    expect(memCtrl.activeSessionId, firstSessionId);
+    expect(memCtrl.messages, hasLength(6));
+    expect(memCtrl.hasMoreOlderMessages, isTrue);
+    expect(find.textContaining('问题轮次 6'), findsWidgets);
+    expect(find.textContaining('问题轮次 0'), findsNothing);
+
+    // 在列表内向下拖（向更早历史方向上翻），触发按页向上加载直至全部 14 条加载完成
+    for (var step = 0; step < 6 && memCtrl.hasMoreOlderMessages; step++) {
+      await tester.drag(
+        find.byKey(const Key('ai-chat-feed')),
+        const Offset(0, 420),
+      );
+      await tester.pumpAndSettle();
+    }
+    expect(memCtrl.messages, hasLength(14));
+    expect(memCtrl.hasMoreOlderMessages, isFalse);
+    await tester.dragUntilVisible(
+      find.byKey(const Key('ai-msg-0')),
+      find.byKey(const Key('ai-chat-feed')),
+      const Offset(0, 320),
+    );
+    expect(
+      find.text('问题轮次 0：关于录音卡轻聊历史记录和滚动体验的讨论。'),
+      findsOneWidget,
+    );
+
+    // 在切回的历史对话中继续聊，新消息追加进该会话并顶到历史列表最前面
+    await tester.enterText(
+      find.byKey(const Key('ai-chat-input')),
+      '接着之前的话题继续聊',
+    );
+    await tester.tap(find.byKey(const Key('ai-chat-send')));
+    await tester.pumpAndSettle();
+    expect(memCtrl.totalMessageCount, 16);
+    expect(find.textContaining('接着之前的话题继续聊'), findsWidgets);
+    expect(memCtrl.sessions.first.id, firstSessionId);
+
+    // 再次右边缘左滑打开抽屉并删除第二段对话
+    await tester.dragFrom(const Offset(386, 420), const Offset(-260, 0));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(Key('ai-session-delete-$secondSessionId')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ai-session-delete-confirm')));
+    await tester.pumpAndSettle();
+    expect(memCtrl.sessions, hasLength(1));
+    expect(memCtrl.sessions.single.id, firstSessionId);
   });
 }

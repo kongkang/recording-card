@@ -65,11 +65,11 @@ android {
         manifestPlaceholders["oauthCallbackScheme"] = oauthCallbackScheme
         resValue("string", "rc_oauth_callback_scheme", oauthCallbackScheme)
 
-        ndk {
-            if (System.getenv("RC_ANDROID_ALL_ABIS") == "1") {
-                abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
-            } else {
-                abiFilters += listOf("arm64-v8a")
+        val includeAllAbis = System.getenv("RC_ANDROID_ALL_ABIS") == "1" ||
+            project.findProperty("RC_ANDROID_ALL_ABIS")?.toString() == "1"
+        if (!includeAllAbis) {
+            ndk {
+                abiFilters += "arm64-v8a"
             }
         }
     }

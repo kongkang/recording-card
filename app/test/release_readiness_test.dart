@@ -424,7 +424,7 @@ void main() {
       250,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.byKey(const Key('delete-account-entry')), findsOneWidget);
+    expect(find.byKey(const Key('account-delete-entry')), findsOneWidget);
 
     for (var i = 0; i < 7; i++) {
       await tester.tap(find.byKey(const Key('setting-version')));
@@ -570,11 +570,14 @@ void main() {
       await tester.pump();
 
       await tester.scrollUntilVisible(
-        find.byKey(const Key('delete-account-entry')),
+        find.byKey(const Key('set-data-management')),
         300,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.byKey(const Key('delete-account-entry')));
+      await tester.tap(find.byKey(const Key('set-data-management')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('delete-account-btn')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('delete-account-dialog')), findsOneWidget);
 
@@ -638,11 +641,14 @@ void main() {
       await tester.pump();
 
       await tester.scrollUntilVisible(
-        find.byKey(const Key('delete-account-entry')),
+        find.byKey(const Key('set-data-management')),
         300,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.byKey(const Key('delete-account-entry')));
+      await tester.tap(find.byKey(const Key('set-data-management')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('delete-account-btn')));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const Key('delete-account-confirm')));
@@ -714,11 +720,14 @@ void main() {
       await tester.pump();
 
       await tester.scrollUntilVisible(
-        find.byKey(const Key('delete-account-entry')),
+        find.byKey(const Key('set-data-management')),
         300,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.byKey(const Key('delete-account-entry')));
+      await tester.tap(find.byKey(const Key('set-data-management')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('delete-account-btn')));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const Key('delete-account-confirm')));

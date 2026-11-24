@@ -23,6 +23,10 @@ bool _initialized = false;
 /// [nativeLibraryPath] 仅桌面平台使用，iOS 忽略。
 void initSherpaBindings([String? nativeLibraryPath]) {
   if (_initialized) return;
+  const envDir = String.fromEnvironment('RC_SHERPA_LIB_DIR');
+  final effectiveDir = (nativeLibraryPath != null && nativeLibraryPath.isNotEmpty)
+      ? nativeLibraryPath
+      : (envDir.isNotEmpty ? envDir : null);
   if (Platform.isIOS) {
     DynamicLibrary lib;
     try {
@@ -33,7 +37,7 @@ void initSherpaBindings([String? nativeLibraryPath]) {
     }
     bindings.SherpaOnnxBindings.init(lib);
   } else {
-    sherpa.initBindings(nativeLibraryPath);
+    sherpa.initBindings(effectiveDir);
   }
   _initialized = true;
 }

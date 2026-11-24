@@ -21,8 +21,9 @@ use futures::StreamExt;
 use reai_card_sdk::{
     BleTransport, DFU_ADVERTISED_NAME, DFU_CONTROL_POINT_UUID, DFU_PACKET_UUID, DFU_SERVICE_UUID,
     DfuOptions, DfuPackage, DfuProgress, DfuReport, DfuStage, DfuTarget, DfuTransport,
-    DyjDevice as CardV2Device, NUS_NOTIFY_UUID, NUS_WRITE_UUID, NotificationStream,
-    Result as SdkResult, SdkError as CardSdkError, SharedDfuTransport, SharedTransport,
+    DyjDevice as CardV2Device, NUS_NOTIFY_UUID, NUS_SERVICE_UUID, NUS_WRITE_UUID,
+    NotificationStream, Result as SdkResult, SdkError as CardSdkError, SharedDfuTransport,
+    SharedTransport,
 };
 use uuid::Uuid;
 
@@ -49,6 +50,7 @@ const MIN_PAGE_ADVANCE_BYTES: usize = 4096;
 pub enum CardV2ConnectOutcome {
     Connected {
         device: CardV2Device,
+        peripheral: Peripheral,
         id: String,
         name: String,
     },
@@ -158,13 +160,7 @@ impl DfuTransport for TimedDfuTransport {
 }
 
 async fn disconnect_bounded(peripheral: &Peripheral) {
-    let is_conn = matches!(
-        tokio::time::timeout(Duration::from_secs(2), peripheral.is_connected()).await,
-        Ok(Ok(true))
-    );
-    if is_conn {
-        let _ = tokio::time::timeout(BLE_DISCONNECT_TIMEOUT, peripheral.disconnect()).await;
-    }
+    let _ = tokio::time::timeout(BLE_DISCONNECT_TIMEOUT, peripheral.disconnect()).await;
 }
 
 fn parse_uuid(value: &str) -> SdkResult<Uuid> {
@@ -229,6 +225,13 @@ async fn find_card_v2_in_adapter(
     name_hint: Option<&str>,
     seen_this_scan: Option<&HashSet<String>>,
 ) -> Option<(Peripheral, String, bool)> {
+    if seen_this_scan.is_none() {
+        let _ = tokio::time::timeout(
+            Duration::from_millis(600),
+            adapter.retrieve_connected_peripherals(&crate::known_ble_service_uuids()),
+        )
+        .await;
+    }
     let peripherals = adapter.peripherals().await.ok()?;
     let trimmed_hint = name_hint.map(str::trim).filter(|s| !s.is_empty());
     let mut best: Option<(i16, Peripheral, String, bool)> = None;
@@ -366,71 +369,12 @@ fn has_dfu_characteristics(characteristics: &std::collections::BTreeSet<Characte
     find_dfu_characteristics(characteristics).is_ok()
 }
 
-pub(crate) async fn connect_card_v2_on_adapter(
-    adapter: &Adapter,
-    id: &str,
-    name_hint: Option<&str>,
+async fn establish_card_v2_session(
+    peripheral: Peripheral,
+    resolved_name: String,
+    mut preconnected: bool,
     connecting_slot: Option<&std::sync::Mutex<Option<Peripheral>>>,
 ) -> Result<CardV2ConnectOutcome, BridgeError> {
-    let hint_is_dfu = name_hint
-        .map(str::trim)
-        .is_some_and(|nh| nh.to_ascii_uppercase().starts_with("DFU"));
-
-    // 先对缓存 id 尝试 4s 短超时直连；若设备已轮换 RPA 或处于 DFU 恢复广播，立即断开并落回实时扫描新外设。
-    let mut preconnected = false;
-    let (peripheral, resolved_name) = if !hint_is_dfu {
-        if let Some((cached, cached_name, cached_is_dfu)) =
-            find_card_v2_in_adapter(adapter, id, name_hint, None).await
-        {
-            if cached_is_dfu || cached_name.to_ascii_uppercase().starts_with("DFU_DYJ") {
-                disconnect_bounded(&cached).await;
-                return Ok(CardV2ConnectOutcome::DfuRecovery {
-                    id: cached.id().to_string(),
-                    name: DFU_ADVERTISED_NAME.to_owned(),
-                });
-            }
-            if connect_peripheral_with_slot(&cached, Duration::from_secs(4), connecting_slot)
-                .await
-                .is_ok()
-            {
-                preconnected = true;
-                (cached, cached_name)
-            } else {
-                let (live_p, live_name, live_dfu) =
-                    scan_card_v2_peripheral_live(adapter, id, name_hint).await?;
-                if live_dfu || live_name.to_ascii_uppercase().starts_with("DFU_DYJ") {
-                    disconnect_bounded(&live_p).await;
-                    return Ok(CardV2ConnectOutcome::DfuRecovery {
-                        id: live_p.id().to_string(),
-                        name: DFU_ADVERTISED_NAME.to_owned(),
-                    });
-                }
-                (live_p, live_name)
-            }
-        } else {
-            let (live_p, live_name, live_dfu) =
-                scan_card_v2_peripheral_live(adapter, id, name_hint).await?;
-            if live_dfu || live_name.to_ascii_uppercase().starts_with("DFU_DYJ") {
-                disconnect_bounded(&live_p).await;
-                return Ok(CardV2ConnectOutcome::DfuRecovery {
-                    id: live_p.id().to_string(),
-                    name: DFU_ADVERTISED_NAME.to_owned(),
-                });
-            }
-            (live_p, live_name)
-        }
-    } else {
-        let (live_p, live_name, live_dfu) =
-            scan_card_v2_peripheral_live(adapter, id, name_hint).await?;
-        if live_dfu || live_name.to_ascii_uppercase().starts_with("DFU_DYJ") {
-            disconnect_bounded(&live_p).await;
-            return Ok(CardV2ConnectOutcome::DfuRecovery {
-                id: live_p.id().to_string(),
-                name: DFU_ADVERTISED_NAME.to_owned(),
-            });
-        }
-        (live_p, live_name)
-    };
     let actual_id = peripheral.id().to_string();
 
     let mut attempt = 0u8;
@@ -492,7 +436,7 @@ pub(crate) async fn connect_card_v2_on_adapter(
         WriteType::WithoutResponse
     };
     let transport: SharedTransport = Arc::new(TimedCardV2BleTransport {
-        peripheral,
+        peripheral: peripheral.clone(),
         write,
         write_type,
     });
@@ -501,6 +445,7 @@ pub(crate) async fn connect_card_v2_on_adapter(
     {
         Ok(Ok(device)) => Ok(CardV2ConnectOutcome::Connected {
             device,
+            peripheral,
             id: actual_id,
             name: resolved_name,
         }),
@@ -516,6 +461,72 @@ pub(crate) async fn connect_card_v2_on_adapter(
             }))
         }
     }
+}
+
+pub(crate) async fn connect_card_v2_on_adapter(
+    adapter: &Adapter,
+    id: &str,
+    name_hint: Option<&str>,
+    connecting_slot: Option<&std::sync::Mutex<Option<Peripheral>>>,
+) -> Result<CardV2ConnectOutcome, BridgeError> {
+    let hint_is_dfu = name_hint
+        .map(str::trim)
+        .is_some_and(|nh| nh.to_ascii_uppercase().starts_with("DFU"));
+
+    // 先通过 CoreBluetooth retrievePeripherals / retrieveConnectedPeripherals 找回缓存或系统已连外设，
+    // 尝试 4s 短超时直连与握手；若缓存句柄是半开僵尸或已轮换 RPA，则显式断开后落回实时扫描一次。
+    if !hint_is_dfu {
+        let mut query_services = Vec::new();
+        if let Ok(nus) = parse_uuid(NUS_SERVICE_UUID) {
+            query_services.push(nus);
+        }
+        if let Ok(dfu) = parse_uuid(DFU_SERVICE_UUID) {
+            query_services.push(dfu);
+        }
+        let id_hint_arr = [id];
+        let id_hints: &[&str] = if id.is_empty() { &[] } else { &id_hint_arr };
+        let _ = crate::retrieve_cached_or_connected_peripherals(adapter, id_hints, &query_services)
+            .await;
+
+        if let Some((cached, cached_name, cached_is_dfu)) =
+            find_card_v2_in_adapter(adapter, id, name_hint, None).await
+        {
+            if cached_is_dfu || cached_name.to_ascii_uppercase().starts_with("DFU_DYJ") {
+                disconnect_bounded(&cached).await;
+                return Ok(CardV2ConnectOutcome::DfuRecovery {
+                    id: cached.id().to_string(),
+                    name: DFU_ADVERTISED_NAME.to_owned(),
+                });
+            }
+            if connect_peripheral_with_slot(&cached, Duration::from_secs(4), connecting_slot)
+                .await
+                .is_ok()
+            {
+                if let Ok(outcome) = establish_card_v2_session(
+                    cached.clone(),
+                    cached_name,
+                    true,
+                    connecting_slot,
+                )
+                .await
+                {
+                    return Ok(outcome);
+                }
+                disconnect_bounded(&cached).await;
+            }
+        }
+    }
+
+    let (live_p, live_name, live_dfu) =
+        scan_card_v2_peripheral_live(adapter, id, name_hint).await?;
+    if live_dfu || live_name.to_ascii_uppercase().starts_with("DFU_DYJ") {
+        disconnect_bounded(&live_p).await;
+        return Ok(CardV2ConnectOutcome::DfuRecovery {
+            id: live_p.id().to_string(),
+            name: DFU_ADVERTISED_NAME.to_owned(),
+        });
+    }
+    establish_card_v2_session(live_p, live_name, false, connecting_slot).await
 }
 
 pub async fn scan_dfu_peripheral(
@@ -572,13 +583,20 @@ pub async fn connect_dfu_target_on_adapter(
 
     let mut attempt = 0u8;
     let (control, packet) = loop {
-        tokio::time::timeout(BLE_CONNECT_TIMEOUT, peripheral.connect())
-            .await
-            .map_err(|_| CardSdkError::Timeout {
-                command: "DFU connect".into(),
-                seconds: BLE_CONNECT_TIMEOUT.as_secs(),
-            })?
-            .map_err(|e| CardSdkError::Transport(e.to_string()))?;
+        match tokio::time::timeout(BLE_CONNECT_TIMEOUT, peripheral.connect()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                disconnect_bounded(&peripheral).await;
+                return Err(CardSdkError::Transport(e.to_string()));
+            }
+            Err(_) => {
+                disconnect_bounded(&peripheral).await;
+                return Err(CardSdkError::Timeout {
+                    command: "DFU connect".into(),
+                    seconds: BLE_CONNECT_TIMEOUT.as_secs(),
+                });
+            }
+        }
 
         let disc = tokio::time::timeout(BLE_DISCOVER_TIMEOUT, peripheral.discover_services()).await;
         if !matches!(disc, Ok(Ok(()))) {
@@ -1019,5 +1037,16 @@ mod tests {
 
         assert_eq!(connect_attempts, 1);
         assert!(matches!(err, CardSdkError::Dfu { result: 0x0B, .. }));
+    }
+
+    #[test]
+    fn current_thread_runtime_with_enable_all_runs_20ms_sleep_without_panicking() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current_thread runtime");
+        rt.block_on(async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        });
     }
 }

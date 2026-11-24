@@ -659,15 +659,24 @@ void main() {
         .first;
     final cycle = find.byKey(const Key('dev-cycle-preset-30'));
     await tester.scrollUntilVisible(cycle, 200, scrollable: devScroll);
+    await tester.ensureVisible(cycle);
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('dev-cycle-value')), findsOneWidget);
-    expect(find.text('10 分钟'), findsWidgets);
+    expect(
+      tester.widget<Text>(find.byKey(const Key('dev-cycle-value'))).data,
+      '15 分钟',
+    );
 
     await tester.tap(cycle);
     await tester.pump();
     expect(cfg.cleanCycleMinutes, 30);
     expect(find.text('30 分钟'), findsWidgets);
 
-    await tester.tap(find.byKey(const Key('dev-overlap-mode-minutes')));
+    final overlapMin = find.byKey(const Key('dev-overlap-mode-minutes'));
+    await tester.scrollUntilVisible(overlapMin, 200, scrollable: devScroll);
+    await tester.ensureVisible(overlapMin);
+    await tester.pumpAndSettle();
+    await tester.tap(overlapMin);
     await tester.pump();
     expect(cfg.cleanOverlapMode, 'minutes');
 
@@ -793,7 +802,8 @@ void main() {
     expect(utterances[1]['emotion'], 'NEUTRAL');
     expect(jsonEncode(chat.calls.first.userJson).contains('0.526'), isFalse);
     expect(chat.calls.first.system, contains('情绪仅供理解'));
-    expect(chat.calls.first.system, contains('按内容/时间事件切卡'));
+    expect(chat.calls.first.system, contains('沉浸式大时段活动归拢'));
+    expect(chat.calls.first.system, contains('lowValue'));
 
     // 原始记录仍保留情绪，不被清洗覆盖删除
     expect(recFile.utterances.first.emotion, 'SAD');

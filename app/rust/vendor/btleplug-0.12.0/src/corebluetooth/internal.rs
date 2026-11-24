@@ -26,13 +26,21 @@ use futures::sink::SinkExt;
 use futures::stream::{Fuse, StreamExt};
 use log::{error, trace, warn};
 use objc2::{ClassType, msg_send_id};
-use objc2::{rc::Retained, runtime::AnyObject};
+use objc2::{
+    rc::Retained,
+    runtime::{AnyObject, ProtocolObject},
+};
+#[cfg(target_os = "ios")]
+use objc2_core_bluetooth::CBCentralManagerOptionRestoreIdentifierKey;
+#[cfg(target_os = "ios")]
+use objc2_foundation::NSDictionary;
 use objc2_core_bluetooth::{
     CBCentralManager, CBCentralManagerScanOptionAllowDuplicatesKey, CBCharacteristic,
     CBCharacteristicProperties, CBCharacteristicWriteType, CBDescriptor, CBManager,
-    CBManagerAuthorization, CBManagerState, CBPeripheral, CBPeripheralState, CBService, CBUUID,
+    CBManagerAuthorization, CBManagerState, CBPeripheral, CBPeripheralDelegate, CBPeripheralState,
+    CBService, CBUUID,
 };
-use objc2_foundation::{NSArray, NSData, NSMutableDictionary, NSNumber};
+use objc2_foundation::{NSArray, NSData, NSMutableDictionary, NSNumber, NSString, NSUUID};
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     ffi::{CString, c_void},
@@ -274,6 +282,7 @@ pub enum CoreBluetoothReply {
     ReadRssi(i16),
     Connected,
     ServicesDiscovered(BTreeSet<Service>),
+    PeripheralsMeta(Vec<(Uuid, Option<String>, Vec<Uuid>)>),
     State(CBPeripheralState),
     Ok,
     Err(String),
@@ -615,6 +624,15 @@ pub enum CoreBluetoothMessage {
         peripheral_uuid: Uuid,
         future: CoreBluetoothReplyStateShared,
     },
+    RetrievePeripherals {
+        identifiers: Vec<Uuid>,
+        services: Vec<Uuid>,
+        future: CoreBluetoothReplyStateShared,
+    },
+    RetrieveConnectedPeripherals {
+        services: Vec<Uuid>,
+        future: CoreBluetoothReplyStateShared,
+    },
 }
 
 #[derive(Debug)]
@@ -651,6 +669,26 @@ impl CoreBluetoothInternal {
             unsafe { ffi::dispatch_queue_create(label.as_ptr(), ffi::DISPATCH_QUEUE_SERIAL) };
         let queue: *mut AnyObject = cb_queue.cast();
 
+        #[cfg(target_os = "ios")]
+        let manager = {
+            let mut options = NSMutableDictionary::<NSString, AnyObject>::new();
+            options.insert_id(
+                unsafe { CBCentralManagerOptionRestoreIdentifierKey },
+                Retained::into_super(Retained::into_super(NSString::from_str(
+                    "com.reai.recordingcard.ble.central",
+                ))),
+            );
+            let options_ref: &NSDictionary<NSString, AnyObject> = &options;
+            unsafe {
+                msg_send_id![
+                    CBCentralManager::alloc(),
+                    initWithDelegate: &*delegate,
+                    queue: queue,
+                    options: options_ref
+                ]
+            }
+        };
+        #[cfg(not(target_os = "ios"))]
         let manager = unsafe {
             msg_send_id![CBCentralManager::alloc(), initWithDelegate: &*delegate, queue: queue]
         };
@@ -777,9 +815,10 @@ impl CoreBluetoothInternal {
         let id = unsafe { peripheral.identifier() };
         let uuid = nsuuid_to_uuid(&id);
         let peripheral_name = unsafe { peripheral.name() };
-        let local_name = peripheral_name
-            .map(|n| n.to_string())
-            .or(advertisement_name.clone());
+        let local_name = advertisement_name
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| peripheral_name.map(|n| n.to_string()));
 
         if self.peripherals.contains_key(&uuid) {
             if local_name.is_some() || advertisement_name.is_some() {
@@ -829,6 +868,23 @@ impl CoreBluetoothInternal {
                 })
                 .collect();
             p.services = services;
+            if p.services.is_empty() {
+                p.check_discovered();
+            }
+        }
+    }
+
+    fn on_discovered_services_failed(
+        &mut self,
+        peripheral_uuid: Uuid,
+        error_description: String,
+    ) {
+        if let Some(p) = self.peripherals.get_mut(&peripheral_uuid) {
+            if let Some(fut) = p.services_discovered_future_state.take() {
+                fut.lock()
+                    .unwrap()
+                    .set_reply(CoreBluetoothReply::Err(error_description));
+            }
         }
     }
 
@@ -879,19 +935,36 @@ impl CoreBluetoothInternal {
         }
     }
 
-    fn on_peripheral_connection_failed(
+    async fn on_peripheral_connection_failed(
         &mut self,
         peripheral_uuid: Uuid,
         error_description: Option<String>,
     ) {
         trace!("Got connection fail event!");
         let error = error_description.unwrap_or(String::from("Connection failed"));
-        if let Some(peripheral) = self.peripherals.get_mut(&peripheral_uuid) {
+        let cancelled = if let Some(peripheral) = self.peripherals.get_mut(&peripheral_uuid) {
             if let Some(fut) = peripheral.connected_future_state.take() {
                 fut.lock()
                     .unwrap()
                     .set_reply(CoreBluetoothReply::Err(error));
             }
+            if let Some(dfut) = peripheral.disconnected_future_state.take() {
+                dfut.lock().unwrap().set_reply(CoreBluetoothReply::Ok);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if cancelled {
+            if let Some(mut p) = self.peripherals.remove(&peripheral_uuid) {
+                p.confirm_disconnect();
+            }
+            self.dispatch_event(CoreBluetoothEvent::DeviceDisconnected {
+                uuid: peripheral_uuid,
+            })
+            .await;
         }
     }
 
@@ -899,20 +972,18 @@ impl CoreBluetoothInternal {
         warn!("Adapter powered off, canceling all pending operations");
         let peripheral_uuids: Vec<Uuid> = self.peripherals.keys().cloned().collect();
         for uuid in peripheral_uuids {
-            if let Err(e) = self
-                .peripherals
-                .get_mut(&uuid)
-                .unwrap()
-                .event_sender
-                .send(PeripheralEventInternal::Disconnected)
-                .await
-            {
-                error!("Error sending disconnect event for {}: {}", uuid, e);
+            if let Some(p) = self.peripherals.get_mut(&uuid) {
+                if let Err(e) = p
+                    .event_sender
+                    .send(PeripheralEventInternal::Disconnected)
+                    .await
+                {
+                    error!("Error sending disconnect event for {}: {}", uuid, e);
+                }
             }
-            self.peripherals
-                .get_mut(&uuid)
-                .unwrap()
-                .confirm_disconnect();
+            if let Some(p) = self.peripherals.get_mut(&uuid) {
+                p.confirm_disconnect();
+            }
             self.dispatch_event(CoreBluetoothEvent::DeviceDisconnected { uuid })
                 .await;
         }
@@ -921,24 +992,19 @@ impl CoreBluetoothInternal {
 
     async fn on_peripheral_disconnect(&mut self, peripheral_uuid: Uuid) {
         trace!("Got disconnect event!");
-        if self.peripherals.contains_key(&peripheral_uuid) {
-            if let Err(e) = self
-                .peripherals
-                .get_mut(&peripheral_uuid)
-                .expect("If we're here we should have an ID")
+        if let Some(p) = self.peripherals.get_mut(&peripheral_uuid) {
+            if let Err(e) = p
                 .event_sender
                 .send(PeripheralEventInternal::Disconnected)
                 .await
             {
                 error!("Error sending notification event: {}", e);
             }
-            // Unlike connect, we'll want to fulfill our disconnect future here, which means grabbing
-            // our peripheral and having it fire, then dropping it and dispatching our event.
-            self.peripherals
-                .get_mut(&peripheral_uuid)
-                .expect("If we're here we should have an ID")
-                .confirm_disconnect();
-            self.peripherals.remove(&peripheral_uuid);
+        }
+        // Unlike connect, we'll want to fulfill our disconnect future here, which means grabbing
+        // our peripheral and having it fire, then dropping it and dispatching our event.
+        if let Some(mut p) = self.peripherals.remove(&peripheral_uuid) {
+            p.confirm_disconnect();
             self.dispatch_event(CoreBluetoothEvent::DeviceDisconnected {
                 uuid: peripheral_uuid,
             })
@@ -1132,6 +1198,15 @@ impl CoreBluetoothInternal {
     fn connect_peripheral(&mut self, peripheral_uuid: Uuid, fut: CoreBluetoothReplyStateShared) {
         trace!("Trying to connect peripheral!");
         if let Some(p) = self.peripherals.get_mut(&peripheral_uuid) {
+            let cb_state = unsafe { p.peripheral.state() };
+            if cb_state == CBPeripheralState::Connected {
+                trace!("Peripheral already connected in CoreBluetooth; reusing link");
+                let proto: &ProtocolObject<dyn CBPeripheralDelegate> =
+                    ProtocolObject::from_ref(&*self.delegate);
+                unsafe { p.peripheral.setDelegate(Some(proto)) };
+                fut.lock().unwrap().set_reply(CoreBluetoothReply::Connected);
+                return;
+            }
             trace!("Connecting peripheral!");
             if let Some(prev) = p.connected_future_state.replace(fut) {
                 prev.lock()
@@ -1146,17 +1221,152 @@ impl CoreBluetoothInternal {
         }
     }
 
-    fn disconnect_peripheral(&mut self, peripheral_uuid: Uuid, fut: CoreBluetoothReplyStateShared) {
+    fn collect_connected_peripherals_into(
+        &self,
+        services: Vec<Uuid>,
+        grouped: &mut HashMap<Uuid, (Retained<CBPeripheral>, Option<String>, Vec<Uuid>)>,
+        order: &mut Vec<Uuid>,
+    ) {
+        if services.is_empty() || unsafe { self.manager.state() } != CBManagerState::PoweredOn {
+            return;
+        }
+        for svc in services {
+            let array = NSArray::from_vec(vec![uuid_to_cbuuid(svc)]);
+            let connected = unsafe { self.manager.retrieveConnectedPeripheralsWithServices(&array) };
+            for cbperipheral in connected {
+                let id = unsafe { cbperipheral.identifier() };
+                let uuid = nsuuid_to_uuid(&id);
+                let local_name = unsafe { cbperipheral.name() }.map(|n| n.to_string());
+                if let Some((_, existing_name, svcs)) = grouped.get_mut(&uuid) {
+                    if existing_name.is_none() && local_name.is_some() {
+                        *existing_name = local_name;
+                    }
+                    if !svcs.contains(&svc) {
+                        svcs.push(svc);
+                    }
+                } else {
+                    order.push(uuid);
+                    grouped.insert(uuid, (cbperipheral, local_name, vec![svc]));
+                }
+            }
+        }
+    }
+
+    async fn finalize_retrieved_peripherals(
+        &mut self,
+        mut grouped: HashMap<Uuid, (Retained<CBPeripheral>, Option<String>, Vec<Uuid>)>,
+        order: Vec<Uuid>,
+    ) -> Vec<(Uuid, Option<String>, Vec<Uuid>)> {
+        let mut meta = Vec::with_capacity(order.len());
+        for uuid in order {
+            let Some((cbperipheral, local_name, svcs)) = grouped.remove(&uuid) else {
+                continue;
+            };
+            if unsafe { cbperipheral.state() } == CBPeripheralState::Connected {
+                let proto: &ProtocolObject<dyn CBPeripheralDelegate> =
+                    ProtocolObject::from_ref(&*self.delegate);
+                unsafe { cbperipheral.setDelegate(Some(proto)) };
+            }
+            self.on_discovered_peripheral(cbperipheral, local_name.clone())
+                .await;
+            meta.push((uuid, local_name, svcs));
+        }
+        meta
+    }
+
+    async fn retrieve_connected_peripherals(
+        &mut self,
+        services: Vec<Uuid>,
+        fut: CoreBluetoothReplyStateShared,
+    ) {
+        let mut grouped = HashMap::new();
+        let mut order = Vec::new();
+        self.collect_connected_peripherals_into(services, &mut grouped, &mut order);
+        let meta = self.finalize_retrieved_peripherals(grouped, order).await;
+        fut.lock()
+            .unwrap()
+            .set_reply(CoreBluetoothReply::PeripheralsMeta(meta));
+    }
+
+    async fn disconnect_peripheral(
+        &mut self,
+        peripheral_uuid: Uuid,
+        fut: CoreBluetoothReplyStateShared,
+    ) {
         trace!("Trying to disconnect peripheral!");
         if let Some(p) = self.peripherals.get_mut(&peripheral_uuid) {
-            trace!("Disconnecting peripheral!");
-            if let Some(prev) = p.disconnected_future_state.replace(fut) {
-                prev.lock().unwrap().set_reply(CoreBluetoothReply::Ok);
+            let cb_state = unsafe { p.peripheral.state() };
+            match cb_state {
+                CBPeripheralState::Disconnected => {
+                    trace!("Peripheral already disconnected; cleaning up immediately");
+                    if let Some(mut removed) = self.peripherals.remove(&peripheral_uuid) {
+                        removed.confirm_disconnect();
+                    }
+                    fut.lock().unwrap().set_reply(CoreBluetoothReply::Ok);
+                    self.dispatch_event(CoreBluetoothEvent::DeviceDisconnected {
+                        uuid: peripheral_uuid,
+                    })
+                    .await;
+                    return;
+                }
+                CBPeripheralState::Connecting => {
+                    unsafe { self.manager.cancelPeripheralConnection(&p.peripheral) };
+                    fut.lock().unwrap().set_reply(CoreBluetoothReply::Ok);
+                    self.on_peripheral_disconnect(peripheral_uuid).await;
+                    return;
+                }
+                _ => {
+                    trace!("Disconnecting peripheral!");
+                    if let Some(prev) = p.disconnected_future_state.replace(fut) {
+                        prev.lock().unwrap().set_reply(CoreBluetoothReply::Ok);
+                    }
+                    unsafe { self.manager.cancelPeripheralConnection(&p.peripheral) };
+                }
             }
-            unsafe { self.manager.cancelPeripheralConnection(&p.peripheral) };
         } else {
             fut.lock().unwrap().set_reply(CoreBluetoothReply::Ok);
         }
+    }
+
+    async fn retrieve_peripherals(
+        &mut self,
+        identifiers: Vec<Uuid>,
+        services: Vec<Uuid>,
+        fut: CoreBluetoothReplyStateShared,
+    ) {
+        let mut grouped: HashMap<Uuid, (Retained<CBPeripheral>, Option<String>, Vec<Uuid>)> =
+            HashMap::new();
+        let mut order: Vec<Uuid> = Vec::new();
+
+        if !identifiers.is_empty() {
+            let ns_uuids: Vec<Retained<NSUUID>> = identifiers
+                .into_iter()
+                .filter_map(|u| {
+                    let s = NSString::from_str(&u.to_string());
+                    NSUUID::initWithUUIDString(NSUUID::alloc(), &s)
+                })
+                .collect();
+            if !ns_uuids.is_empty() {
+                let arr = NSArray::from_vec(ns_uuids);
+                let peripherals = unsafe { self.manager.retrievePeripheralsWithIdentifiers(&arr) };
+                for p in peripherals {
+                    let id = unsafe { p.identifier() };
+                    let uuid = nsuuid_to_uuid(&id);
+                    let local_name = unsafe { p.name() }.map(|n| n.to_string());
+                    if !grouped.contains_key(&uuid) {
+                        order.push(uuid);
+                        grouped.insert(uuid, (p.retain(), local_name, Vec::new()));
+                    }
+                }
+            }
+        }
+
+        self.collect_connected_peripherals_into(services, &mut grouped, &mut order);
+        let meta = self.finalize_retrieved_peripherals(grouped, order).await;
+
+        fut.lock()
+            .unwrap()
+            .set_reply(CoreBluetoothReply::PeripheralsMeta(meta));
     }
 
     fn is_connected(&mut self, peripheral_uuid: Uuid, fut: CoreBluetoothReplyStateShared) {
@@ -1558,11 +1768,19 @@ impl CoreBluetoothInternal {
                         }
                         self.dispatch_event(CoreBluetoothEvent::DidUpdateState{state}).await
                     }
+                    CentralDelegateEvent::WillRestorePeripherals{peripherals} => {
+                        for p in peripherals {
+                            self.on_discovered_peripheral(p, None).await;
+                        }
+                    }
                     CentralDelegateEvent::DiscoveredPeripheral{cbperipheral, advertisement_name} => {
                         self.on_discovered_peripheral(cbperipheral, advertisement_name).await
                     }
                     CentralDelegateEvent::DiscoveredServices{peripheral_uuid, services} => {
                         self.on_discovered_services(peripheral_uuid, services)
+                    }
+                    CentralDelegateEvent::DiscoveredServicesFailed{peripheral_uuid, error_description} => {
+                        self.on_discovered_services_failed(peripheral_uuid, error_description)
                     }
                     CentralDelegateEvent::DiscoveredCharacteristics{peripheral_uuid, service_uuid, characteristics} => {
                         self.on_discovered_characteristics(peripheral_uuid, service_uuid, characteristics)
@@ -1574,7 +1792,7 @@ impl CoreBluetoothInternal {
                         self.on_peripheral_connect(peripheral_uuid)
                     },
                     CentralDelegateEvent::ConnectionFailed{peripheral_uuid, error_description} => {
-                        self.on_peripheral_connection_failed(peripheral_uuid, error_description)
+                        self.on_peripheral_connection_failed(peripheral_uuid, error_description).await
                     },
                     CentralDelegateEvent::DisconnectedDevice{peripheral_uuid} => {
                         self.on_peripheral_disconnect(peripheral_uuid).await
@@ -1681,7 +1899,7 @@ impl CoreBluetoothInternal {
                         self.connect_peripheral(peripheral_uuid, future);
                     }
                     CoreBluetoothMessage::DisconnectDevice{peripheral_uuid, future} => {
-                        self.disconnect_peripheral(peripheral_uuid, future);
+                        self.disconnect_peripheral(peripheral_uuid, future).await;
                     }
                     CoreBluetoothMessage::ReadValue{peripheral_uuid, service_uuid,characteristic_uuid, future} => {
                         self.read_value(peripheral_uuid, service_uuid,characteristic_uuid, future)
@@ -1717,6 +1935,12 @@ impl CoreBluetoothInternal {
                     }
                     CoreBluetoothMessage::ReadRssi{peripheral_uuid, future} => {
                         self.read_rssi(peripheral_uuid, future)
+                    }
+                    CoreBluetoothMessage::RetrievePeripherals{identifiers, services, future} => {
+                        self.retrieve_peripherals(identifiers, services, future).await;
+                    }
+                    CoreBluetoothMessage::RetrieveConnectedPeripherals{services, future} => {
+                        self.retrieve_connected_peripherals(services, future).await
                     }
                 };
             }
@@ -1799,7 +2023,10 @@ pub fn run_corebluetooth_thread(
     let (sender, receiver) = mpsc::channel::<CoreBluetoothMessage>(256);
     // CoreBluetoothInternal is !Send, so we need to keep it on a single thread.
     thread::spawn(move || {
-        let runtime = runtime::Builder::new_current_thread().build().unwrap();
+        let runtime = runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         runtime.block_on(async move {
             let mut cbi = CoreBluetoothInternal::new(receiver, event_sender);
             loop {

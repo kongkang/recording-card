@@ -73,6 +73,7 @@ class LocalAsrService implements SpeechEngine {
   LocalAsrService({
     this.loadTimeout = const Duration(seconds: 90),
     this.transcribeTimeout = const Duration(seconds: 120),
+    this.idleReleaseDelay,
   });
 
   final Duration loadTimeout;
@@ -92,6 +93,19 @@ class LocalAsrService implements SpeechEngine {
   int _numThreads = 2;
 
   bool get isLoaded => _loaded;
+
+  static const double defaultVadMinSilenceDuration = 0.45;
+  static const double defaultVadMaxSpeechDuration = 28;
+
+  static sherpa.SileroVadModelConfig buildSileroVadConfig(String vadPath) =>
+      sherpa.SileroVadModelConfig(
+        model: vadPath,
+        threshold: 0.20,
+        minSilenceDuration: defaultVadMinSilenceDuration,
+        minSpeechDuration: 0.20,
+        windowSize: 512,
+        maxSpeechDuration: defaultVadMaxSpeechDuration,
+      );
 
   bool _vadLoaded = false;
   String? _vadPath;
@@ -263,8 +277,52 @@ class LocalAsrService implements SpeechEngine {
     );
   }
 
+  final Duration? idleReleaseDelay;
+  Timer? _idleTimer;
+  int _activeCalls = 0;
+  bool _releaseWhenIdle = false;
+
+  /// 是否仍有存活的推理 Isolate 或尚未卸载的端侧模型。
+  bool get hasActiveWorker =>
+      _isolate != null || _loaded || _vadLoaded || _embeddingLoaded;
+
+  void _cancelIdleTimer() {
+    _idleTimer?.cancel();
+    _idleTimer = null;
+  }
+
+  void _scheduleIdleRelease() {
+    _cancelIdleTimer();
+    final delay = idleReleaseDelay;
+    if (delay == null || delay <= Duration.zero) return;
+    if (!hasActiveWorker || _activeCalls > 0) return;
+    _idleTimer = Timer(delay, () {
+      _idleTimer = null;
+      if (_activeCalls == 0 && hasActiveWorker) {
+        unawaited(dispose());
+      }
+    });
+  }
+
+  /// 退后台或收到系统内存压力时释放端侧推理 Isolate 与 C++ 模型堆内存；
+  /// 若当前恰有推理调用进行中，不强杀执行，等调用结束后立即回收。
+  Future<void> releaseMemory() async {
+    _cancelIdleTimer();
+    if (!hasActiveWorker) {
+      _releaseWhenIdle = false;
+      return;
+    }
+    if (_activeCalls > 0) {
+      _releaseWhenIdle = true;
+      return;
+    }
+    _releaseWhenIdle = false;
+    await dispose();
+  }
+
   /// 释放模型（保留 worker 可复用；下次 load 重建）。
   Future<void> unload() async {
+    _cancelIdleTimer();
     if (!_loaded) return;
     try {
       await _call('unload', const {}, const Duration(seconds: 10));
@@ -276,6 +334,8 @@ class LocalAsrService implements SpeechEngine {
 
   @override
   Future<void> dispose() async {
+    _cancelIdleTimer();
+    _releaseWhenIdle = false;
     try {
       if (_command != null) {
         await _call('dispose', const {}, const Duration(seconds: 5));
@@ -352,6 +412,8 @@ class LocalAsrService implements SpeechEngine {
     final id = ++_nextId;
     final completer = Completer<Map<String, dynamic>>();
     _pending[id] = completer;
+    _activeCalls++;
+    _cancelIdleTimer();
     command.send({'id': id, 'cmd': cmd, ...payload});
     try {
       return await completer.future.timeout(timeout);
@@ -361,6 +423,16 @@ class LocalAsrService implements SpeechEngine {
       _loaded = false;
       await _killWorker();
       throw AsrException('转写超时（${timeout.inSeconds}s），已重置转写进程');
+    } finally {
+      _activeCalls--;
+      if (cmd != 'dispose') {
+        if (_releaseWhenIdle && _activeCalls == 0 && hasActiveWorker) {
+          _releaseWhenIdle = false;
+          unawaited(dispose());
+        } else {
+          _scheduleIdleRelease();
+        }
+      }
     }
   }
 
@@ -374,6 +446,8 @@ class LocalAsrService implements SpeechEngine {
   }
 
   Future<void> _killWorker() async {
+    _cancelIdleTimer();
+    _releaseWhenIdle = false;
     final isolate = _isolate;
     _isolate = null;
     _command = null;
@@ -461,19 +535,14 @@ void _asrWorkerMain(SendPort mainPort) {
           initSherpaBindings(msg['nativeLibraryPath'] as String?);
           vad = sherpa.VoiceActivityDetector(
             config: sherpa.VadModelConfig(
-              sileroVad: sherpa.SileroVadModelConfig(
-                model: msg['vadPath'] as String,
-                threshold: 0.20,
-                minSilenceDuration: 0.5,
-                minSpeechDuration: 0.20,
-                windowSize: 512,
-                maxSpeechDuration: 10,
+              sileroVad: LocalAsrService.buildSileroVadConfig(
+                msg['vadPath'] as String,
               ),
               sampleRate: 16000,
               numThreads: 1,
               debug: false,
             ),
-            bufferSizeInSeconds: 120,
+            bufferSizeInSeconds: 30,
           );
           reply(id, {'ok': true});
 

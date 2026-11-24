@@ -66,16 +66,6 @@ class RecordingSyncService {
     return dir;
   }
 
-  /// 同步进度文案只用时间，不暴露 watch_… 长文件名。
-  String _timeLabel(String deviceName) {
-    final m = RegExp(r'(20\d{10,12})').firstMatch(deviceName);
-    final raw = m?.group(1);
-    if (raw != null && raw.length >= 12) {
-      return '${raw.substring(8, 10)}:${raw.substring(10, 12)}';
-    }
-    return '这段录音';
-  }
-
   /// 读取本地已有记录（按时间倒序：今天的在前）。
   Future<List<RecordEvent>> loadEvents() async {
     final items = await _manifest.load();
@@ -125,12 +115,13 @@ class RecordingSyncService {
       onProgress?.call(
         SyncStage.downloading,
         base + step * 0.1,
-        '正在取回 ${_timeLabel(file.name)} 这段（${i + 1}/$total）',
+        '正在取回（${i + 1}/$total）',
       );
 
+      CardDownload download;
       String apmPath;
       try {
-        final download = await _gateway.download(file.name, dir.path);
+        download = await _gateway.download(file.name, dir.path);
         apmPath = download.path;
       } on CardException catch (e) {
         items.add(
@@ -142,11 +133,14 @@ class RecordingSyncService {
         );
         continue;
       }
+      final recordedAt = download.startAtSec != null
+          ? DateTime.fromMillisecondsSinceEpoch(download.startAtSec! * 1000)
+          : (file.startTime ?? file.fileModifiedTime ?? DateTime.now());
 
       onProgress?.call(
         SyncStage.transcoding,
         base + step * 0.35,
-        '正在转换 ${_timeLabel(file.name)} 这段',
+        '正在转换（${i + 1}/$total）',
       );
       final wavPath = '$apmPath.wav';
       var durationSecs = 0.0;
@@ -162,7 +156,7 @@ class RecordingSyncService {
             wavPath: null,
             transcript: '',
             durationSecs: 0,
-            recordedAt: DateTime.now(),
+            recordedAt: recordedAt,
           ),
         );
         items.add(
@@ -178,7 +172,7 @@ class RecordingSyncService {
       onProgress?.call(
         SyncStage.transcribing,
         base + step * 0.6,
-        '正在转写 ${_timeLabel(file.name)} 这段',
+        '正在转写（${i + 1}/$total）',
       );
       var transcript = '';
       String? transcribeError;
@@ -205,7 +199,7 @@ class RecordingSyncService {
           wavPath: wavPath,
           transcript: transcript,
           durationSecs: durationSecs,
-          recordedAt: DateTime.now(),
+          recordedAt: recordedAt,
         ),
       );
 

@@ -9,6 +9,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:recording_card/core/device/card_gateway.dart';
 import 'package:recording_card/core/store/device_store.dart';
+import 'package:recording_card/services/legacy_upgrade/legacy_upgrade_controller.dart';
+import 'package:recording_card/services/legacy_upgrade/legacy_upgrade_gateway.dart';
+import 'package:recording_card/services/legacy_upgrade/legacy_upgrade_models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/fake_gateway.dart';
@@ -291,4 +294,228 @@ void main() {
     expect(find.byKey(const Key('legacy-upg-sheet')), findsNothing);
     expect(gw.callLog, contains('legacy_upgrade_close'));
   });
+
+  test('Gen-1 广播名 DYJ-AB12CD 识别、targetOta 清单解析与透传至 bridge', () async {
+    expect(DeviceKind.fromBleName('DYJ-AB12CD'), DeviceKind.dyjV1);
+    expect(DeviceKind.fromBleName('DYJ-V1'), DeviceKind.dyjV1);
+    expect(DeviceKind.bleShortId('DYJ-AB12CD'), 'AB12CD');
+
+    final spec = LegacyTargetOtaSpec.tryParseManifestJson({
+      'version': '0.8.15',
+      'versionName': '0.8.15',
+      'versionCode': 815,
+      'url': 'https://hdd.dev.reai.com/ota/dyj1/app-815.apk',
+    });
+    expect(spec, isNotNull);
+    expect(spec!.versionCode, 815);
+    expect(spec.versionName, '0.8.15');
+    expect(spec.toJson(), {
+      'versionName': '0.8.15',
+      'versionCode': 815,
+      'url': 'https://hdd.dev.reai.com/ota/dyj1/app-815.apk',
+    });
+
+    Map<String, dynamic>? sentOtaPayload;
+    CardDevice? reconnectedTarget;
+    final gw = FakeCardGateway(devices: const [])
+      ..onBridgeCommand = (kind, payload) async {
+        if (kind == 'legacy_upgrade_open') {
+          return {
+            'ok': true,
+            'data': {
+              'deviceId': 'dyj-gen1-ab12cd',
+              'name': 'DYJ-AB12CD',
+              'deviceKind': 'dyj_v1',
+              'currentVersion': '0.6.12',
+              'targetVersion': '0.8.15',
+              'wifiEnabled': true,
+              'wifiConnected': true,
+              'currentSsid': null,
+            },
+          };
+        }
+        if (kind == 'legacy_upgrade_scan_wifi') {
+          return {
+            'ok': true,
+            'data': {
+              'networks': [
+                {
+                  'ssid': 'OfficeWiFi',
+                  'rssi': -44,
+                  'secure': true,
+                  'connected': true,
+                },
+              ],
+            },
+          };
+        }
+        return {'ok': true, 'data': {'connected': true, 'ssid': 'OfficeWiFi'}};
+      }
+      ..onBridgeStream = (kind, payload, onFinal) async* {
+        sentOtaPayload = payload;
+        onFinal?.call({
+          'ok': true,
+          'deviceId': 'ble-new-999',
+          'name': 'DYJ_NEW999',
+          'targetVersion': '0.8.15',
+        });
+      };
+
+    final ctrl = LegacyUpgradeController(
+      gateway: BridgeLegacyUpgradeGateway(gw),
+      onAutoReconnect: (updated) async {
+        reconnectedTarget = updated;
+        return true;
+      },
+      fetchTargetOta: () async => spec,
+      reconnectRetryDelay: Duration.zero,
+    );
+    ctrl.triggerFromMismatch(
+      const LegacyUpgradeMismatch(
+        device: CardDevice(
+          id: 'dyj-gen1-ab12cd',
+          name: 'DYJ-AB12CD',
+          rssi: -52,
+          kind: DeviceKind.dyjV1,
+        ),
+        deviceKind: 'dyj_v1',
+        currentVersion: '0.6.12',
+        minRequiredVersion: '0.8.12',
+        message: '需要升级',
+      ),
+    );
+    await ctrl.beginWifiSetup();
+    expect(ctrl.isSsidAlreadyConnected('OfficeWiFi'), isTrue);
+    await ctrl.submitWifiAndUpgrade(ssid: 'OfficeWiFi', password: '');
+
+    expect(sentOtaPayload?['targetOta']?['versionCode'], 815);
+    expect(
+      sentOtaPayload?['targetOta']?['url'],
+      'https://hdd.dev.reai.com/ota/dyj1/app-815.apk',
+    );
+    expect(reconnectedTarget?.name, 'DYJ_NEW999');
+    expect(reconnectedTarget?.id, 'ble-new-999');
+  });
+
+  testWidgets(
+    '初代固件 DYJ-AB12CD (v0.6.12) 复用已连 Wi-Fi 升级至新版 DYJ_NEW999 后自动重连',
+    (tester) async {
+      const gen1Device = CardDevice(
+        id: 'dyj-gen1-ab12cd',
+        name: 'DYJ-AB12CD',
+        rssi: -52,
+        kind: DeviceKind.dyjV1,
+      );
+      String? connectWifiPwd;
+      late final FakeCardGateway gw;
+      gw = FakeCardGateway(devices: const [gen1Device])
+        ..failConnect = const CardException(
+          CardErrorKind.device,
+          'LEGACY_UPGRADE_REQUIRED|dyj_v1|0.6.12|0.8.12|检测到点一机固件版本不兼容（当前 v0.6.12），请配置 Wi-Fi 完成自动升级',
+        )
+        ..onBridgeCommand = (kind, payload) async {
+          switch (kind) {
+            case 'legacy_upgrade_open':
+              return {
+                'ok': true,
+                'data': {
+                  'deviceId': gen1Device.id,
+                  'name': gen1Device.name,
+                  'deviceKind': 'dyj_v1',
+                  'currentVersion': '0.6.12',
+                  'targetVersion': '0.8.15',
+                  'wifiEnabled': true,
+                  'wifiConnected': true,
+                  'currentSsid': null,
+                },
+              };
+            case 'legacy_upgrade_scan_wifi':
+              return {
+                'ok': true,
+                'data': {
+                  'networks': [
+                    {
+                      'ssid': 'OfficeWiFi',
+                      'rssi': -44,
+                      'secure': true,
+                      'connected': true,
+                    },
+                  ],
+                  'currentSsid': null,
+                },
+              };
+            case 'legacy_upgrade_connect_wifi':
+              connectWifiPwd = payload?['password'] as String?;
+              return {
+                'ok': true,
+                'data': {'connected': true, 'ssid': payload?['ssid'], 'ip': ''},
+              };
+            case 'legacy_upgrade_close':
+              return {'ok': true};
+            default:
+              return {'ok': true};
+          }
+        }
+        ..onBridgeStream = (kind, payload, onFinal) async* {
+          yield const CardProgress(
+            stage: 'downloading',
+            percent: 42,
+            text: '正在下载新固件 50%…',
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          gw.failConnect = null;
+          gw.current = const CardSnapshot(
+            batteryLevel: 96,
+            isCharging: false,
+            wifiOpen: true,
+            recording: false,
+            fwVersion: '0.8.15',
+            fwVersionCode: 815,
+            wifiVersion: '',
+            wifiVersionCode: 0,
+            deviceName: 'DYJ_NEW999',
+            deviceId: 'DYJNEW999ID',
+            storageTotalMb: 11180,
+            storageFreeMb: 9980,
+            deviceKind: DeviceKind.dyjV1,
+            displayModel: '点一机 V1',
+            capabilities: HardwareCapabilities.dyjV1,
+          );
+          onFinal?.call({
+            'ok': true,
+            'deviceId': 'ble-new-999',
+            'name': 'DYJ_NEW999',
+            'targetVersion': '0.8.15',
+          });
+        };
+
+      final device = DeviceStore(gateway: gw);
+      await pumpShell(tester, device: device);
+
+      await tester.tap(find.byKey(const Key('hw-capsule')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.byKey(const Key('dev-item-dyj-gen1-ab12cd')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.textContaining('v0.6.12'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('legacy-upg-start-wifi')));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      // wifiList 标出 connected=true 后，已连同 SSID 不再强制重输密码，直接可点升级
+      expect(device.legacyUpgrade.isSsidAlreadyConnected('OfficeWiFi'), isTrue);
+      await tester.tap(find.byKey(const Key('legacy-upg-connect-btn')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(connectWifiPwd, isNull);
+      expect(device.isConnected, isTrue);
+      expect(device.fwVersion, '0.8.15');
+      expect(device.connectedName, 'DYJ_NEW999');
+    },
+  );
 }

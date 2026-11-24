@@ -4,12 +4,11 @@
 /// 以及「定位到原始对话流 ›」（`Key('pm-jump-dlg')`）或「不属于本段 / 不归类 / 归入」操作。
 library;
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../core/models/record.dart';
 import '../core/theme/tokens.dart';
+import 'photo_thumbnail.dart';
 
 Future<void> showPhotoPreviewSheet(
   BuildContext context, {
@@ -24,17 +23,22 @@ Future<void> showPhotoPreviewSheet(
   VoidCallback? onPrimaryAction,
   String? primaryActionLabel,
 }) {
-  final hasFile = photo.path.isNotEmpty && File(photo.path).existsSync();
+  final outerColors = context.rc;
+  final outerStyle = context.rcStyle;
   return showModalBottomSheet<void>(
     context: context,
     useRootNavigator: true,
     isScrollControlled: true,
-    backgroundColor: RCColors.card,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    backgroundColor: outerColors.card,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(
+        top: Radius.circular(outerStyle.cardRadius + 6),
+      ),
     ),
     clipBehavior: Clip.antiAlias,
     builder: (ctx) {
+      final c = ctx.rc;
+      final s = ctx.rcStyle;
       return SafeArea(
         key: const Key('photo-preview-sheet'),
         child: SingleChildScrollView(
@@ -49,7 +53,7 @@ Future<void> showPhotoPreviewSheet(
                   height: 4,
                   margin: const EdgeInsets.symmetric(vertical: 10),
                   decoration: BoxDecoration(
-                    color: RCColors.sep,
+                    color: c.sep,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -57,25 +61,17 @@ Future<void> showPhotoPreviewSheet(
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(s.cardRadius),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxHeight: 300),
                     child: AspectRatio(
                       aspectRatio: 4 / 3,
-                      child: hasFile
-                          ? Image.file(File(photo.path), fit: BoxFit.cover)
-                          : ColoredBox(
-                              color: const Color(0xFFEAEAE4),
-                              child: Center(
-                                child: Icon(
-                                  photo.source == 'dyj_camera'
-                                      ? Icons.photo_camera_outlined
-                                      : Icons.photo_outlined,
-                                  size: 44,
-                                  color: RCColors.sec,
-                                ),
-                              ),
-                            ),
+                      child: PhotoThumbnail(
+                        path: photo.path,
+                        logicalWidth: 420,
+                        source: photo.source,
+                        placeholderIconSize: 44,
+                      ),
                     ),
                   ),
                 ),
@@ -89,18 +85,19 @@ Future<void> showPhotoPreviewSheet(
                       title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
+                        color: c.label,
                       ),
                     ),
                     if (subtitle != null && subtitle.isNotEmpty) ...[
                       const SizedBox(height: 3),
                       Text(
                         subtitle,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: RCColors.sec,
+                          color: c.sec,
                         ),
                       ),
                     ],
@@ -110,18 +107,18 @@ Future<void> showPhotoPreviewSheet(
                         width: double.infinity,
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: RCColors.bg,
+                          color: c.bg,
                           borderRadius: BorderRadius.circular(9),
-                          border: Border.all(color: RCColors.sep),
+                          border: Border.all(color: c.sep),
                         ),
                         child: Text(
                           quoteText.trim(),
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12.5,
                             height: 1.5,
-                            color: RCColors.ink,
+                            color: c.ink,
                           ),
                         ),
                       ),

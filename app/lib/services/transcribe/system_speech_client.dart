@@ -30,6 +30,10 @@ class SystemSpeechCapabilities {
     this.deviceSummary = '',
     this.engineName = '',
     this.onDeviceServicePackage = '',
+    this.resolutionStrategy = '',
+    this.compatServiceComponent = '',
+    this.compatDescription = '',
+    this.detectedServices = const [],
     this.offlinePackInstalled = true,
     this.canDownloadOfflinePack = false,
     this.unsupportedReason = '',
@@ -50,18 +54,43 @@ class SystemSpeechCapabilities {
   final String deviceSummary;
   final String engineName;
   final String onDeviceServicePackage;
+  final String resolutionStrategy;
+  final String compatServiceComponent;
+  final String compatDescription;
+  final List<String> detectedServices;
   final bool offlinePackInstalled;
   final bool canDownloadOfflinePack;
   final String unsupportedReason;
 
   bool get isAndroid => platform == 'android';
   bool get isIOS => platform == 'ios';
+  bool get isCompatService =>
+      supportsModernSystemAsr && resolutionStrategy == 'compat_service';
+
+  String get recommendedBadgeLabel =>
+      isCompatService ? '兼容方案优先' : '本机默认推荐';
+
+  String get activeStatusPillLabel =>
+      isCompatService ? '兼容方案生效中' : '系统内置生效中';
 
   String get effectiveEngineTitle {
     final clean = engineName.trim();
     if (clean.isNotEmpty) return clean;
     if (isAndroid) return 'Android 系统端侧语音引擎';
     return 'iOS 系统内置模型（SpeechAnalyzer）';
+  }
+
+  String get effectiveEngineSubtitle {
+    final clean = compatDescription.trim();
+    if (clean.isNotEmpty) return clean;
+    if (isAndroid) {
+      if (isCompatService) {
+        return '已匹配「$effectiveEngineTitle」，通过本地文件流直连端侧离线识别服务，免下载 228 MB 模型即可离线转写，全程不开麦克风、不上云。';
+      }
+      return '调用「$effectiveEngineTitle」纯端侧离线识别，音频仅留在本机；'
+          '${offlinePackInstalled ? '安装即用，免下 228 MB 增强模型。' : '中文离线语音包未就绪时可一键拉起系统下载。'}';
+    }
+    return '调用原生 SpeechAnalyzer 纯端侧引擎（未预置长音频资产时自动以系统听写包垫底），刚装好软件即可立即离线使用，音频不出本机。';
   }
 
   String get effectiveDeviceLabel {
@@ -80,12 +109,12 @@ class SystemSpeechCapabilities {
     final clean = unsupportedReason.trim();
     if (clean.isNotEmpty) return clean;
     if (isAndroid) {
-      return '当前 Android 设备未提供可用的端侧音频文件转写服务，音频不上传云端，请下载纯端侧 SenseVoice 增强模型。';
+      return '当前 Android 设备未匹配到免下载的端侧系统/兼容语音服务，音频不上传云端，已优先展示本地离线 SenseVoice 模型。';
     }
     if (isIOS) {
-      return '当前系统低于 iOS 26，不支持新一代纯端侧内置引擎，请下载 SenseVoice 增强模型。';
+      return '当前系统低于 iOS 26，不支持新一代纯端侧内置引擎，请下载本地 SenseVoice 增强模型。';
     }
-    return '当前运行环境未提供系统端侧离线语音引擎，请下载 SenseVoice 增强模型。';
+    return '当前运行环境未提供系统端侧离线语音引擎，已将本地离线 SenseVoice 增强模型设为第一选择。';
   }
 
   factory SystemSpeechCapabilities.fromMap(Map<Object?, Object?> map) =>
@@ -99,6 +128,13 @@ class SystemSpeechCapabilities {
         deviceSummary: '${map['deviceSummary'] ?? ''}',
         engineName: '${map['engineName'] ?? ''}',
         onDeviceServicePackage: '${map['onDeviceServicePackage'] ?? ''}',
+        resolutionStrategy: '${map['resolutionStrategy'] ?? ''}',
+        compatServiceComponent: '${map['compatServiceComponent'] ?? ''}',
+        compatDescription: '${map['compatDescription'] ?? ''}',
+        detectedServices: [
+          for (final item in (map['detectedServices'] as List? ?? const []))
+            if ('$item'.trim().isNotEmpty) '$item'.trim(),
+        ],
         offlinePackInstalled: map['offlinePackInstalled'] != false,
         canDownloadOfflinePack: map['canDownloadOfflinePack'] == true,
         unsupportedReason: '${map['unsupportedReason'] ?? ''}',
@@ -208,12 +244,30 @@ class SystemSpeechClient {
     }
   }
 
+  Future<AsrResult> transcribeWavFile(
+    String wavPath, {
+    String language = 'auto',
+    Float32List? fallbackSamples,
+    int sampleRate = 16000,
+  }) => transcribeSamples(
+    fallbackSamples ?? Float32List(0),
+    sampleRate: sampleRate,
+    language: language,
+    wavPath: wavPath,
+  );
+
   Future<AsrResult> transcribeSamples(
     Float32List samples, {
     int sampleRate = 16000,
     String language = 'auto',
+    String? wavPath,
   }) async {
-    if (samples.isEmpty) {
+    final trimmedPath = wavPath?.trim() ?? '';
+    final existingFile = trimmedPath.isNotEmpty ? File(trimmedPath) : null;
+    final canUseDirectWav =
+        existingFile != null && await existingFile.exists();
+
+    if (samples.isEmpty && !canUseDirectWav) {
       return const AsrResult(
         text: '',
         tokens: [],
@@ -222,23 +276,36 @@ class SystemSpeechClient {
       );
     }
     if (_transcribeOverride != null) {
-      return _transcribeOverride(samples, sampleRate, language);
+      final effectiveSamples = samples.isNotEmpty
+          ? samples
+          : readWavFile(existingFile!.path).toSpeechFloat32();
+      return _transcribeOverride(effectiveSamples, sampleRate, language);
     }
     if (!_hasNativePlatform) {
       throw const AsrException('当前平台不支持系统内置离线语音识别');
     }
 
-    final audioMs = samples.length * 1000 ~/ sampleRate;
-    final wavBytes = encodeWav(samples, sampleRate: sampleRate);
-    final tmpFile = File(
-      '${Directory.systemTemp.path}/rc_sys_asr_${DateTime.now().microsecondsSinceEpoch}_${_seq++}.wav',
-    );
-    await tmpFile.writeAsBytes(wavBytes, flush: true);
+    final audioMs = samples.isNotEmpty
+        ? (samples.length * 1000 ~/ sampleRate)
+        : (readWavDurationMsSync(existingFile!.path) ?? 0);
+
+    File? tmpFile;
+    final String targetWavPath;
+    if (canUseDirectWav) {
+      targetWavPath = existingFile.path;
+    } else {
+      final wavBytes = encodeWav(samples, sampleRate: sampleRate);
+      tmpFile = File(
+        '${Directory.systemTemp.path}/rc_sys_asr_${DateTime.now().microsecondsSinceEpoch}_${_seq++}.wav',
+      );
+      await tmpFile.writeAsBytes(wavBytes, flush: true);
+      targetWavPath = tmpFile.path;
+    }
 
     try {
       final raw = await (_channel ?? _defaultChannel)
           .invokeMapMethod<Object?, Object?>('transcribeWav', {
-            'wavPath': tmpFile.path,
+            'wavPath': targetWavPath,
             'language': language,
           });
       if (raw == null) {
@@ -272,12 +339,14 @@ class SystemSpeechClient {
     } on MissingPluginException {
       throw const AsrException('系统语音识别通道未就绪');
     } finally {
-      try {
-        if (await tmpFile.exists()) {
-          await tmpFile.delete();
+      if (tmpFile != null) {
+        try {
+          if (await tmpFile.exists()) {
+            await tmpFile.delete();
+          }
+        } on Object {
+          // 清理临时 WAV 失败不阻塞主流程
         }
-      } on Object {
-        // 清理临时 WAV 失败不阻塞主流程
       }
     }
   }
@@ -335,12 +404,14 @@ class RoutingSpeechEngine implements SpeechEngine {
   Future<AsrResult> transcribe(
     Float32List samples, {
     int sampleRate = 16000,
+    String? wavPath,
   }) async {
     if (_activeIsSystem) {
       return systemSpeech.transcribeSamples(
         samples,
         sampleRate: sampleRate,
         language: _language,
+        wavPath: wavPath,
       );
     }
     return localEngine.transcribe(samples, sampleRate: sampleRate);
@@ -367,4 +438,12 @@ class RoutingSpeechEngine implements SpeechEngine {
 
   @override
   Future<void> dispose() => localEngine.dispose();
+
+  /// 退后台或内存紧张时释放底层端侧 Isolate 与模型内存。
+  Future<void> releaseMemory() async {
+    final local = localEngine;
+    if (local is LocalAsrService) {
+      await local.releaseMemory();
+    }
+  }
 }

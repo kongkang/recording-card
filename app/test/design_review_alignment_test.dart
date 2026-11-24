@@ -494,8 +494,7 @@ void main() {
       find.byKey(const Key('model-delete-confirm-dialog')),
       findsOneWidget,
     );
-    expect(find.textContaining('付费云端模式'), findsOneWidget);
-    expect(find.textContaining('隐私'), findsOneWidget);
+    expect(find.textContaining('重新下载'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('model-delete-confirm-btn')));
     await tester.pumpAndSettle();
@@ -508,13 +507,10 @@ void main() {
     expect(controller.statusFor(senseVoiceSpec)?.installed, isFalse);
   });
 
-  testWidgets('6. 云端模型极简模式 + 连击版本号7次解锁开发者模式 + Gateway 关闭拦截', (
-    tester,
-  ) async {
-    final agentConfig = AgentConfigStore(store: InMemoryStore());
-    addTearDown(agentConfig.dispose);
-    await agentConfig.load();
-
+  testWidgets('6. 云端模型默认外脑，服务商配置按需显示', (tester) async {
+    final config = AgentConfigStore(store: InMemoryStore());
+    addTearDown(config.dispose);
+    await config.load();
     final settings = SettingsStore(store: InMemoryStore());
     addTearDown(settings.dispose);
 
@@ -522,72 +518,38 @@ void main() {
       MaterialApp(
         theme: testTheme(),
         home: Scaffold(
-          body: SettingPage(settings: settings, agentConfig: agentConfig),
+          body: SettingPage(settings: settings, agentConfig: config),
         ),
       ),
     );
-    await tester.pump();
-
-    // 普通模式下只露出「开启云端模型」与「自定义 API 地址」，不露出模型和温度
-    await tester.tap(find.byKey(const Key('set-cloud-model')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('cloud-enable-switch')), findsOneWidget);
-    expect(find.byKey(const Key('cloud-custom-api-input')), findsOneWidget);
-    expect(find.byKey(const Key('model-opt-deepseek-v3')), findsNothing);
-    expect(find.byKey(const Key('temp-0.2')), findsNothing);
-
-    await tester.tap(find.byKey(const Key('standalone-crumb-back')));
-    await tester.pumpAndSettle();
-
-    // 连续点击版本号 7 次解锁开发者模式
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('setting-version')),
-      160,
-      scrollable: find.byType(Scrollable).first,
-    );
-    for (var i = 0; i < 7; i++) {
-      await tester.tap(find.byKey(const Key('setting-version')));
-      await tester.pump(const Duration(milliseconds: 40));
-    }
-    expect(agentConfig.developerMode, isTrue);
-
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('set-cloud-model')),
-      -160,
-      scrollable: find.byType(Scrollable).first,
-    );
     await tester.tap(find.byKey(const Key('set-cloud-model')));
     await tester.pumpAndSettle();
 
-    // 开发者模式下露出候选模型（不超过 5 个）与温度选项
-    expect(agentConfig.availableCloudModels.length, lessThanOrEqualTo(5));
-    expect(find.byKey(const Key('model-opt-deepseek-v3')), findsOneWidget);
-    expect(find.byKey(const Key('temp-0.2')), findsOneWidget);
+    expect(find.byKey(const Key('cloud-provider-wainao')), findsOneWidget);
+    expect(find.byKey(const Key('cloud-enable-switch')), findsNothing);
+    expect(find.byKey(const Key('cloud-provider-key')), findsNothing);
+    await tester.tap(find.byKey(const Key('cloud-provider-openai')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('cloud-provider-key')), findsOneWidget);
+    expect(find.byKey(const Key('cloud-provider-url')), findsNothing);
+    await tester.tap(find.byKey(const Key('cloud-provider-advanced')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('cloud-provider-url')), findsOneWidget);
+  });
 
-    // 验证 cloudEnabled=false 时 ModelGateway 被明确拦截且返回友好提示
-    await tester.tap(find.byKey(const Key('cloud-enable-switch')));
-    await tester.pump();
-    expect(agentConfig.cloudEnabled, isFalse);
-
+  test('迁移后等待用户选择模型服务时不发送请求', () async {
     final tokens = await buildSignedInTokenStore();
-    final gw = ModelGateway(
+    final gateway = ModelGateway(
       client: AuthorizedHttpClient(
         tokenStore: tokens,
-        httpClient: MockClient((_) async => http.Response('{}', 200)),
+        httpClient: MockClient((_) async => throw StateError('不应发送请求')),
       ),
       config: kStubModelConfig,
-      enabledCheck: () => agentConfig.cloudEnabled,
-      apiBaseOverride: () => agentConfig.customApiBase,
+      enabledCheck: () => false,
     );
-    expect(
-      () => gw.chat([const ChatMessage.user('hi')]),
-      throwsA(
-        isA<ApiNotConfiguredException>().having(
-          (e) => e.message,
-          'message',
-          contains('关闭云端模型'),
-        ),
-      ),
+    await expectLater(
+      gateway.chat([const ChatMessage.user('hi')]),
+      throwsA(isA<ApiNotConfiguredException>()),
     );
   });
 
@@ -670,7 +632,7 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('set-dynamic-island')), findsOneWidget);
 
-    // 3) Timeline 录音状态块严格展示 7x7 圆点与右对齐「每满 1 分钟本地转写」
+    // 3) Timeline 录音状态块严格展示 7x7 圆点与「每满 15 分钟或查看时转写」
     final rec = RecordingStatusController();
     addTearDown(rec.dispose);
     rec.startRecording();
@@ -686,6 +648,6 @@ void main() {
       tester.getSize(find.byKey(const Key('recording-status-dot'))),
       const Size(7, 7),
     );
-    expect(find.textContaining('每满 1 分钟本地转写'), findsOneWidget);
+    expect(find.textContaining('每满 15 分钟或查看时转写'), findsOneWidget);
   });
 }

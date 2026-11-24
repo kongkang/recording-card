@@ -12,22 +12,23 @@
 /// 由设备/音频模块负责），这样这里只有网络语义，不掺音频格式逻辑。
 library;
 
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
 import '../../core/config/remote/model_gateway_config.dart';
 import 'api_exception.dart';
 import 'model_catalog.dart';
+import 'model_provider_store.dart';
 import 'authorized_http_client.dart';
 
 /// 转写结果。
 class TranscriptionResult {
-  const TranscriptionResult({
-    required this.text,
-    this.language,
-    this.duration,
-  });
+  const TranscriptionResult({required this.text, this.language, this.duration});
 
   /// 识别文本（可能是空串：静音或无法识别，**属于正常结果，不算失败**）。
   final String text;
@@ -105,30 +106,26 @@ class ModelGateway {
     ModelGatewayConfig? config,
     Duration defaultTimeout = const Duration(seconds: 60),
     bool Function()? enabledCheck,
-    String Function()? apiBaseOverride,
+    ModelProviderStore? providers,
+    http.Client? providerClient,
   }) : _client = client,
        _config = config ?? ModelGatewayConfig.fromEnvironment(),
        _defaultTimeout = defaultTimeout,
        _enabledCheck = enabledCheck,
-       _apiBaseOverride = apiBaseOverride;
+       _providers = providers,
+       _providerClient = providerClient;
 
   final AuthorizedHttpClient _client;
   final ModelGatewayConfig _config;
   final Duration _defaultTimeout;
   final bool Function()? _enabledCheck;
-  final String Function()? _apiBaseOverride;
+  final ModelProviderStore? _providers;
+  final http.Client? _providerClient;
+
+  bool get usesExternalProvider =>
+      _providers != null && _providers.activeProvider != ModelProvider.wainao;
 
   bool get isCloudEnabled => _enabledCheck?.call() ?? true;
-
-  ModelGatewayConfig get _effectiveConfig {
-    final override = _apiBaseOverride?.call().trim() ?? '';
-    if (override.isEmpty) return _config;
-    return ModelGatewayConfig(
-      baseUrl: override,
-      asrModel: _config.asrModel,
-      refineModel: _config.refineModel,
-    );
-  }
 
   /// 运行时从服务端探测到的模型（dart-define 没配时用它）。
   String? _discoveredAsr;
@@ -139,7 +136,7 @@ class ModelGateway {
   String? _catalogError;
 
   /// 当前配置（只读，便于 UI 展示「哪一项没配」）。
-  ModelGatewayConfig get config => _effectiveConfig;
+  ModelGatewayConfig get config => _config;
 
   /// 模型目录是否已探测过（成功或失败都算）。
   bool get catalogLoaded => _catalogLoaded;
@@ -171,22 +168,43 @@ class ModelGateway {
 
   /// 网关端点与两个模型名都配齐（纯配置判断，与登录态无关）。
   bool get configured =>
-      _effectiveConfig.asrConfigured ||
-      _effectiveConfig.refineConfigured ||
+      _config.asrConfigured ||
+      _config.refineConfigured ||
       (asrModel.isNotEmpty && textModel.isNotEmpty);
 
   /// 转写能力是否**配置齐全**（配置或探测到模型 + https 端点）。
-  bool get asrAvailable => _effectiveConfig.configured && asrModel.isNotEmpty;
+  bool get asrAvailable => _config.configured && asrModel.isNotEmpty;
 
   /// 总结能力是否**配置齐全**（配置或探测到模型 + https 端点 + 未被开关关闭）。
-  bool get chatAvailable =>
-      isCloudEnabled && _effectiveConfig.configured && textModel.isNotEmpty;
+  bool get chatAvailable => chatAvailableFor(ModelScene.summary);
+
+  bool chatAvailableFor(ModelScene scene) =>
+      isCloudEnabled &&
+      (usesExternalProvider || _config.configured) &&
+      modelFor(scene).isNotEmpty;
+
+  bool readyFor(ModelScene scene) =>
+      chatAvailableFor(scene) && (usesExternalProvider || _client.hasSession);
+
+  String modelFor(ModelScene scene) {
+    final providers = _providers;
+    if (providers != null && usesExternalProvider) {
+      return providers.profileFor(providers.activeProvider).modelFor(scene);
+    }
+    return _officialModelFor(scene);
+  }
+
+  String _officialModelFor(ModelScene scene) {
+    if (scene == ModelScene.vision) return visionModel;
+    if (_config.refineModel.trim().isNotEmpty) return textModel;
+    return ModelCatalog(_discoveredModels).firstWith(scene.name) ?? textModel;
+  }
 
   /// 登录后调用一次：向服务端问有哪些模型可用，填上未显式配置的模型名。
   ///
   /// 失败不抛异常（探测只是增强），把原因记在 [catalogError] 里供「关于」页排障。
   Future<void> discoverModels({Duration? timeout}) async {
-    final cfg = _effectiveConfig;
+    final cfg = _config;
     if (!cfg.configured) {
       _catalogLoaded = true;
       _catalogError = '未配置后端地址';
@@ -215,10 +233,11 @@ class ModelGateway {
   /// 语义刻意只反映「配置」：模型名从 dart-define 读，空则 false。
   /// 未登录时该值仍为 true，真正发请求会抛 [ApiUnauthorizedException]。
   /// 需要「配置 + 登录态都就绪」的 UI 门控请用 [ready]。
-  bool get available => isCloudEnabled && configured;
+  bool get available =>
+      usesExternalProvider ? chatAvailable : isCloudEnabled && configured;
 
   /// 可以立即发起请求（配置齐全、开启云端模型且已有登录态）。
-  bool get ready => available && _client.hasSession;
+  bool get ready => readyFor(ModelScene.summary);
 
   /// 语音转写。
   ///
@@ -292,34 +311,55 @@ class ModelGateway {
   Future<String> chat(
     List<ChatMessage> messages, {
     String? model,
+    ModelScene scene = ModelScene.summary,
     double temperature = 0.3,
     int maxTokens = 2048,
     Duration? timeout,
   }) async {
     if (!isCloudEnabled) {
-      throw const ApiNotConfiguredException('已在设置中关闭云端模型');
-    }
-    final url = _effectiveConfig.chatCompletionsUrl;
-    final resolvedModel = (model ?? textModel).trim();
-    if (url == null || resolvedModel.isEmpty) {
-      throw const ApiNotConfiguredException('未配置总结服务，暂时无法生成总结');
+      throw const ApiNotConfiguredException('请先在设置中选择模型服务');
     }
     if (messages.isEmpty) {
       throw const ApiFormatException('没有可发送的内容');
     }
 
-    final response = await _client.postJson(
-      url,
-      {
-        'model': resolvedModel,
-        'stream': false,
-        'temperature': temperature,
-        'max_tokens': maxTokens,
-        'messages': [for (final m in messages) m.toJson()],
-      },
-      timeout: timeout ?? _defaultTimeout,
-    );
-
+    final route = await _providers?.activeRoute(scene);
+    final url = _config.chatCompletionsUrl;
+    final resolvedModel =
+        route?.model ??
+        (_providers == null
+            ? (model ?? _officialModelFor(scene)).trim()
+            : _officialModelFor(scene));
+    if (resolvedModel.isEmpty || (route == null && url == null)) {
+      throw const ApiNotConfiguredException('请先在设置中选择可用的模型服务');
+    }
+    final officialOpenAi =
+        route?.provider == ModelProvider.openai &&
+        route?.endpoint('chat/completions').host == 'api.openai.com';
+    final reasoningModel = RegExp(r'^(o[0-9]|gpt-5)').hasMatch(resolvedModel);
+    final deepSeekSummary =
+        route?.provider == ModelProvider.deepseek &&
+        route?.endpoint('chat/completions').host == 'api.deepseek.com' &&
+        scene == ModelScene.summary;
+    final payload = {
+      'model': resolvedModel,
+      'stream': false,
+      if (deepSeekSummary) 'thinking': {'type': 'disabled'},
+      if (!officialOpenAi || !reasoningModel) 'temperature': temperature,
+      if (officialOpenAi)
+        'max_completion_tokens': maxTokens
+      else
+        'max_tokens': deepSeekSummary ? math.max(maxTokens, 3200) : maxTokens,
+      'messages': [for (final message in messages) message.toJson()],
+    };
+    final requestTimeout = timeout ?? _defaultTimeout;
+    final response = route == null
+        ? await _client.postJson(url!, payload, timeout: requestTimeout)
+        : await _postToProvider(route, payload, requestTimeout);
+    if (deepSeekSummary &&
+        const bool.fromEnvironment('RC_DEEPSEEK_SUMMARY_DIAGNOSTICS')) {
+      await _recordSummaryDiagnostic(route!, payload, response, 'disabled');
+    }
     _ensureSuccess(response, action: '生成');
 
     final Map<String, dynamic> body;
@@ -344,6 +384,103 @@ class ModelGateway {
       throw const ApiFormatException('总结服务返回了空内容');
     }
     return content.trim();
+  }
+
+  Future<void> _recordSummaryDiagnostic(
+    ModelProviderRoute route,
+    Map<String, Object> payload,
+    http.Response response,
+    String thinking,
+  ) async {
+    final result = <String, Object?>{
+      'time': DateTime.now().toUtc().toIso8601String(),
+      'model': route.model,
+      'thinking': thinking,
+      'maxTokens': payload['max_tokens'],
+      'httpStatus': response.statusCode,
+    };
+    try {
+      final body = jsonDecode(utf8.decode(response.bodyBytes));
+      final choices = body is Map ? body['choices'] : null;
+      final first = choices is List && choices.isNotEmpty
+          ? choices.first
+          : null;
+      final message = first is Map ? first['message'] : null;
+      final finish = first is Map ? first['finish_reason'] : null;
+      final content = message is Map ? message['content'] : null;
+      final reasoning = message is Map ? message['reasoning_content'] : null;
+      final usage = body is Map ? body['usage'] : null;
+      final details = usage is Map ? usage['completion_tokens_details'] : null;
+      result.addAll({
+        'finishReason':
+            const {
+              'stop',
+              'length',
+              'content_filter',
+              'tool_calls',
+              'insufficient_system_resource',
+            }.contains(finish)
+            ? finish
+            : null,
+        'contentChars': content is String ? content.trim().length : 0,
+        'reasoningChars': reasoning is String ? reasoning.length : 0,
+        if (usage is Map && usage['completion_tokens'] is int)
+          'completionTokens': usage['completion_tokens'],
+        if (details is Map && details['reasoning_tokens'] is int)
+          'reasoningTokens': details['reasoning_tokens'],
+      });
+    } on FormatException {
+      result['responseFormat'] = 'invalid_json';
+    }
+    try {
+      final dir = await getApplicationSupportDirectory();
+      await File('${dir.path}/deepseek-summary-diagnostic.jsonl').writeAsString(
+        '${jsonEncode(result)}\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } on Exception {
+      // A diagnostic write must not interfere with the summary under test.
+    }
+  }
+
+  Future<http.Response> _postToProvider(
+    ModelProviderRoute route,
+    Map<String, Object> payload,
+    Duration timeout,
+  ) async {
+    final client = _providerClient ?? http.Client();
+    try {
+      final request = http.Request('POST', route.endpoint('chat/completions'))
+        ..followRedirects = false
+        ..headers.addAll({
+          if (route.apiKey.isNotEmpty)
+            'Authorization': 'Bearer ${route.apiKey}',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Accept': 'application/json',
+        })
+        ..bodyBytes = utf8.encode(jsonEncode(payload));
+      final response = await client
+          .send(request)
+          .then(http.Response.fromStream)
+          .timeout(timeout);
+      final status = response.statusCode;
+      if (status < 200 || status >= 300) {
+        final message = switch (status) {
+          401 || 403 => '服务商拒绝访问，请检查 API Key 和模型权限',
+          429 => '服务商请求过多或额度不足，请稍后重试',
+          _ => '所选模型服务暂时无法完成请求',
+        };
+        throw ApiHttpException(message, statusCode: status);
+      }
+      return response;
+    } on TimeoutException {
+      throw const ApiTimeoutException();
+    } on http.ClientException {
+      throw const ApiNetworkException();
+    } finally {
+      if (_providerClient == null) client.close();
+    }
   }
 
   /// 便捷封装：把转写文本整理成总结（一次 system + user 的常规调用）。
@@ -379,10 +516,7 @@ class ModelGateway {
   ///
   /// 会尽力从响应体里挖出服务端的 `error.message` / `message`，
   /// 让「模型不支持」「额度不足」之类的原因能直达用户。
-  void _ensureSuccess(
-    http.Response response, {
-    required String action,
-  }) {
+  void _ensureSuccess(http.Response response, {required String action}) {
     final status = response.statusCode;
     if (status >= 200 && status < 300) return;
 
@@ -410,10 +544,6 @@ class ModelGateway {
     final message = detail != null && detail.trim().isNotEmpty
         ? '$action失败：${detail.trim()}'
         : '$action失败（HTTP $status）';
-    throw ApiHttpException(
-      message,
-      statusCode: status,
-      code: code,
-    );
+    throw ApiHttpException(message, statusCode: status, code: code);
   }
 }

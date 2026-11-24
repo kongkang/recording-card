@@ -2,12 +2,15 @@ package com.nonpolynomial.btleplug.android.impl;
 
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
+import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanFilter.Builder;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
+import android.content.Context;
 import android.os.Build;
 import android.os.ParcelUuid;
 
@@ -15,11 +18,57 @@ import java.util.ArrayList;
 import java.util.List;
 
 @SuppressWarnings("unused") // Native code uses this class.
-class Adapter {
+public class Adapter {
+    private static volatile Context appContext;
+
+    public static void setAppContext(Context context) {
+        appContext = context != null ? context.getApplicationContext() : null;
+    }
+
+    static Context getAppContext() {
+        return appContext;
+    }
+
     private long handle;
     private final Callback callback = new Callback();
 
     public Adapter() {}
+
+    @SuppressLint("MissingPermission")
+    public String[] getConnectedGattDevices() {
+        Context ctx = appContext;
+        if (ctx == null) {
+            return new String[0];
+        }
+        try {
+            BluetoothManager bluetoothManager =
+                    (BluetoothManager) ctx.getSystemService(Context.BLUETOOTH_SERVICE);
+            if (bluetoothManager == null) {
+                return new String[0];
+            }
+            List<BluetoothDevice> devices =
+                    bluetoothManager.getConnectedDevices(BluetoothProfile.GATT);
+            if (devices == null || devices.isEmpty()) {
+                return new String[0];
+            }
+            ArrayList<String> out = new ArrayList<>(devices.size());
+            for (BluetoothDevice device : devices) {
+                if (device == null) {
+                    continue;
+                }
+                String address = device.getAddress();
+                if (address == null || address.isEmpty()) {
+                    continue;
+                }
+                String name = device.getName();
+                String cleanName = name != null ? name.replace('\t', ' ') : "";
+                out.add(address + "\t" + cleanName);
+            }
+            return out.toArray(new String[0]);
+        } catch (SecurityException | RuntimeException ex) {
+            return new String[0];
+        }
+    }
 
     @SuppressLint("MissingPermission")
     public void startScan(ScanFilter filter) {

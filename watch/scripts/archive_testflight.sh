@@ -84,14 +84,14 @@ EXPORT_PLIST="$WATCH_DIR/ExportOptions.plist"
 if [ "$UPLOAD" = true ]; then
   TEMP_PLIST="$BUILD_DIR/ExportOptions.upload.plist"
   sed 's/<string>export<\/string>/<string>upload<\/string>/' "$EXPORT_PLIST" > "$TEMP_PLIST"
-  xcodebuild -exportArchive \
+  PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive \
     -archivePath "$ARCHIVE_PATH" \
     -exportPath "$EXPORT_DIR" \
     -exportOptionsPlist "$TEMP_PLIST" \
     -allowProvisioningUpdates
   echo "✅ 已触发上传统一主端 IPA 至 App Store Connect / TestFlight。"
 else
-  xcodebuild -exportArchive \
+  PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive \
     -archivePath "$ARCHIVE_PATH" \
     -exportPath "$EXPORT_DIR" \
     -exportOptionsPlist "$EXPORT_PLIST" \

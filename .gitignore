@@ -16,3 +16,7 @@ app/rust/card_bridge/target/android-cc/
 # watchOS Swift 包与构建产物
 watch/Packages/WatchRecorderCore/.build/
 watch/build/
+
+# 设计稿本地 Playwright 截屏自检临时目录（不入库）
+design-demos/polish/
+design-demos/default-polish/

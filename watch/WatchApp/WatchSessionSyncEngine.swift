@@ -1,12 +1,13 @@
 import Combine
 import Foundation
-import HealthKit
 import WatchConnectivity
 import WatchKit
+#if canImport(WatchRecorderCore)
 import WatchRecorderCore
+#endif
 import WidgetKit
 
-/// 手表端总控枢纽：串联本地采集、垂腕保活、`WCSession` 指令/文件队列、以及表盘复杂功能同步。
+/// 手表端总控枢纽：串联本地采集、音频后台会话、`WCSession` 指令/文件队列、以及表盘复杂功能同步。
 @MainActor
 final class WatchSessionSyncEngine: NSObject, ObservableObject {
     static let shared = WatchSessionSyncEngine()
@@ -16,12 +17,13 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
     @Published private(set) var isPhoneReachable = false
     @Published private(set) var isCompanionInstalled = true
     @Published private(set) var lastSyncNote: String?
+    @Published private(set) var uiStyle: WatchUIStyle = .warmPaper
 
     let keepAlive = WatchRuntimeKeepAlive()
     let captureEngine: WatchAudioCaptureEngine
     private let manifestStore: WatchManifestStore
     private let complicationStore = ComplicationStateStore()
-    private var lastHandledCommandId: String?
+    private var recentHandledCommandIds: [String] = []
     private var cancellables: Set<AnyCancellable> = []
 
     override private init() {
@@ -37,6 +39,7 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
         self.captureEngine = WatchAudioCaptureEngine(manifestStore: self.manifestStore)
         super.init()
 
+        self.uiStyle = complicationStore.loadStyle()
         WKInterfaceDevice.current().isBatteryMonitoringEnabled = true
         self.captureEngine.isPhoneReachableProvider = { [weak self] in
             self?.isPhoneReachable ?? false
@@ -63,13 +66,13 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
             stopRecording()
         } else {
             Task {
-                await startRecording(workoutConfig: nil, sessionIdOverride: nil)
+                await startRecording(sessionIdOverride: nil)
             }
         }
     }
 
-    func startRecording(workoutConfig: HKWorkoutConfiguration? = nil, sessionIdOverride: String? = nil) async {
-        keepAlive.start(configuration: workoutConfig)
+    func startRecording(sessionIdOverride: String? = nil) async {
+        keepAlive.start()
         let started = await captureEngine.startRecording(sessionIdOverride: sessionIdOverride)
         if !started {
             keepAlive.stop()
@@ -104,7 +107,7 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
             ?? "toggle"
         switch action {
         case "start":
-            Task { await startRecording(workoutConfig: nil, sessionIdOverride: nil) }
+            Task { await startRecording(sessionIdOverride: nil) }
         case "stop":
             stopRecording()
         default:
@@ -223,13 +226,15 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
                 isRecording: nextSnapshot.isRecording,
                 startedAtMs: nextSnapshot.recordingStartedAtMs,
                 pendingCount: nextSnapshot.pendingSliceCount,
+                uiStyleId: uiStyle.rawValue,
                 updatedAtMs: nextSnapshot.updatedAtMs
             )
         )
         WidgetCenter.shared.reloadAllTimelines()
 
         guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
-        let payload = nextSnapshot.toDictionary()
+        var payload = nextSnapshot.toDictionary()
+        payload[WatchConstants.uiStyleKey] = uiStyle.rawValue
         if WCSession.default.isReachable {
             WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: nil)
         }
@@ -238,15 +243,41 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
         }
     }
 
+    func setLocalStyle(_ style: WatchUIStyle) {
+        let resolved = WatchUIStyle.fromRawOrDefault(style.rawValue)
+        let changed = (uiStyle != resolved)
+        uiStyle = resolved
+        complicationStore.saveStyle(resolved)
+        complicationStore.save(
+            ComplicationDisplayState(
+                isRecording: snapshot.isRecording,
+                startedAtMs: snapshot.recordingStartedAtMs,
+                pendingCount: snapshot.pendingSliceCount,
+                uiStyleId: resolved.rawValue,
+                updatedAtMs: Int64(Date().timeIntervalSince1970 * 1000)
+            )
+        )
+        WidgetCenter.shared.reloadAllTimelines()
+        if changed {
+            refreshSnapshotAndBroadcast(pushContext: false)
+        }
+    }
+
     private func handleIncomingDictionary(_ dict: [String: Any]) {
+        if let rawStyle = dict[WatchConstants.uiStyleKey] as? String {
+            setLocalStyle(WatchUIStyle.fromRawOrDefault(rawStyle))
+        }
         guard let cmd = WatchControlCommand.fromDictionary(dict) else { return }
-        if cmd.commandId == lastHandledCommandId { return }
-        lastHandledCommandId = cmd.commandId
+        if recentHandledCommandIds.contains(cmd.commandId) { return }
+        recentHandledCommandIds.append(cmd.commandId)
+        if recentHandledCommandIds.count > 32 {
+            recentHandledCommandIds.removeFirst(recentHandledCommandIds.count - 32)
+        }
 
         switch cmd.action {
         case .startRecording:
             Task {
-                await startRecording(workoutConfig: nil, sessionIdOverride: cmd.sessionId)
+                await startRecording(sessionIdOverride: cmd.sessionId)
             }
         case .stopRecording:
             stopRecording()
@@ -259,8 +290,11 @@ final class WatchSessionSyncEngine: NSObject, ObservableObject {
         case .ackSlice:
             if let sliceId = cmd.sliceId {
                 try? manifestStore.markSyncedAndDeleteLocalAudio(sliceId: sliceId)
+                lastSyncNote = "手机已完成转码确认并清理缓存"
                 reloadSlicesAndSnapshot()
             }
+        case .setStyle:
+            setLocalStyle(WatchUIStyle.fromRawOrDefault(cmd.styleId))
         }
     }
 }
@@ -341,8 +375,10 @@ extension WatchSessionSyncEngine: WCSessionDelegate {
                 try? self.manifestStore.markFailed(sliceId: sliceId, error: errorText)
                 self.lastSyncNote = "传送失败，稍后自动重试：\(errorText)"
             } else {
-                try? self.manifestStore.markSyncedAndDeleteLocalAudio(sliceId: sliceId)
-                self.lastSyncNote = "已本地送达手机并清理缓存"
+                // P0 零丢片铁律：WCSession 文件送达不代表 iPhone 已成功转码落盘，
+                // 此处严禁删除本地 .m4a，仅标记 awaitingAck，必须等待 iPhone 发回 .ackSlice 后才删文件。
+                try? self.manifestStore.markDeliveredPendingAck(sliceId: sliceId)
+                self.lastSyncNote = "已本地送达手机，等待转码确认"
             }
             self.reloadSlicesAndSnapshot()
         }

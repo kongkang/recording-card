@@ -1,18 +1,21 @@
-/// 总结结果页 —— 生成态（进度/已生成/预计还需/步骤）与结果态（吸顶 Tab + 目录浮钮 + 信息点溯源 + 导出）。
+/// 总结结果页 —— 生成态（进度/已生成/预计还需/步骤/取消）与结果态（吸顶 Tab + 目录浮钮 + 信息点溯源 + 导出）。
 library;
 
-import 'dart:io';
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/models/record.dart';
 import '../core/models/summary.dart';
 import '../core/store/app_store.dart';
-import '../services/export/export.dart';
 import '../core/theme/tokens.dart';
+import '../services/export/export.dart';
 import '../widgets/photo_preview_sheet.dart';
+import '../widgets/photo_thumbnail.dart';
 import '../widgets/quick_speaker_sheet.dart';
+import '../widgets/speaker_suggestion_banner.dart';
 import '../widgets/store_scope.dart';
 
 /// 吸顶 Tab 栏高度（原型 .stabs 行高 46）。
@@ -23,21 +26,229 @@ class SummaryResultPage extends StatefulWidget {
     super.key,
     required this.summaryId,
     this.showPaneBack = false,
+    this.onCancelGeneration,
+    this.exportService,
   });
+
   final String summaryId;
   final bool showPaneBack;
+  final VoidCallback? onCancelGeneration;
+  final ExportService? exportService;
 
   @override
   State<SummaryResultPage> createState() => _SummaryResultPageState();
 }
 
+class _FullTextGroupData {
+  const _FullTextGroupData({
+    required this.resolvedSpeaker,
+    required this.rawSpeaker,
+    required this.firstTurnIndex,
+    required this.sampleQuote,
+    required this.joinedText,
+  });
+
+  final String resolvedSpeaker;
+  final String rawSpeaker;
+  final int firstTurnIndex;
+  final String sampleQuote;
+  final String joinedText;
+}
+
+class _FullTextEventSectionData {
+  const _FullTextEventSectionData({
+    required this.event,
+    required this.groups,
+    required this.fallback,
+  });
+
+  final RecordEvent event;
+  final List<_FullTextGroupData> groups;
+  final String fallback;
+}
+
+class _SummaryMemo {
+  const _SummaryMemo({
+    required this.key,
+    required this.allPhotos,
+    required this.leafMatches,
+    required this.pointPhotos,
+    required this.sourceEvents,
+    required this.sourcePhotoCounts,
+    required this.orderedSourceEvents,
+    required this.mergedFullTextSections,
+    required this.fullText,
+    required this.subDescText,
+  });
+
+  final Object key;
+  final List<_ContextualPhoto> allPhotos;
+  final Map<String, _ContextualPhoto> leafMatches;
+  final List<List<_ContextualPhoto>> pointPhotos;
+  final List<RecordEvent> sourceEvents;
+  final Map<String, int> sourcePhotoCounts;
+  final List<RecordEvent> orderedSourceEvents;
+  final List<_FullTextEventSectionData> mergedFullTextSections;
+  final String fullText;
+  final String subDescText;
+}
+
 class _SummaryResultPageState extends State<SummaryResultPage> {
+  static final Map<String, Set<int>> _memoryCheckedTodos = <String, Set<int>>{};
+  static String _prefsTodoKey(String cardId) => 'rc-sum-todos-$cardId';
+
   final _fallbackScroll = ScrollController();
   final _sectionKeys = <String, GlobalKey>{};
+  final _captureKey = GlobalKey(debugLabel: 'sum-export-capture');
+  _SummaryMemo? _memo;
 
   /// 结果态标题块（标题 + 统计行）的实测高度：目录钮的吸附位置由它决定。
   final _titleKey = GlobalKey();
   double _titleH = 76;
+
+  String _tab = 'all'; // all | ov | map | pt | todo | ft | src
+  final Map<int, bool> _ptOpen = {};
+  final Set<int> _todosDone = {};
+  String? _hydratedSummaryId;
+  int _todoMutationVersion = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _hydrateTodosFromMemoryAndPrefs(widget.summaryId);
+  }
+
+  @override
+  void didUpdateWidget(covariant SummaryResultPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.summaryId != widget.summaryId) {
+      _tab = 'all';
+      _ptOpen.clear();
+      _todosDone.clear();
+      _hydratedSummaryId = null;
+      _todoMutationVersion++;
+      _memo = null;
+      _hydrateTodosFromMemoryAndPrefs(widget.summaryId);
+    }
+  }
+
+  _SummaryMemo _ensureMemo(AppStore store, SummaryCard card) {
+    final key = (
+      card.id,
+      card.state,
+      card.title,
+      card.subDesc,
+      card.srcIds.length,
+      card.points.length,
+      card.structure.length,
+      identityHashCode(card),
+      store.dataRevision,
+    );
+    final cached = _memo;
+    if (cached != null && cached.key == key) return cached;
+
+    final allPhotos = _ResultView._allActivePhotos(store, card);
+    final leafMatches = _ResultView._leafPhotoMatches(card, allPhotos);
+    final pointPhotos = [
+      for (final pt in card.points) _ResultView._photosForPoint(store, pt),
+    ];
+    final sourceEvents = [
+      for (final id in card.srcIds) ?store.eventByIdOrNull(id),
+    ];
+    final sourcePhotoCounts = <String, int>{
+      for (final e in sourceEvents) e.id: store.activePhotosForEvent(e).length,
+    };
+    final orderedSourceEvents = sortEventsChronological(sourceEvents);
+    final mergedFullTextSections =
+        _ResultView._buildMergedFullTextSections(store, orderedSourceEvents);
+    final fullText = card.resolvedFullText(
+      sourceEvents,
+      speakerResolver: store.displaySpeaker,
+      turnSpeakerResolver: store.displayTurnSpeaker,
+      preferResolvedTurns: store.hasTurnOverridesFor(sourceEvents),
+      aliasTextTransformer: store.applySpeakerAliasesToText,
+    );
+    final subDescText = _ResultView._resolvedSubDesc(card, allPhotos.length);
+
+    final built = _SummaryMemo(
+      key: key,
+      allPhotos: allPhotos,
+      leafMatches: leafMatches,
+      pointPhotos: pointPhotos,
+      sourceEvents: sourceEvents,
+      sourcePhotoCounts: sourcePhotoCounts,
+      orderedSourceEvents: orderedSourceEvents,
+      mergedFullTextSections: mergedFullTextSections,
+      fullText: fullText,
+      subDescText: subDescText,
+    );
+    _memo = built;
+    return built;
+  }
+
+  void _hydrateTodosFromMemoryAndPrefs(String summaryId) {
+    if (_memoryCheckedTodos.containsKey(summaryId)) {
+      _todosDone
+        ..clear()
+        ..addAll(_memoryCheckedTodos[summaryId]!);
+    }
+    unawaited(_loadTodosFromPrefs(summaryId, _todoMutationVersion));
+  }
+
+  Future<void> _loadTodosFromPrefs(String summaryId, int versionAtStart) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = _prefsTodoKey(summaryId);
+      if (!prefs.containsKey(key)) return;
+      final saved = prefs.getStringList(key) ?? const <String>[];
+      if (!mounted ||
+          widget.summaryId != summaryId ||
+          _todoMutationVersion != versionAtStart) {
+        return;
+      }
+      final parsed = <int>{
+        for (final s in saved)
+          if (int.tryParse(s) != null) int.parse(s),
+      };
+      final store = StoreScope.of(context);
+      setState(() {
+        // SharedPreferences 中显式保存的列表（含空列表 []）为权威状态，直接覆盖而非合并旧值
+        _todosDone
+          ..clear()
+          ..addAll(parsed);
+        _memoryCheckedTodos[summaryId] = Set<int>.from(_todosDone);
+        final card = store.summaryById(summaryId);
+        if (card != null) {
+          card.checkedTodos = Set<int>.from(_todosDone);
+        }
+      });
+    } on Object {
+      // 无插件环境降级使用内存与 SummaryCard.checkedTodos
+    }
+  }
+
+  void _syncTodosWithCard(SummaryCard card) {
+    if (_memoryCheckedTodos.containsKey(card.id)) {
+      final authoritative = _memoryCheckedTodos[card.id]!;
+      _todosDone
+        ..clear()
+        ..addAll(authoritative);
+      card.checkedTodos = Set<int>.from(authoritative);
+      _hydratedSummaryId = card.id;
+      return;
+    }
+    if (_hydratedSummaryId != card.id) {
+      _hydratedSummaryId = card.id;
+      _todosDone
+        ..clear()
+        ..addAll(card.checkedTodos);
+    }
+  }
+
+  Set<int> checkedTodosFor(SummaryCard card) {
+    _syncTodosWithCard(card);
+    return _todosDone;
+  }
 
   void _measureTitle() {
     final ctx = _titleKey.currentContext;
@@ -48,10 +259,6 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
     if ((h - _titleH).abs() > 0.5) setState(() => _titleH = h);
   }
 
-  String _tab = 'all'; // all | ov | map | pt | todo | ft | src
-  final Map<int, bool> _ptOpen = {};
-  final Set<int> _todosDone = {};
-
   @override
   void dispose() {
     _fallbackScroll.dispose();
@@ -59,25 +266,65 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
   }
 
   void _setTab(String k) {
+    final pointCount =
+        StoreScope.of(context).summaryById(widget.summaryId)?.points.length ?? 0;
     setState(() {
       _tab = k;
-      // 与原型一致：切 Tab 时重置信息点展开态（「信息点」默认全开，其余默认全收）
+      // 与原型一致：切 Tab 时重置全部信息点展开态（「信息点」默认全开，其余默认全收）
       _ptOpen
         ..clear()
-        ..addAll({for (var i = 0; i < 4; i++) i: k == 'pt'});
+        ..addAll({for (var i = 0; i < pointCount; i++) i: k == 'pt'});
     });
   }
 
   // 供子组件调用的公开变更入口（避免跨类调用受保护的 setState）
   void togglePoint(int i) =>
-      setState(() => _ptOpen[i] = !(_ptOpen[i] ?? false));
+      setState(() => _ptOpen[i] = !(_ptOpen[i] ?? (_tab == 'pt')));
 
-  void toggleTodo(int i) => setState(
-    () => _todosDone.contains(i) ? _todosDone.remove(i) : _todosDone.add(i),
-  );
+  void toggleTodo(int i, SummaryCard card) {
+    setState(() {
+      _todoMutationVersion++;
+      _syncTodosWithCard(card);
+      if (_todosDone.contains(i)) {
+        _todosDone.remove(i);
+      } else {
+        _todosDone.add(i);
+      }
+      final snapshot = Set<int>.from(_todosDone);
+      card.checkedTodos = snapshot;
+      _memoryCheckedTodos[card.id] = snapshot;
+      unawaited(_persistTodosToPrefs(card.id, snapshot));
+    });
+  }
+
+  static Future<void> _persistTodosToPrefs(String cardId, Set<int> done) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final sorted = done.toList()..sort();
+      await prefs.setStringList(
+        _prefsTodoKey(cardId),
+        [for (final i in sorted) '$i'],
+      );
+    } on Object {
+      // 无插件环境静默忽略
+    }
+  }
+
+  void _cancelInFlight(AppStore store, SummaryCard card) {
+    final customCancel = widget.onCancelGeneration;
+    if (customCancel != null) {
+      customCancel();
+      return;
+    }
+    card.cancelled = true;
+    store.cancelGeneratingSummary(card.id);
+  }
 
   void _tocGo(String secId) {
-    setState(() => _tab = 'all'); // 非「全部」时先切回「全部」再滚动
+    setState(() {
+      _tab = 'all'; // 非「全部」时先切回「全部」再滚动
+      _ptOpen.clear();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = _sectionKeys[secId]?.currentContext;
       if (ctx != null) {
@@ -93,6 +340,7 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
+    final rc = context.rc;
     return ListenableBuilder(
       listenable: store,
       builder: (context, _) {
@@ -112,7 +360,7 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
                     '返回${AppStore.pageLabels[store.stackPrev?.type] ?? ''}',
                   ),
                   style: TextButton.styleFrom(
-                    foregroundColor: RCColors.sec,
+                    foregroundColor: rc.sec,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
                       vertical: 4,
@@ -124,7 +372,11 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
               ),
             if (card.state == SummaryState.generating)
               Expanded(
-                child: _GenView(store: store, card: card),
+                child: _GenView(
+                  store: store,
+                  card: card,
+                  onCancel: () => _cancelInFlight(store, card),
+                ),
               )
             else if (card.state == SummaryState.done)
               Expanded(
@@ -139,26 +391,27 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
+                        Icon(
                           Icons.cloud_off_outlined,
                           size: 40,
-                          color: RCColors.ax,
+                          color: rc.ax,
                         ),
                         const SizedBox(height: 12),
-                        const Text(
+                        Text(
                           '总结没能生成',
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
+                            color: rc.label,
                           ),
                         ),
                         const SizedBox(height: 6),
                         Text(
                           card.error ?? '请稍后重试',
                           textAlign: TextAlign.center,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 13,
-                            color: RCColors.sec,
+                            color: rc.sec,
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -184,14 +437,21 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
   }
 }
 
-/// 生成态：进度条 + 已生成 X 秒 / 预计还需 Y 秒 + 当前步骤
+/// 生成态：进度条 + 已生成 X 秒 / 预计还需 Y 秒 + 当前步骤 + 取消按钮
 class _GenView extends StatelessWidget {
-  const _GenView({required this.store, required this.card});
+  const _GenView({
+    required this.store,
+    required this.card,
+    required this.onCancel,
+  });
+
   final AppStore store;
   final SummaryCard card;
+  final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
+    final rc = context.rc;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -207,8 +467,8 @@ class _GenView extends StatelessWidget {
                   key: const Key('gen-bar'),
                   value: card.progress / 100,
                   minHeight: 6,
-                  backgroundColor: RCColors.sep,
-                  valueColor: const AlwaysStoppedAnimation(RCColors.ok),
+                  backgroundColor: rc.sep,
+                  valueColor: AlwaysStoppedAnimation(rc.ok),
                 ),
               ),
             ),
@@ -219,12 +479,12 @@ class _GenView extends StatelessWidget {
                 Text(
                   store.genElapsedText(),
                   key: const Key('gen-elapsed'),
-                  style: const TextStyle(fontSize: 13, color: RCColors.ink),
+                  style: TextStyle(fontSize: 13, color: rc.ink),
                 ),
                 Text(
                   store.genEtaText(),
                   key: const Key('gen-eta'),
-                  style: const TextStyle(fontSize: 13, color: RCColors.sec),
+                  style: TextStyle(fontSize: 13, color: rc.sec),
                 ),
               ],
             ),
@@ -232,7 +492,24 @@ class _GenView extends StatelessWidget {
             Text(
               store.genStepText(),
               key: const Key('gen-step'),
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: rc.label,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Align(
+              alignment: Alignment.center,
+              child: TextButton(
+                key: const Key('gen-cancel'),
+                onPressed: onCancel,
+                style: TextButton.styleFrom(
+                  foregroundColor: rc.sec,
+                  textStyle: const TextStyle(fontSize: 13),
+                ),
+                child: const Text('取消生成'),
+              ),
             ),
           ],
         ),
@@ -257,11 +534,10 @@ class _ResultView extends StatelessWidget {
     ('src', '来源记录'),
   ];
 
-  String _resolvedSubDesc(AppStore store) {
+  static String _resolvedSubDesc(SummaryCard card, int photoCount) {
     final base = (card.subDesc ?? '')
         .replaceAll(RegExp(r'\s*·\s*含\s*\d+\s*张图片'), '')
         .trim();
-    final photoCount = _allActivePhotos(store).length;
     if (photoCount <= 0) return base;
     return base.isEmpty ? '含 $photoCount 张图片' : '$base · 含 $photoCount 张图片';
   }
@@ -269,110 +545,127 @@ class _ResultView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
-    final subDescText = _resolvedSubDesc(store);
-    // 图片导出的截图锚点：每次构建复用同一个 GlobalKey（同屏只有一个结果页）
-    _exportCaptureKey ??= GlobalKey(debugLabel: 'sum-export-capture');
+    final rc = context.rc;
+    final styleSpec = context.rcStyle;
+    final memo = page._ensureMemo(store, card);
+    final subDescText = memo.subDescText;
+    // 每个 SummaryResultPageState 持有独立截图 GlobalKey，防止路由切换动画双实例挂载冲突
+    _exportCaptureKey = page._captureKey;
     WidgetsBinding.instance.addPostFrameCallback((_) => page._measureTitle());
-    // 原型 .stickbar + .tochold：目录钮是内容区里的 sticky 元素——未滚动时压在
-    // 「概览」这一行右侧，向上滚动到与 Tab 栏同一卡点时跟 Tab 一起钉住
-    // （距 Tab 栏下沿 10px），而不是永远钉在屏幕同一位置去盖住 Tab。
     final primaryCtrl = PrimaryScrollController.maybeOf(context);
     final scrollCtrl = primaryCtrl ?? page._fallbackScroll;
-    return AnimatedBuilder(
-      animation: scrollCtrl,
-      builder: (context, _) {
-        final offset = scrollCtrl.positions.length == 1
-            ? scrollCtrl.position.pixels
-            : 0.0;
-        final natural = page._titleH + _kTabsH - offset + 10;
-        final tocTop = math.max(_kTabsH + 10, natural);
-        return Stack(
-          children: [
-            RepaintBoundary(
-              key: _exportCaptureKey,
-              child: CustomScrollView(
-                key: const Key('sum-scroll'),
-                primary: primaryCtrl != null,
-                controller: primaryCtrl != null ? null : page._fallbackScroll,
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      key: page._titleKey,
-                      padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  card.title ?? '',
-                                  key: const Key('sum-title'),
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  subDescText,
-                                  key: const Key('sum-sub'),
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: RCColors.sec,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          _ExportButton(card: card),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // 吸顶 Tab 栏：滚动中持续可见
-                  SliverPersistentHeader(
-                    key: const Key('stickbar'),
-                    pinned: true,
-                    delegate: _StickyTabs(
-                      tabs: _tabs,
-                      current: page._tab,
-                      onTap: page._setTab,
-                    ),
-                  ),
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(
-                      22,
-                      6,
-                      22,
-                      RCDims.pageBottomPad,
-                    ),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, _) => Column(
+    return Stack(
+      children: [
+        RepaintBoundary(
+          key: page._captureKey,
+          child: CustomScrollView(
+            key: const Key('sum-scroll'),
+            primary: primaryCtrl != null,
+            controller: primaryCtrl != null ? null : page._fallbackScroll,
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  key: page._titleKey,
+                  padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: _sections(context, store),
+                          children: [
+                            Text(
+                              card.title ?? '',
+                              key: const Key('sum-title'),
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: styleSpec.styleId == RCUIStyleId.folio
+                                    ? FontWeight.w900
+                                    : FontWeight.w800,
+                                color: rc.label,
+                                fontFamilyFallback: styleSpec.serifTitles
+                                    ? rcSerifFontFallback
+                                    : rcFontFallback,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              subDescText,
+                              key: const Key('sum-sub'),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: rc.sec,
+                              ),
+                            ),
+                          ],
                         ),
-                        childCount: 1,
                       ),
-                    ),
+                      _ExportButton(
+                        card: card,
+                        captureKey: page._captureKey,
+                        exportService: page.widget.exportService,
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-            // 目录浮钮：随内容滚动，撞到吸顶栏下沿后与 Tab 栏同点吸附（各 Tab 均可用）
-            Positioned(
-              top: tocTop,
-              right: 8,
-              child: _TocButton(onGo: page._tocGo),
-            ),
-          ],
-        );
-      },
+              // 吸顶 Tab 栏：滚动中持续可见
+              SliverPersistentHeader(
+                key: const Key('stickbar'),
+                pinned: true,
+                delegate: _StickyTabs(
+                  tabs: _tabs,
+                  current: page._tab,
+                  onTap: page._setTab,
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(
+                  22,
+                  6,
+                  22,
+                  RCDims.pageBottomPad,
+                ),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, _) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: _sections(context, store, memo),
+                    ),
+                    childCount: 1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // 目录浮钮：仅自身随滚动位移，不重建 CustomScrollView 与分节内容
+        Positioned(
+          top: 0,
+          right: 8,
+          child: AnimatedBuilder(
+            animation: scrollCtrl,
+            child: RepaintBoundary(child: _TocButton(onGo: page._tocGo)),
+            builder: (context, child) {
+              final offset = scrollCtrl.positions.length == 1
+                  ? scrollCtrl.position.pixels
+                  : 0.0;
+              final natural = page._titleH + _kTabsH - offset + 10;
+              final tocTop = math.max(_kTabsH + 10, natural);
+              return Transform.translate(
+                offset: Offset(0, tocTop),
+                child: child,
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
-  List<_ContextualPhoto> _allActivePhotos(AppStore store) {
+  static List<_ContextualPhoto> _allActivePhotos(
+    AppStore store,
+    SummaryCard card,
+  ) {
     final out = <_ContextualPhoto>[];
     final seen = <String>{};
     for (final id in card.srcIds) {
@@ -397,16 +690,23 @@ class _ResultView extends StatelessWidget {
       if (e == null) continue;
       final active = store.activePhotosForEvent(e);
       if (active.isEmpty) continue;
-      final window = _parseClockWindow(s.range);
-      final matched = window == null
-          ? active
-          : active
-                .where((p) {
-                  final sec = _clockSeconds(p.time);
-                  return sec != null && sec >= window.$1 && sec <= window.$2;
-                })
-                .toList();
-      final chosen = matched.isNotEmpty ? matched : [active.first];
+      final window = _parseClockWindow(s.range) ?? _parseClockWindow(e.srcMap);
+      final List<EventPhoto> chosen;
+      if (window == null) {
+        chosen = active;
+      } else {
+        final hasAnyClock = active.any((p) => _clockSeconds(p.time) != null);
+        if (!hasAnyClock) {
+          chosen = active;
+        } else {
+          chosen = active
+              .where((p) {
+                final sec = _clockSeconds(p.time);
+                return sec != null && _isClockInWindow(sec, window);
+              })
+              .toList();
+        }
+      }
       for (final p in chosen) {
         final key = '${e.id}:${p.id}';
         if (seen.add(key)) {
@@ -417,8 +717,8 @@ class _ResultView extends StatelessWidget {
     return out;
   }
 
-  Map<String, _ContextualPhoto> _leafPhotoMatches(
-    AppStore store,
+  static Map<String, _ContextualPhoto> _leafPhotoMatches(
+    SummaryCard card,
     List<_ContextualPhoto> allPhotos,
   ) {
     final map = <String, _ContextualPhoto>{};
@@ -430,6 +730,15 @@ class _ResultView extends StatelessWidget {
       String corpus,
     })>[];
     for (final item in allPhotos) {
+      final evWindow =
+          _parseClockWindow('${item.event.time} · ${item.event.dur}') ??
+          _parseClockWindow(item.event.srcMap);
+      final pSec = _clockSeconds(item.photo.time);
+      if (evWindow != null &&
+          pSec != null &&
+          !_isClockInWindow(pSec, evWindow)) {
+        continue;
+      }
       final buf = StringBuffer()
         ..write(item.event.title)
         ..write(' ')
@@ -467,9 +776,6 @@ class _ResultView extends StatelessWidget {
         }
       }
     }
-    if (map.isEmpty && card.structure.first.leaves.isNotEmpty) {
-      map['0:0'] = allPhotos.first;
-    }
     return map;
   }
 
@@ -484,22 +790,10 @@ class _ResultView extends StatelessWidget {
     return hits;
   }
 
-  static (int, int)? _parseClockWindow(String raw) {
-    final matches = RegExp(
-      r'(\d{1,2}):(\d{2})(?::(\d{2}))?',
-    ).allMatches(raw).toList();
-    if (matches.length < 2) return null;
-    int toSec(RegExpMatch m, {required bool end}) {
-      final h = int.tryParse(m.group(1)!) ?? 0;
-      final min = int.tryParse(m.group(2)!) ?? 0;
-      final sec = m.group(3) != null
-          ? (int.tryParse(m.group(3)!) ?? 0)
-          : (end ? 59 : 0);
-      return h * 3600 + min * 60 + sec;
-    }
+  static (int, int)? _parseClockWindow(String raw) => parseSourceClockWindow(raw);
 
-    return (toSec(matches[0], end: false), toSec(matches[1], end: true));
-  }
+  static bool _isClockInWindow(int sec, (int, int) window) =>
+      isClockSecondInWindow(sec, window);
 
   static int? _clockSeconds(String raw) {
     final m = RegExp(r'(\d{1,2}):(\d{2})(?::(\d{2}))?').firstMatch(raw);
@@ -510,27 +804,122 @@ class _ResultView extends StatelessWidget {
     return h * 3600 + min * 60 + sec;
   }
 
-  List<Widget> _sections(BuildContext context, AppStore store) {
+  String _mindMapRootLabel(AppStore store, List<RecordEvent> sourceEvents) {
+    final raw = (card.title ?? '').trim();
+    if (raw.isEmpty) return '核心脉络';
+    final resolved = store.applySpeakerAliasesToText(raw, sourceEvents).trim();
+    if (resolved.isEmpty || resolved == '核心脉络') return '核心脉络';
+    return '核心脉络 · $resolved';
+  }
+
+  List<Widget> _sections(
+    BuildContext context,
+    AppStore store,
+    _SummaryMemo memo,
+  ) {
+    final rc = context.rc;
     bool show(String k) => page._tab == 'all' || page._tab == k;
-    final allPhotos = _allActivePhotos(store);
-    final leafMatches = _leafPhotoMatches(store, allPhotos);
-    final sourceEvents = [
-      for (final id in card.srcIds) ?store.eventByIdOrNull(id),
-    ];
-    final orderedSourceEvents = sortEventsChronological(sourceEvents);
-    final fullText = card.resolvedFullText(
-      sourceEvents,
-      speakerResolver: store.displaySpeaker,
-      turnSpeakerResolver: store.displayTurnSpeaker,
-      preferResolvedTurns: store.hasTurnOverridesFor(sourceEvents),
-      aliasTextTransformer: store.applySpeakerAliasesToText,
-    );
+    final allPhotos = memo.allPhotos;
+    final leafMatches = memo.leafMatches;
+    final sourceEvents = memo.sourceEvents;
+    final orderedSourceEvents = memo.orderedSourceEvents;
+    final fullText = memo.fullText;
+    final doneSet = page.checkedTodosFor(card);
+    final doneCount = doneSet
+        .where((idx) => idx >= 0 && idx < card.todos.length)
+        .length;
+
     return [
+      if (show('ov') || show('ft'))
+        SpeakerSuggestionBanner(
+          store: store,
+          eventIds: card.srcIds,
+          margin: const EdgeInsets.only(bottom: 14),
+        ),
       if (show('ov'))
-        _section('sec-ov', '概览', [
-          Text(
-            store.applySpeakerAliasesToText(card.overview ?? '', sourceEvents),
-            style: const TextStyle(fontSize: 14, height: 1.6),
+        _section(context, 'sec-ov', '概览', [
+          Builder(
+            builder: (context) {
+              final st = context.rcStyle;
+              final overviewText = store.applySpeakerAliasesToText(
+                card.overview ?? '',
+                sourceEvents,
+              );
+              if (st.styleId == RCUIStyleId.warmPaper) {
+                return Text(
+                  overviewText,
+                  style: TextStyle(fontSize: 14, height: 1.6, color: rc.ink),
+                );
+              }
+              final overviewBody = Padding(
+                padding: const EdgeInsets.all(14),
+                child: Text(
+                  overviewText,
+                  style: TextStyle(
+                    fontSize: 14.5,
+                    height: 1.65,
+                    color: rc.ink,
+                    fontFamilyFallback: st.serifTitles
+                        ? rcSerifFontFallback
+                        : rcFontFallback,
+                  ),
+                ),
+              );
+              if (st.styleId == RCUIStyleId.chronos) {
+                return Container(
+                  width: double.infinity,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE2E6EE)),
+                  ),
+                  child: Stack(
+                    children: [
+                      const Positioned(
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: 3,
+                        child: ColoredBox(color: Color(0xFF1D4ED8)),
+                      ),
+                      overviewBody,
+                    ],
+                  ),
+                );
+              }
+              final BoxDecoration deco = switch (st.styleId) {
+                RCUIStyleId.braunField => BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFD2D1C8)),
+                ),
+                RCUIStyleId.chronos => const BoxDecoration(),
+                RCUIStyleId.folio => const BoxDecoration(
+                  color: Color(0xFFFCF9F2),
+                  border: Border(
+                    left: BorderSide(color: Color(0xFFA62B21), width: 3),
+                  ),
+                ),
+                RCUIStyleId.nocturne => const BoxDecoration(
+                  color: Color(0xFF12141A),
+                  border: Border(
+                    bottom: BorderSide(color: Color(0xFF1E222B)),
+                  ),
+                ),
+                RCUIStyleId.air => BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: st.cardShadow,
+                ),
+                RCUIStyleId.warmPaper => const BoxDecoration(),
+              };
+              return Container(
+                width: double.infinity,
+                decoration: deco,
+                child: overviewBody,
+              );
+            },
           ),
           if (allPhotos.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -542,50 +931,49 @@ class _ResultView extends StatelessWidget {
           ],
         ]),
       if (show('map'))
-        _section('sec-map', '逻辑结构', [
+        _section(context, 'sec-map', '逻辑结构', [
           _MapTree(
+            rootLabel: _mindMapRootLabel(store, sourceEvents),
             branches: card.structure,
             leafPhotos: leafMatches,
             onOpenDetail: store.openDetail,
           ),
         ]),
       if (show('pt'))
-        _section('sec-pt', '信息点', [
+        _section(context, 'sec-pt', '信息点', [
           for (var i = 0; i < card.points.length; i++)
             _PointTile(
               page: page,
               index: i,
               point: card.points[i],
-              photos: _photosForPoint(store, card.points[i]),
+              photos: memo.pointPhotos[i],
               sourceEvents: sourceEvents,
             ),
         ]),
       if (show('todo'))
-        _section('sec-todo', '行动项', [
+        _section(context, 'sec-todo', '行动项', [
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: Text(
-              '已完成 ${page._todosDone.length} / ${card.todos.length}',
+              '已完成 $doneCount / ${card.todos.length}',
               key: const Key('ix-done'),
-              style: const TextStyle(fontSize: 12, color: RCColors.sec),
+              style: TextStyle(fontSize: 12, color: rc.sec),
             ),
           ),
           for (var i = 0; i < card.todos.length; i++)
             InkWell(
               key: Key('todo-$i'),
-              onTap: () => page.toggleTodo(i),
+              onTap: () => page.toggleTodo(i, card),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Row(
                   children: [
                     Icon(
-                      page._todosDone.contains(i)
+                      doneSet.contains(i)
                           ? Icons.check_box
                           : Icons.check_box_outline_blank,
                       size: 20,
-                      color: page._todosDone.contains(i)
-                          ? RCColors.ok
-                          : RCColors.ax,
+                      color: doneSet.contains(i) ? rc.ok : rc.ax,
                     ),
                     const SizedBox(width: 10),
                     Expanded(
@@ -594,7 +982,7 @@ class _ResultView extends StatelessWidget {
                           card.todos[i],
                           sourceEvents,
                         ),
-                        style: const TextStyle(fontSize: 14),
+                        style: TextStyle(fontSize: 14, color: rc.ink),
                       ),
                     ),
                   ],
@@ -603,12 +991,12 @@ class _ResultView extends StatelessWidget {
             ),
         ]),
       if (show('ft'))
-        _section('sec-ft', '全文', [
-          const Padding(
-            padding: EdgeInsets.only(bottom: 10),
+        _section(context, 'sec-ft', '全文', [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
             child: Text(
               'AI 智能优化版 · 保持原意并去除口水词与错别字（点击说话人可快捷命名）',
-              style: TextStyle(fontSize: 12, color: RCColors.sec),
+              style: TextStyle(fontSize: 12, color: rc.sec),
             ),
           ),
           Container(
@@ -616,34 +1004,46 @@ class _ResultView extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: RCColors.card,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: RCColors.sep),
+              color: rc.card,
+              borderRadius: BorderRadius.circular(context.rcStyle.cardRadius),
+              border: context.rcStyle.styleId == RCUIStyleId.air
+                  ? null
+                  : Border.all(color: rc.sep),
+              boxShadow: context.rcStyle.cardShadow,
             ),
             child: _buildMergedFullTextContent(
               context,
               store,
-              orderedSourceEvents,
+              memo.mergedFullTextSections,
+              multipleEvents: orderedSourceEvents.length > 1,
               fallbackText: fullText,
             ),
           ),
         ]),
       if (show('src'))
-        _section('sec-src', '来源记录', [
+        _section(context, 'sec-src', '来源记录', [
           for (final id in card.srcIds)
             Builder(
               builder: (context) {
+                final srcRc = context.rc;
                 final e = store.eventByIdOrNull(id);
                 if (e == null) return const SizedBox.shrink();
-                final picCount = store.activePhotosForEvent(e).length;
+                final picCount = memo.sourcePhotoCounts[e.id] ?? 0;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Material(
-                    color: RCColors.card,
+                    color: srcRc.card,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: const BorderSide(color: RCColors.sep),
+                      borderRadius: BorderRadius.circular(
+                        context.rcStyle.cardRadius,
+                      ),
+                      side: context.rcStyle.styleId == RCUIStyleId.air
+                          ? BorderSide.none
+                          : BorderSide(color: srcRc.sep),
                     ),
+                    elevation:
+                        context.rcStyle.styleId == RCUIStyleId.air ? 2 : 0,
+                    shadowColor: const Color(0x180F172A),
                     clipBehavior: Clip.antiAlias,
                     child: InkWell(
                       key: Key('src-$id'),
@@ -663,16 +1063,17 @@ class _ResultView extends StatelessWidget {
                                     e.title,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w700,
+                                      color: srcRc.label,
                                     ),
                                   ),
                                 ),
-                                const Icon(
+                                Icon(
                                   Icons.chevron_right,
                                   size: 16,
-                                  color: RCColors.ax,
+                                  color: srcRc.ax,
                                 ),
                               ],
                             ),
@@ -684,26 +1085,26 @@ class _ResultView extends StatelessWidget {
                                     '${_dayLabel(e.dayOffset)} ${e.time} · ${e.dur}',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 12,
-                                      color: RCColors.sec,
+                                      color: srcRc.sec,
                                     ),
                                   ),
                                 ),
                                 if (picCount > 0) ...[
-                                  const Text(
+                                  Text(
                                     ' · ',
                                     style: TextStyle(
                                       fontSize: 12,
-                                      color: RCColors.sec,
+                                      color: srcRc.sec,
                                     ),
                                   ),
                                   Text(
                                     '含 $picCount 张图片',
                                     key: Key('src-piccount-$id'),
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 12,
-                                      color: RCColors.sec,
+                                      color: srcRc.sec,
                                     ),
                                   ),
                                 ],
@@ -729,7 +1130,13 @@ class _ResultView extends StatelessWidget {
     return '${d.month}月${d.day}日 ${dow[d.weekday - 1]}';
   }
 
-  Widget _section(String keyName, String title, List<Widget> children) {
+  Widget _section(
+    BuildContext context,
+    String keyName,
+    String title,
+    List<Widget> children,
+  ) {
+    final rc = context.rc;
     final gk = page._sectionKeys.putIfAbsent(keyName, () => GlobalKey());
     return Container(
       key: Key(keyName),
@@ -741,7 +1148,11 @@ class _ResultView extends StatelessWidget {
             padding: const EdgeInsets.only(top: 18, bottom: 10),
             child: Text(
               title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: rc.label,
+              ),
             ),
           ),
           ...children,
@@ -750,35 +1161,15 @@ class _ResultView extends StatelessWidget {
     );
   }
 
-  Widget _buildMergedFullTextContent(
-    BuildContext context,
+  static List<_FullTextEventSectionData> _buildMergedFullTextSections(
     AppStore store,
-    List<RecordEvent> orderedEvents, {
-    required String fallbackText,
-  }) {
-    if (orderedEvents.isEmpty) {
-      final t = fallbackText.trim();
-      return SelectableText(
-        t.isNotEmpty ? t : '暂无可拼接的来源转写文本',
-        style: TextStyle(
-          fontSize: 14,
-          height: 1.65,
-          color: t.isNotEmpty ? RCColors.ink : RCColors.sec,
-        ),
-      );
-    }
-
-    final rc = context.rc;
-    final widgets = <Widget>[];
+    List<RecordEvent> orderedEvents,
+  ) {
+    final sections = <_FullTextEventSectionData>[];
     for (final e in orderedEvents) {
+      if (isSilentPlaceholderEvent(e)) continue;
       final turns = e.dialog.isNotEmpty ? e.dialog : e.raw;
-      final groups = <({
-        String resolvedSpeaker,
-        String rawSpeaker,
-        int firstTurnIndex,
-        String sampleQuote,
-        String joinedText,
-      })>[];
+      final groups = <_FullTextGroupData>[];
 
       String? curSpk;
       var curRaw = '';
@@ -788,20 +1179,24 @@ class _ResultView extends StatelessWidget {
 
       void flushGroup() {
         if (curSpk == null || curText.trim().isEmpty) return;
-        groups.add((
-          resolvedSpeaker: curSpk,
-          rawSpeaker: curRaw,
-          firstTurnIndex: curFirstIdx,
-          sampleQuote: curSample,
-          joinedText: curText,
-        ));
+        groups.add(
+          _FullTextGroupData(
+            resolvedSpeaker: curSpk,
+            rawSpeaker: curRaw,
+            firstTurnIndex: curFirstIdx,
+            sampleQuote: curSample,
+            joinedText: curText,
+          ),
+        );
       }
 
       for (var ti = 0; ti < turns.length; ti++) {
         final t = turns[ti];
         final cleaned = cleanSpokenFillers(t.text);
         if (cleaned.isEmpty) continue;
-        final resolved = store.displayTurnSpeaker(e, ti, t.spk, includeGuessSuffix: false).trim();
+        final resolved = store
+            .displayTurnSpeaker(e, ti, t.spk, includeGuessSuffix: false)
+            .trim();
         final effective = resolved.isEmpty ? '未区分' : resolved;
         if (effective == curSpk) {
           curText = joinPolishedUtterances(curText, cleaned);
@@ -819,8 +1214,43 @@ class _ResultView extends StatelessWidget {
       final fallback = (e.longText.trim().isNotEmpty ? e.longText : e.brief)
           .trim();
       if (groups.isEmpty && fallback.isEmpty) continue;
+      sections.add(
+        _FullTextEventSectionData(
+          event: e,
+          groups: groups,
+          fallback: fallback,
+        ),
+      );
+    }
+    return sections;
+  }
 
-      if (orderedEvents.length > 1) {
+  Widget _buildMergedFullTextContent(
+    BuildContext context,
+    AppStore store,
+    List<_FullTextEventSectionData> sections, {
+    required bool multipleEvents,
+    required String fallbackText,
+  }) {
+    final rc = context.rc;
+    if (sections.isEmpty) {
+      final t = fallbackText.trim();
+      return SelectableText(
+        t.isNotEmpty ? t : '暂无可拼接的来源转写文本',
+        style: TextStyle(
+          fontSize: 14,
+          height: 1.65,
+          color: t.isNotEmpty ? rc.ink : rc.sec,
+        ),
+      );
+    }
+
+    final widgets = <Widget>[];
+    for (final sec in sections) {
+      final e = sec.event;
+      final groups = sec.groups;
+
+      if (multipleEvents) {
         widgets.add(
           Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 8),
@@ -841,11 +1271,11 @@ class _ResultView extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: SelectableText(
-              fallback,
-              style: const TextStyle(
+              sec.fallback,
+              style: TextStyle(
                 fontSize: 14,
                 height: 1.65,
-                color: RCColors.ink,
+                color: rc.ink,
               ),
             ),
           ),
@@ -862,10 +1292,10 @@ class _ResultView extends StatelessWidget {
             padding: EdgeInsets.only(bottom: gi == groups.length - 1 ? 4 : 10),
             child: Text.rich(
               TextSpan(
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   height: 1.65,
-                  color: RCColors.ink,
+                  color: rc.ink,
                 ),
                 children: [
                   WidgetSpan(
@@ -895,7 +1325,19 @@ class _ResultView extends StatelessWidget {
                             border: Border.all(color: rc.sep),
                           ),
                           child: Text(
-                            g.resolvedSpeaker,
+                            () {
+                              if (!canTap) return g.resolvedSpeaker;
+                              final cand = store
+                                  .pendingCandidateNameForEventSlot(
+                                    e,
+                                    g.rawSpeaker,
+                                    turnIndex: g.firstTurnIndex,
+                                  );
+                              if (cand != null && cand.isNotEmpty) {
+                                return '${g.resolvedSpeaker} · 疑似$cand?';
+                              }
+                              return g.resolvedSpeaker;
+                            }(),
                             style: TextStyle(
                               fontSize: 12.5,
                               fontWeight: FontWeight.w600,
@@ -922,7 +1364,7 @@ class _ResultView extends StatelessWidget {
         style: TextStyle(
           fontSize: 14,
           height: 1.65,
-          color: t.isNotEmpty ? RCColors.ink : RCColors.sec,
+          color: t.isNotEmpty ? rc.ink : rc.sec,
         ),
       );
     }
@@ -934,11 +1376,17 @@ class _ResultView extends StatelessWidget {
   }
 }
 
-/// 导出按钮：4 种格式仅格式区分（均含第一部分图文纪要 + 第二部分文字记录），支持「AI 智能优化版 / 原文」切换与标记说话人。
+/// 导出按钮：专用 GlobalKey 作为 iPadOS 系统分享面板锚点（全部 4 种格式统一传递）。
 class _ExportButton extends StatefulWidget {
-  const _ExportButton({required this.card});
+  const _ExportButton({
+    required this.card,
+    this.captureKey,
+    this.exportService,
+  });
 
   final SummaryCard card;
+  final GlobalKey? captureKey;
+  final ExportService? exportService;
 
   @override
   State<_ExportButton> createState() => _ExportButtonState();
@@ -951,6 +1399,9 @@ typedef _ExportPick = ({
 });
 
 class _ExportButtonState extends State<_ExportButton> {
+  final GlobalKey _shareButtonKey = GlobalKey(
+    debugLabel: 'sum-export-btn-anchor',
+  );
   bool _busy = false;
 
   static const _formats = <({
@@ -985,38 +1436,73 @@ class _ExportButtonState extends State<_ExportButton> {
     ),
   ];
 
+  Rect? _computeShareOrigin() {
+    final ctx = _shareButtonKey.currentContext;
+    if (ctx == null) return null;
+    final box = ctx.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || box.size.isEmpty) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return TextButton(
-      key: const Key('export-btn'),
-      onPressed: _busy ? null : () => _open(context),
-      style: TextButton.styleFrom(
-        foregroundColor: RCColors.label,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        minimumSize: Size.zero,
-        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+    final rc = context.rc;
+    final st = context.rcStyle;
+    final isStyled = st.styleId != RCUIStyleId.warmPaper;
+    return KeyedSubtree(
+      key: _shareButtonKey,
+      child: TextButton(
+        key: const Key('export-btn'),
+        onPressed: _busy ? null : () => _open(context),
+        style: isStyled
+            ? TextButton.styleFrom(
+                backgroundColor: st.accent,
+                foregroundColor: st.accentFg,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                minimumSize: Size.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(st.pillRadius),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              )
+            : TextButton.styleFrom(
+                foregroundColor: rc.label,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                minimumSize: Size.zero,
+                textStyle: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+        child: _busy
+            ? const SizedBox(
+                key: Key('export-busy'),
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Text('导出'),
       ),
-      child: _busy
-          ? const SizedBox(
-              key: Key('export-busy'),
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Text('导出'),
     );
   }
 
   Future<void> _open(BuildContext context) async {
     final store = StoreScope.of(context);
     final messenger = ScaffoldMessenger.of(context);
+    final initialAnchorRect = _computeShareOrigin();
     var mode = TranscriptExportMode.aiOptimized;
 
     final picked = await showModalBottomSheet<_ExportPick>(
       context: context,
       useRootNavigator: true,
       isScrollControlled: true,
-      backgroundColor: RCColors.card,
+      backgroundColor: context.rc.card,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
@@ -1026,6 +1512,7 @@ class _ExportButtonState extends State<_ExportButton> {
           return ListenableBuilder(
             listenable: store,
             builder: (sheetCtx, _) {
+              final sheetRc = sheetCtx.rc;
               return SafeArea(
                 top: false,
                 child: ConstrainedBox(
@@ -1047,18 +1534,23 @@ class _ExportButtonState extends State<_ExportButton> {
                       children: [
                         Row(
                           children: [
-                            const Expanded(
+                            Expanded(
                               child: Text(
                                 '导出完整内容',
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w700,
+                                  color: sheetRc.label,
                                 ),
                               ),
                             ),
                             IconButton(
                               onPressed: () => Navigator.pop(sheetCtx),
-                              icon: const Icon(Icons.close, size: 20),
+                              icon: Icon(
+                                Icons.close,
+                                size: 20,
+                                color: sheetRc.sec,
+                              ),
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints.tightFor(
                                 width: 28,
@@ -1067,17 +1559,17 @@ class _ExportButtonState extends State<_ExportButton> {
                             ),
                           ],
                         ),
-                        const Text(
+                        Text(
                           '均含第一部分「图文纪要」与第二部分「文字记录」',
-                          style: TextStyle(fontSize: 12, color: RCColors.sec),
+                          style: TextStyle(fontSize: 12, color: sheetRc.sec),
                         ),
                         const SizedBox(height: 12),
-                        const Text(
+                        Text(
                           '文字记录版本',
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
-                            color: RCColors.sec,
+                            color: sheetRc.sec,
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -1099,21 +1591,22 @@ class _ExportButtonState extends State<_ExportButton> {
                                 child: InkWell(
                                   key: entry.key,
                                   borderRadius: BorderRadius.circular(10),
-                                  onTap: () => setSheetState(() => mode = entry.mode),
+                                  onTap: () =>
+                                      setSheetState(() => mode = entry.mode),
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 10,
                                       vertical: 8,
                                     ),
-                                      decoration: BoxDecoration(
-                                        color: mode == entry.mode
-                                            ? RCColors.ok.withValues(alpha: 0.12)
-                                            : RCColors.bg,
+                                    decoration: BoxDecoration(
+                                      color: mode == entry.mode
+                                          ? sheetRc.ok.withValues(alpha: 0.14)
+                                          : sheetRc.bg,
                                       borderRadius: BorderRadius.circular(10),
                                       border: Border.all(
                                         color: mode == entry.mode
-                                            ? RCColors.ok
-                                            : RCColors.sep,
+                                            ? sheetRc.ok
+                                            : sheetRc.sep,
                                       ),
                                     ),
                                     alignment: Alignment.center,
@@ -1125,8 +1618,8 @@ class _ExportButtonState extends State<_ExportButton> {
                                             ? FontWeight.w700
                                             : FontWeight.w500,
                                         color: mode == entry.mode
-                                            ? RCColors.okInk
-                                            : RCColors.ink,
+                                            ? sheetRc.okInk
+                                            : sheetRc.ink,
                                       ),
                                     ),
                                   ),
@@ -1138,12 +1631,12 @@ class _ExportButtonState extends State<_ExportButton> {
                           ],
                         ),
                         const SizedBox(height: 12),
-                        const Text(
+                        Text(
                           '选择导出格式',
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
-                            color: RCColors.sec,
+                            color: sheetRc.sec,
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -1151,7 +1644,7 @@ class _ExportButtonState extends State<_ExportButton> {
                           Padding(
                             padding: const EdgeInsets.only(bottom: 6),
                             child: Material(
-                              color: RCColors.bg,
+                              color: sheetRc.bg,
                               borderRadius: BorderRadius.circular(10),
                               clipBehavior: Clip.antiAlias,
                               child: InkWell(
@@ -1174,7 +1667,7 @@ class _ExportButtonState extends State<_ExportButton> {
                                       Icon(
                                         f.icon,
                                         size: 18,
-                                        color: RCColors.ink,
+                                        color: sheetRc.ink,
                                       ),
                                       const SizedBox(width: 10),
                                       Expanded(
@@ -1184,27 +1677,28 @@ class _ExportButtonState extends State<_ExportButton> {
                                           children: [
                                             Text(
                                               f.label,
-                                              style: const TextStyle(
+                                              style: TextStyle(
                                                 fontSize: 14,
                                                 fontWeight: FontWeight.w600,
+                                                color: sheetRc.label,
                                               ),
                                             ),
                                             Text(
                                               f.desc,
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
+                                              style: TextStyle(
                                                 fontSize: 11,
-                                                color: RCColors.sec,
+                                                color: sheetRc.sec,
                                               ),
                                             ),
                                           ],
                                         ),
                                       ),
-                                      const Icon(
+                                      Icon(
                                         Icons.chevron_right,
                                         size: 18,
-                                        color: RCColors.sec,
+                                        color: sheetRc.sec,
                                       ),
                                     ],
                                   ),
@@ -1246,12 +1740,16 @@ class _ExportButtonState extends State<_ExportButton> {
         aliasTextTransformer: store.applySpeakerAliasesToText,
       );
       final captureKey = picked.format == ExportFormat.image
-          ? captureKeyForExport()
+          ? (widget.captureKey ?? captureKeyForExport())
           : null;
-      final result = await ExportService().export(
+      final shareOrigin = _computeShareOrigin() ?? initialAnchorRect;
+      final service = widget.exportService ?? ExportService();
+      final result = await service.export(
         picked.format,
         doc,
         captureKey: captureKey,
+        shareAnchorKey: _shareButtonKey,
+        sharePositionOrigin: shareOrigin,
       );
       messenger
         ..hideCurrentSnackBar()
@@ -1298,11 +1796,14 @@ class _StickyTabs extends SliverPersistentHeaderDelegate {
     double shrinkOffset,
     bool overlapsContent,
   ) {
+    final rc = context.rc;
+    final st = context.rcStyle;
+    final isStyled = st.styleId != RCUIStyleId.warmPaper;
     return Container(
       key: const Key('stabs'),
-      decoration: const BoxDecoration(
-        color: RCColors.bg,
-        border: Border(bottom: BorderSide(color: RCColors.sep)),
+      decoration: BoxDecoration(
+        color: rc.bg,
+        border: Border(bottom: BorderSide(color: rc.sep)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 22),
       child: SizedBox(
@@ -1310,7 +1811,6 @@ class _StickyTabs extends SliverPersistentHeaderDelegate {
         child: Row(
           children: [
             Expanded(
-              // SingleChildScrollView 非懒加载：全部 Tab 常驻树内，窄屏溢出横向滑动
               child: SingleChildScrollView(
                 key: const Key('stab-strip'),
                 scrollDirection: Axis.horizontal,
@@ -1318,31 +1818,67 @@ class _StickyTabs extends SliverPersistentHeaderDelegate {
                 child: Row(
                   children: [
                     for (final (k, label) in tabs)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 18),
-                        child: TextButton(
-                          key: Key('stab-$k'),
-                          onPressed: () => onTap(k),
-                          style: TextButton.styleFrom(
-                            foregroundColor: current == k
-                                ? RCColors.label
-                                : RCColors.sec,
-                            padding: const EdgeInsets.symmetric(horizontal: 2),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      if (isStyled)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: InkWell(
+                            key: Key('stab-$k'),
+                            borderRadius: BorderRadius.circular(st.pillRadius),
+                            onTap: () => onTap(k),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 11,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: current == k
+                                    ? st.accent
+                                    : rc.card,
+                                borderRadius: BorderRadius.circular(
+                                  st.pillRadius,
+                                ),
+                                border: Border.all(
+                                  color: current == k ? st.accent : rc.sep,
+                                ),
+                              ),
+                              child: Text(
+                                label,
+                                softWrap: false,
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: current == k ? st.accentFg : rc.sec,
+                                ),
+                              ),
+                            ),
                           ),
-                          child: Text(
-                            label,
-                            softWrap: false,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: current == k
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
+                        )
+                      else
+                        Padding(
+                          padding: const EdgeInsets.only(right: 18),
+                          child: TextButton(
+                            key: Key('stab-$k'),
+                            onPressed: () => onTap(k),
+                            style: TextButton.styleFrom(
+                              foregroundColor: current == k ? rc.label : rc.sec,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: Text(
+                              label,
+                              softWrap: false,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: current == k
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
                             ),
                           ),
                         ),
-                      ),
                   ],
                 ),
               ),
@@ -1400,14 +1936,14 @@ class _InlineSummaryFigure extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final rc = context.rc;
     final p = item.photo;
-    final hasFile = p.path.isNotEmpty && File(p.path).existsSync();
     final srcLabel = p.source == 'dyj_camera' ? '点一机抓拍' : '系统相册';
     return Material(
-      color: RCColors.card,
+      color: rc.card,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
-        side: const BorderSide(color: RCColors.sep),
+        side: BorderSide(color: rc.sep),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -1421,20 +1957,13 @@ class _InlineSummaryFigure extends StatelessWidget {
                 child: SizedBox(
                   width: 56,
                   height: 56,
-                  child: hasFile
-                      ? Image.file(File(p.path), fit: BoxFit.cover)
-                      : ColoredBox(
-                          color: const Color(0xFFEAEAE4),
-                          child: Center(
-                            child: Icon(
-                              p.source == 'dyj_camera'
-                                  ? Icons.photo_camera_outlined
-                                  : Icons.photo_outlined,
-                              size: 20,
-                              color: RCColors.sec,
-                            ),
-                          ),
-                        ),
+                  child: PhotoThumbnail(
+                    path: p.path,
+                    logicalWidth: 56,
+                    source: p.source,
+                    placeholderIconSize: 20,
+                    placeholderColor: rc.sep,
+                  ),
                 ),
               ),
               const SizedBox(width: 10),
@@ -1447,9 +1976,10 @@ class _InlineSummaryFigure extends StatelessWidget {
                       item.event.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w600,
+                        color: rc.label,
                       ),
                     ),
                     const SizedBox(height: 3),
@@ -1457,9 +1987,9 @@ class _InlineSummaryFigure extends StatelessWidget {
                       '$srcLabel · ${p.time}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
-                        color: RCColors.sec,
+                        color: rc.sec,
                       ),
                     ),
                   ],
@@ -1468,14 +1998,17 @@ class _InlineSummaryFigure extends StatelessWidget {
               const SizedBox(width: 6),
               GestureDetector(
                 onTap: onOpenDetail,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 4,
+                  ),
                   child: Text(
                     '原话 ›',
                     style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w600,
-                      color: RCColors.okInk,
+                      color: rc.okInk,
                     ),
                   ),
                 ),
@@ -1488,32 +2021,42 @@ class _InlineSummaryFigure extends StatelessWidget {
   }
 }
 
-/// 逻辑结构：根节点 + 分支 + 叶子（有关联现场图时在叶子旁自然附带图片图标）
+/// 逻辑结构：自适应标题根节点 + 分支 + 叶子（仅当真实语义命中现场图时附带图片图标）
 class _MapTree extends StatelessWidget {
   const _MapTree({
+    required this.rootLabel,
     required this.branches,
     this.leafPhotos = const {},
     required this.onOpenDetail,
   });
 
+  final String rootLabel;
   final List<MapBranch> branches;
   final Map<String, _ContextualPhoto> leafPhotos;
   final void Function(String eventId) onOpenDetail;
 
   @override
   Widget build(BuildContext context) {
+    final rc = context.rc;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFFEAF3EA),
+            color: rc.ok.withValues(alpha: rc.isDark ? 0.18 : 0.14),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: const Text(
-            '会议要点',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          child: Text(
+            rootLabel,
+            key: const Key('map-root-label'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: rc.okInk,
+            ),
           ),
         ),
         const SizedBox(height: 10),
@@ -1525,13 +2068,16 @@ class _MapTree extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Container(width: 2, height: 14, color: RCColors.ax),
+                    Container(width: 2, height: 14, color: rc.ax),
                     const SizedBox(width: 8),
-                    Text(
-                      branches[bi].name,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+                    Flexible(
+                      child: Text(
+                        branches[bi].name,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: rc.label,
+                        ),
                       ),
                     ),
                   ],
@@ -1564,25 +2110,26 @@ class _MapTree extends StatelessWidget {
     String leaf,
     _ContextualPhoto? match,
   ) {
+    final rc = context.rc;
     if (match == null) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: RCColors.card,
+          color: rc.card,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: RCColors.sep),
+          border: Border.all(color: rc.sep),
         ),
         child: Text(
           leaf,
-          style: const TextStyle(fontSize: 12, color: RCColors.ink),
+          style: TextStyle(fontSize: 12, color: rc.ink),
         ),
       );
     }
     return Material(
-      color: RCColors.card,
+      color: rc.card,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: RCColors.sep),
+        side: BorderSide(color: rc.sep),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -1600,11 +2147,11 @@ class _MapTree extends StatelessWidget {
               Flexible(
                 child: Text(
                   leaf,
-                  style: const TextStyle(fontSize: 12, color: RCColors.ink),
+                  style: TextStyle(fontSize: 12, color: rc.ink),
                 ),
               ),
               const SizedBox(width: 5),
-              const Icon(Icons.image_outlined, size: 13.5, color: RCColors.sec),
+              Icon(Icons.image_outlined, size: 13.5, color: rc.sec),
             ],
           ),
         ),
@@ -1631,14 +2178,15 @@ class _PointTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
-    final open = page._ptOpen[index] ?? false;
+    final rc = context.rc;
+    final open = page._ptOpen[index] ?? (page._tab == 'pt');
     return Container(
       key: Key('pt-$index'),
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: RCColors.card,
+        color: rc.card,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: RCColors.sep),
+        border: Border.all(color: rc.sep),
       ),
       child: Column(
         children: [
@@ -1655,9 +2203,10 @@ class _PointTile extends StatelessWidget {
                         point.title,
                         sourceEvents,
                       ),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
+                        color: rc.label,
                       ),
                     ),
                   ),
@@ -1667,14 +2216,14 @@ class _PointTile extends StatelessWidget {
                       Icons.image_outlined,
                       key: Key('pt-picico-$index'),
                       size: 15,
-                      color: RCColors.sec,
+                      color: rc.sec,
                     ),
                     const SizedBox(width: 4),
                   ],
                   Icon(
                     open ? Icons.expand_less : Icons.expand_more,
                     size: 18,
-                    color: RCColors.sec,
+                    color: rc.sec,
                   ),
                 ],
               ),
@@ -1692,7 +2241,7 @@ class _PointTile extends StatelessWidget {
                       sourceEvents,
                     ),
                     key: Key('pt-d-$index'),
-                    style: const TextStyle(fontSize: 13, height: 1.6),
+                    style: TextStyle(fontSize: 13, height: 1.6, color: rc.ink),
                   ),
                   if (photos.isNotEmpty) ...[
                     const SizedBox(height: 10),
@@ -1726,8 +2275,8 @@ class _PointTile extends StatelessWidget {
                           key: Key('srcchip-${s.eventId}-${s.range}'),
                           onPressed: () => store.openDetail(s.eventId),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: RCColors.okInk,
-                            side: const BorderSide(color: RCColors.ok),
+                            foregroundColor: rc.okInk,
+                            side: BorderSide(color: rc.ok),
                             shape: const StadiumBorder(),
                             padding: const EdgeInsets.symmetric(
                               horizontal: 10,
@@ -1766,13 +2315,14 @@ class _TocButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final rc = context.rc;
     return OutlinedButton(
       key: const Key('toc-btn'),
       onPressed: () => _open(context),
       style: OutlinedButton.styleFrom(
-        backgroundColor: RCColors.bg,
-        foregroundColor: RCColors.label,
-        side: const BorderSide(color: RCColors.sep),
+        backgroundColor: rc.bg,
+        foregroundColor: rc.label,
+        side: BorderSide(color: rc.sep),
         shape: const StadiumBorder(),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         minimumSize: Size.zero,
@@ -1783,6 +2333,7 @@ class _TocButton extends StatelessWidget {
   }
 
   void _open(BuildContext context) {
+    final rc = context.rc;
     final box = context.findRenderObject() as RenderBox;
     final pos = RelativeRect.fromRect(
       Rect.fromPoints(
@@ -1793,12 +2344,17 @@ class _TocButton extends StatelessWidget {
     );
     showMenu<String>(
       context: context,
+      color: rc.card,
       position: pos,
       items: [
         for (final (id, label) in _items)
           PopupMenuItem(
             value: id,
-            child: Text(label, key: Key('toc-item-$id')),
+            child: Text(
+              label,
+              key: Key('toc-item-$id'),
+              style: TextStyle(color: rc.label),
+            ),
           ),
       ],
     ).then((v) {

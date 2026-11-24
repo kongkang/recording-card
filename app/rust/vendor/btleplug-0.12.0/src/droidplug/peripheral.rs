@@ -192,6 +192,33 @@ impl Peripheral {
         guard.properties = Some(properties);
     }
 
+    pub(crate) fn merge_connected_properties(&self, addr: BDAddr, name: Option<String>) {
+        let mut guard = self.shared.lock().unwrap();
+        match &mut guard.properties {
+            Some(props) => {
+                if props.local_name.as_deref().is_none_or(|n| n.trim().is_empty()) {
+                    if let Some(clean) = name.filter(|n| !n.trim().is_empty()) {
+                        props.local_name = Some(clean);
+                    }
+                }
+            }
+            None => {
+                guard.properties = Some(PeripheralProperties {
+                    address: addr,
+                    address_type: None,
+                    local_name: name.filter(|n| !n.trim().is_empty()),
+                    advertisement_name: None,
+                    tx_power_level: None,
+                    rssi: None,
+                    manufacturer_data: std::collections::HashMap::new(),
+                    service_data: std::collections::HashMap::new(),
+                    services: Vec::new(),
+                    class: None,
+                });
+            }
+        }
+    }
+
     fn with_obj<T, E>(
         &self,
         f: impl FnOnce(&JNIEnv, JPeripheral) -> std::result::Result<T, E>,

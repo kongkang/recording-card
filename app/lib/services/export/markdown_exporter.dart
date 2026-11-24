@@ -1,11 +1,10 @@
-/// Markdown 导出 —— 写 UTF-8 的 .md 文件，内容以文档自带 Markdown 原文为准。
+/// Markdown 导出 —— 写 UTF-8 的 .md 文件，内容以文档结构或自带 Markdown 原文为准。
 ///
 /// 规则：
-/// - 内容 = `doc.markdown`；
-/// - 如果原文里没有一级标题（首个非空行不是 `# ...`），把 `doc.title` 作为 `#` 一级标题补在最前；
-/// - 原文为空时按结构化字段合成一份 Markdown（保证导出的 .md 不是空文件）。
-///
-/// 纯 Dart 实现（dart:io + dart:convert），便于命令行脚本验证。
+/// - 若文档已采用「第一部分 + 第二部分」结构化导出，按结构化章节实时合成最新 Markdown；
+/// - 独立导出的 `.md` 绝不暴露 `/var/mobile/...`、`/Users/...` 等本机沙盒绝对路径，
+///   图片统一使用干净的相对引用 `images/<basename>` 或 `[现场图片：<说明>]`；
+/// - 纯 Dart 实现（dart:io + dart:convert），便于命令行脚本验证。
 library;
 
 import 'dart:convert';
@@ -31,6 +30,40 @@ class MarkdownExporter {
     }
   }
 
+  /// 将图片本地沙盒路径脱敏为干净的相对路径 `images/<basename>`（网络链接保持不变）。
+  static String sanitizeImagePath(String rawPath) {
+    final trimmed = rawPath.trim();
+    if (trimmed.isEmpty) return '';
+    final lower = trimmed.toLowerCase();
+    if (lower.startsWith('https://') || lower.startsWith('http://')) {
+      return trimmed;
+    }
+    final cleaned = trimmed.replaceFirst(RegExp(r'^file://', caseSensitive: false), '');
+    final segments = cleaned
+        .split(RegExp(r'[/\\]'))
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty && s != '.' && s != '..')
+        .toList(growable: false);
+    if (segments.isEmpty) return '';
+    return 'images/${segments.last}';
+  }
+
+  static String _sanitizeRawMarkdownPaths(String md) {
+    return md.replaceAllMapped(
+      RegExp(r'!\[([^\]]*)\]\(([^)]+)\)'),
+      (m) {
+        final alt = (m.group(1) ?? '').trim();
+        final rawTarget = (m.group(2) ?? '').trim();
+        final safeTarget = sanitizeImagePath(rawTarget);
+        if (safeTarget.isEmpty) {
+          final label = alt.isEmpty ? '现场照片' : alt;
+          return '[现场图片：$label]';
+        }
+        return '![$alt]($safeTarget)';
+      },
+    );
+  }
+
   /// 纯函数：拼出最终 Markdown 文本（导出器与单测共用同一入口）。
   static String buildMarkdownContent(ExportDocument doc) {
     // 若已生成「图文纪要 + 文字记录」两部分结构化文档，始终以结构化版本合成最新 Markdown
@@ -39,7 +72,7 @@ class MarkdownExporter {
       return buildMarkdownFromDocument(doc);
     }
 
-    final raw = doc.markdown.trim();
+    final raw = _sanitizeRawMarkdownPaths(doc.markdown.trim());
 
     if (raw.isEmpty) {
       return buildMarkdownFromDocument(doc);
@@ -108,10 +141,11 @@ class MarkdownExporter {
       }
       for (final img in section.images) {
         final caption = img.caption.trim().isEmpty ? '现场照片' : img.caption.trim();
-        if (img.path.trim().isNotEmpty) {
-          buffer.writeln('![$caption](${img.path.trim()})');
+        final safeRel = sanitizeImagePath(img.path);
+        if (safeRel.isNotEmpty) {
+          buffer.writeln('![$caption]($safeRel)');
         } else {
-          buffer.writeln('- [现场图片] $caption');
+          buffer.writeln('- [现场图片：$caption]');
         }
       }
       buffer.writeln();

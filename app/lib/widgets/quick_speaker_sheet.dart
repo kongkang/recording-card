@@ -62,6 +62,8 @@ class _QuickSpeakerSheetState extends State<_QuickSpeakerSheet> {
   late bool _applyBatch;
   late final int _otherCount;
   late final String? _hintName;
+  late final String? _hintReason;
+  late final bool _isAlreadyNamed;
   bool _saving = false;
 
   @override
@@ -77,8 +79,14 @@ class _QuickSpeakerSheetState extends State<_QuickSpeakerSheet> {
         curDisplay == '未区分' ||
         curDisplay.startsWith('说话人 ') ||
         curDisplay == '无语音';
+    _isAlreadyNamed = !isGeneric;
     _ctrl = TextEditingController(text: isGeneric ? '' : curDisplay);
     _hintName = widget.store.speakerHintFor(
+      widget.event,
+      widget.turnIndex,
+      widget.rawSpeaker,
+    );
+    _hintReason = widget.store.speakerSuggestionReasonFor(
       widget.event,
       widget.turnIndex,
       widget.rawSpeaker,
@@ -110,13 +118,28 @@ class _QuickSpeakerSheetState extends State<_QuickSpeakerSheet> {
       rememberVoiceprint: _rememberVoiceprint,
       applyToOtherMatching: _otherCount > 0 && _applyBatch,
     );
+    final savedName = _ctrl.text.trim();
     if (!mounted) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
+    final retroCount = widget.store.lastRetroSyncedEventCount;
     Navigator.of(context).pop();
-    if (result.frequentFull) {
+    if (retroCount > 0) {
+      messenger?.clearSnackBars();
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text('已命名「$savedName」，并自动同步历史 $retroCount 条录音'),
+          action: SnackBarAction(
+            label: '撤销',
+            onPressed: widget.store.undoLastSpeakerNaming,
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } else if (result.frequentFull) {
       messenger?.showSnackBar(
         const SnackBar(
-          content: Text('常用自动识别已满 5 个槽位，已归入人物库（手动标记 · 省算力）'),
+          content: Text('已存入全库声纹识别（前 5 核心槽位已满，仍会跨记录自动识别）'),
+          behavior: SnackBarBehavior.floating,
         ),
       );
     }
@@ -251,13 +274,32 @@ class _QuickSpeakerSheetState extends State<_QuickSpeakerSheet> {
                     Icon(Icons.auto_awesome_outlined, size: 15, color: rc.okInk),
                     const SizedBox(width: 6),
                     Expanded(
-                      child: Text(
-                        '可能为：$_hintName',
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          color: rc.okInk,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '可能为：$_hintName',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: rc.okInk,
+                            ),
+                          ),
+                          if (_hintReason != null &&
+                              _hintReason.trim().isNotEmpty) ...[
+                            const SizedBox(height: 1),
+                            Text(
+                              _hintReason.trim(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: rc.sec,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                     TextButton(
@@ -369,7 +411,7 @@ class _QuickSpeakerSheetState extends State<_QuickSpeakerSheet> {
               dense: true,
               contentPadding: EdgeInsets.zero,
               title: Text(
-                '记住声纹特征并入人物库（优先自动匹配前 5 常用）',
+                '记住声纹特征并跨记录自动识别（多设备自适应）',
                 style: TextStyle(fontSize: 13, color: rc.ink),
               ),
             ),
@@ -394,6 +436,49 @@ class _QuickSpeakerSheetState extends State<_QuickSpeakerSheet> {
               ),
             ),
             const SizedBox(height: 14),
+            if (_isAlreadyNamed) ...[
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  key: const Key('qspk-detach-btn'),
+                  onPressed: _saving
+                      ? null
+                      : () {
+                          final messenger = ScaffoldMessenger.maybeOf(context);
+                          widget.store.detachSpeakerForEvent(
+                            event: widget.event,
+                            turnIndex: widget.turnIndex,
+                            rawSpeaker: widget.rawSpeaker,
+                          );
+                          Navigator.of(context).pop();
+                          messenger?.clearSnackBars();
+                          messenger?.showSnackBar(
+                            SnackBar(
+                              content: const Text('已解绑本段说话人，已隔离防污染声纹库'),
+                              action: SnackBarAction(
+                                label: '撤销',
+                                onPressed: widget.store.undoLastSpeakerNaming,
+                              ),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: rc.danger,
+                    side: BorderSide(color: rc.danger.withValues(alpha: 0.35)),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: const Text(
+                    '本段不是他（解绑本段）',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
             Row(
               children: [
                 Expanded(

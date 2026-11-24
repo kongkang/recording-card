@@ -6,13 +6,17 @@ library;
 
 import 'package:flutter/foundation.dart';
 
+import '../device/card_gateway.dart';
 import '../storage/storage.dart';
 
-/// 点一机 V1 物理按键可绑定动作（固件事件上行，App 侧解释执行）。
+/// 硬件物理按键与侧边拨杆可绑定动作（固件事件上行或本地执行，App 侧解释/协同执行）。
 enum HardwareButtonAction {
   mark('mark', '打重点（Mark）', '重点'),
+  syncNow('sync_now', '立即同步数据', '同步'),
   agentVoice('agent_voice', '语音任务（发给 Agent）', '语音'),
   photoRecognize('photo_recognize', '拍照识别（发给 Agent）', '识图'),
+  recordStart('record_start', '开始录音', '开录'),
+  recordStop('record_stop', '结束录音', '停录'),
   recordToggle('record_toggle', '开关录音', '录音'),
   none('none', '无动作', '无');
 
@@ -21,6 +25,62 @@ enum HardwareButtonAction {
   final String code;
   final String label;
   final String shortLabel;
+
+  /// 点一机 V1 按钮可选动作（保持既有选项）。
+  static const List<HardwareButtonAction> dyjButtonOptions = [
+    mark,
+    agentVoice,
+    photoRecognize,
+    recordToggle,
+    none,
+  ];
+
+  /// 录音卡 V2 物理按钮可选动作。
+  static const List<HardwareButtonAction> cardButtonOptions = [
+    mark,
+    syncNow,
+    agentVoice,
+    recordStart,
+    recordStop,
+    recordToggle,
+    none,
+  ];
+
+  /// 录音卡 V2 侧边拨杆可选动作。
+  static const List<HardwareButtonAction> cardSwitchOptions = [
+    recordStart,
+    recordStop,
+    recordToggle,
+    mark,
+    syncNow,
+    agentVoice,
+    none,
+  ];
+
+  /// 映射为录音卡 V2 固件 KV 存储值。
+  ///
+  /// 注意：`syncNow` 写入 `'app_sync'`（而非固件自带的 `'sync_upload'`），
+  /// 避免在未配网情况下自动开启 ESP32 Wi-Fi 抢占 SD 卡；改为触发 App 侧实时切片/BLE 同步。
+  String toCardFirmwareWire() => switch (this) {
+    HardwareButtonAction.mark => 'record_mark',
+    HardwareButtonAction.syncNow => 'app_sync',
+    HardwareButtonAction.agentVoice => 'agent_voice',
+    HardwareButtonAction.recordStart => 'record_start',
+    HardwareButtonAction.recordStop => 'record_stop',
+    HardwareButtonAction.recordToggle => 'record_toggle',
+    HardwareButtonAction.photoRecognize || HardwareButtonAction.none => 'none',
+  };
+
+  static HardwareButtonAction fromCardFirmwareWire(String? raw) =>
+      switch (raw?.trim()) {
+        'record_mark' => HardwareButtonAction.mark,
+        'app_sync' || 'sync_now' || 'sync_upload' => HardwareButtonAction.syncNow,
+        'agent_voice' => HardwareButtonAction.agentVoice,
+        'record_start' => HardwareButtonAction.recordStart,
+        'record_stop' => HardwareButtonAction.recordStop,
+        'record_toggle' => HardwareButtonAction.recordToggle,
+        _ => HardwareButtonAction.none,
+      };
 
   static HardwareButtonAction fromCode(
     String? raw, {
@@ -288,30 +348,6 @@ class AgentConfigStore extends ChangeNotifier {
       wiring: 'partial',
       wiringNote: '部分接入：这个开关会同步相册自动对齐。清洗和总结不会把它当成工具去调用。',
     ),
-    AgentExtensionItem(
-      id: 'tl-hist',
-      kind: 'tool',
-      title: '同日连续上下文感知',
-      subtitle: '结合同日早些时候的录音片段理解代词与省略背景',
-      wiring: 'placeholder',
-      wiringNote: '未接入：清洗和总结都不会读取这个开关，也不会因此附带同日更早的录音。',
-    ),
-    AgentExtensionItem(
-      id: 'tl-todo',
-      kind: 'tool',
-      title: '结构化行动项提取',
-      subtitle: '从承诺与排期语句中提取可勾选待办事项',
-      wiring: 'placeholder',
-      wiringNote: '未接入：总结里的行动项来自总结提示词，不看这个开关。',
-    ),
-    AgentExtensionItem(
-      id: 'mcp-kb',
-      kind: 'mcp',
-      title: '个人知识库 MCP',
-      subtitle: 'local://knowledge-vault · 日报与做梦归档接口（规划接入）',
-      wiring: 'placeholder',
-      wiringNote: '未接入：没有 MCP 客户端。打开后也不会连接外部服务。',
-    ),
   ];
 
   static const Map<String, bool> _defaultExtensionStates = {
@@ -319,9 +355,6 @@ class AgentConfigStore extends ChangeNotifier {
     'sk-brief': true,
     'sk-risk': false,
     'tl-photo': true,
-    'tl-hist': true,
-    'tl-todo': true,
-    'mcp-kb': false,
   };
 
   static const String defaultAgentPrompt =
@@ -335,9 +368,9 @@ class AgentConfigStore extends ChangeNotifier {
   bool photoLinkEnabled = true;
   bool islandEnabled = true;
   bool watchLinkEnabled = false;
-  bool getSeedLinkEnabled = false;
   bool omiLinkEnabled = false;
   bool feishuLinkEnabled = false;
+  bool iflytekA1LinkEnabled = false;
 
   /// 行为与健康信号总开关。默认关闭；打开后才申请系统权限并在本机采集。
   bool healthSignalEnabled = false;
@@ -359,24 +392,157 @@ class AgentConfigStore extends ChangeNotifier {
   HardwareButtonAction dyjDoubleClickAction =
       HardwareButtonAction.photoRecognize;
 
+  /// 录音卡 V2（CardV2）物理按钮与侧边拨杆默认行为：
+  /// 单击=重点、双击=立即同步数据、长按=调用 Agent、拨杆开=开始录音、拨杆关=结束录音。
+  HardwareButtonAction cardClickAction = HardwareButtonAction.mark;
+  HardwareButtonAction cardDoubleClickAction = HardwareButtonAction.syncNow;
+  HardwareButtonAction cardLongPressAction = HardwareButtonAction.agentVoice;
+  HardwareButtonAction cardSwitchOnAction = HardwareButtonAction.recordStart;
+  HardwareButtonAction cardSwitchOffAction = HardwareButtonAction.recordStop;
+  bool cardControlsUserConfigured = false;
+
+  /// Omi 物理按键默认行为：固件写死长按约 3 秒直接关机且无配置项，故仅开放单击与双击（默认单击重点、双击启停录音）。
+  HardwareButtonAction omiClickAction = HardwareButtonAction.mark;
+  HardwareButtonAction omiDoubleClickAction = HardwareButtonAction.recordToggle;
+
   /// iPhone 侧边操作按钮「切换录音」快捷动作模式（专用「向 Agent 发送语音任务」始终直接发给 Agent）。
   IphoneActionButtonBehavior iphoneActionButtonBehavior =
       IphoneActionButtonBehavior.recordToggle;
 
   HardwareButtonAction dyjActionForGesture(String gesture) => switch (gesture) {
-    'click' => dyjClickAction,
+    'click' || 'single_tap' => dyjClickAction,
     'long_press' || 'long_press_start' || 'long_press_end' => dyjLongPressAction,
-    'double_click' => dyjDoubleClickAction,
+    'double_click' || 'double_tap' => dyjDoubleClickAction,
     _ => HardwareButtonAction.none,
   };
+
+  HardwareButtonAction cardActionForGesture(String gesture) => switch (gesture) {
+    'click' || 'single_tap' => cardClickAction,
+    'double_click' || 'double_tap' => cardDoubleClickAction,
+    'long_press' || 'long_press_start' || 'long_press_end' => cardLongPressAction,
+    'switch_on' => cardSwitchOnAction,
+    'switch_off' => cardSwitchOffAction,
+    _ => HardwareButtonAction.none,
+  };
+
+  bool get hasAnyCardControlAction =>
+      cardClickAction != HardwareButtonAction.none ||
+      cardDoubleClickAction != HardwareButtonAction.none ||
+      cardLongPressAction != HardwareButtonAction.none ||
+      cardSwitchOnAction != HardwareButtonAction.none ||
+      cardSwitchOffAction != HardwareButtonAction.none;
+
+  Map<String, String> cardFirmwareBindingsPayload() => {
+    'btnSingle': cardClickAction.toCardFirmwareWire(),
+    'btnDouble': cardDoubleClickAction.toCardFirmwareWire(),
+    'btnLongPress': cardLongPressAction.toCardFirmwareWire(),
+    'btnLongRelease': 'none',
+    'switchOn': cardSwitchOnAction.toCardFirmwareWire(),
+    'switchOff': cardSwitchOffAction.toCardFirmwareWire(),
+  };
+
+  /// 计算当前 App 目标绑定与设备端读回 KV 之间的差异（空/`null` 归一为 `'none'`），仅下发需变更的键。
+  Map<String, String> cardFirmwareBindingsDiff(
+    Map<String, dynamic> deviceRaw,
+  ) {
+    final desired = cardFirmwareBindingsPayload();
+    final diff = <String, String>{};
+    for (final entry in desired.entries) {
+      final curRaw =
+          deviceRaw[entry.key]?.toString().trim().toLowerCase() ?? '';
+      final curNorm = curRaw.isEmpty ? 'none' : curRaw;
+      final targetNorm = entry.value.trim().toLowerCase();
+      if (curNorm != targetNorm) {
+        diff[entry.key] = entry.value;
+      }
+    }
+    return diff;
+  }
+
+  Map<String, String> cardFirmwareSinglePayload(
+    String input,
+    HardwareButtonAction action,
+  ) {
+    final wire = action.toCardFirmwareWire();
+    return switch (input) {
+      'click' => {'btnSingle': wire},
+      'double_click' => {'btnDouble': wire},
+      'long_press' => {'btnLongPress': wire, 'btnLongRelease': 'none'},
+      'switch_on' => {'switchOn': wire},
+      'switch_off' => {'switchOff': wire},
+      _ => const {},
+    };
+  }
+
+  /// 按当前硬件家族解析按键手势映射；Omi 明确禁用所有 `long_press*` 与无摄像头拍照动作。
+  HardwareButtonAction buttonActionForDevice(
+    DeviceKind? kind,
+    String gesture,
+  ) {
+    if (kind == DeviceKind.cardV2) {
+      return cardActionForGesture(gesture);
+    }
+    if (kind == DeviceKind.omiCv1) {
+      return switch (gesture) {
+        'click' || 'single_tap' => omiClickAction,
+        'double_click' || 'double_tap' => omiDoubleClickAction,
+        _ => HardwareButtonAction.none,
+      };
+    }
+    return dyjActionForGesture(gesture);
+  }
 
   String get dyjButtonSummary =>
       '单击${dyjClickAction.shortLabel} · 长按${dyjLongPressAction.shortLabel} · 双击${dyjDoubleClickAction.shortLabel}';
 
+  String get cardButtonSummary =>
+      '单击${cardClickAction.shortLabel} · 双击${cardDoubleClickAction.shortLabel} · 长按${cardLongPressAction.shortLabel} · 拨杆${cardSwitchOnAction.shortLabel}/${cardSwitchOffAction.shortLabel}';
+
+  String get omiButtonSummary =>
+      '单击${omiClickAction.shortLabel} · 双击${omiDoubleClickAction.shortLabel}（禁用长按）';
+
+  int get cardConfiguredButtonCount => [
+    cardClickAction,
+    cardDoubleClickAction,
+    cardLongPressAction,
+    cardSwitchOnAction,
+    cardSwitchOffAction,
+  ].where((a) => a != HardwareButtonAction.none).length;
+
+  int get dyjConfiguredButtonCount => [
+    dyjClickAction,
+    dyjLongPressAction,
+    dyjDoubleClickAction,
+  ].where((a) => a != HardwareButtonAction.none).length;
+
+  int get omiConfiguredButtonCount => [
+    omiClickAction,
+    omiDoubleClickAction,
+  ].where((a) => a != HardwareButtonAction.none).length;
+
+  int configuredButtonCount({
+    required bool hasConfigurableSwitch,
+    DeviceKind? kind,
+  }) {
+    if (hasConfigurableSwitch || kind == DeviceKind.cardV2) {
+      return cardConfiguredButtonCount;
+    }
+    if (kind == DeviceKind.omiCv1) {
+      return omiConfiguredButtonCount;
+    }
+    return dyjConfiguredButtonCount;
+  }
+
+  String buttonConfiguredLabel({
+    required bool hasConfigurableSwitch,
+    DeviceKind? kind,
+  }) =>
+      '已设置 ${configuredButtonCount(hasConfigurableSwitch: hasConfigurableSwitch, kind: kind)} 项';
+
   int get enabledExtHardwareCount =>
-      (getSeedLinkEnabled ? 1 : 0) +
       (omiLinkEnabled ? 1 : 0) +
-      (feishuLinkEnabled ? 1 : 0);
+      (feishuLinkEnabled ? 1 : 0) +
+      (iflytekA1LinkEnabled ? 1 : 0);
 
   /// 用户手动指定的模型。空字符串表示没有指定，不能把目录里的 deepseek-v3 当成已选。
   String cloudModel = '';
@@ -389,7 +555,12 @@ class AgentConfigStore extends ChangeNotifier {
 
   // ── 开发者设置：连续录音清洗周期与层叠重叠策略 ─────────────
   /// 阶段清洗触发周期（分钟，支持 1..180 分钟，从分钟到小时可调）。
-  int cleanCycleMinutes = 10;
+  int cleanCycleMinutes = 15;
+
+  /// 录音静默切片落盘后的批量转写与归拢周期（分钟，支持 15 / 30 / 60 等，默认 15 分钟）。
+  int transcribeCycleMinutes = 15;
+
+  String get transcribeCycleLabel => '每 $transcribeCycleMinutes 分钟';
 
   /// 遇到 >=1 分钟静音空白或停止录音时自动提前收敛清洗。
   bool cleanOnSilenceGap = true;
@@ -403,9 +574,12 @@ class AgentConfigStore extends ChangeNotifier {
   /// 按时间重叠时，回溯包含上一轮末尾的分钟数（1..30）。
   int cleanOverlapMinutes = 3;
 
-  /// 录音切片长度（秒）。只保存配置，不改变现有实时切片、合并或分段。
-  /// 当前流水线仍按代码里的 1 分钟窗口运行。
+  /// 实时录音切片长度（秒，默认 60 = 1 分钟，支持 60..1800 即 1~30 分钟可调）。
+  /// 变更后立即驱动蓝牙实时音频流（Omi / 录音卡 / 点一机）与手机本机麦克风切片窗口。
   int recordingSliceSeconds = 60;
+
+  Duration get recordingSliceDuration =>
+      Duration(seconds: recordingSliceSeconds);
 
   /// 健康与位置采样间隔（秒）。默认 60，可在开发者设置调到 300（5 分钟）。
   int healthSampleIntervalSeconds = 60;
@@ -584,14 +758,14 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['watchLinkEnabled'] is bool) {
       watchLinkEnabled = data['watchLinkEnabled'] as bool;
     }
-    if (data['getSeedLinkEnabled'] is bool) {
-      getSeedLinkEnabled = data['getSeedLinkEnabled'] as bool;
-    }
     if (data['omiLinkEnabled'] is bool) {
       omiLinkEnabled = data['omiLinkEnabled'] as bool;
     }
     if (data['feishuLinkEnabled'] is bool) {
       feishuLinkEnabled = data['feishuLinkEnabled'] as bool;
+    }
+    if (data['iflytekA1LinkEnabled'] is bool) {
+      iflytekA1LinkEnabled = data['iflytekA1LinkEnabled'] as bool;
     }
     if (data['healthSignalEnabled'] is bool) {
       healthSignalEnabled = data['healthSignalEnabled'] as bool;
@@ -636,6 +810,57 @@ class AgentConfigStore extends ChangeNotifier {
         fallback: HardwareButtonAction.photoRecognize,
       );
     }
+    if (data['cardBtnClick'] is String) {
+      cardClickAction = HardwareButtonAction.fromCode(
+        data['cardBtnClick'] as String,
+        fallback: HardwareButtonAction.mark,
+      );
+    }
+    if (data['cardBtnDouble'] is String) {
+      cardDoubleClickAction = HardwareButtonAction.fromCode(
+        data['cardBtnDouble'] as String,
+        fallback: HardwareButtonAction.syncNow,
+      );
+    }
+    if (data['cardBtnLong'] is String) {
+      cardLongPressAction = HardwareButtonAction.fromCode(
+        data['cardBtnLong'] as String,
+        fallback: HardwareButtonAction.agentVoice,
+      );
+    }
+    if (data['cardSwitchOn'] is String) {
+      cardSwitchOnAction = HardwareButtonAction.fromCode(
+        data['cardSwitchOn'] as String,
+        fallback: HardwareButtonAction.recordStart,
+      );
+    }
+    if (data['cardSwitchOff'] is String) {
+      cardSwitchOffAction = HardwareButtonAction.fromCode(
+        data['cardSwitchOff'] as String,
+        fallback: HardwareButtonAction.recordStop,
+      );
+    }
+    if (data['cardBtnUserConfigured'] is bool) {
+      cardControlsUserConfigured = data['cardBtnUserConfigured'] as bool;
+    }
+    if (data['omiBtnClick'] is String) {
+      final parsed = HardwareButtonAction.fromCode(
+        data['omiBtnClick'] as String,
+        fallback: HardwareButtonAction.mark,
+      );
+      omiClickAction = parsed == HardwareButtonAction.photoRecognize
+          ? HardwareButtonAction.mark
+          : parsed;
+    }
+    if (data['omiBtnDouble'] is String) {
+      final parsed = HardwareButtonAction.fromCode(
+        data['omiBtnDouble'] as String,
+        fallback: HardwareButtonAction.recordToggle,
+      );
+      omiDoubleClickAction = parsed == HardwareButtonAction.photoRecognize
+          ? HardwareButtonAction.recordToggle
+          : parsed;
+    }
     if (data['iphoneActionBehavior'] is String) {
       iphoneActionButtonBehavior = IphoneActionButtonBehavior.fromCode(
         data['iphoneActionBehavior'] as String,
@@ -671,6 +896,11 @@ class AgentConfigStore extends ChangeNotifier {
         10080,
       );
     }
+    if (data['transcribeCycleMinutes'] is num) {
+      transcribeCycleMinutes = (data['transcribeCycleMinutes'] as num)
+          .toInt()
+          .clamp(5, 180);
+    }
     if (data['cleanOnSilenceGap'] is bool) {
       cleanOnSilenceGap = data['cleanOnSilenceGap'] as bool;
     }
@@ -692,7 +922,7 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['recordingSliceSeconds'] is num) {
       recordingSliceSeconds = (data['recordingSliceSeconds'] as num)
           .toInt()
-          .clamp(60, 600);
+          .clamp(60, 1800);
     }
     if (data['healthSampleIntervalSeconds'] is num) {
       healthSampleIntervalSeconds = (data['healthSampleIntervalSeconds'] as num)
@@ -780,12 +1010,6 @@ class AgentConfigStore extends ChangeNotifier {
     await _save();
   }
 
-  Future<void> setGetSeedLinkEnabled(bool value) async {
-    getSeedLinkEnabled = value;
-    notifyListeners();
-    await _save();
-  }
-
   Future<void> setOmiLinkEnabled(bool value) async {
     omiLinkEnabled = value;
     notifyListeners();
@@ -794,6 +1018,12 @@ class AgentConfigStore extends ChangeNotifier {
 
   Future<void> setFeishuLinkEnabled(bool value) async {
     feishuLinkEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setIflytekA1LinkEnabled(bool value) async {
+    iflytekA1LinkEnabled = value;
     notifyListeners();
     await _save();
   }
@@ -847,7 +1077,7 @@ class AgentConfigStore extends ChangeNotifier {
   }
 
   Future<void> setRecordingSliceSeconds(int seconds) async {
-    recordingSliceSeconds = seconds.clamp(60, 600);
+    recordingSliceSeconds = seconds.clamp(60, 1800);
     notifyListeners();
     await _save();
   }
@@ -903,6 +1133,15 @@ class AgentConfigStore extends ChangeNotifier {
   Future<void> setCleanCycleMinutes(int minutes) async {
     final next = minutes.clamp(1, 10080);
     if (next == cleanCycleMinutes) return;
+    cleanCycleMinutes = next;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setTranscribeCycleMinutes(int minutes) async {
+    final next = minutes.clamp(5, 180);
+    if (next == transcribeCycleMinutes && cleanCycleMinutes == next) return;
+    transcribeCycleMinutes = next;
     cleanCycleMinutes = next;
     notifyListeners();
     await _save();
@@ -1146,6 +1385,124 @@ class AgentConfigStore extends ChangeNotifier {
     await _save();
   }
 
+  Future<void> setCardControlAction(
+    String input,
+    HardwareButtonAction action,
+  ) async {
+    var changed = !cardControlsUserConfigured;
+    cardControlsUserConfigured = true;
+    switch (input) {
+      case 'click':
+        if (cardClickAction != action) {
+          cardClickAction = action;
+          changed = true;
+        }
+      case 'double_click':
+        if (cardDoubleClickAction != action) {
+          cardDoubleClickAction = action;
+          changed = true;
+        }
+      case 'long_press':
+        if (cardLongPressAction != action) {
+          cardLongPressAction = action;
+          changed = true;
+        }
+      case 'switch_on':
+        if (cardSwitchOnAction != action) {
+          cardSwitchOnAction = action;
+          changed = true;
+        }
+      case 'switch_off':
+        if (cardSwitchOffAction != action) {
+          cardSwitchOffAction = action;
+          changed = true;
+        }
+    }
+    if (!changed) return;
+    notifyListeners();
+    await _save();
+  }
+
+  /// 配置 Omi 按键动作：拒绝长按（固件 3s 硬关机）与拍照动作（Omi 无摄像头）。
+  Future<void> setOmiButtonAction(
+    String gesture,
+    HardwareButtonAction action,
+  ) async {
+    if (action == HardwareButtonAction.photoRecognize) return;
+    var changed = false;
+    switch (gesture) {
+      case 'click' || 'single_tap':
+        if (omiClickAction != action) {
+          omiClickAction = action;
+          changed = true;
+        }
+      case 'double_click' || 'double_tap':
+        if (omiDoubleClickAction != action) {
+          omiDoubleClickAction = action;
+          changed = true;
+        }
+      default:
+        return;
+    }
+    if (!changed) return;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> resetCardControlDefaults() async {
+    final changed =
+        cardClickAction != HardwareButtonAction.mark ||
+        cardDoubleClickAction != HardwareButtonAction.syncNow ||
+        cardLongPressAction != HardwareButtonAction.agentVoice ||
+        cardSwitchOnAction != HardwareButtonAction.recordStart ||
+        cardSwitchOffAction != HardwareButtonAction.recordStop ||
+        cardControlsUserConfigured;
+    cardClickAction = HardwareButtonAction.mark;
+    cardDoubleClickAction = HardwareButtonAction.syncNow;
+    cardLongPressAction = HardwareButtonAction.agentVoice;
+    cardSwitchOnAction = HardwareButtonAction.recordStart;
+    cardSwitchOffAction = HardwareButtonAction.recordStop;
+    cardControlsUserConfigured = false;
+    if (!changed) return;
+    notifyListeners();
+    await _save();
+  }
+
+  /// 从已连接录音卡回读既有绑定到 UI，保持 App 展示与设备真实 KV 一致。
+  Future<void> syncCardBindingsFromDevice(Map<String, dynamic> raw) async {
+    final nextClick = HardwareButtonAction.fromCardFirmwareWire(
+      raw['btnSingle'] as String?,
+    );
+    final nextDouble = HardwareButtonAction.fromCardFirmwareWire(
+      raw['btnDouble'] as String?,
+    );
+    final nextLong = HardwareButtonAction.fromCardFirmwareWire(
+      raw['btnLongPress'] as String?,
+    );
+    final nextSwitchOn = HardwareButtonAction.fromCardFirmwareWire(
+      raw['switchOn'] as String?,
+    );
+    final nextSwitchOff = HardwareButtonAction.fromCardFirmwareWire(
+      raw['switchOff'] as String?,
+    );
+    final changed =
+        cardClickAction != nextClick ||
+        cardDoubleClickAction != nextDouble ||
+        cardLongPressAction != nextLong ||
+        cardSwitchOnAction != nextSwitchOn ||
+        cardSwitchOffAction != nextSwitchOff ||
+        !cardControlsUserConfigured;
+    cardClickAction = nextClick;
+    cardDoubleClickAction = nextDouble;
+    cardLongPressAction = nextLong;
+    cardSwitchOnAction = nextSwitchOn;
+    cardSwitchOffAction = nextSwitchOff;
+    cardControlsUserConfigured = true;
+    if (!changed) return;
+    notifyListeners();
+    await _save();
+  }
+
   Future<void> setIphoneActionButtonBehavior(
     IphoneActionButtonBehavior next,
   ) async {
@@ -1153,6 +1510,16 @@ class AgentConfigStore extends ChangeNotifier {
     iphoneActionButtonBehavior = next;
     notifyListeners();
     await _save();
+  }
+
+  /// 注销账号或重置本机配置时删除持久化的 Agent 配置并重新加载默认值。
+  Future<void> resetAll() async {
+    try {
+      await _json.remove(_storageKey);
+    } catch (_) {
+      // 忽略重置单个键异常
+    }
+    await load();
   }
 
   Future<void> _save() async {
@@ -1163,9 +1530,9 @@ class AgentConfigStore extends ChangeNotifier {
       'photoLinkEnabled': photoLinkEnabled,
       'islandEnabled': islandEnabled,
       'watchLinkEnabled': watchLinkEnabled,
-      'getSeedLinkEnabled': getSeedLinkEnabled,
       'omiLinkEnabled': omiLinkEnabled,
       'feishuLinkEnabled': feishuLinkEnabled,
+      'iflytekA1LinkEnabled': iflytekA1LinkEnabled,
       'healthSignalEnabled': healthSignalEnabled,
       if (preferredAsrEngine != null) 'asrEngine': preferredAsrEngine,
       'agentWebSearchEnabled': agentWebSearchEnabled,
@@ -1179,6 +1546,14 @@ class AgentConfigStore extends ChangeNotifier {
       'dyjBtnClick': dyjClickAction.code,
       'dyjBtnLong': dyjLongPressAction.code,
       'dyjBtnDouble': dyjDoubleClickAction.code,
+      'cardBtnClick': cardClickAction.code,
+      'cardBtnDouble': cardDoubleClickAction.code,
+      'cardBtnLong': cardLongPressAction.code,
+      'cardSwitchOn': cardSwitchOnAction.code,
+      'cardSwitchOff': cardSwitchOffAction.code,
+      if (cardControlsUserConfigured) 'cardBtnUserConfigured': true,
+      'omiBtnClick': omiClickAction.code,
+      'omiBtnDouble': omiDoubleClickAction.code,
       'iphoneActionBehavior': iphoneActionButtonBehavior.code,
       'recordingSliceSeconds': recordingSliceSeconds,
       'healthSampleIntervalSeconds': healthSampleIntervalSeconds,
@@ -1190,6 +1565,7 @@ class AgentConfigStore extends ChangeNotifier {
       'ctx': contextMode,
       'temp': temperature,
       'cleanCycleMinutes': cleanCycleMinutes,
+      'transcribeCycleMinutes': transcribeCycleMinutes,
       'cleanOnSilenceGap': cleanOnSilenceGap,
       'cleanOverlapMode': cleanOverlapMode,
       'cleanOverlapParagraphs': cleanOverlapParagraphs,

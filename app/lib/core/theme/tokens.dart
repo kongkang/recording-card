@@ -11,6 +11,10 @@ library;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import 'ui_style.dart';
+
+export 'ui_style.dart';
+
 /// 语义色（浅色常量，等同 `RCColorScheme.light`）。
 ///
 /// 只保证浅色主题下正确；需要跟随深色模式的地方改用 `context.rc`。
@@ -64,6 +68,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
     required this.ok,
     required this.okInk,
     required this.danger,
+    this.warn = RCColors.warn,
+    this.info = RCColors.info,
   });
 
   /// 浅色：与 [RCColors] 常量一一对应（值相同，便于老代码平滑迁移）。
@@ -79,6 +85,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
     ok: RCColors.ok,
     okInk: RCColors.okInk,
     danger: RCColors.danger,
+    warn: RCColors.warn,
+    info: RCColors.info,
   );
 
   /// 深色：背景近黑、正文高对比、分隔线弱化。
@@ -97,6 +105,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
     ok: Color(0xFF30D158),
     okInk: Color(0xFF6FDD8B),
     danger: Color(0xFFFF453A),
+    warn: Color(0xFFFF9F0A),
+    info: Color(0xFF0A84FF),
   );
 
   /// 当前亮度（供需要按亮/暗做微调的组件判断）。
@@ -132,6 +142,12 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
   /// 警示色。
   final Color danger;
 
+  /// 待机/提醒橙色。
+  final Color warn;
+
+  /// 状态信息蓝色。
+  final Color info;
+
   bool get isDark => brightness == Brightness.dark;
 
   /// 开关轨道颜色：开 = 墨色（原型 `.sw.on{background:var(--label)}`），关 = 弱化灰。
@@ -139,6 +155,9 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
 
   /// 开关滑块颜色：浅色轨道上用白，深色模式的开态轨道是近白，滑块反过来用底色。
   Color get switchThumb => isDark ? bg : Colors.white;
+
+  /// 主操作实心按钮（背景为 `label`）上的前景文字色。
+  Color get onLabel => isDark ? bg : Colors.white;
 
   @override
   RCColorScheme copyWith({
@@ -153,6 +172,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
     Color? ok,
     Color? okInk,
     Color? danger,
+    Color? warn,
+    Color? info,
   }) {
     return RCColorScheme(
       brightness: brightness ?? this.brightness,
@@ -166,6 +187,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
       ok: ok ?? this.ok,
       okInk: okInk ?? this.okInk,
       danger: danger ?? this.danger,
+      warn: warn ?? this.warn,
+      info: info ?? this.info,
     );
   }
 
@@ -184,6 +207,8 @@ class RCColorScheme extends ThemeExtension<RCColorScheme> {
       ok: Color.lerp(ok, other.ok, t)!,
       okInk: Color.lerp(okInk, other.okInk, t)!,
       danger: Color.lerp(danger, other.danger, t)!,
+      warn: Color.lerp(warn, other.warn, t)!,
+      info: Color.lerp(info, other.info, t)!,
     );
   }
 }
@@ -211,16 +236,134 @@ const List<String> rcFontFallback = <String>[
   'sans-serif', // 通用兜底
 ];
 
-ThemeData buildRCTheme() => _buildTheme(RCColorScheme.light);
+const List<String> rcSerifFontFallback = <String>[
+  'Songti SC',
+  'Georgia',
+  'Noto Serif CJK SC',
+  'Source Han Serif SC',
+  'serif',
+];
+
+const List<String> rcMonoFontFallback = <String>[
+  'SF Mono',
+  'Menlo',
+  'Roboto Mono',
+  'monospace',
+];
+
+/// 按风格返回 [RCColorScheme]（`warmPaper` 响应系统亮/暗，其余 5 套按策划锁定日间或纯黑 OLED 深色）。
+RCColorScheme colorSchemeForStyle(
+  RCUIStyleId id, {
+  Brightness brightness = Brightness.light,
+}) {
+  switch (id) {
+    case RCUIStyleId.warmPaper:
+      return brightness == Brightness.dark
+          ? RCColorScheme.dark
+          : RCColorScheme.light;
+    case RCUIStyleId.braunField:
+      return const RCColorScheme(
+        brightness: Brightness.light,
+        bg: Color(0xFFEFEFE9),
+        card: Color(0xFFFAFAF5),
+        label: Color(0xFF161614),
+        ink: Color(0xFF2B2A26),
+        sec: Color(0xFF5C5B53),
+        sep: Color(0xFFD8D7CE),
+        ax: Color(0xFFB5B3A8),
+        ok: Color(0xFF5D7A3B),
+        okInk: Color(0xFF3F5924),
+        danger: Color(0xFFE12D1C),
+      );
+    case RCUIStyleId.chronos:
+      return const RCColorScheme(
+        brightness: Brightness.light,
+        bg: Color(0xFFFAFAFC),
+        card: Color(0xFFFFFFFF),
+        label: Color(0xFF111318),
+        ink: Color(0xFF334155),
+        sec: Color(0xFF525968),
+        sep: Color(0xFFE2E6EE),
+        ax: Color(0xFFB8C4D6),
+        ok: Color(0xFF16A34A),
+        okInk: Color(0xFF166534),
+        danger: Color(0xFFB91C1C),
+      );
+    case RCUIStyleId.folio:
+      return const RCColorScheme(
+        brightness: Brightness.light,
+        bg: Color(0xFFF5F0E6),
+        card: Color(0xFFFCF9F2),
+        label: Color(0xFF1C1917),
+        ink: Color(0xFF3F3830),
+        sec: Color(0xFF57534E),
+        sep: Color(0xFFDDD4C3),
+        ax: Color(0xFFC2B8A8),
+        ok: Color(0xFF3A7D44),
+        okInk: Color(0xFF285930),
+        danger: Color(0xFFA62B21),
+      );
+    case RCUIStyleId.nocturne:
+      return const RCColorScheme(
+        brightness: Brightness.dark,
+        bg: Color(0xFF07080A),
+        card: Color(0xFF12141A),
+        label: Color(0xFFF3F4F6),
+        ink: Color(0xFFD4D7DF),
+        sec: Color(0xFF8B92A1),
+        sep: Color(0xFF1E222B),
+        ax: Color(0xFF474C59),
+        ok: Color(0xFF22C55E),
+        okInk: Color(0xFF6FDD8B),
+        danger: Color(0xFFEF4444),
+        warn: Color(0xFFF5A623),
+        info: Color(0xFF0A84FF),
+      );
+    case RCUIStyleId.air:
+      return const RCColorScheme(
+        brightness: Brightness.light,
+        bg: Color(0xFFF2F5F8),
+        card: Color(0xFFFFFFFF),
+        label: Color(0xFF0F172A),
+        ink: Color(0xFF334155),
+        sec: Color(0xFF475569),
+        sep: Color(0xFFDCE5EC),
+        ax: Color(0xFFB4C8C5),
+        ok: Color(0xFF115E63),
+        okInk: Color(0xFF115E63),
+        danger: Color(0xFFE85D3F),
+      );
+  }
+}
+
+/// 风格对应的 `MaterialApp.themeMode`。
+ThemeMode themeModeForStyle(RCUIStyleId id) => switch (id) {
+  RCUIStyleId.warmPaper => ThemeMode.system,
+  RCUIStyleId.nocturne => ThemeMode.dark,
+  RCUIStyleId.braunField ||
+  RCUIStyleId.chronos ||
+  RCUIStyleId.folio ||
+  RCUIStyleId.air => ThemeMode.light,
+};
+
+/// 构造指定风格与亮度的完整 [ThemeData]。
+ThemeData buildRCThemeForStyle(
+  RCUIStyleId id, {
+  Brightness brightness = Brightness.light,
+}) {
+  final scheme = colorSchemeForStyle(id, brightness: brightness);
+  final spec = RCStyleSpec.of(id, brightness: scheme.brightness);
+  return _buildTheme(scheme, spec);
+}
+
+ThemeData buildRCTheme() =>
+    buildRCThemeForStyle(RCUIStyleId.warmPaper, brightness: Brightness.light);
 
 /// 深色主题：同一套语义色，深色取值。
-///
-/// 接线方式（`lib/main.dart` 不在本任务改动范围，需另行接）：
-/// `MaterialApp(theme: buildRCTheme(), darkTheme: buildRCDarkTheme())`；
-/// 不设 `themeMode` 时默认跟随系统。
-ThemeData buildRCDarkTheme() => _buildTheme(RCColorScheme.dark);
+ThemeData buildRCDarkTheme() =>
+    buildRCThemeForStyle(RCUIStyleId.warmPaper, brightness: Brightness.dark);
 
-ThemeData _buildTheme(RCColorScheme scheme) {
+ThemeData _buildTheme(RCColorScheme scheme, RCStyleSpec styleSpec) {
   final dark = scheme.isDark;
   final base = dark
       ? ThemeData.dark(useMaterial3: true)
@@ -228,14 +371,15 @@ ThemeData _buildTheme(RCColorScheme scheme) {
   return base.copyWith(
     scaffoldBackgroundColor: scheme.bg,
     colorScheme: base.colorScheme.copyWith(
-      primary: scheme.label,
+      primary: styleSpec.accent,
+      onPrimary: styleSpec.accentFg,
       secondary: scheme.ok,
       surface: scheme.card,
       onSurface: scheme.label,
     ),
     dividerColor: scheme.sep,
     splashFactory: NoSplash.splashFactory,
-    extensions: <ThemeExtension<dynamic>>[scheme],
+    extensions: <ThemeExtension<dynamic>>[scheme, styleSpec],
     textTheme: base.textTheme.apply(fontFamilyFallback: rcFontFallback),
     primaryTextTheme: base.primaryTextTheme.apply(
       fontFamilyFallback: rcFontFallback,

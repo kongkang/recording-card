@@ -137,3 +137,49 @@ class LegacyUpgradeResult {
   final String name;
   final String targetVersion;
 }
+
+/// 从固件清单服务拉取的目标版本规格，传给原生引导升级链路（尤其初代 `v0.5/0.6.x` `updateApp`）。
+class LegacyTargetOtaSpec {
+  const LegacyTargetOtaSpec({
+    required this.versionName,
+    required this.versionCode,
+    required this.url,
+  });
+
+  static LegacyTargetOtaSpec? tryParseManifestJson(Map<String, dynamic> raw) {
+    final data = raw['data'] is Map<String, dynamic>
+        ? raw['data'] as Map<String, dynamic>
+        : raw;
+    final url =
+        (data['url'] as String? ?? data['downloadUrl'] as String? ?? '').trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return null;
+    }
+    final ver =
+        (data['versionName'] as String? ?? data['version'] as String? ?? '')
+            .trim()
+            .replaceFirst(RegExp(r'^[vV]'), '');
+    final codeNum = data['versionCode'];
+    final code = codeNum is num
+        ? codeNum.toInt()
+        : int.tryParse(codeNum?.toString().trim() ?? '') ?? 0;
+    if (ver.isEmpty || code <= 0) {
+      return null;
+    }
+    return LegacyTargetOtaSpec(
+      versionName: ver,
+      versionCode: code,
+      url: url,
+    );
+  }
+
+  final String versionName;
+  final int versionCode;
+  final String url;
+
+  Map<String, dynamic> toJson() => {
+    'versionName': versionName,
+    'versionCode': versionCode,
+    'url': url,
+  };
+}

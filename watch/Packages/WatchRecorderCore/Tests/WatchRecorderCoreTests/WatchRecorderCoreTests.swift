@@ -88,6 +88,10 @@ final class WatchRecorderCoreTests: XCTestCase {
         try store.registerSlice(first)
 
         XCTAssertEqual(store.pendingEntries().map(\.sliceId), ["id-1", "id-2"])
+        try store.markDeliveredPendingAck(sliceId: "id-1", nowMs: 10_000)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.fileURL(for: first).path))
+        XCTAssertEqual(store.pendingCount(), 2)
+        XCTAssertEqual(store.syncedCount(), 0)
         try store.markSyncedAndDeleteLocalAudio(sliceId: "id-1")
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL(for: first).path))
         XCTAssertEqual(store.pendingCount(), 1)
@@ -98,6 +102,46 @@ final class WatchRecorderCoreTests: XCTestCase {
         let recovered = try store.recoverOrphanedAudioFiles()
         XCTAssertEqual(recovered.count, 1)
         XCTAssertEqual(store.pendingCount(), 2)
+    }
+
+    func testWatchUIStyleProtocolAndComplicationPersistence() {
+        XCTAssertEqual(
+            WatchUIStyle.allCases.map(\.rawValue),
+            ["default", "braun_field", "chronos", "folio", "nocturne", "air"]
+        )
+        XCTAssertEqual(WatchUIStyle.fromRawOrDefault(nil), .warmPaper)
+        XCTAssertEqual(WatchUIStyle.fromRawOrDefault(" unknown "), .warmPaper)
+        XCTAssertEqual(WatchUIStyle.fromRawOrDefault(" nocturne "), .nocturne)
+
+        let styleCmd = WatchControlCommand(
+            commandId: "cmd-style-1",
+            action: .setStyle,
+            requestedAtMs: 1_794_758_500_000,
+            styleId: WatchUIStyle.nocturne.rawValue
+        )
+        XCTAssertEqual(WatchControlCommand.fromDictionary(styleCmd.toDictionary()), styleCmd)
+
+        let suite = "rc.watch.style.xctest.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = ComplicationStateStore(defaults: defaults, suiteName: suite)
+        XCTAssertEqual(store.loadStyle(), .warmPaper)
+
+        store.saveStyle(.braunField)
+        XCTAssertEqual(store.loadStyle(), .braunField)
+
+        let compState = ComplicationDisplayState(
+            isRecording: true,
+            startedAtMs: 1_794_758_400_000,
+            pendingCount: 3,
+            uiStyleId: WatchUIStyle.folio.rawValue,
+            updatedAtMs: 1_794_758_460_000
+        )
+        store.save(compState)
+        let loaded = store.load()
+        XCTAssertEqual(loaded, compState)
+        XCTAssertEqual(loaded.uiStyle, .folio)
     }
 
     func testWavHeaderEncoding() {

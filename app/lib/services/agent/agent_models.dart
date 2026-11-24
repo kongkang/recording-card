@@ -55,6 +55,108 @@ class AgentChatMessage {
   );
 }
 
+/// 一段轻聊 / OS1 对话会话的索引元信息。
+class AgentChatSession {
+  const AgentChatSession({
+    required this.id,
+    required this.title,
+    required this.preview,
+    required this.createdAtMs,
+    required this.updatedAtMs,
+    required this.messageCount,
+  });
+
+  final String id;
+  final String title;
+  final String preview;
+  final int createdAtMs;
+  final int updatedAtMs;
+  final int messageCount;
+
+  AgentChatSession copyWith({
+    String? id,
+    String? title,
+    String? preview,
+    int? createdAtMs,
+    int? updatedAtMs,
+    int? messageCount,
+  }) => AgentChatSession(
+    id: id ?? this.id,
+    title: title ?? this.title,
+    preview: preview ?? this.preview,
+    createdAtMs: createdAtMs ?? this.createdAtMs,
+    updatedAtMs: updatedAtMs ?? this.updatedAtMs,
+    messageCount: messageCount ?? this.messageCount,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'preview': preview,
+    'createdAt': createdAtMs,
+    'updatedAt': updatedAtMs,
+    'count': messageCount,
+  };
+
+  factory AgentChatSession.fromJson(Map<String, dynamic> j) => AgentChatSession(
+    id: '${j['id'] ?? ''}',
+    title: '${j['title'] ?? '新对话'}',
+    preview: '${j['preview'] ?? ''}',
+    createdAtMs: (j['createdAt'] as num?)?.toInt() ?? 0,
+    updatedAtMs: (j['updatedAt'] as num?)?.toInt() ?? 0,
+    messageCount: (j['count'] as num?)?.toInt() ?? 0,
+  );
+
+  /// 从单条文本生成简洁单行摘要，按最大字符数截断。
+  static String summarizeText(String raw, {required int maxChars}) {
+    final normalized = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.isEmpty) return '';
+    if (normalized.length <= maxChars) return normalized;
+    return '${normalized.substring(0, maxChars - 1)}…';
+  }
+
+  /// 基于消息列表生成会话标题（优先取首条用户提问，否则首条消息）。
+  static String deriveTitle(List<AgentChatMessage> messages) {
+    for (final m in messages) {
+      if (m.role == 'user') {
+        final s = summarizeText(m.text, maxChars: 28);
+        if (s.isNotEmpty) return s;
+      }
+    }
+    for (final m in messages) {
+      final s = summarizeText(m.text, maxChars: 28);
+      if (s.isNotEmpty) return s;
+    }
+    return '新对话';
+  }
+
+  /// 基于消息列表生成会话预览（取最新一条非空消息）。
+  static String derivePreview(List<AgentChatMessage> messages) {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      final s = summarizeText(messages[i].text, maxChars: 60);
+      if (s.isNotEmpty) return s;
+    }
+    return '';
+  }
+}
+
+/// 分页加载某段历史会话的结果页。
+class AgentSessionPage {
+  const AgentSessionPage({
+    required this.sessionId,
+    required this.messages,
+    required this.totalCount,
+    required this.startIndex,
+  });
+
+  final String sessionId;
+  final List<AgentChatMessage> messages;
+  final int totalCount;
+  final int startIndex;
+
+  bool get hasMore => startIndex > 0;
+}
+
 /// 供后台 Worker Isolate 索引检索的轻量记录/总结/人物文档。
 class AgentDocument {
   const AgentDocument({

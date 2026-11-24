@@ -199,16 +199,50 @@ void main() {
       ),
       isFalse,
     );
-    // 实时流中间有断档 → 未完整覆盖，允许蓝牙补传完整文件
-    final gapped = cleanSession.copyWith(gapCount: 1);
+    // >= 60s 长会话仅 1 次轻微瞬态丢包（gapCount <= 3）→ 视为健康覆盖，免重复重下整片
+    final minorGapped = cleanSession.copyWith(gapCount: 1);
     expect(
-      gapped.coversCardFile(
+      minorGapped.coversCardFile(
         const CardFile(
           name: '3600E239.APM',
           size: 80000,
           session: '1ABE9622',
           startAtSec: 1794387753,
           createdAtSec: 1794387870,
+        ),
+      ),
+      isTrue,
+    );
+    // >= 60s 但频繁断档（gapCount == 4 > 3）→ 未完整覆盖，允许蓝牙补传完整文件
+    final heavyGapped = cleanSession.copyWith(gapCount: 4);
+    expect(
+      heavyGapped.coversCardFile(
+        const CardFile(
+          name: '3600E239.APM',
+          size: 80000,
+          session: '1ABE9622',
+          startAtSec: 1794387753,
+          createdAtSec: 1794387870,
+        ),
+      ),
+      isFalse,
+    );
+    // < 60s 的短会话出现断档（gapCount == 1）→ 保留给蓝牙补传完整文件
+    final shortGapped = LiveSession(
+      id: 'live-short',
+      startedAt: start,
+      deviceSessionId: '1ABE9622',
+      gapCount: 1,
+      spans: const [ReceivedSpan(startMs: 0, endMs: 30000)],
+    );
+    expect(
+      shortGapped.coversCardFile(
+        const CardFile(
+          name: 'SHORT.APM',
+          size: 20000,
+          session: '1ABE9622',
+          startAtSec: 1794387754,
+          createdAtSec: 1794387780,
         ),
       ),
       isFalse,

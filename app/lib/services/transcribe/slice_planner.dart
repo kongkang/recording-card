@@ -43,11 +43,11 @@ class PlannedSlice {
 
 class SlicePlanner {
   const SlicePlanner({
-    this.targetDuration = const Duration(seconds: 60),
-    this.maxDuration = const Duration(seconds: 90),
-    this.minSilence = const Duration(milliseconds: 600),
+    this.targetDuration = const Duration(seconds: 25),
+    this.maxDuration = const Duration(seconds: 35),
+    this.minSilence = const Duration(milliseconds: 450),
     this.edgePadding = const Duration(milliseconds: 300),
-    this.longSilence = const Duration(seconds: 15),
+    this.longSilence = const Duration(seconds: 12),
   });
 
   /// 达到这个长度后，遇到静音就收片。
@@ -128,7 +128,7 @@ class SlicePlanner {
       if (end <= start) continue;
       final silenceAfter = i < chunked.length
           ? math.max(0, chunked[i].startSample - chunked[last].endSample)
-          : 0;
+          : math.max(0, totalSamples - chunked[last].endSample);
       slices.add(
         PlannedSlice(
           index: slices.length,
