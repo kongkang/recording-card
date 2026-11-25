@@ -3135,8 +3135,8 @@ class DeviceStore extends ChangeNotifier {
     );
   }
 
-  /// 通过具备扬声器的连接硬件播报语音；若固件返回 `unsupported`（如点一机 v0.8.15），
-  /// 调用方应保持手机端静音，避免突然从手机扬声器发声打断用户。
+  /// 通过具备扬声器的连接硬件播报语音；若固件返回 `unsupported`（如点一机旧版固件）
+  /// 或硬件暂不可用，上层协调器将优雅回退到手机端系统 TTS 播报，确保交互不失声。
   Future<DyjSpeechOutcome> trySpeakOnHardware(
     String text, {
     bool interrupt = true,

@@ -161,10 +161,22 @@ class ModelGateway {
   bool get catalogLoaded => _catalogLoaded;
   String? get catalogError => _catalogError;
   List<GatewayModel> get discoveredModels => _discoveredModels;
-  List<String> get discoveredTextModels => [
-    for (final m in _discoveredModels)
-      if (m.capabilities.isEmpty || m.has('text') || m.has('chat')) m.id,
-  ];
+  List<String> get discoveredTextModels {
+    final available = [
+      for (final m in _discoveredModels)
+        if (m.isChatAvailable &&
+            (m.capabilities.isEmpty || m.has('text') || m.has('chat')))
+          m.id,
+    ];
+    if (available.isNotEmpty) return available;
+    return [
+      for (final m in _discoveredModels)
+        if (m.capabilities.isEmpty || m.has('text') || m.has('chat')) m.id,
+    ];
+  }
+
+  List<String> get discoveredVisionModels =>
+      ModelCatalog(_discoveredModels).availableVisionModels;
 
   /// 实际生效的 ASR 模型名：显式配置优先，其次服务端探测结果。
   String get asrModel => _config.asrModel.trim().isNotEmpty
@@ -418,34 +430,137 @@ class ModelGateway {
                   : '请先在设置中选择可用的模型服务'),
       );
     }
+    final requestTimeout = timeout ?? _defaultTimeout;
+    final actionLabel = scene == ModelScene.vision ? '识图' : '生成';
+    final emptyContentError = scene == ModelScene.vision
+        ? '识图服务返回了空内容'
+        : '总结服务返回了空内容';
+
+    if (route == null && scene == ModelScene.vision) {
+      final candidates = <String>[
+        resolvedModel,
+        ...discoveredVisionModels.where((id) => id != resolvedModel).take(1),
+      ];
+      Object? lastError;
+      final tried = <String>[];
+      for (var i = 0; i < candidates.length; i++) {
+        final candidateModel = candidates[i];
+        tried.add(candidateModel);
+        try {
+          return await _sendChatAttempt(
+            url: url!,
+            route: null,
+            model: candidateModel,
+            scene: scene,
+            messages: messages,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            timeout: requestTimeout,
+            actionLabel: actionLabel,
+            emptyContentError: emptyContentError,
+          );
+        } on Object catch (e) {
+          lastError = e;
+          final canRetry =
+              i + 1 < candidates.length && _isRetryableVisionError(e);
+          if (!canRetry) break;
+        }
+      }
+      final err = lastError!;
+      final triedLabel = tried.join(' → ');
+      if (err is ApiHttpException) {
+        throw ApiHttpException(
+          '${err.message}（模型：$triedLabel）',
+          statusCode: err.statusCode,
+          code: err.code,
+        );
+      }
+      if (err is ApiFormatException) {
+        throw ApiFormatException('${err.message}（模型：$triedLabel）', err.cause);
+      }
+      throw err;
+    }
+
+    return _sendChatAttempt(
+      url: url,
+      route: route,
+      model: resolvedModel,
+      scene: scene,
+      messages: messages,
+      temperature: temperature,
+      maxTokens: maxTokens,
+      timeout: requestTimeout,
+      actionLabel: actionLabel,
+      emptyContentError: emptyContentError,
+    );
+  }
+
+  bool _shouldDisableWainaoThinking(String modelId, ModelScene scene) {
+    if (scene == ModelScene.agent) return false;
+    final modelMeta = ModelCatalog(_discoveredModels).byId(modelId);
+    if (modelMeta?.thinkingSupportsOff == true) return true;
+    return modelId.toLowerCase().startsWith('deepseek-v4-flash');
+  }
+
+  static bool _isRetryableVisionError(Object error) {
+    if (error is ApiFormatException) return true;
+    if (error is ApiHttpException) {
+      const retryable = {400, 404, 422, 502, 503};
+      return retryable.contains(error.statusCode);
+    }
+    return false;
+  }
+
+  Future<String> _sendChatAttempt({
+    required String? url,
+    required ModelProviderRoute? route,
+    required String model,
+    required ModelScene scene,
+    required List<ChatMessage> messages,
+    required double temperature,
+    required int maxTokens,
+    required Duration timeout,
+    required String actionLabel,
+    required String emptyContentError,
+  }) async {
     final officialOpenAi =
         route?.provider == ModelProvider.openai &&
         route?.endpoint('chat/completions').host == 'api.openai.com';
-    final reasoningModel = RegExp(r'^(o[0-9]|gpt-5)').hasMatch(resolvedModel);
+    final reasoningModel = RegExp(r'^(o[0-9]|gpt-5)').hasMatch(model);
     final deepSeekSummary =
         route?.provider == ModelProvider.deepseek &&
         route?.endpoint('chat/completions').host == 'api.deepseek.com' &&
         scene == ModelScene.summary;
+    final disableWainaoThinking =
+        route == null && _shouldDisableWainaoThinking(model, scene);
+    final effectiveMaxTokens =
+        (deepSeekSummary ||
+            (disableWainaoThinking &&
+                (scene == ModelScene.vision ||
+                    scene == ModelScene.summary ||
+                    scene == ModelScene.organize)))
+        ? math.max(maxTokens, scene == ModelScene.summary ? 3200 : 2048)
+        : maxTokens;
     final payload = {
-      'model': resolvedModel,
+      'model': model,
       'stream': false,
-      if (deepSeekSummary) 'thinking': {'type': 'disabled'},
+      if (deepSeekSummary || disableWainaoThinking)
+        'thinking': {'type': 'disabled'},
       if (!officialOpenAi || !reasoningModel) 'temperature': temperature,
       if (officialOpenAi)
         'max_completion_tokens': maxTokens
       else
-        'max_tokens': deepSeekSummary ? math.max(maxTokens, 3200) : maxTokens,
+        'max_tokens': effectiveMaxTokens,
       'messages': [for (final message in messages) message.toJson()],
     };
-    final requestTimeout = timeout ?? _defaultTimeout;
     final response = route == null
-        ? await _client.postJson(url!, payload, timeout: requestTimeout)
-        : await _postToProvider(route, payload, requestTimeout);
+        ? await _client.postJson(url!, payload, timeout: timeout)
+        : await _postToProvider(route, payload, timeout);
     if (deepSeekSummary &&
         const bool.fromEnvironment('RC_DEEPSEEK_SUMMARY_DIAGNOSTICS')) {
       await _recordSummaryDiagnostic(route!, payload, response, 'disabled');
     }
-    _ensureSuccess(response, action: '生成');
+    _ensureSuccess(response, action: actionLabel);
 
     final Map<String, dynamic> body;
     try {
@@ -455,18 +570,18 @@ class ModelGateway {
       }
       body = decoded;
     } catch (e) {
-      throw ApiFormatException('总结结果解析失败', e);
+      throw ApiFormatException('$actionLabel结果解析失败', e);
     }
 
     final choices = body['choices'];
     if (choices is! List || choices.isEmpty) {
-      throw const ApiFormatException('总结服务没有返回内容');
+      throw ApiFormatException('$actionLabel服务没有返回内容');
     }
     final first = choices.first;
     final message = first is Map ? first['message'] : null;
     final content = message is Map ? message['content'] : null;
     if (content is! String || content.trim().isEmpty) {
-      throw const ApiFormatException('总结服务返回了空内容');
+      throw ApiFormatException(emptyContentError);
     }
     return content.trim();
   }
