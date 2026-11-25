@@ -59,28 +59,49 @@
 
 ---
 
-## 4. 微信开放平台启用状态与后续服务端配置
+## 4. 微信开放平台启用与全链路配置手册（2026-11-25 已上线闭环）
 
-微信开放平台移动应用「录音卡」（`AppID: wx929549126f19f795`，已获「微信登录」能力）审核已通过，客户端已完成如下对齐：
+微信开放平台移动应用「录音卡」（`AppID: wx929549126f19f795`，`Bundle ID: com.reai.recordingcard`，与外脑主端 `wxd9ce5b90974d7c2a` 同在开放平台账号 `app@wainao.ai` 下，共享 `unionid`）已获「微信登录」能力并完成 iPhone 真机全链路闭环验证。以下是完整配置与运维手册（后续换域名、轮换密钥或新设备测试直接照此核对）：
 
-1. **iOS URL Scheme、Universal Link 与编译期配置（已写入）**
-   `app/ios/Flutter/Wechat.xcconfig` 已写入正式 `AppID`：
-   ```xcconfig
-   WECHAT_APP_ID=wx929549126f19f795
-   ```
-   `app/ios/Runner/Runner.entitlements` 已声明录音卡专属域名 `applinks:ai-card.app.reai.com`，Dart 侧默认 `OAuthConfig.defaultWechatUniversalLink = 'https://ai-card.app.reai.com/link/'`（支持 `--dart-define=RC_WECHAT_UNIVERSAL_LINK=...` 覆盖）。
-   > **为什么必须与 `app.cn.reai.com/link/` 隔离**：`app.cn.reai.com` 属于外脑 App（`35N5SGDE59.com.reai.reaiApp`），同一台手机同时安装外脑与录音卡时，iOS 不支持两个 App 共用同一 `applinks` 域名与 `/link/*` 路径（永远只路由给排在前面的已安装 App，导致微信授权回跳时错打开外脑 App）。
-   > **不变式**：`Wechat.xcconfig` 中的 `WECHAT_APP_ID` 必须与构建参数 `--dart-define=RC_WECHAT_APP_ID=wx929549126f19f795` 完全一致（`watch/scripts/archive_testflight.sh` 会自动读取并注入），否则微信客户端无法跳回 App。`AppSecret` 仅配置在外脑后端，严禁写入客户端仓库。
-2. **上线端到端生效仍需完成的两项外部配置（未完成前 iOS 真机授权会失败或无法回跳）**
-   - **部署 `ai-card.app.reai.com` 的 AASA 与 `/link/` 着陆页**：将仓库内 `site/.well-known/apple-app-site-association`、`site/apple-app-site-association`（仅包含 `35N5SGDE59.com.reai.recordingcard` 与 `/link/*`）及 `site/link/index.html` 部署到 `ai-card.app.reai.com`，并确认 Nginx 对 `/.well-known/apple-app-site-association` 与 `/apple-app-site-association` 返回 `HTTP 200` 且 `Content-Type: application/json`（不可回落到 SPA `index.html`）。
-   - **微信开放平台更新 Universal Links 与确认后端密钥**：在微信开放平台（`open.weixin.qq.com`，AppID `wx929549126f19f795`）将 iPhone/iPad 的 Universal Links 从 `https://app.cn.reai.com/link/` 修改为 `https://ai-card.app.reai.com/link/`，并确认 `AppSecret` 已配入外脑后端（`block2-api.wainao.chat`）`POST /oauth/token` 微信扩展 grant 映射表。
-3. **带参构建或真机安装**
+1. **客户端配置（已入库）**
+   - `app/ios/Flutter/Wechat.xcconfig` 已固定正式 `AppID`：
+     ```xcconfig
+     WECHAT_APP_ID=wx929549126f19f795
+     ```
+   - `app/ios/Runner/Runner.entitlements` 声明录音卡专属域名 `applinks:ai-card.app.reai.com`，Dart 侧默认 `OAuthConfig.defaultWechatUniversalLink = 'https://ai-card.app.reai.com/link/'`（支持 `--dart-define=RC_WECHAT_UNIVERSAL_LINK=...` 覆盖）。
+   - `OAuthClient.exchangeWechatCodeForToken` 在 `POST https://block2-api.wainao.chat/oauth/token`（`grant_type=urn:wainao:params:oauth:grant-type:wechat`、`app_type=app`）自动携带 `wechat_app_id=wx929549126f19f795`。
+   - **为什么必须与 `app.cn.reai.com/link/` 隔离**：`app.cn.reai.com` 属于外脑 App（`35N5SGDE59.com.reai.reaiApp`），同一台手机同时安装外脑与录音卡时，iOS 不支持两个 App 共用同一 `applinks` 域名与 `/link/*` 路径（永远只路由给排在前面的已安装 App，导致微信授权回跳时错打开外脑 App）。
+   - **不变式**：`Wechat.xcconfig` 中的 `WECHAT_APP_ID` 必须与构建参数 `--dart-define=RC_WECHAT_APP_ID=wx929549126f19f795` 完全一致（`watch/scripts/archive_testflight.sh` 会自动读取并注入；**手工本地装包也必须显式传递 `--dart-define=RC_WECHAT_APP_ID=wx929549126f19f795`，否则登录页会隐藏微信按钮**）。`AppSecret` 仅配置在外脑后端站点密钥，严禁写入客户端仓库。
+
+2. **域名与 Nginx AASA 配置（`cn.reai.com` / `ai-card.app.reai.com`，已上线）**
+   - 服务器目录 `/var/www/ai-card.app.reai.com/` 部署来自仓库 `site/.well-known/apple-app-site-association`、`site/apple-app-site-association` 与 `site/link/index.html`。
+   - `/etc/nginx/sites-enabled/ai-card.app.reai.com.conf`（443 server 块、`location /` 之前）显式接管 AASA 与 `/link/`：
+     - `location ~ ^/(\.well-known/)?apple-app-site-association$`：返回 `HTTP 200` + `Content-Type: application/json`，内容仅声明 `{"applinks":{"apps":[],"details":[{"appID":"35N5SGDE59.com.reai.recordingcard","paths":["/link/*"]}]}}`（绝不可回落到 SPA `index.html`）。
+     - `location ^~ /link/`：返回 `HTTP 200` + `Content-Type: text/html`（`try_files /link/index.html =404;`）。
+   - 源站与苹果 CDN 核验命令：
+     ```bash
+     curl -sSi https://ai-card.app.reai.com/.well-known/apple-app-site-association
+     curl -sSi https://app-site-association.cdn-apple.com/a/v1/ai-card.app.reai.com
+     ```
+     > 注意：若 AASA 域名上线前被探测过 404/HTML，苹果 `cdn-apple.com` 会按 `Cache-Control: max-age=3600` 缓存约 1 小时；必须确认苹果 CDN 返回 `HTTP/1.1 200 OK` + `Content-Type: application/json` 后，真机 Universal Link 才会稳定通过校验。
+
+3. **微信开放平台与外脑后端（`block2-api.wainao.chat`）配置（已上线）**
+   - **微信开放平台**（`open.weixin.qq.com`，`wx929549126f19f795`）：iPhone 与 iPad 应用 Bundle ID 均填 `com.reai.recordingcard`，Universal Links 均填 `https://ai-card.app.reai.com/link/`（状态 `已通过`）。
+   - **外脑后端加密站点密钥**（不写进 `.env`，无需重启容器）：在 `https://block2.wainao.chat/admin/site-secrets` 中存储密钥 **`WECHAT_LOGIN_MOBILE_SECRET_WX929549126F19F795`**（`wx929549126f19f795` 的 `AppSecret`，AES-GCM 加密存库）。
+   - **外脑后端多移动应用路由**（`wainao_editor` PR #2075 / commit `f910ebc56` 已上线）：`POST /oauth/token` 微信 grant 与 `POST /my/wechat/bind` 读取 `wechat_app_id`，未传或传外脑 `wxd9ce5b90974d7c2a` 走原配置；传入 `wx929549126f19f795` 时按 `WECHAT_LOGIN_MOBILE_SECRET_<UPPER_APPID>` 解密路由（缺失 fail-closed 不回落默认凭据）。
+   - **账号打通机制**：只要与外脑主端处于同一微信开放平台主体，`unionid` 完全一致，后端按 `(provider='wechat', unionid)` 自动进入原外脑账号（注：若原外脑账号此前仅用邮箱/手机登录且从未绑定微信，需先在原账号绑定微信以免新建独立账号）。
+
+4. **本地真机联调命令 & 常见故障速查**
    ```bash
    cd app
-   flutter run --release -d 00008140-000C4CE23862201C \
-     --dart-define=RC_WECHAT_APP_ID=wx929549126f19f795
+   ./rust/build-ios.sh
+   flutter build ios --release --dart-define=RC_WECHAT_APP_ID=wx929549126f19f795
+   xcrun devicectl device install app --device 00008140-000C4CE23862201C build/ios/iphoneos/Runner.app
    ```
-   启动后本机装有微信时，「微信登录」按钮将自动展示并可点击。
+   - **看不到「微信登录」按钮**：检查是否漏传 `--dart-define=RC_WECHAT_APP_ID=wx929549126f19f795`（例如被另一条未带该参数的 worktree 构建覆盖装机），或本机未安装微信。
+   - **授权后跳进外脑 App**：检查微信开放平台 Universal Links 与 `Runner.entitlements` 是否切到 `ai-card.app.reai.com`，且同一台手机上的 AASA 不能包含外脑 Bundle ID。
+   - **回跳后页面提示「登录已过期，请重新登录」**：客户端把后端 OAuth 错误 `invalid_grant` 映射为此文案，**并非时间问题**；常见根因是微信开放平台 `AppSecret` 未生成/重置未同步，或 `block2.wainao.chat/admin/site-secrets` 中缺少/写错了 `WECHAT_LOGIN_MOBILE_SECRET_WX929549126F19F795`（服务端日志表现为 `wechat access_token 微信错误 errcode=40029 errmsg=invalid code`）。
+   - **刚改好 AASA 仍无法回跳**：确认 `app-site-association.cdn-apple.com` 是否还在 3600s 边缘 404 缓存期内；等刷新后重装 App 验证。
 
 ---
 
@@ -108,10 +129,13 @@ flutter analyze && flutter test
 
 ```bash
 cd app
-# 1. 构建 iOS Release 产物（自动触发 Rust 硬件桥编译）
-flutter build ios --release
+# 1. 新建 worktree 如缺 libcard_bridge.a，先编译 Rust iOS 硬件桥
+./rust/build-ios.sh
 
-# 2. 安装到 iPhone 16 Pro 真机
+# 2. 构建 iOS Release 产物（必须携带 RC_WECHAT_APP_ID 才会点亮「微信登录」按钮）
+flutter build ios --release --dart-define=RC_WECHAT_APP_ID=wx929549126f19f795
+
+# 3. 安装到 iPhone 16 Pro 真机
 xcrun devicectl device install app \
   --device 00008140-000C4CE23862201C \
   build/ios/iphoneos/Runner.app

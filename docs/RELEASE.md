@@ -235,7 +235,7 @@ $ANDROID_HOME/build-tools/35.0.0/aapt2 compile --dir android/app/src/main/res -o
 | 1 | Bonjour 服务类型 `_rc._tcp` / `_http._tcp` 是否与固件广播一致 | 按「Wi-Fi 配网 + 本地 AP」估计填写，未与固件对齐 | 固件负责人 |
 | 2 | 局域网 SoftAP 地址例外与旧版 OTA 域名 | Android `network_security_config.xml` 已仅放行 `192.168.4.1` / `192.168.43.1`；`rust/card_bridge/src/legacy_upgrade.rs` 中 `hdd.dev.reai.com` 需确认是否切生产域名 | 固件 + 客户端 |
 | 3 | 云端转写服务端「30 天保留 / 15 天内删除」 | 目前是政策承诺（App 内仅提供「退出登录」与「清空本机全部数据」）；需后端确认转写副本清理 SLA | 后端负责人 |
-| 4 | 微信开放平台正式 `wx...` AppID 与 Universal Link / 服务端配置 | 移动应用（`wx929549126f19f795`，Android `com.reai.recordingcard` + `fe80df2054941b4051b7268a8a3fce6b`）及「微信登录」能力已过审；客户端已写入 `Wechat.xcconfig=wx929549126f19f795` 与录音卡专属 Universal Link `https://ai-card.app.reai.com/link/`（`applinks:ai-card.app.reai.com`，与外脑 `app.cn.reai.com/link/` 隔离防串跳）。**仍需外部完成两项**：(a) 将 `site/.well-known/apple-app-site-association`（及 `/apple-app-site-association`、`/link/index.html`）部署到 `ai-card.app.reai.com` 并确保 Nginx 返回 `Content-Type: application/json` HTTP 200（不可回落 `index.html`）；(b) 在微信开放平台把 iPhone/iPad Universal Links 改为 `https://ai-card.app.reai.com/link/`，并确认 `AppSecret` 已配入 `block2-api.wainao.chat` | Owner + 后端 |
+| 4 | 微信开放平台正式 `wx...` AppID 与 Universal Link / 服务端配置 | **✅ 已完成并真机闭环验证（2026-11-25）**：开放平台「录音卡」（`wx929549126f19f795`）与外脑主端同在 `app@wainao.ai` 主体下，iPhone/iPad Universal Links 已切换为 `https://ai-card.app.reai.com/link/`；`cn.reai.com` 的 `ai-card.app.reai.com` AASA 与 `/link/` 着陆页已部署并经苹果 CDN（`cdn-apple.com`）返回 `HTTP 200 application/json`；`AppSecret` 已加密存入 `block2.wainao.chat/admin/site-secrets`（`WECHAT_LOGIN_MOBILE_SECRET_WX929549126F19F795`），外脑后端 `wainao_editor` PR #2075（`f910ebc56`）已上线支持多移动应用 `wechat_app_id` 路由。Android 上架仍需确保正式 keystore 签名 MD5 匹配 `fe80df2054941b4051b7268a8a3fce6b` | Owner + 后端 |
 | 5 | 隐私 / 支持邮箱域名 `reai.chat` 可用性 | 政策与商店都用 `privacy@reai.chat` / `support@reai.chat`，需确认可收信 | 运营 |
 | 6 | iOS 是否需要保留横屏 | 当前 `Info.plist` 保留左右横屏（按既定决策）；若审核或设计改为仅竖屏，删掉两项即可 | 设计 + 客户端 |
 
@@ -290,11 +290,11 @@ flutter analyze && flutter test
   1. `app/ios/Flutter/Wechat.xcconfig` 的 `WECHAT_APP_ID` 已写入 `wx929549126f19f795`（展开为 Info.plist 的 `$(WECHAT_APP_ID)` 回调 scheme；未填写时可用占位串 `rc-wechat-disabled` 防空 scheme 触发 ITMS-90158）；
   2. 构建参数 `--dart-define=RC_WECHAT_APP_ID=wx929549126f19f795`（兼容回退 `WECHAT_APP_ID`；Dart 侧 `OAuthConfig.isWechatConfigured` 严格校验 `wx` 前缀，非 `wx` 开头判未配置并隐藏按钮）；
   3. Universal Link 默认 `https://ai-card.app.reai.com/link/`（可通过 `RC_WECHAT_UNIVERSAL_LINK` 覆盖），与 `Runner.entitlements` 中 `applinks:ai-card.app.reai.com` 对应。
-- **iOS 前置（需逐项落实）**：
+- **iOS 前置（已全部落实）**：
   1. Apple Developer 后台为 App ID（开发 `dev.kongkang.recordingCard` 与正式 `com.reai.recordingcard`）开启 **Associated Domains** capability（`Runner.entitlements` 已声明 `applinks:ai-card.app.reai.com`，三个 build configuration 均已挂载）；
-  2. 将 `site/.well-known/apple-app-site-association`（及 `/apple-app-site-association`、`/link/index.html`）部署到 `ai-card.app.reai.com`：内容仅含 `35N5SGDE59.com.reai.recordingcard`（paths `/link/*`），Nginx 必须显式配置返回 `Content-Type: application/json` 且 HTTP 200（不可回落到 SPA `index.html`；修改 AASA 后 Apple CDN 缓存约 24~48h）；
-  3. 在微信开放平台（`open.weixin.qq.com`）把 `wx929549126f19f795` 的 iPhone/iPad Universal Links 更新为 `https://ai-card.app.reai.com/link/`，生成/确认 `AppSecret` 并配入外脑后端 `block2-api.wainao.chat`；Android 打包正式签名 keystore MD5 需匹配 `fe80df2054941b4051b7268a8a3fce6b`。
-- **后端前置**：`/oauth/token` 微信 grant 支持可选 `wechat_app_id` 表单字段（多微信应用路由对应 Secret）；账号归一以 **unionid** 为准（同一主体多应用的 openid 不同）。
+  2. `ai-card.app.reai.com`（`cn.reai.com` `/etc/nginx/sites-enabled/ai-card.app.reai.com.conf`）已显式接管 `/.well-known/apple-app-site-association`、`apple-app-site-association`（仅含 `35N5SGDE59.com.reai.recordingcard` + `/link/*`，返回 `Content-Type: application/json` HTTP 200）与 `/link/` 兜底页，苹果 CDN（`app-site-association.cdn-apple.com`）已校验生效；
+  3. 微信开放平台（`open.weixin.qq.com`）`wx929549126f19f795` iPhone/iPad Universal Links 已切至 `https://ai-card.app.reai.com/link/`，`AppSecret` 已存入 `block2.wainao.chat/admin/site-secrets`（`WECHAT_LOGIN_MOBILE_SECRET_WX929549126F19F795`，不放 `.env`）；Android 打包正式签名 keystore MD5 需匹配 `fe80df2054941b4051b7268a8a3fce6b`。
+- **后端多移动应用路由（已上线）**：`/oauth/token` 微信 grant 与 `/my/wechat/bind` 支持可选 `wechat_app_id` 字段（`wainao_editor` PR #2075 / `f910ebc56`），非默认移动应用自动按 `WECHAT_LOGIN_MOBILE_SECRET_<UPPER_APPID>` 解密路由（不影响外脑主端 `wxd9ce5b90974d7c2a`）；账号归一以 **unionid** 为准（同一主体多应用的 openid 不同）。详细故障速查表见 [AUTH-LOGIN.md §4](./AUTH-LOGIN.md#4-微信开放平台启用与全链路配置手册2026-11-25-已上线闭环)。
 - **联调自检**：
   1. 真机装包后在「设置 → Safari → 高级」清 Cookie 不需要；微信授权页能被 `weixinULAPI://` 拉起即说明 scheme 与 queries 白名单生效；
   2. 授权后跳到外脑或回不到 App：依次查 `Wechat.xcconfig` 与 dart-define 是否同值 → `curl -sI https://ai-card.app.reai.com/.well-known/apple-app-site-association` 是否返回 `200` + `application/json` 且仅含 `35N5SGDE59.com.reai.recordingcard` → 微信开放平台登记的 Bundle ID 与 Universal Links（`https://ai-card.app.reai.com/link/`）是否与客户端逐字符一致；
