@@ -13,7 +13,7 @@
 | TestFlight 公开邀请链接 | https://testflight.apple.com/join/fMWkZSv5 （`publicLinkId`: `fMWkZSv5`） |
 | Android applicationId / namespace | `com.reai.recordingcard` |
 | 显示名 | 录音卡 |
-| 版本 | pubspec `version: 1.0.0+2026112403` → iOS `1.0.0 (2026112403)`（主 App / 扩展 / Watch 共用 `FLUTTER_BUILD_NAME` / `FLUTTER_BUILD_NUMBER`）、Android versionName `1.0.0` / versionCode `2026112403`（当前 TestFlight 外部测试构建：`1.0.0 (2026112101)`） |
+| 版本 | pubspec `version: 1.0.0+2026112501` → iOS `1.0.0 (2026112501)`（主 App / 扩展 / Watch 共用 `FLUTTER_BUILD_NAME` / `FLUTTER_BUILD_NUMBER`）、Android versionName `1.0.0` / versionCode `2026112501`（当前 TestFlight 外部测试构建：`1.0.0 (2026112501)`） |
 | 隐私政策 / 技术支持网页 | 隐私政策 `https://ai-card.app.reai.com/privacy.html` · 技术支持 `https://ai-card.app.reai.com/support.html` |
 | 最低系统 | iOS 15.0、Android 7.0（minSdk 24） |
 | 目标系统 | Android targetSdk 36（Play 新应用要求 ≥ 35） |
@@ -150,8 +150,9 @@ App Store Connect 需要填：
 | `Recording Card Internal Testing` | 内部测试组 | `df549b4d-656d-4374-9433-7224b64271db` | `hasAccessToAllBuilds: true` |
 | `Recording Card External Testing` | 外部测试组 | `4fc99575-cdf1-4295-9535-0ba901375c32` | `publicLinkEnabled: true`，`publicLinkId: fMWkZSv5`，`publicLinkLimitEnabled: false`（未设额外上限，受 TestFlight 单 App 10,000 人总上限约束） |
 
-#### 当前已过审外部测试构建（截至 2026-11-24）
+#### 当前已过审外部测试构建（截至 2026-11-25）
 
+- **`1.0.0 (2026112501)`**：Build ID `38a8332e-3851-4fac-a7d0-9a6d9782326f`，上传日期 `2026-11-25`，有效期至 `2027-02-23`，状态 `VALID` / `APPROVED` / `IN_BETA_TESTING`（内外部测试均为 `IN_BETA_TESTING`，已开启 `autoNotifyEnabled=true` 全员自动通知），出口合规 `usesNonExemptEncryption=false`（统一主端 + Watch 包）。
 - **`1.0.0 (2026112101)`**：Build ID `e059e3ff-06ae-4de5-b241-b600857d83a5`，上传日期 `2026-11-21`，有效期至 `2027-02-18`，状态 `VALID` / `APPROVED` / `IN_BETA_TESTING`，出口合规 `usesNonExemptEncryption=false`（手机与手表同一包）。
 
 #### App Store Connect API 管理说明与安全边界
@@ -203,7 +204,7 @@ $ANDROID_HOME/build-tools/35.0.0/aapt2 compile --dir android/app/src/main/res -o
 
 - [x] 应用图标已替换（两端都不是 Flutter 默认蓝 logo），iOS 图标无 alpha 通道
 - [x] 显示名为「录音卡」，bundle id / 包名为 `com.reai.recordingcard`
-- [x] 版本号已在 `app/pubspec.yaml` 递增，构建号大于上一版（所有 iOS / Watch 扩展自动同步：`1.0.0+2026112403`）
+- [x] 版本号已在 `app/pubspec.yaml` 递增，构建号大于上一版（所有 iOS / Watch 扩展自动同步：`1.0.0+2026112501`）
 - [ ] 公开隐私政策页（`https://ai-card.app.reai.com/privacy.html`）与技术支持页（`https://ai-card.app.reai.com/support.html`）已发布上线，生效日期（`2026-11-24`）一致
 - [ ] 商店截图 / 描述 / 关键词 / 分类（工具类）齐全
 - [x] 崩溃兜底已安装（`installCrashHandlers()`），关于页可显示版本号，设置页「数据管理 → 清空本机全部数据」与「云端账号授权 → 退出登录」已就位
