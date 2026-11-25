@@ -2395,7 +2395,7 @@ var DEVICE_ASR_PROFILES={
 function curAsrProf(){return DEVICE_ASR_PROFILES[agCfg.asrPlat]||DEVICE_ASR_PROFILES.ios26}
 function isSysAsrSupported(){return !!curAsrProf().sysOk}
 function effectiveAsrMode(){if(isSysAsrSupported()&&agCfg.asrEngine==="system")return"system";if(agCfg.local.asr==="ready")return"sensevoice";return"pending"}
-function syncSetSummary(){var c=agCfg;var sa=document.getElementById("sv-auth");if(sa)sa.textContent=c.auth?c.accountEmail:"未登录 · 点击授权";var asrMode=effectiveAsrMode();var prof=curAsrProf();var sl=document.getElementById("sv-local");if(sl)sl.textContent=asrMode==="system"?(prof.strategy==="compat_service"?(c.local.spk==="ready"?"兼容方案 · 即用":"兼容方案 · 缺声纹"):(c.local.spk==="ready"?"系统内置 · 即用":"系统内置 · 缺声纹")):asrMode==="sensevoice"?(c.local.spk==="ready"?"SenseVoice · 已就绪":"SenseVoice · 缺声纹"):"推荐下载增强模型";var svp=document.getElementById("sv-voiceprint");if(svp)svp.textContent=c.local.spk==="ready"?"已就绪":"待下载";var sc=document.getElementById("sv-cloud");if(sc)sc.textContent=MODEL_SERVICES[cloudService].name;var sp=document.getElementById("sv-preset");if(sp)sp.textContent=c.presetLabel;var en=Object.keys(c.exts).filter(k=>c.exts[k]).length;var se=document.getElementById("sv-ext");if(se)se.textContent="已启用 "+en+" 项";var stc=document.getElementById("sv-transcribe-cycle");if(stc)stc.textContent="每 "+(c.transcribeCycleMin||15)+" 分钟";var ri=document.getElementById("row-set-island"),si=document.getElementById("sv-island");if(ri)ri.hidden=!c.hasDynamicIsland;if(si)si.textContent=c.islandEnabled?"已开启":"已关闭";var sw=document.getElementById("sv-watch");if(sw){var wConn=conn.connected&&conn.curDev&&conn.curDev.kind==="watch";sw.textContent=!c.watchLinkEnabled?"未开启":wConn?"已连接":c.watchPaired?"已配对":"未配对"}var sex=document.getElementById("sv-exthw");if(sex){var exCnt=(c.omiLinkEnabled?1:0)+(c.feishuLinkEnabled?1:0)+(c.iflytekA1LinkEnabled?1:0);var exConn=conn.connected&&conn.curDev&&(conn.curDev.kind==="omi"||conn.curDev.kind==="feishu"||conn.curDev.kind==="iflytek");sex.textContent=exCnt===0?"未开启":exConn?("已连接 "+conn.curDev.badge):("已开启 "+exCnt+" 款")}var sea=document.getElementById("sv-extapi");if(sea)sea.textContent=extApiSummaryProto();var sh=document.getElementById("sv-health");if(sh)sh.textContent=c.healthSignalEnabled?("已开启 · "+HEALTH_RECORDS.length+" 条"):"已关闭";var lv=document.getElementById("lbl-version");if(lv)lv.textContent=c.devMode?"版本（开发者）":"版本";var sd=document.getElementById("sv-developer");if(sd){var cyc=fmtCleanCycle(c.cleanCycleMin);var ov=c.cleanOverlapMode==="minutes"?(c.cleanOverlapMin+"分"):(c.cleanOverlapPara+"段");sd.textContent="每 "+cyc+" · 叠 "+ov}var sm=document.getElementById("sv-mem");if(sm){var tagged=Object.keys(SPEAKER_DB).filter(function(k){return SPEAKER_DB[k].confirmed}).length;sm.textContent="声纹 "+tagged+" 人 · 升格关系 2"}var smem=document.getElementById("sv-membership");if(smem){smem.textContent=memState.tier==="free"?("免费版 · "+memState.usedMin+" / 3,600 分钟"+(memState.credits>0?" · "+memState.credits+" 积分":"")):memState.tier==="local_pro"?("Local Pro · 无限本地"+(memState.cycle==="lifetime"?"（买断）":"")):memState.tier==="cloud_basic"?("Cloud 基础 · 剩 "+memState.credits+" 积分"):("Cloud 专业 · Pro "+memState.proSummariesLeft+" 次")}}
+function syncSetSummary(){var c=agCfg;var sa=document.getElementById("sv-auth");if(sa)sa.textContent=c.auth?c.accountEmail:"未登录 · 点击授权";var asrMode=effectiveAsrMode();var prof=curAsrProf();var sl=document.getElementById("sv-local");if(sl)sl.textContent=asrMode==="system"?(prof.strategy==="compat_service"?(c.local.spk==="ready"?"兼容方案 · 即用":"兼容方案 · 缺声纹"):(c.local.spk==="ready"?"系统内置 · 即用":"系统内置 · 缺声纹")):asrMode==="sensevoice"?(c.local.spk==="ready"?"SenseVoice · 已就绪":"SenseVoice · 缺声纹"):"推荐下载增强模型";var svp=document.getElementById("sv-voiceprint");if(svp)svp.textContent=c.local.spk==="ready"?"已就绪":"待下载";var sc=document.getElementById("sv-cloud");if(sc)sc.textContent=MODEL_SERVICES[cloudService].name;var sp=document.getElementById("sv-preset");if(sp)sp.textContent=c.presetLabel;var en=Object.keys(c.exts).filter(k=>c.exts[k]).length;var se=document.getElementById("sv-ext");if(se)se.textContent="已启用 "+en+" 项";var stc=document.getElementById("sv-transcribe-cycle");if(stc)stc.textContent="每 "+(c.transcribeCycleMin||15)+" 分钟";var ri=document.getElementById("row-set-island"),si=document.getElementById("sv-island");if(ri)ri.hidden=!c.hasDynamicIsland;if(si)si.textContent=c.islandEnabled?"已开启":"已关闭";var sw=document.getElementById("sv-watch");if(sw){var wConn=conn.connected&&conn.curDev&&conn.curDev.kind==="watch";sw.textContent=!c.watchLinkEnabled?"未开启":wConn?"已连接":c.watchPaired?"已配对":"未配对"}var sex=document.getElementById("sv-exthw");if(sex){var exCnt=(c.omiLinkEnabled?1:0)+(c.feishuLinkEnabled?1:0)+(c.iflytekA1LinkEnabled?1:0);var exConn=conn.connected&&conn.curDev&&(conn.curDev.kind==="omi"||conn.curDev.kind==="feishu"||conn.curDev.kind==="iflytek");sex.textContent=exCnt===0?"未开启":exConn?("已连接 "+conn.curDev.badge):("已开启 "+exCnt+" 款")}var sea=document.getElementById("sv-extapi");if(sea)sea.textContent=extApiSummaryProto();var sh=document.getElementById("sv-health");if(sh)sh.textContent=c.healthSignalEnabled?("已开启 · "+HEALTH_RECORDS.length+" 条"):"已关闭";var lv=document.getElementById("lbl-version");if(lv)lv.textContent=c.devMode?"版本（开发者）":"版本";var sd=document.getElementById("sv-developer");if(sd){var cyc=fmtCleanCycle(c.cleanCycleMin);var ov=c.cleanOverlapMode==="minutes"?(c.cleanOverlapMin+"分"):(c.cleanOverlapPara+"段");sd.textContent="每 "+cyc+" · 叠 "+ov}var sm=document.getElementById("sv-mem");if(sm){var tagged=Object.keys(SPEAKER_DB).filter(function(k){return SPEAKER_DB[k].confirmed}).length;sm.textContent="声纹 "+tagged+" 人 · 升格关系 2"}var smem=document.getElementById("sv-membership");if(smem){smem.textContent=memState.tier==="free"?("免费版 · "+memState.usedMin+" / 3,600 分钟"+(memState.credits>0?" · "+memState.credits+" 积分":"")):memState.tier==="local_pro"?("本地解锁版"+(memState.cycle==="lifetime"?" · 永久":"")):memState.tier==="cloud_basic"?("云端日常版 · 剩 "+memState.credits+" 积分"):("云端高级版 · 高级总结 "+memState.proSummariesLeft+" 次")}}
 function openSetSub(id){if(id==="local"||id==="cloud")settingsHelpOpen[id]=false;if(!document.getElementById("p-setting").classList.contains("show")){["timeline","setting"].forEach(x=>document.getElementById("p-"+x).classList.toggle("show",x==="setting"));document.getElementById("nt").classList.remove("on");document.getElementById("ns").classList.add("on")}navSub({t:"setsub",id:id},true)}
 function toggleThirdBind(k){agCfg.binds[k]=!agCfg.binds[k];renderSetSub("login");toast(agCfg.binds[k]?"已关联账号并接入外脑鉴权":"已解除第三方账号关联")}
 var settingsHelpOpen={};
@@ -3349,28 +3349,54 @@ function sendHumanChat(txt){
   },620);
 }
 function memSetCycle(c){memState.cycle=c;saveMemState();renderSetSub("membership")}
-function memSimQuota(m){memState.tier="free";memState.usedMin=m;memState.credits=0;memState.proSummariesLeft=0;memState.proQasLeft=0;saveMemState();syncSetSummary();if(typeof render==="function")render();renderSetSub("membership");toast(m>=3600?"已预览本月 3,600 分钟耗尽（仅转写排队，录音绝不中断）":m>=3240?"已预览将满状态（3,360 / 3,600 分钟）":"已重置为免费版（420 / 3,600 分钟）")}
-function memSelectPlan(tier){if(tier==="free"){memSimQuota(420);return}memState.tier=tier;if(tier==="cloud_basic"){if(memState.cycle==="lifetime")memState.cycle="yearly";memState.credits=Math.max(memState.credits,500);memState.proSummariesLeft=0;memState.proQasLeft=0}else if(tier==="cloud_pro"){if(memState.cycle==="lifetime")memState.cycle="yearly";memState.credits=Math.max(memState.credits,1500);memState.proSummariesLeft=50;memState.proQasLeft=50}saveMemState();syncSetSummary();if(typeof render==="function")render();renderSetSub("membership");toast(tier==="local_pro"?"已解锁 Local Pro 本地无限转写（不含云端算力）":tier==="cloud_basic"?"已开通 Cloud 基础版（含 Local Pro + 500 Flash 积分/月）":"已开通 Cloud 专业版（含 Local Pro + 50 次 Gemini Pro + 120h 清洗）")}
-function memBuyPack(amt){memState.credits=(memState.credits||0)+amt;saveMemState();syncSetSummary();renderSetSub("membership");toast("已加购 "+amt+" 云端 AI 积分包（90 天有效）")}
-function memRestorePurchase(){toast("正在通过 Apple StoreKit 2 检查并恢复有效购买记录")}
+function memSimQuota(m){memState.tier="free";memState.usedMin=m;memState.credits=0;memState.proSummariesLeft=0;memState.proQasLeft=0;saveMemState();syncSetSummary();if(typeof render==="function")render();renderSetSub("membership");toast(m>=3600?"已预览本月 3,600 分钟耗尽（仅转写排队，录音照常保存）":m>=3240?"已预览将满状态（3,360 / 3,600 分钟）":"已重置为免费版（420 / 3,600 分钟）")}
+function memSelectPlan(tier){if(tier==="free"){memSimQuota(420);return}memState.tier=tier;if(tier==="cloud_basic"){if(memState.cycle==="lifetime")memState.cycle="yearly";memState.credits=Math.max(memState.credits,500);memState.proSummariesLeft=0;memState.proQasLeft=0}else if(tier==="cloud_pro"){if(memState.cycle==="lifetime")memState.cycle="yearly";memState.credits=Math.max(memState.credits,1500);memState.proSummariesLeft=50;memState.proQasLeft=50}saveMemState();syncSetSummary();if(typeof render==="function")render();renderSetSub("membership");toast(tier==="local_pro"?"已开通本地解锁版":tier==="cloud_basic"?"已开通云端日常版":"已开通云端高级版")}
+function memBuyPack(amt){memState.credits=(memState.credits||0)+amt;saveMemState();syncSetSummary();renderSetSub("membership");toast("已加购 "+amt+" 积分（90 天有效）")}
+function memRestorePurchase(){toast("正在通过 Apple 账户检查并恢复购买记录")}
 function renderMembershipSubPage(t,s,b){
   t.textContent="会员与订阅";
-  if(s){s.textContent="本地音转文零云成本低门槛解锁 · 云端算力按模型分层保障利润";s.hidden=false}
+  if(s){s.hidden=true}
   var c=memState.cycle||"yearly";
-  var tierName=memState.tier==="free"?"当前：免费版":memState.tier==="local_pro"?"当前：Local Pro 本地解锁版":memState.tier==="cloud_basic"?"当前：Cloud 基础版（DeepSeek Flash）":"当前：Cloud 专业版（Gemini Pro 旗舰）";
+  var tierName=memState.tier==="free"?"免费版":memState.tier==="local_pro"?(c==="lifetime"?"本地解锁版 · 永久":"本地解锁版"):memState.tier==="cloud_basic"?"云端日常版":"云端高级版";
   var tierCls=memState.tier==="free"?"mem-tier-pill":memState.tier==="cloud_pro"?"mem-tier-pill pro":"mem-tier-pill paid";
   var pct=memState.tier==="free"?Math.min(100,Math.round(memState.usedMin/3600*100)):100;
   var barCls=memState.tier==="free"?(memState.usedMin>=3600?"mem-bar-fill full":memState.usedMin>=3240?"mem-bar-fill warn":"mem-bar-fill"):"mem-bar-fill";
-  var barText=memState.tier==="free"?('本月免费本地转写已用 '+memState.usedMin+' / 3,600 分钟（'+pct+'%）'):'无限本地离线转写已解锁 · 声纹 / 导出 / BYOK 全开';
-  var rightQuota=memState.tier==="cloud_pro"?('Gemini Pro 剩 '+memState.proSummariesLeft+' 次总结 · 积分 '+memState.credits):(memState.credits>0?('云端 AI 积分 '+memState.credits):'纯本地免云成本');
-  var localPrice=c==="monthly"?'<b>¥6</b><small>/ 月（海外 $0.99）</small>':c==="yearly"?'<b>¥68</b><small>/ 年（¥5.7/月 · 海外 $9.99）</small>':'<b>¥198</b><small>一次性永久买断（海外 $29.99）</small>';
-  var basicPrice=c==="monthly"?'<b>¥28</b><small>/ 月（海外 $3.99）</small>':'<b>¥268</b><small>/ 年（¥22.3/月 · 海外 $39.99）</small>';
-  var proPrice=c==="monthly"?'<b>¥88</b><small>/ 月（海外 $12.99）</small>':'<b>¥848</b><small>/ 年（¥70.7/月 · 海外 $119.99）</small>';
+  var barText=memState.tier==="free"?('每月 1 日自动重置，不限单日；用完后录音仍照常保存'):(memState.tier==="local_pro"?'不限时长本地转写与导出':memState.tier==="cloud_basic"?'含本地解锁版 + 日常模型整理':'含本地解锁版 + 高级模型深度整理');
+  var rightQuota=memState.tier==="free"?('本月已用 '+memState.usedMin+' / 3,600 分钟'):memState.tier==="cloud_pro"?('高级总结剩 '+memState.proSummariesLeft+' 次'):memState.tier==="cloud_basic"?('剩余 '+memState.credits+' 积分'):(c==="lifetime"?'永久有效':'不限本地转写');
+  var localPrice=c==="monthly"?'<b>¥6</b><small>/ 月</small>':c==="yearly"?'<b>¥68</b><small>/ 年</small>':'<b>¥198</b><small>买断</small>';
+  var basicPrice=c==="monthly"?'<b>¥28</b><small>/ 月</small>':'<b>¥268</b><small>/ 年</small>';
+  var proPrice=c==="monthly"?'<b>¥88</b><small>/ 月</small>':'<b>¥848</b><small>/ 年</small>';
+  var isLifetime=(c==="lifetime");
+  var cardsHtml='<div class="plan-card'+(memState.tier==="local_pro"?" on":"")+'" data-testid="plan-card-local">'
+      +'<div class="plan-top"><div class="plan-name">本地解锁版'+(memState.tier==="local_pro"?' <span class="plan-tag cur">当前方案</span>':'')+'</div><div class="plan-price">'+localPrice+'</div></div>'
+      +'<ul class="plan-list"><li>不限时长，随时离线转文字</li><li>区分说话人，照片按时间自动匹配</li><li>一键导出文档、PDF 与图片</li></ul>'
+      +'<div style="font-size:11.5px;color:var(--sec);margin:2px 0 10px">仅含本地转写与导出，不含云端 AI 总结</div>'
+      +'<button type="button" class="btn'+(memState.tier==="local_pro"?" ghost":"")+'" style="width:100%" data-testid="plan-buy-local" onclick="memSelectPlan(\'local_pro\')">'+(memState.tier==="local_pro"?"当前方案":(isLifetime?"¥198 永久买断":"立即开通"))+'</button>'
+    +'</div>';
+  if(isLifetime){
+    cardsHtml+='<div style="text-align:center;margin:12px 0"><button type="button" class="mini-chip" style="border:0;background:transparent;color:var(--sec)" data-testid="lifetime-switch-cloud-hint" onclick="memSetCycle(\'yearly\')">需要云端 AI 总结？切换至按月 / 按年查看</button></div>';
+  }else{
+    cardsHtml+='<div class="plan-card rec'+(memState.tier==="cloud_basic"?" on":"")+'" data-testid="plan-card-basic">'
+        +'<div class="plan-top"><div class="plan-name">云端日常版 <span class="plan-tag">推荐</span>'+(memState.tier==="cloud_basic"?' <span class="plan-tag cur">当前方案</span>':'')+'</div><div class="plan-price">'+basicPrice+'</div></div>'
+        +'<ul class="plan-list"><li>包含全部本地解锁版功能</li><li>日常模型自动提炼重点、待办与问答</li><li>每月 500 积分，满足日常高频使用</li></ul>'
+        +'<button type="button" class="btn'+(memState.tier==="cloud_basic"?" ghost":"")+'" style="width:100%" data-testid="plan-buy-basic" onclick="memSelectPlan(\'cloud_basic\')">'+(memState.tier==="cloud_basic"?"当前方案":"立即开通")+'</button>'
+      +'</div>'
+      +'<div class="plan-card'+(memState.tier==="cloud_pro"?" on":"")+'" data-testid="plan-card-pro">'
+        +'<div class="plan-top"><div class="plan-name">云端高级版'+(memState.tier==="cloud_pro"?' <span class="plan-tag cur">当前方案</span>':'')+'</div><div class="plan-price">'+proPrice+'</div></div>'
+        +'<ul class="plan-list"><li>包含全部本地解锁版功能</li><li>高级模型深度总结、睡前日记与问答</li><li>高额月享，用完自动切日常模型不断档</li></ul>'
+        +'<button type="button" class="btn'+(memState.tier==="cloud_pro"?" ghost":"")+'" style="width:100%" data-testid="plan-buy-pro" onclick="memSelectPlan(\'cloud_pro\')">'+(memState.tier==="cloud_pro"?"当前方案":"立即开通")+'</button>'
+      +'</div>'
+      +'<div class="set-title" style="margin-top:16px">云端积分加量包（按需补充）</div>'
+      +'<div class="pack-grid" data-testid="credits-pack-section">'
+        +'<div class="pack-card"><b>500 积分 · ¥18</b><small>90 天有效</small><button type="button" class="btn ghost" style="margin-top:6px;min-height:32px;padding:6px 10px" data-testid="pack-buy-500" onclick="memBuyPack(500)">购买</button></div>'
+        +'<div class="pack-card"><b>1,200 积分 · ¥38</b><small>90 天有效 · 更划算</small><button type="button" class="btn ghost" style="margin-top:6px;min-height:32px;padding:6px 10px" data-testid="pack-buy-1200" onclick="memBuyPack(1200)">购买</button></div>'
+      +'</div>';
+  }
   b.innerHTML='<div class="mem-card" data-testid="mem-quota-card">'
       +'<div class="mem-hd"><span class="'+tierCls+'" data-testid="mem-tier-pill">'+tierName+'</span><span style="font-size:12px;color:var(--sec);font-weight:600" data-testid="mem-credits-label">'+rightQuota+'</span></div>'
-      +'<div class="mem-bar-wrap"><div class="'+barCls+'" style="width:'+pct+'%"></div></div>'
-      +'<div class="mem-meta"><span>'+barText+'</span><span>每月 1 日重置 · 不限单日</span></div>'
-      +(memState.tier==="free"&&memState.usedMin>=3600?'<div class="plan-note" style="margin-top:8px;margin-bottom:0" data-testid="mem-full-queue-note">本月免费转写额度已满，新录音仍可继续录制并暂存本机队列。返回 Timeline 可预览顶部柔性提示条。</div>':'')
+      +(memState.tier==="free"?'<div class="mem-bar-wrap"><div class="'+barCls+'" style="width:'+pct+'%"></div></div>':'')
+      +'<div class="mem-meta"><span>'+barText+'</span></div>'
+      +(memState.tier==="free"&&memState.usedMin>=3600?'<div class="plan-note" style="margin-top:8px;margin-bottom:0" data-testid="mem-full-queue-note">本月免费转写已用完，录音仍照常保存，升级即可继续转写。</div>':'')
       +'<div class="mem-sim-row">'
         +'<button type="button" class="mini-chip'+(memState.tier==="free"&&memState.usedMin<3240?" on":"")+'" data-testid="mem-sim-normal" onclick="memSimQuota(420)">免费 420 分</button>'
         +'<button type="button" class="mini-chip'+(memState.tier==="free"&&memState.usedMin>=3240&&memState.usedMin<3600?" on":"")+'" data-testid="mem-sim-near" onclick="memSimQuota(3360)">预览将满 3,360 分</button>'
@@ -3378,36 +3404,15 @@ function renderMembershipSubPage(t,s,b){
         +(memState.tier!=="free"?'<button type="button" class="mini-chip" data-testid="mem-sim-reset" onclick="memSelectPlan(\'free\')">切回免费版预览</button>':'')
       +'</div></div>'
     +'<div class="mem-seg" data-testid="paywall-cycle-seg">'
-      +'<button type="button" class="'+(c==="monthly"?"on":"")+'" data-testid="cycle-monthly" onclick="memSetCycle(\'monthly\')">按月订阅</button>'
-      +'<button type="button" class="'+(c==="yearly"?"on":"")+'" data-testid="cycle-yearly" onclick="memSetCycle(\'yearly\')">按年 · 省约 20%</button>'
+      +'<button type="button" class="'+(c==="monthly"?"on":"")+'" data-testid="cycle-monthly" onclick="memSetCycle(\'monthly\')">按月</button>'
+      +'<button type="button" class="'+(c==="yearly"?"on":"")+'" data-testid="cycle-yearly" onclick="memSetCycle(\'yearly\')">按年 · 省 17%</button>'
       +'<button type="button" class="'+(c==="lifetime"?"on":"")+'" data-testid="cycle-lifetime" onclick="memSetCycle(\'lifetime\')">永久买断</button>'
     +'</div>'
-    +'<div class="plan-card'+(memState.tier==="local_pro"?" on":"")+'" data-testid="plan-card-local">'
-      +'<div class="plan-top"><div class="plan-name">本地解锁版 Local Pro'+(memState.tier==="local_pro"?' <span class="plan-tag cur">当前方案</span>':'')+'</div><div class="plan-price">'+localPrice+'</div></div>'
-      +'<ul class="plan-list"><li>解除每月 3,600 分钟限制，<b>本地离线转写不限时</b></li><li>完整声纹区分命名 · 照片按时刻对齐 · 全格式导出（PDF/Word/MD/长图）</li><li>解锁自配大模型 Key（BYOK）与未来桌面端本地模型推理，数据全留本机</li></ul>'
-      +(c==="lifetime"?'<div class="plan-note">买断边界：永久包含全部本地功能、导出与自接入大模型，<b>不含官方云端 AI 算力额度</b>。</div>':'')
-      +'<button type="button" class="btn'+(memState.tier==="local_pro"?" ghost":"")+'" style="width:100%" data-testid="plan-buy-local" onclick="memSelectPlan(\'local_pro\')">'+(memState.tier==="local_pro"?"已解锁 Local Pro":(c==="lifetime"?"¥198 永久买断":"立即订阅 Local Pro"))+'</button>'
-    +'</div>'
-    +'<div class="plan-card rec'+(memState.tier==="cloud_basic"?" on":"")+'" data-testid="plan-card-basic">'
-      +'<div class="plan-top"><div class="plan-name">云端基础版 Cloud Basic <span class="plan-tag">推荐主力</span>'+(memState.tier==="cloud_basic"?' <span class="plan-tag cur">当前方案</span>':'')+'</div><div class="plan-price">'+basicPrice+'</div></div>'
-      +'<ul class="plan-list"><li><b>完整包含 Local Pro 全部本地权益</b>（无限本地转写 + 导出 + 声纹）</li><li>每月 <b>500 云端 AI 积分</b> · 基于 <b>DeepSeek-V4.1-Flash</b></li><li>约覆盖 <b>100 小时</b>智能清洗分段 + <b>150 次</b>总结/问答 + 每日夜间鼾声趋势整理</li></ul>'
-      +(c==="lifetime"?'<div class="plan-note">云端算力需持续承担 API 成本，仅支持按月/按年订阅；上方展示年付参考价。</div>':'')
-      +'<button type="button" class="btn'+(memState.tier==="cloud_basic"?" ghost":"")+'" style="width:100%" data-testid="plan-buy-basic" onclick="memSelectPlan(\'cloud_basic\')">'+(memState.tier==="cloud_basic"?"当前正在使用 Cloud 基础版":"选择 Cloud 基础版")+'</button>'
-    +'</div>'
-    +'<div class="plan-card'+(memState.tier==="cloud_pro"?" on":"")+'" data-testid="plan-card-pro">'
-      +'<div class="plan-top"><div class="plan-name">云端专业版 Cloud Pro'+(memState.tier==="cloud_pro"?' <span class="plan-tag cur">当前方案</span>':'')+'</div><div class="plan-price">'+proPrice+'</div></div>'
-      +'<ul class="plan-list"><li><b>完整包含 Local Pro 权益</b> + <b>120 小时</b> Flash 后台清洗分段</li><li>每月 <b>50 次 Gemini 3.1 Pro</b> 旗舰深度总结/睡前日记 + <b>50 次 Pro 记忆问答</b></li><li>旗舰次数用尽后<b>自动无缝切换 Flash 继续使用</b>，重要时刻不突然断档</li></ul>'
-      +'<button type="button" class="btn'+(memState.tier==="cloud_pro"?" ghost":"")+'" style="width:100%" data-testid="plan-buy-pro" onclick="memSelectPlan(\'cloud_pro\')">'+(memState.tier==="cloud_pro"?"当前正在使用 Cloud 专业版":"选择 Cloud 专业版")+'</button>'
-    +'</div>'
-    +'<div class="set-title" style="margin-top:16px">云端 AI 积分加量包（按需补充 · 90 天有效）</div>'
-    +'<div class="pack-grid" data-testid="credits-pack-section">'
-      +'<div class="pack-card"><b>500 积分 · ¥18</b><small>海外 $2.99 · 约 +100h 清洗或 50 次 Pro</small><button type="button" class="btn ghost" style="margin-top:6px;min-height:32px;padding:6px 10px" data-testid="pack-buy-500" onclick="memBuyPack(500)">立即购买</button></div>'
-      +'<div class="pack-card"><b>1,200 积分 · ¥38</b><small>海外 $4.99 · 约 +240h 清洗或 120 次 Pro</small><button type="button" class="btn ghost" style="margin-top:6px;min-height:32px;padding:6px 10px" data-testid="pack-buy-1200" onclick="memBuyPack(1200)">立即购买</button></div>'
-    +'</div>'
+    +cardsHtml
     +'<div class="mem-foot">'
-      +'<div>Apple StoreKit 2 安全支付 · 确认购买时从 Apple 账户扣款；订阅将于到期前 24 小时自动续订，可随时在「系统设置 → Apple 账户 → 订阅」管理或取消。</div>'
-      +'<div>睡眠鼾声与呼吸节律整理仅作个人健康趋势参考，不构成医疗诊断建议。</div>'
-      +'<div class="mem-foot-links"><button type="button" data-testid="paywall-restore-btn" onclick="memRestorePurchase()">恢复购买</button><button type="button" onclick="openSetSub(\'privacy\')">隐私政策</button><button type="button" onclick="toast(\'技术支持与服务条款：ai-card.app.reai.com/support.html\')">使用条款与支持</button></div>'
+      +'<div>通过 Apple 账户扣款，订阅到期前 24 小时自动续订，可随时在「系统设置 → Apple 账户 → 订阅」管理或取消。</div>'
+      +'<div>睡眠记录整理仅供参考，不构成医疗建议。</div>'
+      +'<div class="mem-foot-links"><button type="button" data-testid="paywall-restore-btn" onclick="memRestorePurchase()">恢复购买</button><button type="button" onclick="openSetSub(\'privacy\')">隐私政策</button><button type="button" onclick="toast(\'服务条款与支持：ai-card.app.reai.com/support.html\')">使用条款</button></div>'
     +'</div>';
 }
 render();renderSub();syncChrome();</script><script>
