@@ -565,10 +565,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('¥6.00'), findsOneWidget);
 
-      // 点击购买 Local Pro
+      // 点击购买 Local Pro：先出现确认支付弹窗，再点确认发起购买
       final buyLocal = find.byKey(const Key('plan-buy-local'));
       await tester.ensureVisible(buyLocal);
       await tester.tap(buyLocal);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('paywall-purchase-sheet')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('paywall-sheet-confirm')));
       await tester.pumpAndSettle();
       expect(mem.tier, MembershipTier.localPro);
       expect(find.text('当前方案'), findsOneWidget);
@@ -700,6 +703,107 @@ void main() {
       await tester.tap(realChip);
       await tester.pumpAndSettle();
       expect(mem.devQuotaOverrideMinutes, isNull);
+    });
+
+    testWidgets('点击套餐先弹确认支付弹窗：取消不触发扣款，StoreKit 不可用时弹真实结果提示且不伪造权益', (
+      tester,
+    ) async {
+      final gw = _FakeStoreKitGateway();
+      final mem = MembershipStore(store: InMemoryStore(), gateway: gw);
+      addTearDown(gw.dispose);
+      addTearDown(mem.dispose);
+      await mem.load();
+
+      final appStore = AppStore(events: seedEvents, loadPersistedState: false);
+      final dev = DeviceStore(gateway: FakeCardGateway());
+      final gen = await SummaryModel().generator();
+      appStore.attachServices(
+        recordings: await FakeRecordingSync.create(),
+        generator: gen,
+      );
+      addTearDown(appStore.dispose);
+      addTearDown(dev.dispose);
+
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MembershipScope(
+          store: mem,
+          child: StoreScope(
+            store: appStore,
+            child: MaterialApp(
+              theme: testTheme(),
+              scrollBehavior: const RCScrollBehavior(),
+              home: AppShell(store: appStore, device: dev, membership: mem),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('nav-setting')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('set-membership')));
+      await tester.pumpAndSettle();
+
+      final memScroll = find
+          .descendant(
+            of: find.byKey(const Key('setsub-scroll-membership')),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      final buyBasic = find.byKey(const Key('plan-buy-basic'));
+      await tester.scrollUntilVisible(buyBasic, 200, scrollable: memScroll);
+      await tester.ensureVisible(buyBasic);
+      await tester.pumpAndSettle();
+      await tester.tap(buyBasic);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('paywall-purchase-sheet')), findsOneWidget);
+      expect(find.text('确认订阅'), findsOneWidget);
+      expect(find.text('Apple App Store（StoreKit 2）'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('paywall-sheet-cancel')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('paywall-purchase-sheet')), findsNothing);
+      expect(gw.purchaseCalls, 0);
+      expect(mem.tier, MembershipTier.free);
+
+      gw.nextPurchaseStatus = StorePurchaseStatus.unavailable;
+      gw.nextMessage = 'App Store 暂未返回该商品';
+
+      await tester.scrollUntilVisible(buyBasic, 200, scrollable: memScroll);
+      await tester.ensureVisible(buyBasic);
+      await tester.pumpAndSettle();
+      await tester.tap(buyBasic);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('paywall-sheet-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(gw.purchaseCalls, 1);
+      final resultDialog = find.byKey(const Key('paywall-result-dialog'));
+      expect(resultDialog, findsOneWidget);
+      expect(
+        find.descendant(
+          of: resultDialog,
+          matching: find.textContaining('未发起真实扣款'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: resultDialog,
+          matching: find.textContaining('App Store 暂未返回该商品'),
+        ),
+        findsOneWidget,
+      );
+      expect(mem.tier, MembershipTier.free);
+
+      await tester.tap(find.byKey(const Key('paywall-result-ok')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('paywall-result-dialog')), findsNothing);
     });
   });
 }
