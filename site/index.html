@@ -1118,6 +1118,175 @@
       margin-bottom: 14px;
     }
 
+    /* ── Beta Verification & TestFlight Invite Widget ── */
+    .rc-beta-root {
+      position: relative;
+    }
+
+    .rc-beta-hp {
+      position: absolute;
+      left: -9999px;
+      opacity: 0;
+      width: 1px;
+      height: 1px;
+      pointer-events: none;
+    }
+
+    .rc-beta-form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .rc-beta-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 172px auto;
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .rc-beta-row--code {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .modal .rc-beta-row {
+      grid-template-columns: 1fr;
+    }
+
+    .rc-beta-input, .rc-beta-select {
+      width: 100%;
+      height: 44px;
+      border: 1px solid var(--rule-strong);
+      border-radius: 10px;
+      padding: 0 14px;
+      font-size: 14px;
+      font-family: inherit;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    .rc-beta-input:focus, .rc-beta-select:focus {
+      outline: none;
+      border-color: var(--ink);
+      background: var(--surface);
+    }
+
+    .rc-beta-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 44px;
+      padding: 0 18px;
+      border-radius: 10px;
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: var(--surface);
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      transition: opacity 0.16s ease, transform 0.16s ease;
+    }
+
+    .rc-beta-btn:hover {
+      opacity: 0.88;
+    }
+
+    .rc-beta-btn:active {
+      transform: translateY(1px);
+    }
+
+    .rc-beta-btn:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .rc-beta-btn--sm {
+      height: 36px;
+      padding: 0 14px;
+      font-size: 13px;
+      border-radius: 9px;
+    }
+
+    .rc-beta-banner {
+      background: var(--well);
+      border: 1px solid var(--rule-strong);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--ink);
+      margin-bottom: 10px;
+    }
+
+    .rc-beta-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-top: 6px;
+    }
+
+    .rc-beta-link {
+      background: none;
+      border: none;
+      padding: 0;
+      font-family: inherit;
+      font-size: 13px;
+      color: var(--ink-2);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .rc-beta-link:hover {
+      color: var(--ink);
+    }
+
+    .rc-beta-link:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      text-decoration: none;
+    }
+
+    .rc-beta-err {
+      font-size: 12.5px;
+      color: var(--rec);
+      min-height: 18px;
+    }
+
+    .rc-beta-info {
+      font-size: 12.5px;
+      color: var(--ok-ink);
+      margin-top: 6px;
+    }
+
+    .rc-beta-note {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .rc-beta-done {
+      background: var(--well);
+      border: 1px solid var(--rule-strong);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .rc-beta-done-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: var(--ok-ink);
+    }
+
+    .rc-beta-done-desc {
+      font-size: 13.5px;
+      color: var(--ink-2);
+      line-height: 1.65;
+      margin-bottom: 10px;
+    }
+
     footer {
       border-top: 1px solid var(--rule);
       padding: 28px 0 calc(48px + env(safe-area-inset-bottom, 0px));
@@ -1223,7 +1392,9 @@
       }
 
       .value-grid,
-      .wl-row {
+      .wl-row,
+      .rc-beta-row,
+      .rc-beta-row--code {
         grid-template-columns: 1fr;
       }
 
@@ -1732,38 +1903,20 @@
       </div>
     </section>
 
-    <!-- Waitlist Early-Bird Registration -->
+    <!-- Waitlist & TestFlight Registration -->
     <section class="waitlist-section" id="waitlist">
       <div class="container">
         <div class="wl-card">
           <div class="wl-copy">
-            <h2 data-i18n="wlTitle">抢先预约体验</h2>
-            <p data-i18n="wlDesc">留下常用邮箱，上线第一时间通知你。</p>
+            <h2 data-i18n="wlTitle">填写邮箱 · 获取 TestFlight 体验</h2>
+            <p data-i18n="wlDesc">输入你的 Apple ID 邮箱并完成验证，系统将自动发送苹果官方 TestFlight 安装邀请。</p>
             <div class="wl-perks">
               <div><span class="check">✓</span><span data-i18n="wlPerk1">赠送至少 1 个月正式版会员</span></div>
               <div><span class="check">✓</span><span data-i18n="wlPerk2">自动参与抽取实体录音卡（价值 ¥1,000）</span></div>
             </div>
           </div>
 
-          <div data-wl-widget>
-            <form class="wl-form" novalidate>
-              <div class="wl-row">
-                <input class="wl-input" type="email" required data-i18n-placeholder="wlEmailPlaceholder" placeholder="你的常用邮箱，例如 you@example.com">
-                <select class="wl-select" aria-label="Platform">
-                  <option value="iOS + Watch">iOS + Watch</option>
-                  <option value="iOS">iOS</option>
-                  <option value="Android">Android</option>
-                </select>
-              </div>
-              <button class="btn btn-lg" type="submit" data-i18n="wlSubmit">免费加入早鸟</button>
-              <div class="wl-err" aria-live="polite"></div>
-            </form>
-            <div class="wl-done" hidden>
-              <div class="wl-done-title"></div>
-              <div class="wl-done-desc"></div>
-              <button class="btn btn-ghost wl-reset" type="button" data-i18n="wlReset">更换邮箱重新登记</button>
-            </div>
-          </div>
+          <div data-wl-widget data-wl-source="inline"></div>
         </div>
       </div>
     </section>
@@ -1788,30 +1941,15 @@
   <div class="modal-backdrop" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal">
       <div class="modal-head">
-        <h3 id="modal-title" data-i18n="modalTitle">早鸟免费登记</h3>
+        <h3 id="modal-title" data-i18n="modalTitle">获取 TestFlight 体验与早鸟福利</h3>
         <button class="modal-close" type="button" id="modal-close" aria-label="Close">×</button>
       </div>
-      <p class="modal-lead" data-i18n="modalLead">留下常用邮箱，上线第一时间通知你：赠送至少 1 个月会员，并自动参与抽取实体录音卡（价值 ¥1,000）。</p>
-      <div data-wl-widget>
-        <form class="wl-form" novalidate>
-          <input class="wl-input" type="email" required data-i18n-placeholder="wlEmailPlaceholder" placeholder="你的常用邮箱，例如 you@example.com">
-          <select class="wl-select" aria-label="Platform">
-            <option value="iOS + Watch">iOS + Watch</option>
-            <option value="iOS">iOS</option>
-            <option value="Android">Android</option>
-          </select>
-          <button class="btn btn-lg" type="submit" data-i18n="wlSubmit">免费加入早鸟</button>
-          <div class="wl-err" aria-live="polite"></div>
-        </form>
-        <div class="wl-done" hidden>
-          <div class="wl-done-title"></div>
-          <div class="wl-done-desc"></div>
-          <button class="btn btn-ghost wl-reset" type="button" data-i18n="wlReset">更换邮箱重新登记</button>
-        </div>
-      </div>
+      <p class="modal-lead" data-i18n="modalLead">填写 Apple ID 或常用邮箱并完成验证码校验：iOS 自动触发 TestFlight 邀请邮件，同步锁定至少 1 个月会员与实体录音卡抽奖资格（价值 ¥1,000）。</p>
+      <div data-wl-widget data-wl-source="modal"></div>
     </div>
   </div>
 
-  <script src="./assets/app.js?v=20261117a"></script>
+  <script src="./assets/beta-signup.js?v=20261125a"></script>
+  <script src="./assets/app.js?v=20261125a"></script>
 </body>
 </html>
