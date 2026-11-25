@@ -822,8 +822,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                                 : context.rc.label.withValues(
                                                     alpha: 0.92,
                                                   ),
-                                            borderRadius:
-                                                BorderRadius.circular(999),
+                                            borderRadius: BorderRadius.circular(
+                                              _hwAgent.statusIsError ? 14 : 999,
+                                            ),
                                             boxShadow: const [
                                               BoxShadow(
                                                 color: Color(0x28000000),
@@ -841,12 +842,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                                 child: DecoratedBox(
                                                   decoration: BoxDecoration(
                                                     shape: BoxShape.circle,
-                                                    color:
-                                                        _hwAgent.phase ==
-                                                            HardwareAgentPhase
-                                                                .listening
-                                                        ? context.rc.ok
-                                                        : const Color(0xFF60A5FA),
+                                                    color: _hwAgent.statusIsError
+                                                        ? context.rc.danger
+                                                        : (_hwAgent.phase ==
+                                                                  HardwareAgentPhase
+                                                                      .listening
+                                                              ? context.rc.ok
+                                                              : const Color(
+                                                                  0xFF60A5FA,
+                                                                )),
                                                   ),
                                                 ),
                                               ),
@@ -854,8 +858,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                               Flexible(
                                                 child: Text(
                                                   text,
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
+                                                  maxLines:
+                                                      _hwAgent.statusIsError
+                                                      ? 3
+                                                      : 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
                                                   style: const TextStyle(
                                                     color: Colors.white,
                                                     fontSize: 12.5,

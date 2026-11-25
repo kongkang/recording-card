@@ -4,6 +4,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -18,6 +19,7 @@ import '../health/health_signal_models.dart';
 import '../health/health_signal_rows.dart';
 import '../health/health_signal_store.dart';
 import '../memory/memory_query.dart';
+import '../net/api_exception.dart';
 import '../net/model_gateway.dart';
 import '../net/model_provider_store.dart';
 import 'agent_harness_worker.dart';
@@ -548,6 +550,102 @@ class AgentChatController extends ChangeNotifier {
     }
   }
 
+  void _removeMemorySessionMessage(String sessionId, String msgId) {
+    final list = _memorySessions[sessionId];
+    if (list == null) return;
+    list.removeWhere((m) => m.id == msgId);
+  }
+
+  String _errorLogsFilePath() =>
+      _agentDirPath.isEmpty ? '' : '$_agentDirPath/error_logs.jsonl';
+
+  static String _sanitizeErrorText(String raw) {
+    var cleaned = raw.replaceAll(
+      RegExp(r'data:image/[^;\s]+;base64,[A-Za-z0-9+/=]+'),
+      '[image-data-omitted]',
+    );
+    cleaned = cleaned.replaceAll(
+      RegExp(r'Bearer\s+[A-Za-z0-9._-]+', caseSensitive: false),
+      'Bearer [redacted]',
+    );
+    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (cleaned.length > 400) {
+      cleaned = '${cleaned.substring(0, 400)}…';
+    }
+    return cleaned;
+  }
+
+  Future<void> _appendErrorLog({
+    required String action,
+    required ModelScene scene,
+    String? model,
+    required Object error,
+  }) async {
+    final path = _errorLogsFilePath();
+    if (path.isEmpty) return;
+    try {
+      final file = File(path);
+      if (!file.parent.existsSync()) {
+        await file.parent.create(recursive: true);
+      }
+      int? statusCode;
+      String? code;
+      if (error is ApiHttpException) {
+        statusCode = error.statusCode;
+        code = error.code;
+      }
+      final entry = jsonEncode({
+        'at': _clock().millisecondsSinceEpoch,
+        'action': action,
+        'scene': scene.name,
+        if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
+        'type': '${error.runtimeType}',
+        'statusCode': ?statusCode,
+        if (code != null && code.trim().isNotEmpty) 'code': code.trim(),
+        'message': _sanitizeErrorText('$error'),
+      });
+      var lines = <String>[];
+      if (file.existsSync()) {
+        lines = (await file.readAsLines())
+            .where((l) => l.trim().isNotEmpty)
+            .toList();
+      }
+      lines.add(entry);
+      if (lines.length > 100) {
+        lines = lines.sublist(lines.length - 100);
+      }
+      await file.writeAsString('${lines.join('\n')}\n', flush: true);
+    } on Object {
+      // 日志落盘失败不影响主流程与界面错误展示
+    }
+  }
+
+  /// 读取持久化在 `agent/error_logs.jsonl` 的最近报错记录，便于诊断排障。
+  Future<List<Map<String, dynamic>>> readRecentErrorLogs({
+    int limit = 20,
+  }) async {
+    final path = _errorLogsFilePath();
+    if (path.isEmpty) return const [];
+    final file = File(path);
+    if (!file.existsSync()) return const [];
+    try {
+      final lines = (await file.readAsLines())
+          .where((l) => l.trim().isNotEmpty)
+          .toList();
+      final out = <Map<String, dynamic>>[];
+      final start = math.max(0, lines.length - math.max(1, limit));
+      for (var i = lines.length - 1; i >= start; i--) {
+        final decoded = jsonDecode(lines[i]);
+        if (decoded is Map) {
+          out.add(Map<String, dynamic>.from(decoded));
+        }
+      }
+      return out;
+    } on Object {
+      return const [];
+    }
+  }
+
   Future<void> sendMessage(
     String rawText, {
     bool viaVoice = false,
@@ -624,6 +722,14 @@ class AgentChatController extends ChangeNotifier {
 
       if (result.error != null) {
         errorMessage = _friendlyError(result.error!);
+        unawaited(
+          _appendErrorLog(
+            action: 'chat',
+            scene: ModelScene.agent,
+            model: _resolveModel(),
+            error: result.error!,
+          ),
+        );
         if (mode == Os1Mode.her) {
           herHeadline = errorMessage!;
           voiceEnergy = 0.30;
@@ -661,6 +767,14 @@ class AgentChatController extends ChangeNotifier {
     } on Object catch (e) {
       if (_disposed) return;
       errorMessage = _friendlyError('$e');
+      unawaited(
+        _appendErrorLog(
+          action: 'chat',
+          scene: ModelScene.agent,
+          model: _resolveModel(),
+          error: e,
+        ),
+      );
       if (mode == Os1Mode.her) herHeadline = errorMessage!;
       if (speakError && errorMessage != null && errorMessage!.isNotEmpty) {
         unawaited(speakText(errorMessage!));
@@ -739,7 +853,7 @@ class AgentChatController extends ChangeNotifier {
               model: _resolveVisionModel(),
               scene: ModelScene.vision,
               temperature: 0.2,
-              maxTokens: 1024,
+              maxTokens: 2048,
               timeout: const Duration(seconds: 60),
             );
       if (_disposed) return;
@@ -773,17 +887,19 @@ class AgentChatController extends ChangeNotifier {
       }
     } on Object catch (e) {
       if (_disposed) return;
-      if (_agentDirPath.isNotEmpty) {
-        try {
-          await _worker.appendSessionMessages(
-            _agentDirPath,
-            sessionId: targetSessionId,
-            messages: [userMsg],
-          );
-        } on Object {
-          // 忽略异常
-        }
-      }
+      // 识图失败时不将孤立的「📷 [拍照识别]」消息写入持久历史，避免污染后续文本对话上下文
+      messages = [
+        for (final m in messages)
+          if (m.id != userMsg.id) m,
+      ];
+      totalMessageCount = math.max(0, totalMessageCount - 1);
+      _removeMemorySessionMessage(targetSessionId, userMsg.id);
+      await _appendErrorLog(
+        action: 'photo_recognize',
+        scene: ModelScene.vision,
+        model: _resolveVisionModel(),
+        error: e,
+      );
       errorMessage = _friendlyError('$e');
       if (mode == Os1Mode.her) herHeadline = errorMessage!;
       if (speakError && errorMessage != null && errorMessage!.isNotEmpty) {

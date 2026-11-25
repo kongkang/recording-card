@@ -90,6 +90,7 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
     Duration postSettleDelay = const Duration(milliseconds: 120),
     Duration maxVoiceTaskDuration = const Duration(seconds: 60),
     Duration transientStatusDuration = const Duration(seconds: 3),
+    Duration errorStatusDuration = const Duration(seconds: 8),
   }) : _device = device,
        _agentConfig = agentConfig,
        _agentChat = agentChat,
@@ -102,7 +103,8 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
        _clock = clock ?? DateTime.now,
        _postSettleDelay = postSettleDelay,
        _maxVoiceTaskDuration = maxVoiceTaskDuration,
-       _transientStatusDuration = transientStatusDuration {
+       _transientStatusDuration = transientStatusDuration,
+       _errorStatusDuration = errorStatusDuration {
     _wasAgentSpeaking = _agentChat.isSpeaking;
     _agentChat.addListener(_onAgentChatChanged);
     _buttonSub = _device.hardwareButtonEvents.listen(_onHardwareButtonEvent);
@@ -120,6 +122,7 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
   final Duration _postSettleDelay;
   final Duration _maxVoiceTaskDuration;
   final Duration _transientStatusDuration;
+  final Duration _errorStatusDuration;
 
   StreamSubscription<HardwareButtonEvent>? _buttonSub;
   Future<void> _serial = Future<void>.value();
@@ -127,6 +130,7 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
 
   HardwareAgentPhase phase = HardwareAgentPhase.idle;
   String? statusText;
+  bool statusIsError = false;
   String? lastButtonToast;
   int buttonToastSeq = 0;
 
@@ -221,12 +225,11 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         if (_lastTtsEndedAtMs == null || nowMs > _lastTtsEndedAtMs!) {
           _lastTtsEndedAtMs = nowMs;
         }
-      } else {
-        debugPrint(
-          '[hw_agent] 硬件扬声器未播报（$outcome），按约定保持手机静音：${clean.length} 字',
-        );
+        return;
       }
-      return;
+      debugPrint(
+        '[hw_agent] 硬件扬声器未播报（$outcome），自动回退手机播报：${clean.length} 字',
+      );
     }
     await _agentChat.speakText(clean);
   }
@@ -284,18 +287,25 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
     HardwareAgentPhase nextPhase,
     String? text, {
     bool transient = false,
+    bool isError = false,
   }) {
     if (_disposed) return;
     _statusClearTimer?.cancel();
     _statusClearTimer = null;
     phase = nextPhase;
     statusText = text;
+    statusIsError = isError && text != null && text.isNotEmpty;
     notifyListeners();
-    if (transient && text != null && _transientStatusDuration > Duration.zero) {
-      _statusClearTimer = Timer(_transientStatusDuration, () {
+    final clearDelay = isError ? _errorStatusDuration : _transientStatusDuration;
+    if (transient &&
+        text != null &&
+        _transientStatusDuration > Duration.zero &&
+        clearDelay > Duration.zero) {
+      _statusClearTimer = Timer(clearDelay, () {
         if (_disposed) return;
         if (phase == HardwareAgentPhase.idle && statusText == text) {
           statusText = null;
+          statusIsError = false;
           notifyListeners();
         }
       });
@@ -669,7 +679,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         unawaited(
           _speakFeedback(err, triggeredByHardware: session.triggeredByHardware),
         );
-        _setStatus(HardwareAgentPhase.idle, err, transient: true);
+        _setStatus(
+          HardwareAgentPhase.idle,
+          err,
+          transient: true,
+          isError: true,
+        );
         return;
       }
     }
@@ -777,7 +792,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         unawaited(
           _speakFeedback(err, triggeredByHardware: session.triggeredByHardware),
         );
-        _setStatus(HardwareAgentPhase.idle, err, transient: true);
+        _setStatus(
+          HardwareAgentPhase.idle,
+          err,
+          transient: true,
+          isError: true,
+        );
       }
       return ok;
     }();
@@ -953,7 +973,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
             triggeredByHardware: session.triggeredByHardware,
           ),
         );
-        _setStatus(HardwareAgentPhase.idle, '未识别到有效语音', transient: true);
+        _setStatus(
+          HardwareAgentPhase.idle,
+          '未识别到有效语音',
+          transient: true,
+          isError: true,
+        );
         return;
       }
 
@@ -978,7 +1003,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
             triggeredByHardware: session.triggeredByHardware,
           ),
         );
-        _setStatus(HardwareAgentPhase.idle, msg, transient: true);
+        _setStatus(
+          HardwareAgentPhase.idle,
+          msg,
+          transient: true,
+          isError: true,
+        );
         return;
       }
     }
@@ -996,7 +1026,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
           triggeredByHardware: session.triggeredByHardware,
         ),
       );
-      _setStatus(HardwareAgentPhase.idle, '未识别到有效语音', transient: true);
+      _setStatus(
+        HardwareAgentPhase.idle,
+        '未识别到有效语音',
+        transient: true,
+        isError: true,
+      );
       return;
     }
 
@@ -1025,7 +1060,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
         oledLine2: '请重试',
         timeoutMs: 2500,
       );
-      _setStatus(HardwareAgentPhase.idle, err, transient: true);
+      _setStatus(
+        HardwareAgentPhase.idle,
+        err,
+        transient: true,
+        isError: true,
+      );
     } else {
       if (useHwSpeaker) {
         final last = _agentChat.messages.lastOrNull;
@@ -1110,7 +1150,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
           oledLine2: '请重试',
           timeoutMs: 2500,
         );
-        _setStatus(HardwareAgentPhase.idle, err, transient: true);
+        _setStatus(
+          HardwareAgentPhase.idle,
+          err,
+          transient: true,
+          isError: true,
+        );
       } else {
         if (useHwSpeaker) {
           final last = _agentChat.messages.lastOrNull;
@@ -1142,7 +1187,12 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       unawaited(
         _speakFeedback('拍照识别失败，请稍后重试', triggeredByHardware: true),
       );
-      _setStatus(HardwareAgentPhase.idle, msg, transient: true);
+      _setStatus(
+        HardwareAgentPhase.idle,
+        msg,
+        transient: true,
+        isError: true,
+      );
     }
   }
 

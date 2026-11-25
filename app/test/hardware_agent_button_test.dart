@@ -824,7 +824,7 @@ void main() {
   );
 
   test(
-    'Case 8: DYJ V1 固件不支持 tts.speak (0.8.15 code=1001) 时先尝试硬件播报，失败后保持手机静音不断链',
+    'Case 8: DYJ V1 固件不支持 tts.speak (0.8.15 code=1001) 时先尝试硬件播报，失败后优雅回退手机 TTS 且不断链',
     () async {
       final dir = await Directory.systemTemp.createTemp('rc_btn_case8_');
       addTearDown(() async {
@@ -894,8 +894,8 @@ void main() {
       expect(device.isConnected, isTrue);
       expect(
         speech.spokenTexts,
-        isEmpty,
-        reason: '自带扬声器硬件固件暂不支持 tts.speak 时，不能让手机突然外放打扰用户',
+        contains('今天天气晴朗。'),
+        reason: '硬件固件返回 unsupported (code=1001) 时，应自动回退手机端系统 TTS 播报，避免无声失联感',
       );
 
       coord.dispose();
