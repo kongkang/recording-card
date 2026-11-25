@@ -130,18 +130,18 @@
       fa4: '可以。App 支持直接用手机或 Apple Watch 录音（手表轻敲两下就能随手记重点），也兼容 Omi 随身录音器；以后拿到录音卡连上就能接着用。',
       fq5: '早鸟登记收费吗？有什么福利？',
       fa5: '完全免费。正式上线后，所有早鸟登记用户都会获赠至少 1 个月会员，并自动参与抽取实体录音卡（价值 ¥1,000）。',
-      wlTitle: '抢先预约体验',
-      wlDesc: '留下常用邮箱，上线第一时间通知你。',
-      wlEmailPlaceholder: '你的常用邮箱，例如 you@example.com',
-      wlSubmit: '免费加入早鸟',
+      wlTitle: '填写邮箱 · 获取 TestFlight 体验',
+      wlDesc: '输入你的 Apple ID 邮箱并完成验证，系统将自动发送苹果官方 TestFlight 安装邀请。',
+      wlEmailPlaceholder: '你的 Apple ID 或常用邮箱，例如 you@icloud.com',
+      wlSubmit: '获取验证码',
       wlPerk1: '赠送至少 1 个月正式版会员',
       wlPerk2: '自动参与抽取实体录音卡（价值 ¥1,000）',
       wlErrEmail: '请输入有效的邮箱地址',
       wlDoneTitle: '已加入早鸟名单',
-      wlDoneDesc: '已登记 {email}（{platform}）。上线第一时间通知你，至少 1 个月会员与实体录音卡抽奖资格（价值 ¥1,000）已为你保留。',
+      wlDoneDesc: '已登记 {email}（{platform}）。',
       wlReset: '更换邮箱重新登记',
-      modalTitle: '早鸟免费登记',
-      modalLead: '留下常用邮箱，上线第一时间通知你：赠送至少 1 个月会员，并自动参与抽取实体录音卡（价值 ¥1,000）。',
+      modalTitle: '获取 TestFlight 体验与早鸟福利',
+      modalLead: '填写 Apple ID 或常用邮箱并完成验证码校验：iOS 自动触发 TestFlight 邀请邮件，同步锁定至少 1 个月会员与实体录音卡抽奖资格（价值 ¥1,000）。',
       footCopy: '© 2026 ReAI · 录音卡',
       footPrivacy: '隐私政策',
       footSupport: '技术支持',
@@ -258,18 +258,18 @@
       fa4: 'Yes. Record right away with your phone or Apple Watch (double-tap to mark key moments), or connect an Omi recorder. Pair your AI Card anytime later.',
       fq5: 'Is the early-bird waitlist free? What do I get?',
       fa5: 'Completely free. Every early-bird signup gets at least 1 month of full membership at launch and enters the giveaway for a physical AI Card (worth ¥1,000).',
-      wlTitle: 'Reserve early access',
-      wlDesc: 'Leave your email and we\'ll notify you the moment we launch.',
-      wlEmailPlaceholder: 'Your email, e.g. you@example.com',
-      wlSubmit: 'Join Free Waitlist',
+      wlTitle: 'Get TestFlight Access',
+      wlDesc: 'Enter and verify your Apple ID email — we will automatically trigger your official Apple TestFlight invitation.',
+      wlEmailPlaceholder: 'Your Apple ID or email, e.g. you@icloud.com',
+      wlSubmit: 'Send Verification Code',
       wlPerk1: 'Guaranteed at least 1 month of full membership',
       wlPerk2: 'Automatic entry to win a physical AI Card (worth ¥1,000)',
       wlErrEmail: 'Please enter a valid email address.',
       wlDoneTitle: 'You\'re on the list',
-      wlDoneDesc: 'Saved {email} ({platform}). We\'ll email you at launch — your 1+ month membership and ¥1,000 AI Card giveaway entry are locked in.',
+      wlDoneDesc: 'Verified {email} ({platform}).',
       wlReset: 'Use a different email',
-      modalTitle: 'Join the Early-Bird Waitlist',
-      modalLead: 'Leave your email for launch access: get at least 1 month of membership and a chance to win a physical AI Card (worth ¥1,000).',
+      modalTitle: 'Get TestFlight & Early-Bird Perks',
+      modalLead: 'Verify your Apple ID or email: iOS automatically sends your Apple TestFlight invite and locks in 1+ month membership plus the ¥1,000 AI Card giveaway.',
       footCopy: '© 2026 ReAI · AI Card',
       footPrivacy: 'Privacy Policy',
       footSupport: 'Support',
@@ -473,72 +473,18 @@
     });
   });
 
-  // 5. Waitlist Registration (Inline Section & Modal)
-  var WL_KEY = 'aicard-waitlist-v1';
-
-  function getSavedWaitlist() {
-    try {
-      var raw = localStorage.getItem(WL_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) {
-      return null;
+  // 5. Waitlist & TestFlight Registration (Email OTP + ASC Invite)
+  function renderWaitlistState() {
+    if (window.AiCardBetaSignup) {
+      window.AiCardBetaSignup.refreshAllLocales();
     }
   }
 
-  function saveWaitlist(email, platform) {
-    var payload = { email: email, platform: platform, ts: Date.now() };
-    try { localStorage.setItem(WL_KEY, JSON.stringify(payload)); } catch (e) {}
-    return payload;
-  }
-
-  function clearWaitlist() {
-    try { localStorage.removeItem(WL_KEY); } catch (e) {}
-  }
-
-  function renderWaitlistState() {
-    var saved = getSavedWaitlist();
-    document.querySelectorAll('[data-wl-widget]').forEach(function (wrap) {
-      var form = wrap.querySelector('.wl-form');
-      var done = wrap.querySelector('.wl-done');
-      var err = wrap.querySelector('.wl-err');
-      if (err) err.textContent = '';
-      if (saved && saved.email) {
-        form.hidden = true;
-        done.hidden = false;
-        done.querySelector('.wl-done-title').textContent = t('wlDoneTitle');
-        done.querySelector('.wl-done-desc').textContent =
-          t('wlDoneDesc').replace('{email}', saved.email).replace('{platform}', saved.platform);
-      } else {
-        form.hidden = false;
-        done.hidden = true;
-      }
-    });
-  }
-
   document.querySelectorAll('[data-wl-widget]').forEach(function (wrap) {
-    var form = wrap.querySelector('.wl-form');
-    var emailInput = wrap.querySelector('input[type="email"]');
-    var platSelect = wrap.querySelector('select');
-    var err = wrap.querySelector('.wl-err');
-    var resetBtn = wrap.querySelector('.wl-reset');
-
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var val = (emailInput.value || '').trim();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
-        err.textContent = t('wlErrEmail');
-        emailInput.focus();
-        return;
-      }
-      err.textContent = '';
-      saveWaitlist(val, platSelect.value);
-      renderWaitlistState();
-    });
-
-    if (resetBtn) {
-      resetBtn.addEventListener('click', function () {
-        clearWaitlist();
-        renderWaitlistState();
+    if (window.AiCardBetaSignup) {
+      window.AiCardBetaSignup.mount(wrap, {
+        source: wrap.getAttribute('data-wl-source') || 'web',
+        getLocale: function () { return currentLang; }
       });
     }
   });
