@@ -414,10 +414,10 @@ class RecordingFile {
       deviceName.startsWith(externalDevicePrefix);
 
   /// 设备会话号（8 位十六进制）；旧固件为空。
-  final String session;
+  String session;
 
   /// 会话内段序号，从 1 递增。
-  final int seq;
+  int seq;
 
   /// 录音起点（Unix 毫秒）。来自设备 `.txt` 的 `start_at`；不可信时用 created - duration。
   int startAtMs;

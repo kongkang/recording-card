@@ -721,6 +721,24 @@ class CardFile {
     final v = value.trim();
     return v.isEmpty ? null : v;
   }
+  static String? _parseSessionFromRecordingName(String raw) {
+    final base = raw.split('/').last;
+    final m = RegExp(
+      r'^(?:synced|nosync)_\d+_([0-9A-Fa-f]{8})_(\d+)\.apm$',
+      caseSensitive: false,
+    ).firstMatch(base);
+    return m?.group(1)?.toUpperCase();
+  }
+
+  static int? _parseSeqFromRecordingName(String raw) {
+    final base = raw.split('/').last;
+    final m = RegExp(
+      r'^(?:synced|nosync)_\d+_([0-9A-Fa-f]{8})_(\d+)\.apm$',
+      caseSensitive: false,
+    ).firstMatch(base);
+    final rawSeq = m?.group(2);
+    return rawSeq == null ? null : int.tryParse(rawSeq);
+  }
 }
 
 /// 单个物理缓存文件拆出的时序分段（例如 Omi Ring Buffer 单块跨多段录音）。
@@ -731,6 +749,8 @@ class CardDownloadPart {
     this.startAtSec,
     this.timeSynced,
     this.durationSecs,
+    this.session,
+    this.seq,
   });
 
   factory CardDownloadPart.fromJson(Map<String, dynamic> json) =>
@@ -742,6 +762,8 @@ class CardDownloadPart {
         ),
         timeSynced: CardFile._boolOrNull(json['timeSynced']),
         durationSecs: (json['durationSecs'] as num?)?.toDouble(),
+        session: CardFile._stringOrNull(json['session']),
+        seq: CardFile._intOrNull(json['seq']),
       );
 
   final String path;
@@ -749,6 +771,8 @@ class CardDownloadPart {
   final int? startAtSec;
   final bool? timeSynced;
   final double? durationSecs;
+  final String? session;
+  final int? seq;
 }
 
 /// 下载结果。
@@ -759,6 +783,8 @@ class CardDownload {
     required this.originalName,
     this.startAtSec,
     this.timeSynced,
+    this.session,
+    this.seq,
     this.parts = const [],
   });
   factory CardDownload.fromJson(Map<String, dynamic> json) {
@@ -769,14 +795,24 @@ class CardDownload {
               .map(CardDownloadPart.fromJson)
               .toList()
         : const <CardDownloadPart>[];
+    final orig = (json['originalName'] as String?) ?? '';
+    final deviceName = (json['deviceName'] as String?) ?? '';
     return CardDownload(
       path: (json['path'] as String?) ?? '',
       bytesWritten: (json['bytesWritten'] as num?)?.toInt() ?? 0,
-      originalName: (json['originalName'] as String?) ?? '',
+      originalName: orig,
       startAtSec: CardFile._normalizeEpochSec(
         json['startAt'] ?? json['start_at'],
       ),
       timeSynced: CardFile._boolOrNull(json['timeSynced']),
+      session:
+          CardFile._stringOrNull(json['session']) ??
+          CardFile._parseSessionFromRecordingName(deviceName) ??
+          CardFile._parseSessionFromRecordingName(orig),
+      seq:
+          CardFile._intOrNull(json['seq']) ??
+          CardFile._parseSeqFromRecordingName(deviceName) ??
+          CardFile._parseSeqFromRecordingName(orig),
       parts: parts,
     );
   }
@@ -785,6 +821,8 @@ class CardDownload {
   final String originalName;
   final int? startAtSec;
   final bool? timeSynced;
+  final String? session;
+  final int? seq;
   final List<CardDownloadPart> parts;
 }
 
@@ -1169,8 +1207,28 @@ abstract class CardGateway {
   Future<CardDownload> takeOldestFile(String dir);
   Future<void> deleteFile(String name);
 
+  /// 经设备 SoftAP（192.168.4.1:80）枚举文件列表。
+  Future<List<CardFile>> apFiles({
+    String host = '192.168.4.1',
+    int port = 80,
+  });
+
+  /// 经设备 SoftAP（只读校验）拉取单文件，校验通过后按需删源。
+  Future<CardDownload> apDownload(
+    String name,
+    String dir, {
+    String host = '192.168.4.1',
+    int port = 80,
+    int? expectedSize,
+    bool deleteAfterVerify = false,
+  });
+
   /// 把设备落地文件（`.apm` / `.amr`）转成 WAV（16kHz/16bit 单声道）。
-  Future<CardAudio> transcode(String apmPath, String wavPath);
+  Future<CardAudio> transcode(
+    String apmPath,
+    String wavPath, {
+    double? sourceSampleRateHz,
+  });
 
   /// 点一机 V1 抓拍照片同步到本地目录（非相机设备安全返回空列表）。
   Future<List<CameraSyncItem>> syncCameraPhotos(
@@ -2046,10 +2104,53 @@ class RealCardGateway implements CardGateway {
       _once('deleteFile', {'name': name}, const Duration(seconds: 20));
 
   @override
-  Future<CardAudio> transcode(String apmPath, String wavPath) async {
+  Future<List<CardFile>> apFiles({
+    String host = '192.168.4.1',
+    int port = 80,
+  }) async {
+    final json = await _once('ap.files', {
+      'host': host,
+      'port': port,
+    }, const Duration(seconds: 15));
+    final list = json['data'] as List<dynamic>? ?? const [];
+    return list
+        .whereType<Map<String, dynamic>>()
+        .map(CardFile.fromJson)
+        .toList();
+  }
+
+  @override
+  Future<CardDownload> apDownload(
+    String name,
+    String dir, {
+    String host = '192.168.4.1',
+    int port = 80,
+    int? expectedSize,
+    bool deleteAfterVerify = false,
+  }) async {
+    final json = await _onceWithProgressWatchdog('ap.download', {
+      'name': name,
+      'dir': dir,
+      'host': host,
+      'port': port,
+      'expectedSize': ?expectedSize,
+      'deleteAfterVerify': deleteAfterVerify,
+    });
+    return CardDownload.fromJson(
+      (json['data'] as Map<String, dynamic>?) ?? const {},
+    );
+  }
+
+  @override
+  Future<CardAudio> transcode(
+    String apmPath,
+    String wavPath, {
+    double? sourceSampleRateHz,
+  }) async {
     final json = await _once('transcode', {
       'apm': apmPath,
       'wav': wavPath,
+      'sourceSampleRateHz': ?sourceSampleRateHz,
     }, const Duration(minutes: 2));
     return CardAudio.fromJson(
       (json['data'] as Map<String, dynamic>?) ?? const {},
@@ -2236,7 +2337,25 @@ class UnsupportedCardGateway implements CardGateway {
   @override
   Future<void> deleteFile(String name) async => _fail();
   @override
-  Future<CardAudio> transcode(String apmPath, String wavPath) async => _fail();
+  Future<List<CardFile>> apFiles({
+    String host = '192.168.4.1',
+    int port = 80,
+  }) async => _fail();
+  @override
+  Future<CardDownload> apDownload(
+    String name,
+    String dir, {
+    String host = '192.168.4.1',
+    int port = 80,
+    int? expectedSize,
+    bool deleteAfterVerify = false,
+  }) async => _fail();
+  @override
+  Future<CardAudio> transcode(
+    String apmPath,
+    String wavPath, {
+    double? sourceSampleRateHz,
+  }) async => _fail();
   @override
   Future<List<CameraSyncItem>> syncCameraPhotos(
     String dir, {
@@ -2394,8 +2513,42 @@ class ActivityGateway implements CardGateway {
   Future<void> deleteFile(String name) => _run(() => _inner.deleteFile(name));
 
   @override
-  Future<CardAudio> transcode(String apmPath, String wavPath) =>
-      _run(() => _inner.transcode(apmPath, wavPath));
+  Future<List<CardFile>> apFiles({
+    String host = '192.168.4.1',
+    int port = 80,
+  }) => _run(() => _inner.apFiles(host: host, port: port));
+
+  @override
+  Future<CardDownload> apDownload(
+    String name,
+    String dir, {
+    String host = '192.168.4.1',
+    int port = 80,
+    int? expectedSize,
+    bool deleteAfterVerify = false,
+  }) => _run(
+    () => _inner.apDownload(
+      name,
+      dir,
+      host: host,
+      port: port,
+      expectedSize: expectedSize,
+      deleteAfterVerify: deleteAfterVerify,
+    ),
+  );
+
+  @override
+  Future<CardAudio> transcode(
+    String apmPath,
+    String wavPath, {
+    double? sourceSampleRateHz,
+  }) => _run(
+    () => _inner.transcode(
+      apmPath,
+      wavPath,
+      sourceSampleRateHz: sourceSampleRateHz,
+    ),
+  );
 
   @override
   Future<List<CameraSyncItem>> syncCameraPhotos(

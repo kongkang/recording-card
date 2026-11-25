@@ -1237,8 +1237,38 @@ class WatchCompositeCardGateway implements CardGateway {
   Future<void> deleteFile(String name) => bleGateway.deleteFile(name);
 
   @override
-  Future<CardAudio> transcode(String apmPath, String wavPath) =>
-      bleGateway.transcode(apmPath, wavPath);
+  Future<List<CardFile>> apFiles({
+    String host = '192.168.4.1',
+    int port = 80,
+  }) => bleGateway.apFiles(host: host, port: port);
+
+  @override
+  Future<CardDownload> apDownload(
+    String name,
+    String dir, {
+    String host = '192.168.4.1',
+    int port = 80,
+    int? expectedSize,
+    bool deleteAfterVerify = false,
+  }) => bleGateway.apDownload(
+    name,
+    dir,
+    host: host,
+    port: port,
+    expectedSize: expectedSize,
+    deleteAfterVerify: deleteAfterVerify,
+  );
+
+  @override
+  Future<CardAudio> transcode(
+    String apmPath,
+    String wavPath, {
+    double? sourceSampleRateHz,
+  }) => bleGateway.transcode(
+    apmPath,
+    wavPath,
+    sourceSampleRateHz: sourceSampleRateHz,
+  );
 
   @override
   Future<List<CameraSyncItem>> syncCameraPhotos(

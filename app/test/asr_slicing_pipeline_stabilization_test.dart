@@ -147,8 +147,13 @@ class _SpeechWavFakeGateway extends FakeCardGateway {
   final Float32List wavSamples;
 
   @override
-  Future<CardAudio> transcode(String apmPath, String wavPath) async {
+  Future<CardAudio> transcode(
+    String apmPath,
+    String wavPath, {
+    double? sourceSampleRateHz,
+  }) async {
     transcodeCalls++;
+    lastTranscodeSourceSampleRateHz = sourceSampleRateHz;
     await Directory(File(wavPath).parent.path).create(recursive: true);
     await File(wavPath).writeAsBytes(encodeWav(wavSamples), flush: true);
     return CardAudio(
