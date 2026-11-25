@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../core/store/membership_store.dart';
 import '../../core/theme/tokens.dart';
 import '../../pages/privacy_page.dart';
+import '../../services/billing/storekit_service.dart';
 
 class MembershipBody extends StatefulWidget {
   const MembershipBody({super.key, required this.store});
@@ -60,7 +61,7 @@ class _MembershipBodyState extends State<MembershipBody> {
               ),
             ),
             const SizedBox(height: 8),
-            _buildCreditPacksRow(c, store),
+            _buildCreditPacksRow(context, c, store),
             const SizedBox(height: 16),
             _buildComplianceFooter(context, c, store),
           ],
@@ -399,6 +400,11 @@ class _MembershipBodyState extends State<MembershipBody> {
         : (cycle == BillingCycle.lifetime
               ? '永久买断 Local Pro'
               : '选择 Local Pro');
+    final cycleLabel = switch (cycle) {
+      BillingCycle.monthly => '按月订阅',
+      BillingCycle.yearly => '按年订阅',
+      BillingCycle.lifetime => '永久买断',
+    };
 
     return _buildPlanCard(
       c: c,
@@ -442,6 +448,17 @@ class _MembershipBodyState extends State<MembershipBody> {
       productId: productId,
       ctaLabel: ctaText,
       isCurrentOwned: ownsExact,
+      onBuyTap: () => unawaited(
+        _handlePurchaseTap(
+          context,
+          store,
+          productId: productId,
+          planTitle: '本地解锁版 Local Pro',
+          cycleLabel: cycleLabel,
+          summary: '解除每月 3,600 分钟本地转写上限，含完整声纹命名、多格式导出与 BYOK；不含官方云端额度。',
+          isSubscription: cycle != BillingCycle.lifetime,
+        ),
+      ),
     );
   }
 
@@ -458,6 +475,7 @@ class _MembershipBodyState extends State<MembershipBody> {
     final hint = cycle == BillingCycle.lifetime
         ? '${price.secondaryHint}（云端支持按月/按年）'
         : price.secondaryHint;
+    final cycleLabel = cycle == BillingCycle.yearly ? '按年订阅' : '按月订阅';
 
     return _buildPlanCard(
       c: c,
@@ -478,6 +496,17 @@ class _MembershipBodyState extends State<MembershipBody> {
       productId: productId,
       ctaLabel: ownsExact ? '当前正在使用 Cloud 基础版' : '选择 Cloud 基础版',
       isCurrentOwned: ownsExact,
+      onBuyTap: () => unawaited(
+        _handlePurchaseTap(
+          context,
+          store,
+          productId: productId,
+          planTitle: '云端基础版 Cloud Basic',
+          cycleLabel: cycleLabel,
+          summary: '完整包含 Local Pro 权益，另含每月 500 云端 AI 积分（约 100 小时清洗 + 150 次总结问答）。',
+          isSubscription: true,
+        ),
+      ),
     );
   }
 
@@ -494,6 +523,7 @@ class _MembershipBodyState extends State<MembershipBody> {
     final hint = cycle == BillingCycle.lifetime
         ? '${price.secondaryHint}（云端支持按月/按年）'
         : price.secondaryHint;
+    final cycleLabel = cycle == BillingCycle.yearly ? '按年订阅' : '按月订阅';
 
     return _buildPlanCard(
       c: c,
@@ -514,6 +544,18 @@ class _MembershipBodyState extends State<MembershipBody> {
       productId: productId,
       ctaLabel: ownsExact ? '当前正在使用 Cloud 专业版' : '选择 Cloud 专业版',
       isCurrentOwned: ownsExact,
+      onBuyTap: () => unawaited(
+        _handlePurchaseTap(
+          context,
+          store,
+          productId: productId,
+          planTitle: '云端专业版 Cloud Pro',
+          cycleLabel: cycleLabel,
+          summary:
+              '完整包含 Local Pro + 120 小时 Flash 清洗 + 每月 50 次 Gemini 3.1 Pro 总结/日记与 50 次 Pro 问答。',
+          isSubscription: true,
+        ),
+      ),
     );
   }
 
@@ -533,6 +575,7 @@ class _MembershipBodyState extends State<MembershipBody> {
     required String productId,
     required String ctaLabel,
     required bool isCurrentOwned,
+    required VoidCallback onBuyTap,
   }) {
     final borderColor = isCurrentOwned
         ? c.ok
@@ -672,9 +715,7 @@ class _MembershipBodyState extends State<MembershipBody> {
           else
             FilledButton(
               key: buttonKey,
-              onPressed: store.purchaseInFlight
-                  ? null
-                  : () => unawaited(store.purchase(productId)),
+              onPressed: store.purchaseInFlight ? null : onBuyTap,
               style: FilledButton.styleFrom(
                 backgroundColor: c.label,
                 foregroundColor: c.onLabel,
@@ -702,7 +743,11 @@ class _MembershipBodyState extends State<MembershipBody> {
     );
   }
 
-  Widget _buildCreditPacksRow(RCColorScheme c, MembershipStore store) {
+  Widget _buildCreditPacksRow(
+    BuildContext context,
+    RCColorScheme c,
+    MembershipStore store,
+  ) {
     final p500 = store.displayPriceFor(MembershipStore.creditsPack500);
     final p1200 = store.displayPriceFor(MembershipStore.creditsPack1200);
 
@@ -711,6 +756,8 @@ class _MembershipBodyState extends State<MembershipBody> {
       required String productId,
       required String title,
       required String subtitle,
+      required String sheetTitle,
+      required String sheetSummary,
     }) {
       final purchasing =
           store.purchaseInFlight && store.purchasingProductId == productId;
@@ -743,7 +790,17 @@ class _MembershipBodyState extends State<MembershipBody> {
                 key: buttonKey,
                 onPressed: store.purchaseInFlight
                     ? null
-                    : () => unawaited(store.purchase(productId)),
+                    : () => unawaited(
+                        _handlePurchaseTap(
+                          context,
+                          store,
+                          productId: productId,
+                          planTitle: sheetTitle,
+                          cycleLabel: '一次性补充',
+                          summary: sheetSummary,
+                          isSubscription: false,
+                        ),
+                      ),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: c.label,
                   side: BorderSide(color: c.sep),
@@ -784,6 +841,8 @@ class _MembershipBodyState extends State<MembershipBody> {
           productId: MembershipStore.creditsPack500,
           title: '500 积分 · ${p500.primaryPrice}',
           subtitle: '${p500.secondaryHint} · 约 +100h 清洗或 50 次 Pro',
+          sheetTitle: '500 云端 AI 积分加量包',
+          sheetSummary: '90 天内有效，约可补充 +100 小时清洗或 50 次 Pro 深度总结。',
         ),
         const SizedBox(width: 8),
         packCard(
@@ -791,9 +850,270 @@ class _MembershipBodyState extends State<MembershipBody> {
           productId: MembershipStore.creditsPack1200,
           title: '1,200 积分 · ${p1200.primaryPrice}',
           subtitle: '${p1200.secondaryHint} · 约 +240h 清洗或 120 次 Pro',
+          sheetTitle: '1,200 云端 AI 积分加量包',
+          sheetSummary: '90 天内有效，约可补充 +240 小时清洗或 120 次 Pro 深度总结。',
         ),
       ],
     );
+  }
+
+  Future<void> _handlePurchaseTap(
+    BuildContext context,
+    MembershipStore store, {
+    required String productId,
+    required String planTitle,
+    required String cycleLabel,
+    required String summary,
+    required bool isSubscription,
+  }) async {
+    final price = store.displayPriceFor(productId);
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) {
+        final sc = sheetCtx.rc;
+        final bottomPad = MediaQuery.paddingOf(sheetCtx).bottom + 16;
+        return Container(
+          key: const Key('paywall-purchase-sheet'),
+          decoration: BoxDecoration(
+            color: sc.bg,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            border: Border.all(color: sc.sep),
+          ),
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(16, 14, 16, bottomPad),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      isSubscription ? '确认订阅' : '确认购买',
+                      style: TextStyle(
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w700,
+                        color: sc.label,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('paywall-sheet-close'),
+                    onPressed: () => Navigator.of(sheetCtx).pop(false),
+                    icon: Icon(Icons.close_rounded, size: 20, color: sc.sec),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: sc.card,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: sc.sep),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Text(
+                                planTitle,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  color: sc.label,
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: sc.sec.withValues(alpha: 0.14),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  cycleLabel,
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: sc.label,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              price.primaryPrice,
+                              style: TextStyle(
+                                fontSize: 19,
+                                fontWeight: FontWeight.w800,
+                                color: sc.label,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                            if (price.secondaryHint.isNotEmpty)
+                              Text(
+                                price.secondaryHint,
+                                style: TextStyle(fontSize: 11, color: sc.sec),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      summary,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.45,
+                        color: sc.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Divider(height: 1, thickness: 0.6, color: sc.sep),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Text(
+                          '支付方式',
+                          style: TextStyle(fontSize: 12, color: sc.sec),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Apple App Store（StoreKit 2）',
+                            textAlign: TextAlign.end,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: sc.label,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                isSubscription
+                    ? '确认后将拉起 Apple App Store 支付确认；订阅在到期前 24 小时自动续订，可随时在「系统设置 → Apple 账户 → 订阅」管理或取消。'
+                    : '确认后将拉起 Apple App Store 一次性付款确认，不会自动续订。',
+                style: TextStyle(fontSize: 11.5, height: 1.45, color: sc.sec),
+              ),
+              const SizedBox(height: 14),
+              FilledButton(
+                key: const Key('paywall-sheet-confirm'),
+                onPressed: () => Navigator.of(sheetCtx).pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: sc.label,
+                  foregroundColor: sc.onLabel,
+                  minimumSize: const Size.fromHeight(44),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                ),
+                child: Text(
+                  '确认支付 · ${price.primaryPrice}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                key: const Key('paywall-sheet-cancel'),
+                onPressed: () => Navigator.of(sheetCtx).pop(false),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: sc.label,
+                  side: BorderSide(color: sc.sep),
+                  minimumSize: const Size.fromHeight(40),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                ),
+                child: const Text('取消'),
+              ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final res = await store.purchase(productId);
+    if (!mounted) return;
+
+    switch (res.status) {
+      case StorePurchaseStatus.purchased:
+        ScaffoldMessenger.maybeOf(this.context)
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(store.lastNotice ?? '购买成功')));
+      case StorePurchaseStatus.cancelled:
+        ScaffoldMessenger.maybeOf(this.context)
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(content: Text(store.lastNotice ?? '已取消本次购买')),
+          );
+      case StorePurchaseStatus.pending:
+        ScaffoldMessenger.maybeOf(this.context)
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(content: Text(store.lastNotice ?? '购买正在等待系统批准')),
+          );
+      case StorePurchaseStatus.unavailable:
+      case StorePurchaseStatus.error:
+      case StorePurchaseStatus.unverified:
+        await showDialog<void>(
+          context: this.context,
+          builder: (dlgCtx) => AlertDialog(
+            key: const Key('paywall-result-dialog'),
+            title: Text(
+              res.status == StorePurchaseStatus.unavailable
+                  ? '暂未接入 Apple 支付环境'
+                  : '购买未完成',
+            ),
+            content: Text(
+              '已完成应用内购买确认流程，未发起真实扣款，当前会员权益保持不变。\n\n'
+              '原因：${res.message ?? store.lastError ?? '请稍后重试'}',
+            ),
+            actions: [
+              TextButton(
+                key: const Key('paywall-result-ok'),
+                onPressed: () => Navigator.of(dlgCtx).pop(),
+                child: const Text('我知道了'),
+              ),
+            ],
+          ),
+        );
+    }
   }
 
   Widget _buildComplianceFooter(
@@ -825,7 +1145,15 @@ class _MembershipBodyState extends State<MembershipBody> {
               key: const Key('paywall-restore-btn'),
               onPressed: store.purchaseInFlight
                   ? null
-                  : () => unawaited(store.restorePurchases()),
+                  : () async {
+                      await store.restorePurchases();
+                      if (!mounted) return;
+                      final msg =
+                          store.lastNotice ?? store.lastError ?? '已完成恢复查询';
+                      ScaffoldMessenger.maybeOf(this.context)
+                        ?..hideCurrentSnackBar()
+                        ..showSnackBar(SnackBar(content: Text(msg)));
+                    },
               style: TextButton.styleFrom(foregroundColor: linkColor),
               child: const Text('恢复购买', style: TextStyle(fontSize: 12)),
             ),
