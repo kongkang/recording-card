@@ -1,11 +1,11 @@
-/// 会员体系、月度 3,600 分钟本地转写额度与 StoreKit 2 购买状态机。
+/// 会员体系、月度 3,600 分钟本地转写额度与购买状态管理。
 ///
 /// 核心原则：
 /// - 免费版提供每月 3,600 分钟（60 小时）灵活总池，不设单日上限，每月 1 日 00:00 重置；
 /// - 额度用尽时实行「柔和队列保护」：绝不中断录音，新音频安全保存在本机队列，等待次月 1 日恢复或升级解锁；
-/// - Local Pro 解锁无限本地离线转写/声纹/导出（不含官方云端 AI 清洗与总结额度）；
-/// - Cloud Basic / Cloud Pro 完整打包包含 Local Pro 权益并叠加云端算力额度；
-/// - 权益真值由 Apple StoreKit 2 校验返回或经开发者调试覆盖，绝不伪造已购状态。
+/// - 本地解锁版解锁无限本地离线转写、说话人区分与多格式导出（不含云端 AI 额度）；
+/// - 云端日常版 / 云端高级版完整包含本地解锁版权益，并分别对应日常模型与高级模型云端额度；
+/// - 权益真值由 Apple 校验返回或经开发者调试覆盖，绝不伪造已购状态。
 library;
 
 import 'dart:async';
@@ -125,7 +125,7 @@ class MembershipStore extends ChangeNotifier {
         localProLifetime: PlanPriceFallback(
           cnyLabel: '¥198',
           usdHint: r'$29.99',
-          unitLabel: '永久买断',
+          unitLabel: '买断',
         ),
         cloudBasicMonthly: PlanPriceFallback(
           cnyLabel: '¥28',
@@ -150,12 +150,12 @@ class MembershipStore extends ChangeNotifier {
         creditsPack500: PlanPriceFallback(
           cnyLabel: '¥18',
           usdHint: r'$2.99',
-          unitLabel: '90 天',
+          unitLabel: '90 天有效',
         ),
         creditsPack1200: PlanPriceFallback(
           cnyLabel: '¥38',
           usdHint: r'$4.99',
-          unitLabel: '90 天',
+          unitLabel: '90 天有效',
         ),
       };
 
@@ -227,9 +227,9 @@ class MembershipStore extends ChangeNotifier {
 
   String get tierDisplayName => switch (tier) {
     MembershipTier.free => '免费版',
-    MembershipTier.localPro => lifetimeLocalPro ? 'Local Pro · 永久版' : 'Local Pro',
-    MembershipTier.cloudBasic => 'Cloud 基础版',
-    MembershipTier.cloudPro => 'Cloud 专业版',
+    MembershipTier.localPro => lifetimeLocalPro ? '本地解锁版 · 永久' : '本地解锁版',
+    MembershipTier.cloudBasic => '云端日常版',
+    MembershipTier.cloudPro => '云端高级版',
   };
 
   int get effectiveUsedMinutes {
@@ -327,7 +327,7 @@ class MembershipStore extends ChangeNotifier {
     }
     return (
       primaryPrice: fb.cnyLabel,
-      secondaryHint: '${fb.unitLabel} · 海外 ${fb.usdHint}',
+      secondaryHint: fb.unitLabel,
     );
   }
 
@@ -550,7 +550,7 @@ class MembershipStore extends ChangeNotifier {
           if (_isConsumable(id)) {
             _grantConsumablePack(id, transactionId: result.transactionId);
             final pts = id == creditsPack1200 ? 1200 : 500;
-            _lastNotice = '购买成功：已到账 $pts 点云端 AI 积分（90 天有效）';
+            _lastNotice = '购买成功：已到账 $pts 积分（90 天有效）';
           } else {
             _ownedProductIds = <String>{..._ownedProductIds, id};
             if (result.expirationDateMs != null) {
@@ -698,9 +698,9 @@ class MembershipStore extends ChangeNotifier {
             ? '免费版 · 本月已满'
             : '免费版 · 已用 $effectiveUsedMinutes/$freeMonthlyLimitMinutes 分',
       MembershipTier.localPro =>
-        lifetimeLocalPro ? 'Local Pro · 永久版' : 'Local Pro · 无限转写',
-      MembershipTier.cloudBasic => 'Cloud 基础版 · 剩 $cloudCreditsRemaining 积分',
-      MembershipTier.cloudPro => 'Cloud 专业版 · Pro 剩 $cloudProSummariesRemaining 次',
+        lifetimeLocalPro ? '本地解锁版 · 永久' : '本地解锁版',
+      MembershipTier.cloudBasic => '云端日常版 · 剩 $cloudCreditsRemaining 积分',
+      MembershipTier.cloudPro => '云端高级版 · 高级总结剩 $cloudProSummariesRemaining 次',
     };
   }
 

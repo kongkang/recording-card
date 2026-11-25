@@ -1,4 +1,4 @@
-/// 会员与订阅（StoreKit 2 付费墙、月度 3,600 分钟额度状态、积分加量包与合规声明）。
+/// 会员与订阅（简洁付费墙、月度 3,600 分钟本地额度、永久买断分栏与合规入口）。
 library;
 
 import 'dart:async';
@@ -39,6 +39,7 @@ class _MembershipBodyState extends State<MembershipBody> {
       builder: (context, _) {
         final c = context.rc;
         final cycle = store.selectedCycle;
+        final isLifetime = cycle == BillingCycle.lifetime;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -47,22 +48,46 @@ class _MembershipBodyState extends State<MembershipBody> {
             _buildCycleSelector(c, store, cycle),
             const SizedBox(height: 12),
             _buildLocalProCard(context, c, store, cycle),
-            const SizedBox(height: 10),
-            _buildCloudBasicCard(context, c, store, cycle),
-            const SizedBox(height: 10),
-            _buildCloudProCard(context, c, store, cycle),
-            const SizedBox(height: 18),
-            Text(
-              '云端 AI 积分加量包（按需补充 · 90 天有效）',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: c.sec,
+            if (isLifetime) ...[
+              const SizedBox(height: 12),
+              Center(
+                child: TextButton(
+                  key: const Key('lifetime-switch-cloud-hint'),
+                  onPressed: () =>
+                      unawaited(store.setSelectedCycle(BillingCycle.yearly)),
+                  style: TextButton.styleFrom(
+                    foregroundColor: c.sec,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text(
+                    '需要云端 AI 总结？切换至按月 / 按年查看',
+                    style: TextStyle(fontSize: 12.5),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            _buildCreditPacksRow(context, c, store),
-            const SizedBox(height: 16),
+            ] else ...[
+              const SizedBox(height: 10),
+              _buildCloudBasicCard(context, c, store, cycle),
+              const SizedBox(height: 10),
+              _buildCloudProCard(context, c, store, cycle),
+              const SizedBox(height: 18),
+              Text(
+                '云端积分加量包（按需补充）',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: c.sec,
+                ),
+              ),
+              const SizedBox(height: 8),
+              _buildCreditPacksRow(context, c, store),
+            ],
+            const SizedBox(height: 18),
             _buildComplianceFooter(context, c, store),
           ],
         );
@@ -103,36 +128,31 @@ class _MembershipBodyState extends State<MembershipBody> {
         pillFg = c.isDark ? c.info : const Color(0xFF0F4C81);
     }
 
-    final barColor = store.isUnlimitedLocal
-        ? c.ok
-        : (store.isLocalQuotaExhausted
-              ? c.danger
-              : (store.isLocalQuotaWarning ? c.warn : c.label));
+    final barColor = store.isLocalQuotaExhausted
+        ? c.danger
+        : (store.isLocalQuotaWarning ? c.warn : c.label);
 
-    final String primaryMeta;
-    final String secondaryMeta;
+    final String rightMeta;
+    final String subtitleMeta;
     switch (store.tier) {
       case MembershipTier.free:
-        primaryMeta =
-            '本月已转写 ${store.effectiveUsedMinutes} / ${MembershipStore.freeMonthlyLimitMinutes} 分钟 · 剩余 ${store.remainingFreeMinutes} 分钟';
-        secondaryMeta = '每月 1 日重置 · 不限单日 · 满额后新录音仍安全入队';
+        rightMeta =
+            '本月已用 ${store.effectiveUsedMinutes} / ${MembershipStore.freeMonthlyLimitMinutes} 分钟';
+        subtitleMeta = '每月 1 日自动重置，不限单日；用完后录音仍照常保存';
       case MembershipTier.localPro:
-        primaryMeta = '无限本地离线转写 · 声纹区分 · 多格式导出';
-        secondaryMeta = store.lifetimeLocalPro
-            ? '永久有效（不含官方云端额度）'
+        rightMeta = store.lifetimeLocalPro ? '永久有效' : '不限本地转写';
+        subtitleMeta = store.lifetimeLocalPro
+            ? '不限时长本地转写与导出'
             : _expiryText(store.subscriptionExpiresAtMs);
       case MembershipTier.cloudBasic:
-        primaryMeta =
-            '已含 Local Pro + 剩余 ${store.cloudCreditsRemaining} 云端 AI 积分';
-        secondaryMeta = _expiryText(store.subscriptionExpiresAtMs);
+        rightMeta = '剩余 ${store.cloudCreditsRemaining} 积分';
+        subtitleMeta = '含本地解锁版 + 日常模型整理 · ${_expiryText(store.subscriptionExpiresAtMs)}';
       case MembershipTier.cloudPro:
-        primaryMeta =
-            '已含 Local Pro + 120h 清洗 + Pro 总结剩 ${store.cloudProSummariesRemaining} 次 / 问答 ${store.cloudProQaRemaining} 次';
-        secondaryMeta = '超额自动无缝切 Flash · ${_expiryText(store.subscriptionExpiresAtMs)}';
+        rightMeta = '高级总结剩 ${store.cloudProSummariesRemaining} 次';
+        subtitleMeta = '含本地解锁版 + 高级模型深度整理 · ${_expiryText(store.subscriptionExpiresAtMs)}';
     }
 
-    final noticeText = store.lastError ?? store.lastNotice;
-    final hasError = store.lastError != null && store.lastError!.isNotEmpty;
+    final noticeText = store.lastNotice;
 
     return Container(
       key: const Key('membership-quota-card'),
@@ -147,16 +167,6 @@ class _MembershipBodyState extends State<MembershipBody> {
         children: [
           Row(
             children: [
-              Expanded(
-                child: Text(
-                  '当前方案与本月额度',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: c.label,
-                  ),
-                ),
-              ),
               Container(
                 key: const Key('membership-tier-pill'),
                 padding: const EdgeInsets.symmetric(
@@ -177,45 +187,53 @@ class _MembershipBodyState extends State<MembershipBody> {
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  rightMeta,
+                  textAlign: TextAlign.end,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: c.label,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            key: const Key('membership-quota-bar'),
-            borderRadius: BorderRadius.circular(999),
-            child: Container(
-              height: 8,
-              color: c.sec.withValues(alpha: 0.16),
-              alignment: Alignment.centerLeft,
-              child: FractionallySizedBox(
-                widthFactor: store.usageRatio,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: barColor,
-                    borderRadius: BorderRadius.circular(999),
+          if (store.tier == MembershipTier.free) ...[
+            const SizedBox(height: 10),
+            ClipRRect(
+              key: const Key('membership-quota-bar'),
+              borderRadius: BorderRadius.circular(999),
+              child: Container(
+                height: 6,
+                color: c.sec.withValues(alpha: 0.16),
+                alignment: Alignment.centerLeft,
+                child: FractionallySizedBox(
+                  widthFactor: store.usageRatio,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: barColor,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+          ],
           const SizedBox(height: 8),
           Text(
-            primaryMeta,
-            style: TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-              color: c.label,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            secondaryMeta,
-            style: TextStyle(fontSize: 11.5, height: 1.45, color: c.sec),
+            subtitleMeta,
+            style: TextStyle(fontSize: 12, height: 1.45, color: c.sec),
           ),
           if (store.isLocalQuotaExhausted) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Container(
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
                 color: c.isDark
                     ? c.danger.withValues(alpha: 0.15)
@@ -228,7 +246,7 @@ class _MembershipBodyState extends State<MembershipBody> {
                 ),
               ),
               child: Text(
-                '本月 3,600 分钟免费转写已满：新录音继续正常保存于本机队列，等待次月 1 日恢复或升级下方方案即刻转写。',
+                '本月免费转写已用完，录音仍照常保存，升级即可继续转写。',
                 style: TextStyle(
                   fontSize: 12,
                   height: 1.45,
@@ -238,39 +256,33 @@ class _MembershipBodyState extends State<MembershipBody> {
             ),
           ],
           if (store.loadingCatalog) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Row(
               children: [
                 SizedBox(
-                  width: 14,
-                  height: 14,
+                  width: 13,
+                  height: 13,
                   child: CircularProgressIndicator(
-                    strokeWidth: 2,
+                    strokeWidth: 1.8,
                     color: c.sec,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '正在从 App Store 拉取最新商品价格与已购权益…',
+                  '正在更新价格…',
                   style: TextStyle(fontSize: 11.5, color: c.sec),
                 ),
               ],
             ),
           ] else if (noticeText != null && noticeText.isNotEmpty) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Container(
               key: const Key('membership-storekit-notice'),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: hasError
-                    ? c.danger.withValues(alpha: 0.08)
-                    : c.sec.withValues(alpha: 0.08),
+                color: c.sec.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: hasError
-                      ? c.danger.withValues(alpha: 0.35)
-                      : c.sep,
-                ),
+                border: Border.all(color: c.sep),
               ),
               child: Row(
                 children: [
@@ -280,7 +292,7 @@ class _MembershipBodyState extends State<MembershipBody> {
                       style: TextStyle(
                         fontSize: 11.5,
                         height: 1.45,
-                        color: hasError ? c.danger : c.ink,
+                        color: c.ink,
                       ),
                     ),
                   ),
@@ -396,10 +408,10 @@ class _MembershipBodyState extends State<MembershipBody> {
     final ownsExact = store.ownsExactProduct(productId);
     final price = store.displayPriceFor(productId);
     final ctaText = ownsExact
-        ? '当前正在使用 Local Pro'
+        ? '当前方案'
         : (cycle == BillingCycle.lifetime
-              ? '永久买断 Local Pro'
-              : '选择 Local Pro');
+              ? '${price.primaryPrice} 永久买断'
+              : '立即开通');
     final cycleLabel = switch (cycle) {
       BillingCycle.monthly => '按月订阅',
       BillingCycle.yearly => '按年订阅',
@@ -411,40 +423,18 @@ class _MembershipBodyState extends State<MembershipBody> {
       store: store,
       cardKey: const Key('plan-card-local'),
       buttonKey: const Key('plan-buy-local'),
-      title: '本地解锁版 Local Pro',
+      title: '本地解锁版',
       tagText: isCurrentTier ? '当前方案' : null,
       tagIsCurrent: isCurrentTier,
       highlighted: isCurrentTier,
       primaryPrice: price.primaryPrice,
       secondaryHint: price.secondaryHint,
       bullets: const [
-        '解除每月 3,600 分钟限制，无限本地离线转写',
-        '完整声纹聚类命名、相册按时刻对齐、Word/PDF/Markdown/图片导出',
-        '支持自接入第三方大模型（BYOK）与未来桌面端本地推理',
+        '不限时长，随时离线转文字',
+        '区分说话人，照片按时间自动匹配',
+        '一键导出文档、PDF 与图片',
       ],
-      extraBanner: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: c.isDark
-              ? c.warn.withValues(alpha: 0.14)
-              : const Color(0xFFFFF7E8),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: c.isDark
-                ? c.warn.withValues(alpha: 0.4)
-                : const Color(0xFFF2D399),
-          ),
-        ),
-        child: Text(
-          '说明：仅解锁本机离线与 BYOK 能力，不包含官方云端 AI 清洗与总结额度。',
-          style: TextStyle(
-            fontSize: 11.5,
-            height: 1.45,
-            color: c.isDark ? c.warn : const Color(0xFF8A4300),
-          ),
-        ),
-      ),
+      footnote: '仅含本地转写与导出，不含云端 AI 总结',
       productId: productId,
       ctaLabel: ctaText,
       isCurrentOwned: ownsExact,
@@ -453,9 +443,9 @@ class _MembershipBodyState extends State<MembershipBody> {
           context,
           store,
           productId: productId,
-          planTitle: '本地解锁版 Local Pro',
+          planTitle: '本地解锁版',
           cycleLabel: cycleLabel,
-          summary: '解除每月 3,600 分钟本地转写上限，含完整声纹命名、多格式导出与 BYOK；不含官方云端额度。',
+          summary: '不限时长本地离线转文字，支持说话人区分与多格式导出；不含云端 AI 总结。',
           isSubscription: cycle != BillingCycle.lifetime,
         ),
       ),
@@ -472,9 +462,6 @@ class _MembershipBodyState extends State<MembershipBody> {
     final isCurrentTier = store.tier == MembershipTier.cloudBasic;
     final ownsExact = store.ownsExactProduct(productId);
     final price = store.displayPriceFor(productId);
-    final hint = cycle == BillingCycle.lifetime
-        ? '${price.secondaryHint}（云端支持按月/按年）'
-        : price.secondaryHint;
     final cycleLabel = cycle == BillingCycle.yearly ? '按年订阅' : '按月订阅';
 
     return _buildPlanCard(
@@ -482,28 +469,28 @@ class _MembershipBodyState extends State<MembershipBody> {
       store: store,
       cardKey: const Key('plan-card-basic'),
       buttonKey: const Key('plan-buy-basic'),
-      title: '云端基础版 Cloud Basic',
-      tagText: isCurrentTier ? '当前方案' : '推荐 · 性价比',
+      title: '云端日常版',
+      tagText: isCurrentTier ? '当前方案' : '推荐',
       tagIsCurrent: isCurrentTier,
       highlighted: !isCurrentTier,
       primaryPrice: price.primaryPrice,
-      secondaryHint: hint,
+      secondaryHint: price.secondaryHint,
       bullets: const [
-        '完整包含 Local Pro 全部本地转写与导出权益',
-        '每月 500 云端 AI 积分（约 100 小时 DeepSeek V4.1 Flash 清洗 + 150 次总结问答）',
-        '每日夜间端侧鼾声与呼吸节律特征趋势整理',
+        '包含全部本地解锁版功能',
+        '日常模型自动提炼重点、待办与问答',
+        '每月 500 积分，满足日常高频使用',
       ],
       productId: productId,
-      ctaLabel: ownsExact ? '当前正在使用 Cloud 基础版' : '选择 Cloud 基础版',
+      ctaLabel: ownsExact ? '当前方案' : '立即开通',
       isCurrentOwned: ownsExact,
       onBuyTap: () => unawaited(
         _handlePurchaseTap(
           context,
           store,
           productId: productId,
-          planTitle: '云端基础版 Cloud Basic',
+          planTitle: '云端日常版',
           cycleLabel: cycleLabel,
-          summary: '完整包含 Local Pro 权益，另含每月 500 云端 AI 积分（约 100 小时清洗 + 150 次总结问答）。',
+          summary: '包含全部本地解锁版功能，叠加日常模型智能总结与每月 500 积分。',
           isSubscription: true,
         ),
       ),
@@ -520,9 +507,6 @@ class _MembershipBodyState extends State<MembershipBody> {
     final isCurrentTier = store.tier == MembershipTier.cloudPro;
     final ownsExact = store.ownsExactProduct(productId);
     final price = store.displayPriceFor(productId);
-    final hint = cycle == BillingCycle.lifetime
-        ? '${price.secondaryHint}（云端支持按月/按年）'
-        : price.secondaryHint;
     final cycleLabel = cycle == BillingCycle.yearly ? '按年订阅' : '按月订阅';
 
     return _buildPlanCard(
@@ -530,29 +514,28 @@ class _MembershipBodyState extends State<MembershipBody> {
       store: store,
       cardKey: const Key('plan-card-pro'),
       buttonKey: const Key('plan-buy-pro'),
-      title: '云端专业版 Cloud Pro',
+      title: '云端高级版',
       tagText: isCurrentTier ? '当前方案' : null,
       tagIsCurrent: isCurrentTier,
       highlighted: isCurrentTier,
       primaryPrice: price.primaryPrice,
-      secondaryHint: hint,
+      secondaryHint: price.secondaryHint,
       bullets: const [
-        '完整包含 Local Pro 权益 + 120 小时 Flash 后台清洗分段',
-        '每月 50 次 Gemini 3.1 Pro 旗舰深度总结/睡前日记 + 50 次 Pro 记忆问答',
-        '旗舰次数用尽后自动无缝切换 Flash 继续使用，关键时刻不突然断档',
+        '包含全部本地解锁版功能',
+        '高级模型深度总结、睡前日记与问答',
+        '高额月享，用完自动切日常模型不断档',
       ],
       productId: productId,
-      ctaLabel: ownsExact ? '当前正在使用 Cloud 专业版' : '选择 Cloud 专业版',
+      ctaLabel: ownsExact ? '当前方案' : '立即开通',
       isCurrentOwned: ownsExact,
       onBuyTap: () => unawaited(
         _handlePurchaseTap(
           context,
           store,
           productId: productId,
-          planTitle: '云端专业版 Cloud Pro',
+          planTitle: '云端高级版',
           cycleLabel: cycleLabel,
-          summary:
-              '完整包含 Local Pro + 120 小时 Flash 清洗 + 每月 50 次 Gemini 3.1 Pro 总结/日记与 50 次 Pro 问答。',
+          summary: '包含全部本地解锁版功能，享高级模型深度总结、睡前日记与问答。',
           isSubscription: true,
         ),
       ),
@@ -571,7 +554,7 @@ class _MembershipBodyState extends State<MembershipBody> {
     required String primaryPrice,
     required String secondaryHint,
     required List<String> bullets,
-    Widget? extraBanner,
+    String? footnote,
     required String productId,
     required String ctaLabel,
     required bool isCurrentOwned,
@@ -644,8 +627,9 @@ class _MembershipBodyState extends State<MembershipBody> {
                 ),
               ),
               const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
                 children: [
                   Text(
                     primaryPrice,
@@ -656,11 +640,13 @@ class _MembershipBodyState extends State<MembershipBody> {
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
-                  if (secondaryHint.isNotEmpty)
+                  if (secondaryHint.isNotEmpty) ...[
+                    const SizedBox(width: 3),
                     Text(
                       secondaryHint,
-                      style: TextStyle(fontSize: 11, color: c.sec),
+                      style: TextStyle(fontSize: 11.5, color: c.sec),
                     ),
+                  ],
                 ],
               ),
             ],
@@ -694,9 +680,13 @@ class _MembershipBodyState extends State<MembershipBody> {
                 ],
               ),
             ),
-          if (extraBanner != null) ...[
-            const SizedBox(height: 4),
-            extraBanner,
+          if (footnote != null && footnote.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              footnote,
+              style: TextStyle(fontSize: 11.5, height: 1.45, color: c.sec),
+            ),
+            const SizedBox(height: 10),
           ] else
             const SizedBox(height: 6),
           if (isCurrentOwned)
@@ -755,6 +745,7 @@ class _MembershipBodyState extends State<MembershipBody> {
       required Key buttonKey,
       required String productId,
       required String title,
+      required String priceText,
       required String subtitle,
       required String sheetTitle,
       required String sheetSummary,
@@ -772,15 +763,30 @@ class _MembershipBodyState extends State<MembershipBody> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w700,
-                  color: c.label,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        color: c.label,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    priceText,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: c.label,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 3),
+              const SizedBox(height: 4),
               Text(
                 subtitle,
                 style: TextStyle(fontSize: 11.5, height: 1.4, color: c.sec),
@@ -796,7 +802,7 @@ class _MembershipBodyState extends State<MembershipBody> {
                           store,
                           productId: productId,
                           planTitle: sheetTitle,
-                          cycleLabel: '一次性补充',
+                          cycleLabel: '一次性购买',
                           summary: sheetSummary,
                           isSubscription: false,
                         ),
@@ -819,7 +825,7 @@ class _MembershipBodyState extends State<MembershipBody> {
                         ),
                       )
                     : const Text(
-                        '立即购买',
+                        '购买',
                         style: TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w600,
@@ -839,19 +845,21 @@ class _MembershipBodyState extends State<MembershipBody> {
         packCard(
           buttonKey: const Key('pack-buy-500'),
           productId: MembershipStore.creditsPack500,
-          title: '500 积分 · ${p500.primaryPrice}',
-          subtitle: '${p500.secondaryHint} · 约 +100h 清洗或 50 次 Pro',
-          sheetTitle: '500 云端 AI 积分加量包',
-          sheetSummary: '90 天内有效，约可补充 +100 小时清洗或 50 次 Pro 深度总结。',
+          title: '500 积分',
+          priceText: p500.primaryPrice,
+          subtitle: '90 天有效',
+          sheetTitle: '500 云端积分包',
+          sheetSummary: '补充 500 云端 AI 积分，90 天内有效。',
         ),
         const SizedBox(width: 8),
         packCard(
           buttonKey: const Key('pack-buy-1200'),
           productId: MembershipStore.creditsPack1200,
-          title: '1,200 积分 · ${p1200.primaryPrice}',
-          subtitle: '${p1200.secondaryHint} · 约 +240h 清洗或 120 次 Pro',
-          sheetTitle: '1,200 云端 AI 积分加量包',
-          sheetSummary: '90 天内有效，约可补充 +240 小时清洗或 120 次 Pro 深度总结。',
+          title: '1,200 积分',
+          priceText: p1200.primaryPrice,
+          subtitle: '90 天有效 · 更划算',
+          sheetTitle: '1,200 云端积分包',
+          sheetSummary: '补充 1,200 云端 AI 积分，90 天内有效。',
         ),
       ],
     );
@@ -887,178 +895,181 @@ class _MembershipBodyState extends State<MembershipBody> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      isSubscription ? '确认订阅' : '确认购买',
-                      style: TextStyle(
-                        fontSize: 16.5,
-                        fontWeight: FontWeight.w700,
-                        color: sc.label,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    key: const Key('paywall-sheet-close'),
-                    onPressed: () => Navigator.of(sheetCtx).pop(false),
-                    icon: Icon(Icons.close_rounded, size: 20, color: sc.sec),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: sc.card,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: sc.sep),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Row(
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Wrap(
-                            spacing: 6,
-                            runSpacing: 4,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              Text(
-                                planTitle,
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                  color: sc.label,
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 7,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: sc.sec.withValues(alpha: 0.14),
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  cycleLabel,
-                                  style: TextStyle(
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w600,
-                                    color: sc.label,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                    Expanded(
+                      child: Text(
+                        isSubscription ? '确认订阅' : '确认购买',
+                        style: TextStyle(
+                          fontSize: 16.5,
+                          fontWeight: FontWeight.w700,
+                          color: sc.label,
                         ),
-                        const SizedBox(width: 8),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              price.primaryPrice,
-                              style: TextStyle(
-                                fontSize: 19,
-                                fontWeight: FontWeight.w800,
-                                color: sc.label,
-                                fontFeatures: const [
-                                  FontFeature.tabularFigures(),
-                                ],
-                              ),
-                            ),
-                            if (price.secondaryHint.isNotEmpty)
-                              Text(
-                                price.secondaryHint,
-                                style: TextStyle(fontSize: 11, color: sc.sec),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      summary,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.45,
-                        color: sc.ink,
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    Divider(height: 1, thickness: 0.6, color: sc.sep),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Text(
-                          '支付方式',
-                          style: TextStyle(fontSize: 12, color: sc.sec),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'Apple App Store（StoreKit 2）',
-                            textAlign: TextAlign.end,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w600,
-                              color: sc.label,
-                            ),
-                          ),
-                        ),
-                      ],
+                    IconButton(
+                      key: const Key('paywall-sheet-close'),
+                      onPressed: () => Navigator.of(sheetCtx).pop(false),
+                      icon: Icon(Icons.close_rounded, size: 20, color: sc.sec),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                isSubscription
-                    ? '确认后将拉起 Apple App Store 支付确认；订阅在到期前 24 小时自动续订，可随时在「系统设置 → Apple 账户 → 订阅」管理或取消。'
-                    : '确认后将拉起 Apple App Store 一次性付款确认，不会自动续订。',
-                style: TextStyle(fontSize: 11.5, height: 1.45, color: sc.sec),
-              ),
-              const SizedBox(height: 14),
-              FilledButton(
-                key: const Key('paywall-sheet-confirm'),
-                onPressed: () => Navigator.of(sheetCtx).pop(true),
-                style: FilledButton.styleFrom(
-                  backgroundColor: sc.label,
-                  foregroundColor: sc.onLabel,
-                  minimumSize: const Size.fromHeight(44),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(11),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: sc.card,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: sc.sep),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(
+                                  planTitle,
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                    color: sc.label,
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 7,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: sc.sec.withValues(alpha: 0.14),
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    cycleLabel,
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: sc.label,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.baseline,
+                            textBaseline: TextBaseline.alphabetic,
+                            children: [
+                              Text(
+                                price.primaryPrice,
+                                style: TextStyle(
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.w800,
+                                  color: sc.label,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                              if (price.secondaryHint.isNotEmpty) ...[
+                                const SizedBox(width: 3),
+                                Text(
+                                  price.secondaryHint,
+                                  style: TextStyle(fontSize: 11, color: sc.sec),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        summary,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.45,
+                          color: sc.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Divider(height: 1, thickness: 0.6, color: sc.sep),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Text(
+                            '支付方式',
+                            style: TextStyle(fontSize: 12, color: sc.sec),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Apple 支付',
+                              textAlign: TextAlign.end,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                                color: sc.label,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-                child: Text(
-                  '确认支付 · ${price.primaryPrice}',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                const SizedBox(height: 10),
+                Text(
+                  isSubscription
+                      ? '确认后通过 Apple 账户扣款，到期前 24 小时自动续订，可随时在系统设置取消。'
+                      : '确认后通过 Apple 账户一次性扣款，不会自动续订。',
+                  style: TextStyle(fontSize: 11.5, height: 1.45, color: sc.sec),
                 ),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton(
-                key: const Key('paywall-sheet-cancel'),
-                onPressed: () => Navigator.of(sheetCtx).pop(false),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: sc.label,
-                  side: BorderSide(color: sc.sep),
-                  minimumSize: const Size.fromHeight(40),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(11),
+                const SizedBox(height: 14),
+                FilledButton(
+                  key: const Key('paywall-sheet-confirm'),
+                  onPressed: () => Navigator.of(sheetCtx).pop(true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: sc.label,
+                    foregroundColor: sc.onLabel,
+                    minimumSize: const Size.fromHeight(44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                  ),
+                  child: Text(
+                    '确认支付 · ${price.primaryPrice}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
-                child: const Text('取消'),
-              ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  key: const Key('paywall-sheet-cancel'),
+                  onPressed: () => Navigator.of(sheetCtx).pop(false),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: sc.label,
+                    side: BorderSide(color: sc.sep),
+                    minimumSize: const Size.fromHeight(40),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                  ),
+                  child: const Text('取消'),
+                ),
               ],
             ),
           ),
@@ -1091,18 +1102,17 @@ class _MembershipBodyState extends State<MembershipBody> {
       case StorePurchaseStatus.unavailable:
       case StorePurchaseStatus.error:
       case StorePurchaseStatus.unverified:
+        final isPreviewUnavailable =
+            res.status == StorePurchaseStatus.unavailable;
         await showDialog<void>(
           context: this.context,
           builder: (dlgCtx) => AlertDialog(
             key: const Key('paywall-result-dialog'),
-            title: Text(
-              res.status == StorePurchaseStatus.unavailable
-                  ? '暂未接入 Apple 支付环境'
-                  : '购买未完成',
-            ),
+            title: Text(isPreviewUnavailable ? '支付示意' : '购买未完成'),
             content: Text(
-              '已完成应用内购买确认流程，未发起真实扣款，当前会员权益保持不变。\n\n'
-              '原因：${res.message ?? store.lastError ?? '请稍后重试'}',
+              isPreviewUnavailable
+                  ? '已完成购买确认展示，当前为预览环境，未发起 Apple 扣款，会员状态保持不变。'
+                  : '本次购买未能完成，未发起扣款，请稍后重试。',
             ),
             actions: [
               TextButton(
@@ -1125,13 +1135,13 @@ class _MembershipBodyState extends State<MembershipBody> {
     return Column(
       children: [
         Text(
-          'Apple StoreKit 2 安全支付 · 确认购买时从 Apple 账户扣款；订阅将于到期前 24 小时自动续订，可随时在「系统设置 → Apple 账户 → 订阅」管理或取消。',
+          '通过 Apple 账户扣款，订阅到期前 24 小时自动续订，可随时在「系统设置 → Apple 账户 → 订阅」管理或取消。',
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 11.5, height: 1.55, color: c.sec),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 4),
         Text(
-          '睡眠鼾声与呼吸节律整理仅作个人健康趋势参考，不构成医疗诊断建议。',
+          '睡眠记录整理仅供参考，不构成医疗建议。',
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 11.5, height: 1.55, color: c.sec),
         ),
@@ -1177,11 +1187,11 @@ class _MembershipBodyState extends State<MembershipBody> {
                 context: context,
                 builder: (ctx) => AlertDialog(
                   key: const Key('paywall-terms-dialog'),
-                  title: const Text('使用条款与技术支持'),
+                  title: const Text('使用条款'),
                   content: const Text(
-                    '完整服务条款、自动续订说明与售后支持请访问：\n'
+                    '服务条款与技术支持请访问：\n'
                     'https://ai-card.app.reai.com/support.html\n\n'
-                    '隐私与合规咨询邮箱：privacy@reai.chat',
+                    '联系邮箱：privacy@reai.chat',
                   ),
                   actions: [
                     TextButton(
@@ -1192,7 +1202,7 @@ class _MembershipBodyState extends State<MembershipBody> {
                 ),
               ),
               style: TextButton.styleFrom(foregroundColor: linkColor),
-              child: const Text('使用条款与支持', style: TextStyle(fontSize: 12)),
+              child: const Text('使用条款', style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
@@ -1201,10 +1211,10 @@ class _MembershipBodyState extends State<MembershipBody> {
   }
 
   static String _expiryText(int? expMs) {
-    if (expMs == null || expMs <= 0) return '有效期内自动续订 · 随时可在系统设置取消';
+    if (expMs == null || expMs <= 0) return '到期前可随时在系统设置取消';
     final dt = DateTime.fromMillisecondsSinceEpoch(expMs);
     final mm = dt.month.toString().padLeft(2, '0');
     final dd = dt.day.toString().padLeft(2, '0');
-    return '当前周期有效期至 ${dt.year}-$mm-$dd · 到期前 24 小时可随时取消';
+    return '有效期至 ${dt.year}-$mm-$dd · 到期前可随时取消';
   }
 }

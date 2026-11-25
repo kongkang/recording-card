@@ -404,7 +404,7 @@ void main() {
       expect(gw.restoreCalls, 1);
       expect(mem.tier, MembershipTier.localPro);
       expect(mem.lifetimeLocalPro, isTrue);
-      expect(mem.settingRowSummary(), 'Local Pro · 永久版');
+      expect(mem.settingRowSummary(), '本地解锁版 · 永久');
     });
   });
 
@@ -551,7 +551,7 @@ void main() {
       expect(find.byKey(const Key('plan-card-pro')), findsOneWidget);
       expect(find.byKey(const Key('credits-pack-section')), findsOneWidget);
 
-      // 切换按年 / 永久买断 / 按月
+      // 切换按年 / 永久买断（只展示本地解锁版）/ 提示切回按年 / 按月
       await tester.tap(find.byKey(const Key('cycle-seg-yearly')));
       await tester.pumpAndSettle();
       expect(find.text('¥68'), findsOneWidget);
@@ -559,13 +559,29 @@ void main() {
 
       await tester.tap(find.byKey(const Key('cycle-seg-lifetime')));
       await tester.pumpAndSettle();
+      expect(find.byKey(const Key('plan-card-local')), findsOneWidget);
       expect(find.text('¥198'), findsOneWidget);
+      expect(find.byKey(const Key('plan-card-basic')), findsNothing);
+      expect(find.byKey(const Key('plan-card-pro')), findsNothing);
+      expect(find.byKey(const Key('credits-pack-section')), findsNothing);
+      expect(find.byKey(const Key('lifetime-switch-cloud-hint')), findsOneWidget);
+
+      // 不出现任何未约定模型名与技术术语
+      for (final banned in ['Gemini', 'DeepSeek', 'Flash', 'BYOK', 'StoreKit']) {
+        expect(find.textContaining(banned), findsNothing);
+      }
+
+      await tester.tap(find.byKey(const Key('lifetime-switch-cloud-hint')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('plan-card-basic')), findsOneWidget);
+      expect(find.byKey(const Key('plan-card-pro')), findsOneWidget);
+      expect(find.byKey(const Key('credits-pack-section')), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('cycle-seg-monthly')));
       await tester.pumpAndSettle();
       expect(find.text('¥6.00'), findsOneWidget);
 
-      // 点击购买 Local Pro：先出现确认支付弹窗，再点确认发起购买
+      // 点击购买本地解锁版：先出现确认支付弹窗，再点确认发起购买
       final buyLocal = find.byKey(const Key('plan-buy-local'));
       await tester.ensureVisible(buyLocal);
       await tester.tap(buyLocal);
@@ -574,7 +590,7 @@ void main() {
       await tester.tap(find.byKey(const Key('paywall-sheet-confirm')));
       await tester.pumpAndSettle();
       expect(mem.tier, MembershipTier.localPro);
-      expect(find.text('当前方案'), findsOneWidget);
+      expect(find.text('当前方案'), findsNWidgets(2));
 
       // 滚到底部检查恢复购买、管理订阅、隐私政策与使用条款
       final memScroll = find
@@ -763,7 +779,7 @@ void main() {
 
       expect(find.byKey(const Key('paywall-purchase-sheet')), findsOneWidget);
       expect(find.text('确认订阅'), findsOneWidget);
-      expect(find.text('Apple App Store（StoreKit 2）'), findsOneWidget);
+      expect(find.text('Apple 支付'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('paywall-sheet-cancel')));
       await tester.pumpAndSettle();
@@ -788,14 +804,14 @@ void main() {
       expect(
         find.descendant(
           of: resultDialog,
-          matching: find.textContaining('未发起真实扣款'),
+          matching: find.text('支付示意'),
         ),
         findsOneWidget,
       );
       expect(
         find.descendant(
           of: resultDialog,
-          matching: find.textContaining('App Store 暂未返回该商品'),
+          matching: find.textContaining('未发起 Apple 扣款'),
         ),
         findsOneWidget,
       );
