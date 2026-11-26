@@ -4592,14 +4592,30 @@ async fn camera_list(active: &ActiveDevice) -> Result<Value, BridgeError> {
     }
 }
 
-/// 同步点一机 V1 硬件按键拍摄的照片（触发 `upload.start` 并从配网媒体服务拉取照片到本地 `dir`）。
+fn classify_dyj_media_kind(name: &str, kind_hint: Option<&str>) -> Option<&'static str> {
+    match kind_hint.map(str::trim) {
+        Some("photo") => return Some("photo"),
+        Some("video") => return Some("video"),
+        _ => {}
+    }
+    let low = name.trim().to_ascii_lowercase();
+    if low.ends_with(".jpg") || low.ends_with(".jpeg") {
+        Some("photo")
+    } else if low.ends_with(".mp4") || low.ends_with(".mov") {
+        Some("video")
+    } else {
+        None
+    }
+}
+
+/// 同步点一机 V1 硬件按键拍摄的照片与视频（触发 `upload.start` 并从配网媒体服务拉取媒体到本地 `dir`）。
 async fn camera_sync(
     active: &ActiveDevice,
     dir: &str,
     server_origin_override: Option<&str>,
 ) -> Result<Value, BridgeError> {
     let ActiveDevice::DyjV1 { device, meta, .. } = active else {
-        return Ok(json!({"photos": [], "pendingOnDevice": 0}));
+        return Ok(json!({"photos": [], "videos": [], "media": [], "pendingOnDevice": 0}));
     };
 
     let cam = device.camera_list().await.unwrap_or(Value::Null);
@@ -4609,33 +4625,30 @@ async fn camera_sync(
         .cloned()
         .unwrap_or_default();
     let mut mtime_by_name: HashMap<String, u64> = HashMap::new();
-    let photo_items: Vec<Value> = items
-        .into_iter()
-        .filter(|it| {
-            it.get("kind").and_then(Value::as_str) == Some("photo")
-                || it
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .is_some_and(|n| {
-                        let low = n.to_ascii_lowercase();
-                        low.ends_with(".jpg") || low.ends_with(".jpeg")
-                    })
-        })
-        .map(|it| {
-            if let (Some(n), Some(m)) = (
-                it.get("name").and_then(Value::as_str),
-                it.get("mtime").and_then(Value::as_u64),
-            ) {
+    let mut photo_items: Vec<Value> = Vec::new();
+    let mut video_items: Vec<Value> = Vec::new();
+    for it in items {
+        let name = it.get("name").and_then(Value::as_str).unwrap_or("");
+        let kind_hint = it.get("kind").and_then(Value::as_str);
+        let Some(media_kind) = classify_dyj_media_kind(name, kind_hint) else {
+            continue;
+        };
+        if let Some(m) = it.get("mtime").and_then(Value::as_u64) {
+            if !name.is_empty() {
                 if let Some(sec) = normalize_mtime_sec(m) {
-                    mtime_by_name.insert(n.to_string(), sec);
+                    mtime_by_name.insert(name.to_string(), sec);
                 }
             }
-            it
-        })
-        .collect();
+        }
+        if media_kind == "video" {
+            video_items.push(it);
+        } else {
+            photo_items.push(it);
+        }
+    }
 
-    // 若设备上有未上传照片且已连接 Wi-Fi，触发后台上传并短暂等待落盘后再查服务器列表
-    if !photo_items.is_empty() {
+    // 若设备上有未上传媒体且已连接 Wi-Fi，触发后台上传并短暂等待落盘后再查服务器列表
+    if !photo_items.is_empty() || !video_items.is_empty() {
         let wifi_st = device.wifi_status().await.unwrap_or(Value::Null);
         if is_dyj_wifi_connected(&wifi_st) {
             if device.upload_start(None).await.is_ok() {
@@ -4656,14 +4669,18 @@ async fn camera_sync(
     let device_id = resolve_dyj_device_id(device, meta).await;
     let origin = resolve_dyj_server_origin(device, server_origin_override).await;
 
-    let mut downloaded = Vec::new();
+    let mut downloaded_photos = Vec::new();
+    let mut downloaded_videos = Vec::new();
+    let mut downloaded_media = Vec::new();
     let dir_path = Path::new(dir);
     if let (Some(did), Some(orig)) = (device_id, origin) {
         if let Ok(server) = DyjV1ServerClient::new(&orig) {
             if let Ok(remote_list) = server.list_files(&did).await {
                 for rf in remote_list.files {
-                    let low = rf.name.to_ascii_lowercase();
-                    if (!low.ends_with(".jpg") && !low.ends_with(".jpeg")) || rf.size == 0 {
+                    let Some(media_type) = classify_dyj_media_kind(&rf.name, None) else {
+                        continue;
+                    };
+                    if rf.size == 0 {
                         continue;
                     }
                     if let Ok(sf) = atomic_download_dyj_server_file(
@@ -4677,14 +4694,21 @@ async fn camera_sync(
                     .await
                     {
                         let captured_at = mtime_by_name.get(&sf.name).copied();
-                        downloaded.push(json!({
+                        let entry = json!({
                             "name": sf.name,
                             "path": sf.path.to_string_lossy(),
                             "bytesWritten": sf.bytes_written,
                             "bytes": sf.bytes_written,
                             "capturedAt": captured_at,
                             "source": "dyj_camera",
-                        }));
+                            "mediaType": media_type,
+                        });
+                        if media_type == "video" {
+                            downloaded_videos.push(entry.clone());
+                        } else {
+                            downloaded_photos.push(entry.clone());
+                        }
+                        downloaded_media.push(entry);
                     }
                 }
             }
@@ -4692,9 +4716,12 @@ async fn camera_sync(
     }
 
     Ok(json!({
-        "photos": downloaded,
+        "photos": downloaded_photos,
+        "videos": downloaded_videos,
+        "media": downloaded_media,
         "devicePhotos": photo_items,
-        "pendingOnDevice": photo_items.len(),
+        "deviceVideos": video_items,
+        "pendingOnDevice": photo_items.len() + video_items.len(),
     }))
 }
 
@@ -8724,6 +8751,38 @@ mod tests {
         assert_eq!(
             normalized["recordingName"],
             "synced_1792393129_0140A9CA_03.apm"
+        );
+    }
+
+    #[test]
+    fn classifies_dyj_camera_photos_and_videos() {
+        assert_eq!(
+            classify_dyj_media_kind("IMG_001.JPG", None),
+            Some("photo")
+        );
+        assert_eq!(
+            classify_dyj_media_kind("shot.jpeg", None),
+            Some("photo")
+        );
+        assert_eq!(
+            classify_dyj_media_kind("video_20261126-100000_ABCD_01.mp4", None),
+            Some("video")
+        );
+        assert_eq!(
+            classify_dyj_media_kind("clip.MOV", None),
+            Some("video")
+        );
+        assert_eq!(
+            classify_dyj_media_kind("raw_blob", Some("video")),
+            Some("video")
+        );
+        assert_eq!(
+            classify_dyj_media_kind("raw_blob", Some("photo")),
+            Some("photo")
+        );
+        assert_eq!(
+            classify_dyj_media_kind("audio_20261126-100000.amr", None),
+            None
         );
     }
 }

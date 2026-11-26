@@ -45,7 +45,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "WC1122330005000000000001"
             BuildableName = "RecordingCardWatchApp.app"
-            BlueprintName = "RecordingCardWatchApp"
             ReferencedContainer = "container:Runner.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -62,7 +61,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "WC1122330005000000000001"
             BuildableName = "RecordingCardWatchApp.app"
-            BlueprintName = "RecordingCardWatchApp"
             ReferencedContainer = "container:Runner.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

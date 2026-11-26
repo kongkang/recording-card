@@ -1279,6 +1279,14 @@ class WatchCompositeCardGateway implements CardGateway {
       : bleGateway.syncCameraPhotos(dir, serverOrigin: serverOrigin);
 
   @override
+  Future<List<CameraSyncItem>> syncCameraMedia(
+    String dir, {
+    String? serverOrigin,
+  }) => _watchActive
+      ? Future<List<CameraSyncItem>>.value(const [])
+      : bleGateway.syncCameraMedia(dir, serverOrigin: serverOrigin);
+
+  @override
   Future<List<CardWifiNetwork>> scanWifi() => _watchActive
       ? Future<List<CardWifiNetwork>>.value(const [])
       : bleGateway.scanWifi();

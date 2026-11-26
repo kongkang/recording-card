@@ -1706,6 +1706,28 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.waitForSelector('[data-testid="mem-quota-card"]', { timeout: 3000 });
   await pCur.click('[data-testid="mem-sim-normal"]');
   await pCur.click('[data-testid="crumb-back"]');
+  // 当前版：硬件照片视频默认存相册开关 + iCloud 同步（默认关，可选音频/音频+文本/仅文本）
+  assert.equal(await pCur.$eval('[data-testid="sw-hw-album-save"]', x => x.getAttribute('aria-checked')), 'true');
+  assert.equal(await pCur.$eval('[data-testid="sv-icloud-sync"]', x => x.innerText.trim()), '已关闭');
+  await pCur.$eval('[data-testid="set-hw-album-save"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-hw-album-save"]');
+  assert.equal(await pCur.$eval('[data-testid="sw-hw-album-save"]', x => x.getAttribute('aria-checked')), 'false');
+  await pCur.click('[data-testid="set-hw-album-save"]');
+  assert.equal(await pCur.$eval('[data-testid="sw-hw-album-save"]', x => x.getAttribute('aria-checked')), 'true');
+  await pCur.$eval('[data-testid="set-icloud-sync"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-icloud-sync"]');
+  await pCur.waitForSelector('[data-testid="icloud-sync-toggle"]', { timeout: 3000 });
+  assert.equal(await pCur.$eval('[data-testid="sw-icloud-sync"]', x => x.getAttribute('aria-checked')), 'false');
+  await pCur.click('[data-testid="icloud-sync-toggle"]');
+  assert.equal(await pCur.$eval('[data-testid="sw-icloud-sync"]', x => x.getAttribute('aria-checked')), 'true');
+  await pCur.click('[data-testid="icloud-scope-audio"]');
+  assert(await pCur.$eval('[data-testid="icloud-status-text"]', x => x.innerText.includes('仅音频')));
+  await pCur.click('[data-testid="icloud-scope-text"]');
+  assert(await pCur.$eval('[data-testid="icloud-status-text"]', x => x.innerText.includes('仅转录文本')));
+  await pCur.click('[data-testid="icloud-scope-audio-text"]');
+  await pCur.click('[data-testid="icloud-sync-now-btn"]');
+  await pCur.click('[data-testid="crumb-back"]');
+  assert.equal(await pCur.$eval('[data-testid="sv-icloud-sync"]', x => x.innerText.trim()), '已开启 · 音频 + 转录文本');
   await pCur.close();
 
   assert.equal(errors.length, 0, errors.join(','));

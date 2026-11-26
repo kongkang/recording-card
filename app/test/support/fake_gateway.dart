@@ -73,6 +73,7 @@ class FakeCardGateway implements CardGateway {
     this.failMainOta,
     this.failWifiOta,
     this.cameraPhotos = const [],
+    this.cameraVideos = const [],
     this.fakeCapturedPhotoBytes,
     Map<String, String>? initialCardControls,
   }) : _initialSnapshot = initialSnapshot,
@@ -95,6 +96,8 @@ class FakeCardGateway implements CardGateway {
 
   /// syncCameraPhotos() 返回的硬件抓拍照片。
   List<CameraSyncItem> cameraPhotos;
+  /// syncCameraMedia() 额外返回的硬件录像条目。
+  List<CameraSyncItem> cameraVideos;
   int syncCameraCalls = 0;
 
   /// 测试用硬件抓拍字节（响应 `camera_capture_and_fetch`）。
@@ -688,9 +691,18 @@ class FakeCardGateway implements CardGateway {
     String dir, {
     String? serverOrigin,
   }) async {
+    final all = await syncCameraMedia(dir, serverOrigin: serverOrigin);
+    return all.where((item) => !item.isVideo).toList();
+  }
+
+  @override
+  Future<List<CameraSyncItem>> syncCameraMedia(
+    String dir, {
+    String? serverOrigin,
+  }) async {
     syncCameraCalls++;
     callLog.add('camera.sync');
-    return cameraPhotos;
+    return [...cameraPhotos, ...cameraVideos];
   }
 
   @override

@@ -9,6 +9,27 @@ import 'package:flutter/foundation.dart';
 import '../device/card_gateway.dart';
 import '../storage/storage.dart';
 
+/// iCloud 云盘同步内容范围（用户手动开启 iCloud 后可选）。
+enum ICloudSyncScope {
+  audioAndText('audio_and_text', '音频 + 转录文本'),
+  audioOnly('audio_only', '仅音频'),
+  textOnly('text_only', '仅转录文本');
+
+  const ICloudSyncScope(this.wireValue, this.label);
+
+  final String wireValue;
+  final String label;
+
+  bool get includesAudio => this == audioAndText || this == audioOnly;
+  bool get includesText => this == audioAndText || this == textOnly;
+
+  static ICloudSyncScope fromWire(String? raw) => switch (raw?.trim()) {
+    'audio_only' => audioOnly,
+    'text_only' => textOnly,
+    _ => audioAndText,
+  };
+}
+
 /// 硬件物理按键与侧边拨杆可绑定动作（固件事件上行或本地执行，App 侧解释/协同执行）。
 enum HardwareButtonAction {
   mark('mark', '打重点（Mark）', '重点'),
@@ -366,6 +387,9 @@ class AgentConfigStore extends ChangeNotifier {
   String customApiBase = '';
   bool developerMode = false;
   bool photoLinkEnabled = true;
+  bool saveHardwareMediaToAlbum = true;
+  bool icloudSyncEnabled = false;
+  ICloudSyncScope icloudSyncScope = ICloudSyncScope.audioAndText;
   bool islandEnabled = true;
   bool watchLinkEnabled = false;
   bool omiLinkEnabled = false;
@@ -771,6 +795,17 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['photoLinkEnabled'] is bool) {
       photoLinkEnabled = data['photoLinkEnabled'] as bool;
     }
+    if (data['saveHardwareMediaToAlbum'] is bool) {
+      saveHardwareMediaToAlbum = data['saveHardwareMediaToAlbum'] as bool;
+    }
+    if (data['icloudSyncEnabled'] is bool) {
+      icloudSyncEnabled = data['icloudSyncEnabled'] as bool;
+    }
+    if (data['icloudSyncScope'] is String) {
+      icloudSyncScope = ICloudSyncScope.fromWire(
+        data['icloudSyncScope'] as String,
+      );
+    }
     if (data['islandEnabled'] is bool) {
       islandEnabled = data['islandEnabled'] as bool;
     }
@@ -1049,6 +1084,30 @@ class AgentConfigStore extends ChangeNotifier {
   Future<void> setPhotoLinkEnabled(bool value) async {
     photoLinkEnabled = value;
     extensionStates = {...extensionStates, 'tl-photo': value};
+    notifyListeners();
+    await _save();
+  }
+
+  String get icloudSyncSummary =>
+      icloudSyncEnabled ? '已开启 · ${icloudSyncScope.label}' : '已关闭';
+
+  Future<void> setSaveHardwareMediaToAlbum(bool value) async {
+    if (saveHardwareMediaToAlbum == value) return;
+    saveHardwareMediaToAlbum = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setICloudSyncEnabled(bool value) async {
+    if (icloudSyncEnabled == value) return;
+    icloudSyncEnabled = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setICloudSyncScope(ICloudSyncScope scope) async {
+    if (icloudSyncScope == scope) return;
+    icloudSyncScope = scope;
     notifyListeners();
     await _save();
   }
@@ -1645,6 +1704,9 @@ class AgentConfigStore extends ChangeNotifier {
     byoAsrConnected = false;
     hotwords = const [];
     localOnlyMode = false;
+    saveHardwareMediaToAlbum = true;
+    icloudSyncEnabled = false;
+    icloudSyncScope = ICloudSyncScope.audioAndText;
     cardV2SliceMinutes = 3;
     cardV2SilenceStopMinutes = 30;
     notifyListeners();
@@ -1657,6 +1719,9 @@ class AgentConfigStore extends ChangeNotifier {
       if (customApiBase.isNotEmpty) 'customApiBase': customApiBase,
       if (developerMode) 'devMode': developerMode,
       'photoLinkEnabled': photoLinkEnabled,
+      'saveHardwareMediaToAlbum': saveHardwareMediaToAlbum,
+      'icloudSyncEnabled': icloudSyncEnabled,
+      'icloudSyncScope': icloudSyncScope.wireValue,
       'islandEnabled': islandEnabled,
       'watchLinkEnabled': watchLinkEnabled,
       'omiLinkEnabled': omiLinkEnabled,

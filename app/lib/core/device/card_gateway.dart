@@ -540,7 +540,7 @@ class CardDevice {
       capabilities ?? HardwareCapabilities.forKind(deviceKind);
 }
 
-/// 点一机 V1 硬件抓拍照片同步结果。
+/// 点一机 V1 硬件抓拍照片/视频同步结果。
 class CameraSyncItem {
   const CameraSyncItem({
     required this.name,
@@ -548,10 +548,18 @@ class CameraSyncItem {
     required this.bytesWritten,
     this.capturedAtSec,
     this.source = 'dyj_camera',
+    this.mediaType = 'photo',
   });
 
   factory CameraSyncItem.fromJson(Map<String, dynamic> json) {
     final name = (json['name'] as String?) ?? '';
+    final rawType = (json['mediaType'] as String?)?.trim().toLowerCase();
+    final lowName = name.toLowerCase();
+    final mediaType = (rawType == 'video' || rawType == 'photo')
+        ? rawType!
+        : ((lowName.endsWith('.mp4') || lowName.endsWith('.mov'))
+              ? 'video'
+              : 'photo');
     return CameraSyncItem(
       name: name,
       path: (json['path'] as String?) ?? '',
@@ -565,6 +573,7 @@ class CameraSyncItem {
           (json['createdAt'] as num?)?.toInt() ??
           _parseCapturedEpochSec(name),
       source: (json['source'] as String?) ?? 'dyj_camera',
+      mediaType: mediaType,
     );
   }
 
@@ -607,6 +616,9 @@ class CameraSyncItem {
   final int bytesWritten;
   final int? capturedAtSec;
   final String source;
+  final String mediaType; // 'photo' | 'video'
+
+  bool get isVideo => mediaType == 'video';
 }
 
 /// 断连结果：桥如实报告这次是否真的释放了 BLE 链路。
@@ -1235,6 +1247,12 @@ abstract class CardGateway {
     String dir, {
     String? serverOrigin,
   });
+
+  /// 点一机 V1 抓拍照片与录像同步到本地目录（非相机设备安全返回空列表）。
+  Future<List<CameraSyncItem>> syncCameraMedia(
+    String dir, {
+    String? serverOrigin,
+  }) => syncCameraPhotos(dir, serverOrigin: serverOrigin);
 
   Future<List<CardWifiNetwork>> scanWifi();
   Future<void> connectWifi(String ssid, String password);
@@ -2162,6 +2180,15 @@ class RealCardGateway implements CardGateway {
     String dir, {
     String? serverOrigin,
   }) async {
+    final all = await syncCameraMedia(dir, serverOrigin: serverOrigin);
+    return all.where((item) => !item.isVideo).toList();
+  }
+
+  @override
+  Future<List<CameraSyncItem>> syncCameraMedia(
+    String dir, {
+    String? serverOrigin,
+  }) async {
     final json = await _once(
       'camera.sync',
       {
@@ -2174,8 +2201,18 @@ class RealCardGateway implements CardGateway {
     final rawData = json['data'];
     final list = switch (rawData) {
       final List<dynamic> l => l,
-      final Map<String, dynamic> m => m['photos'] as List<dynamic>? ?? const [],
-      final Map<Object?, Object?> m => m['photos'] as List<dynamic>? ?? const [],
+      final Map<String, dynamic> m =>
+        (m['media'] as List<dynamic>?) ??
+            <dynamic>[
+              ...(m['photos'] as List<dynamic>? ?? const []),
+              ...(m['videos'] as List<dynamic>? ?? const []),
+            ],
+      final Map<Object?, Object?> m =>
+        (m['media'] as List<dynamic>?) ??
+            <dynamic>[
+              ...(m['photos'] as List<dynamic>? ?? const []),
+              ...(m['videos'] as List<dynamic>? ?? const []),
+            ],
       _ => const <dynamic>[],
     };
     return list
@@ -2358,6 +2395,11 @@ class UnsupportedCardGateway implements CardGateway {
   }) async => _fail();
   @override
   Future<List<CameraSyncItem>> syncCameraPhotos(
+    String dir, {
+    String? serverOrigin,
+  }) async => _fail();
+  @override
+  Future<List<CameraSyncItem>> syncCameraMedia(
     String dir, {
     String? serverOrigin,
   }) async => _fail();
@@ -2555,6 +2597,12 @@ class ActivityGateway implements CardGateway {
     String dir, {
     String? serverOrigin,
   }) => _run(() => _inner.syncCameraPhotos(dir, serverOrigin: serverOrigin));
+
+  @override
+  Future<List<CameraSyncItem>> syncCameraMedia(
+    String dir, {
+    String? serverOrigin,
+  }) => _run(() => _inner.syncCameraMedia(dir, serverOrigin: serverOrigin));
 
   @override
   Future<List<CardWifiNetwork>> scanWifi() => _run(_inner.scanWifi);
