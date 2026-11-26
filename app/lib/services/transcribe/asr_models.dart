@@ -19,6 +19,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
+import 'byo_asr_client.dart';
 import 'speech_models.dart';
 
 enum LocalModelKind { asr, vad, speakerSegmentation, speakerEmbedding }
@@ -423,10 +424,13 @@ class InstalledSpeechModelProvider implements SpeechModelProvider {
   InstalledSpeechModelProvider(
     this.installer, {
     Future<bool> Function()? useSystemAsr,
-  }) : _useSystemAsr = useSystemAsr;
+    Future<bool> Function()? useByoCloudAsr,
+  }) : _useSystemAsr = useSystemAsr,
+       _useByoCloudAsr = useByoCloudAsr;
 
   final ModelInstaller installer;
   final Future<bool> Function()? _useSystemAsr;
+  final Future<bool> Function()? _useByoCloudAsr;
 
   @override
   Future<SpeechModelPaths?> resolve() async {
@@ -444,6 +448,15 @@ class InstalledSpeechModelProvider implements SpeechModelProvider {
             campplusEmbeddingSpec.files.first.relPath,
           )
         : null;
+
+    if (await (_useByoCloudAsr?.call() ?? Future.value(false))) {
+      return SpeechModelPaths(
+        asrModelPath: kByoCloudSentinelModelPath,
+        tokensPath: '',
+        vadPath: vadPath,
+        speakerEmbeddingPath: embPath,
+      );
+    }
 
     if (await (_useSystemAsr?.call() ?? Future.value(false))) {
       return SpeechModelPaths(

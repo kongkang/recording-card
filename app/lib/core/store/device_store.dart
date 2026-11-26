@@ -14,6 +14,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -41,7 +42,7 @@ enum SyncState { idle, busy, done }
 /// 最近一次同步是谁触发的：自动（停止录音/后台）还是用户点同步行。
 enum SyncTrigger { auto, manual }
 
-enum DeviceView { main, upg, wifi, btn, more }
+enum DeviceView { main, upg, wifi, btn, more, v2cfg }
 
 /// 硬件端侧 TTS 播报结果。
 enum DyjSpeechOutcome { spoken, unsupported, unavailable }
@@ -141,6 +142,8 @@ class DeviceStore extends ChangeNotifier {
     _omiLinkEnabled = initialOmiLinkEnabled;
     _feishuLinkEnabled = initialFeishuLinkEnabled;
     _iflytekA1LinkEnabled = initialIflytekA1LinkEnabled;
+    _lastSyncedLocalOnly = _agentConfig?.localOnlyMode;
+    _agentConfig?.addListener(_onAgentConfigUpdated);
     _bindDownloadProgressActivity(_bleGateway);
     _gateway = WatchCompositeCardGateway(
       bleGateway: _bleGateway,
@@ -226,6 +229,24 @@ class DeviceStore extends ChangeNotifier {
   bool devicePowerBusy = false;
   String? devicePowerError;
   String _powerStatusText = '';
+  int _cardPendingFileCount = 0;
+  bool _apFastSyncBusy = false;
+  String? _apFastSyncError;
+  String? silenceStopNotice;
+  DateTime? _silenceWindowStartedAt;
+  bool _silenceStopInFlight = false;
+  bool? _lastSyncedLocalOnly;
+
+  /// V2 热点快传回调（注入 `AppStore.syncRecordingsViaAp`）。
+  Future<String?> Function()? onApFastSync;
+
+  bool get isCardV2 =>
+      isConnected && (activeKind == DeviceKind.cardV2 || isCardV2WifiOtaOnly);
+  int? get preferredHardwareSliceSecs =>
+      isCardV2 ? ((_agentConfig?.cardV2SliceMinutes ?? 3) * 60) : null;
+  int get cardPendingFileCount => _cardPendingFileCount;
+  bool get apFastSyncBusy => _apFastSyncBusy;
+  String? get apFastSyncError => _apFastSyncError;
 
   bool get hasRecentHardwareRecordOledPrompt =>
       _oledDelayTimer != null ||
@@ -233,10 +254,35 @@ class DeviceStore extends ChangeNotifier {
           _now().difference(_lastHardwareRecordOledAt!).abs() <
               const Duration(seconds: 2));
 
+  void _onAgentConfigUpdated() {
+    final cfg = _agentConfig;
+    if (cfg == null || _disposed) return;
+    if (_lastSyncedLocalOnly != cfg.localOnlyMode) {
+      _lastSyncedLocalOnly = cfg.localOnlyMode;
+      if (isCardV2) {
+        unawaited(_pushLocalOnlyConfigToCard(cfg.localOnlyMode));
+      }
+    }
+    notifyListeners();
+  }
+
+  Future<void> _pushLocalOnlyConfigToCard(bool on) async {
+    try {
+      await _gw.invokeBridgeCommand(
+        'device.set_config',
+        {'key': 'local_only', 'value': on ? '1' : '0'},
+        const Duration(seconds: 5),
+      );
+    } on Object catch (_) {}
+  }
+
   /// 挂载 AgentConfigStore：连接录音卡时读取/初始化默认按键与拨杆绑定。
   void attachAgentConfig(AgentConfigStore config) {
     if (identical(_agentConfig, config)) return;
+    _agentConfig?.removeListener(_onAgentConfigUpdated);
     _agentConfig = config;
+    _lastSyncedLocalOnly = config.localOnlyMode;
+    config.addListener(_onAgentConfigUpdated);
     if (isConnected) {
       unawaited(_syncCardControlsAndDisplayOnConnect(_epoch));
     }
@@ -1322,6 +1368,7 @@ class DeviceStore extends ChangeNotifier {
     _disconnectNotice = null;
     _pendingPostReconnectSync = false;
     _hwRecordingStartedAt = null;
+    _silenceWindowStartedAt = null;
     _clearPersistedLastDevice();
     if (isRecording) {
       try {
@@ -1595,6 +1642,7 @@ class DeviceStore extends ChangeNotifier {
     _disconnectNotice = null;
     _pendingPostReconnectSync = false;
     _hwRecordingStartedAt = null;
+    _silenceWindowStartedAt = null;
     _oledDelayTimer?.cancel();
     _oledDelayTimer = null;
     _heartbeatTimer?.cancel();
@@ -2535,6 +2583,7 @@ class DeviceStore extends ChangeNotifier {
     _liveRecording = false;
     _recordSession = null;
     _hwRecordingStartedAt = null;
+    _silenceWindowStartedAt = null;
     linkState = LinkState.disconnected;
     linkError = message;
     if (target != null && target.deviceKind != DeviceKind.appleWatch) {
@@ -2861,12 +2910,16 @@ class DeviceStore extends ChangeNotifier {
       }
       if (wantStart) {
         _pendingPhoneFailover = false;
+        silenceStopNotice = null;
       }
+      _silenceWindowStartedAt = null;
       // 用**明确的开始/停止**而不是 toggle：
       // toggle 依赖"App 认为的状态"与设备实际一致，一旦不一致（比如设备侧拨杆
       // 已开录、或状态推送丢失），再切就变成"停一条没在录的音" → 设备回 code -1/-2。
       // 硬超时也要有：设备无响应时必须给出明确结果，不能让开关永远停在"忙"。
-      final action = wantStart ? _gw.startRecording() : _gw.stopRecording();
+      final action = wantStart
+          ? _gw.startRecording(durationSecs: preferredHardwareSliceSecs)
+          : _gw.stopRecording();
       await action.timeout(const Duration(seconds: 15));
       await refreshFromDevice();
       if (wantStart && isRecording) {
@@ -3665,7 +3718,9 @@ class DeviceStore extends ChangeNotifier {
           ? _watchFailoverRecSec
           : (_phoneRecording ? _phoneRecSec : _pendingFailoverCarrySec);
       try {
-        await _gw.startRecording().timeout(const Duration(seconds: 10));
+        await _gw
+            .startRecording(durationSecs: preferredHardwareSliceSecs)
+            .timeout(const Duration(seconds: 10));
         final refreshed = await _gw.snapshot().timeout(_snapshotTimeout);
         _applySnapshot(refreshed);
       } on Object catch (e) {
@@ -3961,6 +4016,7 @@ class DeviceStore extends ChangeNotifier {
     _disconnectNotice = null;
     _pendingPostReconnectSync = false;
     _hwRecordingStartedAt = null;
+    _silenceWindowStartedAt = null;
     _lastDevice = null;
     _clearPersistedLastDevice();
     if (_watchFailoverRecording) {
@@ -4098,6 +4154,13 @@ class DeviceStore extends ChangeNotifier {
       return;
     }
 
+    if (_agentConfig?.localOnlyMode == true) {
+      syncState = SyncState.idle;
+      syncError = '已开启仅本机模式';
+      notifyListeners();
+      return;
+    }
+
     syncState = SyncState.busy;
     syncError = null;
     notifyListeners();
@@ -4135,6 +4198,9 @@ class DeviceStore extends ChangeNotifier {
     lastSyncTrigger = SyncTrigger.auto;
     syncState = SyncState.idle;
     notifyListeners();
+    if (isCardV2 && !isRecording) {
+      unawaited(refreshCardPendingCount(pushOled: true));
+    }
   }
 
   void _finishSync(SyncTrigger trigger) {
@@ -4142,12 +4208,164 @@ class DeviceStore extends ChangeNotifier {
     lastSyncTrigger = trigger;
     syncState = SyncState.done;
     notifyListeners();
+    if (isCardV2 && !isRecording) {
+      unawaited(refreshCardPendingCount(pushOled: true));
+    }
     _syncCooldown = true;
     Timer(const Duration(seconds: 10), () {
       _syncCooldown = false;
       syncState = SyncState.idle;
       notifyListeners();
     });
+  }
+
+  Future<void> refreshCardPendingCount({bool pushOled = false}) async {
+    if (!isCardV2 || isRecording || fwUpdating || _apFastSyncBusy) return;
+    final epoch = _epoch;
+    try {
+      final list = await _gw.files().timeout(const Duration(seconds: 8));
+      if (_disposed || epoch != _epoch) return;
+      _cardPendingFileCount = list.where((f) => f.isAudioRecording).length;
+      notifyListeners();
+      if (pushOled && activeCapabilities.hasOledDisplay) {
+        await showCardDisplayPrompt(
+          line1: _cardPendingFileCount > 0
+              ? '待传 $_cardPendingFileCount 段'
+              : '已同步',
+          line2: isRecording ? '录音中' : '就绪',
+          timeoutMs: 3500,
+        );
+      }
+    } on Object catch (_) {}
+  }
+
+  Future<void> triggerCardV2ApFastSync() async {
+    if (!isCardV2 || _apFastSyncBusy || fwUpdating) return;
+    if (isRecording) {
+      _apFastSyncError = '请先停止录音再使用热点快传';
+      notifyListeners();
+      return;
+    }
+    _apFastSyncBusy = true;
+    _apFastSyncError = null;
+    notifyListeners();
+    final epoch = _epoch;
+    try {
+      final callback = onApFastSync;
+      if (callback != null) {
+        final err = await callback();
+        if (err != null && err.isNotEmpty) {
+          _apFastSyncError = err;
+        }
+      } else {
+        final ap = await _gw.invokeBridgeCommand(
+          'ap.start',
+          const <String, dynamic>{},
+          const Duration(seconds: 20),
+        );
+        try {
+          final rawHost = (ap['ip'] as String?)?.trim();
+          final host =
+              (rawHost == null || rawHost.isEmpty) ? '192.168.4.1' : rawHost;
+          final list = await _gw.apFiles(host: host);
+          final tmp = await Directory.systemTemp.createTemp('rc_ap_');
+          try {
+            for (final f in list.where((x) => x.isAudioRecording)) {
+              await _gw.apDownload(
+                f.name,
+                tmp.path,
+                host: host,
+                expectedSize: f.size,
+                deleteAfterVerify: true,
+              );
+            }
+          } finally {
+            try {
+              await tmp.delete(recursive: true);
+            } on Object catch (_) {}
+          }
+        } finally {
+          try {
+            await _gw.invokeBridgeCommand(
+              'ap.stop',
+              const <String, dynamic>{},
+              const Duration(seconds: 10),
+            );
+          } on Object catch (_) {}
+        }
+      }
+    } on CardException catch (e) {
+      _apFastSyncError = e.message;
+    } on Object catch (e) {
+      _apFastSyncError = '$e';
+    } finally {
+      if (!_disposed && epoch == _epoch) {
+        _apFastSyncBusy = false;
+        if (_apFastSyncError == null) {
+          _cardPendingFileCount = 0;
+          await refreshCardPendingCount(pushOled: true);
+        }
+        notifyListeners();
+      }
+    }
+  }
+
+  void onRealtimePcmSamplesForSilenceCheck(List<int> pcmBytes) {
+    if (!isCardV2 || !isRecording || _silenceStopInFlight || pcmBytes.length < 2) {
+      return;
+    }
+    final limitMin = _agentConfig?.cardV2SilenceStopMinutes ?? 0;
+    if (limitMin <= 0) {
+      _silenceWindowStartedAt = null;
+      return;
+    }
+    final bytes = pcmBytes is Uint8List ? pcmBytes : Uint8List.fromList(pcmBytes);
+    final bd = ByteData.sublistView(bytes);
+    final sampleCount = bytes.length ~/ 2;
+    if (sampleCount <= 0) return;
+    var sumSq = 0.0;
+    for (var i = 0; i < sampleCount; i++) {
+      final s = bd.getInt16(i * 2, Endian.little).toDouble();
+      sumSq += s * s;
+    }
+    final rms = math.sqrt(sumSq / sampleCount);
+    final now = _now();
+    if (rms >= 220.0) {
+      _silenceWindowStartedAt = now;
+      return;
+    }
+    _silenceWindowStartedAt ??= now;
+    if (now.difference(_silenceWindowStartedAt!) >= Duration(minutes: limitMin)) {
+      unawaited(_triggerSilenceAutoStop(limitMin));
+    }
+  }
+
+  Future<void> _triggerSilenceAutoStop(int limitMin) async {
+    if (_silenceStopInFlight || !isConnected || !isRecording) return;
+    _silenceStopInFlight = true;
+    _silenceWindowStartedAt = null;
+    _phoneStandbyArmed = false;
+    try {
+      await _gw.stopRecording().timeout(const Duration(seconds: 10));
+      await refreshFromDevice();
+      if (!hasActiveRecording) {
+        _stopLiveActivity(force: true);
+      }
+      silenceStopNotice = '静音满 $limitMin 分钟，已自动停录';
+      if (activeCapabilities.hasOledDisplay) {
+        unawaited(
+          showCardDisplayPrompt(
+            line1: '已自动停录',
+            line2: '静音$limitMin分',
+            timeoutMs: 3500,
+          ),
+        );
+      }
+    } on Object catch (_) {
+    } finally {
+      _silenceStopInFlight = false;
+      notifyListeners();
+    }
   }
 
   /// 轮询设备同步状态直到 running=false 或超时（默认 60s）。
@@ -4296,6 +4514,9 @@ class DeviceStore extends ChangeNotifier {
     if (isConnected) {
       unawaited(refreshFromDevice());
       unawaited(prefetchSummaryInfo());
+      if (isCardV2 && !isRecording && !fwUpdating) {
+        unawaited(refreshCardPendingCount());
+      }
       if (fwStage == FwStage.failed) {
         unawaited(checkFirmware());
       }
@@ -5381,6 +5602,7 @@ class DeviceStore extends ChangeNotifier {
     if (_ownsPhoneMicRecorder) {
       _phoneMicRecorder.dispose();
     }
+    _agentConfig?.removeListener(_onAgentConfigUpdated);
     if (_ownsLegacyUpgrade) {
       legacyUpgrade.dispose();
     }

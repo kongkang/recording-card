@@ -112,6 +112,7 @@ class FakeCardGateway implements CardGateway {
   final Map<String, String> cardControls;
   int cardControlsGetCalls = 0;
   final List<Map<String, dynamic>> cardControlsSetCalls = [];
+  final Map<String, String> deviceConfigs = {};
 
   /// 录音卡 V2（CardV2）OLED 屏幕调用记录（`card_display.show`/`clear`）。
   final List<Map<String, dynamic>> displayShowCalls = [];
@@ -909,6 +910,17 @@ class FakeCardGateway implements CardGateway {
       case 'card_display.clear':
         displayClearCalls++;
         return {'supported': true, 'cleared': true};
+      case 'ap.start':
+        return {'ip': '192.168.4.1', 'ssid': 'DYJ_AP_TEST', 'port': 80};
+      case 'ap.stop':
+        return {'stopped': true};
+      case 'device.set_config':
+        final k = '${payload?['key'] ?? ''}'.trim();
+        final v = '${payload?['value'] ?? ''}'.trim();
+        if (k.isNotEmpty) {
+          deviceConfigs[k] = v;
+        }
+        return {'ok': true};
       case 'device.restart':
         restartCalls++;
         if (failRestart != null) throw failRestart!;

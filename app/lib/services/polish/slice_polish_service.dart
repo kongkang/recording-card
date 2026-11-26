@@ -39,11 +39,13 @@ class SlicePolishService {
     this.windowSize = 3,
     this.temperature = 0.2,
     bool Function()? ready,
+    List<String> Function()? hotwordsResolver,
   }) : _refiner = CloudSliceRefiner(
          chat: chat,
          model: model,
          modelResolver: modelResolver,
          temperature: temperature,
+         hotwordsResolver: hotwordsResolver,
        ),
        _ready = ready;
 
@@ -167,12 +169,14 @@ class CloudSliceRefiner implements SegmentRefiner {
     this.model = '',
     this.modelResolver,
     this.temperature = 0.2,
+    this.hotwordsResolver,
   });
 
   final ChatCompletion chat;
   final String model;
   final String Function()? modelResolver;
   final double temperature;
+  final List<String> Function()? hotwordsResolver;
 
   String get effectiveModel {
     final resolved = modelResolver?.call().trim() ?? '';
@@ -197,9 +201,16 @@ class CloudSliceRefiner implements SegmentRefiner {
   Future<List<RefinedSegment>> refine(List<RefineSegmentInput> window) async {
     if (window.isEmpty) return const [];
     final resolvedModel = effectiveModel;
+    final cleanHotwords = [
+      for (final w in (hotwordsResolver?.call() ?? const <String>[]))
+        if (w.trim().isNotEmpty) w.trim(),
+    ];
+    final sysPrompt = cleanHotwords.isEmpty
+        ? _systemPrompt
+        : '$_systemPrompt\n专有名词与热词参考（仅在语境对应同音/近音误字时纠正为以下词条，未提及切勿强行插入）：${cleanHotwords.join('、')}';
     final content = await chat.complete(
       [
-        const ChatMessage(role: 'system', content: _systemPrompt),
+        ChatMessage(role: 'system', content: sysPrompt),
         ChatMessage(role: 'user', content: jsonEncode(_payload(window))),
       ],
       model: resolvedModel,

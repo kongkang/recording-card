@@ -693,7 +693,8 @@ class RollingCleanSegmentService {
   }
 
   String _buildSystemPrompt() {
-    final customStyle = _agentConfig?.promptFor('polish').trim() ?? '';
+    final customStyle =
+        _agentConfig?.effectivePromptFor('polish').trim() ?? '';
     final skills = _agentConfig?.enabledSkillRules ?? const <String>[];
     final buf = StringBuffer()
       ..writeln(

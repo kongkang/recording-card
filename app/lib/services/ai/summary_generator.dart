@@ -93,7 +93,7 @@ class SummaryGenerator {
     List<String> knownSpeakerNames = const [],
   }) {
     final cfg = _agentConfig;
-    final customRole = cfg?.promptFor('summary').trim() ?? '';
+    final customRole = cfg?.effectivePromptFor('summary').trim() ?? '';
     final skillLines = cfg?.enabledSkillRules ?? const <String>[];
     final baseRole = customRole.isNotEmpty
         ? customRole

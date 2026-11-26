@@ -484,6 +484,10 @@ class _StatusSheetOverlayState extends State<StatusSheetOverlay>
                         store: store,
                         agentConfig: widget.agentConfig,
                       ),
+                      DeviceView.v2cfg => _V2RecConfigView(
+                        store: store,
+                        agentConfig: widget.agentConfig,
+                      ),
                       DeviceView.more =>
                         store.isConnected
                             ? _MoreView(store: store)
@@ -982,6 +986,107 @@ class _MainView extends StatelessWidget {
               ],
             ),
           ),
+        if (store.isCardV2) ...[
+          _Row(
+            keyName: 'card-v2-ap-fast-btn',
+            label: '热点快传',
+            onTap: store.apFastSyncBusy
+                ? null
+                : () => unawaited(store.triggerCardV2ApFastSync()),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    store.apFastSyncBusy
+                        ? '正在快传…'
+                        : (store.cardPendingFileCount > 0
+                              ? '待传 ${store.cardPendingFileCount} 段'
+                              : '已同步'),
+                    key: const Key('card-v2-oled-pending'),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: TextStyle(fontSize: 14, color: c.label),
+                  ),
+                ),
+                const SizedBox(width: 5),
+                if (store.apFastSyncBusy)
+                  const SizedBox(width: 15, height: 15, child: _SpinIcon())
+                else
+                  RCIcon(RCIconKind.chevronRight, size: 15, color: c.ax),
+              ],
+            ),
+          ),
+          if (store.apFastSyncError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                store.apFastSyncError!,
+                key: const Key('card-v2-ap-fast-error'),
+                style: TextStyle(fontSize: 12, color: c.danger),
+              ),
+            ),
+          if (agentConfig != null)
+            ListenableBuilder(
+              listenable: agentConfig!,
+              builder: (context, _) {
+                final sliceMin = agentConfig!.cardV2SliceMinutes;
+                final silenceMin = agentConfig!.cardV2SilenceStopMinutes;
+                return _Row(
+                  keyName: 'card-v2-guard-row',
+                  label: '录音设置',
+                  onTap: () => store.showView(DeviceView.v2cfg),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          '$sliceMin 分钟 · ${silenceMin > 0 ? '静音 $silenceMin 分停' : '不限静音'}',
+                          key: const Key('v2-cfg-val'),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                          style: TextStyle(fontSize: 14, color: c.label),
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      RCIcon(RCIconKind.chevronRight, size: 15, color: c.ax),
+                    ],
+                  ),
+                );
+              },
+            )
+          else
+            _Row(
+              keyName: 'card-v2-guard-row',
+              label: '录音设置',
+              onTap: () => store.showView(DeviceView.v2cfg),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      '3 分钟 · 静音 30 分停',
+                      key: const Key('v2-cfg-val'),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: TextStyle(fontSize: 14, color: c.label),
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  RCIcon(RCIconKind.chevronRight, size: 15, color: c.ax),
+                ],
+              ),
+            ),
+          if (store.silenceStopNotice != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                store.silenceStopNotice!,
+                key: const Key('card-v2-silence-notice'),
+                style: TextStyle(fontSize: 12, color: c.warn),
+              ),
+            ),
+        ],
         if (showWifiRow && store.showMainWifiRow)
           _Row(
             keyName: 'wifi-row',
@@ -3261,6 +3366,163 @@ Future<void> _confirmShutdown(BuildContext context, DeviceStore store) async {
   );
   if (!ok) return;
   await store.shutdownDevice();
+}
+
+class _V2RecConfigView extends StatelessWidget {
+  const _V2RecConfigView({required this.store, this.agentConfig});
+
+  final DeviceStore store;
+  final AgentConfigStore? agentConfig;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    Widget buildBody() {
+      final sliceMin = agentConfig?.cardV2SliceMinutes ?? 3;
+      final silenceMin = agentConfig?.cardV2SilenceStopMinutes ?? 30;
+      return Column(
+        key: const Key('dev-v2cfg'),
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                key: const Key('v2cfg-back'),
+                onPressed: () => store.showView(DeviceView.main),
+                icon: RCIcon(
+                  RCIconKind.chevronLeft,
+                  size: 18,
+                  color: c.ink,
+                ),
+                color: c.ink,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '录音设置',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                  color: c.label,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '分片时长',
+            style: TextStyle(fontSize: 12, color: c.sec),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: c.sep),
+            ),
+            child: Column(
+              children: [
+                for (final (idx, mins) in const [1, 3, 5, 10].indexed) ...[
+                  if (idx > 0) Divider(height: 1, thickness: 1, color: c.sep),
+                  InkWell(
+                    key: Key('card-slice-opt-$mins'),
+                    onTap: () =>
+                        unawaited(agentConfig?.setCardV2SliceMinutes(mins)),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 11,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '$mins 分钟',
+                              style: TextStyle(fontSize: 14, color: c.label),
+                            ),
+                          ),
+                          Icon(
+                            sliceMin == mins
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_off,
+                            size: 19,
+                            color: sliceMin == mins ? c.ok : c.ax,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            '静音自动停录',
+            style: TextStyle(fontSize: 12, color: c.sec),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: c.sep),
+            ),
+            child: Column(
+              children: [
+                for (final (idx, mins, label) in const [
+                  (0, 0, '关闭'),
+                  (1, 30, '30 分钟'),
+                  (2, 60, '60 分钟'),
+                ]) ...[
+                  if (idx > 0) Divider(height: 1, thickness: 1, color: c.sep),
+                  InkWell(
+                    key: Key('card-silence-opt-$mins'),
+                    onTap: () => unawaited(
+                      agentConfig?.setCardV2SilenceStopMinutes(mins),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 11,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              label,
+                              style: TextStyle(fontSize: 14, color: c.label),
+                            ),
+                          ),
+                          Icon(
+                            silenceMin == mins
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_off,
+                            size: 19,
+                            color: silenceMin == mins ? c.ok : c.ax,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (agentConfig != null) {
+      return ListenableBuilder(
+        listenable: agentConfig!,
+        builder: (context, _) => buildBody(),
+      );
+    }
+    return buildBody();
+  }
 }
 
 class _Chip extends StatelessWidget {

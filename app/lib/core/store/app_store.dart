@@ -1526,7 +1526,21 @@ class AppStore extends ChangeNotifier {
   }
 
   /// v2 流水线同步：真实进度来自下载/切片/转写/润色/分段。
-  Future<String?> _syncWithPipeline(RecordingPipeline pipeline) async {
+  /// 经卡端 SoftAP 热点一键极速取回离线录音并走完整校准/转写管线。
+  Future<String?> syncRecordingsViaAp() async {
+    final pipeline = _pipeline;
+    if (pipeline == null) {
+      syncError = '录音同步未就绪，请稍后重试';
+      notifyListeners();
+      return syncError;
+    }
+    return _syncWithPipeline(pipeline, useApFast: true);
+  }
+
+  Future<String?> _syncWithPipeline(
+    RecordingPipeline pipeline, {
+    bool useApFast = false,
+  }) async {
     if (pipeline.isBusy) {
       syncError = '处理已在进行中';
       notifyListeners();
@@ -1535,7 +1549,7 @@ class AppStore extends ChangeNotifier {
     syncError = null;
     syncStage = SyncStage.listing;
     syncProgress = 0;
-    syncText = '正在读取录音卡文件列表…';
+    syncText = useApFast ? '正在开启卡片热点极速同步…' : '正在读取录音卡文件列表…';
     _status?.startSync(detail: syncText, progress: 0);
     notifyListeners();
     try {
@@ -1544,6 +1558,7 @@ class AppStore extends ChangeNotifier {
       );
       final report = await pipeline.sync(
         onProgress: _onPipelineProgress,
+        useApFast: useApFast,
         onFileReady: (_) async {
           if (!_disposed) await refreshFromStore();
         },

@@ -117,8 +117,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await p.$eval('[data-testid="card-daily-1"]', x => x.innerText.includes('昨日睡前日记') && x.innerText.includes('已标注')));
   assert.equal(await p.$eval('[data-testid="tbc-daily"]', x => x.innerText.trim()), 'TBC');
   assert.equal(await p.$('[data-testid="tbc-slice-merge"]'), null);
-  assert.equal(await p.$('[data-testid="nc-btn"]'), null, '行为与健康信号已落地，index.html 不再展示 NC 胶囊');
-  assert.equal(await p.$$eval('.nc-badge', x => x.length), 0, 'index.html 不再展示行为与健康信号 NC 徽标');
+  assert.equal(await p.$('[data-testid="nc-btn"]'), null, '已落地后 index.html 顶栏不应再展示 NC 胶囊');
+  assert.equal(await p.$$eval('.nc-badge', x => x.length), 0, '已落地后 index.html 不应再展示 NC 徽标');
   assert(await p.$('[data-testid="set-health-location"]'), 'index.html 应包含定位与健康采集行');
   assert.equal(await p.$('[data-testid="nc-merge-panel"]'), null);
   assert(await p.$eval('[data-testid="ev-merge-badge-e1"]', x => x.innerText.includes('已合并 6 分片')));
@@ -278,7 +278,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="raw-audio-delete-cancel"]');
   assert.equal(await p.$('[data-testid="raw-audio-delete-confirm"]'), null);
   await p.click('[data-testid="raw-audio-delete"]');
-  await p.click('[data-testid="raw-audio-delete-confirm"]');
+  await p.$eval('[data-testid="raw-audio-delete-confirm"]', x => x.click());
   assert(await p.$eval('[data-testid="raw-audio-cleared"]', x => x.innerText.includes('原始录音已清理')));
   assert.equal(await p.$('[data-testid="raw-audio-player"]'), null, '清理后不应假装还能播');
   await shot('raw-data');
@@ -684,6 +684,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="cloud-use-configured"]');
   await p.click('[data-testid="crumb-back"]');
   assert.equal(await p.$eval('#sv-cloud', x => x.innerText.trim()), 'DeepSeek');
+  await p.$eval('[data-testid="setting-version"]', x => x.scrollIntoView({ block: 'center' }));
   for (let i = 0; i < 7; i++) {
     await p.click('[data-testid="setting-version"]');
   }
@@ -774,7 +775,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert.equal(await p.$('#parity-tabs'), null, '清理后不再保留 App 超前对比分页');
   assert.equal(await p.$$eval('#parity-list .p-item', x => x.length), 11);
   await p.evaluate(() => closeParity());
-  assert.equal(await p.$('[data-testid="nc-btn"]'), null, '行为与健康信号落地后不再保留 NC 胶囊');
+  assert.equal(await p.$('[data-testid="nc-btn"]'), null);
+  assert.equal(await p.$$eval('.nc-badge', x => x.length), 0);
   await p.click('[data-testid="hw-capsule"]');
   assert(await p.$eval('#sheet', x => x.classList.contains('show')));
   // 默认未连接：弹层先给连接引导，自动扫描三款自有硬件（DYJ* / REAI_VB_*），按 RSSI 从强到弱
@@ -840,7 +842,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await p.click('[data-testid="toggle-charge-btn"]');
   assert.equal(await p.$$eval('.batt.charging [data-testid="batt-bolt"]', x => x.filter(el => getComputedStyle(el).display !== 'none').length), 2);
   await p.click('[data-testid="toggle-charge-btn"]');
-  assert.equal(await p.$$eval('#dev-main .row', x => x.length), 5);
+  assert.equal(await p.$$eval('#dev-main .row', x => x.length), 7);
   assert.equal(await p.$$eval('.batt', x => x.length), 2);
   assert.equal(await p.$$eval('.batt svg', x => x.length), 2);
   assert(['inline-flex', 'flex'].includes(await p.$eval('.recval', x => getComputedStyle(x).display)));
@@ -1184,8 +1186,8 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$('[data-testid="ai-chat-clear"]'));
   await pCur.click('[data-testid="ai-space-close"]');
   assert(!(await pCur.$eval('#ai-space', x => x.classList.contains('show'))));
-  assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, 'current.html 行为与健康信号已落地，不再展示 NC 胶囊');
-  assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0, 'current.html 不再展示 NC 徽标');
+  assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, '已落地后 current.html 不应展示 NC 胶囊');
+  assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0, '已落地后 current.html 不应展示 NC 徽标');
   assert.equal(await pCur.$$eval('.card[data-kind="daily"], .card[data-kind="dream"]', x => x.length), 0);
   assert(!(await pCur.evaluate(() => document.body.innerText.includes('模拟') || document.body.innerText.includes('演示'))));
   // 验证当前版同样具备：总结卡左下图片数、未归类双列正方形详情页与「不归类」按钮、总结正文自然穿插配图
@@ -1238,7 +1240,33 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.click('[data-testid="crumb-back"]');
   // 验证「当前版」已落地清单、合并分片徽标及声纹管理（5 常用槽位含我的声音+单独录音 / 不限人数人物库）
   assert.equal(await pCur.$eval('[data-testid="ver-switch-target"]', x => x.innerText.trim()), '目标版·11');
-  assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, 'current.html 不再保留 NC 待确认胶囊');
+  assert.equal(await pCur.$('[data-testid="nc-btn"]'), null, '已落地后 current.html 顶栏应已摘除 NC 胶囊');
+  assert.equal(await pCur.$$eval('.nc-badge', x => x.length), 0, 'current.html 全局不应保留 NC 徽标');
+  await pCur.click('[data-testid="nav-setting"]');
+  await pCur.$eval('[data-testid="set-local-model"]', x => x.scrollIntoView({ block: 'center' }));
+  await pCur.click('[data-testid="set-local-model"]');
+  await pCur.click('[data-testid="asr-opt-byo-cloud"]');
+  assert(await pCur.$eval('#p-setsub', x => x.classList.contains('show')));
+  assert(await pCur.$eval('[data-testid="asr-opt-byo-cloud"]', x => x.classList.contains('on')));
+  assert(await pCur.$('[data-testid="nc-byo-asr-card"]'));
+  await pCur.click('[data-testid="byo-asr-save-btn"]');
+  assert(await pCur.$eval('[data-testid="byo-asr-status"]', x => x.innerText.includes('已连接')));
+  assert(await pCur.$eval('#sv-local', x => x.innerText.includes('Qwen3-ASR-0.6B')));
+  await pCur.click('[data-testid="asr-opt-system"]');
+  assert.equal(await pCur.$eval('#sv-local', x => x.innerText.trim()), '系统内置 · 即用');
+  assert(await pCur.$('[data-testid="nc-hotwords-card"]'));
+  const hwCountBefore = await pCur.$$eval('#hotwords-list > span', xs => xs.length);
+  await pCur.type('[data-testid="hotword-inp"]', '端侧热词校准');
+  await pCur.click('[data-testid="hotword-add-btn"]');
+  assert(await pCur.$eval('#hotwords-list', x => x.innerText.includes('端侧热词校准')));
+  await pCur.click('[data-testid="hotword-del-5"]');
+  assert.equal(await pCur.$$eval('#hotwords-list > span', xs => xs.length), hwCountBefore);
+  await pCur.click('[data-testid="crumb-back"]');
+  await pCur.click('[data-testid="sw-privacy-lock"]');
+  assert.equal(await pCur.$eval('[data-testid="sw-privacy-lock"]', x => x.getAttribute('aria-checked')), 'true');
+  await pCur.click('[data-testid="sw-privacy-lock"]');
+  assert.equal(await pCur.$eval('[data-testid="sw-privacy-lock"]', x => x.getAttribute('aria-checked')), 'false');
+  await pCur.click('[data-testid="nav-timeline"]');
   await pCur.click('[data-testid="parity-btn"]');
   assert(await pCur.$eval('#parity-wrap', x => x.classList.contains('show')));
   assert((await pCur.$$eval('#parity-list .p-item', x => x.length)) >= 9);
@@ -1346,6 +1374,19 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   await pCur.waitForFunction(() => !document.getElementById('dev-main').hidden, { timeout: 5000 });
   assert.equal(await pCur.$('#dev-main [data-testid="phone-rec-main-row"]'), null, 'current.html 已连硬件不应显示本机录音行');
   assert(await pCur.$eval('[data-testid="wifi-row"]', x => x.hidden === true), 'current.html 录音卡 V2 主弹层默认隐藏 Wi-Fi 行');
+  assert(await pCur.$eval('#row-v2-ap', x => !x.hidden) && await pCur.$eval('#row-v2-cfg', x => !x.hidden), '连接录音卡 V2 时应展示热点快传与录音设置单行');
+  await pCur.click('[data-testid="card-v2-ap-fast-btn"]');
+  assert.equal(await pCur.$eval('[data-testid="card-v2-oled-pending"]', x => x.innerText.trim()), '已同步');
+  await pCur.click('[data-testid="card-v2-guard-row"]');
+  assert(await pCur.$eval('#dev-v2cfg', x => !x.hidden));
+  await pCur.click('[data-testid="card-slice-opt-5"]');
+  assert(await pCur.$eval('[data-testid="card-slice-opt-5"]', x => x.classList.contains('on')));
+  await pCur.click('[data-testid="card-silence-opt-60"]');
+  assert(await pCur.$eval('[data-testid="card-silence-opt-60"]', x => x.classList.contains('on')));
+  await pCur.click('[data-testid="v2cfg-back"]');
+  assert(await pCur.$eval('#dev-main', x => !x.hidden));
+  assert(await pCur.$eval('#v2-cfg-val', x => x.innerText.includes('5 分钟 · 静音 60 分停')));
+  await pCur.evaluate(() => { agCfg.cardSliceMin = 3; agCfg.cardSilenceStopMin = 30; agCfg.cardPendingSegs = 3; syncCardV2GuardUI(); });
   await pCur.click('[data-testid="fw-update"]');
   assert(await pCur.$eval('[data-testid="upg-wifi-row"]', x => !x.hidden && x.textContent.includes('已配置')));
   await pCur.click('[data-testid="upg-wifi-row"]');
@@ -1414,6 +1455,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$eval('#row-sync', x => !x.hidden));
   assert(await pCur.$eval('#row-wifi', x => x.hidden));
   assert(await pCur.$eval('#row-fw', x => x.hidden));
+  assert(await pCur.$eval('#row-v2-ap', x => x.hidden) && await pCur.$eval('#row-v2-cfg', x => x.hidden), '非 V2 硬件应隐藏 V2 热点快传与录音设置');
   assert(await pCur.$eval('#row-batt', x => !x.innerText.includes('%') && !x.innerText.includes('已充满')));
   await pCur.click('[data-testid="rec-toggle"]');
   assert.deepEqual(await pCur.evaluate(() => ({ hw: rec.on, phone: phoneRec.on, standby: phoneRec.standby })), { hw: true, phone: false, standby: true });
@@ -1466,6 +1508,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$eval('#row-sync', x => !x.hidden));
   assert(await pCur.$eval('#row-wifi', x => x.hidden));
   assert(await pCur.$eval('#row-fw', x => x.hidden));
+  assert(await pCur.$eval('#row-v2-ap', x => x.hidden) && await pCur.$eval('#row-v2-cfg', x => x.hidden), '非 V2 硬件应隐藏 V2 热点快传与录音设置');
   await pCur.click('[data-testid="dev-disconnect"]');
   await pCur.click('[data-testid="disconnect-confirm"]');
   await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
@@ -1489,6 +1532,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$eval('#row-sync', x => !x.hidden));
   assert(await pCur.$eval('#row-wifi', x => x.hidden));
   assert(await pCur.$eval('#row-fw', x => x.hidden));
+  assert(await pCur.$eval('#row-v2-ap', x => x.hidden) && await pCur.$eval('#row-v2-cfg', x => x.hidden), '非 V2 硬件应隐藏 V2 热点快传与录音设置');
   await pCur.click('[data-testid="dev-disconnect"]');
   await pCur.click('[data-testid="disconnect-confirm"]');
   await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });
@@ -1512,6 +1556,7 @@ if (!exe) { console.error('未找到 Chrome，可用 CHROME_PATH 指定'); proce
   assert(await pCur.$eval('#row-sync', x => !x.hidden));
   assert(await pCur.$eval('#row-wifi', x => x.hidden));
   assert(await pCur.$eval('#row-fw', x => x.hidden));
+  assert(await pCur.$eval('#row-v2-ap', x => x.hidden) && await pCur.$eval('#row-v2-cfg', x => x.hidden), '非 V2 硬件应隐藏 V2 热点快传与录音设置');
   await pCur.click('[data-testid="dev-disconnect"]');
   await pCur.click('[data-testid="disconnect-confirm"]');
   await pCur.waitForFunction(() => !document.getElementById('dev-connect').hidden, { timeout: 5000 });

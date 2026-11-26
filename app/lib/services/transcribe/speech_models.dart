@@ -1,6 +1,8 @@
 /// 本地模型路径解析接缝 —— 管线只关心"四个模型文件在哪"，不关心下载/安装。
 library;
 
+import 'byo_asr_client.dart';
+
 /// 当启用 iOS 26+ 系统自带语音识别时使用的哨兵模型路径。
 const String kSystemSpeechSentinelModelPath = '__ios_system_speech__';
 
@@ -20,10 +22,13 @@ class SpeechModelPaths {
   final String? speakerEmbeddingPath;
 
   bool get usesSystemAsr => asrModelPath == kSystemSpeechSentinelModelPath;
+  bool get usesByoCloudAsr => asrModelPath == kByoCloudSentinelModelPath;
 
   bool get canTranscribe =>
       vadPath.isNotEmpty &&
-      (usesSystemAsr || (asrModelPath.isNotEmpty && tokensPath.isNotEmpty));
+      (usesSystemAsr ||
+          usesByoCloudAsr ||
+          (asrModelPath.isNotEmpty && tokensPath.isNotEmpty));
 
   bool get canLabelSpeakers =>
       speakerEmbeddingPath != null && speakerEmbeddingPath!.isNotEmpty;

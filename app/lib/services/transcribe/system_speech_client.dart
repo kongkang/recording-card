@@ -11,13 +11,15 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
+import '../../core/store/agent_config_store.dart';
+import 'byo_asr_client.dart';
 import 'local_asr_service.dart';
 import 'slice_planner.dart';
 import 'speech_engine.dart';
 import 'speech_models.dart';
 import 'wav_io.dart';
 
-enum LocalAsrEngineMode { system, sensevoice }
+enum LocalAsrEngineMode { system, sensevoice, byoCloud }
 
 class SystemSpeechCapabilities {
   const SystemSpeechCapabilities({
@@ -358,15 +360,21 @@ class RoutingSpeechEngine implements SpeechEngine {
   RoutingSpeechEngine({
     required this.localEngine,
     required this.systemSpeech,
+    this.byoAsr,
+    this.agentConfig,
   });
 
   final SpeechEngine localEngine;
   final SystemSpeechClient systemSpeech;
+  final ByoAsrClient? byoAsr;
+  final AgentConfigStore? agentConfig;
 
   bool _activeIsSystem = false;
+  bool _activeIsByoCloud = false;
   String _language = 'auto';
 
   bool get activeIsSystem => _activeIsSystem;
+  bool get activeIsByoCloud => _activeIsByoCloud;
 
   @override
   Future<void> load({
@@ -376,6 +384,17 @@ class RoutingSpeechEngine implements SpeechEngine {
     int numThreads = 2,
   }) async {
     _language = language;
+    if (modelPath == kByoCloudSentinelModelPath) {
+      _activeIsByoCloud = true;
+      _activeIsSystem = false;
+      final local = localEngine;
+      if (local is LocalAsrService && local.isLoaded) {
+        await local.unload();
+      }
+      return;
+    }
+
+    _activeIsByoCloud = false;
     if (modelPath == kSystemSpeechSentinelModelPath) {
       final auth = await systemSpeech.requestAuthorization();
       if (auth == 'denied' || auth == 'restricted') {
@@ -406,6 +425,26 @@ class RoutingSpeechEngine implements SpeechEngine {
     int sampleRate = 16000,
     String? wavPath,
   }) async {
+    if (_activeIsByoCloud) {
+      final client = byoAsr;
+      final cfg = agentConfig;
+      if (client == null ||
+          cfg == null ||
+          cfg.byoAsrUrl.trim().isEmpty ||
+          !cfg.byoAsrConnected) {
+        throw const AsrException('请先配置并连接自建转写服务');
+      }
+      return client.transcribeSamples(
+        samples,
+        baseUrl: cfg.byoAsrUrl,
+        model: cfg.byoAsrModel,
+        apiKey: cfg.byoAsrApiKey,
+        hotwords: cfg.hotwords,
+        sampleRate: sampleRate,
+        language: _language,
+        wavPath: wavPath,
+      );
+    }
     if (_activeIsSystem) {
       return systemSpeech.transcribeSamples(
         samples,
