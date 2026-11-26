@@ -32,6 +32,7 @@ import '../services/auth_service.dart';
 import '../services/external_data/external_data_hub_store.dart';
 import '../services/external_data/getnote_sync_store.dart';
 import '../services/health/health_signal_controller.dart';
+import '../services/media/media_backup_service.dart';
 import '../services/net/model_gateway.dart';
 import '../services/net/model_provider_store.dart';
 import '../services/photos/photo_library_service.dart';
@@ -57,6 +58,7 @@ class SettingPage extends StatefulWidget {
     this.agentConfig,
     this.authService,
     this.photoLibrary,
+    this.mediaBackup,
     this.healthSignals,
     this.getNoteStore,
     this.externalDataHub,
@@ -86,6 +88,9 @@ class SettingPage extends StatefulWidget {
 
   /// 系统相册权限与对齐导入服务（默认走 PhotoKit 通道）。
   final PhotoLibraryService? photoLibrary;
+
+  /// 媒体备份协调器（iCloud 同步与本机文件导出状态）。
+  final MediaBackupService? mediaBackup;
 
   /// 本机健康与位置采集。未注入时设置行仍可进入，子页提示服务未装载。
   final HealthSignalController? healthSignals;
@@ -145,6 +150,7 @@ class _SettingPageState extends State<SettingPage> {
             )
           : ExternalDataHubStore.instance);
   String? _photoImportHint;
+  String? _hwAlbumHint;
   CrashRecord? _lastCrash;
   int _versionTapCount = 0;
   DateTime? _lastVersionTapAt;
@@ -350,6 +356,7 @@ class _SettingPageState extends State<SettingPage> {
           modelGateway: widget.modelGateway,
           authService: widget.authService,
           healthSignals: widget.healthSignals,
+          mediaBackup: widget.mediaBackup,
           getNoteStore: _getNoteStore,
           externalDataHub: _externalDataHub,
           uiStyle: widget.uiStyle ?? UIStyleScope.maybeOf(context),
@@ -441,6 +448,56 @@ class _SettingPageState extends State<SettingPage> {
         _photoImportHint = '已开启 · 已自动对齐 $added 张照片';
       });
     }
+  }
+
+  Future<void> _toggleHwAlbumSave(BuildContext context) async {
+    if (_agent.saveHardwareMediaToAlbum) {
+      if (mounted) {
+        setState(() => _hwAlbumHint = null);
+      }
+      await _agent.setSaveHardwareMediaToAlbum(false);
+      return;
+    }
+
+    final photoLib = widget.photoLibrary ?? const PhotoLibraryService();
+    var status = await photoLib.checkAddPermission();
+    if (status != PhotoPermissionState.granted) {
+      if (!context.mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          key: const Key('hw-album-perm-dialog'),
+          title: const Text('允许存入系统相册'),
+          content: const Text(
+            '开启后，点一机等硬件拍摄的照片与视频会自动保存到系统「照片」相册，防止卸载 App 后数据丢失。',
+          ),
+          actions: <Widget>[
+            TextButton(
+              key: const Key('hw-album-perm-cancel'),
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              key: const Key('hw-album-perm-grant'),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('前往授权'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      status = await photoLib.requestAddPermission();
+      if (status != PhotoPermissionState.granted) {
+        if (!mounted) return;
+        setState(() => _hwAlbumHint = '未获得相册写入权限');
+        return;
+      }
+    }
+
+    if (mounted) {
+      setState(() => _hwAlbumHint = null);
+    }
+    await _agent.setSaveHardwareMediaToAlbum(true);
   }
 
   @override
@@ -709,6 +766,17 @@ class _SettingPageState extends State<SettingPage> {
                   if (group.title == '同步') ...<Widget>[
                     const _RowDivider(),
                     _photoAutoSyncRow(context),
+                    const _RowDivider(),
+                    _hardwareAlbumSaveRow(context),
+                    const _RowDivider(),
+                    _navRow(
+                      context,
+                      keyName: 'set-icloud-sync',
+                      label: 'iCloud 同步与本机文件',
+                      value: _agent.icloudSyncSummary,
+                      valueKey: const Key('sv-icloud-sync'),
+                      onTap: () => _openSub(context, 'icloud'),
+                    ),
                   ],
                   if (group.title == '转录与清洗') ...<Widget>[
                     const _RowDivider(),
@@ -1033,6 +1101,69 @@ class _SettingPageState extends State<SettingPage> {
                   const SizedBox(width: 12),
                   KeyedSubtree(
                     key: const Key('sw-photo-sync'),
+                    child: RCSwitch(on: on),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _hardwareAlbumSaveRow(BuildContext context) {
+    final c = context.rc;
+    final on = _agent.saveHardwareMediaToAlbum;
+    final subtitle =
+        _hwAlbumHint ?? (on ? '已开启 · 点一机拍照与录像默认存入系统相册' : '已关闭 · 仅保存在 App 内');
+    return Semantics(
+      container: true,
+      button: true,
+      toggled: on,
+      enabled: true,
+      label: '硬件照片与视频存入系统相册开关',
+      onTap: () => unawaited(_toggleHwAlbumSave(context)),
+      child: ExcludeSemantics(
+        child: GestureDetector(
+          key: const Key('set-hw-album-save'),
+          behavior: HitTestBehavior.opaque,
+          onTap: () => unawaited(_toggleHwAlbumSave(context)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: RCDims.settingRow),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Text(
+                          '硬件照片与视频存入系统相册',
+                          style: TextStyle(
+                            fontSize: 15,
+                            height: 1.3,
+                            color: c.label,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          key: const Key('sv-hw-album-save'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.3,
+                            color: c.sec,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  KeyedSubtree(
+                    key: const Key('sw-hw-album-save'),
                     child: RCSwitch(on: on),
                   ),
                 ],

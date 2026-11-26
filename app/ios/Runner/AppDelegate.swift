@@ -109,6 +109,7 @@ import StoreKit
     // 健康通道与蓝牙共用同一 messenger：勿依赖可能为空的
     // registrar(forPlugin: "RCHealthSignal")，否则设置页一点开就 MissingPlugin 闪退。
     HealthSignalBridge.shared.register(messenger: registrar.messenger())
+    ICloudSyncBridge.shared.register(with: registrar.messenger())
     RCStoreKitBridge.shared.register(with: registrar.messenger())
     if let speechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCSystemSpeech") {
       SystemSpeechBridge.shared.register(with: speechRegistrar.messenger())
@@ -250,6 +251,45 @@ import StoreKit
       } else {
         result(Self.photoPermissionText(current))
       }
+    case "addStatus":
+      let addSt = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+      let rwSt = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+      if addSt == .authorized || rwSt == .authorized {
+        result("granted")
+      } else {
+        result(Self.photoPermissionText(addSt))
+      }
+    case "requestAdd":
+      let addSt = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+      let rwSt = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+      if addSt == .authorized || rwSt == .authorized {
+        result("granted")
+      } else if addSt == .notDetermined {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { updated in
+          DispatchQueue.main.async {
+            result(Self.photoPermissionText(updated))
+          }
+        }
+      } else {
+        result(Self.photoPermissionText(addSt))
+      }
+    case "saveMediaToAlbum":
+      guard let args = call.arguments as? [String: Any],
+            let path = args["path"] as? String,
+            !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        result(["saved": false, "authorized": false, "error": "缺少媒体文件路径"])
+        return
+      }
+      let mediaType = (args["mediaType"] as? String) ?? "photo"
+      let capturedAtMs = (args["capturedAtMs"] as? NSNumber)?.int64Value
+      let promptIfNeeded = (args["promptIfNeeded"] as? Bool) ?? true
+      saveMediaToAlbum(
+        path: path,
+        mediaType: mediaType,
+        capturedAtMs: capturedAtMs,
+        promptIfNeeded: promptIfNeeded,
+        result: result
+      )
     case "importInWindows":
       guard let args = call.arguments as? [String: Any],
             let windows = args["windows"] as? [[String: Any]],
@@ -358,6 +398,71 @@ import StoreKit
       PHPhotoLibrary.requestAuthorization(for: .readWrite, handler: proceed)
     } else {
       proceed(current)
+    }
+  }
+
+  private func saveMediaToAlbum(
+    path: String,
+    mediaType: String,
+    capturedAtMs: Int64?,
+    promptIfNeeded: Bool,
+    result: @escaping FlutterResult
+  ) {
+    guard FileManager.default.fileExists(atPath: path) else {
+      result(["saved": false, "authorized": true, "error": "本地媒体文件不存在"])
+      return
+    }
+
+    let proceed: (PHAuthorizationStatus) -> Void = { status in
+      let allowed = (status == .authorized || status == .limited)
+      guard allowed else {
+        DispatchQueue.main.async {
+          result(["saved": false, "authorized": false, "error": "未获得系统相册写入权限"])
+        }
+        return
+      }
+
+      DispatchQueue.global(qos: .userInitiated).async {
+        let fileURL = URL(fileURLWithPath: path)
+        var createdLocalId: String?
+        PHPhotoLibrary.shared().performChanges({
+          let request: PHAssetCreationRequest? = mediaType == "video"
+            ? PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: fileURL)
+            : PHAssetCreationRequest.creationRequestForAssetFromImage(atFileURL: fileURL)
+          if let req = request {
+            if let ms = capturedAtMs, ms > 0 {
+              req.creationDate = Date(timeIntervalSince1970: Double(ms) / 1000.0)
+            }
+            createdLocalId = req.placeholderForCreatedAsset?.localIdentifier
+          }
+        }) { success, error in
+          DispatchQueue.main.async {
+            if success {
+              result([
+                "saved": true,
+                "authorized": true,
+                "localIdentifier": createdLocalId ?? "",
+              ])
+            } else {
+              result([
+                "saved": false,
+                "authorized": true,
+                "error": error?.localizedDescription ?? "写入系统相册失败",
+              ])
+            }
+          }
+        }
+      }
+    }
+
+    let addSt = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+    let rwSt = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    if addSt == .authorized || rwSt == .authorized {
+      proceed(.authorized)
+    } else if addSt == .notDetermined && promptIfNeeded {
+      PHPhotoLibrary.requestAuthorization(for: .addOnly, handler: proceed)
+    } else {
+      proceed(addSt)
     }
   }
 }

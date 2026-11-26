@@ -54,6 +54,20 @@ class PhotoImportReport {
   });
 }
 
+class MediaAlbumSaveResult {
+  final bool saved;
+  final bool authorized;
+  final String? localIdentifier;
+  final String? error;
+
+  const MediaAlbumSaveResult({
+    required this.saved,
+    required this.authorized,
+    this.localIdentifier,
+    this.error,
+  });
+}
+
 enum PhotoPermissionState { granted, denied, notDetermined }
 
 class PhotoLibraryService {
@@ -61,26 +75,47 @@ class PhotoLibraryService {
     MethodChannel channel = const MethodChannel('com.reai.recordingcard/photos'),
     Future<PhotoPermissionState> Function()? statusOverride,
     Future<PhotoPermissionState> Function()? requestOverride,
+    Future<PhotoPermissionState> Function()? addStatusOverride,
+    Future<PhotoPermissionState> Function()? requestAddOverride,
     Future<PhotoImportReport> Function(
       List<PhotoWindow> windows, {
       bool promptIfNeeded,
     })?
     importOverride,
+    Future<MediaAlbumSaveResult> Function({
+      required String path,
+      required String mediaType,
+      int? capturedAtMs,
+      bool promptIfNeeded,
+    })?
+    saveMediaOverride,
     Future<Directory> Function()? directoryOverride,
   }) : _channel = channel,
        _statusOverride = statusOverride,
        _requestOverride = requestOverride,
+       _addStatusOverride = addStatusOverride,
+       _requestAddOverride = requestAddOverride,
        _importOverride = importOverride,
+       _saveMediaOverride = saveMediaOverride,
        _directoryOverride = directoryOverride;
 
   final MethodChannel _channel;
   final Future<PhotoPermissionState> Function()? _statusOverride;
   final Future<PhotoPermissionState> Function()? _requestOverride;
+  final Future<PhotoPermissionState> Function()? _addStatusOverride;
+  final Future<PhotoPermissionState> Function()? _requestAddOverride;
   final Future<PhotoImportReport> Function(
     List<PhotoWindow> windows, {
     bool promptIfNeeded,
   })?
   _importOverride;
+  final Future<MediaAlbumSaveResult> Function({
+    required String path,
+    required String mediaType,
+    int? capturedAtMs,
+    bool promptIfNeeded,
+  })?
+  _saveMediaOverride;
   final Future<Directory> Function()? _directoryOverride;
 
   static PhotoPermissionState _parsePermission(String? raw) => switch (raw) {
@@ -110,6 +145,83 @@ class PhotoLibraryService {
       return PhotoPermissionState.denied;
     } on PlatformException {
       return PhotoPermissionState.denied;
+    }
+  }
+
+  Future<PhotoPermissionState> checkAddPermission() async {
+    if (_addStatusOverride != null) return _addStatusOverride();
+    try {
+      final raw = await _channel.invokeMethod<String>('addStatus');
+      return _parsePermission(raw);
+    } on MissingPluginException {
+      return PhotoPermissionState.denied;
+    } on PlatformException {
+      return PhotoPermissionState.denied;
+    }
+  }
+
+  Future<PhotoPermissionState> requestAddPermission() async {
+    if (_requestAddOverride != null) return _requestAddOverride();
+    try {
+      final raw = await _channel.invokeMethod<String>('requestAdd');
+      return _parsePermission(raw);
+    } on MissingPluginException {
+      return PhotoPermissionState.denied;
+    } on PlatformException {
+      return PhotoPermissionState.denied;
+    }
+  }
+
+  Future<MediaAlbumSaveResult> saveMediaToAlbum({
+    required String path,
+    String mediaType = 'photo',
+    int? capturedAtMs,
+    bool promptIfNeeded = true,
+  }) async {
+    if (_saveMediaOverride != null) {
+      return _saveMediaOverride(
+        path: path,
+        mediaType: mediaType,
+        capturedAtMs: capturedAtMs,
+        promptIfNeeded: promptIfNeeded,
+      );
+    }
+    try {
+      final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
+        'saveMediaToAlbum',
+        {
+          'path': path,
+          'mediaType': mediaType,
+          'capturedAtMs': ?capturedAtMs,
+          'promptIfNeeded': promptIfNeeded,
+        },
+      );
+      if (raw == null) {
+        return const MediaAlbumSaveResult(
+          saved: false,
+          authorized: false,
+          error: '系统相册通道无响应',
+        );
+      }
+      final localId = '${raw['localIdentifier'] ?? ''}'.trim();
+      return MediaAlbumSaveResult(
+        saved: raw['saved'] == true,
+        authorized: raw['authorized'] == true,
+        localIdentifier: localId.isEmpty ? null : localId,
+        error: raw['error'] as String?,
+      );
+    } on MissingPluginException {
+      return const MediaAlbumSaveResult(
+        saved: false,
+        authorized: false,
+        error: '当前平台不支持写入系统相册',
+      );
+    } on PlatformException catch (e) {
+      return MediaAlbumSaveResult(
+        saved: false,
+        authorized: false,
+        error: e.message ?? '写入系统相册失败',
+      );
     }
   }
 

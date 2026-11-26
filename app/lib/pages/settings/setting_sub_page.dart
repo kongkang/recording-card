@@ -24,6 +24,8 @@ import '../../services/auth_service.dart';
 import '../../services/external_data/external_data_hub_store.dart';
 import '../../services/external_data/getnote_sync_store.dart';
 import '../../services/health/health_signal_controller.dart';
+import '../../services/media/icloud_sync_service.dart';
+import '../../services/media/media_backup_service.dart';
 import '../../services/memory/memory_search_scope.dart';
 import '../../services/net/api_exception.dart';
 import '../../services/net/model_gateway.dart';
@@ -57,6 +59,7 @@ class SettingSubPage extends StatelessWidget {
     this.modelGateway,
     this.authService,
     this.healthSignals,
+    this.mediaBackup,
     this.getNoteStore,
     this.externalDataHub,
     this.uiStyle,
@@ -69,7 +72,7 @@ class SettingSubPage extends StatelessWidget {
   });
 
   final String
-  subId; // 'membership' | 'login' | 'style' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extapi' | 'extdata' | 'extapi:<id>' | 'health' | 'data' | 'dev'
+  subId; // 'membership' | 'login' | 'style' | 'local' | 'cloud' | 'prompts' | 'voiceprint' | 'ext' | 'mem' | 'island' | 'watch' | 'exthw' | 'extapi' | 'extdata' | 'extapi:<id>' | 'health' | 'icloud' | 'data' | 'dev'
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
@@ -78,6 +81,7 @@ class SettingSubPage extends StatelessWidget {
   final ModelGateway? modelGateway;
   final AuthService? authService;
   final HealthSignalController? healthSignals;
+  final MediaBackupService? mediaBackup;
   final GetNoteSyncStore? getNoteStore;
   final ExternalDataHubStore? externalDataHub;
   final UIStyleStore? uiStyle;
@@ -112,6 +116,7 @@ class SettingSubPage extends StatelessWidget {
       'extapi' || 'extnotes' || 'extrecorders' => '第三方 API 接入',
       'extdata' => 'Get 笔记',
       'health' => '行为与健康信号',
+      'icloud' => 'iCloud 同步与本机文件',
       'data' => '数据管理',
       'dev' => '开发者设置',
       _ => '设置详情',
@@ -340,6 +345,11 @@ class SettingSubPage extends StatelessWidget {
                           : HealthSignalSettingsBody(
                               controller: healthSignals!,
                             ),
+                    'icloud' => _ICloudSyncSubBody(
+                      config: agentConfig,
+                      mediaBackup:
+                          mediaBackup ?? StoreScope.maybeOf(context)?.mediaBackup,
+                    ),
                     'data' => _DataManagementSubBody(
                       device: device,
                       healthSignals: healthSignals,
@@ -5645,6 +5655,457 @@ class _DataManagementSubBodyState extends State<_DataManagementSubBody> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ICloudSyncSubBody extends StatefulWidget {
+  const _ICloudSyncSubBody({
+    required this.config,
+    this.mediaBackup,
+  });
+
+  final AgentConfigStore config;
+  final MediaBackupService? mediaBackup;
+
+  @override
+  State<_ICloudSyncSubBody> createState() => _ICloudSyncSubBodyState();
+}
+
+class _ICloudSyncSubBodyState extends State<_ICloudSyncSubBody> {
+  static const ICloudSyncService _fallbackICloud = ICloudSyncService();
+
+  bool _checking = false;
+  bool _syncing = false;
+  ICloudStatus? _status;
+  ICloudStats? _stats;
+  String? _hint;
+  bool _isError = false;
+
+  MediaBackupService? get _backup =>
+      widget.mediaBackup ?? StoreScope.maybeOf(context)?.mediaBackup;
+
+  ICloudSyncService get _icloud => _backup?.icloudSync ?? _fallbackICloud;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshStatus());
+  }
+
+  Future<void> _refreshStatus() async {
+    if (_checking) return;
+    setState(() => _checking = true);
+    try {
+      await _backup?.ensureLoaded();
+      final status = await _icloud.checkStatus();
+      final stats = status.available ? await _icloud.listStats() : null;
+      if (!mounted) return;
+      setState(() {
+        _status = status;
+        _stats = stats;
+        _checking = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _checking = false);
+    }
+  }
+
+  Future<void> _toggleICloud() async {
+    if (_checking || _syncing) return;
+    if (widget.config.icloudSyncEnabled) {
+      await widget.config.setICloudSyncEnabled(false);
+      if (!mounted) return;
+      setState(() {
+        _hint = '已关闭 iCloud 同步，仅照片与视频保留自动存入系统相册，转录文本仍保存在本机「文件」';
+        _isError = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _checking = true;
+      _hint = null;
+      _isError = false;
+    });
+    final status = await _icloud.checkStatus();
+    if (!mounted) return;
+    setState(() {
+      _status = status;
+      _checking = false;
+    });
+    if (!status.available) {
+      setState(() {
+        _hint =
+            status.error ??
+            '请先在系统「设置 → Apple 账户 → iCloud → iCloud 云盘」中登录并开启权限';
+        _isError = true;
+      });
+      return;
+    }
+
+    await widget.config.setICloudSyncEnabled(true);
+    if (!mounted) return;
+    await _runSyncNow();
+  }
+
+  Future<void> _selectScope(ICloudSyncScope scope) async {
+    await widget.config.setICloudSyncScope(scope);
+    if (!mounted) return;
+    if (widget.config.icloudSyncEnabled && !widget.config.localOnlyMode) {
+      await _runSyncNow();
+    }
+  }
+
+  Future<void> _runSyncNow() async {
+    if (_syncing) return;
+    final backup = _backup;
+    if (backup == null) {
+      setState(() {
+        _hint = '同步服务未就绪，请返回主页后重试';
+        _isError = true;
+      });
+      return;
+    }
+    if (widget.config.localOnlyMode) {
+      setState(() {
+        _hint = '已开启「仅本机模式」，iCloud 同步已暂停';
+        _isError = false;
+      });
+      return;
+    }
+    setState(() {
+      _syncing = true;
+      _hint = '正在整理本机文本并同步至 iCloud…';
+      _isError = false;
+    });
+    try {
+      final store = StoreScope.maybeOf(context);
+      final recordings = store?.recordingFiles ?? const [];
+      final photos = [
+        if (store != null)
+          for (final list in store.eventPhotos.values) ...list,
+      ];
+      final report = await backup.syncAllNow(
+        recordings: recordings,
+        hardwarePhotos: photos,
+      );
+      final stats = widget.config.icloudSyncEnabled
+          ? await _icloud.listStats()
+          : null;
+      if (!mounted) return;
+      setState(() {
+        if (stats != null) _stats = stats;
+        if (report.icloudError != null && report.icloudError!.isNotEmpty) {
+          _hint = report.icloudError;
+          _isError = true;
+        } else if (widget.config.icloudSyncEnabled) {
+          _hint =
+              '同步完成：新导出文本 ${report.localTranscriptsWritten} 篇 · '
+              '入相册 ${report.albumSavedCount} 项 · 上传 iCloud ${report.icloudUploadedCount} 项';
+          _isError = false;
+        } else {
+          _hint =
+              '本机整理完成：新导出文本 ${report.localTranscriptsWritten} 篇 · '
+              '入相册 ${report.albumSavedCount} 项';
+          _isError = false;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _hint = '同步失败：$e';
+        _isError = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _syncing = false);
+      }
+    }
+  }
+
+  String _formatClock(int? ms) {
+    if (ms == null || ms <= 0) return '尚未同步';
+    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '${dt.month}/${dt.day} $hh:$mm';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.rc;
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        widget.config,
+        ?_backup,
+      ]),
+      builder: (context, _) {
+        final on = widget.config.icloudSyncEnabled;
+        final scope = widget.config.icloudSyncScope;
+        final backup = _backup;
+        final localCount = backup?.localTranscriptCount ?? 0;
+        final stats = _stats ?? backup?.lastICloudStats;
+        final statusLabel = on
+            ? (widget.config.localOnlyMode
+                  ? '已暂停（仅本机模式开启中）'
+                  : (_status?.available == false
+                        ? (_status?.error ?? 'iCloud 云盘不可用')
+                        : '已开启 · ${scope.label}'))
+            : '已关闭（默认）';
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              '未开启 iCloud 时：点一机等硬件拍摄的照片与视频按开关自动存入系统相册；音频保存在 App 内；转录文本自动保存到系统「文件 → 我的 iPhone → 录音卡」。\n'
+              '手动开启 iCloud 后：按所选范围将录音音频、转录文本及硬件照片视频备份至「iCloud 云盘 → 录音卡」。',
+              style: TextStyle(fontSize: 12.5, height: 1.5, color: c.sec),
+            ),
+            const SizedBox(height: 16),
+            if (on && widget.config.localOnlyMode)
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: c.warn.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: c.warn.withValues(alpha: 0.35)),
+                ),
+                child: Text(
+                  '当前已开启「仅本机模式」，iCloud 云盘上传已自动暂停；关闭仅本机模式后将恢复同步。',
+                  style: TextStyle(fontSize: 12.5, height: 1.4, color: c.label),
+                ),
+              ),
+            Container(
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: c.sep),
+              ),
+              child: InkWell(
+                key: const Key('icloud-sync-toggle'),
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => unawaited(_toggleICloud()),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 14,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'iCloud 云盘同步',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: c.label,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              statusLabel,
+                              key: const Key('icloud-status-text'),
+                              style: TextStyle(
+                                fontSize: 12,
+                                height: 1.35,
+                                color: c.sec,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      KeyedSubtree(
+                        key: const Key('sw-icloud-sync'),
+                        child: RCSwitch(on: on),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            const _SubSectionLabel('iCloud 同步内容（同时包含硬件照片与视频）'),
+            const SizedBox(height: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                children: [
+                  _scopeTile(
+                    context,
+                    keyName: 'icloud-scope-audio-text',
+                    item: ICloudSyncScope.audioAndText,
+                    subtitle: '同步录音音频、Markdown 转录文本，以及硬件拍摄的照片与视频',
+                    selected: scope == ICloudSyncScope.audioAndText,
+                    onTap: () =>
+                        unawaited(_selectScope(ICloudSyncScope.audioAndText)),
+                  ),
+                  Divider(height: 1, thickness: 1, color: c.sep),
+                  _scopeTile(
+                    context,
+                    keyName: 'icloud-scope-audio',
+                    item: ICloudSyncScope.audioOnly,
+                    subtitle: '同步录音音频与硬件照片视频；转录文本保留在本机「文件」',
+                    selected: scope == ICloudSyncScope.audioOnly,
+                    onTap: () =>
+                        unawaited(_selectScope(ICloudSyncScope.audioOnly)),
+                  ),
+                  Divider(height: 1, thickness: 1, color: c.sep),
+                  _scopeTile(
+                    context,
+                    keyName: 'icloud-scope-text',
+                    item: ICloudSyncScope.textOnly,
+                    subtitle: '同步 Markdown 转录文本与硬件照片视频；音频仅留在 App 内',
+                    selected: scope == ICloudSyncScope.textOnly,
+                    onTap: () =>
+                        unawaited(_selectScope(ICloudSyncScope.textOnly)),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            const _SubSectionLabel('存储与同步概览'),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: c.sep),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '本机「文件 → 录音卡」转录文本',
+                        style: TextStyle(fontSize: 13.5, color: c.label),
+                      ),
+                      Text(
+                        '$localCount 篇',
+                        key: const Key('local-transcript-count'),
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          color: c.sec,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '最近 iCloud 同步',
+                        style: TextStyle(fontSize: 13.5, color: c.label),
+                      ),
+                      Text(
+                        _formatClock(backup?.lastICloudSyncAtMs),
+                        style: TextStyle(fontSize: 13, color: c.sec),
+                      ),
+                    ],
+                  ),
+                  if (stats != null && stats.available) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'iCloud 云盘已存：音频 ${stats.audio} · 文本 ${stats.transcripts} · 照片 ${stats.photos} · 视频 ${stats.videos}',
+                      style: TextStyle(fontSize: 12, color: c.sec),
+                    ),
+                  ],
+                  if (_hint != null && _hint!.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      _hint!,
+                      key: const Key('icloud-sync-result'),
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.4,
+                        color: _isError ? c.danger : c.ok,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    key: const Key('icloud-sync-now-btn'),
+                    onPressed: _syncing ? null : () => unawaited(_runSyncNow()),
+                    icon: _syncing
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.sync_rounded, size: 18),
+                    label: Text(_syncing ? '正在同步…' : '立即同步本机文本与 iCloud'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _scopeTile(
+    BuildContext context, {
+    required String keyName,
+    required ICloudSyncScope item,
+    required String subtitle,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    final c = context.rc;
+    return InkWell(
+      key: Key(keyName),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.label,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                      color: c.label,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 12, height: 1.35, color: c.sec),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              size: 20,
+              color: selected ? c.ok : c.ax,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

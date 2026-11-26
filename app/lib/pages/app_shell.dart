@@ -27,6 +27,7 @@ import '../services/auth_service.dart';
 import '../services/external_data/external_data_hub_store.dart';
 import '../services/external_data/getnote_sync_store.dart';
 import '../services/health/health_signal_controller.dart';
+import '../services/media/media_backup_service.dart';
 import '../services/memory/memory_search_scope.dart';
 import '../services/memory/memory_search_service.dart';
 import '../services/net/model_gateway.dart';
@@ -165,6 +166,7 @@ class AppShell extends StatefulWidget {
     this.liveAudio,
     this.authService,
     this.photoLibrary,
+    this.mediaBackup,
     this.healthSignals,
     this.getNoteStore,
     this.externalDataHub,
@@ -195,6 +197,7 @@ class AppShell extends StatefulWidget {
   final LiveAudioRecorder? liveAudio;
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
+  final MediaBackupService? mediaBackup;
   final HealthSignalController? healthSignals;
   final GetNoteSyncStore? getNoteStore;
   final ExternalDataHubStore? externalDataHub;
@@ -242,6 +245,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       );
   late final PhotoLibraryService _photoLib =
       widget.photoLibrary ?? const PhotoLibraryService();
+  late final bool _ownsMediaBackup =
+      widget.mediaBackup == null && widget.store.mediaBackup == null;
+  late final MediaBackupService _mediaBackup =
+      widget.mediaBackup ??
+      widget.store.mediaBackup ??
+      MediaBackupService(
+        agentConfig: _agentConfig,
+        photoLibrary: _photoLib,
+      );
+  late bool _lastICloudEnabled = _agentConfig.icloudSyncEnabled;
+  late ICloudSyncScope _lastICloudScope = _agentConfig.icloudSyncScope;
   late final HardwareAgentTaskCoordinator _hwAgent;
   late final bool _ownsHwAgent = widget.hardwareAgentCoordinator == null;
   StreamSubscription<LiveAudioSlice>? _liveSliceSub;
@@ -338,13 +352,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     widget.store.deviceHasCameraMedia ??= () =>
         _device.activeCapabilities.hasCameraMedia;
     widget.store.photoLibrary = _photoLib;
+    widget.store.mediaBackup ??= _mediaBackup;
+    _mediaBackup.updatePhotoLibrary(_photoLib);
+    unawaited(_mediaBackup.ensureLoaded());
     widget.store.photoSyncEnabled ??= () => _agentConfig.photoLinkEnabled;
+    widget.store.hardwareMediaBackupEnabled ??= () =>
+        _agentConfig.saveHardwareMediaToAlbum || _agentConfig.icloudSyncEnabled;
     widget.store.deviceGateway ??= () => _device.gateway;
     _device.attachAgentConfig(_agentConfig);
     _device.onHardwarePhotoCaptured ??= () {
-      if (_agentConfig.photoLinkEnabled &&
-          _device.isConnected &&
-          _device.activeCapabilities.hasCameraMedia) {
+      if (_device.isConnected && _device.activeCapabilities.hasCameraMedia) {
         unawaited(widget.store.syncHardwareCameraPhotos(_device.gateway));
       }
     };
@@ -380,6 +397,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           agentConfig: _agentConfig,
           agentChat: _agentChat,
           liveAudio: _liveAudio,
+          photoLibrary: _photoLib,
+          mediaBackup: _mediaBackup,
           transcribeSamples: _defaultTranscribeSamples,
           lookupExistingTranscript: widget.lookupExistingTranscript,
         );
@@ -483,6 +502,20 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         ),
       );
     }
+    if (_agentConfig.icloudSyncEnabled &&
+        (!_lastICloudEnabled ||
+            _agentConfig.icloudSyncScope != _lastICloudScope)) {
+      unawaited(
+        _mediaBackup.syncAllNow(
+          recordings: widget.store.recordingFiles,
+          hardwarePhotos: [
+            for (final list in widget.store.eventPhotos.values) ...list,
+          ],
+        ),
+      );
+    }
+    _lastICloudEnabled = _agentConfig.icloudSyncEnabled;
+    _lastICloudScope = _agentConfig.icloudSyncScope;
   }
 
   /// 设备录音态 / 本机录音态 → 实时音频流切片 + Timeline 顶部状态块。
@@ -657,6 +690,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (widget.device == null) _device.dispose();
     if (widget.recordingStatus == null) _recording.dispose();
     if (widget.agentChat == null) _agentChat.dispose();
+    if (_ownsMediaBackup) _mediaBackup.dispose();
     if (widget.agentConfig == null) _agentConfig.dispose();
     super.dispose();
   }
@@ -697,6 +731,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           agentConfig: _agentConfig,
                           authService: widget.authService,
                           photoLibrary: _photoLib,
+                          mediaBackup: _mediaBackup,
                           healthSignals: widget.healthSignals,
                           getNoteStore: widget.getNoteStore,
                           externalDataHub: widget.externalDataHub,
@@ -717,6 +752,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           agentConfig: _agentConfig,
                           authService: widget.authService,
                           photoLibrary: _photoLib,
+                          mediaBackup: _mediaBackup,
                           healthSignals: widget.healthSignals,
                           getNoteStore: widget.getNoteStore,
                           externalDataHub: widget.externalDataHub,
@@ -1316,6 +1352,7 @@ Widget _stackTopPage(
   ModelGateway? modelGateway,
   AuthService? authService,
   HealthSignalController? healthSignals,
+  MediaBackupService? mediaBackup,
   GetNoteSyncStore? getNoteStore,
   ExternalDataHubStore? externalDataHub,
   UIStyleStore? uiStyle,
@@ -1350,6 +1387,7 @@ Widget _stackTopPage(
       modelGateway: modelGateway,
       authService: authService,
       healthSignals: healthSignals,
+      mediaBackup: mediaBackup,
       getNoteStore: getNoteStore,
       externalDataHub: externalDataHub,
       uiStyle: uiStyle,
@@ -1376,6 +1414,7 @@ class _NarrowLayout extends StatelessWidget {
     this.settings,
     this.authService,
     this.photoLibrary,
+    this.mediaBackup,
     this.healthSignals,
     this.getNoteStore,
     this.externalDataHub,
@@ -1394,6 +1433,7 @@ class _NarrowLayout extends StatelessWidget {
   final AgentConfigStore agentConfig;
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
+  final MediaBackupService? mediaBackup;
   final HealthSignalController? healthSignals;
   final GetNoteSyncStore? getNoteStore;
   final ExternalDataHubStore? externalDataHub;
@@ -1436,6 +1476,7 @@ class _NarrowLayout extends StatelessWidget {
                   agentConfig: agentConfig,
                   authService: authService,
                   photoLibrary: photoLibrary,
+                  mediaBackup: mediaBackup,
                   healthSignals: healthSignals,
                   getNoteStore: getNoteStore,
                   externalDataHub: externalDataHub,
@@ -1466,6 +1507,7 @@ class _NarrowLayout extends StatelessWidget {
                   modelGateway,
                   authService,
                   healthSignals,
+                  mediaBackup,
                   getNoteStore,
                   externalDataHub,
                   uiStyle,
@@ -1540,6 +1582,7 @@ class _NarrowLayout extends StatelessWidget {
     ModelGateway? modelGateway,
     AuthService? authService,
     HealthSignalController? healthSignals,
+    MediaBackupService? mediaBackup,
     GetNoteSyncStore? getNoteStore,
     ExternalDataHubStore? externalDataHub,
     UIStyleStore? uiStyle,
@@ -1590,6 +1633,7 @@ class _WideLayout extends StatelessWidget {
     this.settings,
     this.authService,
     this.photoLibrary,
+    this.mediaBackup,
     this.healthSignals,
     this.getNoteStore,
     this.externalDataHub,
@@ -1608,6 +1652,7 @@ class _WideLayout extends StatelessWidget {
   final AgentConfigStore agentConfig;
   final AuthService? authService;
   final PhotoLibraryService? photoLibrary;
+  final MediaBackupService? mediaBackup;
   final HealthSignalController? healthSignals;
   final GetNoteSyncStore? getNoteStore;
   final ExternalDataHubStore? externalDataHub;
@@ -1657,6 +1702,7 @@ class _WideLayout extends StatelessWidget {
                       agentConfig: agentConfig,
                       authService: authService,
                       photoLibrary: photoLibrary,
+                      mediaBackup: mediaBackup,
                       healthSignals: healthSignals,
                       getNoteStore: getNoteStore,
                       externalDataHub: externalDataHub,
@@ -1686,6 +1732,7 @@ class _WideLayout extends StatelessWidget {
                             modelGateway: modelGateway,
                             authService: authService,
                             healthSignals: healthSignals,
+                            mediaBackup: mediaBackup,
                             getNoteStore: getNoteStore,
                             externalDataHub: externalDataHub,
                             uiStyle: uiStyle,

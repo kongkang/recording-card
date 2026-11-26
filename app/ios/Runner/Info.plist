@@ -92,6 +92,24 @@
 	</array>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>录音卡仅读取你在录音时间段内拍摄的系统相册照片，将其按拍摄时间插入对应录音对话详情中，不会访问其它时间段照片，也不会未经允许上传。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>开启「硬件照片与视频存入系统相册」后，录音卡会将点一机等硬件拍摄的照片与视频自动保存到系统相册，防止卸载或换机导致数据丢失。</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>NSUbiquitousContainers</key>
+	<dict>
+		<key>iCloud.com.reai.recordingcard</key>
+		<dict>
+			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
+			<true/>
+			<key>NSUbiquitousContainerName</key>
+			<string>录音卡</string>
+			<key>NSUbiquitousContainerSupportedFolderLevels</key>
+			<string>Any</string>
+		</dict>
+	</dict>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_rc._tcp</string>

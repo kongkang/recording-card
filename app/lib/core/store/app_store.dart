@@ -21,6 +21,7 @@ import '../../data/seed.dart';
 import '../../services/ai/summary_generator.dart';
 import '../../services/audio/live_audio_recorder.dart';
 import '../../services/audio/recording_status.dart';
+import '../../services/media/media_backup_service.dart';
 import '../../services/photos/photo_library_service.dart';
 import '../../services/recordings/multi_track_reconciler.dart';
 import '../../services/recordings/recording_pipeline.dart';
@@ -398,13 +399,22 @@ class AppStore extends ChangeNotifier {
   /// 系统相册访问服务（可在测试中注入假实现）。
   PhotoLibraryService photoLibrary = const PhotoLibraryService();
 
+  /// 媒体备份协调器（系统相册写入 + 本机「文件」转录文本导出 + iCloud 云盘同步）。
+  MediaBackupService? mediaBackup;
+
   /// 是否允许自动关联照片（由 AgentConfigStore.photoLinkEnabled 注入；未注入时默认开启）。
   bool Function()? photoSyncEnabled;
 
-  /// 当前设备网关（用于自动拉取点一机 V1 硬件抓拍照片）。
+  /// 是否允许硬件相机媒体备份（存入系统相册或 iCloud）。
+  bool Function()? hardwareMediaBackupEnabled;
+
+  /// 当前设备网关（用于自动拉取点一机 V1 硬件抓拍照片/视频）。
   CardGateway? Function()? deviceGateway;
 
   bool get _isPhotoSyncEnabled => photoSyncEnabled?.call() ?? true;
+  bool get _isHardwareMediaBackupEnabled =>
+      hardwareMediaBackupEnabled?.call() ?? (mediaBackup != null);
+  Future<void> _recordingBackupChain = Future<void>.value();
   bool _disposed = false;
   bool _photoSyncRunning = false;
   bool _photoSyncQueued = false;
@@ -489,6 +499,7 @@ class AppStore extends ChangeNotifier {
     'membership' => '会员与订阅',
     'extapi' || 'extnotes' || 'extrecorders' => '第三方 API 接入',
     'exthw' => '第三方硬件 SDK',
+    'icloud' => 'iCloud 同步与本机文件',
     _ => 'Setting',
   };
 
@@ -1043,11 +1054,24 @@ class AppStore extends ChangeNotifier {
       segmentViews = projection.views;
       _reconciliation = reconciliation ?? const MultiTrackReconciliationState();
       await reconcileVoiceprintsAndCluesForEvents(events, notify: false);
+      _scheduleRecordingBackups(files);
     } on Object catch (e) {
       loadError = '读取本地录音失败：$e';
     }
     loading = false;
     notifyListeners();
+  }
+
+  void _scheduleRecordingBackups(List<RecordingFile> files) {
+    final backup = mediaBackup;
+    if (_disposed || backup == null || files.isEmpty) return;
+    final snapshot = List<RecordingFile>.of(files);
+    _recordingBackupChain = _recordingBackupChain.then((_) async {
+      for (final file in snapshot) {
+        if (_disposed) break;
+        await backup.backupRecording(file);
+      }
+    });
   }
 
   static String _externalDeviceNameFromEventId(String id) {
@@ -2297,7 +2321,13 @@ class AppStore extends ChangeNotifier {
     CardGateway? gatewayOverride,
     String? outputDirOverride,
   }) async {
-    if (_disposed || !_isPhotoSyncEnabled || events.isEmpty) return 0;
+    if (_disposed) return 0;
+    final wantSystemAlbum = _isPhotoSyncEnabled && events.isNotEmpty;
+    final wantHardwareCamera =
+        (deviceConnected?.call() ?? false) &&
+        (deviceHasCameraMedia?.call() ?? false) &&
+        (_isPhotoSyncEnabled || _isHardwareMediaBackupEnabled);
+    if (!wantSystemAlbum && !wantHardwareCamera) return 0;
     if (_photoSyncRunning) {
       _photoSyncQueued = true;
       if (!recentOnly) _photoSyncQueuedFull = true;
@@ -2316,19 +2346,22 @@ class AppStore extends ChangeNotifier {
             ? _recentPhotoEventIds(targetFile: runTargetFile)
             : null;
 
-        try {
-          totalAdded += await importSystemAlbumPhotos(
-            onlyEventIds: onlyIds,
-            outputDirOverride: outputDirOverride,
-            promptIfNeeded: false,
-          );
-        } on Object catch (e) {
-          debugPrint('[store] 自动同步系统相册照片失败：$e');
+        if (_isPhotoSyncEnabled && events.isNotEmpty) {
+          try {
+            totalAdded += await importSystemAlbumPhotos(
+              onlyEventIds: onlyIds,
+              outputDirOverride: outputDirOverride,
+              promptIfNeeded: false,
+            );
+          } on Object catch (e) {
+            debugPrint('[store] 自动同步系统相册照片失败：$e');
+          }
         }
 
         if (!_disposed &&
             (deviceConnected?.call() ?? false) &&
-            (deviceHasCameraMedia?.call() ?? false)) {
+            (deviceHasCameraMedia?.call() ?? false) &&
+            (_isPhotoSyncEnabled || _isHardwareMediaBackupEnabled)) {
           final gw = runGateway ?? deviceGateway?.call() ?? _pipeline?.gateway;
           if (gw != null) {
             try {
@@ -2338,7 +2371,7 @@ class AppStore extends ChangeNotifier {
                 outputDirOverride: outputDirOverride,
               ).timeout(const Duration(seconds: 8));
             } on Object catch (e) {
-              debugPrint('[store] 自动同步硬件照片失败：$e');
+              debugPrint('[store] 自动同步硬件媒体失败：$e');
             }
           }
         }
@@ -2389,6 +2422,9 @@ class AppStore extends ChangeNotifier {
     final photoVerBefore = _photoVersion;
     final excludedOwners = _collectExcludedPhotoOwners();
     for (final p in report.photos) {
+      if (mediaBackup?.isOwnExportedAlbumPhotoId(p.id) ?? false) {
+        continue;
+      }
       final targetEventId =
           _bestEventIdForCapture(p.capturedAtMs, fallbackEventId: p.eventId) ??
           p.eventId;
@@ -2413,7 +2449,9 @@ class AppStore extends ChangeNotifier {
     return added;
   }
 
-  /// 同步点一机 V1 硬件按键抓拍照片并按拍摄时间戳对齐到最近一段录音记录。
+  /// 同步点一机 V1 硬件按键抓拍照片与视频：
+  /// 1. 照片/视频均立即交由 [mediaBackup] 写入系统相册（默认开）与 iCloud（开启时）；
+  /// 2. 抓拍照片同时按拍摄时间戳对齐到最近一段录音记录。
   Future<int> syncHardwareCameraPhotos(
     CardGateway gateway, {
     PhotoLibraryService? photoService,
@@ -2424,15 +2462,33 @@ class AppStore extends ChangeNotifier {
     final outDir =
         outputDirOverride ??
         (await (photoService ?? photoLibrary).photosDirectory()).path;
-    final items = await gateway.syncCameraPhotos(
+    final items = await gateway.syncCameraMedia(
       outDir,
       serverOrigin: serverOrigin,
     );
-    if (_disposed || items.isEmpty || events.isEmpty) return 0;
+    if (_disposed || items.isEmpty) return 0;
+
+    final backup = mediaBackup;
+    if (backup != null) {
+      for (final item in items) {
+        final capturedMs = item.capturedAtSec != null
+            ? item.capturedAtSec! * 1000
+            : DateTime.now().millisecondsSinceEpoch;
+        await backup.backupHardwareMediaItem(
+          name: item.name,
+          path: item.path,
+          mediaType: item.mediaType,
+          capturedAtMs: capturedMs,
+        );
+      }
+    }
+
+    if (_disposed || events.isEmpty || !_isPhotoSyncEnabled) return 0;
     var added = 0;
     final photoVerBefore = _photoVersion;
     final excludedOwners = _collectExcludedPhotoOwners();
     for (final item in items) {
+      if (item.isVideo) continue;
       final capturedMs = item.capturedAtSec != null
           ? item.capturedAtSec! * 1000
           : DateTime.now().millisecondsSinceEpoch;
@@ -4908,6 +4964,11 @@ class AppStore extends ChangeNotifier {
       await photoLibrary.clearLocalCache();
     } on Object {
       // 忽略相册缓存清理异常
+    }
+    try {
+      await mediaBackup?.clearLocalExports();
+    } on Object {
+      // 忽略导出文本与备份索引清理异常
     }
     try {
       final support = await getApplicationSupportDirectory();

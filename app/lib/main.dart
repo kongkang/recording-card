@@ -31,6 +31,7 @@ import 'services/health/health_signal_collector.dart';
 import 'services/health/health_signal_controller.dart';
 import 'services/health/health_signal_models.dart';
 import 'services/health/health_signal_store.dart';
+import 'services/media/media_backup_service.dart';
 import 'services/memory/local_memory_index.dart';
 import 'services/memory/memory_indexer.dart';
 import 'services/memory/memory_search_service.dart';
@@ -274,6 +275,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
   InAppTaskRunner? _taskRunner;
   late final AgentChatController _agentChat;
   late final MemorySearchService _memorySearch;
+  late final MediaBackupService _mediaBackup;
   bool _booted = false;
   bool _wasSignedIn = false;
 
@@ -435,7 +437,11 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
           ChatMessage(role: turn.role, content: turn.content),
       ], scene: ModelScene.agent),
     );
+    _mediaBackup = MediaBackupService(agentConfig: _agentConfig);
+    _store.mediaBackup = _mediaBackup;
     _store.photoSyncEnabled = () => _agentConfig.photoLinkEnabled;
+    _store.hardwareMediaBackupEnabled = () =>
+        _agentConfig.saveHardwareMediaToAlbum || _agentConfig.icloudSyncEnabled;
     _store.deviceGateway = () => _device.gateway;
     _device.attachAgentConfig(_agentConfig);
     _device.isExternalBleSyncBusy = () => _pipeline.isBusy;
@@ -722,6 +728,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
     _agentChat.dispose();
     unawaited(_memorySearch.close());
     _healthSignals.dispose();
+    _mediaBackup.dispose();
     _modelManager.dispose();
     _membership.onLocalQuotaUnlocked = null;
     if (widget.membership == null) _membership.dispose();
@@ -750,6 +757,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
               settings: _settings,
               agentConfig: _agentConfig,
               authService: _auth,
+              mediaBackup: _mediaBackup,
               healthSignals: _healthSignals,
               getNoteStore: GetNoteSyncStore.instance,
               externalDataHub: ExternalDataHubStore.instance,

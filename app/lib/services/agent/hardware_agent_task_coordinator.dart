@@ -20,7 +20,6 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../core/device/card_gateway.dart';
 import '../../core/store/agent_config_store.dart';
@@ -28,6 +27,8 @@ import '../../core/store/device_store.dart';
 import '../audio/live_audio_recorder.dart';
 import '../audio/pcm_ring_buffer.dart';
 import '../audio/phone_mic_service.dart';
+import '../media/media_backup_service.dart';
+import '../photos/photo_library_service.dart';
 import 'agent_chat_controller.dart';
 import 'agent_harness_worker.dart';
 
@@ -86,6 +87,8 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
     TranscriptLookupFn? lookupExistingTranscript,
     PhoneMicBackend Function()? phoneMicBackendFactory,
     Future<Directory> Function()? tempDirResolver,
+    PhotoLibraryService? photoLibrary,
+    MediaBackupService? mediaBackup,
     DateTime Function()? clock,
     Duration postSettleDelay = const Duration(milliseconds: 120),
     Duration maxVoiceTaskDuration = const Duration(seconds: 60),
@@ -100,6 +103,8 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
        _phoneMicBackendFactory =
            phoneMicBackendFactory ?? PlatformPhoneMicBackend.new,
        _tempDirResolver = tempDirResolver,
+       _photoLibrary = photoLibrary,
+       _mediaBackup = mediaBackup,
        _clock = clock ?? DateTime.now,
        _postSettleDelay = postSettleDelay,
        _maxVoiceTaskDuration = maxVoiceTaskDuration,
@@ -118,6 +123,8 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
   final TranscriptLookupFn? _lookupExistingTranscript;
   final PhoneMicBackend Function() _phoneMicBackendFactory;
   final Future<Directory> Function()? _tempDirResolver;
+  final PhotoLibraryService? _photoLibrary;
+  final MediaBackupService? _mediaBackup;
   final DateTime Function() _clock;
   final Duration _postSettleDelay;
   final Duration _maxVoiceTaskDuration;
@@ -1100,7 +1107,8 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
     try {
       final dir = _tempDirResolver != null
           ? await _tempDirResolver()
-          : await getTemporaryDirectory();
+          : await (_photoLibrary ?? const PhotoLibraryService())
+                .photosDirectory();
       if (!dir.existsSync()) {
         await dir.create(recursive: true);
       }
@@ -1126,6 +1134,20 @@ class HardwareAgentTaskCoordinator extends ChangeNotifier {
       final bytes = await File(localPath).readAsBytes();
       if (bytes.isEmpty) {
         throw StateError('照片文件为空');
+      }
+      final capturedName = '${dataMap?['name'] ?? res['name'] ?? ''}'.trim();
+      final backup = _mediaBackup;
+      if (backup != null) {
+        unawaited(
+          backup.backupHardwareMediaItem(
+            name: capturedName.isNotEmpty
+                ? capturedName
+                : localPath.split(RegExp(r'[/\\]')).last,
+            path: localPath,
+            mediaType: 'photo',
+            capturedAtMs: _clock().millisecondsSinceEpoch,
+          ),
+        );
       }
       if (_disposed) return;
 

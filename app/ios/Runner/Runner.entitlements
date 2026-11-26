@@ -19,5 +19,17 @@
 	<array>
 		<string>group.com.reai.recordingcard</string>
 	</array>
+	<key>com.apple.developer.icloud-container-identifiers</key>
+	<array>
+		<string>iCloud.com.reai.recordingcard</string>
+	</array>
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudDocuments</string>
+	</array>
+	<key>com.apple.developer.ubiquity-container-identifiers</key>
+	<array>
+		<string>iCloud.com.reai.recordingcard</string>
+	</array>
 </dict>
 </plist>
