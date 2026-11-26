@@ -29,6 +29,8 @@ import '../../services/net/api_exception.dart';
 import '../../services/net/model_gateway.dart';
 import '../../services/net/model_provider_store.dart';
 import '../../services/transcribe/asr_models.dart';
+import '../../services/transcribe/byo_asr_client.dart';
+import '../../services/transcribe/local_asr_service.dart';
 import '../../services/transcribe/model_manager_controller.dart';
 import '../../services/transcribe/system_speech_client.dart';
 import '../../services/watch/watch_hardware_service.dart';
@@ -50,6 +52,7 @@ class SettingSubPage extends StatelessWidget {
     required this.agentConfig,
     this.device,
     this.modelManager,
+    this.byoAsrClient,
     this.modelProviders,
     this.modelGateway,
     this.authService,
@@ -70,6 +73,7 @@ class SettingSubPage extends StatelessWidget {
   final AgentConfigStore agentConfig;
   final DeviceStore? device;
   final ModelManagerController? modelManager;
+  final ByoAsrClient? byoAsrClient;
   final ModelProviderStore? modelProviders;
   final ModelGateway? modelGateway;
   final AuthService? authService;
@@ -270,6 +274,7 @@ class SettingSubPage extends StatelessWidget {
                     'local' => _LocalEngineBody(
                       controller: modelManager,
                       config: agentConfig,
+                      byoAsrClient: byoAsrClient,
                     ),
                     'cloud' => _CloudModelBody(
                       config: agentConfig,
@@ -427,23 +432,52 @@ class _SettingsHelpButton extends StatelessWidget {
 // ── 1) 本地语音引擎 ──────────────────────────────────────────
 
 class _LocalEngineBody extends StatefulWidget {
-  const _LocalEngineBody({required this.controller, this.config});
+  const _LocalEngineBody({
+    required this.controller,
+    this.config,
+    this.byoAsrClient,
+  });
 
   final ModelManagerController? controller;
   final AgentConfigStore? config;
+  final ByoAsrClient? byoAsrClient;
 
   @override
   State<_LocalEngineBody> createState() => _LocalEngineBodyState();
 }
 
 class _LocalEngineBodyState extends State<_LocalEngineBody> {
+  late final TextEditingController _byoUrlCtrl;
+  late final TextEditingController _byoModelCtrl;
+  late final TextEditingController _byoKeyCtrl;
+  late final TextEditingController _hotwordCtrl;
+  bool _byoBusy = false;
+  String? _byoStatusMsg;
+  bool _byoStatusOk = false;
+
   @override
   void initState() {
     super.initState();
+    final cfg = widget.config;
+    _byoUrlCtrl = TextEditingController(text: cfg?.byoAsrUrl ?? '');
+    _byoModelCtrl = TextEditingController(text: cfg?.byoAsrModel ?? '');
+    _byoKeyCtrl = TextEditingController(text: cfg?.byoAsrApiKey ?? '');
+    _hotwordCtrl = TextEditingController();
+    _byoStatusOk = cfg?.byoAsrConnected ?? false;
+    _byoStatusMsg = _byoStatusOk ? '已连接' : null;
     final ctrl = widget.controller;
     if (ctrl != null && !ctrl.hasStatuses) {
       unawaited(ctrl.refresh());
     }
+  }
+
+  @override
+  void dispose() {
+    _byoUrlCtrl.dispose();
+    _byoModelCtrl.dispose();
+    _byoKeyCtrl.dispose();
+    _hotwordCtrl.dispose();
+    super.dispose();
   }
 
   void _showHint(BuildContext context, String message) {
@@ -520,10 +554,16 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
 
   Widget _buildContent(BuildContext context) {
     final ctrl = widget.controller;
+    final cfg = widget.config;
     final specs =
         ctrl?.specs ??
         const [senseVoiceSpec, sileroVadSpec, campplusEmbeddingSpec];
-    final effectiveMode = ctrl?.effectiveAsrMode ?? 'pending';
+    final effectiveMode =
+        ctrl?.effectiveAsrMode ??
+        ((cfg?.preferredAsrEngine == 'byo_cloud' &&
+                (cfg?.byoAsrConnected ?? false))
+            ? 'byo_cloud'
+            : 'pending');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -538,6 +578,12 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
         for (final spec in specs.where((spec) => !spec.bundled)) ...[
           const SizedBox(height: 10),
           _buildSpecCard(context, spec, ctrl),
+        ],
+        if (cfg != null) ...[
+          const SizedBox(height: 18),
+          const _SubSectionLabel('热词'),
+          const SizedBox(height: 8),
+          _buildHotwordsCard(context, cfg),
         ],
       ],
     );
@@ -554,8 +600,13 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     final speakerReady = ctrl?.speakerReady ?? false;
     final configured = ctrl?.configured ?? false;
 
-    final isReady = effectiveMode == 'system' || effectiveMode == 'sensevoice';
-    final title = isReady
+    final isReady =
+        effectiveMode == 'system' ||
+        effectiveMode == 'sensevoice' ||
+        effectiveMode == 'byo_cloud';
+    final title = effectiveMode == 'byo_cloud'
+        ? '自建转写已启用'
+        : isReady
         ? '本地转写已就绪'
         : (ctrl != null && !configured ? '下载服务暂不可用' : '等待下载转写模型');
 
@@ -672,15 +723,82 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
     );
   }
 
+  Future<void> _saveByoAsr() async {
+    final cfg = widget.config;
+    if (_byoBusy || cfg == null) return;
+    final url = _byoUrlCtrl.text.trim();
+    final rawModel = _byoModelCtrl.text.trim();
+    final model = rawModel.isEmpty ? 'whisper-1' : rawModel;
+    final key = _byoKeyCtrl.text.trim();
+    setState(() {
+      _byoBusy = true;
+      _byoStatusMsg = null;
+    });
+    final ctrl = widget.controller;
+    String? err;
+    if (ctrl != null) {
+      err = await ctrl.connectAndEnableByoAsr(
+        url: url,
+        model: model,
+        apiKey: key,
+        client: widget.byoAsrClient,
+      );
+    } else {
+      final tester = widget.byoAsrClient ?? ByoAsrClient();
+      try {
+        await tester.testConnection(
+          baseUrl: url,
+          model: model,
+          apiKey: key,
+        );
+        await cfg.updateByoAsrConfig(
+          url: url,
+          model: model,
+          apiKey: key,
+          connected: true,
+        );
+        await cfg.setPreferredAsrEngine('byo_cloud');
+      } on AsrException catch (e) {
+        err = e.message;
+        await cfg.updateByoAsrConfig(
+          url: url,
+          model: model,
+          apiKey: key,
+          connected: false,
+        );
+      } on Object catch (e) {
+        err = '$e';
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _byoBusy = false;
+      _byoStatusOk = err == null;
+      _byoStatusMsg = err ?? '已连接';
+    });
+  }
+
+  Future<void> _submitHotword(AgentConfigStore cfg) async {
+    final raw = _hotwordCtrl.text.trim();
+    if (raw.isEmpty) return;
+    await cfg.addHotwordsFromRaw(raw);
+    if (!mounted) return;
+    _hotwordCtrl.clear();
+  }
+
   Widget _buildEngineSelectorCard(
     BuildContext context,
     ModelManagerController? ctrl,
     String effectiveMode,
   ) {
     final c = context.rc;
+    final cfg = widget.config;
     final sysOk = ctrl?.supportsSystemAsr ?? false;
     final senseInstalled = ctrl?.statusFor(senseVoiceSpec)?.installed ?? false;
     final configured = ctrl?.configured ?? false;
+    final byoSelected = ctrl != null
+        ? ctrl.selectedEngine == LocalAsrEngineMode.byoCloud
+        : cfg?.preferredAsrEngine == 'byo_cloud';
 
     final senseStateLabel = senseInstalled
         ? '已下载'
@@ -746,6 +864,198 @@ class _LocalEngineBodyState extends State<_LocalEngineBody> {
                       ctrl.selectAsrEngine(LocalAsrEngineMode.sensevoice),
                     );
                   },
+          ),
+          if (cfg != null) ...[
+            Divider(height: 1, thickness: 1, color: c.sep),
+            _buildEngineOptionRow(
+              context,
+              key: const Key('asr-opt-byo-cloud'),
+              title: '自建服务',
+              tags: [
+                if (cfg.byoAsrConnected)
+                  _tagPill(
+                    cfg.byoAsrModel.isNotEmpty ? cfg.byoAsrModel : '已启用',
+                    bg: c.isDark
+                        ? c.ok.withValues(alpha: 0.16)
+                        : const Color(0xFFE8F5EA),
+                    fg: c.okInk,
+                  ),
+              ],
+              selected: byoSelected,
+              onTap: ctrl?.busy == true
+                  ? null
+                  : () => unawaited(
+                      ctrl != null
+                          ? ctrl.selectAsrEngine(LocalAsrEngineMode.byoCloud)
+                          : cfg.setPreferredAsrEngine('byo_cloud'),
+                    ),
+            ),
+            if (byoSelected) _buildByoForm(context, c),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildByoForm(BuildContext context, RCColorScheme c) {
+    final statusMsg = _byoStatusMsg;
+    return Container(
+      key: const Key('nc-byo-asr-card'),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: c.sep)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 8),
+          TextField(
+            key: const Key('byo-asr-url-inp'),
+            controller: _byoUrlCtrl,
+            style: TextStyle(fontSize: 13.5, color: c.label),
+            decoration: const InputDecoration(
+              labelText: '服务地址',
+              hintText: 'http://192.168.1.x:8000/v1',
+              isDense: true,
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            key: const Key('byo-asr-model-inp'),
+            controller: _byoModelCtrl,
+            style: TextStyle(fontSize: 13.5, color: c.label),
+            decoration: const InputDecoration(
+              labelText: '模型',
+              hintText: 'whisper-1',
+              isDense: true,
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            key: const Key('byo-asr-key-inp'),
+            controller: _byoKeyCtrl,
+            obscureText: true,
+            style: TextStyle(fontSize: 13.5, color: c.label),
+            decoration: const InputDecoration(
+              labelText: 'API Key（可选）',
+              hintText: '免密可留空',
+              isDense: true,
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 10),
+          FilledButton(
+            key: const Key('byo-asr-save-btn'),
+            onPressed: _byoBusy ? null : () => unawaited(_saveByoAsr()),
+            child: Text(_byoBusy ? '连接中…' : '连接并启用'),
+          ),
+          if (statusMsg != null && statusMsg.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              statusMsg,
+              key: const Key('byo-asr-status'),
+              style: TextStyle(
+                fontSize: 12,
+                color: _byoStatusOk ? c.okInk : c.danger,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHotwordsCard(BuildContext context, AgentConfigStore cfg) {
+    final c = context.rc;
+    final list = cfg.hotwords;
+    return Container(
+      key: const Key('nc-hotwords-card'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: c.sep),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            key: const Key('hotwords-list'),
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              if (list.isEmpty)
+                Text(
+                  '暂无热词',
+                  style: TextStyle(fontSize: 12.5, color: c.sec),
+                )
+              else
+                for (var i = 0; i < list.length; i++)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: c.isDark
+                          ? const Color(0xFF242428)
+                          : const Color(0xFFF0F0EC),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          list[i],
+                          style: TextStyle(fontSize: 12.5, color: c.label),
+                        ),
+                        const SizedBox(width: 5),
+                        GestureDetector(
+                          key: Key('hotword-del-$i'),
+                          onTap: () => unawaited(cfg.removeHotwordAt(i)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: Text(
+                              '×',
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w600,
+                                color: c.sec,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  key: const Key('hotword-inp'),
+                  controller: _hotwordCtrl,
+                  style: TextStyle(fontSize: 13.5, color: c.label),
+                  decoration: const InputDecoration(
+                    hintText: '添加热词，逗号分隔',
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                  onSubmitted: (_) => unawaited(_submitHotword(cfg)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                key: const Key('hotword-add-btn'),
+                onPressed: () => unawaited(_submitHotword(cfg)),
+                child: const Text('添加'),
+              ),
+            ],
           ),
         ],
       ),

@@ -294,6 +294,9 @@ class LiveAudioRecorder extends ChangeNotifier {
   /// 每满一片（或停录冲刷尾片）立即回调上层送入本地 ASR。
   void Function(LiveAudioSlice slice)? onSliceReady;
 
+  /// 实时音频 PCM 帧回调（供连续静音防误录保护检测能量使用）。
+  void Function(Uint8List pcmBytes)? onAudioSamples;
+
   final StreamController<LiveAudioSlice> _sliceController =
       StreamController<LiveAudioSlice>.broadcast();
 
@@ -445,6 +448,7 @@ class LiveAudioRecorder extends ChangeNotifier {
             : Uint8List.sublistView(pcm, 0, evenLen);
         _sink?.add(aligned);
         ringBuffer.append(aligned, endTimestampMs: _clock().millisecondsSinceEpoch);
+        onAudioSamples?.call(aligned);
         final samples = aligned.length ~/ 2;
         final startMs = _writtenSamples * 1000 ~/ session.sampleRate;
         _writtenSamples += samples;

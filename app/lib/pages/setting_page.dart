@@ -695,6 +695,10 @@ class _SettingPageState extends State<SettingPage> {
               _GroupTitle(text: group.title),
               _GroupCard(
                 children: <Widget>[
+                  if (group.title == '同步') ...<Widget>[
+                    _localOnlyModeRow(context),
+                    const _RowDivider(),
+                  ],
                   for (var i = 0; i < group.items.length; i++)
                     if (i == 0)
                       _switchRow(context, index++, group.items[i])
@@ -931,6 +935,53 @@ class _SettingPageState extends State<SettingPage> {
   }
 
   /// 拍照数据自动对齐开关行（独立锚点 `set-photo-import` / `sw-photo-sync`，不占用 `sw-0..sw-5`）。
+  Widget _localOnlyModeRow(BuildContext context) {
+    final c = context.rc;
+    final on = _agent.localOnlyMode;
+    return Semantics(
+      container: true,
+      button: true,
+      toggled: on,
+      enabled: true,
+      label: '仅本机模式开关',
+      onTap: () => unawaited(_agent.setLocalOnlyMode(!on)),
+      child: ExcludeSemantics(
+        child: GestureDetector(
+          key: const Key('set-privacy-lock-row'),
+          behavior: HitTestBehavior.opaque,
+          onTap: () => unawaited(_agent.setLocalOnlyMode(!on)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: RCDims.settingRow),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      '仅本机模式',
+                      style: TextStyle(
+                        fontSize: 15,
+                        height: 1.3,
+                        color: c.label,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  GestureDetector(
+                    key: const Key('sw-privacy-lock'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => unawaited(_agent.setLocalOnlyMode(!on)),
+                    child: RCSwitch(on: on),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _photoAutoSyncRow(BuildContext context) {
     final c = context.rc;
     final on = _agent.photoLinkEnabled;

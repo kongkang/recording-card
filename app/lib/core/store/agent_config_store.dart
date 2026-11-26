@@ -375,8 +375,16 @@ class AgentConfigStore extends ChangeNotifier {
   /// 行为与健康信号总开关。默认关闭；打开后才申请系统权限并在本机采集。
   bool healthSignalEnabled = false;
 
-  /// 用户手动选中的端侧语音转写引擎（null=跟随平台默认，'system'=系统内置，'sensevoice'=增强模型）。
+  /// 用户手动选中的端侧语音转写引擎（null=跟随平台默认，'system'=系统内置，'sensevoice'=增强模型，'byo_cloud'=自建转写服务）。
   String? preferredAsrEngine;
+  String byoAsrUrl = '';
+  String byoAsrModel = '';
+  String byoAsrApiKey = '';
+  bool byoAsrConnected = false;
+  List<String> hotwords = const [];
+  bool localOnlyMode = false;
+  int cardV2SliceMinutes = 3;
+  int cardV2SilenceStopMinutes = 30;
 
   /// OS1 对话 Agent 默认挂载的基础能力权限（保持开放可扩展，均可在设置或由 Agent 自身调整）。
   bool agentWebSearchEnabled = true;
@@ -719,6 +727,17 @@ class AgentConfigStore extends ChangeNotifier {
   String promptFor(String kind) =>
       prompts[kind] ?? builtinPresets.first.summaryPrompt;
 
+  /// 在保留用户编辑区干净原文 [promptFor] 的前提下，附带热词/术语词库给模型纠偏。
+  String effectivePromptFor(String kind) {
+    final base = promptFor(kind).trim();
+    final clean = [
+      for (final w in hotwords)
+        if (w.trim().isNotEmpty) w.trim(),
+    ];
+    if (clean.isEmpty) return base;
+    return '$base\n专有名词与热词参考（仅在语境对应同音/近音误字时纠正为以下词条，未提及切勿强行插入）：${clean.join('、')}';
+  }
+
   List<AgentExtensionItem> get allExtensions => [
     ...builtinExtensions,
     ...customMcps,
@@ -770,8 +789,44 @@ class AgentConfigStore extends ChangeNotifier {
     if (data['healthSignalEnabled'] is bool) {
       healthSignalEnabled = data['healthSignalEnabled'] as bool;
     }
-    if (data['asrEngine'] == 'system' || data['asrEngine'] == 'sensevoice') {
+    if (data['asrEngine'] == 'system' ||
+        data['asrEngine'] == 'sensevoice' ||
+        data['asrEngine'] == 'byo_cloud') {
       preferredAsrEngine = data['asrEngine'] as String;
+    }
+    if (data['byoAsrUrl'] is String) {
+      byoAsrUrl = (data['byoAsrUrl'] as String).trim();
+    }
+    if (data['byoAsrModel'] is String) {
+      byoAsrModel = (data['byoAsrModel'] as String).trim();
+    }
+    if (data['byoAsrApiKey'] is String) {
+      byoAsrApiKey = (data['byoAsrApiKey'] as String).trim();
+    }
+    if (data['byoAsrConnected'] is bool) {
+      byoAsrConnected = data['byoAsrConnected'] as bool;
+    }
+    final rawHotwords = data['hotwords'];
+    if (rawHotwords is List) {
+      hotwords = List<String>.unmodifiable([
+        for (final w in rawHotwords)
+          if (w is String && w.trim().isNotEmpty) w.trim(),
+      ]);
+    }
+    if (data['localOnlyMode'] is bool) {
+      localOnlyMode = data['localOnlyMode'] as bool;
+    }
+    if (data['cardV2SliceMinutes'] is num) {
+      final v = (data['cardV2SliceMinutes'] as num).toInt();
+      if (v == 1 || v == 3 || v == 5 || v == 10) {
+        cardV2SliceMinutes = v;
+      }
+    }
+    if (data['cardV2SilenceStopMinutes'] is num) {
+      final v = (data['cardV2SilenceStopMinutes'] as num).toInt();
+      if (v == 0 || v == 30 || v == 60) {
+        cardV2SilenceStopMinutes = v;
+      }
     }
     if (data['agentWebSearchEnabled'] is bool) {
       agentWebSearchEnabled = data['agentWebSearchEnabled'] as bool;
@@ -1351,9 +1406,73 @@ class AgentConfigStore extends ChangeNotifier {
   }
 
   Future<void> setPreferredAsrEngine(String? mode) async {
-    final normalized = (mode == 'system' || mode == 'sensevoice') ? mode : null;
+    final normalized =
+        (mode == 'system' || mode == 'sensevoice' || mode == 'byo_cloud')
+        ? mode
+        : null;
     if (preferredAsrEngine == normalized) return;
     preferredAsrEngine = normalized;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> updateByoAsrConfig({
+    required String url,
+    required String model,
+    required String apiKey,
+    required bool connected,
+  }) async {
+    byoAsrUrl = url.trim();
+    byoAsrModel = model.trim();
+    byoAsrApiKey = apiKey.trim();
+    byoAsrConnected = connected;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> addHotwordsFromRaw(String raw) async {
+    final next = List<String>.of(hotwords);
+    var added = false;
+    for (final part in raw.split(RegExp(r'[,，\n;；]+'))) {
+      final clean = part.trim();
+      if (clean.isNotEmpty && !next.contains(clean)) {
+        next.add(clean);
+        added = true;
+      }
+    }
+    if (!added) return;
+    hotwords = List<String>.unmodifiable(next);
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> removeHotwordAt(int index) async {
+    if (index < 0 || index >= hotwords.length) return;
+    final next = List<String>.of(hotwords)..removeAt(index);
+    hotwords = List<String>.unmodifiable(next);
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setLocalOnlyMode(bool value) async {
+    if (localOnlyMode == value) return;
+    localOnlyMode = value;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setCardV2SliceMinutes(int minutes) async {
+    if (minutes != 1 && minutes != 3 && minutes != 5 && minutes != 10) return;
+    if (cardV2SliceMinutes == minutes) return;
+    cardV2SliceMinutes = minutes;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setCardV2SilenceStopMinutes(int minutes) async {
+    if (minutes != 0 && minutes != 30 && minutes != 60) return;
+    if (cardV2SilenceStopMinutes == minutes) return;
+    cardV2SilenceStopMinutes = minutes;
     notifyListeners();
     await _save();
   }
@@ -1519,6 +1638,16 @@ class AgentConfigStore extends ChangeNotifier {
     } catch (_) {
       // 忽略重置单个键异常
     }
+    preferredAsrEngine = null;
+    byoAsrUrl = '';
+    byoAsrModel = '';
+    byoAsrApiKey = '';
+    byoAsrConnected = false;
+    hotwords = const [];
+    localOnlyMode = false;
+    cardV2SliceMinutes = 3;
+    cardV2SilenceStopMinutes = 30;
+    notifyListeners();
     await load();
   }
 
@@ -1535,6 +1664,15 @@ class AgentConfigStore extends ChangeNotifier {
       'iflytekA1LinkEnabled': iflytekA1LinkEnabled,
       'healthSignalEnabled': healthSignalEnabled,
       if (preferredAsrEngine != null) 'asrEngine': preferredAsrEngine,
+      if (byoAsrUrl.isNotEmpty) 'byoAsrUrl': byoAsrUrl,
+      if (byoAsrModel.isNotEmpty) 'byoAsrModel': byoAsrModel,
+      if (byoAsrApiKey.isNotEmpty) 'byoAsrApiKey': byoAsrApiKey,
+      if (byoAsrConnected) 'byoAsrConnected': true,
+      if (hotwords.isNotEmpty) 'hotwords': hotwords,
+      if (localOnlyMode) 'localOnlyMode': true,
+      if (cardV2SliceMinutes != 3) 'cardV2SliceMinutes': cardV2SliceMinutes,
+      if (cardV2SilenceStopMinutes != 30)
+        'cardV2SilenceStopMinutes': cardV2SilenceStopMinutes,
       'agentWebSearchEnabled': agentWebSearchEnabled,
       'agentRecordSearchEnabled': agentRecordSearchEnabled,
       'agentHealthAccessEnabled': agentHealthAccessEnabled,

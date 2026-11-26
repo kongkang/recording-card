@@ -1103,33 +1103,61 @@ class RecordingPipeline {
     return recovered;
   }
 
+  Future<PipelineSyncResult> syncViaApFast({
+    void Function(PipelineProgress progress)? onProgress,
+    Future<void> Function(RecordingFile file)? onFileReady,
+  }) => sync(
+    onProgress: onProgress,
+    onFileReady: onFileReady,
+    useApFast: true,
+  );
+
   /// 从设备同步新录音并处理。已完成的文件跳过；已被实时流无断档覆盖的文件跳过；失败文件重试。
   ///
   /// [maxFiles] / [smallestFirst] 用于真机验证：只取最小的一个文件，避免
   /// 把整卡录音都拉下来（BLE 很慢）。生产不传 = 处理全部新文件。
+  /// [useApFast] 为 true 时通过卡端 SoftAP 热点枚举与只读校验极速取回离线录音。
   Future<PipelineSyncResult> sync({
     void Function(PipelineProgress progress)? onProgress,
     Future<void> Function(RecordingFile file)? onFileReady,
     int? maxFiles,
     bool smallestFirst = false,
     int minFileSize = 0,
+    bool useApFast = false,
   }) async {
     if (_busy) {
       throw const PipelineException('同步已在进行中');
     }
     _syncYieldRequested = false;
     _enterBusy();
+    var apOpened = false;
+    var apHost = '192.168.4.1';
+    var apPort = 80;
     try {
       onProgress?.call(
-        const PipelineProgress(
+        PipelineProgress(
           stage: PipelineStage.listing,
           fileIndex: 0,
           fileTotal: 0,
-          text: '正在读取录音卡文件列表…',
+          text: useApFast ? '正在开启卡片热点极速同步…' : '正在读取录音卡文件列表…',
         ),
       );
-      await _ensureSdCardOnMcu();
-      final files = await gateway.files();
+      final List<CardFile> files;
+      if (useApFast) {
+        final ap = await gateway.invokeBridgeCommand(
+          'ap.start',
+          const <String, dynamic>{},
+          const Duration(seconds: 20),
+        );
+        apOpened = true;
+        final rawHost = (ap['ip'] as String?)?.trim() ?? '';
+        if (rawHost.isNotEmpty) apHost = rawHost;
+        apPort = (ap['port'] as num?)?.toInt() ?? 80;
+        files = await _listApFilesWithRetry(host: apHost, port: apPort);
+      } else {
+        await _ensureSdCardOnMcu();
+        files = await gateway.files();
+      }
       await store.pruneMissingGhosts({for (final f in files) f.name});
       var apms = files
           .where((f) => f.isAudioRecording && f.size >= minFileSize)
@@ -1193,6 +1221,9 @@ class RecordingPipeline {
             onProgress: onProgress,
             allowRingDelete: !ringAdvancementBlocked,
             onPartReady: onFileReady,
+            useApFast: useApFast,
+            apHost: apHost,
+            apPort: apPort,
           );
           if (didDownload) downloaded++;
           if (file.stage == RecordingStage.ready) ready++;
@@ -1221,9 +1252,38 @@ class RecordingPipeline {
         pausedForLiveRecording: pausedForLiveRecording,
       );
     } finally {
+      if (apOpened) {
+        try {
+          await gateway.invokeBridgeCommand(
+            'ap.stop',
+            const <String, dynamic>{},
+            const Duration(seconds: 10),
+          );
+        } on Object catch (e) {
+          debugPrint('[pipeline] 停止卡片 AP 热点失败：$e');
+        }
+      }
       _syncYieldRequested = false;
       _exitBusy();
     }
+  }
+
+  Future<List<CardFile>> _listApFilesWithRetry({
+    required String host,
+    required int port,
+  }) async {
+    Object? lastErr;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await gateway.apFiles(host: host, port: port);
+      } on Object catch (e) {
+        lastErr = e;
+        if (attempt < 2) {
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        }
+      }
+    }
+    throw lastErr!;
   }
 
   /// 继续处理本地未完成的录音（启动/切前台时调用）。
@@ -1472,6 +1532,9 @@ class RecordingPipeline {
     void Function(PipelineProgress progress)? onProgress,
     bool allowRingDelete = true,
     Future<void> Function(RecordingFile file)? onPartReady,
+    bool useApFast = false,
+    String apHost = '192.168.4.1',
+    int apPort = 80,
   }) async {
     void report(
       PipelineStage stage, {
@@ -1527,7 +1590,16 @@ class RecordingPipeline {
         ..stage = RecordingStage.downloading
         ..error = null;
       await store.save(file);
-      final download = await gateway.download(file.deviceName, dir.path);
+      final download = useApFast
+          ? await gateway.apDownload(
+              file.deviceName,
+              dir.path,
+              host: apHost,
+              port: apPort,
+              expectedSize: source?.size,
+              deleteAfterVerify: true,
+            )
+          : await gateway.download(file.deviceName, dir.path);
       final firstPart = download.parts.isNotEmpty ? download.parts.first : null;
       final effectivePath = (firstPart != null && firstPart.path.isNotEmpty)
           ? firstPart.path

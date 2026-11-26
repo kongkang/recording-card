@@ -306,6 +306,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     // 已经有人显式接线时不覆盖（测试用假设备，外壳不该抢方向盘）。
     widget.store.deviceConnected ??= () => _device.isConnected;
     _device.onAutoSyncMissedData ??= () => widget.store.syncRecordings();
+    if (widget.store.hasPipeline) {
+      _device.onApFastSync ??= () => widget.store.syncRecordingsViaAp();
+    }
+    _liveAudio.onAudioSamples = _device.onRealtimePcmSamplesForSilenceCheck;
     widget.store.deviceRecording ??= () =>
         _device.isRecording ||
         _device.isPhoneRecording ||

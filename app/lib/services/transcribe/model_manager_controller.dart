@@ -13,6 +13,8 @@ import '../../core/config/remote/client_config.dart';
 import '../../core/store/agent_config_store.dart';
 import 'apple_asset_pack_client.dart';
 import 'asr_models.dart';
+import 'byo_asr_client.dart';
+import 'local_asr_service.dart';
 import 'system_speech_client.dart';
 
 class ModelManagerController extends ChangeNotifier {
@@ -106,13 +108,24 @@ class ModelManagerController extends ChangeNotifier {
   /// 当前选中的语音转写引擎策略。
   LocalAsrEngineMode get selectedEngine {
     final pref = _agentConfig?.preferredAsrEngine;
+    if (pref == 'byo_cloud') return LocalAsrEngineMode.byoCloud;
     if (pref == 'sensevoice') return LocalAsrEngineMode.sensevoice;
     if (supportsSystemAsr) return LocalAsrEngineMode.system;
     return LocalAsrEngineMode.sensevoice;
   }
 
-  /// 当前实际生效的转写状态：`'system'` | `'sensevoice'` | `'pending'`。
+  /// 当前实际生效的转写状态：`'byo_cloud'` | `'system'` | `'sensevoice'` | `'pending'`。
   String get effectiveAsrMode {
+    if (selectedEngine == LocalAsrEngineMode.byoCloud) {
+      final cfg = _agentConfig;
+      if (cfg != null &&
+          cfg.byoAsrConnected &&
+          cfg.byoAsrUrl.trim().isNotEmpty) {
+        return 'byo_cloud';
+      }
+      if (asrReady) return 'pending';
+      return 'pending';
+    }
     if (supportsSystemAsr && selectedEngine == LocalAsrEngineMode.system) {
       return 'system';
     }
@@ -120,13 +133,25 @@ class ModelManagerController extends ChangeNotifier {
     return 'pending';
   }
 
-  String get settingSummaryLabel => switch (effectiveAsrMode) {
-    'system' => _sysCaps.isCompatService
-        ? (speakerReady ? '兼容方案 · 即用' : '兼容方案 · 缺声纹')
-        : (speakerReady ? '系统内置 · 即用' : '系统内置 · 缺声纹'),
-    'sensevoice' => speakerReady ? 'SenseVoice · 已就绪' : 'SenseVoice · 缺声纹',
-    _ => '推荐下载增强模型',
-  };
+  String get settingSummaryLabel {
+    if (selectedEngine == LocalAsrEngineMode.byoCloud) {
+      final cfg = _agentConfig;
+      if (cfg != null &&
+          cfg.byoAsrConnected &&
+          cfg.byoAsrUrl.trim().isNotEmpty) {
+        final model = cfg.byoAsrModel.trim();
+        return model.isEmpty ? '自建服务' : model;
+      }
+      return '自建服务 · 待连接';
+    }
+    return switch (effectiveAsrMode) {
+      'system' => _sysCaps.isCompatService
+          ? (speakerReady ? '兼容方案 · 即用' : '兼容方案 · 缺声纹')
+          : (speakerReady ? '系统内置 · 即用' : '系统内置 · 缺声纹'),
+      'sensevoice' => speakerReady ? 'SenseVoice · 已就绪' : 'SenseVoice · 缺声纹',
+      _ => '推荐下载增强模型',
+    };
+  }
 
   /// 是否有明确的新版本可更新（版本与本地一致或离线未比对时不提示更新，避免打扰）。
   bool get hasRemoteUpdates => false;
@@ -143,6 +168,15 @@ class ModelManagerController extends ChangeNotifier {
 
   /// 切换转写引擎；若切到 SenseVoice 且本地未下载，立即按需下载并在成功后启用。
   Future<void> selectAsrEngine(LocalAsrEngineMode mode) async {
+    if (mode == LocalAsrEngineMode.byoCloud) {
+      await _agentConfig?.setPreferredAsrEngine('byo_cloud');
+      notifyListeners();
+      if (effectiveAsrMode == 'byo_cloud') {
+        await onInstalled?.call();
+      }
+      return;
+    }
+
     if (mode == LocalAsrEngineMode.system) {
       if (!supportsSystemAsr) return;
       await _agentConfig?.setPreferredAsrEngine('system');
@@ -164,6 +198,51 @@ class ModelManagerController extends ChangeNotifier {
 
     if (configured && !_busy) {
       await installSpec(senseVoiceSpec);
+    }
+  }
+
+  /// 验证并启用用户自建 Whisper 兼容转写端点；成功返回 null，失败返回简洁原因。
+  Future<String?> connectAndEnableByoAsr({
+    required String url,
+    required String model,
+    String apiKey = '',
+    ByoAsrClient? client,
+  }) async {
+    final trimmedUrl = url.trim();
+    final trimmedModel = model.trim().isEmpty ? 'whisper-1' : model.trim();
+    final trimmedKey = apiKey.trim();
+    final tester = client ?? ByoAsrClient();
+    try {
+      await tester.testConnection(
+        baseUrl: trimmedUrl,
+        model: trimmedModel,
+        apiKey: trimmedKey,
+      );
+      await _agentConfig?.updateByoAsrConfig(
+        url: trimmedUrl,
+        model: trimmedModel,
+        apiKey: trimmedKey,
+        connected: true,
+      );
+      await _agentConfig?.setPreferredAsrEngine('byo_cloud');
+      try {
+        await _installer.ensureBundled(sileroVadSpec);
+      } on Object {
+        // 单元测试环境下无 bundle 资源时忽略
+      }
+      await refresh();
+      await onInstalled?.call();
+      return null;
+    } on AsrException catch (e) {
+      await _agentConfig?.updateByoAsrConfig(
+        url: trimmedUrl,
+        model: trimmedModel,
+        apiKey: trimmedKey,
+        connected: false,
+      );
+      return e.message;
+    } on Object catch (e) {
+      return '$e';
     }
   }
 

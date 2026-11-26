@@ -52,6 +52,7 @@ import 'services/segment/rolling_clean_segment_service.dart';
 import 'services/segment/segment_build_service.dart';
 import 'services/transcribe/model_manager_controller.dart';
 import 'services/transcribe/asr_models.dart';
+import 'services/transcribe/byo_asr_client.dart';
 import 'services/transcribe/local_asr_service.dart';
 import 'services/transcribe/system_speech_client.dart';
 
@@ -290,10 +291,12 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
       initialIflytekA1LinkEnabled: _agentConfig.iflytekA1LinkEnabled,
       onAutoSyncMissedData: () => _store.syncRecordings(),
     );
+    _device.onApFastSync = () => _store.syncRecordingsViaAp();
     _auth.addListener(_onAuthChanged);
     _modelGateway = ModelGateway(
       client: _auth.apiClient,
       enabledCheck: () => _agentConfig.cloudEnabled,
+      localOnlyCheck: () => _agentConfig.localOnlyMode,
       providers: _modelProviders,
     );
     _summaries = SummaryGenerator(
@@ -312,6 +315,12 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
     );
     _models = InstalledSpeechModelProvider(
       _installer,
+      useByoCloudAsr: () async {
+        if (!_modelManager.hasStatuses) {
+          await _modelManager.refresh();
+        }
+        return _modelManager.effectiveAsrMode == 'byo_cloud';
+      },
       useSystemAsr: () async {
         if (!_modelManager.hasStatuses) {
           await _modelManager.refresh();
@@ -324,6 +333,8 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
         idleReleaseDelay: const Duration(seconds: 20),
       ),
       systemSpeech: _systemSpeech,
+      byoAsr: ByoAsrClient(),
+      agentConfig: _agentConfig,
     );
     _recordingStore = RecordingStore();
     _healthSignals = HealthSignalController(
@@ -362,6 +373,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
         chat: _meteredChat,
         modelResolver: () => _modelGateway.modelFor(ModelScene.polish),
         ready: () => _modelGateway.readyFor(ModelScene.polish),
+        hotwordsResolver: () => _agentConfig.hotwords,
       ),
       segments: SegmentBuildService(
         chat: segmentChat,
@@ -389,7 +401,9 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
       ),
       bleDeviceLabelResolver: () => _device.activeRecordingDeviceLabel,
       apmSourceSampleRateResolver: _device.apmSourceSampleRateHzFor,
-      localQuotaAllowTranscribe: () => _membership.canTranscribeLocally,
+      localQuotaAllowTranscribe: () =>
+          _modelManager.effectiveAsrMode == 'byo_cloud' ||
+          _membership.canTranscribeLocally,
       onLocalTranscribed: (ms) =>
           unawaited(_membership.recordLocalTranscriptionMs(ms)),
     );

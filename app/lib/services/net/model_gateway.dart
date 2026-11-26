@@ -107,12 +107,14 @@ class ModelGateway {
     ModelGatewayConfig? config,
     Duration defaultTimeout = const Duration(seconds: 60),
     bool Function()? enabledCheck,
+    bool Function()? localOnlyCheck,
     ModelProviderStore? providers,
     http.Client? providerClient,
   }) : _client = client,
        _config = config ?? ModelGatewayConfig.fromEnvironment(),
        _defaultTimeout = defaultTimeout,
        _enabledCheck = enabledCheck,
+       _localOnlyCheck = localOnlyCheck,
        _providers = providers,
        _providerClient = providerClient;
 
@@ -120,13 +122,16 @@ class ModelGateway {
   final ModelGatewayConfig _config;
   final Duration _defaultTimeout;
   final bool Function()? _enabledCheck;
+  final bool Function()? _localOnlyCheck;
   final ModelProviderStore? _providers;
   final http.Client? _providerClient;
 
   bool get usesExternalProvider =>
       _providers != null && _providers.activeProvider != ModelProvider.wainao;
 
-  bool get isCloudEnabled => _enabledCheck?.call() ?? true;
+  bool get isLocalOnly => _localOnlyCheck?.call() ?? false;
+
+  bool get isCloudEnabled => !isLocalOnly && (_enabledCheck?.call() ?? true);
 
   /// 运行时从服务端探测到的模型（dart-define 没配时用它）。
   String? _discoveredAsr;
@@ -283,6 +288,12 @@ class ModelGateway {
   }
 
   Future<void> _runDiscoverModels({Duration? timeout}) async {
+    if (isLocalOnly) {
+      _catalogLoaded = true;
+      _catalogError = '已开启仅本机模式';
+      _catalogRevision.value++;
+      return;
+    }
     final cfg = _config;
     if (!cfg.configured) {
       _catalogLoaded = true;
@@ -334,6 +345,9 @@ class ModelGateway {
     String? language,
     Duration? timeout,
   }) async {
+    if (isLocalOnly) {
+      throw const ApiNotConfiguredException('已开启仅本机模式，云端服务已停用');
+    }
     final url = _config.audioTranscriptionsUrl;
     if (!_config.asrConfigured || url == null) {
       throw const ApiNotConfiguredException('未配置转写服务，暂时无法转写');
@@ -397,6 +411,9 @@ class ModelGateway {
     int maxTokens = 2048,
     Duration? timeout,
   }) async {
+    if (isLocalOnly) {
+      throw const ApiNotConfiguredException('已开启仅本机模式，云端服务已停用');
+    }
     if (!isCloudEnabled) {
       throw const ApiNotConfiguredException('请先在设置中选择模型服务');
     }
