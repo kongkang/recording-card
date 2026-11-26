@@ -48,6 +48,9 @@ import StoreKit
     ) { _ in
       Self.trimNativeMemory()
     }
+    // FlutterAppDelegate / FlutterPluginAppLifeCycleDelegate 未实现可选委托方法
+    // `applicationDidReceiveMemoryWarning:`，切勿覆盖并调用 super，否则内存告警会抛出
+    // unrecognized selector 崩溃；统一由系统通知回调清理原生内存。
     NotificationCenter.default.addObserver(
       forName: UIApplication.didReceiveMemoryWarningNotification,
       object: nil,
@@ -58,11 +61,6 @@ import StoreKit
     // UIScene 迁移：插件注册移至 didInitializeImplicitFlutterEngine
     //（scene 生命周期下 didFinishLaunching 早于隐式引擎初始化，直接注册失效）
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-  }
-
-  override func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
-    Self.trimNativeMemory()
-    super.applicationDidReceiveMemoryWarning(application)
   }
 
   static func trimNativeMemory() {

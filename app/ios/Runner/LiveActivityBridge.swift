@@ -1,3 +1,4 @@
+import Darwin
 import Flutter
 import Foundation
 import UIKit
@@ -156,7 +157,7 @@ final class LiveActivityBridge {
 
   func cleanupOrphanedActivitiesIfIdle() {
     #if canImport(ActivityKit)
-    if #available(iOS 16.1, *) {
+    if #available(iOS 16.1, *), Self.isActivityKitRuntimeAvailable() {
       runOnMain { [weak self] in
         guard let self, !self.activeSessionDesired else { return }
         let hasLingering = Activity<RecordingCardActivityAttributes>.activities.contains {
@@ -235,10 +236,42 @@ final class LiveActivityBridge {
     }
   }
 
+  private static let isActivityKitDylibLoaded: Bool = {
+    guard let handle = dlopen(
+      "/System/Library/Frameworks/ActivityKit.framework/ActivityKit",
+      RTLD_LAZY
+    ) else {
+      return false
+    }
+    return dlsym(
+      handle,
+      "$s11ActivityKit0A17AuthorizationInfoCACycfC"
+    ) != nil
+  }()
+
+  static func isActivityKitRuntimeAvailable(
+    isiOSAppOnMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
+    isMacCatalystApp: Bool = ProcessInfo.processInfo.isMacCatalystApp
+  ) -> Bool {
+    #if targetEnvironment(macCatalyst)
+    return false
+    #elseif canImport(ActivityKit)
+    if isiOSAppOnMac || isMacCatalystApp {
+      return false
+    }
+    guard #available(iOS 16.1, *) else {
+      return false
+    }
+    return isActivityKitDylibLoaded
+    #else
+    return false
+    #endif
+  }
+
   /// 按真实机型 identifier 判断灵动岛与操作按钮支持：
   /// - 灵动岛：iPhone 14 Pro / Pro Max (`iPhone15,2`/`iPhone15,3`)、iPhone 15 全系 (`iPhone15,4`/`5`, `iPhone16,1`/`2`)、
   ///   iPhone 16 全系及更新机型 (`iPhone17,*` 及以上)。iPhone 13 mini (`iPhone14,4`) 等刘海屏返回 false。
-  private static func hardwareFlags(model: String) -> (island: Bool, actionButton: Bool) {
+  static func hardwareFlags(model: String) -> (island: Bool, actionButton: Bool) {
     guard model.hasPrefix("iPhone") else { return (false, false) }
     let suffix = model.dropFirst("iPhone".count)
     let parts = suffix.split(separator: ",")
@@ -258,7 +291,7 @@ final class LiveActivityBridge {
     var supportsLive = false
     var enabled = false
     #if canImport(ActivityKit)
-    if #available(iOS 16.1, *) {
+    if #available(iOS 16.1, *), Self.isActivityKitRuntimeAvailable() {
       supportsLive = true
       enabled = ActivityAuthorizationInfo().areActivitiesEnabled
     }
@@ -274,7 +307,7 @@ final class LiveActivityBridge {
 
   private func activeActivityPayload() -> [String: Any] {
     #if canImport(ActivityKit)
-    if #available(iOS 16.1, *) {
+    if #available(iOS 16.1, *), Self.isActivityKitRuntimeAvailable() {
       let activities = Activity<RecordingCardActivityAttributes>.activities
       let current = activities.first(where: { Self.isLiveActivityState($0.activityState) })
       if let activity = current {
@@ -306,7 +339,7 @@ final class LiveActivityBridge {
     result: @escaping FlutterResult
   ) {
     #if canImport(ActivityKit)
-    if #available(iOS 16.1, *) {
+    if #available(iOS 16.1, *), Self.isActivityKitRuntimeAvailable() {
       runOnMain { [weak self] in
         guard let self else {
           result(nil)
@@ -518,7 +551,7 @@ final class LiveActivityBridge {
 
   private func enqueueStopActivities(result: FlutterResult?) {
     #if canImport(ActivityKit)
-    if #available(iOS 16.1, *) {
+    if #available(iOS 16.1, *), Self.isActivityKitRuntimeAvailable() {
       runOnMain { [weak self] in
         guard let self else {
           result?(nil)
