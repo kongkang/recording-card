@@ -133,7 +133,10 @@ class FakeCardGateway implements CardGateway {
   final List<String> deletedFiles = [];
   Duration downloadDelay = Duration.zero;
   int downloadCalls = 0;
+  int apFilesCalls = 0;
+  int apDownloadCalls = 0;
   int transcodeCalls = 0;
+  double? lastTranscodeSourceSampleRateHz;
 
   /// 当前设备快照；null = 未连接。
   CardSnapshot? current;
@@ -626,8 +629,41 @@ class FakeCardGateway implements CardGateway {
   }
 
   @override
-  Future<CardAudio> transcode(String apmPath, String wavPath) async {
+  Future<List<CardFile>> apFiles({
+    String host = '192.168.4.1',
+    int port = 80,
+  }) async {
+    apFilesCalls++;
+    callLog.add('ap.files:$host:$port');
+    return deviceFiles;
+  }
+
+  @override
+  Future<CardDownload> apDownload(
+    String name,
+    String dir, {
+    String host = '192.168.4.1',
+    int port = 80,
+    int? expectedSize,
+    bool deleteAfterVerify = false,
+  }) async {
+    apDownloadCalls++;
+    callLog.add('ap.download:$name');
+    final dl = await download(name, dir);
+    if (deleteAfterVerify) {
+      await deleteFile(name);
+    }
+    return dl;
+  }
+
+  @override
+  Future<CardAudio> transcode(
+    String apmPath,
+    String wavPath, {
+    double? sourceSampleRateHz,
+  }) async {
     transcodeCalls++;
+    lastTranscodeSourceSampleRateHz = sourceSampleRateHz;
     if (failTranscode != null) throw failTranscode!;
     if (transcodeSeconds <= 0) {
       return CardAudio(path: wavPath, samples: 0, durationSecs: 0);

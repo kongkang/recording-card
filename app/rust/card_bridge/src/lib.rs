@@ -749,6 +749,58 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
             let active = active_device().await?;
             out.ok(ap_stop(&active).await?);
         }
+        "ap.files" => {
+            let host = payload
+                .get("host")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(reai_card_sdk::AP_DEFAULT_IP);
+            let port = payload
+                .get("port")
+                .and_then(Value::as_u64)
+                .and_then(|v| u16::try_from(v).ok())
+                .unwrap_or(reai_card_sdk::AP_DEFAULT_PORT);
+            let page_size = payload
+                .get("pageSize")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .filter(|&v| v > 0)
+                .unwrap_or(100);
+            out.ok(ap_list_files(host, port, page_size).await?);
+        }
+        "ap.download" => {
+            let name = str_field(&payload, "name");
+            let dir = str_field(&payload, "dir");
+            let host = payload
+                .get("host")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(reai_card_sdk::AP_DEFAULT_IP);
+            let port = payload
+                .get("port")
+                .and_then(Value::as_u64)
+                .and_then(|v| u16::try_from(v).ok())
+                .unwrap_or(reai_card_sdk::AP_DEFAULT_PORT);
+            let expected_size = payload.get("expectedSize").and_then(Value::as_u64);
+            let delete_after_verify = payload
+                .get("deleteAfterVerify")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            out.ok(
+                ap_download_verified(
+                    host,
+                    port,
+                    &name,
+                    &dir,
+                    expected_size,
+                    delete_after_verify,
+                    Some(out),
+                )
+                .await?,
+            );
+        }
         "time.sync" => {
             let active = active_device().await?;
             out.ok(time_sync(&active).await?);
@@ -756,6 +808,10 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
         "transcode" => {
             let src = str_field(&payload, "apm");
             let wav = str_field(&payload, "wav");
+            let source_sample_rate_hz = payload
+                .get("sourceSampleRateHz")
+                .and_then(Value::as_f64)
+                .filter(|r| r.is_finite() && (8_000.0..=48_000.0).contains(r));
             let src_path = Path::new(&src);
             let wav_path = Path::new(&wav);
             let head = tokio::fs::read(src_path)
@@ -812,6 +868,40 @@ async fn dispatch(kind: &str, payload: Value, out: Emitter) -> Result<(), Bridge
                     "path": wav,
                     "samples": result.samples,
                     "durationSecs": result.duration_secs,
+                }));
+            } else if let Some(src_hz) =
+                source_sample_rate_hz.filter(|r| (*r - f64::from(reai_card_sdk::SAMPLE_RATE_HZ)).abs() >= 1.0)
+            {
+                let src_owned = src_path.to_path_buf();
+                let wav_owned = wav_path.to_path_buf();
+                let (sample_count, duration_secs) = tokio::task::spawn_blocking(move || -> Result<(usize, f64), BridgeError> {
+                    let adpcm = std::fs::read(&src_owned)
+                        .map_err(|e| BridgeError::from(format!("读取 APM 失败: {e}")))?;
+                    let decoded = reai_card_sdk::AdpcmDecoder::new().decode(&adpcm);
+                    let resampled = resample_mono_i16(
+                        &decoded,
+                        src_hz,
+                        f64::from(reai_card_sdk::SAMPLE_RATE_HZ),
+                    );
+                    let wav_data = reai_card_sdk::wav_bytes(&resampled, reai_card_sdk::SAMPLE_RATE_HZ);
+                    if let Some(parent) = wav_owned.parent() {
+                        if !parent.as_os_str().is_empty() {
+                            std::fs::create_dir_all(parent)
+                                .map_err(|e| BridgeError::from(format!("创建 WAV 目录失败: {e}")))?;
+                        }
+                    }
+                    std::fs::write(&wav_owned, wav_data)
+                        .map_err(|e| BridgeError::from(format!("写入 WAV 失败: {e}")))?;
+                    let count = resampled.len();
+                    let dur = count as f64 / f64::from(reai_card_sdk::SAMPLE_RATE_HZ);
+                    Ok((count, dur))
+                })
+                .await
+                .map_err(|e| BridgeError::from(format!("APM 重采样任务失败: {e}")))??;
+                out.ok(json!({
+                    "path": wav,
+                    "samples": sample_count,
+                    "durationSecs": duration_secs,
                 }));
             } else {
                 let result = reai_card_sdk::apm_to_wav(src_path, wav_path).await?;
@@ -3275,32 +3365,168 @@ fn emit_pcm_chunk(
     }));
 }
 
+/// Card V2 firmware <= 0.3.19 PDM clock runs at ~15,578 Hz (-2.7% vs 16 kHz).
+pub(crate) const CARD_V2_UNCALIBRATED_PDM_HZ: f64 = 15_578.0;
+pub(crate) const CARD_V2_DRIFT_MAX_VERSION_CODE: u32 = 319;
+
+/// Resample mono i16 PCM cleanly using fractional linear interpolation.
+pub(crate) fn resample_mono_i16(samples: &[i16], src_rate_hz: f64, dst_rate_hz: f64) -> Vec<i16> {
+    if samples.len() < 2
+        || !src_rate_hz.is_finite()
+        || !dst_rate_hz.is_finite()
+        || src_rate_hz <= 0.0
+        || dst_rate_hz <= 0.0
+        || (src_rate_hz - dst_rate_hz).abs() < 1.0
+    {
+        return samples.to_vec();
+    }
+    let ratio = src_rate_hz / dst_rate_hz;
+    let out_len = ((samples.len() as f64) / ratio).round().max(1.0) as usize;
+    let mut out = Vec::with_capacity(out_len);
+    let last_idx = samples.len() - 1;
+    for i in 0..out_len {
+        let pos = (i as f64) * ratio;
+        let idx = (pos.floor() as usize).min(last_idx);
+        let next = (idx + 1).min(last_idx);
+        let frac = (pos - idx as f64).clamp(0.0, 1.0);
+        let s0 = f64::from(samples[idx]);
+        let s1 = f64::from(samples[next]);
+        let interp = (s0 + (s1 - s0) * frac).round().clamp(f64::from(i16::MIN), f64::from(i16::MAX));
+        out.push(interp as i16);
+    }
+    out
+}
+
+/// Stateful streaming linear resampler preserving fractional phase and boundary sample across chunks.
+struct StreamingLinearResampler {
+    step: f64,
+    phase: f64,
+    prev: Option<i16>,
+}
+
+impl StreamingLinearResampler {
+    fn new(src_rate_hz: f64, dst_rate_hz: f64) -> Self {
+        let step = if src_rate_hz > 0.0 && dst_rate_hz > 0.0 {
+            src_rate_hz / dst_rate_hz
+        } else {
+            1.0
+        };
+        Self {
+            step,
+            phase: 0.0,
+            prev: None,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.phase = 0.0;
+        self.prev = None;
+    }
+
+    fn process(&mut self, chunk: &[i16]) -> Vec<i16> {
+        if chunk.is_empty() || (self.step - 1.0).abs() < 1e-6 {
+            if let Some(&last) = chunk.last() {
+                self.prev = Some(last);
+            }
+            return chunk.to_vec();
+        }
+        let mut combined = Vec::with_capacity(chunk.len() + 1);
+        if let Some(p) = self.prev {
+            combined.push(p);
+        }
+        combined.extend_from_slice(chunk);
+        if combined.len() < 2 {
+            self.prev = chunk.last().copied();
+            return chunk.to_vec();
+        }
+        let mut pos = self.phase.max(0.0);
+        let limit = (combined.len() - 1) as f64;
+        let est_out = (((limit - pos) / self.step).ceil().max(0.0) as usize) + 1;
+        let mut out = Vec::with_capacity(est_out);
+        while pos <= limit + 1e-9 {
+            let idx = (pos.floor() as usize).min(combined.len() - 2);
+            let frac = (pos - idx as f64).clamp(0.0, 1.0);
+            let s0 = f64::from(combined[idx]);
+            let s1 = f64::from(combined[idx + 1]);
+            let interp = (s0 + (s1 - s0) * frac)
+                .round()
+                .clamp(f64::from(i16::MIN), f64::from(i16::MAX));
+            out.push(interp as i16);
+            pos += self.step;
+        }
+        self.phase = pos - (combined.len() - 1) as f64;
+        self.prev = combined.last().copied();
+        out
+    }
+}
+
 async fn realtime_open_card_v2(device: CardV2Device, out: Emitter) -> Result<(), BridgeError> {
+    let fw_version_code = tokio::time::timeout(Duration::from_millis(1200), device.device_info())
+        .await
+        .ok()
+        .and_then(|res| res.ok())
+        .map(|info| info.version_code)
+        .unwrap_or(0);
+    let compensate_drift =
+        fw_version_code > 0 && fw_version_code <= CARD_V2_DRIFT_MAX_VERSION_CODE;
+
     device.set_realtime_enabled(true).await?;
     let mut audio = device.subscribe_audio();
     let mut stop_rx = install_realtime_stop();
-    out.progress(json!({"state": "open", "deviceKind": "card_v2"}));
+    out.progress(json!({
+        "state": "open",
+        "deviceKind": "card_v2",
+        "driftCompensated": compensate_drift,
+    }));
 
     tokio::spawn(async move {
         let mut blocks: u64 = 0;
         let mut samples: u64 = 0;
         let mut gaps: u64 = 0;
+        let mut resampler = compensate_drift.then(|| {
+            StreamingLinearResampler::new(
+                CARD_V2_UNCALIBRATED_PDM_HZ,
+                f64::from(reai_card_sdk::SAMPLE_RATE_HZ),
+            )
+        });
         loop {
             tokio::select! {
                 _ = &mut stop_rx => break,
                 received = audio.recv() => match received {
-                    Ok(chunk) => emit_pcm_chunk(
-                        &out,
-                        &chunk.samples,
-                        chunk.sample_rate,
-                        chunk.channels,
-                        chunk.discontinuous,
-                        &mut blocks,
-                        &mut samples,
-                        &mut gaps,
-                    ),
+                    Ok(chunk) => {
+                        if let Some(ref mut r) = resampler {
+                            if chunk.discontinuous {
+                                r.reset();
+                            }
+                            let resampled = r.process(&chunk.samples);
+                            emit_pcm_chunk(
+                                &out,
+                                &resampled,
+                                reai_card_sdk::SAMPLE_RATE_HZ,
+                                chunk.channels,
+                                chunk.discontinuous,
+                                &mut blocks,
+                                &mut samples,
+                                &mut gaps,
+                            );
+                        } else {
+                            emit_pcm_chunk(
+                                &out,
+                                &chunk.samples,
+                                chunk.sample_rate,
+                                chunk.channels,
+                                chunk.discontinuous,
+                                &mut blocks,
+                                &mut samples,
+                                &mut gaps,
+                            );
+                        }
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                         gaps += 1;
+                        if let Some(ref mut r) = resampler {
+                            r.reset();
+                        }
                         out.progress(json!({
                             "state": "gap",
                             "gapIndex": gaps,
@@ -3848,7 +4074,11 @@ async fn take_card_v2_file_with_progress(
         return Err(BridgeError::from(format!("重命名录音文件失败: {e}")));
     }
 
-    let stamp = reai_card_sdk::RecordingStamp::parse(&taken.name)
+    let seg = reai_card_sdk::RecordingSegmentName::parse(&taken.name);
+    let stamp = seg
+        .as_ref()
+        .map(|s| s.stamp)
+        .or_else(|| reai_card_sdk::RecordingStamp::parse(&taken.name))
         .filter(|s| s.synced && (1_577_836_800..=4_102_444_800).contains(&s.timestamp));
 
     Ok(json!({
@@ -3858,6 +4088,8 @@ async fn take_card_v2_file_with_progress(
         "deviceName": resolved.device_name,
         "startAt": stamp.map(|s| s.timestamp),
         "timeSynced": stamp.map(|s| s.synced),
+        "session": seg.as_ref().and_then(|s| s.session.clone()),
+        "seq": seg.as_ref().and_then(|s| s.seq),
     }))
 }
 
@@ -6035,10 +6267,25 @@ async fn ap_start(
     password: Option<&str>,
 ) -> Result<Value, BridgeError> {
     match active {
-        ActiveDevice::CardV2 { device, .. } => Ok(device
-            .start_access_point(ssid, password)
+        ActiveDevice::CardV2 { device, .. } => {
+            // Card V2 v0.3.x nRF 固件未实现 AP_START/AP_STOP 透传，热点由 WIFI_OPEN 自动拉起。
+            device.open_wifi().await?;
+            let ready = tokio::time::timeout(
+                Duration::from_secs(12),
+                device.wait_for_ap_ready(Duration::from_secs(12)),
+            )
             .await
-            .and_then(to_value)?),
+            .map(|r| r.is_ok())
+            .unwrap_or(false);
+            Ok(json!({
+                "active": true,
+                "ready": ready,
+                "ssid": reai_card_sdk::AP_DEFAULT_SSID,
+                "password": "",
+                "ip": reai_card_sdk::AP_DEFAULT_IP,
+                "port": reai_card_sdk::AP_DEFAULT_PORT,
+            }))
+        }
         ActiveDevice::DyjV1 { device, .. } => Ok(device.ap_start(ssid, password, true).await?),
         ActiveDevice::BoardV21 { .. } => {
             Err(BridgeError::from("语音 AI 键盘不支持热点模式".to_string()))
@@ -6056,13 +6303,155 @@ async fn ap_start(
 async fn ap_stop(active: &ActiveDevice) -> Result<Value, BridgeError> {
     match active {
         ActiveDevice::CardV2 { device, .. } => {
-            Ok(device.stop_access_point().await.and_then(to_value)?)
+            device.close_wifi().await?;
+            Ok(json!({"active": false}))
         }
         ActiveDevice::DyjV1 { device, .. } => Ok(device.ap_stop().await?),
         ActiveDevice::BoardV21 { .. }
         | ActiveDevice::External { .. }
         | ActiveDevice::CardV2DfuRecovery { .. } => Ok(json!({"active": false})),
     }
+}
+
+pub(crate) fn normalize_ap_file_entry(
+    entry: &reai_card_sdk::AccessPointFileEntry,
+    index: usize,
+) -> Value {
+    json!({
+        "index": index,
+        "name": entry.name,
+        "size": entry.size,
+        "is_dir": 0,
+        "start_at": entry.start_at,
+        "synced": entry.synced,
+        "session": entry.session,
+        "seq": entry.seq,
+        "recordingName": entry.recording_name(),
+    })
+}
+
+async fn ap_list_files(host: &str, port: u16, page_size: u32) -> Result<Value, BridgeError> {
+    let client = reai_card_sdk::AccessPointClient::new(host, port)?;
+    let mut items = Vec::new();
+    let mut page = 1_u32;
+    let mut idx = 0_usize;
+    loop {
+        let resp = client.list_files(page, page_size).await?;
+        for entry in &resp.files {
+            items.push(normalize_ap_file_entry(entry, idx));
+            idx += 1;
+        }
+        if page >= resp.total_pages || resp.files.is_empty() || page >= 200 {
+            break;
+        }
+        page += 1;
+    }
+    Ok(Value::Array(items))
+}
+
+async fn ap_download_verified(
+    host: &str,
+    port: u16,
+    name: &str,
+    dir: &str,
+    expected_size: Option<u64>,
+    delete_after_verify: bool,
+    out: Option<Emitter>,
+) -> Result<Value, BridgeError> {
+    use tokio::io::AsyncWriteExt as _;
+
+    let clean_name = clean_download_filename(name)?;
+    let client = reai_card_sdk::AccessPointClient::new(host, port)?;
+    let dir_path = Path::new(dir);
+    tokio::fs::create_dir_all(dir_path)
+        .await
+        .map_err(|e| BridgeError::from(format!("创建 AP 下载目录失败: {e}")))?;
+
+    let part_path = dir_path.join(format!("{clean_name}.part"));
+    let _ = tokio::fs::remove_file(&part_path).await;
+
+    let file = tokio::fs::File::create(&part_path)
+        .await
+        .map_err(|e| BridgeError::from(format!("创建 AP 临时文件失败: {e}")))?;
+    let progress_label = clean_name.clone();
+    let mut writer = ProgressTrackingWriter::new(file, move |written| {
+        if let Some(emitter) = out {
+            emitter.progress(json!({
+                "stage": "download",
+                "name": progress_label,
+                "bytesWritten": written,
+            }));
+        }
+    });
+
+    let dl = match client.download_file_to(name, &mut writer).await {
+        Ok(res) => res,
+        Err(e) => {
+            drop(writer);
+            let _ = tokio::fs::remove_file(&part_path).await;
+            return Err(BridgeError::from(e));
+        }
+    };
+    if let Err(e) = writer.flush().await {
+        drop(writer);
+        let _ = tokio::fs::remove_file(&part_path).await;
+        return Err(BridgeError::from(format!("刷新 AP 临时文件失败: {e}")));
+    }
+    drop(writer);
+
+    let actual_len = tokio::fs::metadata(&part_path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
+    if actual_len == 0 || dl.bytes_written == 0 || actual_len != dl.bytes_written {
+        let _ = tokio::fs::remove_file(&part_path).await;
+        return Err(BridgeError::from(format!(
+            "AP 下载字节异常: reported={}, disk={actual_len}",
+            dl.bytes_written
+        )));
+    }
+    if let Some(exp) = expected_size.filter(|&s| s > 0) {
+        if actual_len != exp {
+            let _ = tokio::fs::remove_file(&part_path).await;
+            return Err(BridgeError::from(format!(
+                "AP 下载长度不匹配: expected={exp}, actual={actual_len}"
+            )));
+        }
+    }
+
+    let suggested = dl.suggested_name.as_deref().unwrap_or("");
+    let resolved = resolve_card_v2_taken_file_naming(Some(&clean_name), suggested, "")?;
+    let final_path = dir_path.join(&resolved.final_file_name);
+    if let Err(e) = tokio::fs::rename(&part_path, &final_path).await {
+        let _ = tokio::fs::remove_file(&part_path).await;
+        return Err(BridgeError::from(format!("重命名 AP 下载文件失败: {e}")));
+    }
+
+    let seg = if !suggested.is_empty() {
+        reai_card_sdk::RecordingSegmentName::parse(suggested)
+    } else {
+        None
+    };
+    let stamp = seg.as_ref().map(|s| s.stamp).filter(|s| {
+        s.synced && (1_577_836_800..=4_102_444_800).contains(&s.timestamp)
+    });
+
+    let deleted_remote = if delete_after_verify {
+        client.delete_file(name).await.is_ok()
+    } else {
+        false
+    };
+
+    Ok(json!({
+        "path": final_path.to_string_lossy(),
+        "bytesWritten": actual_len,
+        "originalName": resolved.original_name,
+        "startAt": stamp.map(|s| s.timestamp),
+        "timeSynced": stamp.map(|s| s.synced),
+        "session": seg.as_ref().and_then(|s| s.session.clone()),
+        "seq": seg.as_ref().and_then(|s| s.seq),
+        "deletedRemote": deleted_remote,
+    }))
 }
 
 async fn time_sync(active: &ActiveDevice) -> Result<Value, BridgeError> {
@@ -8269,5 +8658,72 @@ mod tests {
         assert_eq!(normalize_mtime_sec(1_000_000_000), None);
         assert_eq!(normalize_mtime_sec(1_730_000_000), Some(1_730_000_000));
         assert_eq!(normalize_mtime_sec(1_730_000_000_123), Some(1_730_000_000));
+    }
+
+    #[test]
+    fn resamples_pdm_drift_15578hz_to_16000hz_batch_and_streaming() {
+        // 1 秒 15,578 Hz -> 16,000 Hz 样本数校准
+        let src_len = 15_578usize;
+        let input: Vec<i16> = (0..src_len)
+            .map(|i| (((i as f64) * 2.0 * std::f64::consts::PI * 440.0 / 15_578.0).sin() * 12_000.0) as i16)
+            .collect();
+        let batch = resample_mono_i16(&input, CARD_V2_UNCALIBRATED_PDM_HZ, 16_000.0);
+        assert!(
+            (batch.len() as isize - 16_000).abs() <= 1,
+            "expected ~16000 samples, got {}",
+            batch.len()
+        );
+        // 与同率输入相比应零损失复制
+        assert_eq!(resample_mono_i16(&input[..64], 16_000.0, 16_000.0), input[..64].to_vec());
+
+        let mut streaming = StreamingLinearResampler::new(CARD_V2_UNCALIBRATED_PDM_HZ, 16_000.0);
+        let mut streamed_out = Vec::new();
+        for chunk in input.chunks(320) {
+            streamed_out.extend(streaming.process(chunk));
+        }
+        assert!(
+            (streamed_out.len() as isize - 16_000).abs() <= 2,
+            "streamed length mismatch: {}",
+            streamed_out.len()
+        );
+        let compare_len = batch.len().min(streamed_out.len());
+        let max_diff = batch[..compare_len]
+            .iter()
+            .zip(streamed_out[..compare_len].iter())
+            .map(|(a, b)| (i32::from(*a) - i32::from(*b)).abs())
+            .max()
+            .unwrap_or(0);
+        assert!(max_diff <= 2, "batch vs streaming max sample diff = {max_diff}");
+    }
+
+    #[test]
+    fn normalizes_card_v2_segment_metadata_and_ap_file_entry() {
+        let seg = reai_card_sdk::RecordingSegmentName::parse("synced_1792392529_0140A9CA_02.apm")
+            .expect("segment name should parse");
+        assert!(seg.stamp.synced);
+        assert_eq!(seg.stamp.timestamp, 1792392529);
+        assert_eq!(seg.session.as_deref(), Some("0140A9CA"));
+        assert_eq!(seg.seq, Some(2));
+
+        let entry = reai_card_sdk::AccessPointFileEntry {
+            name: "0140A9CA.APM".to_string(),
+            size: 4_812_800,
+            size_formatted: None,
+            timestamp: None,
+            date: None,
+            session: Some("0140A9CA".to_string()),
+            seq: Some(3),
+            start_at: Some(1792393129),
+            synced: Some(true),
+        };
+        let normalized = normalize_ap_file_entry(&entry, 0);
+        assert_eq!(normalized["name"], "0140A9CA.APM");
+        assert_eq!(normalized["session"], "0140A9CA");
+        assert_eq!(normalized["seq"], 3);
+        assert_eq!(normalized["synced"], true);
+        assert_eq!(
+            normalized["recordingName"],
+            "synced_1792393129_0140A9CA_03.apm"
+        );
     }
 }

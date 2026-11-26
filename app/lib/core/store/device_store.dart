@@ -28,6 +28,7 @@ import '../../services/platform/live_activity_service.dart';
 import '../../services/platform/local_notification_service.dart';
 import '../../services/watch/watch_hardware_service.dart';
 import '../device/card_gateway.dart';
+import '../models/recording.dart';
 import '../platform/bluetooth_permission.dart';
 import '../storage/json_store.dart';
 import '../storage/secure_store.dart';
@@ -1744,7 +1745,23 @@ class DeviceStore extends ChangeNotifier {
         if (battery['isCharging'] is bool) {
           _liveCharging = battery['isCharging'] as bool;
         }
+        _checkLowBatterySafeStop();
         changed = true;
+      }
+
+      // 物理按键与拨杆事件（含拨杆 ON 漏录检测）
+      var sawSwitchOn = false;
+      String? switchOnAction;
+      for (final swEv in batch.switchEvents) {
+        if (swEv.gesture == 'switch_on') {
+          sawSwitchOn = true;
+          switchOnAction = swEv.action ?? swEv.deviceAction;
+        } else if (swEv.gesture == 'switch_off') {
+          _hardwareSafetyNotice = null;
+        }
+      }
+      if (sawSwitchOn && !isRecording) {
+        _scheduleSwitchOnMissedRecordCheck(action: switchOnAction);
       }
 
       // 语音 AI 键盘物理语音键按下：翻转统一录音开关
@@ -1916,12 +1933,17 @@ class DeviceStore extends ChangeNotifier {
     _fastHeartbeatConfirmTimer = null;
   }
 
+  static const int lowBatterySafeStopPercent = 5;
+
   CardDevice? _autoReconnectTarget;
   Timer? _autoReconnectTimer;
   int _autoReconnectAttempt = 0;
   bool _backgroundReconnecting = false;
   bool _pendingPostReconnectSync = false;
   String? _disconnectNotice;
+  String? _hardwareSafetyNotice;
+  bool _lowBatteryProtectedThisSession = false;
+  Timer? _switchOnGuardTimer;
 
   /// 外部 BLE 同步管线（例如 RecordingPipeline.sync）是否正在忙，忙时顺延心跳探测避免误判断连。
   bool Function()? isExternalBleSyncBusy;
@@ -1932,6 +1954,85 @@ class DeviceStore extends ChangeNotifier {
   bool get isBackgroundReconnectArmed => _autoReconnectTarget != null;
   CardDevice? get autoReconnectTarget => _autoReconnectTarget;
   String? get disconnectNotice => _disconnectNotice;
+  String? get hardwareSafetyNotice => _hardwareSafetyNotice;
+
+  void dismissHardwareSafetyNotice() {
+    if (_hardwareSafetyNotice == null) return;
+    _hardwareSafetyNotice = null;
+    notifyListeners();
+  }
+
+  /// 返回录音卡 V2 在已知 ≤0.3.19 固件下的实际 PDM 采样率（15578Hz，用于修正 -2.7% 时钟频偏）。
+  double? apmSourceSampleRateHzFor(RecordingFile file) {
+    if (!file.apmPath.toLowerCase().endsWith('.apm')) return null;
+    if (activeKind != DeviceKind.cardV2) return null;
+    if (_fwVersionCode == 0 || _fwVersionCode <= 319) {
+      return 15578.0;
+    }
+    return null;
+  }
+
+  void _checkLowBatterySafeStop() {
+    if (!isConnected || !activeCapabilities.hasOnboardStorage) {
+      _lowBatteryProtectedThisSession = false;
+      return;
+    }
+    final recording = _liveRecording ?? false;
+    final charging = _liveCharging ?? false;
+    final batt = _liveBattery;
+    if (!recording || charging || batt == null || batt <= 0) {
+      if (!recording || charging || (batt != null && batt > lowBatterySafeStopPercent)) {
+        _lowBatteryProtectedThisSession = false;
+      }
+      return;
+    }
+    if (batt > lowBatterySafeStopPercent || _lowBatteryProtectedThisSession) {
+      return;
+    }
+    _lowBatteryProtectedThisSession = true;
+    final carrySec = _clockTicks;
+    _hardwareSafetyNotice = '录音卡电量低至 $batt%，已自动停止卡内录音保存分段并切换接力兜底';
+    _phoneStandbyArmed = true;
+    unawaited(
+      _triggerCompanionFailover(
+        reason: '录音卡电量剩余 $batt%，已接力防丢录',
+        carrySecOverride: carrySec,
+      ),
+    );
+    unawaited(_performLowBatteryGracefulStop(batt));
+  }
+
+  Future<void> _performLowBatteryGracefulStop(int batteryPercent) async {
+    try {
+      await _gw.stopRecording().timeout(const Duration(seconds: 6));
+    } on Object catch (e) {
+      debugPrint('[device] 低电量安全停录发送失败（$batteryPercent%）: $e');
+    } finally {
+      _liveRecording = false;
+      _hwRecordingStartedAt = null;
+      _clockTicks = 0;
+      _stopClock();
+      _persistCurrentDeviceState(recordingOverride: false);
+      notifyListeners();
+    }
+  }
+
+  void _scheduleSwitchOnMissedRecordCheck({String? action}) {
+    if (action != null &&
+        action.isNotEmpty &&
+        action != 'none' &&
+        action != 'record_start' &&
+        action != 'record_toggle') {
+      return;
+    }
+    _switchOnGuardTimer?.cancel();
+    _switchOnGuardTimer = Timer(const Duration(milliseconds: 1500), () {
+      _switchOnGuardTimer = null;
+      if (_disposed || !isConnected || isRecording) return;
+      _hardwareSafetyNotice = '检测到物理拨杆处于开启状态但设备未录音，请检查卡内存储或轻触开启录音';
+      notifyListeners();
+    });
+  }
 
   void dismissDisconnectNotice() {
     final clearPending = _pendingPhoneFailover && !hasActiveRecording;
@@ -2599,6 +2700,7 @@ class DeviceStore extends ChangeNotifier {
           (prevRecording || _liveActivityActive)) {
         _stopLiveActivity(force: true);
       }
+      _checkLowBatterySafeStop();
     }
   }
 
@@ -5270,6 +5372,8 @@ class DeviceStore extends ChangeNotifier {
     _resetHeartbeatFailures();
     _oledDelayTimer?.cancel();
     _oledDelayTimer = null;
+    _switchOnGuardTimer?.cancel();
+    _switchOnGuardTimer = null;
     _eventWatch?.cancel();
     _stopSheetWatch();
     _stopScanExpiryTimer();

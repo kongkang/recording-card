@@ -11,6 +11,7 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -158,6 +159,7 @@ class RecordingPipeline {
     this.skipLegacyCloudPolishWhenRollingActive = true,
     this.localQuotaAllowTranscribe,
     this.onLocalTranscribed,
+    this.apmSourceSampleRateResolver,
   }) : _topicStore = topicStore,
        _reconciliationStore = reconciliationStore;
 
@@ -167,6 +169,7 @@ class RecordingPipeline {
   final bool skipLegacyCloudPolishWhenRollingActive;
   final bool Function()? localQuotaAllowTranscribe;
   final void Function(int durationMs)? onLocalTranscribed;
+  final double? Function(RecordingFile file)? apmSourceSampleRateResolver;
 
   final CardGateway gateway;
   final RecordingStore store;
@@ -1134,16 +1137,7 @@ class RecordingPipeline {
       if (smallestFirst) {
         apms.sort((a, b) => a.size.compareTo(b.size));
       } else {
-        apms.sort((a, b) {
-          final aRing = _omiRingStartSeq(a);
-          final bRing = _omiRingStartSeq(b);
-          // Omi Ring Buffer 推进删除是 FIFO 游标：必须按起始编号升序拉取与推进，
-          // 否则先删后段或跳过前段会错推设备读指针。
-          if (aRing != null && bRing != null) {
-            return aRing.compareTo(bRing);
-          }
-          return _startSecond(b).compareTo(_startSecond(a));
-        });
+        apms = orderCardFilesForSync(apms);
       }
       if (maxFiles != null && apms.length > maxFiles) {
         apms = apms.take(maxFiles).toList();
@@ -1189,6 +1183,7 @@ class RecordingPipeline {
           continue;
         }
         final file = existing ?? _newFile(source);
+        await _reconcileStoredSessionForFile(file);
         try {
           final didDownload = await _processFile(
             file,
@@ -1540,6 +1535,12 @@ class RecordingPipeline {
                 ? '${dir.path}/${file.deviceName}'
                 : download.path);
       file.apmPath = effectivePath;
+      if (download.session != null && download.session!.isNotEmpty) {
+        file.session = download.session!;
+      }
+      if (download.seq != null && download.seq! > 0) {
+        file.seq = download.seq!;
+      }
       final resolvedStartAtSec = download.startAtSec ?? firstPart?.startAtSec;
       final resolvedTimeSynced = download.timeSynced ?? firstPart?.timeSynced;
       if (resolvedStartAtSec != null) {
@@ -1667,7 +1668,11 @@ class RecordingPipeline {
         ..error = null
         ..wavPath = wavPath;
       await store.save(file);
-      final audio = await gateway.transcode(file.apmPath, wavPath);
+      final audio = await gateway.transcode(
+        file.apmPath,
+        wavPath,
+        sourceSampleRateHz: apmSourceSampleRateResolver?.call(file),
+      );
       file.durationMs = (audio.durationSecs * 1000).round();
       // start_at 缺失时，created_at 是结束时间，反推起点；绝不覆盖 download 带回的权威起点
       if (!hasAuthoritativeStartAt &&
@@ -1680,6 +1685,7 @@ class RecordingPipeline {
         file.timeSynced = false;
       }
       await store.save(file);
+      await _reconcileStoredSessionForFile(file);
     }
 
     // 3) 模型未就绪：音频已入库，停在转码完成，等下次重试
@@ -2346,4 +2352,166 @@ class RecordingPipeline {
 
   static int _startSecond(CardFile file) =>
       file.startAtSec ?? file.createdAtSec ?? 0;
+
+  static final RegExp _validHexSessionRe = RegExp(r'^[0-9A-Fa-f]{8}$');
+
+  static bool isValidHexSession(String? session) =>
+      session != null && _validHexSessionRe.hasMatch(session.trim());
+
+  /// 排序待同步设备文件：
+  /// - Omi Ring Buffer 保持 FIFO 起始偏移升序；
+  /// - 同 8 位十六进制 `session` 内按 `seq` 升序（避免 1024s 阈值回绕后倒序拉取）；
+  /// - 不同会话/散段仍按时间由新到旧排序，优先呈现最新内容。
+  static List<CardFile> orderCardFilesForSync(List<CardFile> input) {
+    final ringFiles = <CardFile>[];
+    final sessionBuckets = <String, List<CardFile>>{};
+    final looseFiles = <CardFile>[];
+
+    for (final f in input) {
+      if (_omiRingStartSeq(f) != null) {
+        ringFiles.add(f);
+      } else if (isValidHexSession(f.session) && f.seq != null) {
+        final key = f.session!.trim().toUpperCase();
+        sessionBuckets.putIfAbsent(key, () => []).add(f);
+      } else {
+        looseFiles.add(f);
+      }
+    }
+
+    ringFiles.sort((a, b) => _omiRingStartSeq(a)!.compareTo(_omiRingStartSeq(b)!));
+    final groups = <({int sortSec, List<CardFile> items})>[];
+    for (final entry in sessionBuckets.values) {
+      entry.sort((a, b) {
+        final c = a.seq!.compareTo(b.seq!);
+        return c != 0 ? c : a.name.compareTo(b.name);
+      });
+      var maxSec = 0;
+      for (final f in entry) {
+        final s = _startSecond(f);
+        if (s > maxSec) maxSec = s;
+      }
+      groups.add((sortSec: maxSec, items: entry));
+    }
+    for (final f in looseFiles) {
+      groups.add((sortSec: _startSecond(f), items: [f]));
+    }
+    groups.sort((a, b) => b.sortSec.compareTo(a.sortSec));
+
+    return [
+      ...ringFiles,
+      for (final g in groups) ...g.items,
+    ];
+  }
+
+  /// 同会话 RTC1 每 1024s 回绕与 `nosync` 顺序失真自愈：
+  /// 对共享 8 位十六进制 `session` 的多段录音按 `seq` 升序串联；
+  /// 若发现后段 `startAtMs` 倒流或相对 `prevStartMs + prevDurationMs` 偏差 > 90s（或未校时），
+  /// 按累计时长顺推并标记 `timeSynced = false`（诚实表达估算来源）。返回被修复的文件列表。
+  static List<RecordingFile> reconcileSessionTimestamps(
+    List<RecordingFile> files, {
+    double defaultApmSampleRateHz = 15578.0,
+    int? fallbackAnchorNowMs,
+  }) {
+    final bySession = <String, List<RecordingFile>>{};
+    for (final f in files) {
+      if (!isValidHexSession(f.session) || f.seq <= 0) continue;
+      final key = f.session.trim().toUpperCase();
+      bySession.putIfAbsent(key, () => []).add(f);
+    }
+
+    final repaired = <RecordingFile>[];
+    for (final group in bySession.values) {
+      if (group.length < 2) continue;
+      group.sort((a, b) {
+        final c = a.seq.compareTo(b.seq);
+        return c != 0 ? c : a.deviceName.compareTo(b.deviceName);
+      });
+
+      int estimateDurationMs(RecordingFile seg) {
+        if (seg.durationMs > 0) return seg.durationMs;
+        if (seg.apmPath.isNotEmpty) {
+          try {
+            final f = File(seg.apmPath);
+            if (f.existsSync()) {
+              final bytes = f.lengthSync();
+              if (bytes > 0) {
+                return ((bytes * 2 * 1000) / defaultApmSampleRateHz).round();
+              }
+            }
+          } on Object {
+            // 文件不可读时退回分段默认步长估算
+          }
+        }
+        return 600 * 1000;
+      }
+
+      // 若首段明显未校时或落盘早于 2020 年，先从合理时间或末段落盘时间倒推锚点
+      final anchor = group.first;
+      const minPlausibleEpochMs = 1577836800 * 1000;
+      if (anchor.startAtMs < minPlausibleEpochMs) {
+        var totalEstimatedMs = 0;
+        for (var i = 0; i < group.length; i++) {
+          totalEstimatedMs += estimateDurationMs(group[i]);
+        }
+        final tailAnchor = group.last.createdAtMs >= minPlausibleEpochMs
+            ? group.last.createdAtMs
+            : (fallbackAnchorNowMs ?? DateTime.now().millisecondsSinceEpoch);
+        anchor
+          ..startAtMs = tailAnchor - totalEstimatedMs
+          ..timeSynced = false;
+        repaired.add(anchor);
+      }
+
+      var sessionOverflowed = !anchor.timeSynced;
+      for (var i = 1; i < group.length; i++) {
+        final prev = group[i - 1];
+        final cur = group[i];
+        final int seqGap = math.max(1, cur.seq - prev.seq);
+        final int prevDurMs = prev.durationMs > 0
+            ? prev.durationMs
+            : (seqGap == 1 ? estimateDurationMs(prev) : seqGap * 600 * 1000);
+        final int expectedStartMs = prev.startAtMs + prevDurMs;
+        final driftMs = (cur.startAtMs - expectedStartMs).abs();
+        final wentBackwards = cur.startAtMs <= prev.startAtMs + 1000;
+        final clockWrapped =
+            sessionOverflowed ||
+            wentBackwards ||
+            !cur.timeSynced ||
+            (cur.startAtMs < minPlausibleEpochMs) ||
+            (seqGap == 1 && prevDurMs > 0 && driftMs > 60 * 1000);
+        if (clockWrapped) {
+          sessionOverflowed = true;
+          if (cur.startAtMs != expectedStartMs || cur.timeSynced != false) {
+            cur
+              ..startAtMs = expectedStartMs
+              ..timeSynced = false;
+            repaired.add(cur);
+          }
+        }
+      }
+    }
+    return repaired;
+  }
+
+  Future<void> _reconcileStoredSessionForFile(RecordingFile file) async {
+    if (!isValidHexSession(file.session)) return;
+    final key = file.session.trim().toUpperCase();
+    final all = await store.loadAll(refresh: true);
+    final cohort = [
+      for (final f in all)
+        if (f.deviceName == file.deviceName)
+          file
+        else if (f.session.trim().toUpperCase() == key)
+          f,
+    ];
+    if (cohort.length < 2) return;
+    final sampleRateHz = apmSourceSampleRateResolver?.call(file) ?? 15578.0;
+    final changed = reconcileSessionTimestamps(
+      cohort,
+      defaultApmSampleRateHz: sampleRateHz,
+    );
+    for (final fixed in changed) {
+      await store.save(fixed);
+    }
+  }
 }

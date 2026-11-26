@@ -388,6 +388,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
         ready: () => _modelGateway.readyFor(ModelScene.polish),
       ),
       bleDeviceLabelResolver: () => _device.activeRecordingDeviceLabel,
+      apmSourceSampleRateResolver: _device.apmSourceSampleRateHzFor,
       localQuotaAllowTranscribe: () => _membership.canTranscribeLocally,
       onLocalTranscribed: (ms) =>
           unawaited(_membership.recordLocalTranscriptionMs(ms)),
