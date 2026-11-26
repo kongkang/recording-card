@@ -1,4 +1,5 @@
 import BackgroundAssets
+import Darwin
 import Flutter
 import Foundation
 import System
@@ -74,7 +75,17 @@ final class AppleAssetPackBridge: NSObject, FlutterStreamHandler {
   }
 
   private func isAppleHostingAvailable() -> Bool {
+    let processInfo = ProcessInfo.processInfo
+    if processInfo.isiOSAppOnMac || processInfo.isMacCatalystApp {
+      return false
+    }
     guard #available(iOS 26.0, *) else {
+      return false
+    }
+    guard dlopen(
+      "/System/Library/Frameworks/BackgroundAssets.framework/BackgroundAssets",
+      RTLD_LAZY
+    ) != nil else {
       return false
     }
     // Xcode / devicectl 本地安装的开发包内含带 ProvisionedDevices 的描述文件，
