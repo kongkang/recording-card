@@ -65,7 +65,7 @@ public class Adapter {
                 out.add(address + "\t" + cleanName);
             }
             return out.toArray(new String[0]);
-        } catch (SecurityException | RuntimeException ex) {
+        } catch (RuntimeException ex) {
             return new String[0];
         }
     }
