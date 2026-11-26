@@ -512,11 +512,17 @@ class ModelGateway {
     );
   }
 
+  static const int _kEmptyLengthRetryMaxTokens = 8192;
+
   bool _shouldDisableWainaoThinking(String modelId, ModelScene scene) {
     if (scene == ModelScene.agent) return false;
     final modelMeta = ModelCatalog(_discoveredModels).byId(modelId);
     if (modelMeta?.thinkingSupportsOff == true) return true;
-    return modelId.toLowerCase().startsWith('deepseek-v4-flash');
+    final lower = modelId.toLowerCase();
+    return lower.startsWith('deepseek-v4-flash') ||
+        lower.startsWith('deepseek-deepseek-flash') ||
+        lower == 'deepseek-flash' ||
+        lower.startsWith('deepseek-v4-pro');
   }
 
   static bool _isRetryableVisionError(Object error) {
@@ -544,63 +550,110 @@ class ModelGateway {
         route?.provider == ModelProvider.openai &&
         route?.endpoint('chat/completions').host == 'api.openai.com';
     final reasoningModel = RegExp(r'^(o[0-9]|gpt-5)').hasMatch(model);
-    final deepSeekSummary =
+    final deepSeekDisableThinking =
         route?.provider == ModelProvider.deepseek &&
         route?.endpoint('chat/completions').host == 'api.deepseek.com' &&
-        scene == ModelScene.summary;
+        scene != ModelScene.agent;
     final disableWainaoThinking =
         route == null && _shouldDisableWainaoThinking(model, scene);
-    final effectiveMaxTokens =
-        (deepSeekSummary ||
-            (disableWainaoThinking &&
-                (scene == ModelScene.vision ||
-                    scene == ModelScene.summary ||
-                    scene == ModelScene.organize)))
-        ? math.max(maxTokens, scene == ModelScene.summary ? 3200 : 2048)
-        : maxTokens;
-    final payload = {
-      'model': model,
-      'stream': false,
-      if (deepSeekSummary || disableWainaoThinking)
-        'thinking': {'type': 'disabled'},
-      if (!officialOpenAi || !reasoningModel) 'temperature': temperature,
-      if (officialOpenAi)
-        'max_completion_tokens': maxTokens
-      else
-        'max_tokens': effectiveMaxTokens,
-      'messages': [for (final message in messages) message.toJson()],
-    };
-    final response = route == null
-        ? await _client.postJson(url!, payload, timeout: timeout)
-        : await _postToProvider(route, payload, timeout);
-    if (deepSeekSummary &&
-        const bool.fromEnvironment('RC_DEEPSEEK_SUMMARY_DIAGNOSTICS')) {
-      await _recordSummaryDiagnostic(route!, payload, response, 'disabled');
-    }
-    _ensureSuccess(response, action: actionLabel);
+    final initialMaxTokens = officialOpenAi
+        ? maxTokens
+        : ((deepSeekDisableThinking || disableWainaoThinking) &&
+                  (scene == ModelScene.vision ||
+                      scene == ModelScene.summary ||
+                      scene == ModelScene.organize)
+              ? math.max(maxTokens, scene == ModelScene.summary ? 3200 : 2048)
+              : maxTokens);
 
-    final Map<String, dynamic> body;
-    try {
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      if (decoded is! Map<String, dynamic>) {
-        throw const FormatException('响应不是 JSON 对象');
+    var currentMaxTokens = initialMaxTokens;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final payload = {
+        'model': model,
+        'stream': false,
+        if (deepSeekDisableThinking || disableWainaoThinking)
+          'thinking': {'type': 'disabled'},
+        if (!officialOpenAi || !reasoningModel) 'temperature': temperature,
+        if (officialOpenAi)
+          'max_completion_tokens': currentMaxTokens
+        else
+          'max_tokens': currentMaxTokens,
+        'messages': [for (final message in messages) message.toJson()],
+      };
+      final response = route == null
+          ? await _client.postJson(url!, payload, timeout: timeout)
+          : await _postToProvider(route, payload, timeout);
+      if (deepSeekDisableThinking &&
+          scene == ModelScene.summary &&
+          const bool.fromEnvironment('RC_DEEPSEEK_SUMMARY_DIAGNOSTICS')) {
+        await _recordSummaryDiagnostic(route!, payload, response, 'disabled');
       }
-      body = decoded;
-    } catch (e) {
-      throw ApiFormatException('$actionLabel结果解析失败', e);
-    }
+      _ensureSuccess(response, action: actionLabel);
 
-    final choices = body['choices'];
-    if (choices is! List || choices.isEmpty) {
-      throw ApiFormatException('$actionLabel服务没有返回内容');
-    }
-    final first = choices.first;
-    final message = first is Map ? first['message'] : null;
-    final content = message is Map ? message['content'] : null;
-    if (content is! String || content.trim().isEmpty) {
+      final Map<String, dynamic> body;
+      try {
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        if (decoded is! Map<String, dynamic>) {
+          throw const FormatException('响应不是 JSON 对象');
+        }
+        body = decoded;
+      } catch (e) {
+        throw ApiFormatException('$actionLabel结果解析失败', e);
+      }
+
+      final choices = body['choices'];
+      if (choices is! List || choices.isEmpty) {
+        throw ApiFormatException('$actionLabel服务没有返回内容');
+      }
+      final first = choices.first;
+      final message = first is Map ? first['message'] : null;
+      final content = message is Map ? message['content'] : null;
+      if (content is String && content.trim().isNotEmpty) {
+        return content.trim();
+      }
+
+      final finishReason = first is Map
+          ? first['finish_reason']?.toString()
+          : null;
+      if (finishReason == 'length' &&
+          attempt == 0 &&
+          currentMaxTokens < _kEmptyLengthRetryMaxTokens) {
+        currentMaxTokens = _kEmptyLengthRetryMaxTokens;
+        continue;
+      }
+
+      if (finishReason == 'length') {
+        final reasoningTokens = _extractReasoningTokens(body);
+        if (reasoningTokens != null && reasoningTokens > 0) {
+          throw ApiFormatException(
+            '$emptyContentError（模型思考耗尽输出长度上限 $currentMaxTokens，推理 $reasoningTokens tokens）',
+          );
+        }
+        throw ApiFormatException(
+          '$emptyContentError（输出长度达到上限 $currentMaxTokens，正文被截断为空）',
+        );
+      }
+      if (finishReason == 'content_filter') {
+        throw ApiFormatException('$emptyContentError（内容触发安全过滤）');
+      }
       throw ApiFormatException(emptyContentError);
     }
-    return content.trim();
+
+    throw ApiFormatException(emptyContentError);
+  }
+
+  static int? _extractReasoningTokens(Map<String, dynamic> body) {
+    final usage = body['usage'];
+    if (usage is! Map) return null;
+    final details = usage['completion_tokens_details'];
+    if (details is Map) {
+      final raw = details['reasoning_tokens'];
+      if (raw is int) return raw;
+      if (raw is num) return raw.toInt();
+    }
+    final rawDirect = usage['reasoning_tokens'];
+    if (rawDirect is int) return rawDirect;
+    if (rawDirect is num) return rawDirect.toInt();
+    return null;
   }
 
   Future<void> _recordSummaryDiagnostic(
