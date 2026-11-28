@@ -320,6 +320,15 @@ class SummaryCard {
   /// 用户是否已主动取消生成中的任务。
   bool cancelled = false;
 
+  /// 流式生成期间的实时文本预览（仅在 generating 态展示）。
+  String streamPreview = '';
+
+  /// 是否因切后台/失活而安全暂停并缓存了上下文检查点。
+  bool pausedForBackground = false;
+
+  /// 当前生成所选用的路由标签（如「端侧大模型」「云端模型」）。
+  String? activeEngineLabel;
+
   SummaryCard({required this.id, required this.time, this.state = SummaryState.pending});
 
   /// 解析可用于展示/导出的全文：优先使用润色拼接全文并联动说话人标记；若为空则按时间顺序拼接来源记录。

@@ -18,6 +18,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../data/seed.dart';
+import '../../services/ai/local_llm_models.dart';
+import '../../services/ai/summary_checkpoint_store.dart';
 import '../../services/ai/summary_generator.dart';
 import '../../services/audio/live_audio_recorder.dart';
 import '../../services/audio/recording_status.dart';
@@ -152,6 +154,7 @@ class AppStore extends ChangeNotifier {
     SummaryGenerator? generator,
     RecordingStatusController? status,
     JsonStore? jsonStore,
+    SummaryCheckpointStore? summaryCheckpoints,
     bool loadPersistedState = true,
   }) : _events = events ?? const [],
        _seedOverride = events,
@@ -159,6 +162,7 @@ class AppStore extends ChangeNotifier {
        _generator = generator,
        _status = status,
        _json = jsonStore,
+       _summaryCheckpoints = summaryCheckpoints,
        _loadPersisted = loadPersistedState {
     _eventPhotos = _ObservablePhotoMap({}, _onPhotoMapMutated);
     voiceprintStore.addListener(_onVoiceprintChanged);
@@ -254,6 +258,7 @@ class AppStore extends ChangeNotifier {
   RecordingStatusController? _status;
   SummaryGenerator? _generator;
   JsonStore? _json;
+  SummaryCheckpointStore? _summaryCheckpoints;
   final bool _loadPersisted;
 
   /// 本地录音文件（含未完成/失败的，供空态与处理状态使用）。
@@ -447,6 +452,9 @@ class AppStore extends ChangeNotifier {
 
   /// 正式版默认开启延迟批量转写：录音期间切片静默存盘，到达周期或查看/下拉/停录时统一转写并归拢。
   bool deferredBatchTranscription = false;
+
+  /// 录音过程中只录不转（仅保存本地音频与波形；语音输入法按时间戳单独触发，普通录音停录后再转写）。
+  bool pauseTranscriptionWhileRecording = true;
   int transcribeCycleMinutes = 15;
   bool _forceImmediateLiveIngest = false;
   bool _isAppBackgrounded = false;
@@ -479,6 +487,19 @@ class AppStore extends ChangeNotifier {
   String _genStep = '';
   int _genEpoch = 0;
   final Set<String> _cancelledSummaryIds = {};
+  final Set<String> _pausedSummaryIds = {};
+  LocalLlmRoutingOverride summaryRoutingOverride = LocalLlmRoutingOverride.auto;
+
+  SummaryCheckpointStore? _checkpointStoreFor() {
+    if (_summaryCheckpoints != null) return _summaryCheckpoints;
+    if (_json != null) {
+      return _summaryCheckpoints = SummaryCheckpointStore(jsonStore: _json);
+    }
+    if (_loadPersisted) {
+      return _summaryCheckpoints = SummaryCheckpointStore();
+    }
+    return null;
+  }
 
   /// 详情页合并气泡上下文：当用户对多句合并后的单气泡取消勾选「同改其余」时，整段气泡的所有句下标同步改名，不拆裂气泡。
   ({String eventId, int firstTurnIndex, List<int> turnIndices})?
@@ -585,6 +606,9 @@ class AppStore extends ChangeNotifier {
 
     final deferNow =
         _isAppBackgrounded ||
+        (pauseTranscriptionWhileRecording &&
+            _isActivelyRecording &&
+            !_forceImmediateLiveIngest) ||
         (deferredBatchTranscription && !_forceImmediateLiveIngest);
     _liveSlicesInFlight++;
     if (!deferNow) {
@@ -615,6 +639,7 @@ class AppStore extends ChangeNotifier {
             );
           }
           if (!_isAppBackgrounded &&
+              !(pauseTranscriptionWhileRecording && _isActivelyRecording) &&
               pendingLocalAudioDurationMs >=
                   transcribeCycleMinutes * 60 * 1000) {
             unawaited(transcribeAndOrganizePending(reason: 'cycle'));
@@ -669,6 +694,13 @@ class AppStore extends ChangeNotifier {
       return (transcribed: 0, failed: 0, error: null);
     }
     if (_isAppBackgrounded && reason != 'manual') {
+      return (transcribed: 0, failed: 0, error: null);
+    }
+    if (pauseTranscriptionWhileRecording &&
+        _isActivelyRecording &&
+        reason != 'manual' &&
+        reason != 'pull-refresh' &&
+        reason != 'session-ended') {
       return (transcribed: 0, failed: 0, error: null);
     }
     if (reason == 'view-resume' || reason == 'tab-view') {
@@ -761,7 +793,8 @@ class AppStore extends ChangeNotifier {
     await Future<void>.value();
     await _liveIngestTail;
     await syncPhotosAutomatically(recentOnly: false);
-    if (deferredBatchTranscription && pendingLocalAudioCount > 0) {
+    if ((deferredBatchTranscription || pauseTranscriptionWhileRecording) &&
+        pendingLocalAudioCount > 0) {
       await transcribeAndOrganizePending(
         reason: 'session-ended',
         sessionJustEnded: true,
@@ -995,11 +1028,71 @@ class AppStore extends ChangeNotifier {
         debugPrint('[store] 存量标点清洗失败（不阻塞启动）：$e');
       }
       await refreshFromStore();
+      await _restorePendingSummaryCheckpoints();
       unawaited(syncPhotosAutomatically(recentOnly: false));
       return;
     }
     await refreshEvents();
+    await _restorePendingSummaryCheckpoints();
     unawaited(syncPhotosAutomatically(recentOnly: false));
+  }
+
+  Future<void> _restorePendingSummaryCheckpoints() async {
+    final cpStore = _checkpointStoreFor();
+    if (cpStore == null) return;
+    try {
+      final all = await cpStore.loadAll();
+      if (all.isEmpty) return;
+      var changed = false;
+      for (final cp in all.values) {
+        final existing = summaryById(cp.summaryId);
+        if (existing != null && existing.state == SummaryState.done) {
+          await cpStore.remove(cp.summaryId);
+          continue;
+        }
+        final resolvedSources = [
+          for (final id in cp.srcIds)
+            if (eventByIdOrNull(id) != null) eventByIdOrNull(id)!,
+        ];
+        if (resolvedSources.isEmpty) {
+          await cpStore.remove(cp.summaryId);
+          continue;
+        }
+        if (existing != null) {
+          existing
+            ..state = SummaryState.generating
+            ..pausedForBackground = true
+            ..streamPreview = cp.streamedText
+            ..progress = (cp.progress * 100).clamp(0, 99)
+            ..activeEngineLabel = cp.engineRoute;
+          changed = true;
+        } else {
+          final card = SummaryCard(
+            id: cp.summaryId,
+            time: nowHM(),
+            state: SummaryState.generating,
+          )
+            ..srcIds = cp.srcIds
+            ..endAtMs = resolvedSources
+                .map((e) => _windowForEvent(e).endMs)
+                .reduce(math.max)
+            ..rangeLabel = _formatSummaryRangeLabel(resolvedSources)
+            ..progress = (cp.progress * 100).clamp(0, 99)
+            ..streamPreview = cp.streamedText
+            ..pausedForBackground = true
+            ..activeEngineLabel = cp.engineRoute;
+          summaries = [card, ...summaries];
+          pend ??= card;
+          changed = true;
+        }
+      }
+      if (changed) {
+        _invalidateFeedCache();
+        notifyListeners();
+      }
+    } on Object catch (e) {
+      debugPrint('[store] 恢复总结检查点失败：$e');
+    }
   }
 
   Future<JsonStore> _jsonStore() async {
@@ -3038,11 +3131,13 @@ class AppStore extends ChangeNotifier {
 
   Future<void> _runGeneration(
     SummaryCard card,
-    List<RecordEvent> sources,
-  ) async {
+    List<RecordEvent> sources, {
+    SummaryCheckpoint? resumeFrom,
+  }) async {
     final myEpoch = ++_genEpoch;
-    _genProgress = 0;
-    _genStep = '解析来源内容…';
+    _pausedSummaryIds.remove(card.id);
+    _genProgress = resumeFrom?.progress ?? 0;
+    _genStep = resumeFrom != null ? '从缓存上下文恢复总结…' : '解析来源内容…';
     _genTickHalfSeconds = 0;
     _genWatch = Stopwatch()..start();
     _genTicker?.cancel();
@@ -3051,7 +3146,10 @@ class AppStore extends ChangeNotifier {
       _genTickHalfSeconds++;
       if (!_disposed) notifyListeners();
     });
-    card.progress = 0;
+    card
+      ..pausedForBackground = false
+      ..progress = (_genProgress * 100).clamp(0, 99)
+      ..streamPreview = resumeFrom?.streamedText ?? '';
     _invalidateFeedCache();
     notifyListeners();
 
@@ -3062,11 +3160,40 @@ class AppStore extends ChangeNotifier {
       }
       final draft = await generator.generate(
         sources,
+        summaryId: card.id,
+        resumeFrom: resumeFrom,
+        routingOverride: summaryRoutingOverride,
         speakerResolver: displaySpeaker,
         knownSpeakerNames: voiceprintStore.preferredRosterNames(limit: 16),
+        isCancelled: () =>
+            _disposed ||
+            _cancelledSummaryIds.contains(card.id) ||
+            _genEpoch != myEpoch,
+        isPaused: () => _pausedSummaryIds.contains(card.id),
+        onRouteSelected: (label) {
+          if (_disposed ||
+              _cancelledSummaryIds.contains(card.id) ||
+              _genEpoch != myEpoch) {
+            return;
+          }
+          card.activeEngineLabel = label;
+          notifyListeners();
+        },
+        onStreamDelta: (_, accumulated) {
+          if (_disposed ||
+              _cancelledSummaryIds.contains(card.id) ||
+              _pausedSummaryIds.contains(card.id) ||
+              _genEpoch != myEpoch ||
+              summaryById(card.id) == null) {
+            return;
+          }
+          card.streamPreview = accumulated;
+          notifyListeners();
+        },
         onProgress: (progress, step) {
           if (_disposed ||
               _cancelledSummaryIds.contains(card.id) ||
+              _pausedSummaryIds.contains(card.id) ||
               _genEpoch != myEpoch ||
               summaryById(card.id) == null) {
             return;
@@ -3125,6 +3252,8 @@ class AppStore extends ChangeNotifier {
           : draft.markdown;
       card
         ..state = SummaryState.done
+        ..pausedForBackground = false
+        ..streamPreview = ''
         ..progress = 100
         ..error = null
         ..title = resolvedTitle
@@ -3144,6 +3273,22 @@ class AppStore extends ChangeNotifier {
       _summaryPhotoCountCache.clear();
       _invalidateFeedCache();
       _persist();
+    } on SummaryPausedException catch (e) {
+      if (_disposed ||
+          _cancelledSummaryIds.contains(card.id) ||
+          _genEpoch != myEpoch ||
+          summaryById(card.id) == null) {
+        return;
+      }
+      _genStep = '已暂停并缓存上下文，回到应用后可继续生成';
+      card
+        ..state = SummaryState.generating
+        ..pausedForBackground = true
+        ..streamPreview = e.checkpoint.streamedText
+        ..progress = (e.checkpoint.progress * 100).clamp(0, 99);
+      _dataVersion++;
+      _invalidateFeedCache();
+      _persist();
     } on Object catch (e) {
       if (_disposed ||
           _cancelledSummaryIds.contains(card.id) ||
@@ -3155,6 +3300,7 @@ class AppStore extends ChangeNotifier {
       // 失败不产出任何内容：卡片停在 failed，页面展示原因与重试入口
       card
         ..state = SummaryState.failed
+        ..pausedForBackground = false
         ..error = message
         ..progress = 100;
       _dataVersion++;
@@ -3169,6 +3315,76 @@ class AppStore extends ChangeNotifier {
     }
   }
 
+  /// 切后台/失活时立即暂停在途总结生成并缓存上下文，防止 Metal/网络后台崩溃或丢失进度。
+  Future<void> pauseGeneratingSummaryForBackground() async {
+    SummaryCard? target;
+    for (final s in summaries) {
+      if (s.state == SummaryState.generating && !s.pausedForBackground) {
+        target = s;
+        break;
+      }
+    }
+    if (target == null) return;
+    _pausedSummaryIds.add(target.id);
+    _genTicker?.cancel();
+    _genTicker = null;
+    _genWatch?.stop();
+    target.pausedForBackground = true;
+    _genStep = '已暂停并缓存上下文，回到应用后可继续生成';
+    final cpStore = _checkpointStoreFor();
+    if (cpStore != null) {
+      final existing = await cpStore.load(target.id);
+      await cpStore.save(
+        SummaryCheckpoint(
+          summaryId: target.id,
+          srcIds: target.srcIds,
+          completedBatchDigests:
+              existing?.completedBatchDigests ?? const <String>[],
+          totalBatches: existing?.totalBatches ?? 0,
+          streamedText: target.streamPreview.isNotEmpty
+              ? target.streamPreview
+              : (existing?.streamedText ?? ''),
+          progress: _genProgress.clamp(0, 0.99),
+          step: _genStep,
+          engineRoute: target.activeEngineLabel ?? existing?.engineRoute ?? 'cloud',
+          pausedAtMs: DateTime.now().millisecondsSinceEpoch,
+          pausedReason: 'background',
+        ),
+      );
+    }
+    if (!_disposed) notifyListeners();
+  }
+
+  /// 从缓存上下文继续生成被暂停的总结。
+  Future<bool> resumePausedSummary([String? summaryId]) async {
+    SummaryCard? target;
+    if (summaryId != null && summaryId.isNotEmpty) {
+      target = summaryById(summaryId);
+    } else {
+      for (final s in summaries) {
+        if (s.state == SummaryState.generating && s.pausedForBackground) {
+          target = s;
+          break;
+        }
+      }
+    }
+    if (target == null || target.state != SummaryState.generating) {
+      return false;
+    }
+    final cp = await _checkpointStoreFor()?.load(target.id);
+    final ids = target.srcIds.isNotEmpty
+        ? target.srcIds
+        : (cp?.srcIds ?? const <String>[]);
+    final sources = <RecordEvent>[
+      for (final id in ids)
+        if (eventByIdOrNull(id) != null) eventByIdOrNull(id)!,
+    ];
+    if (sources.isEmpty) return false;
+    _cancelledSummaryIds.remove(target.id);
+    unawaited(_runGeneration(target, sources, resumeFrom: cp));
+    return true;
+  }
+
   /// 取消正在生成中的总结卡：立即移除生成态卡片并弹栈返回，在途响应返回后自动忽略。
   void cancelGeneratingSummary([String? summaryId]) {
     final targetId =
@@ -3178,6 +3394,8 @@ class AppStore extends ChangeNotifier {
     final card = summaryById(targetId);
     if (card != null && card.state == SummaryState.done) return;
     _cancelledSummaryIds.add(targetId);
+    _pausedSummaryIds.remove(targetId);
+    unawaited(_checkpointStoreFor()?.remove(targetId));
     _genEpoch++;
     _genTicker?.cancel();
     _genTicker = null;
@@ -4951,6 +5169,7 @@ class AppStore extends ChangeNotifier {
       try {
         final js = await _jsonStore();
         await js.remove('route');
+        await _checkpointStoreFor()?.clearAll();
         if (_recordingStore == null) {
           await js.remove('recordings');
           await js.remove('migration');

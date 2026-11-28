@@ -111,6 +111,43 @@ class AuthorizedHttpClient {
     );
   }
 
+  /// 发送 JSON（POST）并保留流式响应体，供 SSE 流式生成使用（支持 401 单次刷新重放）。
+  Future<http.StreamedResponse> postJsonStream(
+    String url,
+    Object body, {
+    Duration? timeout,
+  }) async {
+    final payload = utf8.encode(jsonEncode(body));
+    http.Request buildRequest(String token) => http.Request('POST', _parseUrl(url))
+      ..headers.addAll({
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json; charset=utf-8',
+        'Accept': 'text/event-stream, application/json',
+      })
+      ..bodyBytes = payload;
+
+    final firstToken = await _currentAccessToken();
+    final capturedEpoch = _tokens.identityEpoch;
+    final first = await _dispatchStream(buildRequest, firstToken, timeout);
+    if (first.statusCode != 401) return first;
+
+    await first.stream.drain<void>().catchError((Object _) {});
+    if (_isLoggingOut || _tokens.identityEpoch != capturedEpoch) {
+      throw const ApiUnauthorizedException();
+    }
+    final refreshedToken = await _refreshTokenAfter401();
+    if (refreshedToken == null || _tokens.identityEpoch != capturedEpoch) {
+      throw const ApiUnauthorizedException();
+    }
+    final retried = await _dispatchStream(buildRequest, refreshedToken, timeout);
+    if (retried.statusCode == 401) {
+      await retried.stream.drain<void>().catchError((Object _) {});
+      onAuthRequired?.call();
+      throw const ApiUnauthorizedException();
+    }
+    return retried;
+  }
+
   /// 发送 GET（JSON），用于 `/profile` 之类的轻量查询。
   Future<http.Response> getJson(String url, {Duration? timeout}) {
     return _authorizedSend(
@@ -225,6 +262,27 @@ class AuthorizedHttpClient {
       final responseFuture =
           _httpClient.send(request).then(http.Response.fromStream);
       return await responseFuture.timeout(timeout ?? _defaultTimeout);
+    } on TimeoutException catch (e) {
+      throw ApiTimeoutException(ApiTimeoutException.defaultMessage, e);
+    } on http.ClientException catch (e) {
+      throw ApiNetworkException(ApiNetworkException.defaultMessage, e);
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ApiNetworkException(ApiNetworkException.defaultMessage, e);
+    }
+  }
+
+  Future<http.StreamedResponse> _dispatchStream(
+    http.BaseRequest Function(String token) build,
+    String token,
+    Duration? timeout,
+  ) async {
+    final request = build(token);
+    try {
+      return await _httpClient
+          .send(request)
+          .timeout(timeout ?? _defaultTimeout);
     } on TimeoutException catch (e) {
       throw ApiTimeoutException(ApiTimeoutException.defaultMessage, e);
     } on http.ClientException catch (e) {

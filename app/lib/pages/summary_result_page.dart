@@ -437,7 +437,7 @@ class _SummaryResultPageState extends State<SummaryResultPage> {
   }
 }
 
-/// 生成态：进度条 + 已生成 X 秒 / 预计还需 Y 秒 + 当前步骤 + 取消按钮
+/// 生成态：前台提示 + 进度条 + 已生成 X 秒 / 预计还需 Y 秒 + 实时流式预览 + 暂停续跑 / 取消按钮
 class _GenView extends StatelessWidget {
   const _GenView({
     required this.store,
@@ -452,13 +452,43 @@ class _GenView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rc = context.rc;
+    final paused = card.pausedForBackground;
+    final preview = card.streamPreview.trim();
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Container(
+              key: const Key('gen-stay-hint'),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: rc.card,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: rc.sep),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    paused ? Icons.pause_circle_outline : Icons.bolt_outlined,
+                    size: 16,
+                    color: paused ? rc.warn : rc.ok,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      paused
+                          ? '已暂停并缓存当前上下文，点击下方按钮可从断点继续生成'
+                          : '正在实时生成总结，请尽量不要离开应用（切走会自动缓存断点）',
+                      style: TextStyle(fontSize: 12, color: rc.sec),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: SizedBox(
@@ -468,7 +498,7 @@ class _GenView extends StatelessWidget {
                   value: card.progress / 100,
                   minHeight: 6,
                   backgroundColor: rc.sep,
-                  valueColor: AlwaysStoppedAnimation(rc.ok),
+                  valueColor: AlwaysStoppedAnimation(paused ? rc.warn : rc.ok),
                 ),
               ),
             ),
@@ -489,16 +519,62 @@ class _GenView extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            Text(
-              store.genStepText(),
-              key: const Key('gen-step'),
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: rc.label,
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    store.genStepText(),
+                    key: const Key('gen-step'),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: rc.label,
+                    ),
+                  ),
+                ),
+                if ((card.activeEngineLabel ?? '').isNotEmpty)
+                  Text(
+                    card.activeEngineLabel!,
+                    style: TextStyle(fontSize: 11, color: rc.sec),
+                  ),
+              ],
             ),
+            if (preview.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 220),
+                child: Container(
+                  key: const Key('gen-stream-preview'),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: rc.card,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: rc.sep),
+                  ),
+                  child: SingleChildScrollView(
+                    reverse: true,
+                    child: Text(
+                      preview,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.5,
+                        color: rc.ink,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
+            if (paused)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: FilledButton(
+                  key: const Key('gen-resume'),
+                  onPressed: () => unawaited(store.resumePausedSummary(card.id)),
+                  child: const Text('继续生成'),
+                ),
+              ),
             Align(
               alignment: Alignment.center,
               child: TextButton(

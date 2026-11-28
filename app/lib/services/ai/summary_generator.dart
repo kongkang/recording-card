@@ -21,13 +21,25 @@ import '../../core/models/record.dart';
 import '../../core/models/summary.dart';
 import '../../core/store/agent_config_store.dart';
 import '../net/model_gateway.dart';
+import '../net/model_provider_store.dart';
 import '../voiceprint/joint_speaker_resolver.dart';
+import 'local_llm_models.dart';
+import 'local_llm_service.dart';
+import 'summary_checkpoint_store.dart';
 
 class SummaryGenerationException implements Exception {
   const SummaryGenerationException(this.message);
   final String message;
   @override
   String toString() => message;
+}
+
+/// 生成过程中切后台/失活触发的安全暂停（已持久化检查点，不属于失败）。
+class SummaryPausedException implements Exception {
+  const SummaryPausedException(this.checkpoint);
+  final SummaryCheckpoint checkpoint;
+  @override
+  String toString() => '已暂停生成并缓存上下文';
 }
 
 /// 生成结果（界面直接映射到 SummaryCard 的字段）。
@@ -57,22 +69,28 @@ class SummaryGenerator {
   SummaryGenerator({
     required ModelGateway gateway,
     AgentConfigStore? agentConfig,
+    LocalLlmService? localLlm,
+    SummaryCheckpointStore? checkpointStore,
     int mapReduceTriggerChars = 16000,
     int mapBatchTargetChars = 12000,
   }) : _gateway = gateway,
        _agentConfig = agentConfig,
+       _localLlm = localLlm,
+       _checkpointStore = checkpointStore,
        _mapReduceTriggerChars = math.max(2000, mapReduceTriggerChars),
        _mapBatchTargetChars = math.max(1500, mapBatchTargetChars);
 
   final ModelGateway _gateway;
   final AgentConfigStore? _agentConfig;
+  final LocalLlmService? _localLlm;
+  final SummaryCheckpointStore? _checkpointStore;
   final int _mapReduceTriggerChars;
   final int _mapBatchTargetChars;
 
-  /// 是否可以发起生成（配置齐全且已登录）。
-  bool get ready => _gateway.ready;
+  /// 是否可以发起生成（云端配置齐全且已登录，或挂载了端侧大模型）。
+  bool get ready => _gateway.ready || (_localLlm != null);
 
-  bool get configured => _gateway.chatAvailable;
+  bool get configured => _gateway.chatAvailable || (_localLlm != null);
 
   String? _resolveModelOverride() {
     final cfg = _agentConfig;
@@ -139,7 +157,7 @@ class SummaryGenerator {
     return buffer.toString();
   }
 
-  /// 生成总结。
+  /// 生成总结（支持前台流式输出、端侧大模型/云端自动路由与切后台检查点续跑）。
   ///
   /// [onProgress] 汇报真实阶段（准备 → 分批提炼/请求模型 → 解析），不做假动画。
   Future<SummaryDraft> generate(
@@ -148,6 +166,12 @@ class SummaryGenerator {
     String Function(RecordEvent event, String rawSpeaker)? speakerResolver,
     List<String> knownSpeakerNames = const [],
     bool Function()? isCancelled,
+    bool Function()? isPaused,
+    void Function(String delta, String accumulated)? onStreamDelta,
+    void Function(String routeLabel)? onRouteSelected,
+    SummaryCheckpoint? resumeFrom,
+    String? summaryId,
+    LocalLlmRoutingOverride routingOverride = LocalLlmRoutingOverride.auto,
   }) async {
     void checkCancelled() {
       if (isCancelled?.call() == true) {
@@ -166,15 +190,32 @@ class SummaryGenerator {
       throw const SummaryGenerationException('所选记录均为静音片段，暂无可总结的语音内容');
     }
 
-    if (!_gateway.isCloudEnabled) {
-      throw const SummaryGenerationException('请先在设置中选择模型服务');
+    final cloudReady =
+        _gateway.isCloudEnabled && _gateway.chatAvailable && _gateway.ready;
+    LlmRouteDecision? localDecision;
+    if (_localLlm != null) {
+      localDecision = await _localLlm.decideSummaryRoute(
+        override: routingOverride,
+        cloudReady: cloudReady,
+      );
     }
-    if (!configured) {
-      throw const SummaryGenerationException('未配置总结服务，暂时无法生成');
+
+    final useLocal = localDecision?.route.isLocal == true;
+    if (!useLocal) {
+      if (!_gateway.isCloudEnabled) {
+        throw const SummaryGenerationException('请先在设置中选择模型服务');
+      }
+      if (!_gateway.chatAvailable) {
+        throw const SummaryGenerationException('未配置总结服务，暂时无法生成');
+      }
+      if (!_gateway.ready) {
+        throw const SummaryGenerationException('登录后才能生成总结');
+      }
     }
-    if (!ready) {
-      throw const SummaryGenerationException('登录后才能生成总结');
-    }
+
+    final routeCode = useLocal ? localDecision!.route.code : 'cloud';
+    final routeLabel = useLocal ? localDecision!.route.label : '云端模型';
+    onRouteSelected?.call(routeLabel);
 
     checkCancelled();
     onProgress?.call(0.05, '解析来源内容…');
@@ -189,6 +230,152 @@ class SummaryGenerator {
         ? _agentConfig.temperature
         : 0.2;
     final modelOverride = _resolveModelOverride();
+    final srcIds = [for (final e in ordered) e.id];
+
+    var lastProgress = resumeFrom?.progress ?? 0.05;
+    var lastStep = resumeFrom?.step ?? '解析来源内容…';
+    var completedDigests = List<String>.from(
+      resumeFrom?.completedBatchDigests ?? const <String>[],
+    );
+    var totalBatches = resumeFrom?.totalBatches ?? 0;
+    final streamedBuffer = StringBuffer(resumeFrom?.streamedText ?? '');
+
+    Future<void> saveCheckpointNow({String pausedReason = 'background'}) async {
+      final sid = summaryId;
+      final store = _checkpointStore;
+      if (sid == null || sid.isEmpty || store == null) return;
+      await store.save(
+        SummaryCheckpoint(
+          summaryId: sid,
+          srcIds: srcIds,
+          completedBatchDigests: List.unmodifiable(completedDigests),
+          totalBatches: totalBatches,
+          streamedText: streamedBuffer.toString(),
+          progress: lastProgress,
+          step: lastStep,
+          engineRoute: routeCode,
+          pausedAtMs: DateTime.now().millisecondsSinceEpoch,
+          pausedReason: pausedReason,
+        ),
+      );
+    }
+
+    Future<Never> abortPaused() async {
+      await saveCheckpointNow(pausedReason: 'background');
+      throw SummaryPausedException(
+        SummaryCheckpoint(
+          summaryId: summaryId ?? '',
+          srcIds: srcIds,
+          completedBatchDigests: List.unmodifiable(completedDigests),
+          totalBatches: totalBatches,
+          streamedText: streamedBuffer.toString(),
+          progress: lastProgress,
+          step: lastStep,
+          engineRoute: routeCode,
+          pausedAtMs: DateTime.now().millisecondsSinceEpoch,
+          pausedReason: 'background',
+        ),
+      );
+    }
+
+    Future<void> checkCancelledOrPaused() async {
+      checkCancelled();
+      if (isPaused?.call() == true) {
+        await abortPaused();
+      }
+    }
+
+    void reportProgress(double p, String s) {
+      lastProgress = p;
+      lastStep = s;
+      onProgress?.call(p, s);
+    }
+
+    Future<String> runStreamedChat({
+      required List<ChatMessage> messages,
+      required int maxTokens,
+      required bool trackResumePreview,
+    }) async {
+      final shouldStream =
+          useLocal ||
+          onStreamDelta != null ||
+          (resumeFrom?.streamedText.isNotEmpty == true);
+      if (!shouldStream) {
+        final full = await _gateway.chat(
+          messages,
+          model: modelOverride,
+          scene: ModelScene.summary,
+          temperature: temp,
+          maxTokens: maxTokens,
+          timeout: const Duration(seconds: 120),
+        );
+        await checkCancelledOrPaused();
+        return full;
+      }
+
+      final Stream<String> tokenStream;
+      if (useLocal) {
+        final systemMsg = messages
+            .where((m) => m.role == 'system')
+            .map((m) => m.content)
+            .join('\n');
+        final userMsg = messages
+            .where((m) => m.role != 'system')
+            .map((m) => m.content)
+            .join('\n');
+        tokenStream = await _localLlm!.generateTextStream(
+          decision: localDecision!,
+          systemPrompt: systemMsg,
+          userPrompt: userMsg,
+          maxTokens: maxTokens,
+          temperature: temp,
+        );
+      } else {
+        tokenStream = _gateway.chatStream(
+          messages,
+          model: modelOverride,
+          scene: ModelScene.summary,
+          temperature: temp,
+          maxTokens: maxTokens,
+          timeout: const Duration(seconds: 120),
+          isCancelled: () =>
+              (isCancelled?.call() == true) || (isPaused?.call() == true),
+        );
+      }
+
+      final prefix = trackResumePreview ? streamedBuffer.toString() : '';
+      final freshBuf = StringBuffer();
+      var charsSinceSave = 0;
+
+      await for (final delta in tokenStream) {
+        checkCancelled();
+        if (isPaused?.call() == true) {
+          await abortPaused();
+        }
+        if (delta.isEmpty) continue;
+        freshBuf.write(delta);
+        if (trackResumePreview) {
+          streamedBuffer.write(delta);
+          onStreamDelta?.call(delta, streamedBuffer.toString());
+          charsSinceSave += delta.length;
+          if (charsSinceSave >= 32) {
+            charsSinceSave = 0;
+            await saveCheckpointNow(pausedReason: 'streaming');
+          }
+        }
+      }
+
+      await checkCancelledOrPaused();
+      final freshText = freshBuf.toString();
+      if (!trackResumePreview || prefix.isEmpty) {
+        return freshText;
+      }
+      // 若续跑返回本身已是完整 JSON 对象，优先使用新返回；否则把前缀与新生成部分拼接后解析。
+      if (_extractJson(freshText) != null) {
+        return freshText;
+      }
+      return '$prefix$freshText';
+    }
 
     final needsMapReduce =
         totalChars > _mapReduceTriggerChars ||
@@ -196,22 +383,27 @@ class SummaryGenerator {
 
     late final String raw;
     if (!needsMapReduce) {
-      onProgress?.call(0.25, '提炼要点与逻辑…');
+      reportProgress(0.25, '提炼要点与逻辑…');
       final transcript = blocks.map((b) => b.formatted).join('\n');
-      raw = await _gateway.chat(
-        [
+      final resumePrefix = streamedBuffer.toString().trim();
+      final userContent = resumePrefix.isEmpty
+          ? transcript
+          : '$transcript\n\n【已生成部分前缀（请紧接其后继续补全并闭合为完整 JSON）】\n$resumePrefix';
+      if (resumePrefix.isNotEmpty) {
+        onStreamDelta?.call('', resumePrefix);
+      }
+      raw = await runStreamedChat(
+        messages: [
           ChatMessage.system(
             _buildSystemPrompt(knownSpeakerNames: knownSpeakerNames),
           ),
-          ChatMessage.user(transcript),
+          ChatMessage.user(userContent),
         ],
-        model: modelOverride,
-        temperature: temp,
         maxTokens: (1800 + ordered.length * 250).clamp(1800, 4096),
-        timeout: const Duration(seconds: 120),
+        trackResumePreview: true,
       );
-      checkCancelled();
-      onProgress?.call(0.90, '整理结构与行动项…');
+      await checkCancelledOrPaused();
+      reportProgress(0.90, '整理结构与行动项…');
     } else {
       raw = await _runMapReduce(
         ordered: ordered,
@@ -219,8 +411,36 @@ class SummaryGenerator {
         model: modelOverride,
         temperature: temp,
         knownSpeakerNames: knownSpeakerNames,
-        onProgress: onProgress,
+        onProgress: reportProgress,
         checkCancelled: checkCancelled,
+        checkCancelledOrPaused: checkCancelledOrPaused,
+        existingDigests: completedDigests,
+        onTotalBatches: (n) => totalBatches = n,
+        onBatchDigestSaved: (digests) async {
+          completedDigests = digests;
+          await saveCheckpointNow(pausedReason: 'map_batch');
+        },
+        runReduceStream: (messages, maxTokens) => runStreamedChat(
+          messages: messages,
+          maxTokens: maxTokens,
+          trackResumePreview: true,
+        ),
+        runMapRequest: (messages, maxTokens) async {
+          if (useLocal) {
+            return runStreamedChat(
+              messages: messages,
+              maxTokens: maxTokens,
+              trackResumePreview: false,
+            );
+          }
+          return _gateway.chat(
+            messages,
+            model: modelOverride,
+            temperature: temp,
+            maxTokens: maxTokens,
+            timeout: const Duration(seconds: 120),
+          );
+        },
       );
     }
 
@@ -230,6 +450,9 @@ class SummaryGenerator {
       speakerResolver: speakerResolver,
       knownSpeakerNames: knownSpeakerNames,
     );
+    if (summaryId != null && summaryId.isNotEmpty) {
+      await _checkpointStore?.remove(summaryId);
+    }
     onProgress?.call(1, '完成');
     return draft;
   }
@@ -240,60 +463,67 @@ class SummaryGenerator {
     required String? model,
     required double temperature,
     List<String> knownSpeakerNames = const [],
-    required void Function(double progress, String step)? onProgress,
+    required void Function(double progress, String step) onProgress,
     required void Function() checkCancelled,
+    required Future<void> Function() checkCancelledOrPaused,
+    required List<String> existingDigests,
+    required void Function(int totalBatches) onTotalBatches,
+    required Future<void> Function(List<String> digests) onBatchDigestSaved,
+    required Future<String> Function(List<ChatMessage> messages, int maxTokens)
+    runReduceStream,
+    required Future<String> Function(List<ChatMessage> messages, int maxTokens)
+    runMapRequest,
   }) async {
     final batches = _chunkIntoMapBatches(blocks, targetChars: _mapBatchTargetChars);
+    onTotalBatches(batches.length);
     final mapSystem = _buildMapPrompt();
-    var digests = <String>[];
+    var digests = List<String>.from(existingDigests);
 
-    for (var i = 0; i < batches.length; i++) {
-      checkCancelled();
+    for (var i = digests.length; i < batches.length; i++) {
+      await checkCancelledOrPaused();
       final startProg = 0.10 + (0.60 * i / batches.length);
-      onProgress?.call(
+      onProgress(
         double.parse(startProg.toStringAsFixed(3)),
         '分段提炼第 ${i + 1}/${batches.length} 批记录…',
       );
-      final digest = await _gateway.chat(
+      final digest = await runMapRequest(
         [
           ChatMessage.system(mapSystem),
           ChatMessage.user(batches[i]),
         ],
-        model: model,
-        temperature: temperature,
-        maxTokens: 1600,
-        timeout: const Duration(seconds: 120),
+        1600,
       );
       checkCancelled();
       final trimmed = digest.trim();
       if (trimmed.isNotEmpty) {
         digests.add('=== 第 ${i + 1}/${batches.length} 批事实纪要 ===\n$trimmed');
+      } else {
+        digests.add('=== 第 ${i + 1}/${batches.length} 批事实纪要 ===\n（无新增要点）');
       }
       final doneProg = 0.10 + (0.60 * (i + 1) / batches.length);
-      onProgress?.call(
+      onProgress(
         double.parse(doneProg.toStringAsFixed(3)),
         '已完成 ${i + 1}/${batches.length} 批事实提炼…',
       );
+      await onBatchDigestSaved(List<String>.from(digests));
+      await checkCancelledOrPaused();
     }
 
     // 若超大规模记录（如整月上百条）汇总后摘要仍超出窗口，再做一层分层压缩
     final combinedLen = digests.fold<int>(0, (s, d) => s + d.length);
     if (combinedLen > _mapReduceTriggerChars * 2 && digests.length > 2) {
-      checkCancelled();
-      onProgress?.call(0.72, '跨批次归并长周期脉络…');
+      await checkCancelledOrPaused();
+      onProgress(0.72, '跨批次归并长周期脉络…');
       final superBatches = _packStrings(digests, targetChars: _mapBatchTargetChars);
       final folded = <String>[];
       for (var i = 0; i < superBatches.length; i++) {
-        checkCancelled();
-        final compressed = await _gateway.chat(
+        await checkCancelledOrPaused();
+        final compressed = await runMapRequest(
           [
             ChatMessage.system(mapSystem),
             ChatMessage.user(superBatches[i]),
           ],
-          model: model,
-          temperature: temperature,
-          maxTokens: 1600,
-          timeout: const Duration(seconds: 120),
+          1600,
         );
         if (compressed.trim().isNotEmpty) {
           folded.add('=== 阶段汇总 ${i + 1}/${superBatches.length} ===\n${compressed.trim()}');
@@ -302,8 +532,8 @@ class SummaryGenerator {
       if (folded.isNotEmpty) digests = folded;
     }
 
-    checkCancelled();
-    onProgress?.call(0.75, '汇总全局逻辑与行动项…');
+    await checkCancelledOrPaused();
+    onProgress(0.75, '汇总全局逻辑与行动项…');
     final reduceInput = StringBuffer()
       ..writeln('可用来源记录清单（points.sources 只能从中选择真实出现过的 id）：');
     for (final e in ordered) {
@@ -313,7 +543,7 @@ class SummaryGenerator {
       ..writeln()
       ..writeln(digests.join('\n\n'));
 
-    final raw = await _gateway.chat(
+    final raw = await runReduceStream(
       [
         ChatMessage.system(
           _buildSystemPrompt(
@@ -323,13 +553,10 @@ class SummaryGenerator {
         ),
         ChatMessage.user(reduceInput.toString()),
       ],
-      model: model,
-      temperature: temperature,
-      maxTokens: 4096,
-      timeout: const Duration(seconds: 120),
+      4096,
     );
-    checkCancelled();
-    onProgress?.call(0.95, '解析结构化总结…');
+    await checkCancelledOrPaused();
+    onProgress(0.95, '解析结构化总结…');
     return raw;
   }
 

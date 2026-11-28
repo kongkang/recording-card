@@ -45,6 +45,8 @@
 		WC1122330003000000000001 /* WatchHardwareBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = WC1122330001000000000001 /* WatchHardwareBridge.swift */; };
 		HS1122330003000000000001 /* HealthSignalBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = HS1122330001000000000001 /* HealthSignalBridge.swift */; };
 		IC1122330003000000000001 /* ICloudSyncBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = IC1122330001000000000001 /* ICloudSyncBridge.swift */; };
+		LM1122330003000000000001 /* LocalLlmBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = LM1122330001000000000001 /* LocalLlmBridge.swift */; };
+		VK1122330003000000000001 /* VoiceKeyboardIpcBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = VK1122330001000000000001 /* VoiceKeyboardIpcBridge.swift */; };
 		HS1122330003000000000002 /* RCObjCCatch.m in Sources */ = {isa = PBXBuildFile; fileRef = HS1122330001000000000002 /* RCObjCCatch.m */; };
 		SS1122330003000000000001 /* SystemSpeechBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = SS1122330001000000000001 /* SystemSpeechBridge.swift */; };
 		SS1122330003000000000002 /* Speech.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = SS1122330001000000000002 /* Speech.framework */; };
@@ -222,6 +224,8 @@
 		WC1122330001000000000001 /* WatchHardwareBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchHardwareBridge.swift; sourceTree = "<group>"; };
 		HS1122330001000000000001 /* HealthSignalBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HealthSignalBridge.swift; sourceTree = "<group>"; };
 		IC1122330001000000000001 /* ICloudSyncBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ICloudSyncBridge.swift; sourceTree = "<group>"; };
+		LM1122330001000000000001 /* LocalLlmBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LocalLlmBridge.swift; sourceTree = "<group>"; };
+		VK1122330001000000000001 /* VoiceKeyboardIpcBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VoiceKeyboardIpcBridge.swift; sourceTree = "<group>"; };
 		HS1122330001000000000002 /* RCObjCCatch.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = RCObjCCatch.m; sourceTree = "<group>"; };
 		HS1122330001000000000003 /* RCObjCCatch.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = RCObjCCatch.h; sourceTree = "<group>"; };
 		SS1122330001000000000001 /* SystemSpeechBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SystemSpeechBridge.swift; sourceTree = "<group>"; };
@@ -386,6 +390,8 @@
 				WC1122330001000000000001 /* WatchHardwareBridge.swift */,
 				HS1122330001000000000001 /* HealthSignalBridge.swift */,
 				IC1122330001000000000001 /* ICloudSyncBridge.swift */,
+				LM1122330001000000000001 /* LocalLlmBridge.swift */,
+				VK1122330001000000000001 /* VoiceKeyboardIpcBridge.swift */,
 				HS1122330001000000000002 /* RCObjCCatch.m */,
 				HS1122330001000000000003 /* RCObjCCatch.h */,
 				SS1122330001000000000001 /* SystemSpeechBridge.swift */,
@@ -878,6 +884,8 @@
 				WC1122330003000000000001 /* WatchHardwareBridge.swift in Sources */,
 				HS1122330003000000000001 /* HealthSignalBridge.swift in Sources */,
 				IC1122330003000000000001 /* ICloudSyncBridge.swift in Sources */,
+				LM1122330003000000000001 /* LocalLlmBridge.swift in Sources */,
+				VK1122330003000000000001 /* VoiceKeyboardIpcBridge.swift in Sources */,
 				HS1122330003000000000002 /* RCObjCCatch.m in Sources */,
 				SS1122330003000000000001 /* SystemSpeechBridge.swift in Sources */,
 				WC1122330003000000000021 /* ComplicationStateStore.swift in Sources */,
