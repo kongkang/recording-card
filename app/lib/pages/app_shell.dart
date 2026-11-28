@@ -21,16 +21,21 @@ import '../core/store/ui_style_store.dart';
 import '../core/theme/tokens.dart';
 import '../services/agent/agent_chat_controller.dart';
 import '../services/agent/hardware_agent_task_coordinator.dart';
+import '../services/ai/local_llm_service.dart';
+import '../services/ai/local_model_memory_guard.dart';
 import '../services/audio/live_audio_recorder.dart';
 import '../services/audio/recording_status.dart';
 import '../services/auth_service.dart';
 import '../services/external_data/external_data_hub_store.dart';
 import '../services/external_data/getnote_sync_store.dart';
 import '../services/health/health_signal_controller.dart';
+import '../services/keyboard/voice_keyboard_ipc.dart';
+import '../services/keyboard/voice_keyboard_pipeline.dart';
 import '../services/media/media_backup_service.dart';
 import '../services/memory/memory_search_scope.dart';
 import '../services/memory/memory_search_service.dart';
 import '../services/net/model_gateway.dart';
+import '../services/net/model_provider_store.dart';
 import '../services/photos/photo_library_service.dart';
 import '../services/transcribe/asr_models.dart';
 import '../services/transcribe/local_asr_service.dart';
@@ -184,6 +189,9 @@ class AppShell extends StatefulWidget {
     this.crashStore,
     this.uiStyle,
     this.membership,
+    this.memoryGuard,
+    this.localLlm,
+    this.voiceKeyboardPipeline,
     this.onClearAllLocalData,
   });
 
@@ -215,6 +223,9 @@ class AppShell extends StatefulWidget {
   final KeyValueStore? crashStore;
   final UIStyleStore? uiStyle;
   final MembershipStore? membership;
+  final LocalModelMemoryGuard? memoryGuard;
+  final LocalLlmService? localLlm;
+  final VoiceKeyboardPipelineService? voiceKeyboardPipeline;
   final Future<void> Function()? onClearAllLocalData;
 
   @override
@@ -258,6 +269,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late ICloudSyncScope _lastICloudScope = _agentConfig.icloudSyncScope;
   late final HardwareAgentTaskCoordinator _hwAgent;
   late final bool _ownsHwAgent = widget.hardwareAgentCoordinator == null;
+  VoiceKeyboardPipelineService? _voiceKeyboard;
+  MethodChannelVoiceKeyboardIpc? _ownedVoiceKeyboardIpc;
+  LocalLlmService? _ownedLocalLlm;
   StreamSubscription<LiveAudioSlice>? _liveSliceSub;
   StreamSubscription<LiveAudioSlice>? _phoneSliceSub;
   StreamSubscription<LiveAudioSlice>? _watchSliceSub;
@@ -323,7 +337,46 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (widget.store.hasPipeline) {
       _device.onApFastSync ??= () => widget.store.syncRecordingsViaAp();
     }
-    _liveAudio.onAudioSamples = _device.onRealtimePcmSamplesForSilenceCheck;
+    _liveAudio.onAudioSamples = (pcm) {
+      _device.onRealtimePcmSamplesForSilenceCheck(pcm);
+      _voiceKeyboard?.ingestLivePcmFrame(pcm);
+    };
+    if (widget.voiceKeyboardPipeline != null) {
+      _voiceKeyboard = widget.voiceKeyboardPipeline;
+    } else if (!Platform.environment.containsKey('FLUTTER_TEST') &&
+        Platform.isIOS) {
+      final ipc = MethodChannelVoiceKeyboardIpc();
+      _ownedVoiceKeyboardIpc = ipc;
+      final guard = widget.memoryGuard ?? LocalModelMemoryGuard();
+      final llm =
+          widget.localLlm ?? (_ownedLocalLlm = LocalLlmService(memoryGuard: guard));
+      _voiceKeyboard = VoiceKeyboardPipelineService(
+        ringBuffer: _liveAudio.ringBuffer,
+        isRecordingActive: () =>
+            _device.isRecording || _device.isPhoneRecording,
+        memoryGuard: guard,
+        transcribeSamples: _defaultTranscribeSamples,
+        localLlm: llm,
+        cloudPolishFallback: (raw) async {
+          final gw = widget.modelGateway;
+          if (gw == null || !gw.ready) return raw;
+          return gw.chat(
+            [
+              ChatMessage.system(
+                '你是极速语音输入润色助手，仅删除口水词、补全标点与修正明显同音错字，不要扩写或解释。',
+              ),
+              ChatMessage.user(raw),
+            ],
+            scene: ModelScene.polish,
+            temperature: 0.1,
+            maxTokens: (raw.length * 2).clamp(128, 512),
+          );
+        },
+        cloudReady: () => widget.modelGateway?.ready == true,
+        hotwordsResolver: () => _agentConfig.hotwords,
+        ipc: ipc,
+      );
+    }
     widget.store.deviceRecording ??= () =>
         _device.isRecording ||
         _device.isPhoneRecording ||
@@ -681,6 +734,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _device.onBleReconnectedNeedSync = null;
     }
     if (_ownsHwAgent) _hwAgent.dispose();
+    if (widget.voiceKeyboardPipeline == null) {
+      _voiceKeyboard?.dispose();
+    }
+    final kbdIpc = _ownedVoiceKeyboardIpc;
+    if (kbdIpc != null) {
+      unawaited(kbdIpc.dispose());
+    }
+    _ownedLocalLlm?.dispose();
     _liveSliceSub?.cancel();
     _phoneSliceSub?.cancel();
     _watchSliceSub?.cancel();

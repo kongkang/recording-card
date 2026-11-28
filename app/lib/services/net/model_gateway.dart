@@ -512,6 +512,221 @@ class ModelGateway {
     );
   }
 
+  /// 流式文本对话（用于前台总结实时流式展示，SSE `data: {...}` 增量吐字，兼容非流式 JSON 响应）。
+  Stream<String> chatStream(
+    List<ChatMessage> messages, {
+    String? model,
+    ModelScene scene = ModelScene.summary,
+    double temperature = 0.2,
+    int maxTokens = 2048,
+    Duration? timeout,
+    bool Function()? isCancelled,
+  }) async* {
+    if (isLocalOnly) {
+      throw const ApiNotConfiguredException('已开启仅本机模式，云端服务已停用');
+    }
+    if (!isCloudEnabled) {
+      throw const ApiNotConfiguredException('请先在设置中选择模型服务');
+    }
+    if (messages.isEmpty) {
+      throw const ApiFormatException('没有可发送的内容');
+    }
+
+    final route = await _providers?.activeRoute(scene);
+    final url = _config.chatCompletionsUrl;
+    var resolvedModel =
+        route?.model ??
+        (_providers == null
+            ? (model ?? _officialModelFor(scene)).trim()
+            : _officialModelFor(scene));
+    if (route == null &&
+        resolvedModel.isEmpty &&
+        _config.configured &&
+        _client.hasSession) {
+      await ensureModelsDiscovered(timeout: timeout);
+      resolvedModel = _providers == null
+          ? (model ?? _officialModelFor(scene)).trim()
+          : _officialModelFor(scene);
+    }
+    if (resolvedModel.isEmpty || (route == null && url == null)) {
+      final detail = (_catalogError ?? '').trim();
+      throw ApiNotConfiguredException(
+        route == null && !_client.hasSession
+            ? '尚未登录云端账号，请先登录后再试'
+            : (detail.isNotEmpty
+                  ? '尚未获取到可用模型（$detail）'
+                  : '请先在设置中选择可用的模型服务'),
+      );
+    }
+
+    final requestTimeout = timeout ?? _defaultTimeout;
+    final officialOpenAi =
+        route?.provider == ModelProvider.openai &&
+        route?.endpoint('chat/completions').host == 'api.openai.com';
+    final reasoningModel = RegExp(r'^(o[0-9]|gpt-5)').hasMatch(resolvedModel);
+    final deepSeekDisableThinking =
+        route?.provider == ModelProvider.deepseek &&
+        route?.endpoint('chat/completions').host == 'api.deepseek.com' &&
+        scene != ModelScene.agent;
+    final disableWainaoThinking =
+        route == null && _shouldDisableWainaoThinking(resolvedModel, scene);
+    final effectiveMaxTokens = officialOpenAi
+        ? maxTokens
+        : ((deepSeekDisableThinking || disableWainaoThinking) &&
+                  (scene == ModelScene.summary ||
+                      scene == ModelScene.organize)
+              ? math.max(maxTokens, scene == ModelScene.summary ? 3200 : 2048)
+              : maxTokens);
+
+    final payload = <String, Object>{
+      'model': resolvedModel,
+      'stream': true,
+      if (deepSeekDisableThinking || disableWainaoThinking)
+        'thinking': {'type': 'disabled'},
+      if (!officialOpenAi || !reasoningModel) 'temperature': temperature,
+      if (officialOpenAi)
+        'max_completion_tokens': effectiveMaxTokens
+      else
+        'max_tokens': effectiveMaxTokens,
+      'messages': [for (final message in messages) message.toJson()],
+    };
+
+    http.Client? ownedClient;
+    late final http.StreamedResponse streamed;
+    if (route == null) {
+      streamed = await _client.postJsonStream(
+        url!,
+        payload,
+        timeout: requestTimeout,
+      );
+    } else {
+      ownedClient = _providerClient ?? http.Client();
+      try {
+        final req = http.Request('POST', route.endpoint('chat/completions'))
+          ..followRedirects = false
+          ..headers.addAll({
+            if (route.apiKey.isNotEmpty)
+              'Authorization': 'Bearer ${route.apiKey}',
+            'Content-Type': 'application/json; charset=utf-8',
+            'Accept': 'text/event-stream, application/json',
+          })
+          ..bodyBytes = utf8.encode(jsonEncode(payload));
+        streamed = await ownedClient.send(req).timeout(requestTimeout);
+      } on TimeoutException {
+        if (_providerClient == null) ownedClient.close();
+        throw const ApiTimeoutException();
+      } on http.ClientException {
+        if (_providerClient == null) ownedClient.close();
+        throw const ApiNetworkException();
+      }
+    }
+
+    try {
+      if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+        final full = await http.Response.fromStream(streamed);
+        if (route == null) {
+          _ensureSuccess(full, action: '生成');
+        } else {
+          final message = switch (full.statusCode) {
+            401 || 403 => '服务商拒绝访问，请检查 API Key 和模型权限',
+            429 => '服务商请求过多或额度不足，请稍后重试',
+            _ => '所选模型服务暂时无法完成请求',
+          };
+          throw ApiHttpException(message, statusCode: full.statusCode);
+        }
+      }
+
+      final contentType =
+          (streamed.headers['content-type'] ?? '').toLowerCase();
+      if (!contentType.contains('text/event-stream')) {
+        // 兼容未开 SSE 的 MockClient 或只返回完整 JSON 的网关
+        final rawText = await streamed.stream.bytesToString().timeout(
+          requestTimeout,
+        );
+        if (rawText.contains('\ndata:') || rawText.startsWith('data:')) {
+          for (final chunk in _extractSseTextChunks(rawText)) {
+            if (isCancelled?.call() == true) return;
+            yield chunk;
+          }
+          return;
+        }
+        final decoded = jsonDecode(rawText);
+        if (decoded is Map<String, dynamic>) {
+          final choices = decoded['choices'];
+          if (choices is List && choices.isNotEmpty) {
+            final first = choices.first;
+            final msg = first is Map ? first['message'] : null;
+            final content = msg is Map ? msg['content'] : null;
+            if (content is String && content.isNotEmpty) {
+              yield content;
+              return;
+            }
+          }
+        }
+        throw const ApiFormatException('总结服务返回了空内容');
+      }
+
+      var emittedAny = false;
+      final lineStream = streamed.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+      await for (final line in lineStream) {
+        if (isCancelled?.call() == true) return;
+        final trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        final data = trimmed.substring(5).trim();
+        if (data.isEmpty || data == '[DONE]') continue;
+        final delta = _parseSseDeltaContent(data);
+        if (delta != null && delta.isNotEmpty) {
+          emittedAny = true;
+          yield delta;
+        }
+      }
+      if (!emittedAny && isCancelled?.call() != true) {
+        throw const ApiFormatException('总结服务返回了空内容');
+      }
+    } on TimeoutException {
+      throw const ApiTimeoutException();
+    } on http.ClientException {
+      throw const ApiNetworkException();
+    } finally {
+      if (_providerClient == null) ownedClient?.close();
+    }
+  }
+
+  static Iterable<String> _extractSseTextChunks(String raw) sync* {
+    for (final line in const LineSplitter().convert(raw)) {
+      final trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      final data = trimmed.substring(5).trim();
+      if (data.isEmpty || data == '[DONE]') continue;
+      final delta = _parseSseDeltaContent(data);
+      if (delta != null && delta.isNotEmpty) yield delta;
+    }
+  }
+
+  static String? _parseSseDeltaContent(String jsonPayload) {
+    try {
+      final decoded = jsonDecode(jsonPayload);
+      if (decoded is! Map) return null;
+      final choices = decoded['choices'];
+      if (choices is! List || choices.isEmpty) return null;
+      final first = choices.first;
+      if (first is! Map) return null;
+      final delta = first['delta'];
+      if (delta is Map && delta['content'] is String) {
+        return delta['content'] as String;
+      }
+      final msg = first['message'];
+      if (msg is Map && msg['content'] is String) {
+        return msg['content'] as String;
+      }
+    } on FormatException {
+      return null;
+    }
+    return null;
+  }
+
   static const int _kEmptyLengthRetryMaxTokens = 8192;
 
   bool _shouldDisableWainaoThinking(String modelId, ModelScene scene) {

@@ -108,6 +108,8 @@ import StoreKit
     // registrar(forPlugin: "RCHealthSignal")，否则设置页一点开就 MissingPlugin 闪退。
     HealthSignalBridge.shared.register(messenger: registrar.messenger())
     ICloudSyncBridge.shared.register(with: registrar.messenger())
+    LocalLlmBridge.shared.register(with: registrar.messenger())
+    VoiceKeyboardIpcBridge.shared.register(with: registrar.messenger())
     RCStoreKitBridge.shared.register(with: registrar.messenger())
     if let speechRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "RCSystemSpeech") {
       SystemSpeechBridge.shared.register(with: speechRegistrar.messenger())

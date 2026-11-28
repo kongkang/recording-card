@@ -19,6 +19,9 @@ import 'core/theme/tokens.dart';
 import 'pages/app_shell.dart';
 import 'pages/login_page.dart';
 import 'services/agent/agent_chat_controller.dart';
+import 'services/ai/local_llm_service.dart';
+import 'services/ai/local_model_memory_guard.dart';
+import 'services/ai/summary_checkpoint_store.dart';
 import 'services/ai/summary_generator.dart';
 import 'services/analysis/chat_completion.dart';
 import 'services/audio/recording_status.dart';
@@ -245,7 +248,10 @@ class _HomeGate extends StatefulWidget {
 
 class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
   final _auth = AuthService();
-  final _store = AppStore();
+  final _summaryCheckpoints = SummaryCheckpointStore();
+  late final _store = AppStore(summaryCheckpoints: _summaryCheckpoints);
+  late final LocalModelMemoryGuard _memoryGuard;
+  late final LocalLlmService _localLlm;
   late final DeviceStore _device;
   final _recordingStatus = RecordingStatusController();
   late final SettingsStore _settings = widget.settings;
@@ -301,9 +307,15 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
       localOnlyCheck: () => _agentConfig.localOnlyMode,
       providers: _modelProviders,
     );
+    _memoryGuard = LocalModelMemoryGuard(
+      onTrimNativeMemory: () => const BluetoothPermission().trimNativeMemory(),
+    );
+    _localLlm = LocalLlmService(memoryGuard: _memoryGuard);
     _summaries = SummaryGenerator(
       gateway: _modelGateway,
       agentConfig: _agentConfig,
+      localLlm: _localLlm,
+      checkpointStore: _summaryCheckpoints,
     );
 
     // 本地转写/润色/分段流水线（离线优先；iOS 26+ 默认系统内置免下载，按需可切 SenseVoice）
@@ -338,6 +350,7 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
       byoAsr: ByoAsrClient(),
       agentConfig: _agentConfig,
     );
+    _memoryGuard.registerReleaser(LocalHeavyModelSlot.asr, _asr.releaseMemory);
     _recordingStore = RecordingStore();
     _healthSignals = HealthSignalController(
       store: HealthSignalStore(),
@@ -672,11 +685,21 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
       _store.setAppBackgrounded(false);
       _taskRunner?.start();
       _device.handleAppResumed();
+      final top = _store.stackTop;
+      if (top != null && top.type == 'sum') {
+        unawaited(_store.resumePausedSummary(top.id));
+      }
+    } else if (state == AppLifecycleState.inactive) {
+      // iOS willResignActive 阶段抢先停掉 Metal/流式生成并缓存检查点，防切后台崩溃
+      unawaited(_store.pauseGeneratingSummaryForBackground());
+      unawaited(_localLlm.pauseAndDrainForBackground());
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       _store.setAppBackgrounded(true);
       _taskRunner?.stop();
       _device.handleAppBackgrounded();
+      unawaited(_store.pauseGeneratingSummaryForBackground());
+      unawaited(_localLlm.pauseAndDrainForBackground());
       unawaited(_trimMemoryForBackground());
     }
   }
@@ -702,6 +725,9 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
       _device.phoneRingBuffer.clear();
     }
     await _agentChat.releaseBackgroundMemory();
+    await _memoryGuard.releaseAll(
+      reason: aggressive ? 'memory_pressure' : 'background',
+    );
     await _asr.releaseMemory();
     await const BluetoothPermission().trimNativeMemory();
   }
@@ -726,6 +752,8 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
     _store.dispose();
     _recordingStatus.dispose();
     _agentChat.dispose();
+    _localLlm.dispose();
+    _memoryGuard.dispose();
     unawaited(_memorySearch.close());
     _healthSignals.dispose();
     _mediaBackup.dispose();
@@ -767,6 +795,8 @@ class _HomeGateState extends State<_HomeGate> with WidgetsBindingObserver {
               lookupExistingTranscript: _lookupExistingTranscript,
               uiStyle: widget.uiStyle,
               membership: _membership,
+              memoryGuard: _memoryGuard,
+              localLlm: _localLlm,
             );
           }
           return LoginPage(
